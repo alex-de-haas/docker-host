@@ -293,6 +293,50 @@ public sealed class AppIdentityServiceTests
         Assert.Equal("app_access_denied", error.Code);
     }
 
+    // An app nobody has been assigned to is not "unrestricted" — it is granted to nobody. Regression:
+    // the rule used to skip the check when the app had no assignment rows, so every non-admin could
+    // launch every never-assigned app.
+    [Fact]
+    public async Task CreateLaunchTokenAsync_RejectsAppWithNoAssignments()
+    {
+        var fixture = await IdentityFixture.CreateAsync();
+        await fixture.WriteUsersAsync([CreateUser("user_1")], []);
+
+        var error = await Assert.ThrowsAsync<AppIdentityException>(
+            () => fixture.Service.CreateLaunchTokenAsync("com.example.notes", "user_1"));
+
+        Assert.Equal("app_access_denied", error.Code);
+    }
+
+    [Fact]
+    public async Task CreateLaunchTokenAsync_AllowsAdminOnAppWithNoAssignments()
+    {
+        var fixture = await IdentityFixture.CreateAsync();
+        await fixture.WriteUsersAsync([CreateUser("admin_1", role: "host.admin")], []);
+
+        var token = await fixture.Service.CreateLaunchTokenAsync("com.example.notes", "admin_1");
+
+        var session = await fixture.Service.RevalidateAsync(token.AccessToken, "com.example.notes");
+        Assert.True(session.Active);
+    }
+
+    // A state document that predates the field (or was hand-edited) has no `assignments` key, which
+    // deserializes the collection to null despite its non-nullable declaration — the store's default only
+    // covers a missing file. The access check must read that as "no grants", not throw.
+    [Fact]
+    public async Task CreateLaunchTokenAsync_DeniesWhenAssignmentsKeyIsAbsent()
+    {
+        var fixture = await IdentityFixture.CreateAsync();
+        await fixture.WriteRawUserStateAsync("""
+            {"schemaVersion":1,"users":[{"id":"user_1","email":"user_1@example.test","displayName":"user_1","role":"host.user","disabled":false,"createdAt":"2026-07-17T00:00:00+00:00","updatedAt":"2026-07-17T00:00:00+00:00"}],"invitations":[],"sessions":[]}
+            """);
+
+        var error = await Assert.ThrowsAsync<AppIdentityException>(
+            () => fixture.Service.CreateLaunchTokenAsync("com.example.notes", "user_1"));
+
+        Assert.Equal("app_access_denied", error.Code);
+    }
+
     [Fact]
     public async Task RevalidateAsync_RejectsTokensIssuedForAnotherApp()
     {
@@ -396,6 +440,14 @@ public sealed class AppIdentityServiceTests
 
         public async Task WriteUsersAsync(IReadOnlyList<HostUserRecord> users, IReadOnlyList<AppAssignmentRecord> assignments)
             => await Users.WriteAsync(new UserDirectoryState(1, users, [], assignments, []));
+
+        // Bypasses the typed writer so a test can persist a document the C# record could not express —
+        // e.g. one missing a collection key entirely, as an older or hand-edited state.json would be.
+        public async Task WriteRawUserStateAsync(string json)
+        {
+            Directory.CreateDirectory(Paths.AuthRoot);
+            await File.WriteAllTextAsync(Path.Combine(Paths.AuthRoot, "state.json"), json);
+        }
 
         public async Task UpsertSystemAppAsync()
             => await Apps.UpsertAppAsync(CreateApp(id: "hosty.sysapp", system: true, origin: "https://sysapp.example"));
