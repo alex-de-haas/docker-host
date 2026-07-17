@@ -173,7 +173,10 @@ internal sealed class AppIdentityService(
         // Assignments are a per-user allowlist, so an app with no rows at all grants nobody access. The
         // rule must not weaken to "unassigned means public": that made every never-assigned app reachable
         // by every user, which is the opposite of what the admin picker's unchecked box promises.
-        var userAssigned = state.Assignments.Any(assignment =>
+        // The `?? []` is not ceremony: the store only substitutes a default state for a *missing* file, so
+        // a document that exists without an `assignments` key deserializes this to null despite the
+        // non-nullable declaration. Guarding keeps that a closed door rather than a 500.
+        var userAssigned = (state.Assignments ?? []).Any(assignment =>
             string.Equals(assignment.AppId, appId, StringComparison.Ordinal) &&
             string.Equals(assignment.UserId, user.Id, StringComparison.Ordinal));
         if (!string.Equals(user.Role, "host.admin", StringComparison.Ordinal) && !userAssigned)
