@@ -52,8 +52,8 @@ Every plan carries `requiresReview`, derived from its change list. It is the gat
 **Routine** — the app's own build moving forward, with nothing else changing:
 
 - `version:*` and the `manifest` fallback;
-- `artifact:{service}:{digest}->{digest}` with a resolved target digest;
-- `image:{service}:{ref}->{ref}` while both references point into the **same repository** (a tag advancing inside the app's own repository is an ordinary release).
+- `artifact:{service}:{current}->{target}` with a resolved target digest;
+- `image:{service}:{currentRef}->{targetRef}` while both references point into the **same repository** (a tag advancing inside the app's own repository is an ordinary release).
 
 **Review-required** — everything else, because it changes the app's shape, privileges, or where its bytes come from: `runtime`, `role` (a manifest newly declaring `role: system` escalates the app — surfacing it here is what makes the escalation operator-approved), `service` added/removed/changed, `setting`, `dependency`, `endpoint`, `data`, `capability`, an `image` change that redirects to a different repository, and `artifact:*->unknown` (applying an artifact nobody could resolve is not a routine act).
 

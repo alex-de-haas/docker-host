@@ -9,8 +9,9 @@ updates: update checking builds full reviewed-update plans up front, rows offer 
 or an explicit "Review" based on the plan's change classes, apply runs as a Core-side background
 operation with persisted progress, and "Update All" applies every routine update in one action.
 
-Phases 1–4 shipped as PRs #214, #215, #216, and #217 (Platform 0.58.0, Shell 0.41.0); PR #218
-(0.58.1) fixed a phantom `setting:HOSTY_PORT_*:removed` diff found in live verification. The
+Phases 1–4 shipped as PRs #214 (Platform 0.56.0), #215 (0.57.0), #216 (0.58.0), and #217 (Shell
+0.41.0); PR #218 (0.58.1) fixed a phantom `setting:HOSTY_PORT_*:removed` diff found in live
+verification. The
 behavior now lives in [Runtime App Update](../features/runtime-app-update.md) — this document is
 kept as the design record. Remaining: the Windows-server port-release investigation noted under
 Verification.
