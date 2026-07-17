@@ -846,12 +846,17 @@ function InstalledAppRow({
   // the same reviewed plan/apply flow as every other runtime app (docs/ideas/system-app-updates.md);
   // only start/stop, backups, and remove stay system-gated via canControl.
   const canUpdate = canManageApps && appSupportsReviewedUpdate(app);
-  // The row Update/Review affordances render from the fleet-check verdict on the app summary
-  // (plan-first updates): blue "Update" applies the cached plan without a dialog, its dropdown (and
-  // the yellow review-class button) opens the review popup over the same cached plan. Progress is
-  // the record's operationStatus — server state, so it survives reloads and shows for every admin.
+  // The row's update affordance renders from the fleet-check verdict on the app summary (plan-first
+  // updates), as one icon among the other row actions: blue applies the cached plan straight away,
+  // amber means the plan must be read first and opens the review dialog. Either way the actions menu
+  // offers "Review and update" for the full plan. Progress is the record's operationStatus — server
+  // state, so it survives reloads and shows for every admin.
   const updating = app.operationStatus === "updating";
   const verdict = canUpdate && !updating ? app.updateCheck : null;
+  const updateVisible = Boolean(verdict?.updateAvailable && !verdict.error);
+  // A verdict with no cached plan digest cannot be applied in one click (the plan expired or was
+  // consumed), so it takes the review path too — the dialog rebuilds the plan.
+  const needsReview = Boolean(verdict?.requiresReview || !verdict?.planDigest);
   // Removal, like start/stop/restart/update, is an inherent Core operation: the endpoint authorizes on
   // the admin session, never on the manifest `capabilities` list, so an app cannot decline to be
   // uninstalled by omitting a token. canControl already keeps system apps out.
@@ -953,49 +958,31 @@ function InstalledAppRow({
               <CircleAlert className="h-4 w-4 text-amber-500" aria-label="Update check failed" />
             </span>
           )}
-          {verdict?.updateAvailable && !verdict.error && (verdict.requiresReview || !verdict.planDigest ? (
+          {updateVisible && (needsReview ? (
             <Button
               type="button"
-              variant="outline"
-              size="sm"
-              className="h-7 gap-1 border-amber-500/40 px-2 text-xs text-amber-600 hover:bg-amber-500/10 hover:text-amber-600 dark:text-amber-500 dark:hover:text-amber-500"
-              title="This update changes more than the app's build — review it before applying"
+              variant="ghost"
+              size="icon-sm"
+              className="text-amber-600 hover:bg-amber-500/10 hover:text-amber-600 dark:text-amber-500 dark:hover:text-amber-500"
+              title="Update available — changes more than the app's build, so review it before applying"
+              aria-label="Update available — review before applying"
               onClick={() => onOpenPanel(app, "update")}
             >
-              <ArrowUpCircle className="h-3.5 w-3.5" />
-              Review
+              <ArrowUpCircle className="h-4 w-4" />
             </Button>
           ) : (
-            <span className="inline-flex items-center">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-7 gap-1 rounded-r-none border-r-0 px-2 text-xs text-sky-600 hover:bg-sky-500/10 hover:text-sky-600 dark:text-sky-400 dark:hover:text-sky-400"
-                title="Routine update — apply without opening the review dialog"
-                disabled={isBusy("update")}
-                onClick={() => onUpdateApp(app)}
-              >
-                {isBusy("update") ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <ArrowUpCircle className="h-3.5 w-3.5" />}
-                Update
-              </Button>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-7 rounded-l-none px-1 text-sky-600 hover:bg-sky-500/10 hover:text-sky-600 dark:text-sky-400 dark:hover:text-sky-400"
-                    aria-label="More update options"
-                  >
-                    <ChevronDown className="h-3.5 w-3.5" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => onOpenPanel(app, "update")}>Review changes</DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="text-sky-600 hover:bg-sky-500/10 hover:text-sky-600 dark:text-sky-400 dark:hover:text-sky-400"
+              title="Routine update available — apply it (use the actions menu to review the changes first)"
+              aria-label="Routine update available — apply"
+              disabled={isBusy("update")}
+              onClick={() => onUpdateApp(app)}
+            >
+              {isBusy("update") ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ArrowUpCircle className="h-4 w-4" />}
+            </Button>
           ))}
           {canControl && (running ? (
             <IconButton title="Stop app" disabled={isBusy("stop")} onClick={() => onAction(app, "stop")}>
@@ -1017,11 +1004,13 @@ function InstalledAppRow({
             canConfigure={canConfigure}
             canRemove={canRemove}
             canCheckUpdate={canUpdate}
+            canReviewUpdate={updateVisible}
             checkingUpdate={checkingUpdate}
             devRuntime={canManageApps ? selectedDevRuntime : undefined}
             devWillRestart={!app.system && running}
             devBusy={isBusy("development-mode")}
             onCheckUpdate={() => onCheckUpdate(app)}
+            onReviewUpdate={() => onOpenPanel(app, "update")}
             onSetDevelopmentMode={onSetDevelopmentMode}
             onOpenPanel={onOpenPanel}
           />
@@ -1125,11 +1114,13 @@ function InstalledAppActionsMenu({
   canConfigure,
   canRemove,
   canCheckUpdate,
+  canReviewUpdate,
   checkingUpdate,
   devRuntime,
   devWillRestart,
   devBusy,
   onCheckUpdate,
+  onReviewUpdate,
   onSetDevelopmentMode,
   onOpenPanel,
 }: {
@@ -1139,8 +1130,12 @@ function InstalledAppActionsMenu({
   canRemove: boolean;
   // Same gate as the row's Update affordance: an admin, and an app with a reviewed-update path.
   canCheckUpdate: boolean;
+  // True exactly when the row shows its update icon, so the plan is reachable from the menu as well
+  // — the only way in for a routine update, whose icon applies straight away.
+  canReviewUpdate: boolean;
   checkingUpdate: boolean;
   onCheckUpdate: () => void;
+  onReviewUpdate: () => void;
   // The selected source runtime whose Development Mode can be toggled here (undefined when the
   // selected runtime is not a source runtime, or the operator cannot manage apps).
   devRuntime?: CoreRuntimeProfile;
@@ -1154,7 +1149,7 @@ function InstalledAppActionsMenu({
   // declares the `logs` capability — independent of the telemetry backend.
   const canViewLogs = app.capabilities.includes("logs");
   const hasMenuActions =
-    canCheckUpdate || Boolean(devRuntime) || canViewLogs || canBackup || canConfigure || canRemove;
+    canCheckUpdate || canReviewUpdate || Boolean(devRuntime) || canViewLogs || canBackup || canConfigure || canRemove;
 
   if (!hasMenuActions) {
     return null;
@@ -1170,22 +1165,27 @@ function InstalledAppActionsMenu({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
-        {canCheckUpdate && (
-          <>
-            <DropdownMenuItem
-              disabled={checkingUpdate}
-              // Keep the menu open while the check runs so the spinner is visible.
-              onSelect={(event) => {
-                event.preventDefault();
-                onCheckUpdate();
-              }}
-            >
-              {checkingUpdate ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-              Check for updates
-            </DropdownMenuItem>
-            {(Boolean(devRuntime) || canViewLogs || canBackup || canConfigure || canRemove) && <DropdownMenuSeparator />}
-          </>
+        {canReviewUpdate && (
+          <DropdownMenuItem onClick={onReviewUpdate}>
+            <ArrowUpCircle className="h-4 w-4" />
+            Review and update
+          </DropdownMenuItem>
         )}
+        {canCheckUpdate && (
+          <DropdownMenuItem
+            disabled={checkingUpdate}
+            // Keep the menu open while the check runs so the spinner is visible.
+            onSelect={(event) => {
+              event.preventDefault();
+              onCheckUpdate();
+            }}
+          >
+            {checkingUpdate ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            Check for updates
+          </DropdownMenuItem>
+        )}
+        {(canCheckUpdate || canReviewUpdate) &&
+          (Boolean(devRuntime) || canViewLogs || canBackup || canConfigure || canRemove) && <DropdownMenuSeparator />}
         {devRuntime && (
           <>
             <DropdownMenuLabel>Development mode</DropdownMenuLabel>
