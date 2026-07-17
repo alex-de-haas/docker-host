@@ -79,6 +79,7 @@ Draft, exploratory, or backlog items that are not current implementation commitm
 - [Browser account switching](ideas/account-switching.md) - retired behavior and future restoration boundary.
 - [Gateway and app wrapping ideas](ideas/gateway-and-app-wrapping.md) - future gateway, ingress, and third-party app wrapping boundaries.
 - [Auth session lifecycle and recovery](ideas/auth-session-lifecycle.md) - agreed design: split identity error contract (401/403/503), standalone and embedded session recovery through app-open + login continuation, opaque server-side app session grants replacing the browser JWT, and sliding idle+absolute Core sessions.
+- [Hosty App SDK](ideas/hosty-app-sdk.md) - agreed design: shared auth/recovery SDK for runtime apps (TypeScript on npmjs + .NET on NuGet) packaging the session state machine with a `misconfigured` class, silent embedded recovery, standalone redirect recovery, the embedder contract for shells, and the no-version-sync compatibility policy.
 - [Auth provider extensions](ideas/auth-provider-extensions.md) - future OIDC, trusted-proxy provisioning, password reset, and durable throttling directions.
 - [Runtime source extensions](ideas/runtime-source-extensions.md) - future multi-repository source and private repository credential handling.
 - [Runtime app repository install](ideas/runtime-app-repository-install.md) - future direct Git repository install flow for runtime apps.
