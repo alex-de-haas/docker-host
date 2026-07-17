@@ -133,8 +133,11 @@ export function InstalledAppsPage({
     });
   }, [runtimeApps, systemApps]);
 
+  // Returns both halves so a caller can tell a real failure from an auth redirect: the latter yields
+  // no status *and* no error, because the page is already navigating to the login screen and has
+  // nothing to report.
   const loadUpdateStatus = useCallback(
-    async (app: CoreApp, options?: { refresh?: boolean }): Promise<AppUpdateStatusResponse | null> => {
+    async (app: CoreApp, options?: { refresh?: boolean }): Promise<{ status: AppUpdateStatusResponse | null; error: string | null }> => {
       setUpdateStatusByApp((current) => ({
         ...current,
         [app.id]: { loading: true, error: null, status: current[app.id]?.status ?? null },
@@ -142,7 +145,7 @@ export function InstalledAppsPage({
 
       try {
         // Without `refresh` Core answers from its cached plan (no network work); refresh=true forces
-        // a single-app rebuild — the expanded panel's explicit "Check for updates" uses it.
+        // a single-app rebuild — the actions menu's explicit "Check for updates" uses it.
         const response = await fetch(
           `${coreOrigin}/api/apps/${encodeURIComponent(app.id)}/update-status${options?.refresh ? "?refresh=true" : ""}`,
           { credentials: "include" },
@@ -153,20 +156,21 @@ export function InstalledAppsPage({
         }
         const status = (await response.json()) as AppUpdateStatusResponse;
         setUpdateStatusByApp((current) => ({ ...current, [app.id]: { loading: false, error: null, status } }));
-        return status;
+        return { status, error: null };
       } catch (error) {
         if (isAuthRequiredRedirectError(error)) {
-          return null;
+          return { status: null, error: null };
         }
+        const message = error instanceof Error ? error.message : "Update status is unavailable.";
         setUpdateStatusByApp((current) => ({
           ...current,
           [app.id]: {
             loading: false,
-            error: error instanceof Error ? error.message : "Update status is unavailable.",
+            error: message,
             status: current[app.id]?.status ?? null,
           },
         }));
-        return null;
+        return { status: null, error: message };
       }
     },
     [coreOrigin],
@@ -201,9 +205,13 @@ export function InstalledAppsPage({
   const checkAppUpdate = useCallback(
     async (app: CoreApp) => {
       statusRequestedRef.current.add(app.id);
-      const status = await loadUpdateStatus(app, { refresh: true });
+      const { status, error } = await loadUpdateStatus(app, { refresh: true });
       if (status) {
         toast.success(status.updateAvailable ? "Update available" : "Up to date", { description: app.displayName });
+      } else if (error) {
+        // The operator asked for this check, so its failure is theirs to see; an auth redirect
+        // reports neither and is left to the login navigation already under way.
+        toast.error("Update check failed", { description: `${app.displayName}: ${error}` });
       }
       onRefresh();
     },
@@ -432,6 +440,14 @@ function AppServiceDetailsPanel({
       {hasImageInfo && showsUpdatePolicy && (
         <div className="flex flex-wrap items-center gap-2 rounded-md bg-muted/30 px-2 py-1.5">
           <UpdatePolicyBadge policy={app.updatePolicy} />
+        </div>
+      )}
+      {/* Only ever set for an app whose digests the operator explicitly checked, so this reports a
+          check they asked for — including one that failed after they closed the toast, or a
+          re-read that went stale-quiet after a runtime switch. */}
+      {updateStatusState?.error && (
+        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
+          Update check failed: {updateStatusState.error}
         </div>
       )}
       {healthState?.loading && (
