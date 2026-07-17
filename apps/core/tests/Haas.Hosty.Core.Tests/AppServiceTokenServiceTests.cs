@@ -113,7 +113,7 @@ public sealed class AppServiceTokenServiceTests
         var second = AppServiceSigningKey.LoadOrCreate(root.Paths);
 
         Assert.Equal(32, first.Value.Length);
-        Assert.Equal(first.Value, second.Value);
+        Assert.Equal(first.Value.ToArray(), second.Value.ToArray());
     }
 
     private static AppServiceTokenService CreateService(string seed = "test-secret")

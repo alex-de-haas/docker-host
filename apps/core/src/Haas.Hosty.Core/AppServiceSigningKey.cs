@@ -9,9 +9,15 @@ namespace Haas.Hosty.Core;
 // their token baked into the container environment, and the next Core adopts them instead of
 // recreating, so a per-process key would 401 every app→Core callback (directory roster,
 // notifications, backups, session revalidation) until something else recreated the container.
-internal sealed class AppServiceSigningKey(byte[] value)
+internal sealed class AppServiceSigningKey
 {
-    public byte[] Value { get; } = value;
+    private readonly byte[] _value;
+
+    // Defensive copy in, read-only view out: the key must be immutable after construction — a caller
+    // mutating a shared array would change the HMAC key mid-flight and break every outstanding token.
+    public AppServiceSigningKey(byte[] value) => _value = (byte[])value.Clone();
+
+    public ReadOnlySpan<byte> Value => _value;
 
     public static AppServiceSigningKey LoadOrCreate(CoreDataPaths paths)
     {
@@ -66,10 +72,13 @@ internal sealed class AppServiceSigningKey(byte[] value)
             var key = Convert.FromBase64String(text);
             return key.Length == 0 ? null : key;
         }
-        catch (Exception ex) when (ex is IOException or FormatException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or FormatException)
         {
             // Missing, mid-rename, or poisoned content all read as absent — never as a valid
             // empty key, which would silently break signature validation forever.
+            // UnauthorizedAccessException deliberately propagates: an existing-but-unreadable key
+            // file (e.g. left owned by another user) must fail loudly, because the create path
+            // could rename over it and silently rotate the durable key.
             return null;
         }
     }
@@ -88,8 +97,10 @@ internal sealed class AppServiceSigningKey(byte[] value)
             SecureFileSystem.TryRestrictFile(path);
             return true;
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
+            // A lost race or a write the filesystem refuses (e.g. a restricted destination on
+            // Windows) reports as "did not win"; the caller falls back to reading the winner.
             return false;
         }
         finally
