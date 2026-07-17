@@ -46,7 +46,7 @@ System app actions should stay limited in Shell:
 - logs are allowed when the app exposes the `logs` capability and the active user is `host.admin`;
 - runtime switching is allowed for administrators when the app exposes more than one runtime profile;
 - settings, public origins, external mounts, source override, and development-mode configuration are allowed for administrators through the ordinary app settings dialog;
-- reviewed updates are allowed for administrators when the app declares the `update` capability and does not run a live source runtime — the same eligibility as runtime apps, served by the same update-status/plan/apply flow;
+- reviewed updates are allowed for administrators whenever the app does not run a live source runtime — the same eligibility as runtime apps, served by the same check/plan/apply flow. Updating is inherent to Core managing an app and is authorized on the endpoint, never by the manifest `capabilities` list;
 - lifecycle controls such as start, stop, restart, autostart, backup, restore, and remove are hidden for all system apps.
 
 ## User/API Scenarios
@@ -73,7 +73,7 @@ Shell sidebar rendering should show Host management navigation only when the act
 
 Shell main-content routing should guard management views with `canManageApps`. If the active user is not an administrator and reaches `/`, `/dashboard`, `/installed-apps`, or `/users`, Shell should route the user back to `/apps` and render the app-navigation experience rather than Dashboard or Installed Apps.
 
-Installed Apps accepts both runtime apps and system apps for administrator rendering. It renders separate sections and passes `app.system` into action eligibility. Settings and reviewed updates use administrator permission for both groups; lifecycle, backup, and remove eligibility additionally require a non-system app. The fleet "Check updates" action probes system apps with the same filter as runtime apps.
+Installed Apps accepts both runtime apps and system apps for administrator rendering. It renders separate sections and passes `app.system` into action eligibility. Settings and reviewed updates use administrator permission for both groups; lifecycle, backup, and remove eligibility additionally require a non-system app. The fleet "Check updates" action triggers Core's sweep, which covers system apps on the same terms as runtime apps.
 
 Dashboard should receive runtime app groups for summary metrics. System app rendering stays inside the Installed Apps System Apps section.
 
