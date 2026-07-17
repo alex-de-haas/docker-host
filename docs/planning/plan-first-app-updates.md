@@ -1,13 +1,20 @@
 # Plan-First App Updates
 
-Status: Ready
+Status: Implemented
 Created: 2026-07-16
 Updated: 2026-07-16
 
-Approved for implementation on 2026-07-16. Captures the agreed design for one-click, reload-safe app
+Approved and implemented on 2026-07-16. Captures the agreed design for one-click, reload-safe app
 updates: update checking builds full reviewed-update plans up front, rows offer a silent "Update"
 or an explicit "Review" based on the plan's change classes, apply runs as a Core-side background
 operation with persisted progress, and "Update All" applies every routine update in one action.
+
+Phases 1–4 shipped as PRs #214 (Platform 0.56.0), #215 (0.57.0), #216 (0.58.0), and #217 (Shell
+0.41.0); PR #218 (0.58.1) fixed a phantom `setting:HOSTY_PORT_*:removed` diff found in live
+verification. The
+behavior now lives in [Runtime App Update](../features/runtime-app-update.md) — this document is
+kept as the design record. Remaining: the Windows-server port-release investigation noted under
+Verification.
 
 ## Goal
 
@@ -248,42 +255,58 @@ Decided 2026-07-16; no open questions remain.
 
 ## Implementation Phases
 
-### Phase 1 — Plan classification and read paths (Core)
+Phases 1–5 are complete; the per-phase notes below are the shipped scope, kept for the record.
+
+### Phase 1 — Plan classification and read paths (Core) — MERGED (PR #214, 0.56.0)
 
 `requiresReview` on `AppUpdatePlan` + serializer contexts; `GET /api/apps/{id}/update/plan`;
 update-status reimplemented over the cached plan with `?refresh=true` single-app rebuild;
 parallel per-service digest probes. Shell keeps working unchanged.
 
-### Phase 2 — Fleet sweep (Core)
+### Phase 2 — Fleet sweep (Core) — MERGED (PR #215, 0.57.0)
 
-Sweep service with memoized fetches and per-app error capture; availability projection in app
-summaries; `POST /api/apps/update-check` single-flight trigger + `updateCheck` status block;
-background scheduler + Core settings interval key.
+Sweep service with per-app error capture; availability projection in app summaries;
+`POST /api/apps/update-check` single-flight trigger + `updateCheck` status block; background
+scheduler + Core settings interval key. (Cross-app feed memoization from the draft was dropped:
+`app-feeds.0.1` documents are per-app, so there was nothing to dedupe.)
 
-### Phase 3 — Background apply (Core)
+### Phase 3 — Background apply (Core) — MERGED (PR #216, 0.58.0)
 
 Enqueue semantics with `"updating"` `OperationStatus`, `update_in_progress` guard, detached
 execution, completion/failure notifications, post-apply single-app re-plan, boot sweep for
 interrupted applies.
 
-### Phase 4 — Shell UX
+### Phase 4 — Shell UX — MERGED (PR #217, Shell 0.41.0)
 
 Plan-driven row buttons (split-button, info/warning colors), busy state from server state, popup
 over the cached plan, enqueue error handling with row refresh, "Update All" with Shell-last
 ordering, polling cadence.
 
-### Phase 5 — Documentation and end-to-end verification
+### Phase 5 — Documentation and end-to-end verification — DONE
 
-Feature docs update (reviewed-update flow, Core settings), CHANGELOG/versions, live verification.
+Feature docs rewritten against the shipped behavior ([Runtime App Update](../features/runtime-app-update.md),
+[Core API](../features/core-api.md), [Shell Access and System Apps](../features/shell-access-and-system-apps.md));
+live verification run on the owner's install (below).
 
 ## Verification
 
-- Unit: classification table per change kind (incl. `->unknown`); sweep memoization and per-app
-  error isolation; enqueue guards (`update_in_progress`, digest mismatch, base-state); boot sweep.
-- Live: fleet sweep on a real install (shared feeds.json fetched once); silent routine update via
-  the row button; review-class app blocked from the silent path and applied via popup; page reload
-  mid-apply keeps the spinner and the apply completes; Core restart mid-apply → `failed` +
-  notification; "Update All" including a Shell self-update; second browser sees identical state.
+- Unit: classification table per change kind (incl. `->unknown`); per-app error isolation in the
+  sweep; enqueue guards (`update_in_progress`, digest mismatch, base-state); boot sweep, including
+  that it leaves a genuinely in-flight apply alone.
+- Live (2026-07-16, owner's install, Platform 0.58.0 + Shell 0.41.0): verdict buttons, "Update all",
+  and the notification-carried outcome all behaved as designed. Two findings:
+  - A same-version plan kept re-appearing as "Review" because a carried `HOSTY_PORT_*` record pin
+    was diffed as a removed setting — a change apply could never make, so the loop never converged.
+    Fixed in PR #218 (0.58.1). This is exactly the class of bug the old flow hid: the phantom change
+    was always in the plan, but nothing acted on the classification until now.
+  - A Shell self-update failed its post-update restart on Windows with the host port still held
+    (`runtime_port_unavailable` on 7171), past the 5s self-release tolerance and still failing on a
+    later retry — so a long-lived holder, not TIME_WAIT. Not reproducible on macOS. Deferred: needs
+    `netstat`/`docker ps` evidence from the server to tell a stray container from Docker Desktop's
+    known published-port retention. The background apply reported it correctly (record `failed`,
+    notification), which is how it was noticed at all.
+  - Still worth doing at leisure: a page reload mid-apply keeps the spinner and the apply completes;
+    Core restart mid-apply → `failed` + notification; second browser sees identical state.
 
 ## Links
 
