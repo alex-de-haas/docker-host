@@ -244,6 +244,168 @@ public sealed class RuntimePortAllocatorTests
     }
 
     [Fact]
+    public async Task ReassignAsync_ManualPort_PinsAndWritesOverride()
+    {
+        var allocator = new RuntimePortAllocator(CreateConfig());
+        var record = PinnableApp();
+
+        var (result, oldPort, newPort) = await allocator.ReassignAsync(
+            record,
+            "app",
+            "http",
+            _ => Task.FromResult<IReadOnlyList<AppRecord>>([]),
+            (updated, _) => Task.FromResult(updated),
+            desiredPort: 8123);
+
+        Assert.Equal(5000, oldPort);
+        Assert.Equal(8123, newPort);
+
+        // The assignment must stop being remappable, or a later automatic pass could move the port the
+        // operator deliberately chose.
+        var assignment = Assert.Single(result.PortAssignments!);
+        Assert.Equal(8123, assignment.HostPort);
+        Assert.Equal(AppPortSources.Operator, assignment.Source);
+        Assert.False(assignment.Remappable);
+
+        Assert.Equal("http://127.0.0.1:8123", Assert.Single(result.Endpoints).Url);
+        // Written under the service-scoped key, which is what TryResolvePinnedHostPort reads first.
+        Assert.Equal("8123", result.Settings[RuntimePortHelper.ServiceScopedOverrideSettingKey("app", "http")].Value);
+    }
+
+    [Fact]
+    public async Task ReassignAsync_AutomaticAfterPin_ClearsOverrideAndRestoresAutomaticSource()
+    {
+        var allocator = new RuntimePortAllocator(CreateConfig());
+        var scopedKey = RuntimePortHelper.ServiceScopedOverrideSettingKey("app", "http");
+        var record = PinnableApp() with
+        {
+            PortAssignments =
+            [
+                new AppPortAssignment("app", "http", 8123, AppPortTransports.Tcp, AppPortBindScopes.Loopback, AppPortSources.Operator, Remappable: false, AssignedAt: DateTimeOffset.UnixEpoch),
+            ],
+            Settings = new Dictionary<string, AppSettingValue>(StringComparer.Ordinal)
+            {
+                [scopedKey] = new(scopedKey, "string", "8123", Secret: false),
+            },
+        };
+
+        var (result, oldPort, newPort) = await allocator.ReassignAsync(
+            record,
+            "app",
+            "http",
+            _ => Task.FromResult<IReadOnlyList<AppRecord>>([]),
+            (updated, _) => Task.FromResult(updated));
+
+        Assert.Equal(8123, oldPort);
+        Assert.NotEqual(8123, newPort);
+
+        var assignment = Assert.Single(result.PortAssignments!);
+        Assert.Equal(AppPortSources.Automatic, assignment.Source);
+        Assert.True(assignment.Remappable);
+        // A leftover override would silently re-pin the old port at the next start.
+        Assert.False(result.Settings.ContainsKey(scopedKey));
+    }
+
+    [Fact]
+    public async Task ReassignAsync_ManualPort_MayRePinThePortItAlreadyHolds()
+    {
+        // Re-pinning the current port must not be judged "in use" by its own listener, so this case skips
+        // the bind probe. Bind the port for real to prove the probe is genuinely bypassed.
+        using var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        listener.Start();
+        var held = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+
+        var allocator = new RuntimePortAllocator(CreateConfig());
+        var record = PinnableApp(held);
+
+        var (result, _, newPort) = await allocator.ReassignAsync(
+            record,
+            "app",
+            "http",
+            _ => Task.FromResult<IReadOnlyList<AppRecord>>([]),
+            (updated, _) => Task.FromResult(updated),
+            desiredPort: held);
+
+        Assert.Equal(held, newPort);
+        Assert.Equal(AppPortSources.Operator, Assert.Single(result.PortAssignments!).Source);
+    }
+
+    [Theory]
+    [InlineData(0, "port_out_of_range")]
+    [InlineData(70000, "port_out_of_range")]
+    [InlineData(80, "port_privileged")]
+    [InlineData(1023, "port_privileged")]
+    public async Task ReassignAsync_ManualPort_RejectsInvalidPort(int port, string expectedCode)
+    {
+        var allocator = new RuntimePortAllocator(CreateConfig());
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() => allocator.ReassignAsync(
+            PinnableApp(),
+            "app",
+            "http",
+            _ => Task.FromResult<IReadOnlyList<AppRecord>>([]),
+            (updated, _) => Task.FromResult(updated),
+            desiredPort: port));
+
+        Assert.Equal(expectedCode, error.Code);
+    }
+
+    [Fact]
+    public async Task ReassignAsync_ManualPort_RejectsPortReservedByAnotherApp_NamingTheHolder()
+    {
+        var allocator = new RuntimePortAllocator(CreateConfig());
+        var other = CreateApp("com.example.other", [Endpoint("app", "http")]) with
+        {
+            PortAssignments =
+            [
+                new AppPortAssignment("app", "http", 8200, AppPortTransports.Tcp, AppPortBindScopes.Loopback, AppPortSources.Automatic, Remappable: true, AssignedAt: DateTimeOffset.UnixEpoch),
+            ],
+        };
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() => allocator.ReassignAsync(
+            PinnableApp(),
+            "app",
+            "http",
+            _ => Task.FromResult<IReadOnlyList<AppRecord>>([other]),
+            (updated, _) => Task.FromResult(updated),
+            desiredPort: 8200));
+
+        Assert.Equal("port_reserved", error.Code);
+        // The operator has to know which app to act on, not just that something took the port.
+        Assert.Contains("com.example.other", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ReassignAsync_ManualPort_RejectsPortHeldByAnotherProcess()
+    {
+        using var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        listener.Start();
+        var held = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+
+        var allocator = new RuntimePortAllocator(CreateConfig());
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() => allocator.ReassignAsync(
+            PinnableApp(),
+            "app",
+            "http",
+            _ => Task.FromResult<IReadOnlyList<AppRecord>>([]),
+            (updated, _) => Task.FromResult(updated),
+            desiredPort: held));
+
+        Assert.Equal("port_in_use", error.Code);
+    }
+
+    private static AppRecord PinnableApp(int currentPort = 5000)
+        => CreateApp("com.example.notes",
+            [new AppEndpointContract("app.http", "http", $"http://127.0.0.1:{currentPort}", Public: true, Service: "app", Port: "http")]) with
+        {
+            PortAssignments =
+            [
+                new AppPortAssignment("app", "http", currentPort, AppPortTransports.Tcp, AppPortBindScopes.Loopback, AppPortSources.Automatic, Remappable: true, AssignedAt: DateTimeOffset.UnixEpoch),
+            ],
+        };
+
+    [Fact]
     public async Task ReassignAsync_ExcludesAppOwnHostScopeAssignment()
     {
         // A raw-L4 (host-scope) assignment occupies a real host port; the reassigned loopback port must

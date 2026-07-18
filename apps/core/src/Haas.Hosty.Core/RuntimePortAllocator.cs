@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net;
 
 namespace Haas.Hosty.Core;
 
@@ -56,18 +57,25 @@ internal sealed class RuntimePortAllocator(HostyCoreRuntimeConfig config)
         }
     }
 
-    // Reassign one automatic loopback port to a fresh value, as one critical section under the gate so the
-    // new port is chosen against the current view of every other app plus the platform. The exclusion set
-    // spans other apps' loopback ports, the Core/Shell launch ports, this record's other loopback
-    // reservations, and the old port (so the new one always differs). The target assignment and its
-    // endpoint URL are reprojected; the caller persists the returned record. Returns the persisted record
-    // with the old and new ports.
+    // Reassign one loopback port, as one critical section under the gate so the new port is chosen — or an
+    // operator-chosen one validated — against the current view of every other app plus the platform. The
+    // exclusion set spans other apps' loopback ports, the Core/Shell launch ports, and this record's other
+    // loopback reservations; in automatic mode the old port joins it so the new one always differs.
+    //
+    // `desiredPort` switches the operation from "pick a free port" to "pin this one": the port is validated
+    // against that same view, the assignment becomes Operator-sourced and non-remappable, and the
+    // HOSTY_PORT_* override is written so start-time resolution agrees with the record. A null
+    // `desiredPort` allocates automatically and clears the override, returning the assignment to
+    // Automatic/remappable. Assignment, endpoint URL, and override setting move together in the single
+    // record handed to `persist`, so the record can never disagree with itself. Returns the persisted
+    // record with the old and new ports.
     public async Task<(TResult Persisted, int OldPort, int NewPort)> ReassignAsync<TResult>(
         AppRecord record,
         string service,
         string portKey,
         Func<CancellationToken, Task<IReadOnlyList<AppRecord>>> listInstalled,
         Func<AppRecord, CancellationToken, Task<TResult>> persist,
+        int? desiredPort = null,
         CancellationToken cancellationToken = default)
     {
         var target = (record.PortAssignments ?? []).FirstOrDefault(assignment =>
@@ -95,13 +103,32 @@ internal sealed class RuntimePortAllocator(HostyCoreRuntimeConfig config)
             }
 
             var oldPort = target.HostPort;
-            reserved.Add(oldPort);
-            var newPort = RuntimePortHelper.AllocateLoopbackPort(reserved);
+            int newPort;
+            if (desiredPort is { } pinned)
+            {
+                ValidateManualPort(pinned, oldPort, reserved, record, others);
+                newPort = pinned;
+            }
+            else
+            {
+                reserved.Add(oldPort);
+                newPort = RuntimePortHelper.AllocateLoopbackPort(reserved);
+            }
+
+            var manual = desiredPort is not null;
             var now = DateTimeOffset.UtcNow;
             var assignments = (record.PortAssignments ?? [])
                 .Select(assignment => string.Equals(assignment.Service, service, StringComparison.Ordinal) &&
                     string.Equals(assignment.PortKey, portKey, StringComparison.Ordinal)
-                        ? assignment with { HostPort = newPort, AssignedAt = now }
+                        ? assignment with
+                        {
+                            HostPort = newPort,
+                            AssignedAt = now,
+                            // Classify the same way a fresh reservation would (see ClassifySource): an
+                            // operator-chosen port must not stay eligible for a later automatic move.
+                            Source = manual ? AppPortSources.Operator : AppPortSources.Automatic,
+                            Remappable = !manual,
+                        }
                         : assignment)
                 .ToArray();
             var endpoints = (record.Endpoints ?? [])
@@ -110,13 +137,128 @@ internal sealed class RuntimePortAllocator(HostyCoreRuntimeConfig config)
                         ? endpoint with { Url = BuildUrl(EndpointProtocol(endpoint), newPort) }
                         : endpoint)
                 .ToArray();
-            var persisted = await persist(record with { PortAssignments = assignments, Endpoints = endpoints }, cancellationToken);
+            var persisted = await persist(
+                record with
+                {
+                    PortAssignments = assignments,
+                    Endpoints = endpoints,
+                    Settings = ApplyPortOverride(record, service, portKey, manual ? newPort : null),
+                },
+                cancellationToken);
             return (persisted, oldPort, newPort);
         }
         finally
         {
             gate.Release();
         }
+    }
+
+    // Ports below this need privileges Core does not have (it never runs as root), so a pin there would only
+    // fail later at bind time. Rejecting it at the point of choice is the honest answer. Exposed so the plan
+    // can tell the Shell the floor instead of the UI hard-coding its own copy.
+    internal const int MinManualPort = 1024;
+
+    // Validate an operator-chosen host port against the same exclusion view an automatic allocation uses.
+    // Re-pinning the port this endpoint already holds is allowed and skips the bind probe — the owning app
+    // may legitimately be running on it, and probing would report its own listener as a conflict.
+    private void ValidateManualPort(
+        int port,
+        int currentPort,
+        IReadOnlySet<int> reserved,
+        AppRecord record,
+        IReadOnlyList<AppRecord> others)
+    {
+        if (port is <= 0 or > IPEndPoint.MaxPort)
+        {
+            throw new AppLifecycleException(
+                "port_out_of_range",
+                $"Port {port} is outside the valid range 1-{IPEndPoint.MaxPort}.");
+        }
+
+        if (port < MinManualPort)
+        {
+            throw new AppLifecycleException(
+                "port_privileged",
+                $"Port {port} is privileged (below {MinManualPort}) and Core cannot bind it. Choose {MinManualPort} or above.");
+        }
+
+        if (port == currentPort)
+        {
+            return;
+        }
+
+        if (reserved.Contains(port))
+        {
+            throw new AppLifecycleException(
+                "port_reserved",
+                $"Port {port} is already reserved by {DescribePortHolder(port, record, others)}.");
+        }
+
+        if (!RuntimePortHelper.IsLoopbackTcpPortAvailable(port))
+        {
+            throw new AppLifecycleException(
+                "port_in_use",
+                $"Port {port} is currently held by another process on this host.");
+        }
+    }
+
+    // Name the holder of a reserved port, so a conflict tells the operator what to act on instead of leaving
+    // them to guess which app took it.
+    private string DescribePortHolder(int port, AppRecord record, IReadOnlyList<AppRecord> others)
+    {
+        if (port == config.CorePort)
+        {
+            return "Hosty Core";
+        }
+
+        var owner = others.FirstOrDefault(other =>
+            (other.PortAssignments ?? []).Any(assignment => assignment.HostPort == port));
+        if (owner is not null)
+        {
+            return $"app '{owner.Id}'";
+        }
+
+        var own = (record.PortAssignments ?? []).FirstOrDefault(assignment => assignment.HostPort == port);
+        return own is not null
+            ? $"this app's own {own.Service}.{own.PortKey} endpoint"
+            : "the platform";
+    }
+
+    // Write (or clear) the HOSTY_PORT_* override so start-time resolution agrees with the assignment we just
+    // persisted. Always the service-scoped key: the app-scoped form cannot express a port key like `http`
+    // shared by two services.
+    //
+    // Clearing also drops a legacy app-scoped override for the same key — otherwise "back to automatic"
+    // would leave a pin behind that silently re-applies at the next start. That removal is skipped when
+    // another service in this app shares the port key, since the app-scoped override speaks for those too
+    // and un-pinning them here would be an invisible side effect of editing this endpoint.
+    private static IReadOnlyDictionary<string, AppSettingValue> ApplyPortOverride(
+        AppRecord record,
+        string service,
+        string portKey,
+        int? port)
+    {
+        var settings = record.Settings.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+        var scopedKey = RuntimePortHelper.ServiceScopedOverrideSettingKey(service, portKey);
+        if (port is { } pinned)
+        {
+            var value = pinned.ToString(CultureInfo.InvariantCulture);
+            settings[scopedKey] = settings.TryGetValue(scopedKey, out var existing)
+                ? existing with { Value = value }
+                : new AppSettingValue(scopedKey, "string", value, Secret: false);
+            return settings;
+        }
+
+        settings.Remove(scopedKey);
+        var sharedWithAnotherService = (record.PortAssignments ?? []).Any(assignment =>
+            string.Equals(assignment.PortKey, portKey, StringComparison.Ordinal) &&
+            !string.Equals(assignment.Service, service, StringComparison.Ordinal));
+        if (!sharedWithAnotherService)
+        {
+            settings.Remove(RuntimePortHelper.OverrideSettingKey(portKey));
+        }
+
+        return settings;
     }
 
     private AppRecord Assign(

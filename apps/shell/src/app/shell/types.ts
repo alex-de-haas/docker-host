@@ -95,6 +95,11 @@ export type CoreReassignPlan = {
   currentUrl?: string | null;
   ownerRunning: boolean;
   affectedDependents: CoreReassignDependent[];
+  // True when the current port is an operator pin rather than an automatic assignment, so the dialog
+  // opens in the mode the endpoint is actually in.
+  pinned: boolean;
+  // Lowest port a manual pin may use; below it Core lacks the privileges to bind.
+  minManualPort: number;
   digest: string;
 };
 

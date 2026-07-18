@@ -96,6 +96,11 @@ internal static class RuntimePortHelper
     public static string OverrideSettingKey(string key)
         => $"HOSTY_PORT_{NormalizeEnvironmentKey(key)}";
 
+    // The setting key a service-scoped override lives under. Public so the reassign path writes exactly the
+    // key TryResolvePinnedHostPort reads first, instead of re-deriving the `<service>_<key>` convention.
+    public static string ServiceScopedOverrideSettingKey(string serviceKey, string key)
+        => OverrideSettingKey(ServiceScopedOverrideKey(serviceKey, key));
+
     // Allocate a free loopback TCP port, excluding a caller-provided set (ports already handed out in the
     // same pass, or reserved by other installed apps and the platform). Public so the install-time
     // allocator can resolve automatic ports with the same self-race protection the start path uses.
