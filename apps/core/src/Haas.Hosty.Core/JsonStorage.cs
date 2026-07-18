@@ -72,12 +72,22 @@ internal static class JsonStorage
     public static Task WriteAsync<T>(string path, T value, CancellationToken cancellationToken = default)
         => WriteAsync(path, value, restrictToOwner: false, cancellationToken);
 
-    public static async Task WriteAsync<T>(string path, T value, bool restrictToOwner, CancellationToken cancellationToken = default)
+    // Owner-only file inside an ordinary directory. Distinct from restrictToOwner, which also locks
+    // the containing directory: app state lives at apps/<id>/state.json, next to the bind-mounted
+    // data/ that a container running as another uid must still traverse. The secret is in the file,
+    // not the directory listing, so restricting the file is the part that matters.
+    public static Task WriteOwnerFileAsync<T>(string path, T value, CancellationToken cancellationToken = default)
+        => WriteCoreAsync(path, value, restrictFile: true, restrictDirectory: false, cancellationToken);
+
+    public static Task WriteAsync<T>(string path, T value, bool restrictToOwner, CancellationToken cancellationToken = default)
+        => WriteCoreAsync(path, value, restrictFile: restrictToOwner, restrictDirectory: restrictToOwner, cancellationToken);
+
+    private static async Task WriteCoreAsync<T>(string path, T value, bool restrictFile, bool restrictDirectory, CancellationToken cancellationToken)
     {
         var directory = Path.GetDirectoryName(path);
         if (!string.IsNullOrWhiteSpace(directory))
         {
-            if (restrictToOwner)
+            if (restrictDirectory)
             {
                 SecureFileSystem.EnsurePrivateDirectory(directory);
             }
@@ -90,7 +100,7 @@ internal static class JsonStorage
         var tempPath = $"{path}.{Guid.NewGuid():N}.tmp";
         try
         {
-            await using (var stream = restrictToOwner
+            await using (var stream = restrictFile
                 ? SecureFileSystem.CreatePrivateFile(tempPath, FileMode.CreateNew)
                 : File.Create(tempPath))
             {

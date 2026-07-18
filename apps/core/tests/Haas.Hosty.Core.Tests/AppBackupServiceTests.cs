@@ -25,6 +25,29 @@ public sealed class AppBackupServiceTests
     }
 
     [Fact]
+    public async Task CreateBackupAsync_WritesTheArchiveAndMetadataOwnerOnly()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        // An archive is a full copy of the app's data, so it must not inherit the umask default.
+        var fixture = BackupFixture.Create();
+        await File.WriteAllTextAsync(Path.Combine(fixture.DataPath, "notes.txt"), "secret");
+
+        var backup = await fixture.Service.CreateBackupAsync("com.example.notes", "manual");
+
+        Assert.NotNull(backup);
+        var ownerOnlyFile = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+        Assert.Equal(ownerOnlyFile, File.GetUnixFileMode(backup.ArchivePath));
+        Assert.Equal(ownerOnlyFile, File.GetUnixFileMode(Path.ChangeExtension(backup.ArchivePath, ".json")));
+        Assert.Equal(
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute,
+            File.GetUnixFileMode(Path.GetDirectoryName(backup.ArchivePath)!));
+    }
+
+    [Fact]
     public async Task CreateBackupAsync_SameInstant_ProducesDistinctBackups()
     {
         // The fixture clock does not advance between calls, so both backups share a timestamp.

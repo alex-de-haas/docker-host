@@ -15,14 +15,25 @@ internal static class SecureFileSystem
     }
 
     public static FileStream CreatePrivateFile(string path, FileMode mode)
+        => CreatePrivateFile(path, mode, FileShare.None);
+
+    // `share` exists for append-style files that a reader opens concurrently (runtime logs are
+    // tailed while the process writing them still holds the handle). UnixCreateMode only applies
+    // when this call creates the file; an existing file keeps its mode, which is what the startup
+    // migration is for.
+    //
+    // `fileOptions` must match how the caller actually writes. Callers that write synchronously
+    // (ZipFile.CreateFromDirectory, StreamWriter with AutoFlush) pass FileOptions.None: leaving
+    // Asynchronous on a synchronous writer costs a thread-pool hop per write on Windows.
+    public static FileStream CreatePrivateFile(string path, FileMode mode, FileShare share, FileOptions fileOptions = FileOptions.Asynchronous)
     {
         var options = new FileStreamOptions
         {
             Mode = mode,
             Access = FileAccess.Write,
-            Share = FileShare.None,
+            Share = share,
             BufferSize = 4096,
-            Options = FileOptions.Asynchronous,
+            Options = fileOptions,
         };
         if (!OperatingSystem.IsWindows())
         {
@@ -46,6 +57,26 @@ internal static class SecureFileSystem
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // Permissions stay best-effort for files created by older versions.
+        }
+    }
+
+    // Best-effort counterpart of TryRestrictFile for directories Core owns outright. Never call this
+    // on a directory an app runtime has to traverse — app data roots are bind-mounted into containers
+    // that may run as a different uid, so tightening those would break the mount, not harden it.
+    public static void TryRestrictDirectory(string path)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        try
+        {
+            File.SetUnixFileMode(path, OwnerOnlyDirectoryMode);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Permissions stay best-effort for directories created by older versions.
         }
     }
 }

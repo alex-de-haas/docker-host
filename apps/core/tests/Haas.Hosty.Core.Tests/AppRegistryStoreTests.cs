@@ -22,6 +22,31 @@ public sealed class AppRegistryStoreTests
     }
 
     [Fact]
+    public async Task UpsertAppAsync_WritesStateOwnerOnlyWithoutLockingTheAppDirectory()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        // state.json holds setting values flagged secret, so the file is owner-only — but the app
+        // directory must stay traversable for the container uid that mounts apps/<id>/data.
+        var root = await CreateTempRootAsync();
+        var paths = CreatePaths(root);
+        var store = new AppRegistryStore(paths);
+        var reference = Path.Combine(root, "reference");
+        Directory.CreateDirectory(reference);
+
+        await store.UpsertAppAsync(CreateApp("com.example.notes"));
+
+        var appRoot = Path.Combine(paths.AppsRoot, "com.example.notes");
+        Assert.Equal(
+            UnixFileMode.UserRead | UnixFileMode.UserWrite,
+            File.GetUnixFileMode(Path.Combine(appRoot, "state.json")));
+        Assert.Equal(File.GetUnixFileMode(reference), File.GetUnixFileMode(appRoot));
+    }
+
+    [Fact]
     public async Task ListAppsAsync_HydratesUiNavigationFromInstalledManifest()
     {
         var root = await CreateTempRootAsync();

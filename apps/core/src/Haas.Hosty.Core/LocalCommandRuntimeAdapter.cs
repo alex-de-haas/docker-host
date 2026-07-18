@@ -69,9 +69,14 @@ internal sealed class LocalCommandRuntimeAdapter(
                         $"Local command working directory was not found: {workingDirectory}");
                 }
 
-                Directory.CreateDirectory(Path.Combine(context.AppRoot, "logs"));
+                // Owner-only: service output routinely contains settings and tokens the command was
+                // handed. The logs directory is Core-owned and never bind-mounted, so unlike the app
+                // data root it can be locked down outright.
+                SecureFileSystem.EnsurePrivateDirectory(Path.Combine(context.AppRoot, "logs"));
                 var logPath = Path.Combine(context.AppRoot, "logs", $"{service.Key}.log");
-                var logWriter = new LocalCommandLogWriter(new StreamWriter(File.Open(logPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
+                // FileOptions.None: LocalCommandLogWriter writes synchronously with AutoFlush, so an
+                // async handle would add a thread-pool hop per log line.
+                var logWriter = new LocalCommandLogWriter(new StreamWriter(SecureFileSystem.CreatePrivateFile(logPath, FileMode.Append, FileShare.ReadWrite, FileOptions.None))
                 {
                     AutoFlush = true,
                 });
