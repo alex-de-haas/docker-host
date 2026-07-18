@@ -811,9 +811,12 @@ internal sealed class CoreLifecycleService(
 
         request.Validate();
         var app = await RequireAppAsync(appId, cancellationToken);
-        // A manual pin may target an already-pinned port (re-pinning, or moving one pin to another number);
-        // an automatic re-roll may not, since Core must not silently move a port the operator chose.
-        var assignment = RequireRemappableAssignment(app, request.Service, request.PortKey, allowOperatorPinned: request.IsManual);
+        // Any explicitly-moded request may touch an already-pinned port: manual re-pins it, automatic hands
+        // it back to Core. Gating this on IsManual alone made pinning a one-way door — the un-pin path the
+        // allocator implements and the dialog offers was unreachable. A legacy request (no mode) still
+        // cannot move a deliberate pin: that client has no UI to express the choice, so a blind re-roll
+        // there would be the silent move this guard exists to prevent.
+        var assignment = RequireRemappableAssignment(app, request.Service, request.PortKey, allowOperatorPinned: request.HasExplicitMode);
         var dependents = FindDependents(await apps.ListAppRecordsAsync(cancellationToken), appId);
         // Bind apply to the state the plan was computed against: a changed assignment or dependency graph
         // (e.g. a runtime switch moved the port, or a dependency was added/removed) fails rather than
@@ -4933,6 +4936,11 @@ internal sealed record ReassignPortRequest(string Service, string PortKey, strin
     public const string ModeManual = "manual";
 
     public bool IsManual => string.Equals(Mode, ModeManual, StringComparison.OrdinalIgnoreCase);
+
+    // True when the caller stated a mode at all. An explicit mode means the operator chose this outcome in
+    // a UI that can express both, which is what licenses touching an existing pin — including handing it
+    // back to automatic. A legacy request carries no mode and no such intent.
+    public bool HasExplicitMode => !string.IsNullOrWhiteSpace(Mode);
 
     // The operator-chosen port, or null for an automatic allocation. Validated downstream by the allocator
     // against the live exclusion view; this only decides which of the two operations runs.

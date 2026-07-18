@@ -4579,10 +4579,41 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
-    public async Task ReassignPortAsync_PinnedPort_StaysEditableButRefusesAutomaticMove()
+    public async Task ReassignPortAsync_ExplicitAutomatic_UnpinsAndReturnsToAutomatic()
     {
-        // The whole point of the relaxed guard: pinning must not be a one-way door. The plan must still
-        // load, a re-pin must succeed, and only an *automatic* re-roll of a deliberate choice is refused.
+        // The un-pin path: without it, choosing a port would be a one-way door. The dialog's Automatic
+        // toggle posts exactly this.
+        var fixture = await LifecycleFixture.CreateAsync(withPortAllocator: true);
+        var scopedKey = RuntimePortHelper.ServiceScopedOverrideSettingKey("app", "http");
+        await fixture.Apps.UpsertAppAsync(SeedReassignApp("com.example.api", "stopped",
+            assignments: [ReassignAssignment("app", "http", 8321, source: AppPortSources.Operator, remappable: false)],
+            endpoints: [ReassignEndpoint("app", "http", "http://localhost:8321")]) with
+        {
+            Settings = new Dictionary<string, AppSettingValue>(StringComparer.Ordinal)
+            {
+                [scopedKey] = new(scopedKey, "string", "8321", Secret: false),
+            },
+        });
+
+        var plan = await fixture.Service.ReassignPortPlanAsync("com.example.api", "app", "http");
+        var result = await fixture.Service.ReassignPortAsync(
+            "com.example.api",
+            new ReassignPortRequest("app", "http", plan.Digest, ReassignPortRequest.ModeAutomatic, null));
+
+        Assert.NotEqual(8321, result.NewPort);
+        var api = await fixture.Apps.GetAppAsync("com.example.api");
+        var assignment = Assert.Single(api!.PortAssignments!);
+        Assert.Equal(AppPortSources.Automatic, assignment.Source);
+        Assert.True(assignment.Remappable);
+        // A surviving override would silently re-pin the old port at the next start.
+        Assert.False(api.Settings.ContainsKey(scopedKey));
+    }
+
+    [Fact]
+    public async Task ReassignPortAsync_PinnedPort_StaysEditableButRefusesLegacyAutomaticMove()
+    {
+        // A legacy client (no mode) has no UI to choose automatic-vs-manual, so a blind re-roll from it must
+        // not move a port the operator deliberately pinned. An explicitly-moded request may, see above.
         var fixture = await LifecycleFixture.CreateAsync(withPortAllocator: true);
         await fixture.Apps.UpsertAppAsync(SeedReassignApp("com.example.api", "stopped",
             assignments: [ReassignAssignment("app", "http", 8321, source: AppPortSources.Operator, remappable: false)],
