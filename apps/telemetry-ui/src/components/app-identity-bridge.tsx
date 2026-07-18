@@ -24,6 +24,25 @@ function readIdentityStatus(body: unknown): string | null {
   return typeof status === "string" ? status : null;
 }
 
+type RecoveryParams = { appId: string; corePublicOrigin: string };
+
+// Reads the recovery parameters out of the same payload. They come from the probe response, not a
+// layout prop, because a prerendered layout would bake in the image-build environment (see the
+// identity route).
+function readRecoveryParams(body: unknown): RecoveryParams | null {
+  if (!body || typeof body !== "object") {
+    return null;
+  }
+  const recovery = (body as { recovery?: unknown }).recovery;
+  if (!recovery || typeof recovery !== "object") {
+    return null;
+  }
+  const { appId, corePublicOrigin } = recovery as { appId?: unknown; corePublicOrigin?: unknown };
+  return typeof appId === "string" && appId && typeof corePublicOrigin === "string" && corePublicOrigin
+    ? { appId, corePublicOrigin }
+    : null;
+}
+
 function buildOpenUrl(corePublicOrigin: string, appId: string): string {
   const target = new URL(`/api/apps/${encodeURIComponent(appId)}/open`, corePublicOrigin);
   // Exclude any URL fragment: Core rejects redirect URIs with a fragment (redirect_uri_invalid), and
@@ -33,7 +52,7 @@ function buildOpenUrl(corePublicOrigin: string, appId: string): string {
   return target.toString();
 }
 
-export function AppIdentityBridge({ corePublicOrigin, appId }: { corePublicOrigin: string; appId: string }) {
+export function AppIdentityBridge() {
   const [ui, setUi] = useState<RecoveryUi>({ kind: "hidden" });
 
   useEffect(() => {
@@ -61,13 +80,16 @@ export function AppIdentityBridge({ corePublicOrigin, appId }: { corePublicOrigi
 
     async function probeAndRecover() {
       let status: string | null;
+      let recovery: RecoveryParams | null = null;
       try {
         const response = await fetch("/api/auth/identity", {
           headers: { Accept: "application/json" },
           cache: "no-store",
           signal: controller.signal,
         });
-        status = readIdentityStatus(await response.json().catch(() => null));
+        const body: unknown = await response.json().catch(() => null);
+        status = readIdentityStatus(body);
+        recovery = readRecoveryParams(body);
       } catch {
         // A failed probe (Core unreachable) is treated like "unavailable": keep the cookie, offer retry.
         status = null;
@@ -90,13 +112,19 @@ export function AppIdentityBridge({ corePublicOrigin, appId }: { corePublicOrigi
         setUi({ kind: "unavailable" });
         return;
       }
+      if (!recovery) {
+        // Recoverable status but no recovery parameters: treat as transient rather than redirect
+        // to a guessed Core origin.
+        setUi({ kind: "unavailable" });
+        return;
+      }
 
-      const openUrl = buildOpenUrl(corePublicOrigin, appId);
+      const openUrl = buildOpenUrl(recovery.corePublicOrigin, recovery.appId);
       if (window.self !== window.top) {
         // Embedded: the sandbox forbids top navigation, so ask Shell to reissue a code. The payload
         // carries no secret, so targetOrigin "*" is safe — Shell verifies the sender before acting.
         try {
-          window.parent.postMessage({ type: "hosty:auth-required", appId }, "*");
+          window.parent.postMessage({ type: "hosty:auth-required", appId: recovery.appId }, "*");
         } catch {
           // Ignore; the timeout below still falls back to the manual sign-in card.
         }
@@ -152,7 +180,7 @@ export function AppIdentityBridge({ corePublicOrigin, appId }: { corePublicOrigi
       cancelled = true;
       controller.abort();
     };
-  }, [corePublicOrigin, appId]);
+  }, []);
 
   if (ui.kind === "hidden") {
     return null;

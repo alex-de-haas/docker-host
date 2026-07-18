@@ -3,7 +3,7 @@
   "id": "hosty.telemetry",
   "name": "Hosty Telemetry",
   "description": "OpenTelemetry collector + telemetry backend + UI: receives OTLP from Hosty runtime apps, stores metrics/logs/traces in an embedded SQLite store, and serves the Metrics/Structured logs/Traces pages that read the backend directly.",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "role": "system",
   "provides": ["otlp-collector"],
   "runtimeProfiles": [

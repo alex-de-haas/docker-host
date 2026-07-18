@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { AppIdentityBridge } from "@/components/AppIdentityBridge";
 import { HostThemeBridge } from "@/components/HostThemeBridge";
-import { getDemoConfig } from "@/lib/demo-config";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -35,13 +34,12 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const config = getDemoConfig();
   return (
     <html lang="en" suppressHydrationWarning>
       <body className="font-sans antialiased">
         <script dangerouslySetInnerHTML={{ __html: hostThemeBootstrapScript }} />
         <HostThemeBridge />
-        <AppIdentityBridge corePublicOrigin={config.host.corePublicOrigin} appId={config.host.appId} />
+        <AppIdentityBridge />
         {children}
       </body>
     </html>

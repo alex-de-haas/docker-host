@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { appIdentityCookieName, getMarketplaceIdentity } from "@/lib/host-auth";
+import { appIdentityCookieName, getMarketplaceIdentity, getRecoveryParams } from "@/lib/host-auth";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -60,6 +60,35 @@ describe("getMarketplaceIdentity", () => {
     expect(identity).toMatchObject({
       status: "forbidden",
       error: { code: "app_identity_app_mismatch" },
+    });
+  });
+});
+
+describe("getRecoveryParams", () => {
+  it("prefers the browser-reachable Core origin over the server origin", () => {
+    vi.stubEnv("HOSTY_APP_ID", "hosty.marketplace");
+    vi.stubEnv("HOSTY_CORE_ORIGIN", "http://hosty-core:7070");
+    vi.stubEnv("HOSTY_CORE_PUBLIC_ORIGIN", "https://hosty.example.test");
+
+    expect(getRecoveryParams()).toEqual({
+      appId: "hosty.marketplace",
+      corePublicOrigin: "https://hosty.example.test",
+    });
+  });
+
+  it("falls back to the server origin, then to the local default", () => {
+    vi.stubEnv("HOSTY_APP_ID", "");
+    vi.stubEnv("HOSTY_CORE_PUBLIC_ORIGIN", "");
+    vi.stubEnv("HOSTY_CORE_ORIGIN", "http://hosty-core:7070");
+    expect(getRecoveryParams()).toEqual({
+      appId: "hosty.marketplace",
+      corePublicOrigin: "http://hosty-core:7070",
+    });
+
+    vi.stubEnv("HOSTY_CORE_ORIGIN", "");
+    expect(getRecoveryParams()).toEqual({
+      appId: "hosty.marketplace",
+      corePublicOrigin: "http://localhost:7070",
     });
   });
 });
