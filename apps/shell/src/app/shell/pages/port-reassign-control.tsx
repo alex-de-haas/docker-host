@@ -6,10 +6,14 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { isAuthRequiredRedirectError } from "../core-api";
 import { useShellActions, useShellState } from "../shell-context";
 import type { CoreApp, CoreEndpoint, CoreReassignPlan, CoreReassignResult } from "../types";
 import { FactCard, IconButton, InlineError } from "../ui";
+
+// Highest TCP port; the floor is per-plan (Core reports it) since it depends on what Core may bind.
+const MaxPort = 65535;
 
 // Read-only marker for an endpoint's install-time port reservation. Only the failure case earns a
 // marker: "running" duplicates the service status badge above it, and "assigned" duplicates the
@@ -28,10 +32,12 @@ export function EndpointAvailabilityMarker({ availability }: { availability?: Co
   );
 }
 
-// Impact-aware reassignment of one endpoint's automatic host port. Self-contained: it reads sendCsrfJson /
-// refresh / coreOrigin from context, so it needs no prop threading. Opening the dialog loads the plan
+// Impact-aware assignment of one endpoint's host port. Self-contained: it reads sendCsrfJson / refresh /
+// coreOrigin from context, so it needs no prop threading. Opening the dialog loads the plan
 // (POST …/ports/reassign/plan); confirming applies it (POST …/ports/reassign) and reports which apps must
-// be restarted. Core rejects a non-automatic (manifest/operator/host-network) port, surfaced inline.
+// be restarted. Two modes: automatic (Core allocates, and may move it later) or manual (the operator pins
+// an exact port, which Core then never moves on its own). Core rejects a manifest/host-network port and
+// every invalid manual port with a message shown inline.
 export function PortReassignControl({ app, endpoint }: { app: CoreApp; endpoint: CoreEndpoint }) {
   const { canManageApps } = useShellState();
   const { coreOrigin, sendCsrfJson, refresh } = useShellActions();
@@ -40,6 +46,8 @@ export function PortReassignControl({ app, endpoint }: { app: CoreApp; endpoint:
   const [applying, setApplying] = useState(false);
   const [plan, setPlan] = useState<CoreReassignPlan | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [manual, setManual] = useState(false);
+  const [port, setPort] = useState("");
 
   const service = endpoint.service;
   const portKey = endpoint.port;
@@ -57,7 +65,12 @@ export function PortReassignControl({ app, endpoint }: { app: CoreApp; endpoint:
     setLoading(true);
     try {
       const response = await sendCsrfJson(`${base}/plan`, { service, portKey });
-      setPlan((await response.json()) as CoreReassignPlan);
+      const loaded = (await response.json()) as CoreReassignPlan;
+      setPlan(loaded);
+      // Open in the mode the endpoint is already in, prefilled with its current port, so re-pinning or
+      // nudging an existing pin does not start from a blank field.
+      setManual(loaded.pinned);
+      setPort(String(loaded.currentPort));
     } catch (err) {
       if (isAuthRequiredRedirectError(err)) {
         return;
@@ -74,14 +87,28 @@ export function PortReassignControl({ app, endpoint }: { app: CoreApp; endpoint:
       return;
     }
 
+    // Check the obvious locally so a typo answers instantly; Core still re-validates against the live
+    // reservation view, which is the only place conflicts can be judged.
+    const desired = Number(port.trim());
+    if (manual && (!Number.isInteger(desired) || desired < plan.minManualPort || desired > MaxPort)) {
+      setError(`Enter a port between ${plan.minManualPort} and ${MaxPort}.`);
+      return;
+    }
+
     setApplying(true);
     setError(null);
     try {
-      const response = await sendCsrfJson(base, { service, portKey, digest: plan.digest });
+      const response = await sendCsrfJson(base, {
+        service,
+        portKey,
+        digest: plan.digest,
+        mode: manual ? "manual" : "automatic",
+        ...(manual ? { port: desired } : {}),
+      });
       const result = (await response.json()) as CoreReassignResult;
       setOpen(false);
       await refresh();
-      toast.success(`Port reassigned to ${result.newPort}`, {
+      toast.success(manual ? `Port pinned to ${result.newPort}` : `Port reassigned to ${result.newPort}`, {
         description: result.restartRequiredAppIds.length > 0
           ? `Restart to apply: ${result.restartRequiredAppIds.join(", ")}.`
           : `${service}.${portKey} now uses ${result.newUrl ?? `port ${result.newPort}`}.`,
@@ -105,8 +132,8 @@ export function PortReassignControl({ app, endpoint }: { app: CoreApp; endpoint:
       <Dialog open={open} onOpenChange={(next) => { if (!applying) setOpen(next); }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Reassign {service}.{portKey}</DialogTitle>
-            <DialogDescription>Pick a new local host port for this endpoint, then restart the affected apps to bind it.</DialogDescription>
+            <DialogTitle>Local port — {service}.{portKey}</DialogTitle>
+            <DialogDescription>Let Core assign a free port, or pin an exact one. Restart the affected apps afterwards to bind it.</DialogDescription>
           </DialogHeader>
           <DialogBody>
             {loading ? (
@@ -115,7 +142,47 @@ export function PortReassignControl({ app, endpoint }: { app: CoreApp; endpoint:
               </div>
             ) : plan ? (
               <div className="grid gap-3">
-                <FactCard label="Current port" value={String(plan.currentPort)} />
+                <FactCard label="Current port" value={plan.pinned ? `${plan.currentPort} (pinned)` : String(plan.currentPort)} />
+                <div className="grid gap-2">
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={manual ? "outline" : "default"}
+                      disabled={applying}
+                      onClick={() => { setManual(false); setError(null); }}
+                    >
+                      Automatic
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={manual ? "default" : "outline"}
+                      disabled={applying}
+                      onClick={() => { setManual(true); setError(null); }}
+                    >
+                      Manual
+                    </Button>
+                  </div>
+                  {manual && (
+                    <Input
+                      type="number"
+                      inputMode="numeric"
+                      min={plan.minManualPort}
+                      max={MaxPort}
+                      value={port}
+                      disabled={applying}
+                      onChange={(event) => setPort(event.target.value)}
+                      className="h-8 w-40 text-sm"
+                      aria-label="Host port"
+                    />
+                  )}
+                  <p className="text-[11px] text-muted-foreground">
+                    {manual
+                      ? `Core keeps this exact port and will not move it. ${plan.minManualPort}–${MaxPort}.`
+                      : "Core picks a free port, and may move it later to resolve a conflict."}
+                  </p>
+                </div>
                 {plan.ownerRunning && (
                   <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs">
                     <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
@@ -149,7 +216,7 @@ export function PortReassignControl({ app, endpoint }: { app: CoreApp; endpoint:
             </Button>
             <Button type="button" onClick={() => void apply()} disabled={!plan || applying}>
               {applying && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
-              Reassign port
+              {manual ? "Pin port" : "Reassign port"}
             </Button>
           </DialogFooter>
         </DialogContent>

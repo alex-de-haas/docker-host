@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Haas.Hosty.Core;
 
 namespace Haas.Hosty.Core.Tests;
@@ -4552,6 +4553,145 @@ public sealed class CoreLifecycleServiceTests
         var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
             fixture.Service.ReassignPortPlanAsync("com.example.api", "app", "http"));
         Assert.Equal("reassign_not_remappable", error.Code);
+    }
+
+    [Fact]
+    public async Task ReassignPortAsync_ManualMode_PinsPortAndMarksAssignmentOperatorOwned()
+    {
+        var fixture = await LifecycleFixture.CreateAsync(withPortAllocator: true);
+        await fixture.Apps.UpsertAppAsync(SeedReassignApp("com.example.api", "stopped",
+            assignments: [ReassignAssignment("app", "http", 5000)],
+            endpoints: [ReassignEndpoint("app", "http", "http://localhost:5000")]));
+
+        var plan = await fixture.Service.ReassignPortPlanAsync("com.example.api", "app", "http");
+        Assert.False(plan.Pinned);
+
+        var result = await fixture.Service.ReassignPortAsync(
+            "com.example.api",
+            new ReassignPortRequest("app", "http", plan.Digest, ReassignPortRequest.ModeManual, 8321));
+
+        Assert.Equal(8321, result.NewPort);
+        var api = await fixture.Apps.GetAppAsync("com.example.api");
+        var assignment = Assert.Single(api!.PortAssignments!);
+        Assert.Equal(AppPortSources.Operator, assignment.Source);
+        Assert.False(assignment.Remappable);
+        Assert.Equal("http://localhost:8321", Assert.Single(api.Endpoints).Url);
+    }
+
+    [Fact]
+    public async Task ReassignPortAsync_ExplicitAutomatic_UnpinsAndReturnsToAutomatic()
+    {
+        // The un-pin path: without it, choosing a port would be a one-way door. The dialog's Automatic
+        // toggle posts exactly this.
+        var fixture = await LifecycleFixture.CreateAsync(withPortAllocator: true);
+        var scopedKey = RuntimePortHelper.ServiceScopedOverrideSettingKey("app", "http");
+        await fixture.Apps.UpsertAppAsync(SeedReassignApp("com.example.api", "stopped",
+            assignments: [ReassignAssignment("app", "http", 8321, source: AppPortSources.Operator, remappable: false)],
+            endpoints: [ReassignEndpoint("app", "http", "http://localhost:8321")]) with
+        {
+            Settings = new Dictionary<string, AppSettingValue>(StringComparer.Ordinal)
+            {
+                [scopedKey] = new(scopedKey, "string", "8321", Secret: false),
+            },
+        });
+
+        var plan = await fixture.Service.ReassignPortPlanAsync("com.example.api", "app", "http");
+        var result = await fixture.Service.ReassignPortAsync(
+            "com.example.api",
+            new ReassignPortRequest("app", "http", plan.Digest, ReassignPortRequest.ModeAutomatic, null));
+
+        Assert.NotEqual(8321, result.NewPort);
+        var api = await fixture.Apps.GetAppAsync("com.example.api");
+        var assignment = Assert.Single(api!.PortAssignments!);
+        Assert.Equal(AppPortSources.Automatic, assignment.Source);
+        Assert.True(assignment.Remappable);
+        // A surviving override would silently re-pin the old port at the next start.
+        Assert.False(api.Settings.ContainsKey(scopedKey));
+    }
+
+    [Fact]
+    public async Task ReassignPortAsync_PinnedPort_StaysEditableButRefusesLegacyAutomaticMove()
+    {
+        // A legacy client (no mode) has no UI to choose automatic-vs-manual, so a blind re-roll from it must
+        // not move a port the operator deliberately pinned. An explicitly-moded request may, see above.
+        var fixture = await LifecycleFixture.CreateAsync(withPortAllocator: true);
+        await fixture.Apps.UpsertAppAsync(SeedReassignApp("com.example.api", "stopped",
+            assignments: [ReassignAssignment("app", "http", 8321, source: AppPortSources.Operator, remappable: false)],
+            endpoints: [ReassignEndpoint("app", "http", "http://localhost:8321")]));
+
+        var plan = await fixture.Service.ReassignPortPlanAsync("com.example.api", "app", "http");
+        Assert.True(plan.Pinned);
+        Assert.Equal(8321, plan.CurrentPort);
+
+        var moved = await fixture.Service.ReassignPortAsync(
+            "com.example.api",
+            new ReassignPortRequest("app", "http", plan.Digest, ReassignPortRequest.ModeManual, 8322));
+        Assert.Equal(8322, moved.NewPort);
+
+        var afterMove = await fixture.Service.ReassignPortPlanAsync("com.example.api", "app", "http");
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.ReassignPortAsync("com.example.api", new ReassignPortRequest("app", "http", afterMove.Digest)));
+        Assert.Equal("reassign_not_remappable", error.Code);
+    }
+
+    [Fact]
+    public async Task ReassignPortAsync_ManualModeWithoutPort_Rejected()
+    {
+        var fixture = await LifecycleFixture.CreateAsync(withPortAllocator: true);
+        await fixture.Apps.UpsertAppAsync(SeedReassignApp("com.example.api", "stopped",
+            assignments: [ReassignAssignment("app", "http", 5000)],
+            endpoints: [ReassignEndpoint("app", "http", "http://localhost:5000")]));
+
+        var plan = await fixture.Service.ReassignPortPlanAsync("com.example.api", "app", "http");
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.ReassignPortAsync(
+                "com.example.api",
+                new ReassignPortRequest("app", "http", plan.Digest, ReassignPortRequest.ModeManual, null)));
+        Assert.Equal("port_required", error.Code);
+    }
+
+    [Fact]
+    public async Task ReassignPortAsync_AbsentMode_StillAllocatesAutomatically()
+    {
+        // Wire compatibility: an older Shell posts service/portKey/digest with no mode at all.
+        var fixture = await LifecycleFixture.CreateAsync(withPortAllocator: true);
+        await fixture.Apps.UpsertAppAsync(SeedReassignApp("com.example.api", "stopped",
+            assignments: [ReassignAssignment("app", "http", 5000)],
+            endpoints: [ReassignEndpoint("app", "http", "http://localhost:5000")]));
+
+        var plan = await fixture.Service.ReassignPortPlanAsync("com.example.api", "app", "http");
+        var result = await fixture.Service.ReassignPortAsync("com.example.api", new ReassignPortRequest("app", "http", plan.Digest));
+
+        Assert.NotEqual(5000, result.NewPort);
+        var api = await fixture.Apps.GetAppAsync("com.example.api");
+        Assert.Equal(AppPortSources.Automatic, Assert.Single(api!.PortAssignments!).Source);
+    }
+
+    [Fact]
+    public void ReassignPortContract_MatchesTheWireNamesTheShellReads()
+    {
+        // The Shell types this endpoint against `pinned` / `minManualPort`, and posts `mode` / `port`.
+        // Source-generated AOT metadata is the only place that contract is decided, so assert it here
+        // rather than discovering a silent rename at runtime.
+        var plan = new ReassignPortPlan("com.example.api", "app", "http", 8321, "http://localhost:8321", OwnerRunning: false, [], Pinned: true, MinManualPort: 1024, Digest: "d");
+        var planJson = JsonSerializer.Serialize(plan, CoreJsonSerializerContext.Default.ReassignPortPlan);
+        Assert.Contains("\"pinned\":true", planJson, StringComparison.Ordinal);
+        Assert.Contains("\"minManualPort\":1024", planJson, StringComparison.Ordinal);
+
+        var request = JsonSerializer.Deserialize(
+            """{"service":"app","portKey":"http","digest":"d","mode":"manual","port":8321}""",
+            CoreJsonSerializerContext.Default.ReassignPortRequest);
+        Assert.NotNull(request);
+        Assert.True(request!.IsManual);
+        Assert.Equal(8321, request.DesiredPort);
+
+        // An older Shell omits both new fields entirely.
+        var legacy = JsonSerializer.Deserialize(
+            """{"service":"app","portKey":"http","digest":"d"}""",
+            CoreJsonSerializerContext.Default.ReassignPortRequest);
+        Assert.NotNull(legacy);
+        Assert.False(legacy!.IsManual);
+        Assert.Null(legacy.DesiredPort);
     }
 
     [Fact]

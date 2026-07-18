@@ -776,14 +776,15 @@ internal sealed class CoreLifecycleService(
         return new AppLifecycleResponse(await BuildAppSummaryAsync(updated.App, cancellationToken), null, "stopped");
     }
 
-    // Preview reassigning one automatic host port: reports the current port/URL, the installed apps that
-    // depend on this app (whose injected local URL would go stale), whether each is running, and a digest
-    // binding a later apply to this structural state. Read-only. Only an automatic, remappable assignment
-    // can be reassigned — a manifest/operator/host-network port is fixed.
+    // Preview reassigning one host port: reports the current port/URL, whether that port is an operator pin,
+    // the installed apps that depend on this app (whose injected local URL would go stale), whether each is
+    // running, and a digest binding a later apply to this structural state. Read-only. An already-pinned
+    // port is included so the operator can re-pin it or hand it back to automatic — a manifest/host-network
+    // port stays fixed and is rejected here.
     public async Task<ReassignPortPlan> ReassignPortPlanAsync(string appId, string service, string portKey, CancellationToken cancellationToken = default)
     {
         var app = await RequireAppAsync(appId, cancellationToken);
-        var assignment = RequireRemappableAssignment(app, service, portKey);
+        var assignment = RequireRemappableAssignment(app, service, portKey, allowOperatorPinned: true);
         var dependents = FindDependents(await apps.ListAppRecordsAsync(cancellationToken), appId);
         return new ReassignPortPlan(
             appId,
@@ -793,6 +794,8 @@ internal sealed class CoreLifecycleService(
             FindEndpointUrl(app, service, portKey),
             string.Equals(app.RuntimeState, "running", StringComparison.Ordinal),
             dependents,
+            string.Equals(assignment.Source, AppPortSources.Operator, StringComparison.Ordinal),
+            RuntimePortAllocator.MinManualPort,
             ComputeReassignDigest(app, assignment, dependents));
     }
 
@@ -806,8 +809,14 @@ internal sealed class CoreLifecycleService(
             throw new AppLifecycleException("reassign_unavailable", "Port reassignment requires the allocation coordinator.");
         }
 
+        request.Validate();
         var app = await RequireAppAsync(appId, cancellationToken);
-        var assignment = RequireRemappableAssignment(app, request.Service, request.PortKey);
+        // Any explicitly-moded request may touch an already-pinned port: manual re-pins it, automatic hands
+        // it back to Core. Gating this on IsManual alone made pinning a one-way door — the un-pin path the
+        // allocator implements and the dialog offers was unreachable. A legacy request (no mode) still
+        // cannot move a deliberate pin: that client has no UI to express the choice, so a blind re-roll
+        // there would be the silent move this guard exists to prevent.
+        var assignment = RequireRemappableAssignment(app, request.Service, request.PortKey, allowOperatorPinned: request.HasExplicitMode);
         var dependents = FindDependents(await apps.ListAppRecordsAsync(cancellationToken), appId);
         // Bind apply to the state the plan was computed against: a changed assignment or dependency graph
         // (e.g. a runtime switch moved the port, or a dependency was added/removed) fails rather than
@@ -826,6 +835,7 @@ internal sealed class CoreLifecycleService(
             request.PortKey,
             apps.ListAppRecordsAsync,
             async (record, ct) => (await apps.UpsertAppAsync(record, ct)).App,
+            request.DesiredPort,
             cancellationToken);
 
         // Reassignment never restarts anything as a side effect. The owning app, if running, still binds
@@ -931,7 +941,11 @@ internal sealed class CoreLifecycleService(
         throw PortsUnavailable(app, conflicts);
     }
 
-    private static AppPortAssignment RequireRemappableAssignment(AppRecord app, string service, string portKey)
+    // `allowOperatorPinned` admits a port the operator already pinned. Without it a manual pin would be a
+    // one-way door: the assignment stops being Automatic the moment it is pinned, so every later edit — and
+    // even loading the plan to un-pin it — would be refused. Manifest and host-network ports stay fixed in
+    // both modes; only an *automatic move* of a deliberate choice remains forbidden.
+    private static AppPortAssignment RequireRemappableAssignment(AppRecord app, string service, string portKey, bool allowOperatorPinned = false)
     {
         var assignment = (app.PortAssignments ?? []).FirstOrDefault(assignment =>
             string.Equals(assignment.Service, service, StringComparison.Ordinal) &&
@@ -939,6 +953,11 @@ internal sealed class CoreLifecycleService(
             ?? throw new AppLifecycleException(
                 "reassign_not_found",
                 $"App '{app.Id}' has no port assignment for service '{service}' key '{portKey}'.");
+        if (allowOperatorPinned && string.Equals(assignment.Source, AppPortSources.Operator, StringComparison.Ordinal))
+        {
+            return assignment;
+        }
+
         if (!assignment.Remappable || !string.Equals(assignment.Source, AppPortSources.Automatic, StringComparison.Ordinal))
         {
             throw new AppLifecycleException(
@@ -4908,7 +4927,40 @@ internal sealed record AppRuntimeSwitchApplyRequest(string TargetRuntime, string
 
 internal sealed record ReassignPortPlanRequest(string Service, string PortKey);
 
-internal sealed record ReassignPortRequest(string Service, string PortKey, string Digest);
+// `Mode` selects how the new port is decided: "automatic" (Core allocates, clearing any operator pin) or
+// "manual" (`Port` is validated and pinned). Absent/blank means automatic, so an older Shell's payload keeps
+// working unchanged against a newer Core. `Port` is ignored unless the mode is manual.
+internal sealed record ReassignPortRequest(string Service, string PortKey, string Digest, string? Mode = null, int? Port = null)
+{
+    public const string ModeAutomatic = "automatic";
+    public const string ModeManual = "manual";
+
+    public bool IsManual => string.Equals(Mode, ModeManual, StringComparison.OrdinalIgnoreCase);
+
+    // True when the caller stated a mode at all. An explicit mode means the operator chose this outcome in
+    // a UI that can express both, which is what licenses touching an existing pin — including handing it
+    // back to automatic. A legacy request carries no mode and no such intent.
+    public bool HasExplicitMode => !string.IsNullOrWhiteSpace(Mode);
+
+    // The operator-chosen port, or null for an automatic allocation. Validated downstream by the allocator
+    // against the live exclusion view; this only decides which of the two operations runs.
+    public int? DesiredPort => IsManual ? Port : null;
+
+    public void Validate()
+    {
+        if (!string.IsNullOrWhiteSpace(Mode) &&
+            !IsManual &&
+            !string.Equals(Mode, ModeAutomatic, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new AppLifecycleException("reassign_mode_invalid", $"Unknown reassignment mode '{Mode}'. Use '{ModeAutomatic}' or '{ModeManual}'.");
+        }
+
+        if (IsManual && Port is null)
+        {
+            throw new AppLifecycleException("port_required", "Manual reassignment needs a port.");
+        }
+    }
+}
 
 internal sealed record ReassignDependentImpact(string AppId, bool Running);
 
@@ -4920,6 +4972,11 @@ internal sealed record ReassignPortPlan(
     string? CurrentUrl,
     bool OwnerRunning,
     IReadOnlyList<ReassignDependentImpact> AffectedDependents,
+    // True when the current port is an operator pin rather than an automatic assignment, so the dialog can
+    // open in the mode the endpoint is actually in and offer a way back to automatic.
+    bool Pinned,
+    // Lowest port a manual pin may use — everything below needs privileges Core does not have.
+    int MinManualPort,
     // Binds a later apply to this structural state; apply fails with reassign_state_changed on mismatch.
     string Digest);
 
