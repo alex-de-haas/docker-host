@@ -338,7 +338,7 @@ internal static class HostyCoreApplication
     internal static IResult RequireControlSecret(HttpRequest request, ControlSecret secret, Func<IResult> action)
     {
         if (!request.Headers.TryGetValue(ControlSecretHeader, out var submitted) ||
-            !string.Equals(submitted.ToString(), secret.Value, StringComparison.Ordinal))
+            !SecretComparison.HexEquals(secret.Value, submitted.ToString()))
         {
             return CoreJson.Json(new ErrorResponse("control_unauthorized", "Local control secret is missing or invalid."), statusCode: StatusCodes.Status401Unauthorized);
         }
@@ -349,7 +349,7 @@ internal static class HostyCoreApplication
     internal static async Task<IResult> RequireControlSecret(HttpRequest request, ControlSecret secret, Func<Task<IResult>> action)
     {
         if (!request.Headers.TryGetValue(ControlSecretHeader, out var submitted) ||
-            !string.Equals(submitted.ToString(), secret.Value, StringComparison.Ordinal))
+            !SecretComparison.HexEquals(secret.Value, submitted.ToString()))
         {
             return CoreJson.Json(new ErrorResponse("control_unauthorized", "Local control secret is missing or invalid."), statusCode: StatusCodes.Status401Unauthorized);
         }

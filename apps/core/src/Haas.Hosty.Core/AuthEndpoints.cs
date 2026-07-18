@@ -73,7 +73,7 @@ internal static class AuthEndpoints
             }
 
             var submittedSecret = request.Headers[TrustedProxySecretHeader].ToString();
-            if (!FixedTimeEquals(config.TrustedProxySecret, submittedSecret))
+            if (!SecretComparison.Equals(config.TrustedProxySecret, submittedSecret))
             {
                 return CoreJson.Json(new ErrorResponse("trusted_proxy_unauthorized", "Trusted proxy secret is missing or invalid."), statusCode: StatusCodes.Status401Unauthorized);
             }
@@ -253,11 +253,6 @@ internal static class AuthEndpoints
 
     private static string CreateSessionId()
         => Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
-
-    private static bool FixedTimeEquals(string expected, string actual)
-        => CryptographicOperations.FixedTimeEquals(
-            Encoding.UTF8.GetBytes(expected),
-            Encoding.UTF8.GetBytes(actual));
 
     // Sessions carry an absolute cap (ExpiresAt) plus a sliding idle window (LastSeenAt + idle TTL). Dead
     // records are pruned opportunistically on write so the list does not grow unbounded now that lifetimes
