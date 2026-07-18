@@ -1,10 +1,11 @@
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.Extensions.Logging;
 
 namespace Haas.Hosty.Core;
 
-internal sealed class AppBackupService(CoreDataPaths paths, IClock clock)
+internal sealed class AppBackupService(CoreDataPaths paths, IClock clock, ILogger<AppBackupService>? logger = null)
 {
     private const int AutomaticRetentionCount = 5;
     private const string ManualReason = "manual";
@@ -274,6 +275,14 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock)
         return new AppBackupCleanupApplyResponse(plan.PlanDigest, deleted, skipped);
     }
 
+    // The backup root is operator-visible on disk, so a metadata file can be hand-edited, truncated by
+    // a crash, or copied under a new name. Every unusable file is skipped with a warning rather than
+    // faulting the read: one bad file must not break a listing, and the retention sweep runs from a
+    // BackgroundService where an escaping exception takes the whole host down.
+    //
+    // Callers may assume every returned record has a non-empty AppId/BackupId/Reason and that BackupId
+    // is unique within the result — those are dictionary keys, path segments and policy lookups
+    // downstream, where a null throws far away from the file that caused it.
     private async Task<IReadOnlyList<AppBackupRecord>> ReadBackupRecordsAsync(string appId, CancellationToken cancellationToken)
     {
         var backupRoot = GetBackupRoot(appId);
@@ -283,14 +292,48 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock)
         }
 
         var records = new List<AppBackupRecord>();
+        var claimedBackupIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var metadataPath in Directory.EnumerateFiles(backupRoot, "*.json").Order(StringComparer.Ordinal))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var record = await JsonStorage.ReadAsync<AppBackupRecord>(metadataPath, cancellationToken);
-            if (record is not null)
+
+            AppBackupRecord? record;
+            try
             {
-                records.Add(record with { Retention = null });
+                record = await JsonStorage.ReadAsync<AppBackupRecord>(metadataPath, cancellationToken);
             }
+            catch (Exception ex) when (ex is System.Text.Json.JsonException or IOException or UnauthorizedAccessException)
+            {
+                logger?.LogWarning(ex, "Skipping unreadable Hosty backup metadata file {MetadataPath}.", metadataPath);
+                continue;
+            }
+
+            if (record is null)
+            {
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(record.AppId) ||
+                string.IsNullOrWhiteSpace(record.BackupId) ||
+                string.IsNullOrWhiteSpace(record.Reason))
+            {
+                logger?.LogWarning(
+                    "Skipping Hosty backup metadata file {MetadataPath}: appId, backupId or reason is missing.",
+                    metadataPath);
+                continue;
+            }
+
+            // Ordinal enumeration makes "first file wins" deterministic across runs.
+            if (!claimedBackupIds.Add(record.BackupId))
+            {
+                logger?.LogWarning(
+                    "Skipping Hosty backup metadata file {MetadataPath}: backup id {BackupId} is already claimed by an earlier file.",
+                    metadataPath,
+                    record.BackupId);
+                continue;
+            }
+
+            records.Add(record with { Retention = null });
         }
 
         return records;
@@ -308,6 +351,7 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock)
 
         var candidates = new Dictionary<string, AppBackupCleanupCandidate>(StringComparer.Ordinal);
         var records = await ReadBackupRecordsAsync(appId, cancellationToken);
+        // Safe to key on: ReadBackupRecordsAsync drops records with a missing or duplicate BackupId.
         var recordsById = records.ToDictionary(record => record.BackupId, StringComparer.Ordinal);
         var backupIds = new HashSet<string>(recordsById.Keys, StringComparer.Ordinal);
 

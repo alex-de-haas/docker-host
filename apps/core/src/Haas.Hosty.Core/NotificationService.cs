@@ -329,5 +329,10 @@ internal sealed class NotificationRetentionScheduler(
             // BackgroundService loop tears down the application in .NET 6+.
             logger.LogWarning(ex, "Hosty notification retention cleanup did not complete.");
         }
+        catch (Exception ex)
+        {
+            // Same reason, for the failures the filter above did not anticipate.
+            logger.LogError(ex, "Hosty notification retention cleanup failed unexpectedly; retrying next cycle.");
+        }
     }
 }

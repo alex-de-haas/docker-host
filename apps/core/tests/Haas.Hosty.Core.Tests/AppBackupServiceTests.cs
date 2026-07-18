@@ -82,18 +82,64 @@ public sealed class AppBackupServiceTests
         Assert.Equal("live", await File.ReadAllTextAsync(Path.Combine(fixture.DataPath, "notes.txt")));
     }
 
+    // A backup root is a plain directory an operator can edit, so a metadata file may be truncated,
+    // hand-written or copied under a second name. None of those may fail a listing or the retention
+    // sweep — the sweep runs in a BackgroundService, where an escaping exception stops the host.
+    [Fact]
+    public async Task MalformedMetadata_DoesNotBreakListingOrScheduledCleanup()
+    {
+        var fixture = BackupFixture.Create();
+        await File.WriteAllTextAsync(Path.Combine(fixture.DataPath, "notes.txt"), "original");
+        var good = await fixture.Service.CreateBackupAsync("com.example.notes", "manual");
+        Assert.NotNull(good);
+
+        // No backupId at all: the reported repro, which faulted the plan's ToDictionary on a null key.
+        var orphanMetadataPath = Path.Combine(fixture.BackupRoot, "b1.json");
+        var orphanArchivePath = Path.Combine(fixture.BackupRoot, "b1.zip");
+        await File.WriteAllTextAsync(orphanMetadataPath, "{}");
+        await File.WriteAllBytesAsync(orphanArchivePath, [0x50, 0x4b, 0x05, 0x06]);
+
+        // A second file claiming the same backupId, which faulted the same call on a duplicate key.
+        var duplicateMetadataPath = Path.Combine(fixture.BackupRoot, "zz-duplicate.json");
+        File.Copy(Path.Combine(fixture.BackupRoot, $"{good.BackupId}.json"), duplicateMetadataPath);
+
+        // Not JSON at all: JsonStorage.ReadAsync surfaces a JsonException from the enumeration.
+        var unparsableMetadataPath = Path.Combine(fixture.BackupRoot, "zz-unparsable.json");
+        await File.WriteAllTextAsync(unparsableMetadataPath, "{ this is not json");
+
+        var listed = await fixture.Service.ListBackupsAsync("com.example.notes");
+        Assert.Equal([good.BackupId], listed.Select(record => record.BackupId));
+
+        var plan = await fixture.Service.CreateCleanupPlanAsync("com.example.notes");
+        Assert.DoesNotContain(plan.Candidates, candidate => string.IsNullOrWhiteSpace(candidate.BackupId));
+
+        var applied = await fixture.Service.ApplyScheduledCleanupAsync();
+
+        // The unusable files are skipped, not deleted: only an operator-confirmed cleanup removes an
+        // archive Core has no metadata for, so nothing here is automatic.
+        Assert.Empty(applied.Deleted);
+        Assert.True(File.Exists(orphanMetadataPath));
+        Assert.True(File.Exists(orphanArchivePath));
+        Assert.True(File.Exists(duplicateMetadataPath));
+        Assert.True(File.Exists(unparsableMetadataPath));
+        Assert.True(File.Exists(good.ArchivePath));
+    }
+
     private sealed class BackupFixture
     {
-        private BackupFixture(AppBackupService service, string dataPath, FakeClock clock)
+        private BackupFixture(AppBackupService service, string dataPath, string backupRoot, FakeClock clock)
         {
             Service = service;
             DataPath = dataPath;
+            BackupRoot = backupRoot;
             Clock = clock;
         }
 
         public AppBackupService Service { get; }
 
         public string DataPath { get; }
+
+        public string BackupRoot { get; }
 
         public FakeClock Clock { get; }
 
@@ -111,7 +157,11 @@ public sealed class AppBackupServiceTests
             var dataPath = Path.Combine(paths.AppsRoot, "com.example.notes", "data");
             Directory.CreateDirectory(dataPath);
             var clock = new FakeClock(DateTimeOffset.Parse("2026-06-05T10:00:00Z"));
-            return new BackupFixture(new AppBackupService(paths, clock), dataPath, clock);
+            return new BackupFixture(
+                new AppBackupService(paths, clock),
+                dataPath,
+                Path.Combine(paths.BackupsRoot, "com.example.notes"),
+                clock);
         }
     }
 
