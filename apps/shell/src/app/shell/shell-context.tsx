@@ -13,12 +13,10 @@ import type {
 
 export type ShellContextValue = {
   state: LoadState;
+  // Non-system apps only (the dashboard's counters); the Installed Apps page renders state.apps —
+  // runtime and system apps as one list.
   runtimeApps: CoreApp[];
-  systemApps: CoreApp[];
   uiRuntimeApps: CoreApp[];
-  // UI-capable system apps (admin-only by Core filtering): rendered in the sidebar System group and
-  // opened through the canonical /system-apps/<id> route.
-  uiSystemApps: CoreApp[];
   activeUser: SessionResponse["user"] | null;
   canManageApps: boolean;
   busyAction: string | null;

@@ -462,9 +462,10 @@ internal sealed class CoreLifecycleService(
         var enabling = request.Enabled && !currentlyOn;
         var disabling = !request.Enabled && currentlyOn;
         var changing = enabling || disabling;
-        // System apps (e.g. the Shell) are never stopped/snapshotted/restarted from here: cycling the
-        // Shell would drop the operator's own session, and the manual start/stop affordances are gated
-        // off system apps too. Their toggle just flips the flag and takes effect on their next start.
+        // System apps (e.g. the Shell) are never stopped/snapshotted/restarted from here: silently
+        // cycling the app that is serving this very call is worse than deferring. Their toggle just
+        // flips the flag and takes effect on their next start — which the operator can trigger from
+        // the Shell's lifecycle controls, available for system apps like for any other runtime app.
         var manageLifecycle = !app.System;
 
         // Detect a risky disable up front — before we flip or restart, while app.Version still reflects

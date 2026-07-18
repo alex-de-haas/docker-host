@@ -87,10 +87,10 @@ export function AppDetailsDialog({
   onSetFeed: (app: CoreApp, feedId: string) => void;
   onRemove: (app: CoreApp, options: RemoveOptions) => void;
 }) {
-  // Settings (env/public origins/mounts/source) and reviewed updates are available for system apps
-  // too; only backups and remove stay hidden for them. System apps update through the exact same
-  // plan/apply flow as every other runtime app (docs/ideas/system-app-updates.md).
-  const canMutateApp = canManageApps && !app.system;
+  // Settings, reviewed updates, lifecycle, and backups are all available for system apps too — the
+  // Installed Apps rows carry the same set. Remove is the one verb that stays system-gated: Core
+  // rejects removing a system app anywhere but the local control plane (hosty CLI).
+  const canRemoveApp = canManageApps && !app.system;
   const canConfigureApp = canManageApps;
   const canUpdateApp = canManageApps;
 
@@ -102,7 +102,7 @@ export function AppDetailsDialog({
           <DialogDescription>{app.id}</DialogDescription>
         </DialogHeader>
         {detail.error && <InlineError message={detail.error} />}
-        {view === "backups" && canMutateApp && (
+        {view === "backups" && (canManageApps ? (
           <BackupsPanel
             app={app}
             detail={detail}
@@ -114,8 +114,9 @@ export function AppDetailsDialog({
             onPreviewCleanup={onPreviewBackupCleanup}
             onApplyCleanup={onApplyBackupCleanup}
           />
-        )}
-        {view === "backups" && !canMutateApp && <InlineError message="System app backup controls are not available in Shell." />}
+        ) : (
+          <InlineError message="You do not have permission to manage app backups." />
+        ))}
         {view === "settings" && (canConfigureApp ? (
           <SettingsDialog
             app={app}
@@ -137,7 +138,7 @@ export function AppDetailsDialog({
         ) : (
           <InlineError message="You do not have permission to update apps." />
         ))}
-        {view === "remove" && <RemovePanel app={app} busyAction={busyAction} canRemove={canMutateApp} onRemove={onRemove} />}
+        {view === "remove" && <RemovePanel app={app} busyAction={busyAction} canRemove={canRemoveApp} onRemove={onRemove} />}
         {view === "logs" && <ConsoleLogsPanel app={app} coreOrigin={coreOrigin} />}
       </DialogContent>
     </Dialog>
