@@ -45,7 +45,8 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock)
         var archivePath = Path.Combine(backupRoot, $"{backupId}.zip");
         var metadataPath = Path.Combine(backupRoot, $"{backupId}.json");
 
-        await using (var archiveStream = SecureFileSystem.CreatePrivateFile(archivePath, FileMode.CreateNew))
+        // Synchronous writer, so the stream is opened synchronously too.
+        using (var archiveStream = SecureFileSystem.CreatePrivateFile(archivePath, FileMode.CreateNew, FileShare.None, FileOptions.None))
         {
             ZipFile.CreateFromDirectory(dataPath, archiveStream, CompressionLevel.Optimal, includeBaseDirectory: false);
         }

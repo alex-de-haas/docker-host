@@ -48,6 +48,7 @@ public sealed class CoreFilePermissionTests
         var auditRoot = Path.GetDirectoryName(paths.AuditLogPath)!;
 
         var statePath = Path.Combine(appRoot, "state.json");
+        var retainedConfigPath = Path.Combine(appRoot, "retained-config.json");
         var logPath = Path.Combine(logsRoot, "web.log");
         var archivePath = Path.Combine(backupRoot, "20260718_manual.zip");
         var metadataPath = Path.Combine(backupRoot, "20260718_manual.json");
@@ -58,7 +59,7 @@ public sealed class CoreFilePermissionTests
             File.SetUnixFileMode(directory, WorldReadableDirectory);
         }
 
-        foreach (var file in new[] { statePath, logPath, archivePath, metadataPath, paths.AuditLogPath })
+        foreach (var file in new[] { statePath, retainedConfigPath, logPath, archivePath, metadataPath, paths.AuditLogPath })
         {
             await File.WriteAllTextAsync(file, "legacy");
             File.SetUnixFileMode(file, WorldReadableFile);
@@ -68,6 +69,7 @@ public sealed class CoreFilePermissionTests
             .StartAsync(CancellationToken.None);
 
         Assert.Equal(OwnerOnlyFile, File.GetUnixFileMode(statePath));
+        Assert.Equal(OwnerOnlyFile, File.GetUnixFileMode(retainedConfigPath));
         Assert.Equal(OwnerOnlyFile, File.GetUnixFileMode(logPath));
         Assert.Equal(OwnerOnlyFile, File.GetUnixFileMode(archivePath));
         Assert.Equal(OwnerOnlyFile, File.GetUnixFileMode(metadataPath));

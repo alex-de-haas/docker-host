@@ -21,7 +21,11 @@ internal static class SecureFileSystem
     // tailed while the process writing them still holds the handle). UnixCreateMode only applies
     // when this call creates the file; an existing file keeps its mode, which is what the startup
     // migration is for.
-    public static FileStream CreatePrivateFile(string path, FileMode mode, FileShare share)
+    //
+    // `fileOptions` must match how the caller actually writes. Callers that write synchronously
+    // (ZipFile.CreateFromDirectory, StreamWriter with AutoFlush) pass FileOptions.None: leaving
+    // Asynchronous on a synchronous writer costs a thread-pool hop per write on Windows.
+    public static FileStream CreatePrivateFile(string path, FileMode mode, FileShare share, FileOptions fileOptions = FileOptions.Asynchronous)
     {
         var options = new FileStreamOptions
         {
@@ -29,7 +33,7 @@ internal static class SecureFileSystem
             Access = FileAccess.Write,
             Share = share,
             BufferSize = 4096,
-            Options = FileOptions.Asynchronous,
+            Options = fileOptions,
         };
         if (!OperatingSystem.IsWindows())
         {

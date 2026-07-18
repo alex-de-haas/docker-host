@@ -69,6 +69,9 @@ internal sealed class CoreFilePermissionMigration(
         foreach (var appRoot in EnumerateDirectories(paths.AppsRoot))
         {
             tightened += RestrictFile(Path.Combine(appRoot, "state.json"));
+            // Survives an uninstall that keeps data, and carries setting values (including secrets),
+            // mount bindings and the autostart toggle — same sensitivity as state.json.
+            tightened += RestrictFile(Path.Combine(appRoot, "retained-config.json"));
 
             var logsRoot = Path.Combine(appRoot, "logs");
             tightened += RestrictDirectory(logsRoot);

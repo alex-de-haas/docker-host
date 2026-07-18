@@ -74,7 +74,9 @@ internal sealed class LocalCommandRuntimeAdapter(
                 // data root it can be locked down outright.
                 SecureFileSystem.EnsurePrivateDirectory(Path.Combine(context.AppRoot, "logs"));
                 var logPath = Path.Combine(context.AppRoot, "logs", $"{service.Key}.log");
-                var logWriter = new LocalCommandLogWriter(new StreamWriter(SecureFileSystem.CreatePrivateFile(logPath, FileMode.Append, FileShare.ReadWrite))
+                // FileOptions.None: LocalCommandLogWriter writes synchronously with AutoFlush, so an
+                // async handle would add a thread-pool hop per log line.
+                var logWriter = new LocalCommandLogWriter(new StreamWriter(SecureFileSystem.CreatePrivateFile(logPath, FileMode.Append, FileShare.ReadWrite, FileOptions.None))
                 {
                     AutoFlush = true,
                 });
