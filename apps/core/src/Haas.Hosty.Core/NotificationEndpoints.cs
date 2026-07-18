@@ -50,8 +50,11 @@ internal static class NotificationEndpoints
             UserDirectoryStore users,
             IClock clock,
             NotificationBroadcaster broadcaster,
+            IHostApplicationLifetime lifetime,
             CancellationToken cancellationToken) =>
-            StreamForSessionAsync(request, response, users, clock, broadcaster, cancellationToken));
+            StreamForSessionAsync(
+                request, response, users, clock, broadcaster, cancellationToken,
+                applicationStopping: lifetime.ApplicationStopping));
     }
 
     public static async Task<IResult> PublishFromAppAsync(
@@ -249,7 +252,8 @@ internal static class NotificationEndpoints
         NotificationBroadcaster broadcaster,
         CancellationToken cancellationToken,
         // Overridable only so tests can exercise the idle keep-alive without waiting the full cadence.
-        TimeSpan? heartbeat = null)
+        TimeSpan? heartbeat = null,
+        CancellationToken applicationStopping = default)
         => CoreSessionAuthorization.RequireSessionAsync(
             request,
             users,
@@ -262,19 +266,26 @@ internal static class NotificationEndpoints
 
                 using var subscription = broadcaster.Subscribe(user.Id);
 
-                // Emit an initial comment so the whole proxy chain (cloudflared -> Cloudflare edge)
-                // forwards the response start with real body bytes. A header-only flush can be held
-                // back until the first byte and time out as a Cloudflare 524.
-                await response.WriteAsync(": connected\n\n", cancellationToken);
-                await response.Body.FlushAsync(cancellationToken);
+                // End the stream on Core shutdown, not only on client disconnect. Kestrel's graceful
+                // stop waits for in-flight requests and an SSE response never completes on its own —
+                // one open bell stream would otherwise hold shutdown for the full
+                // HostOptions.ShutdownTimeout and starve the runtime-app stop sweep behind it.
+                using var streamCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, applicationStopping);
+                var streamToken = streamCts.Token;
 
                 try
                 {
+                    // Emit an initial comment so the whole proxy chain (cloudflared -> Cloudflare edge)
+                    // forwards the response start with real body bytes. A header-only flush can be held
+                    // back until the first byte and time out as a Cloudflare 524.
+                    await response.WriteAsync(": connected\n\n", streamToken);
+                    await response.Body.FlushAsync(streamToken);
+
                     while (true)
                     {
                         // Cancel only the read wait (not the request) when the heartbeat elapses, so an
                         // idle stream sends a keep-alive comment instead of stalling past the proxy timeout.
-                        using var heartbeatCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                        using var heartbeatCts = CancellationTokenSource.CreateLinkedTokenSource(streamToken);
                         heartbeatCts.CancelAfter(heartbeat ?? StreamHeartbeat);
 
                         bool dataAvailable;
@@ -282,10 +293,10 @@ internal static class NotificationEndpoints
                         {
                             dataAvailable = await subscription.Reader.WaitToReadAsync(heartbeatCts.Token);
                         }
-                        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                        catch (OperationCanceledException) when (!streamToken.IsCancellationRequested)
                         {
-                            await response.WriteAsync(": ping\n\n", cancellationToken);
-                            await response.Body.FlushAsync(cancellationToken);
+                            await response.WriteAsync(": ping\n\n", streamToken);
+                            await response.Body.FlushAsync(streamToken);
                             continue;
                         }
 
@@ -297,15 +308,15 @@ internal static class NotificationEndpoints
                         while (subscription.Reader.TryRead(out var view))
                         {
                             var json = JsonSerializer.Serialize(view, CoreJsonSerializerContext.Default.NotificationView);
-                            await response.WriteAsync($"data: {json}\n\n", cancellationToken);
+                            await response.WriteAsync($"data: {json}\n\n", streamToken);
                         }
 
-                        await response.Body.FlushAsync(cancellationToken);
+                        await response.Body.FlushAsync(streamToken);
                     }
                 }
                 catch (OperationCanceledException)
                 {
-                    // Client disconnected; end the stream.
+                    // Client disconnected or Core is shutting down; end the stream.
                 }
 
                 return Results.Empty;

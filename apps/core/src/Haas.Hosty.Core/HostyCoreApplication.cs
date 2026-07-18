@@ -1395,13 +1395,23 @@ internal sealed class RuntimeAppSupervisorService(
         }
     }
 
-    private async Task StopRuntimeAppsAsync(CancellationToken cancellationToken)
+    private async Task StopRuntimeAppsAsync(CancellationToken hostShutdownToken)
     {
-        // Bound the per-shutdown app stop so a wedged app can never hold the process
-        // (and therefore the listening port) open indefinitely. When the bound is hit
-        // we abandon the remaining stops and let shutdown continue so the port frees.
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCts.CancelAfter(RuntimeAppShutdownTimeout);
+        // The sweep deliberately does NOT link to the host shutdown token. Kestrel stops before this
+        // service, and one in-flight request that never ends on its own (an open notification SSE
+        // stream) makes Kestrel eat the entire HostOptions.ShutdownTimeout budget — the token then
+        // arrives here already cancelled and a linked sweep would be skipped outright, leaving every
+        // container and localCommand tree running. The fixed budget below still bounds the sweep so
+        // a wedged app can never hold the process (and therefore the listening port) open
+        // indefinitely: when it is hit we abandon the remaining stops and let shutdown continue.
+        if (hostShutdownToken.IsCancellationRequested)
+        {
+            logger.LogWarning(
+                "Host shutdown budget was exhausted before the runtime app stop sweep started (a held connection can cause this); running the sweep on its own {Timeout} budget.",
+                RuntimeAppShutdownTimeout);
+        }
+
+        using var timeoutCts = new CancellationTokenSource(RuntimeAppShutdownTimeout);
         try
         {
             var results = await lifecycle.StopRuntimeAppsAsync(timeoutCts.Token);
@@ -1414,14 +1424,11 @@ internal sealed class RuntimeAppSupervisorService(
                     result.Message);
             }
         }
-        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
         {
             logger.LogWarning(
                 "Hosty runtime app shutdown stop exceeded {Timeout} and was abandoned so Core can release its port.",
                 RuntimeAppShutdownTimeout);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
         {

@@ -113,6 +113,30 @@ public sealed class NotificationConsumerEndpointsTests
         Assert.Contains(": ping\n\n", text, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task StreamForSessionAsync_EndsWhenApplicationStops()
+    {
+        // An SSE response never completes on its own, and Kestrel's graceful stop waits for
+        // in-flight requests — the stream must end itself when Core begins shutting down, or one
+        // open bell tab holds shutdown for the whole host budget and starves the runtime-app
+        // stop sweep behind it.
+        var fixture = await Fixture.CreateAsync();
+        var context = new DefaultHttpContext();
+        context.Request.Headers.Cookie = $"{CoreSessionAuthorization.SessionCookieName}=session_1";
+        context.Response.Body = new MemoryStream();
+
+        using var stopping = new CancellationTokenSource();
+        var stream = NotificationEndpoints.StreamForSessionAsync(
+            context.Request, context.Response, fixture.Users, fixture.Clock, new NotificationBroadcaster(),
+            CancellationToken.None, heartbeat: TimeSpan.FromMilliseconds(30), applicationStopping: stopping.Token);
+
+        await Task.Delay(100);
+        Assert.False(stream.IsCompleted); // The client never disconnects; only shutdown may end it.
+
+        stopping.Cancel();
+        await stream.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
     private static HttpRequest Request(bool session = true, bool csrf = false)
     {
         var context = new DefaultHttpContext();

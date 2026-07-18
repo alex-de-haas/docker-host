@@ -137,6 +137,35 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task StopAsync_HostShutdownTokenAlreadyCancelled_StillStopsRuntimeApps()
+    {
+        // Kestrel stops before the supervisor, and one held connection (an open notification SSE
+        // stream) makes it eat the whole HostOptions.ShutdownTimeout budget — the supervisor then
+        // receives an already-cancelled token. The sweep must still run on its own budget; linking
+        // to the host token skipped it silently and left every container and localCommand tree
+        // running after `hosty stop`.
+        var fixture = CreateFixture(_ => throw new HttpRequestException("no remote fetches expected"));
+        var manifest = Path.Combine(root, "spent-budget-stop-manifest.json");
+        await File.WriteAllTextAsync(manifest, CreateShellManifest("1.0.0", "hosty-shell", "local", "never"));
+        await fixture.Lifecycle.InstallAsync(new AppInstallRequest(
+            ManifestPath: manifest,
+            SelectedRuntime: "docker",
+            System: false,
+            Autostart: true));
+        var config = CreateConfig(fixture.Paths, shellAutostart: true);
+        var supervisor = CreateSupervisor(fixture, config, CreateDistribution());
+
+        await supervisor.StartAsync(CancellationToken.None);
+        await WaitForAppAsync(fixture.Apps, "hosty.shell", app => string.Equals(app.RuntimeState, "running", StringComparison.Ordinal));
+
+        using var spentBudget = new CancellationTokenSource();
+        spentBudget.Cancel();
+        await supervisor.StopAsync(spentBudget.Token);
+
+        Assert.True(fixture.Docker.StopCount >= 1);
+    }
+
+    [Fact]
     public async Task StartAsync_ShellBootstrapHttpFailureLeavesCoreSupervisorRunning()
     {
         const string manifestUrl = "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/shell/manifest.json";
