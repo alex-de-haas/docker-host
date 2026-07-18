@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { LoaderCircle, Shuffle, TriangleAlert } from "lucide-react";
+import { LoaderCircle, Shuffle, TriangleAlert, Unplug } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,21 +11,21 @@ import { useShellActions, useShellState } from "../shell-context";
 import type { CoreApp, CoreEndpoint, CoreReassignPlan, CoreReassignResult } from "../types";
 import { FactCard, IconButton, InlineError } from "../ui";
 
-// Read-only badge for an endpoint's install-time reservation state. Absent on older Core builds → nothing.
-export function EndpointAvailabilityBadge({ availability }: { availability?: CoreEndpoint["availability"] }) {
-  if (!availability) {
+// Read-only marker for an endpoint's install-time port reservation. Only the failure case earns a
+// marker: "running" duplicates the service status badge above it, and "assigned" duplicates the
+// endpoint URL block below (Core reserves the port at install time, so even a stopped app has one).
+// An "unavailable" reservation — the reserved port failed preflight/binding — is a real problem, shown
+// here as a red icon and mirrored onto the collapsed app row so it is visible without expanding.
+export function EndpointAvailabilityMarker({ availability }: { availability?: CoreEndpoint["availability"] }) {
+  if (availability !== "unavailable") {
     return null;
   }
 
-  if (availability === "running") {
-    return <Badge variant="outline" title="The owning service is running">Running</Badge>;
-  }
-
-  if (availability === "unavailable") {
-    return <Badge variant="destructive" title="The reserved port failed to bind — reassign or free it">Port unavailable</Badge>;
-  }
-
-  return <Badge variant="secondary" title="A host port is reserved but the app is stopped">Assigned · app stopped</Badge>;
+  return (
+    <span title="The reserved port failed to bind — reassign or free it" className="inline-flex shrink-0">
+      <Unplug className="h-4 w-4 text-destructive" aria-label="Reserved port unavailable" />
+    </span>
+  );
 }
 
 // Impact-aware reassignment of one endpoint's automatic host port. Self-contained: it reads sendCsrfJson /

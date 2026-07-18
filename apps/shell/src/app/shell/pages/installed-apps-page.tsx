@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import {
   ArrowUpCircle,
   Boxes,
@@ -25,6 +26,7 @@ import {
   Terminal,
   Trash2,
   TriangleAlert,
+  Unplug,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -65,7 +67,7 @@ import type {
   UpdateStatusState,
 } from "../types";
 import { EmptyState, IconButton, PageHeader, StatusBadge } from "../ui";
-import { EndpointAvailabilityBadge, PortReassignControl } from "./port-reassign-control";
+import { EndpointAvailabilityMarker, PortReassignControl } from "./port-reassign-control";
 import { CloudflarePublishControl } from "./cloudflare-publish-control";
 
 export function InstalledAppsPage({
@@ -404,9 +406,14 @@ function AppServiceDetailsPanel({
     Object.keys(lockedByService).length > 0 ||
     [...runningByService.values()].some((digest) => digest) ||
     statusByService.size > 0;
-  // The policy badge is the bar's only content now, and it renders nothing without an explicit
-  // policy from Core — so gate the bar on it too, or an older Core leaves an empty strip behind.
+  // The policy badge and the health-probe spinner share one bar. Carrying the spinner inline here rather
+  // than as its own row is what keeps the panel from shifting on every open: for an app with a policy badge
+  // the row is already there, so starting and finishing the probe changes only its contents. The bar still
+  // needs a reason to exist — the badge renders nothing without an explicit policy from Core, and an older
+  // Core would otherwise leave an empty strip behind — so it appears when either half has something to say.
   const showsUpdatePolicy = app.updatePolicy === "pinned" || app.updatePolicy === "rolling";
+  const showsPolicyBadge = hasImageInfo && showsUpdatePolicy;
+  const healthLoading = healthState?.loading ?? false;
 
   return (
     <div className="space-y-2 rounded-md border bg-background p-3">
@@ -437,9 +444,15 @@ function AppServiceDetailsPanel({
           )}
         </div>
       )}
-      {hasImageInfo && showsUpdatePolicy && (
+      {(showsPolicyBadge || healthLoading) && (
         <div className="flex flex-wrap items-center gap-2 rounded-md bg-muted/30 px-2 py-1.5">
-          <UpdatePolicyBadge policy={app.updatePolicy} />
+          {showsPolicyBadge && <UpdatePolicyBadge policy={app.updatePolicy} />}
+          {healthLoading && (
+            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+              Loading services
+            </span>
+          )}
         </div>
       )}
       {/* Only ever set for an app whose digests the operator explicitly checked, so this reports a
@@ -448,12 +461,6 @@ function AppServiceDetailsPanel({
       {updateStatusState?.error && (
         <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
           Update check failed: {updateStatusState.error}
-        </div>
-      )}
-      {healthState?.loading && (
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <LoaderCircle className="h-4 w-4 animate-spin" />
-          Loading services
         </div>
       )}
       {healthState?.error && <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">{healthState.error}</div>}
@@ -468,16 +475,38 @@ function AppServiceDetailsPanel({
             const serviceStatus = statusByService.get(service.service);
             const serviceHealth = healthByService.get(service.service);
             const drift = Boolean(locked && running && locked !== running);
+            // Locked and running agree in every healthy case, so the digest rides in the service header as
+            // a badge and the box below disappears entirely. The two-row split is spent only on drift —
+            // the state actually worth reading.
+            const matchedDigest = locked && running && locked === running ? locked : null;
             const hasServiceImage = Boolean(locked || running || serviceStatus);
+            const candidateDigest = serviceStatus?.updateAvailable ? serviceStatus.candidateDigest ?? null : null;
+            // The header badge can only carry the matched digest, so the box still has to appear for a
+            // locked/running split, an available candidate, or a check that could not reach the registry —
+            // an available update is reported precisely when the digests DO match, so it must not be
+            // collapsed away with them.
+            const showsDigestRows = hasServiceImage && !matchedDigest;
+            const showsDigestBox = showsDigestRows || Boolean(candidateDigest) || Boolean(serviceStatus?.unknown);
             return (
             <div key={service.service} className="rounded-md bg-muted/30 p-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="min-w-0">
-                  <div
-                    className="truncate text-xs font-medium"
-                    title={serviceHealth?.startedAt ? `Started ${serviceHealth.startedAt}` : undefined}
-                  >
-                    {service.service}
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span
+                      className="truncate text-xs font-medium"
+                      title={serviceHealth?.startedAt ? `Started ${serviceHealth.startedAt}` : undefined}
+                    >
+                      {service.service}
+                    </span>
+                    {matchedDigest && (
+                      <Badge
+                        variant="outline"
+                        className="shrink-0 font-mono text-[10px] font-normal text-muted-foreground"
+                        title={`Running the locked build — ${matchedDigest}`}
+                      >
+                        {shortDigest(matchedDigest) ?? matchedDigest}
+                      </Badge>
+                    )}
                   </div>
                   {service.message && <div className="truncate text-xs text-muted-foreground">{service.message}</div>}
                   {serviceHealth?.restartCount ? (
@@ -491,17 +520,21 @@ function AppServiceDetailsPanel({
                   <StatusBadge value={service.status} />
                 </div>
               </div>
-              {hasServiceImage && (
+              {showsDigestBox && (
                 <div className="mt-2 grid gap-1 rounded-md border bg-background px-2 py-1.5 text-xs">
-                  {locked && <ServiceDigestRow label="Locked" digest={locked} />}
-                  {running && <ServiceDigestRow label="Running" digest={running} tone={drift ? "warning" : undefined} />}
+                  {showsDigestRows && (
+                    <>
+                      {locked && <ServiceDigestRow label="Locked" digest={locked} />}
+                      {running && <ServiceDigestRow label="Running" digest={running} tone={drift ? "warning" : undefined} />}
+                    </>
+                  )}
                   {drift && (
                     <div className="text-[11px] text-amber-700 dark:text-amber-300">
                       Running a different build than the recorded lock.
                     </div>
                   )}
-                  {serviceStatus?.updateAvailable && serviceStatus.candidateDigest && (
-                    <ServiceDigestRow label="Available" digest={serviceStatus.candidateDigest} tone="update" />
+                  {candidateDigest && (
+                    <ServiceDigestRow label="Available" digest={candidateDigest} tone="update" />
                   )}
                   {serviceStatus?.unknown && (
                     <div className="text-[11px] text-muted-foreground">Update check unavailable (registry unreachable).</div>
@@ -518,11 +551,7 @@ function AppServiceDetailsPanel({
                       <div key={endpoint.key} className="grid gap-1 text-xs">
                         <div className="flex items-center gap-2">
                           <span className="truncate font-mono text-muted-foreground">{endpoint.key}</span>
-                          <EndpointAvailabilityBadge availability={endpoint.availability} />
-                          <span className="ml-auto flex items-center gap-1">
-                            {endpoint.public && <CloudflarePublishControl app={app} endpoint={endpoint} />}
-                            <PortReassignControl app={app} endpoint={endpoint} />
-                          </span>
+                          <EndpointAvailabilityMarker availability={endpoint.availability} />
                         </div>
                         <div className={cn("grid gap-2", endpoint.public && "md:grid-cols-2")}>
                           <EndpointUrlBlock
@@ -531,6 +560,7 @@ function AppServiceDetailsPanel({
                             copyTitle="Copy local endpoint URL"
                             openTitle="Open local endpoint URL"
                             onCopy={copyEndpointUrl}
+                            actions={<PortReassignControl app={app} endpoint={endpoint} />}
                           />
                           {endpoint.public && (
                             <EndpointUrlBlock
@@ -541,6 +571,7 @@ function AppServiceDetailsPanel({
                               onCopy={copyEndpointUrl}
                               configureTitle="Configure public origin"
                               onConfigure={canConfigurePublicOrigins ? onConfigurePublicOrigins : undefined}
+                              actions={<CloudflarePublishControl app={app} endpoint={endpoint} />}
                             />
                           )}
                         </div>
@@ -596,6 +627,7 @@ function EndpointUrlBlock({
   configureTitle,
   onCopy,
   onConfigure,
+  actions,
 }: {
   url?: string | null;
   missingText: string;
@@ -603,27 +635,37 @@ function EndpointUrlBlock({
   openTitle: string;
   configureTitle?: string;
   onCopy: (url: string) => void | Promise<void>;
+  // Rendered independently of `url`: an origin that is already set still needs an edit affordance, not
+  // just a way to fill an empty one.
   onConfigure?: () => void;
+  // Endpoint-scoped controls (port reassignment on the local URL, Cloudflare publishing on the public
+  // origin) rendered beside copy/open so they sit with the URL they act on. Deliberately independent of
+  // `url`: an unassigned port — or an origin not published yet — is exactly when they matter most.
+  actions?: ReactNode;
 }) {
   return (
     <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md border bg-background px-2 py-1.5">
       <span className={cn("truncate font-mono", url ? "text-foreground" : "text-muted-foreground")}>{url || missingText}</span>
-      {url ? (
-        <span className="flex items-center gap-1">
-          <IconButton title={copyTitle} onClick={() => void onCopy(url)}>
-            <Copy className="h-4 w-4" />
+      <span className="flex items-center gap-1">
+        {url && (
+          <>
+            <IconButton title={copyTitle} onClick={() => void onCopy(url)}>
+              <Copy className="h-4 w-4" />
+            </IconButton>
+            <Button type="button" variant="ghost" size="icon-sm" title={openTitle} aria-label={openTitle} asChild>
+              <a href={url} target="_blank" rel="noreferrer">
+                <ExternalLink className="h-4 w-4" />
+              </a>
+            </Button>
+          </>
+        )}
+        {onConfigure && (
+          <IconButton title={configureTitle || "Configure"} onClick={onConfigure}>
+            <Settings2 className="h-4 w-4" />
           </IconButton>
-          <Button type="button" variant="ghost" size="icon-sm" title={openTitle} aria-label={openTitle} asChild>
-            <a href={url} target="_blank" rel="noreferrer">
-              <ExternalLink className="h-4 w-4" />
-            </a>
-          </Button>
-        </span>
-      ) : onConfigure ? (
-        <IconButton title={configureTitle || "Configure"} onClick={onConfigure}>
-          <Settings2 className="h-4 w-4" />
-        </IconButton>
-      ) : null}
+        )}
+        {actions}
+      </span>
     </div>
   );
 }
@@ -889,6 +931,9 @@ function InstalledAppRow({
   const isBusy = (action: string) => busyAction === `${app.id}:${action}`;
   const autostartEnabled = isAppAutostartEnabled(app);
   const needsRequiredSettings = !running && appHasMissingRequiredSettings(app);
+  // A reserved host port that failed to bind is surfaced on the collapsed row so an operator sees it
+  // without expanding services; the details panel shows which endpoint (EndpointAvailabilityMarker).
+  const hasUnavailableEndpoint = (app.endpoints ?? []).some((endpoint) => endpoint.availability === "unavailable");
 
   return (
     <TableRow data-testid={`app-row-${app.id}`}>
@@ -924,6 +969,11 @@ function InstalledAppRow({
                 </span>
               )}
               {app.lastError && <CircleAlert className="h-4 w-4 text-destructive" />}
+              {hasUnavailableEndpoint && (
+                <span title="A reserved host port failed to bind — expand the app to reassign or free it" className="inline-flex shrink-0">
+                  <Unplug className="h-4 w-4 text-destructive" aria-label="A reserved host port is unavailable" />
+                </span>
+              )}
             </div>
             <div className="truncate text-xs text-muted-foreground">{app.id}</div>
           </div>

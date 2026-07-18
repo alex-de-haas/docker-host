@@ -7,6 +7,10 @@ export type CoreStatus = {
   corePublicOrigin?: string | null;
   shellPublicOrigin?: string | null;
   runtimePublicHost?: string | null;
+  // Live ingress provider: "cloudflared" when Core manages public origins, "none" when exposure is left
+  // to the operator. The anonymous status payload blanks it to "", so treat anything but "cloudflared"
+  // as "ingress off".
+  ingressProvider?: string | null;
   warnings?: string[];
   serverTime: string;
 };
