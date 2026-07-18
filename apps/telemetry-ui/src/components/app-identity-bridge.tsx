@@ -38,9 +38,18 @@ function readRecoveryParams(body: unknown): RecoveryParams | null {
     return null;
   }
   const { appId, corePublicOrigin } = recovery as { appId?: unknown; corePublicOrigin?: unknown };
-  return typeof appId === "string" && appId && typeof corePublicOrigin === "string" && corePublicOrigin
-    ? { appId, corePublicOrigin }
-    : null;
+  if (typeof appId !== "string" || !appId || typeof corePublicOrigin !== "string") {
+    return null;
+  }
+  // An origin that does not parse (operator typo, e.g. a missing scheme) would make buildOpenUrl
+  // throw and abandon the flow with no UI at all. Reject it here so it lands in the same
+  // "no recovery parameters" branch as a missing one and the user still gets a card.
+  try {
+    new URL(corePublicOrigin);
+  } catch {
+    return null;
+  }
+  return { appId, corePublicOrigin };
 }
 
 function buildOpenUrl(corePublicOrigin: string, appId: string): string {
