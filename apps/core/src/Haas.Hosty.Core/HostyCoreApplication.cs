@@ -1608,7 +1608,8 @@ internal sealed class AppBackupRetentionScheduler(
         }
     }
 
-    private async Task RunCleanupAsync(CancellationToken cancellationToken)
+    // internal (not private) so a test can drive one pass without the timer, like the sibling schedulers.
+    internal async Task RunCleanupAsync(CancellationToken cancellationToken)
     {
         try
         {
@@ -1645,6 +1646,13 @@ internal sealed class AppBackupRetentionScheduler(
         catch (Exception ex) when (ex is AppLifecycleException or IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
         {
             logger.LogWarning(ex, "Hosty backup retention cleanup did not complete.");
+        }
+        catch (Exception ex)
+        {
+            // Nothing a sweep can hit is worth killing Core over: an exception escaping a
+            // BackgroundService loop tears the host down in .NET 6+, so an unexpected failure
+            // (a corrupt metadata file, a bug in the plan builder) is logged and retried next tick.
+            logger.LogError(ex, "Hosty backup retention cleanup failed unexpectedly; retrying next cycle.");
         }
     }
 }
@@ -1723,6 +1731,11 @@ internal sealed class UserRetentionScheduler(
         catch (Exception ex) when (ex is AppLifecycleException or IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
         {
             logger.LogWarning(ex, "Hosty disabled-user retention purge did not complete.");
+        }
+        catch (Exception ex)
+        {
+            // See AppBackupRetentionScheduler: an escaping exception would stop the host.
+            logger.LogError(ex, "Hosty disabled-user retention purge failed unexpectedly; retrying next cycle.");
         }
     }
 }

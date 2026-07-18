@@ -1,10 +1,11 @@
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.Extensions.Logging;
 
 namespace Haas.Hosty.Core;
 
-internal sealed class AppBackupService(CoreDataPaths paths, IClock clock)
+internal sealed class AppBackupService(CoreDataPaths paths, IClock clock, ILogger<AppBackupService>? logger = null)
 {
     private const int AutomaticRetentionCount = 5;
     private const string ManualReason = "manual";
@@ -131,7 +132,13 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock)
     {
         var record = (await ListBackupsAsync(appId, cancellationToken))
             .FirstOrDefault(candidate => string.Equals(candidate.BackupId, backupId, StringComparison.Ordinal));
-        if (record is null || !File.Exists(record.ArchivePath))
+        // The archive path comes out of an operator-editable metadata file, so it is not trusted to
+        // point anywhere in particular: a hand-written record could otherwise make Core hash and
+        // extract an arbitrary host file into the app's data directory. Deletion already enforces the
+        // same containment rule; restore is the read side of it.
+        if (record is null ||
+            !IsSafeBackupPath(record.ArchivePath, GetBackupRoot(appId), ".zip") ||
+            !File.Exists(record.ArchivePath))
         {
             return null;
         }
@@ -281,6 +288,19 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock)
         return new AppBackupCleanupApplyResponse(plan.PlanDigest, deleted, skipped);
     }
 
+    // The backup root is operator-visible on disk, so a metadata file can be hand-edited, truncated by
+    // a crash, or copied under a new name. Every unusable file is skipped with a warning rather than
+    // faulting the read: one bad file must not break a listing, and the retention sweep runs from a
+    // BackgroundService where an escaping exception takes the whole host down.
+    //
+    // Callers may assume every returned record has a non-empty BackupId/Reason, an AppId equal to the
+    // requested one, and a BackupId unique within the result — those are dictionary keys, path segments
+    // and policy lookups downstream, where a null throws far away from the file that caused it.
+    //
+    // ArchivePath is deliberately *not* validated here: a record pointing nowhere is still worth
+    // returning so the sweep can collect it as a missing-archive candidate, and an operator who moves
+    // HOSTY_DATA_ROOT leaves every stored path stale without their backups deserving to vanish from the
+    // listing. Every path that reads, extracts or deletes an archive runs IsSafeBackupPath first.
     private async Task<IReadOnlyList<AppBackupRecord>> ReadBackupRecordsAsync(string appId, CancellationToken cancellationToken)
     {
         var backupRoot = GetBackupRoot(appId);
@@ -290,14 +310,61 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock)
         }
 
         var records = new List<AppBackupRecord>();
+        var claimedBackupIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var metadataPath in Directory.EnumerateFiles(backupRoot, "*.json").Order(StringComparer.Ordinal))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var record = await JsonStorage.ReadAsync<AppBackupRecord>(metadataPath, cancellationToken);
-            if (record is not null)
+
+            AppBackupRecord? record;
+            try
             {
-                records.Add(record with { Retention = null });
+                record = await JsonStorage.ReadAsync<AppBackupRecord>(metadataPath, cancellationToken);
             }
+            catch (Exception ex) when (ex is System.Text.Json.JsonException or IOException or UnauthorizedAccessException)
+            {
+                logger?.LogWarning(ex, "Skipping unreadable Hosty backup metadata file {MetadataPath}.", metadataPath);
+                continue;
+            }
+
+            if (record is null)
+            {
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(record.AppId) ||
+                string.IsNullOrWhiteSpace(record.BackupId) ||
+                string.IsNullOrWhiteSpace(record.Reason))
+            {
+                logger?.LogWarning(
+                    "Skipping Hosty backup metadata file {MetadataPath}: appId, backupId or reason is missing.",
+                    metadataPath);
+                continue;
+            }
+
+            // The directory owns the identity, not the file's contents. A record claiming a different
+            // app would otherwise produce a cleanup candidate that resolves against *that* app's backup
+            // root, letting one app's stray metadata file delete another app's archives.
+            if (!string.Equals(record.AppId, appId, StringComparison.Ordinal))
+            {
+                logger?.LogWarning(
+                    "Skipping Hosty backup metadata file {MetadataPath}: it claims app {ClaimedAppId} but sits in the backup directory of {AppId}.",
+                    metadataPath,
+                    record.AppId,
+                    appId);
+                continue;
+            }
+
+            // Ordinal enumeration makes "first file wins" deterministic across runs.
+            if (!claimedBackupIds.Add(record.BackupId))
+            {
+                logger?.LogWarning(
+                    "Skipping Hosty backup metadata file {MetadataPath}: backup id {BackupId} is already claimed by an earlier file.",
+                    metadataPath,
+                    record.BackupId);
+                continue;
+            }
+
+            records.Add(record with { Retention = null });
         }
 
         return records;
@@ -315,6 +382,7 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock)
 
         var candidates = new Dictionary<string, AppBackupCleanupCandidate>(StringComparer.Ordinal);
         var records = await ReadBackupRecordsAsync(appId, cancellationToken);
+        // Safe to key on: ReadBackupRecordsAsync drops records with a missing or duplicate BackupId.
         var recordsById = records.ToDictionary(record => record.BackupId, StringComparer.Ordinal);
         var backupIds = new HashSet<string>(recordsById.Keys, StringComparer.Ordinal);
 
@@ -556,8 +624,15 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock)
     private string GetBackupRoot(string appId)
         => CoreDataPaths.ResolveContainedPath(paths.BackupsRoot, appId);
 
-    private static bool IsSafeBackupPath(string path, string backupRoot, string extension)
+    // Nullable path: a metadata file may omit archivePath entirely, and Path.GetFullPath(null) throws.
+    // An absent path is never a safe path, so callers get "false" instead of an exception.
+    private static bool IsSafeBackupPath(string? path, string backupRoot, string extension)
     {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return false;
+        }
+
         var fullPath = Path.GetFullPath(path);
         var fullRoot = EnsureTrailingSeparator(Path.GetFullPath(backupRoot));
         var comparison = OperatingSystem.IsWindows()
