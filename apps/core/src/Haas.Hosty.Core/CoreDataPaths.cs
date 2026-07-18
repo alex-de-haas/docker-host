@@ -129,11 +129,16 @@ internal sealed record CoreDataPaths(
 
         var separator = rootRelativePath.IndexOf('/');
         var head = separator < 0 ? rootRelativePath : rootRelativePath[..separator];
+        // Both lists are checked against the head whatever its shape. Selecting a list by whether a
+        // separator is present leaves two gaps: a bare "data" (no separator, so only the file list is
+        // consulted) would be allowed to occupy the reserved directory name, and "manifest.json/x.png"
+        // (separator present, so only the directory list is consulted) would be allowed to write
+        // underneath a reserved file name.
+        //
         // Compared case-insensitively regardless of host: a case-insensitive filesystem would let
         // "Data/x.png" reach the same directory a case-sensitive comparison would wave through.
-        return separator < 0
-            ? ReservedAppRootFiles.Contains(head, StringComparer.OrdinalIgnoreCase)
-            : ReservedAppRootDirectories.Contains(head, StringComparer.OrdinalIgnoreCase);
+        return ReservedAppRootFiles.Contains(head, StringComparer.OrdinalIgnoreCase) ||
+            ReservedAppRootDirectories.Contains(head, StringComparer.OrdinalIgnoreCase);
     }
 
     // True if any component of fullPath below root is a symbolic link. Callers that resolved a path

@@ -215,20 +215,18 @@ public sealed class AppAssetTests
         // HttpMessageHandler never auto-redirects, so stubbing one would prove nothing.
         // The asset URI must sit under the manifest folder, but a 302 would carry the fetch
         // anywhere; with redirects refused it is just a non-success status and the asset is skipped.
-        using var origin = new HttpListener();
-        var port = GetFreePort();
-        origin.Prefixes.Add($"http://127.0.0.1:{port}/");
-        origin.Start();
+        var (origin, port) = StartLoopbackListener();
+        using var listener = origin;
 
         var followed = 0;
         var serving = Task.Run(async () =>
         {
-            while (origin.IsListening)
+            while (listener.IsListening)
             {
                 HttpListenerContext context;
                 try
                 {
-                    context = await origin.GetContextAsync();
+                    context = await listener.GetContextAsync();
                 }
                 catch (Exception ex) when (ex is HttpListenerException or ObjectDisposedException)
                 {
@@ -264,18 +262,38 @@ public sealed class AppAssetTests
 
         await service.VendorDisplayAssetsAsync(selection, appRoot);
 
-        origin.Stop();
+        listener.Stop();
         await serving;
 
         Assert.False(File.Exists(Path.Combine(appRoot, "assets", "icon.svg")));
         Assert.Equal(0, followed);
     }
 
-    private static int GetFreePort()
+    // Probing a free port and then binding it is a race: another process can take the port in between.
+    // Retry the probe-and-start pair so the test only fails when the behaviour under test is wrong.
+    private static (HttpListener Listener, int Port) StartLoopbackListener()
     {
-        using var probe = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-        probe.Bind(new IPEndPoint(IPAddress.Loopback, 0));
-        return ((IPEndPoint)probe.LocalEndPoint!).Port;
+        for (var attempt = 1; ; attempt++)
+        {
+            int port;
+            using (var probe = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp))
+            {
+                probe.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+                port = ((IPEndPoint)probe.LocalEndPoint!).Port;
+            }
+
+            var listener = new HttpListener();
+            listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+            try
+            {
+                listener.Start();
+                return (listener, port);
+            }
+            catch (HttpListenerException) when (attempt < 10)
+            {
+                ((IDisposable)listener).Dispose();
+            }
+        }
     }
 
     // --- helpers --------------------------------------------------------------------------------
