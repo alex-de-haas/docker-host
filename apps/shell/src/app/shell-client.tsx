@@ -252,7 +252,9 @@ export function ShellClient({
         loading: false,
         error: null,
         status,
-        apps: apps.apps,
+        // The cast above cannot catch a Core that answers without an `apps` field, and every
+        // consumer of state.apps assumes an array — normalize once here rather than in each page.
+        apps: apps.apps ?? [],
         session,
         updatedAt: new Date().toISOString(),
         updateCheck: apps.updateCheck ?? null,
