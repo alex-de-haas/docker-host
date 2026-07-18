@@ -26,15 +26,6 @@ export function isAppAutostartEnabled(app: CoreApp) {
   return app.autostart ?? true;
 }
 
-// Whether the app has a required setting we can see is unset. Non-secret only: the API never
-// surfaces secret values, so a required secret can't be judged here — Core is the authoritative
-// gate that refuses the start (app_required_settings_missing). Used to flag the app row.
-export function appHasMissingRequiredSettings(app: CoreApp) {
-  return (app.settings ?? []).some(
-    (setting) => setting.required && !setting.secret && (setting.value ?? "").trim().length === 0,
-  );
-}
-
 // Whether Shell should offer the reviewed-update entry points (the row Update button and the fleet
 // "Check updates" probe) for this app. Updating is an inherent Core operation, not something an app
 // grants: Core authorizes it on the admin session and refuses it for exactly one reason — a live

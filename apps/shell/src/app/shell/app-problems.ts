@@ -1,0 +1,62 @@
+import type { AppProblem, CoreApp } from "./types";
+
+// Kept a leaf module — types only, no runtime imports — so it stays directly testable under
+// `node --test`, which cannot resolve the extensionless specifiers app-helpers reaches for.
+
+// Whether the app has a required setting we can see is unset. Non-secret only: the API never surfaces
+// secret values, so a required secret can't be judged here — Core is the authoritative gate that refuses
+// the start (app_required_settings_missing).
+export function appHasMissingRequiredSettings(app: CoreApp) {
+  return (app.settings ?? []).some(
+    (setting) => setting.required && !setting.secret && (setting.value ?? "").trim().length === 0,
+  );
+}
+
+// Every problem derivable from the app record alone. The collapsed row's icons and the panel's alert list
+// both render from this one call, so what the row warns about and what the panel explains can never drift
+// apart — before this they were computed independently in two places.
+//
+// Deliberately excludes anything that needs a probe: health failures, digest drift, and an unreachable
+// registry are unknown until a row is expanded, so they cannot honestly drive a collapsed-row icon. Those
+// stay next to the data they describe, rendered with the same Alert for a consistent look.
+export function collectAppProblems(app: CoreApp): AppProblem[] {
+  const problems: AppProblem[] = [];
+
+  if (app.lastError) {
+    problems.push({ severity: "error", title: "Last operation failed", detail: app.lastError });
+  }
+
+  const unavailable = (app.endpoints ?? []).filter((endpoint) => endpoint.availability === "unavailable");
+  if (unavailable.length > 0) {
+    const names = unavailable.map((endpoint) => (endpoint.service ? `${endpoint.service}.${endpoint.key}` : endpoint.key));
+    problems.push({
+      severity: "error",
+      title: unavailable.length === 1 ? "A reserved host port failed to bind" : `${unavailable.length} reserved host ports failed to bind`,
+      detail: `${names.join(", ")} — something else on this host is holding the port. Reassign it from the endpoint below, or free the port and restart the app.`,
+    });
+  }
+
+  // Only worth raising while the app is stopped: a running app already got past this, and Core does not
+  // re-validate settings mid-run.
+  if (app.runtimeState !== "running" && appHasMissingRequiredSettings(app)) {
+    problems.push({
+      severity: "warning",
+      title: "Required settings have no value",
+      detail: "This app cannot start until every required setting is filled in.",
+    });
+  }
+
+  if (app.manifestError) {
+    problems.push({
+      severity: "warning",
+      title: "The live manifest was rejected at last start",
+      detail: `Core kept the previous manifest running: ${app.manifestError}`,
+    });
+  }
+
+  // A failed update check is deliberately absent: it already has its own marker beside the row's update
+  // affordance, gated on the app actually supporting reviewed updates. Repeating it here would report the
+  // same problem twice, and would report it for live-source apps that have no update path at all.
+
+  return problems;
+}

@@ -1,13 +1,14 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Check, Copy } from "lucide-react";
+import { Check, CircleAlert, Copy, TriangleAlert } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import type { AlertSeverity } from "./types";
 
 export function PageHeader({ title, description, actions }: { title: string; description?: string; actions?: ReactNode }) {
   return (
@@ -40,6 +41,30 @@ export function CheckboxRow({ label, checked, disabled, onChange }: { label: str
 
 export function InlineError({ message }: { message: string }) {
   return <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{message}</div>;
+}
+
+// One shape for every "something is wrong here" block, so a failed start, an unbound port, and a stale
+// manifest do not each invent their own box. `error` means the app is broken; `warning` means it needs
+// attention but may still work. The detail keeps the title's colour rather than muted-foreground, which
+// washes out against the tinted background.
+export function Alert({ severity, title, detail }: { severity: AlertSeverity; title: string; detail?: string }) {
+  const Icon = severity === "error" ? CircleAlert : TriangleAlert;
+  return (
+    <div
+      className={cn(
+        "flex items-start gap-2 rounded-md border px-3 py-2 text-xs",
+        severity === "error"
+          ? "border-destructive/30 bg-destructive/10 text-destructive"
+          : "border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-200",
+      )}
+    >
+      <Icon className="mt-0.5 h-4 w-4 shrink-0" />
+      <div className="min-w-0 space-y-0.5">
+        <div className="font-medium">{title}</div>
+        {detail && <div className="break-words opacity-90">{detail}</div>}
+      </div>
+    </div>
+  );
 }
 
 export function EmptyState({ icon: Icon, title, description, iconClassName }: { icon: LucideIcon; title: string; description?: string; iconClassName?: string }) {

@@ -26,7 +26,6 @@ import {
   Terminal,
   Trash2,
   TriangleAlert,
-  Unplug,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -42,7 +41,6 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import {
-  appHasMissingRequiredSettings,
   appSupportsReviewedUpdate,
   buildRuntimeServiceRows,
   formatRuntimeProfileLabel,
@@ -52,12 +50,15 @@ import {
   resolveAssetSrc,
   shortDigest,
 } from "../app-helpers";
+import { collectAppProblems } from "../app-problems";
 import { AppIcon } from "../app-icon";
 import { copyTextToClipboard } from "../clipboard";
 import { isAuthRequiredRedirectError, readCoreError, redirectToCoreLoginIfAuthRequired } from "../core-api";
 import type {
+  AlertSeverity,
   AppAction,
   AppHealthResponse,
+  AppProblem,
   AppUpdateCheckStatus,
   AppUpdateStatusResponse,
   CoreApp,
@@ -66,7 +67,7 @@ import type {
   RuntimeHealthState,
   UpdateStatusState,
 } from "../types";
-import { EmptyState, IconButton, PageHeader, StatusBadge } from "../ui";
+import { Alert, EmptyState, IconButton, PageHeader, StatusBadge } from "../ui";
 import { EndpointAvailabilityMarker, PortReassignControl } from "./port-reassign-control";
 import { CloudflarePublishControl } from "./cloudflare-publish-control";
 
@@ -415,8 +416,15 @@ function AppServiceDetailsPanel({
   const showsPolicyBadge = hasImageInfo && showsUpdatePolicy;
   const healthLoading = healthState?.loading ?? false;
 
+  // The same derivation the collapsed row's icons use, so expanding an app explains exactly the problems
+  // its icons warned about — no more, no less.
+  const problems = collectAppProblems(app);
+
   return (
     <div className="space-y-2 rounded-md border bg-background p-3">
+      {problems.map((problem) => (
+        <Alert key={problem.title} severity={problem.severity} title={problem.title} detail={problem.detail} />
+      ))}
       {app.live && (
         <div className="space-y-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-xs">
           <div className="flex items-center gap-1.5 font-medium text-emerald-700 dark:text-emerald-300">
@@ -426,12 +434,8 @@ function AppServiceDetailsPanel({
           <p className="text-muted-foreground">
             Core runs this app from your source folder and adopts manifest edits on restart — there is no reviewed update. Switch to a compiled runtime for locked, reviewed updates.
           </p>
-          {app.manifestError && (
-            <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-amber-900 dark:text-amber-200">
-              <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              <span>Last start kept the previous manifest because the folder manifest was invalid: {app.manifestError}</span>
-            </div>
-          )}
+          {/* The manifest error is raised as a top-level alert (and a row icon) instead, so it is not
+              repeated here. */}
           {app.liveChanges && app.liveChanges.length > 0 && (
             <div className="text-muted-foreground">
               <span className="text-[11px] uppercase tracking-wide">Adopted at last start</span>
@@ -459,11 +463,9 @@ function AppServiceDetailsPanel({
           check they asked for — including one that failed after they closed the toast, or a
           re-read that went stale-quiet after a runtime switch. */}
       {updateStatusState?.error && (
-        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
-          Update check failed: {updateStatusState.error}
-        </div>
+        <Alert severity="warning" title="Digest check failed" detail={updateStatusState.error} />
       )}
-      {healthState?.error && <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">{healthState.error}</div>}
+      {healthState?.error && <Alert severity="warning" title="Service health is unavailable" detail={healthState.error} />}
 
       {serviceRows.length === 0 ? (
         <div className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">No services reported</div>
@@ -930,10 +932,9 @@ function InstalledAppRow({
   );
   const isBusy = (action: string) => busyAction === `${app.id}:${action}`;
   const autostartEnabled = isAppAutostartEnabled(app);
-  const needsRequiredSettings = !running && appHasMissingRequiredSettings(app);
-  // A reserved host port that failed to bind is surfaced on the collapsed row so an operator sees it
-  // without expanding services; the details panel shows which endpoint (EndpointAvailabilityMarker).
-  const hasUnavailableEndpoint = (app.endpoints ?? []).some((endpoint) => endpoint.availability === "unavailable");
+  // Same call the details panel makes, so the row's icons and the panel's alerts always describe the
+  // same set of problems.
+  const problems = collectAppProblems(app);
 
   return (
     <TableRow data-testid={`app-row-${app.id}`}>
@@ -963,17 +964,7 @@ function InstalledAppRow({
               <span className="truncate font-medium">{app.displayName}</span>
               {app.system && <Badge variant="secondary">System</Badge>}
               {isShell && <Badge variant="outline">Shell</Badge>}
-              {needsRequiredSettings && (
-                <span title="Configure required settings before starting" className="inline-flex shrink-0">
-                  <TriangleAlert className="h-4 w-4 text-amber-500" aria-label="Configure required settings before starting" />
-                </span>
-              )}
-              {app.lastError && <CircleAlert className="h-4 w-4 text-destructive" />}
-              {hasUnavailableEndpoint && (
-                <span title="A reserved host port failed to bind — expand the app to reassign or free it" className="inline-flex shrink-0">
-                  <Unplug className="h-4 w-4 text-destructive" aria-label="A reserved host port is unavailable" />
-                </span>
-              )}
+              <AppProblemIcons problems={problems} />
             </div>
             <div className="truncate text-xs text-muted-foreground">{app.id}</div>
           </div>
@@ -1083,6 +1074,37 @@ function InstalledAppRow({
         </div>
       </TableCell>
     </TableRow>
+  );
+}
+
+// At most two icons — one per severity, worst first — rather than one glyph per problem type. A distinct
+// glyph reads better at a glance, but does not scale: an app with a failed start, an unbound port, and
+// missing settings would carry three icons and stop being scannable. The tooltip carries the specifics,
+// and the panel's alerts carry the full explanation.
+function AppProblemIcons({ problems }: { problems: AppProblem[] }) {
+  const errors = problems.filter((problem) => problem.severity === "error");
+  const warnings = problems.filter((problem) => problem.severity === "warning");
+
+  return (
+    <>
+      {errors.length > 0 && <AppProblemIcon severity="error" problems={errors} />}
+      {warnings.length > 0 && <AppProblemIcon severity="warning" problems={warnings} />}
+    </>
+  );
+}
+
+function AppProblemIcon({ severity, problems }: { severity: AlertSeverity; problems: AppProblem[] }) {
+  const Icon = severity === "error" ? CircleAlert : TriangleAlert;
+  const label = severity === "error"
+    ? `${problems.length} problem${problems.length === 1 ? "" : "s"} stopping this app`
+    : `${problems.length} problem${problems.length === 1 ? "" : "s"} needing attention`;
+  // Titles alone: the details belong in the panel, and a multi-paragraph tooltip is unreadable.
+  const summary = problems.map((problem) => problem.title).join("\n");
+
+  return (
+    <span title={`${label}:\n${summary}`} className="inline-flex shrink-0">
+      <Icon className={cn("h-4 w-4", severity === "error" ? "text-destructive" : "text-amber-500")} aria-label={label} />
+    </span>
   );
 }
 
