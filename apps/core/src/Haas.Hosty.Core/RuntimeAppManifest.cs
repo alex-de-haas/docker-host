@@ -19,7 +19,26 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
     // HOSTY_MOUNT_{KEY} env names and `/mnt/{key}/...` container paths, not lowercase contract keys.
     private static readonly Regex ExternalMountKeyPattern = new("^[A-Za-z][A-Za-z0-9_-]{0,62}$", RegexOptions.Compiled);
     private static readonly Regex AppIdPattern = new("^[a-z0-9][a-z0-9._-]{0,62}$", RegexOptions.Compiled);
-    private readonly HttpClient httpClient = httpClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+    private readonly HttpClient httpClient = httpClient ?? CreateDefaultHttpClient();
+
+    // The one place the manifest/asset fetch client is configured, so the composition root and the
+    // no-client fallback cannot drift apart on it.
+    //
+    // AllowAutoRedirect = false is load-bearing: display assets are fetched relative to the manifest
+    // URL and required to stay under its folder, but a 302 would carry that fetch onto any other host
+    // — loopback, 169.254.169.254, an internal service — and the bytes then surface through the app
+    // asset endpoint. Refusing redirects makes the containment check hold all the way to the socket.
+    // Unlike the feed client this deliberately does not reject private-IP hosts: installing from an
+    // operator's own http://localhost manifest is a supported direct-install flow.
+    public static HttpClient CreateDefaultHttpClient()
+        => new(new SocketsHttpHandler
+        {
+            AllowAutoRedirect = false,
+            PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+        })
+        {
+            Timeout = TimeSpan.FromSeconds(20),
+        };
 
     public async Task<RuntimeAppManifestSelection> LoadAsync(
         string manifestPath,
@@ -218,6 +237,14 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
             return null;
         }
 
+        // Containment above is lexical. A source tree that ships `icon.png` as a symlink — or puts the
+        // asset behind a symlinked directory — would otherwise have Core read whatever it points at
+        // (Core's own auth state, another app's data) and republish it through the asset endpoint.
+        if (CoreDataPaths.ContainsSymbolicLink(baseDir, fullPath))
+        {
+            return null;
+        }
+
         var info = new FileInfo(fullPath);
         if (info.Length > cap)
         {
@@ -294,7 +321,12 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
 
     private static void WriteVendoredAsset(string appRoot, string rootRel, byte[] bytes)
     {
-        if (!CoreDataPaths.TryResolveContainedRelativePath(appRoot, rootRel, out var dest))
+        // Containment alone puts the whole app root in reach, including the namespaces the runtime
+        // owns. A manifest declaring `icon: "data/config.png"` or a markdown image ref of
+        // `logs/web.log.png` would otherwise let display-asset vendoring overwrite app data, runtime
+        // logs, or the internal manifest copy with attacker-chosen bytes.
+        if (CoreDataPaths.IsReservedAppRootPath(rootRel) ||
+            !CoreDataPaths.TryResolveContainedRelativePath(appRoot, rootRel, out var dest))
         {
             return;
         }

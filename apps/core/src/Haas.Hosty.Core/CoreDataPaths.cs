@@ -114,6 +114,73 @@ internal sealed record CoreDataPaths(
         return parts.Count == 0 ? null : string.Join('/', parts);
     }
 
+    // Namespaces under apps/<id> that Core and the runtime own. Display-asset vendoring resolves
+    // manifest-chosen relative paths against the whole app root, so without this an app-supplied
+    // asset reference could land on app data, runtime logs, or Core's own manifest copy.
+    private static readonly string[] ReservedAppRootDirectories = ["data", "logs", "run", "runtimes"];
+    private static readonly string[] ReservedAppRootFiles = ["manifest.json", "state.json"];
+
+    public static bool IsReservedAppRootPath(string? rootRelativePath)
+    {
+        if (string.IsNullOrWhiteSpace(rootRelativePath))
+        {
+            return true;
+        }
+
+        var separator = rootRelativePath.IndexOf('/');
+        var head = separator < 0 ? rootRelativePath : rootRelativePath[..separator];
+        // Both lists are checked against the head whatever its shape. Selecting a list by whether a
+        // separator is present leaves two gaps: a bare "data" (no separator, so only the file list is
+        // consulted) would be allowed to occupy the reserved directory name, and "manifest.json/x.png"
+        // (separator present, so only the directory list is consulted) would be allowed to write
+        // underneath a reserved file name.
+        //
+        // Compared case-insensitively regardless of host: a case-insensitive filesystem would let
+        // "Data/x.png" reach the same directory a case-sensitive comparison would wave through.
+        return ReservedAppRootFiles.Contains(head, StringComparer.OrdinalIgnoreCase) ||
+            ReservedAppRootDirectories.Contains(head, StringComparer.OrdinalIgnoreCase);
+    }
+
+    // True if any component of fullPath below root is a symbolic link. Callers that resolved a path
+    // lexically use this to fail closed before reading it: lexical containment says nothing about
+    // where a link inside the tree actually points. Errors count as "linked" so an unreadable or
+    // racing entry is refused rather than followed.
+    public static bool ContainsSymbolicLink(string root, string fullPath)
+    {
+        try
+        {
+            var boundary = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+            var current = Path.GetFullPath(fullPath);
+            var comparison = OperatingSystem.IsWindows()
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal;
+
+            while (!string.Equals(current, boundary, comparison))
+            {
+                FileSystemInfo info = Directory.Exists(current) ? new DirectoryInfo(current) : new FileInfo(current);
+                if (info.LinkTarget is not null)
+                {
+                    return true;
+                }
+
+                var parent = Path.GetDirectoryName(current);
+                if (string.IsNullOrEmpty(parent) || string.Equals(parent, current, comparison))
+                {
+                    // Walked past the root without meeting it: treat as out of bounds.
+                    return true;
+                }
+
+                current = parent;
+            }
+
+            return false;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return true;
+        }
+    }
+
     private static bool TryContain(string root, string relative, out string fullPath)
     {
         fullPath = string.Empty;

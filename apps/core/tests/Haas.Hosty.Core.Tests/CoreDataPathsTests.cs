@@ -5,6 +5,37 @@ namespace Haas.Hosty.Core.Tests;
 public sealed class CoreDataPathsTests
 {
     [Theory]
+    // Reserved directories, with and without a trailing path.
+    [InlineData("data")]
+    [InlineData("data/uploads/private.png")]
+    [InlineData("logs")]
+    [InlineData("run/state.png")]
+    [InlineData("runtimes/docker/img.png")]
+    // Case-insensitive: a case-insensitive filesystem reaches the same directory.
+    [InlineData("Data/uploads/private.png")]
+    // Reserved files, bare and as a path head. Selecting one list by whether a separator is present
+    // left both of these reachable: "data" was only checked against the file names, and
+    // "manifest.json/x.png" only against the directory names.
+    [InlineData("manifest.json")]
+    [InlineData("manifest.json/icon.png")]
+    [InlineData("state.json")]
+    [InlineData("state.json/icon.png")]
+    [InlineData("")]
+    [InlineData(null)]
+    public void IsReservedAppRootPath_RefusesRuntimeOwnedNamespaces(string? rootRelativePath)
+        => Assert.True(CoreDataPaths.IsReservedAppRootPath(rootRelativePath));
+
+    [Theory]
+    [InlineData("assets/icon.svg")]
+    [InlineData("docs/store.md")]
+    [InlineData("icon.png")]
+    // Only an exact head matches: a directory that merely starts with a reserved name is fine.
+    [InlineData("database/icon.png")]
+    [InlineData("logs-archive/icon.png")]
+    public void IsReservedAppRootPath_AllowsOrdinaryDisplayAssets(string rootRelativePath)
+        => Assert.False(CoreDataPaths.IsReservedAppRootPath(rootRelativePath));
+
+    [Theory]
     [InlineData("com.example.notes")]
     [InlineData("hosty.shell")]
     [InlineData("app_1-x")]

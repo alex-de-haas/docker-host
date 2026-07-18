@@ -1,3 +1,5 @@
+using System.Net;
+using System.Net.Sockets;
 using Haas.Hosty.Core;
 
 namespace Haas.Hosty.Core.Tests;
@@ -121,6 +123,177 @@ public sealed class AppAssetTests
         File.WriteAllText(Path.Combine(appsRoot, "secret.png"), "x");
 
         Assert.False(AppAssetEndpoints.TryResolveAsset(appsRoot, "com.example.notes", assetPath, out _, out _));
+    }
+
+    // --- Vendoring boundaries (C-M1) ------------------------------------------------------------
+
+    [Fact]
+    public async Task VendorDisplayAssets_SkipsAnAssetThatIsItselfASymlink()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        // The manifest folder is operator-supplied but its contents are not: a source tree can ship
+        // the icon as a link to something Core can read but must never republish.
+        var outside = NewTempDir();
+        var secretPath = Path.Combine(outside, "auth-state.json");
+        await File.WriteAllTextAsync(secretPath, "password-hash");
+
+        var source = NewTempDir();
+        Directory.CreateDirectory(Path.Combine(source, "assets"));
+        File.CreateSymbolicLink(Path.Combine(source, "assets", "icon.svg"), secretPath);
+        var manifestPath = await WriteManifestAsync(source, """
+            "icon": "assets/icon.svg"
+            """);
+
+        var appRoot = NewTempDir();
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+        await new AppManifestService().VendorDisplayAssetsAsync(selection, appRoot);
+
+        Assert.False(File.Exists(Path.Combine(appRoot, "assets", "icon.svg")));
+    }
+
+    [Fact]
+    public async Task VendorDisplayAssets_SkipsAnAssetBehindASymlinkedDirectory()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        // The final component is a real file, so a check that only resolves the leaf would pass it.
+        var outside = NewTempDir();
+        await File.WriteAllTextAsync(Path.Combine(outside, "icon.svg"), "<svg id='stolen'/>");
+
+        var source = NewTempDir();
+        Directory.CreateSymbolicLink(Path.Combine(source, "assets"), outside);
+        var manifestPath = await WriteManifestAsync(source, """
+            "icon": "assets/icon.svg"
+            """);
+
+        var appRoot = NewTempDir();
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+        await new AppManifestService().VendorDisplayAssetsAsync(selection, appRoot);
+
+        Assert.False(File.Exists(Path.Combine(appRoot, "assets", "icon.svg")));
+    }
+
+    [Theory]
+    [InlineData("data/icon.png", "data")]
+    [InlineData("logs/icon.png", "logs")]
+    [InlineData("run/icon.png", "run")]
+    [InlineData("runtimes/icon.png", "runtimes")]
+    // Case-insensitive: on a case-insensitive filesystem this reaches the same directory.
+    [InlineData("Data/icon.png", "Data")]
+    public async Task VendorDisplayAssets_RefusesToWriteIntoAReservedNamespace(string reference, string headDirectory)
+    {
+        var source = NewTempDir();
+        Directory.CreateDirectory(Path.Combine(source, headDirectory));
+        await File.WriteAllBytesAsync(Path.Combine(source, headDirectory, "icon.png"), [1, 2, 3]);
+        var manifestPath = await WriteManifestAsync(source, $$"""
+            "icon": "{{reference}}"
+            """);
+
+        var appRoot = NewTempDir();
+        // A pre-existing runtime file in that namespace must survive untouched.
+        Directory.CreateDirectory(Path.Combine(appRoot, headDirectory));
+        var occupied = Path.Combine(appRoot, headDirectory, "icon.png");
+        await File.WriteAllTextAsync(occupied, "runtime-owned");
+
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+        await new AppManifestService().VendorDisplayAssetsAsync(selection, appRoot);
+
+        Assert.Equal("runtime-owned", await File.ReadAllTextAsync(occupied));
+    }
+
+    [Fact]
+    public async Task VendorDisplayAssets_DoesNotFollowARedirectOffTheManifestHost()
+    {
+        // Exercises the real client the composition root uses, over a real socket: a custom
+        // HttpMessageHandler never auto-redirects, so stubbing one would prove nothing.
+        // The asset URI must sit under the manifest folder, but a 302 would carry the fetch
+        // anywhere; with redirects refused it is just a non-success status and the asset is skipped.
+        var (origin, port) = StartLoopbackListener();
+        using var listener = origin;
+
+        var followed = 0;
+        var serving = Task.Run(async () =>
+        {
+            while (listener.IsListening)
+            {
+                HttpListenerContext context;
+                try
+                {
+                    context = await listener.GetContextAsync();
+                }
+                catch (Exception ex) when (ex is HttpListenerException or ObjectDisposedException)
+                {
+                    return;
+                }
+
+                if (context.Request.Url!.AbsolutePath.EndsWith("/icon.svg", StringComparison.Ordinal))
+                {
+                    context.Response.StatusCode = 302;
+                    context.Response.RedirectLocation = $"http://127.0.0.1:{port}/internal/secret.svg";
+                }
+                else
+                {
+                    Interlocked.Increment(ref followed);
+                    var payload = "<svg id='internal'/>"u8.ToArray();
+                    await context.Response.OutputStream.WriteAsync(payload);
+                }
+
+                context.Response.Close();
+            }
+        });
+
+        var source = NewTempDir();
+        var manifestPath = await WriteManifestAsync(source, """
+            "icon": "assets/icon.svg"
+            """);
+        var appRoot = NewTempDir();
+        var service = new AppManifestService(AppManifestService.CreateDefaultHttpClient());
+        var selection = await service.LoadAsync(manifestPath) with
+        {
+            ManifestUrl = $"http://127.0.0.1:{port}/notes/manifest.json",
+        };
+
+        await service.VendorDisplayAssetsAsync(selection, appRoot);
+
+        listener.Stop();
+        await serving;
+
+        Assert.False(File.Exists(Path.Combine(appRoot, "assets", "icon.svg")));
+        Assert.Equal(0, followed);
+    }
+
+    // Probing a free port and then binding it is a race: another process can take the port in between.
+    // Retry the probe-and-start pair so the test only fails when the behaviour under test is wrong.
+    private static (HttpListener Listener, int Port) StartLoopbackListener()
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            int port;
+            using (var probe = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp))
+            {
+                probe.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+                port = ((IPEndPoint)probe.LocalEndPoint!).Port;
+            }
+
+            var listener = new HttpListener();
+            listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+            try
+            {
+                listener.Start();
+                return (listener, port);
+            }
+            catch (HttpListenerException) when (attempt < 10)
+            {
+                ((IDisposable)listener).Dispose();
+            }
+        }
     }
 
     // --- helpers --------------------------------------------------------------------------------

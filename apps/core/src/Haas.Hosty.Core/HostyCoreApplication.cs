@@ -50,7 +50,7 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<LocalPasswordAuthService>();
         builder.Services.AddSingleton<AuthBootstrapService>();
         builder.Services.AddSingleton<UserManagementService>();
-        builder.Services.AddSingleton(sp => new AppManifestService());
+        builder.Services.AddSingleton(sp => new AppManifestService(AppManifestService.CreateDefaultHttpClient()));
         // The feed document is untrusted lifecycle input fetched over http(s). Refuse auto-redirects
         // so a feed URL cannot bounce Core onto an internal host (SSRF); a 3xx surfaces as a non-success
         // status and fails the load. AppFeedService also rejects non-http(s)/credentialed URLs.
