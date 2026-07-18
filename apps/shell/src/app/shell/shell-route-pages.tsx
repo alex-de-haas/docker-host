@@ -51,8 +51,7 @@ export function ShellInstalledAppsRoute() {
     <AdminShellRoute>
       <InstalledAppsPage
         coreOrigin={shellActions.coreOrigin}
-        runtimeApps={shell.runtimeApps}
-        systemApps={shell.systemApps}
+        apps={shell.state.apps}
         shellAppId={shellActions.shellAppId}
         canManageApps={shell.canManageApps}
         loading={shell.state.loading}

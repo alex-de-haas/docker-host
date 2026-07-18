@@ -73,8 +73,7 @@ import { CloudflarePublishControl } from "./cloudflare-publish-control";
 
 export function InstalledAppsPage({
   coreOrigin,
-  runtimeApps,
-  systemApps,
+  apps,
   shellAppId,
   canManageApps,
   loading,
@@ -93,8 +92,9 @@ export function InstalledAppsPage({
   onOpenSharedMounts,
 }: {
   coreOrigin: string;
-  runtimeApps: CoreApp[];
-  systemApps: CoreApp[];
+  // Runtime and system apps together, in Core's id order: one list with one command set, where a
+  // system app is told apart by its badge — not by which table it sits in.
+  apps: CoreApp[];
   shellAppId: string;
   canManageApps: boolean;
   loading: boolean;
@@ -118,7 +118,7 @@ export function InstalledAppsPage({
   onOpenSharedMounts: () => void;
 }) {
   const isRefreshing = loading;
-  const hasAnyApps = runtimeApps.length > 0 || systemApps.length > 0;
+  const hasAnyApps = apps.length > 0;
 
   // Per-app per-service digest detail for the expanded row (GET /api/apps/{id}/update-status,
   // served from Core's cached plan). The row Update/Review affordances read the fleet-check verdict
@@ -129,12 +129,12 @@ export function InstalledAppsPage({
   const statusRequestedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    const appIds = new Set([...runtimeApps, ...systemApps].map((app) => app.id));
+    const appIds = new Set(apps.map((app) => app.id));
     setUpdateStatusByApp((current) => {
       const entries = Object.entries(current).filter(([appId]) => appIds.has(appId));
       return entries.length === Object.keys(current).length ? current : Object.fromEntries(entries);
     });
-  }, [runtimeApps, systemApps]);
+  }, [apps]);
 
   // Returns both halves so a caller can tell a real failure from an auth redirect: the latter yields
   // no status *and* no error, because the page is already navigating to the login screen and has
@@ -187,7 +187,7 @@ export function InstalledAppsPage({
   // mounted are acted on.
   const probedInvalidationsRef = useRef<Record<string, number>>({ ...updateStatusInvalidations });
   useEffect(() => {
-    const appsById = new Map<string, CoreApp>([...runtimeApps, ...systemApps].map((app) => [app.id, app]));
+    const appsById = new Map<string, CoreApp>(apps.map((app) => [app.id, app]));
     for (const [appId, nonce] of Object.entries(updateStatusInvalidations)) {
       if (probedInvalidationsRef.current[appId] === nonce) {
         continue;
@@ -199,7 +199,7 @@ export function InstalledAppsPage({
       }
       void loadUpdateStatus(app);
     }
-  }, [updateStatusInvalidations, runtimeApps, systemApps, loadUpdateStatus]);
+  }, [updateStatusInvalidations, apps, loadUpdateStatus]);
 
   // Explicit per-app check from the row's actions menu: rebuilds this app's plan on Core
   // (?refresh=true), which both fills the expanded panel's per-service digests and refreshes Core's
@@ -233,12 +233,11 @@ export function InstalledAppsPage({
       return;
     }
 
-    const allApps = [...runtimeApps, ...systemApps];
-    const available = allApps.filter((app) => app.updateCheck?.updateAvailable).length;
-    const failed = allApps.filter((app) => app.updateCheck?.error).length;
+    const available = apps.filter((app) => app.updateCheck?.updateAvailable).length;
+    const failed = apps.filter((app) => app.updateCheck?.error).length;
     const failedNote = failed > 0 ? `${failed} app${failed === 1 ? "" : "s"} could not be checked.` : undefined;
     if (available > 0) {
-      const review = allApps.filter((app) => app.updateCheck?.updateAvailable && app.updateCheck.requiresReview).length;
+      const review = apps.filter((app) => app.updateCheck?.updateAvailable && app.updateCheck.requiresReview).length;
       const reviewNote = review > 0 ? `${review} need${review === 1 ? "s" : ""} review.` : undefined;
       toast.success(`${available} update${available === 1 ? "" : "s"} available`, {
         description: [reviewNote, failedNote].filter(Boolean).join(" ") || undefined,
@@ -248,12 +247,12 @@ export function InstalledAppsPage({
     } else {
       toast.success("All apps up to date");
     }
-  }, [checkingUpdates, runtimeApps, systemApps]);
+  }, [checkingUpdates, apps]);
 
   // Routine verdicts the header "Update all" would apply (review-class ones stay on their rows).
   // Mirrors updateAllApps' own filter — including the planDigest requirement, so N never counts an
   // app the action could not actually enqueue.
-  const routineUpdateCount = [...runtimeApps, ...systemApps].filter(
+  const routineUpdateCount = apps.filter(
     (app) =>
       app.updateCheck?.updateAvailable === true &&
       app.updateCheck.requiresReview !== true &&
@@ -265,7 +264,7 @@ export function InstalledAppsPage({
     <div className="space-y-6">
       <PageHeader
         title="Installed Apps"
-        description="App state is resolved through the Core backend API and runtime state."
+        description="Runtime and system apps on this host, in one list — system apps carry a badge. App state is resolved through the Core backend API and runtime state."
         actions={(
           <>
             <Button variant="outline" size="icon" onClick={onRefresh} disabled={isRefreshing} aria-label="Refresh apps">
@@ -310,44 +309,20 @@ export function InstalledAppsPage({
       ) : !hasAnyApps ? (
         <EmptyState icon={Boxes} title="No installed apps" description="Install a runtime app to make it available in the shell." />
       ) : (
-        <div className="space-y-6">
-          <InstalledAppTableSection
-            coreOrigin={coreOrigin}
-            title="Runtime Apps"
-            description="User-installed runtime apps and their lifecycle state."
-            emptyTitle="No runtime apps installed"
-            emptyDescription="Install a runtime app to make it available in the shell."
-            apps={runtimeApps}
-            shellAppId={shellAppId}
-            canManageApps={canManageApps}
-            busyAction={busyAction}
-            updateStatusByApp={updateStatusByApp}
-            onAction={onAction}
-            onSwitchRuntime={onSwitchRuntime}
-            onSetDevelopmentMode={onSetDevelopmentMode}
-            onUpdateApp={onUpdateApp}
-            onCheckUpdate={(target) => void checkAppUpdate(target)}
-            onOpenPanel={onOpenPanel}
-          />
-          <InstalledAppTableSection
-            coreOrigin={coreOrigin}
-            title="System Apps"
-            description="Core-managed Shell and platform runtime apps. Runtime switching and inspection are available to administrators."
-            emptyTitle="No system apps registered"
-            emptyDescription="Core has not registered a system app yet."
-            apps={systemApps}
-            shellAppId={shellAppId}
-            canManageApps={canManageApps}
-            busyAction={busyAction}
-            updateStatusByApp={updateStatusByApp}
-            onAction={onAction}
-            onSwitchRuntime={onSwitchRuntime}
-            onSetDevelopmentMode={onSetDevelopmentMode}
-            onUpdateApp={onUpdateApp}
-            onCheckUpdate={(target) => void checkAppUpdate(target)}
-            onOpenPanel={onOpenPanel}
-          />
-        </div>
+        <InstalledAppsTable
+          coreOrigin={coreOrigin}
+          apps={apps}
+          shellAppId={shellAppId}
+          canManageApps={canManageApps}
+          busyAction={busyAction}
+          updateStatusByApp={updateStatusByApp}
+          onAction={onAction}
+          onSwitchRuntime={onSwitchRuntime}
+          onSetDevelopmentMode={onSetDevelopmentMode}
+          onUpdateApp={onUpdateApp}
+          onCheckUpdate={(target) => void checkAppUpdate(target)}
+          onOpenPanel={onOpenPanel}
+        />
       )}
     </div>
   );
@@ -672,12 +647,8 @@ function EndpointUrlBlock({
   );
 }
 
-function InstalledAppTableSection({
+function InstalledAppsTable({
   coreOrigin,
-  title,
-  description,
-  emptyTitle,
-  emptyDescription,
   apps,
   shellAppId,
   canManageApps,
@@ -691,10 +662,6 @@ function InstalledAppTableSection({
   onOpenPanel,
 }: {
   coreOrigin: string;
-  title: string;
-  description: string;
-  emptyTitle: string;
-  emptyDescription: string;
   apps: CoreApp[];
   shellAppId: string;
   canManageApps: boolean;
@@ -785,75 +752,62 @@ function InstalledAppTableSection({
   };
 
   return (
-    <section className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="text-base font-semibold">{title}</h2>
-          <p className="text-sm text-muted-foreground">{description}</p>
-        </div>
-        <Badge variant="outline">{apps.length}</Badge>
-      </div>
-      {apps.length === 0 ? (
-        <EmptyState icon={Boxes} title={emptyTitle} description={emptyDescription} />
-      ) : (
-        <div className="rounded-lg border bg-card">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="min-w-[240px]">App</TableHead>
-                <TableHead>Runtime</TableHead>
-                <TableHead>Version</TableHead>
-                <TableHead>Autostart</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {apps.map((app) => {
-                const expanded = expandedAppIds.has(app.id);
-                const healthState = healthByApp[app.id];
-                const updateStatusState = updateStatusByApp[app.id];
+    <div className="rounded-lg border bg-card">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead className="min-w-[240px]">App</TableHead>
+            <TableHead>Runtime</TableHead>
+            <TableHead>Version</TableHead>
+            <TableHead>Autostart</TableHead>
+            <TableHead>Status</TableHead>
+            <TableHead className="text-right">Actions</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {apps.map((app) => {
+            const expanded = expandedAppIds.has(app.id);
+            const healthState = healthByApp[app.id];
+            const updateStatusState = updateStatusByApp[app.id];
 
-                return (
-                  <Fragment key={app.id}>
-                    <InstalledAppRow
-                      app={app}
-                      coreOrigin={coreOrigin}
-                      isShell={app.id === shellAppId}
-                      expanded={expanded}
-                      healthLoading={healthState?.loading ?? false}
-                      canManageApps={canManageApps}
-                      busyAction={busyAction}
-                      checkingUpdate={updateStatusState?.loading ?? false}
-                      onToggleExpanded={() => toggleAppExpanded(app)}
-                      onAction={onAction}
-                      onSwitchRuntime={onSwitchRuntime}
-                      onSetDevelopmentMode={onSetDevelopmentMode}
-                      onUpdateApp={onUpdateApp}
-                      onCheckUpdate={onCheckUpdate}
-                      onOpenPanel={onOpenPanel}
-                    />
-                    {expanded && (
-                      <TableRow>
-                        <TableCell colSpan={6} className="bg-muted/20 px-4 py-3">
-                          <AppServiceDetailsPanel
-                            app={app}
-                            healthState={healthState}
-                            updateStatusState={updateStatusState}
-                            canConfigurePublicOrigins={canManageApps}
-                            onConfigurePublicOrigins={() => onOpenPanel(app, "settings", { settingsTab: "publicOrigins" })}
-                          />
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </Fragment>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </div>
-      )}
-    </section>
+            return (
+              <Fragment key={app.id}>
+                <InstalledAppRow
+                  app={app}
+                  coreOrigin={coreOrigin}
+                  isShell={app.id === shellAppId}
+                  expanded={expanded}
+                  healthLoading={healthState?.loading ?? false}
+                  canManageApps={canManageApps}
+                  busyAction={busyAction}
+                  checkingUpdate={updateStatusState?.loading ?? false}
+                  onToggleExpanded={() => toggleAppExpanded(app)}
+                  onAction={onAction}
+                  onSwitchRuntime={onSwitchRuntime}
+                  onSetDevelopmentMode={onSetDevelopmentMode}
+                  onUpdateApp={onUpdateApp}
+                  onCheckUpdate={onCheckUpdate}
+                  onOpenPanel={onOpenPanel}
+                />
+                {expanded && (
+                  <TableRow>
+                    <TableCell colSpan={6} className="bg-muted/20 px-4 py-3">
+                      <AppServiceDetailsPanel
+                        app={app}
+                        healthState={healthState}
+                        updateStatusState={updateStatusState}
+                        canConfigurePublicOrigins={canManageApps}
+                        onConfigurePublicOrigins={() => onOpenPanel(app, "settings", { settingsTab: "publicOrigins" })}
+                      />
+                    </TableCell>
+                  </TableRow>
+                )}
+              </Fragment>
+            );
+          })}
+        </TableBody>
+      </Table>
+    </div>
   );
 }
 
@@ -891,20 +845,20 @@ function InstalledAppRow({
   onOpenPanel: OpenAppPanel;
 }) {
   const running = app.runtimeState === "running";
-  const canControl = canManageApps && !app.system;
+  // Lifecycle (start/stop/restart) is not system-gated: Core's endpoints never were, reviewed updates
+  // already cycle system apps, and a stopped one recovers from this page or the CLI. Stopping or
+  // restarting the Shell itself takes this UI down with it, so the action handler confirms that case.
+  const canControl = canManageApps;
   const canSwitchRuntime = canManageApps;
   // `backup` and `logs` are the only genuine capability gates left: unlike the lifecycle verbs, they
   // are optional *features* that depend on the app itself (does it have data worth snapshotting?),
   // which is why Core's canonical vocabulary is now just those two. Restore lives inside this panel.
   const canBackup = canControl && app.capabilities.includes("backup");
-  // Settings (env/public origins/mounts/source) are available for system apps too; only start/stop,
-  // backups, and remove stay gated on !app.system via canControl.
   const canConfigure = canManageApps;
   // Live source runtimes have no reviewed-update path (the manifest is adopted on restart), so the
   // Update affordance is hidden and the live-source status icon is shown instead — that live check is
-  // all appSupportsReviewedUpdate does. Deliberately not gated on !app.system: system apps go through
-  // the same reviewed plan/apply flow as every other runtime app (docs/ideas/system-app-updates.md);
-  // only start/stop, backups, and remove stay system-gated via canControl.
+  // all appSupportsReviewedUpdate does. System apps go through the same reviewed plan/apply flow as
+  // every other runtime app (docs/ideas/system-app-updates.md).
   const canUpdate = canManageApps && appSupportsReviewedUpdate(app);
   // The row's update affordance renders from the fleet-check verdict on the app summary (plan-first
   // updates), as one icon among the other row actions: blue applies the cached plan straight away,
@@ -919,8 +873,9 @@ function InstalledAppRow({
   const needsReview = Boolean(verdict?.requiresReview || !verdict?.planDigest);
   // Removal, like start/stop/restart/update, is an inherent Core operation: the endpoint authorizes on
   // the admin session, never on the manifest `capabilities` list, so an app cannot decline to be
-  // uninstalled by omitting a token. canControl already keeps system apps out.
-  const canRemove = canControl;
+  // uninstalled by omitting a token. It is the one verb that stays system-gated — Core rejects removing
+  // a system app anywhere but the local control plane (hosty CLI), so the menu item would only 403.
+  const canRemove = canManageApps && !app.system;
   // Development Mode is a per-source-runtime toggle (localCommand + Core reports developmentMode).
   // Surface it in the actions menu only for the *selected* source runtime, so an operator can flip
   // live/reviewed without opening Settings → Source. See runtime-artifact-model.md.

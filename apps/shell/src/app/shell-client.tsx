@@ -252,7 +252,9 @@ export function ShellClient({
         loading: false,
         error: null,
         status,
-        apps: apps.apps,
+        // The cast above cannot catch a Core that answers without an `apps` field, and every
+        // consumer of state.apps assumes an array — normalize once here rather than in each page.
+        apps: apps.apps ?? [],
         session,
         updatedAt: new Date().toISOString(),
         updateCheck: apps.updateCheck ?? null,
@@ -533,12 +535,43 @@ export function ShellClient({
 
   const runAppAction = useCallback(
     async (app: CoreApp, action: AppAction) => {
+      // Stopping or restarting the Shell acts on the app serving this very UI. The already-loaded
+      // page keeps working against Core either way (its Start button included), but new page loads
+      // fail while the Shell is down — name the blast radius and get an explicit go-ahead first.
+      if (app.id === shellAppId && (action === "stop" || action === "restart")) {
+        const confirmed = window.confirm(
+          action === "stop"
+            ? "Stop the Shell? Loading this UI in a new tab or reload will fail until it is started again — from this already-open page, `hosty apps start`, or a Core restart."
+            : "Restart the Shell? This page reloads once the Shell answers again.",
+        );
+        if (!confirmed) {
+          return;
+        }
+      }
+
       const actionKey = `${app.id}:${action}`;
       setBusyAction(actionKey);
       setState((current) => ({ ...current, error: null }));
       try {
         const endpoint = action === "backup" ? appEndpoint(app, "/backups") : appEndpoint(app, `/${action}`);
         await sendCsrfJson(endpoint, action === "backup" ? { reason: "manual" } : {});
+
+        // Shell self-restart: as with a self-update, the old bundle keeps working against Core, but
+        // reconnect the browser to the fresh Shell once it answers instead of leaving a page whose
+        // next navigation would land on a half-restarted server.
+        if (app.id === shellAppId && action === "restart") {
+          toast.success("Shell restarting", { description: "Waiting for the Shell, then reloading this page…" });
+          void refresh();
+          if (await waitForOwnOrigin()) {
+            window.location.reload();
+          } else {
+            toast.warning("Shell is not answering yet", {
+              description: "Keep this tab open and reload manually once the Shell is reachable again.",
+            });
+          }
+          return;
+        }
+
         await refresh();
         toast.success(`${app.displayName}: ${action} complete`);
       } catch (error) {
@@ -553,7 +586,7 @@ export function ShellClient({
         setBusyAction((current) => (current === actionKey ? null : current));
       }
     },
-    [appEndpoint, refresh, sendCsrfJson],
+    [appEndpoint, refresh, sendCsrfJson, shellAppId],
   );
 
   const switchAppRuntime = useCallback(
@@ -1719,9 +1752,7 @@ export function ShellClient({
     () => ({
       state,
       runtimeApps,
-      systemApps,
       uiRuntimeApps,
-      uiSystemApps,
       activeUser,
       canManageApps: Boolean(canManageApps),
       busyAction,
@@ -1733,9 +1764,7 @@ export function ShellClient({
       canManageApps,
       state,
       runtimeApps,
-      systemApps,
       uiRuntimeApps,
-      uiSystemApps,
       updateStatusInvalidations,
     ],
   );
