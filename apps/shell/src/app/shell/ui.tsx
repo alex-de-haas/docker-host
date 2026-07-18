@@ -58,7 +58,9 @@ export function Alert({ severity, title, detail }: { severity: AlertSeverity; ti
           : "border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-200",
       )}
     >
-      <Icon className="mt-0.5 h-4 w-4 shrink-0" />
+      {/* Decorative: the title and detail already carry the meaning, and the severity is conveyed by them
+          rather than by the glyph. Announcing it would just prepend a meaningless "graphic". */}
+      <Icon className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
       <div className="min-w-0 space-y-0.5">
         <div className="font-medium">{title}</div>
         {detail && <div className="break-words opacity-90">{detail}</div>}
