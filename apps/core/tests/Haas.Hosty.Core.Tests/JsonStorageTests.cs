@@ -52,6 +52,31 @@ public sealed class JsonStorageTests
             File.GetUnixFileMode(Path.Combine(root, "auth")));
     }
 
+    [Fact]
+    public async Task WriteOwnerFileAsync_RestrictsTheFileButLeavesTheDirectoryTraversable()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        // App state sits next to the bind-mounted data/ directory, so locking the containing
+        // directory would cut off a container running as another uid.
+        var root = Path.Combine(Path.GetTempPath(), $"hosty-core-json-tests-{Guid.NewGuid():N}");
+        var directory = Path.Combine(root, "com.example.notes");
+        var path = Path.Combine(directory, "state.json");
+
+        // Compared against a plainly created sibling rather than a literal mode, so the assertion
+        // holds whatever umask the test host runs under.
+        var reference = Path.Combine(root, "reference");
+        Directory.CreateDirectory(reference);
+
+        await JsonStorage.WriteOwnerFileAsync(path, CreateSampleRecord(1, "secret"));
+
+        Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(path));
+        Assert.Equal(File.GetUnixFileMode(reference), File.GetUnixFileMode(directory));
+    }
+
     // Uses a production storage type registered in CoreJsonSerializerContext so the storage
     // round-trip exercises the same source-generated path that Native AOT requires.
     private static AuditRecord CreateSampleRecord(int index, string payload) => new(

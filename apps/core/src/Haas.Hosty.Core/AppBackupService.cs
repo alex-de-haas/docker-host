@@ -34,16 +34,22 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock)
             return null;
         }
 
+        // A backup archive is a complete copy of the app's data, so the whole tree is owner-only:
+        // the directory (nothing bind-mounts it) and every archive and metadata file inside it.
         var backupRoot = GetBackupRoot(appId);
-        Directory.CreateDirectory(backupRoot);
+        SecureFileSystem.EnsurePrivateDirectory(backupRoot);
         // A short random suffix keeps the id unique even when two backups are requested in the
         // same millisecond (more likely now that apps can trigger backups programmatically),
-        // so the CreateNew-based ZipFile.CreateFromDirectory below never collides.
+        // so the CreateNew-based archive creation below never collides.
         var backupId = $"{clock.UtcNow:yyyyMMddHHmmssfff}_{reason}_{Convert.ToHexString(RandomNumberGenerator.GetBytes(4)).ToLowerInvariant()}";
         var archivePath = Path.Combine(backupRoot, $"{backupId}.zip");
         var metadataPath = Path.Combine(backupRoot, $"{backupId}.json");
 
-        ZipFile.CreateFromDirectory(dataPath, archivePath, CompressionLevel.Optimal, includeBaseDirectory: false);
+        await using (var archiveStream = SecureFileSystem.CreatePrivateFile(archivePath, FileMode.CreateNew))
+        {
+            ZipFile.CreateFromDirectory(dataPath, archiveStream, CompressionLevel.Optimal, includeBaseDirectory: false);
+        }
+
         var archiveInfo = new FileInfo(archivePath);
         var record = new AppBackupRecord(
             AppId: appId,
@@ -57,7 +63,7 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock)
             FileCount: Directory.EnumerateFiles(dataPath, "*", SearchOption.AllDirectories).Count(),
             Note: note,
             Retention: null);
-        await JsonStorage.WriteAsync(metadataPath, record, cancellationToken);
+        await JsonStorage.WriteAsync(metadataPath, record, restrictToOwner: true, cancellationToken);
 
         if (IsRetentionManagedReason(reason))
         {

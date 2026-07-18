@@ -116,7 +116,8 @@ internal sealed class AppRegistryStore(CoreDataPaths paths)
             InstalledAt = app.InstalledAt == default ? now : app.InstalledAt,
         };
         var document = new AppStateDocument(1, normalized);
-        await JsonStorage.WriteAsync(GetAppStatePath(app.Id), document, cancellationToken);
+        // Owner-only: this document carries setting values, including ones flagged secret.
+        await JsonStorage.WriteOwnerFileAsync(GetAppStatePath(app.Id), document, cancellationToken);
         return document;
     }
 

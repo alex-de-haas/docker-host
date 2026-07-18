@@ -108,6 +108,9 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<DistributionAppsProvider>();
         builder.Services.AddSingleton<BootstrapChoicesStore>();
         builder.Services.AddSingleton<SystemAppBootstrapService>();
+        // Runs before the schedulers below so an upgraded installation's existing state/backups/logs
+        // are tightened before anything starts appending to them.
+        builder.Services.AddHostedService<CoreFilePermissionMigration>();
         builder.Services.AddHostedService<RuntimeAppSupervisorService>();
         builder.Services.AddHostedService<AppBackupRetentionScheduler>();
         builder.Services.AddHostedService<NotificationRetentionScheduler>();
