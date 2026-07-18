@@ -305,6 +305,33 @@ public sealed class UserManagementServiceTests
         }
     }
 
+    // A state.json that exists but omits collection keys deserializes them to null despite the non-nullable
+    // declarations, which used to make the first LINQ hit on the directory throw. Purge walks all four, so
+    // pin the normalization: a partial document reads as an empty directory instead of a 500.
+    [Fact]
+    public async Task ReadAsync_NormalizesMissingCollectionsOnPartialState()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"hosty-core-users-partial-{Guid.NewGuid():N}");
+        var authRoot = Path.Combine(root, "core", "auth");
+        Directory.CreateDirectory(authRoot);
+        await File.WriteAllTextAsync(Path.Combine(authRoot, "state.json"), """{"schemaVersion":1}""");
+        var store = new UserDirectoryStore(new CoreDataPaths(
+            DataRoot: root,
+            CoreRoot: Path.Combine(root, "core"),
+            AppsRoot: Path.Combine(root, "apps"),
+            BackupsRoot: Path.Combine(root, "backups"),
+            SourcesRoot: Path.Combine(root, "sources"),
+            AuthRoot: authRoot,
+            AuditLogPath: Path.Combine(root, "core", "audit", "audit.ndjson")));
+
+        var state = await store.ReadAsync();
+
+        Assert.Empty(state.Users);
+        Assert.Empty(state.Invitations);
+        Assert.Empty(state.Assignments);
+        Assert.Empty(state.Sessions);
+    }
+
     private sealed class FakeClock(DateTimeOffset now) : IClock
     {
         public DateTimeOffset UtcNow { get; set; } = now;
