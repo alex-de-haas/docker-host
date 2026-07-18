@@ -125,6 +125,46 @@ public sealed class AppAssetTests
         Assert.False(AppAssetEndpoints.TryResolveAsset(appsRoot, "com.example.notes", assetPath, out _, out _));
     }
 
+    // --- Endpoint asset resolution boundaries (C-H4) ---------------------------------------------
+
+    [Theory]
+    [InlineData("data/uploads/private.png")]
+    [InlineData("logs/web.png")]
+    [InlineData("run/state.png")]
+    [InlineData("runtimes/docker/img.png")]
+    [InlineData("Data/uploads/private.png")]
+    public void TryResolveAsset_RefusesReservedNamespacesEvenWhenTheFileExists(string assetPath)
+    {
+        // App runtime data lives under data/ — the path the IDOR was read through. Extension and
+        // containment alone would happily serve it.
+        var appsRoot = NewTempDir();
+        var target = Path.Combine(appsRoot, "com.example.notes", Path.GetDirectoryName(assetPath)!);
+        Directory.CreateDirectory(target);
+        File.WriteAllText(Path.Combine(appsRoot, "com.example.notes", assetPath), "private");
+
+        Assert.False(AppAssetEndpoints.TryResolveAsset(appsRoot, "com.example.notes", assetPath, out _, out _));
+    }
+
+    [Fact]
+    public void TryResolveAsset_FailsClosedOnASymlinkedAncestorDirectory()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        // The leaf is a real file, so resolving only the final component would serve it.
+        var outside = NewTempDir();
+        File.WriteAllText(Path.Combine(outside, "icon.svg"), "<svg id='stolen'/>");
+
+        var appsRoot = NewTempDir();
+        var appRoot = Path.Combine(appsRoot, "com.example.notes");
+        Directory.CreateDirectory(appRoot);
+        Directory.CreateSymbolicLink(Path.Combine(appRoot, "assets"), outside);
+
+        Assert.False(AppAssetEndpoints.TryResolveAsset(appsRoot, "com.example.notes", "assets/icon.svg", out _, out _));
+    }
+
     // --- Vendoring boundaries (C-M1) ------------------------------------------------------------
 
     [Fact]
