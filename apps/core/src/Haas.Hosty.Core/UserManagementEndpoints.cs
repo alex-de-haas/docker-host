@@ -137,6 +137,28 @@ internal static class UserManagementEndpoints
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
+        // Hard delete of the stored record, distinct from the soft-disable DELETE above. The user must
+        // already be disabled (the service enforces it), so deletion is always a deliberate second step.
+        app.MapDelete("/api/auth/users/{userId}/record", async (
+            string userId,
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            UserManagementService management,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                users,
+                clock,
+                async () => await CoreSessionAuthorization.RequireSessionAsync(
+                    request,
+                    users,
+                    clock,
+                    async actor => await HandleUserManagementError(() => management.PurgeUserAsync(userId, actor, cancellationToken)),
+                    cancellationToken: cancellationToken),
+                requireCsrf: true,
+                cancellationToken: cancellationToken));
+
         app.MapPut("/api/auth/users/{userId}/assignments", async (
             string userId,
             HttpRequest request,

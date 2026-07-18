@@ -138,6 +138,115 @@ public sealed class UserManagementServiceTests
         Assert.Contains(state.Assignments, assignment => assignment.AppId == "com.example.other" && assignment.UserId == other.Id);
     }
 
+    [Fact]
+    public async Task PurgeUserAsync_RemovesDisabledRecordAndCredentialAndSessions()
+    {
+        var fixture = await UserManagementFixture.CreateAsync();
+        var actor = CreateUser("admin_1", "host.admin");
+        await fixture.Users.WriteAsync(new UserDirectoryState(1, [actor], [], [], []));
+        var invitation = await fixture.Service.CreateInvitationAsync(new UserInvitationCreateRequest(
+            Email: "user@example.test",
+            Role: "host.user",
+            AssignedAppIds: ["com.example.notes"]), actor);
+        var user = await fixture.Service.AcceptInvitationAsync(new UserInvitationAcceptRequest(
+            SetupToken: invitation.Token,
+            Password: "correct horse battery staple"));
+        await fixture.Service.DisableUserAsync(user.Id, actor);
+
+        var result = await fixture.Service.PurgeUserAsync(user.Id, actor);
+        var state = await fixture.Users.ReadAsync();
+
+        Assert.True(result.Purged);
+        Assert.DoesNotContain(state.Users, candidate => candidate.Id == user.Id);
+        Assert.DoesNotContain(state.PasswordCredentials ?? [], credential => credential.UserId == user.Id);
+        Assert.DoesNotContain(state.Sessions, session => session.UserId == user.Id);
+        Assert.DoesNotContain(state.Assignments, assignment => assignment.UserId == user.Id);
+    }
+
+    [Fact]
+    public async Task PurgeUserAsync_RejectsActiveUser()
+    {
+        var fixture = await UserManagementFixture.CreateAsync();
+        var actor = CreateUser("admin_1", "host.admin");
+        var user = CreateUser("user_1", "host.user");
+        await fixture.Users.WriteAsync(new UserDirectoryState(1, [actor, user], [], [], []));
+
+        var error = await Assert.ThrowsAsync<UserManagementException>(() =>
+            fixture.Service.PurgeUserAsync(user.Id, actor));
+        var state = await fixture.Users.ReadAsync();
+
+        Assert.Equal("user_not_disabled", error.Code);
+        Assert.Contains(state.Users, candidate => candidate.Id == user.Id);
+    }
+
+    [Fact]
+    public async Task PurgeUserAsync_MissingUser_Throws()
+    {
+        var fixture = await UserManagementFixture.CreateAsync();
+        var actor = CreateUser("admin_1", "host.admin");
+        await fixture.Users.WriteAsync(new UserDirectoryState(1, [actor], [], [], []));
+
+        var error = await Assert.ThrowsAsync<UserManagementException>(() =>
+            fixture.Service.PurgeUserAsync("user_missing", actor));
+
+        Assert.Equal("user_not_found", error.Code);
+    }
+
+    [Fact]
+    public async Task PurgeUserAsync_FreesEmailForReinvite()
+    {
+        var fixture = await UserManagementFixture.CreateAsync();
+        var actor = CreateUser("admin_1", "host.admin");
+        var user = CreateUser("user_1", "host.user") with { Email = "reuse@example.test", Disabled = true };
+        await fixture.Users.WriteAsync(new UserDirectoryState(1, [actor, user], [], [], []));
+
+        // Same email is blocked while the disabled record exists...
+        var blocked = await Assert.ThrowsAsync<UserManagementException>(() =>
+            fixture.Service.CreateInvitationAsync(new UserInvitationCreateRequest(Email: "reuse@example.test", Role: "host.user"), actor));
+        Assert.Equal("email_exists", blocked.Code);
+
+        // ...and available again once the record is purged.
+        await fixture.Service.PurgeUserAsync(user.Id, actor);
+        var invitation = await fixture.Service.CreateInvitationAsync(new UserInvitationCreateRequest(Email: "reuse@example.test", Role: "host.user"), actor);
+        Assert.StartsWith("dhstp_", invitation.Token, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PurgeExpiredDisabledUsersAsync_RemovesOnlyAgedDisabledUsers()
+    {
+        var fixture = await UserManagementFixture.CreateAsync();
+        var now = fixture.Clock.UtcNow;
+        var admin = CreateUser("admin_1", "host.admin");
+        var active = CreateUser("user_active", "host.user");
+        var recentlyDisabled = CreateUser("user_recent", "host.user") with { Disabled = true, UpdatedAt = now.AddDays(-3) };
+        var longDisabled = CreateUser("user_old", "host.user") with { Disabled = true, UpdatedAt = now.AddDays(-30) };
+        await fixture.Users.WriteAsync(new UserDirectoryState(
+            1, [admin, active, recentlyDisabled, longDisabled], [], [], []));
+
+        var purged = await fixture.Service.PurgeExpiredDisabledUsersAsync(TimeSpan.FromDays(10));
+        var state = await fixture.Users.ReadAsync();
+
+        Assert.Equal(["user_old"], purged);
+        Assert.DoesNotContain(state.Users, candidate => candidate.Id == "user_old");
+        Assert.Contains(state.Users, candidate => candidate.Id == "user_recent");
+        Assert.Contains(state.Users, candidate => candidate.Id == "user_active");
+        Assert.Contains(state.Users, candidate => candidate.Id == "admin_1");
+    }
+
+    [Fact]
+    public async Task PurgeExpiredDisabledUsersAsync_NonPositiveRetentionRemovesNothing()
+    {
+        var fixture = await UserManagementFixture.CreateAsync();
+        var admin = CreateUser("admin_1", "host.admin");
+        var longDisabled = CreateUser("user_old", "host.user") with { Disabled = true, UpdatedAt = fixture.Clock.UtcNow.AddDays(-100) };
+        await fixture.Users.WriteAsync(new UserDirectoryState(1, [admin, longDisabled], [], [], []));
+
+        var purged = await fixture.Service.PurgeExpiredDisabledUsersAsync(TimeSpan.Zero);
+
+        Assert.Empty(purged);
+        Assert.Contains((await fixture.Users.ReadAsync()).Users, candidate => candidate.Id == "user_old");
+    }
+
     private static HostUserRecord CreateUser(string id, string role)
         => new(
             Id: id,
@@ -194,6 +303,33 @@ public sealed class UserManagementServiceTests
             await users.WriteAsync(new UserDirectoryState(1, [], [], [], []));
             return new UserManagementFixture(users, service, clock);
         }
+    }
+
+    // A state.json that exists but omits collection keys deserializes them to null despite the non-nullable
+    // declarations, which used to make the first LINQ hit on the directory throw. Purge walks all four, so
+    // pin the normalization: a partial document reads as an empty directory instead of a 500.
+    [Fact]
+    public async Task ReadAsync_NormalizesMissingCollectionsOnPartialState()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"hosty-core-users-partial-{Guid.NewGuid():N}");
+        var authRoot = Path.Combine(root, "core", "auth");
+        Directory.CreateDirectory(authRoot);
+        await File.WriteAllTextAsync(Path.Combine(authRoot, "state.json"), """{"schemaVersion":1}""");
+        var store = new UserDirectoryStore(new CoreDataPaths(
+            DataRoot: root,
+            CoreRoot: Path.Combine(root, "core"),
+            AppsRoot: Path.Combine(root, "apps"),
+            BackupsRoot: Path.Combine(root, "backups"),
+            SourcesRoot: Path.Combine(root, "sources"),
+            AuthRoot: authRoot,
+            AuditLogPath: Path.Combine(root, "core", "audit", "audit.ndjson")));
+
+        var state = await store.ReadAsync();
+
+        Assert.Empty(state.Users);
+        Assert.Empty(state.Invitations);
+        Assert.Empty(state.Assignments);
+        Assert.Empty(state.Sessions);
     }
 
     private sealed class FakeClock(DateTimeOffset now) : IClock

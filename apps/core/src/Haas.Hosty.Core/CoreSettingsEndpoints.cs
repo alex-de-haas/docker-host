@@ -115,6 +115,19 @@ internal static class CoreSettingsEndpoints
             Unit: "min",
             Options: null));
 
+        var userRetention = settings.GetUserRetentionRow();
+        rows.Add(new CoreSettingSummary(
+            UserRetentionSettings.DisabledRetentionDaysKey,
+            Type: "number",
+            Value: userRetention.EffectiveRetentionDays.ToString(CultureInfo.InvariantCulture),
+            Default: UserRetentionSettings.DefaultDisabledRetentionDays.ToString(CultureInfo.InvariantCulture),
+            Group: CoreUserRetentionSettings.Group,
+            Label: CoreUserRetentionSettings.RetentionLabel,
+            Description: CoreUserRetentionSettings.RetentionDescription,
+            Overridden: userRetention.Overridden,
+            Unit: "day",
+            Options: null));
+
         return new CoreSettingsResponse(rows);
     }
 }

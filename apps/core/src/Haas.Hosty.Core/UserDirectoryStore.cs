@@ -10,9 +10,25 @@ internal sealed class UserDirectoryStore(CoreDataPaths paths)
 
     private string StatePath => Path.Combine(paths.AuthRoot, "state.json");
 
+    // Callers treat the collections below as non-null (their declarations say so), but that contract does
+    // not survive deserialization: the fallback here only covers a *missing* file, so a document that does
+    // exist without a `users` or `sessions` key deserializes those to null anyway. Normalizing once here
+    // keeps every call site — login, disable, purge — from having to guard, and turns a partial state.json
+    // into an empty directory rather than a 500. Nothing downstream distinguishes null from empty.
+    // PasswordCredentials stays as-is: it is declared nullable, so its consumers already handle null.
     public async Task<UserDirectoryState> ReadAsync(CancellationToken cancellationToken = default)
-        => await JsonStorage.ReadAsync<UserDirectoryState>(StatePath, cancellationToken) ??
-            new UserDirectoryState(1, [], [], [], []);
+    {
+        var state = await JsonStorage.ReadAsync<UserDirectoryState>(StatePath, cancellationToken);
+        return state is null
+            ? new UserDirectoryState(1, [], [], [], [])
+            : state with
+            {
+                Users = state.Users ?? [],
+                Invitations = state.Invitations ?? [],
+                Assignments = state.Assignments ?? [],
+                Sessions = state.Sessions ?? [],
+            };
+    }
 
     public async Task WriteAsync(UserDirectoryState state, CancellationToken cancellationToken = default)
         => await JsonStorage.WriteAsync(StatePath, state, restrictToOwner: true, cancellationToken);

@@ -293,6 +293,80 @@ internal sealed class UserManagementService(
         return new HostUserDisableResponse(SummarizeUser(committedState, disabled, now), true);
     }
 
+    // Permanently deletes a user's stored record — the account, its password credential, and any leftover
+    // sessions/assignments. Unlike DisableUserAsync (the soft "delete" the UI exposes first), this is the
+    // hard delete: it is admin-driven and requires the user to already be disabled, so deletion is always
+    // a deliberate two-step (disable, then delete). Note the freed email becomes invitable again.
+    public async Task<HostUserPurgeResponse> PurgeUserAsync(
+        string userId,
+        HostUserRecord actor,
+        CancellationToken cancellationToken = default)
+    {
+        var purged = await users.UpdateAsync(state =>
+        {
+            var user = state.Users.FirstOrDefault(candidate => string.Equals(candidate.Id, userId, StringComparison.Ordinal)) ??
+                throw new UserManagementException("user_not_found", "The Host user does not exist.", StatusCodes.Status404NotFound);
+            if (!user.Disabled)
+            {
+                throw new UserManagementException("user_not_disabled", "Disable the user before deleting the account permanently.", StatusCodes.Status409Conflict);
+            }
+
+            return (RemoveUsers(state, [user.Id]), user);
+        }, cancellationToken);
+
+        await AppendAuditAsync("auth.user.purged", "auth.user", purged.Id, actor.Id, "succeeded", new Dictionary<string, string>
+        {
+            ["email"] = purged.Email ?? "",
+            ["trigger"] = "manual",
+        }, cancellationToken);
+
+        return new HostUserPurgeResponse(purged.Id, true);
+    }
+
+    // The background-purge counterpart to PurgeUserAsync: removes every disabled user whose disable
+    // timestamp (UpdatedAt, frozen at disable since disabled users cannot be edited) is at least
+    // `retention` old. Runs the whole sweep under one lock and returns the removed ids so the scheduler
+    // can write a single aggregate audit record. A non-positive retention removes nothing.
+    public async Task<IReadOnlyList<string>> PurgeExpiredDisabledUsersAsync(
+        TimeSpan retention,
+        CancellationToken cancellationToken = default)
+    {
+        if (retention <= TimeSpan.Zero)
+        {
+            return [];
+        }
+
+        var cutoff = clock.UtcNow - retention;
+        return await users.UpdateAsync<IReadOnlyList<string>>(state =>
+        {
+            var expired = state.Users
+                .Where(user => user.Disabled && user.UpdatedAt <= cutoff)
+                .Select(user => user.Id)
+                .ToArray();
+            return expired.Length == 0
+                ? (state, expired)
+                : (RemoveUsers(state, expired), expired);
+        }, cancellationToken);
+    }
+
+    // Drops the given users and everything that dangles off them — password credentials, sessions, and
+    // app assignments — so no orphaned auth state survives the deletion. Disable already clears sessions
+    // and assignments for a live disable, but a record can be purged long after (or reached by the
+    // scheduler), so this re-clears defensively rather than assuming.
+    private static UserDirectoryState RemoveUsers(UserDirectoryState state, IReadOnlyCollection<string> userIds)
+    {
+        var ids = userIds as IReadOnlySet<string> ?? userIds.ToHashSet(StringComparer.Ordinal);
+        return state with
+        {
+            Users = state.Users.Where(user => !ids.Contains(user.Id)).ToArray(),
+            Sessions = state.Sessions.Where(session => !ids.Contains(session.UserId)).ToArray(),
+            Assignments = state.Assignments.Where(assignment => !ids.Contains(assignment.UserId)).ToArray(),
+            PasswordCredentials = state.PasswordCredentials?
+                .Where(credential => !ids.Contains(credential.UserId))
+                .ToArray(),
+        };
+    }
+
     public async Task<HostUserAssignmentsResponse> ReplaceAssignmentsAsync(
         string userId,
         HostUserAssignmentsRequest request,
@@ -531,6 +605,8 @@ internal sealed record HostUserUpdateRequest(string? DisplayName = null, string?
 internal sealed record HostUserUpdateResponse(UserManagementHostUserSummary User);
 
 internal sealed record HostUserDisableResponse(UserManagementHostUserSummary User, bool Disabled);
+
+internal sealed record HostUserPurgeResponse(string UserId, bool Purged);
 
 internal sealed record HostUserAssignmentsRequest(
     IReadOnlyList<string>? AssignedAppIds = null);

@@ -67,6 +67,11 @@ what it would display (per core-dev-target).
   the live values and a save re-renders `config.yml` immediately, so switching cloudflared on/off is a
   settings edit, not a restart. The provider renders as a `select`; the `config.yml` output path stays
   launch-only. See [cloudflared ingress](../features/cloudflared-ingress.md).
+- **User-management retention (shipped): disabled-user retention window** — a single numeric
+  `HOSTY_USERS_DISABLED_RETENTION_DAYS` setting (default 10, `0` = never) in a `users` section of the
+  same `settings.json` (additive; schema stays `core-settings.0.1`). It backs the `UserRetentionScheduler`
+  that permanently deletes aged disabled users. Modeled on the update-check interval setting. See
+  [user management](../features/user-management.md).
 - **Candidates for later phases:** the trusted-proxy secret is also env-only Core behavior. It is
   deferred — a secret needs a masked/secret editor and rotation semantics.
 
