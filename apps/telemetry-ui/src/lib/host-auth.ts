@@ -27,6 +27,28 @@ export type TelemetryIdentity = {
   error: { code: string; message: string; status: number | null } | null;
 };
 
+export type RecoveryParams = {
+  appId: string;
+  corePublicOrigin: string;
+};
+
+/**
+ * App id + browser-reachable Core origin for client session recovery. These ride in the
+ * force-dynamic identity response — not in a server-component prop — because pages can be
+ * prerendered at image build time, where the HOSTY_* environment does not exist yet; a route
+ * handler reads them on the machine that actually runs the app. Neither value is secret: both
+ * are addressed to the browser by design.
+ */
+export function getRecoveryParams(): RecoveryParams {
+  return {
+    appId: readEnvironmentString("HOSTY_APP_ID") ?? "hosty.telemetry",
+    corePublicOrigin:
+      readEnvironmentString("HOSTY_CORE_PUBLIC_ORIGIN") ??
+      readEnvironmentString("HOSTY_CORE_ORIGIN") ??
+      "http://localhost:7070",
+  };
+}
+
 export async function getTelemetryIdentity(headersList: HeaderReader): Promise<TelemetryIdentity> {
   const appId = readEnvironmentString("HOSTY_APP_ID") ?? "hosty.telemetry";
   const token = readIdentityToken(headersList);

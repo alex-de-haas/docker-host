@@ -11,14 +11,13 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
-  // Browser-reachable Core origin for client session recovery; falls back to the server origin.
-  const corePublicOrigin =
-    process.env.HOSTY_CORE_PUBLIC_ORIGIN || process.env.HOSTY_CORE_ORIGIN || "http://localhost:7070";
-  const appId = process.env.HOSTY_APP_ID || "hosty.telemetry";
+  // The identity bridge takes no props: recovery parameters come from the request-time identity
+  // probe, never from a layout render — this app's pages are prerendered at image build time,
+  // where the HOSTY_* environment does not exist yet.
   return (
     <html lang="en">
       <body>
-        <AppIdentityBridge corePublicOrigin={corePublicOrigin} appId={appId} />
+        <AppIdentityBridge />
         <HostThemeBridge />
         <AppShell>{children}</AppShell>
       </body>

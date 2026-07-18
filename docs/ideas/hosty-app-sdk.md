@@ -394,6 +394,12 @@ slices — but it is also nearly free, since the code already exists in Shell.
 
 **`server` (`import "server-only"`, Next binding):**
 - Route-handler factories: `/api/auth/app-code`, `/api/auth/identity`, `/api/auth/session`, optional `/logout`.
+  The identity/session responses carry the recovery parameters (`appId` + browser-reachable
+  Core origin) so the client never learns them from a server-component prop: static routes are
+  prerendered at image build, where the `HOSTY_*` environment does not exist, so a layout prop
+  bakes the build-time fallback into the RSC payload (hit live by media-server and fixed in
+  `alex-de-haas/media-server` PR #63 — not a docker-host PR number; the three monorepo Next
+  apps now use the probe-carried form too, docker-host PR #233).
 - Middleware/proxy factory: public paths, launch-code bootstrap, header stripping, trusted-identity injection.
 - Scoped app-directory client (`/api/internal/apps/{id}/directory/users`).
 
