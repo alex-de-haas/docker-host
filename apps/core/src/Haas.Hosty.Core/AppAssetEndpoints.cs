@@ -33,16 +33,37 @@ internal static class AppAssetEndpoints
             HttpRequest request,
             HttpResponse response,
             CoreDataPaths paths,
+            AppRegistryStore apps,
             UserDirectoryStore users,
             IClock clock,
             CancellationToken cancellationToken) =>
-            // Any authenticated session may read display assets — the sidebar and app cards render them
-            // for host.user accounts too, so this is not gated to administrators. A safe GET needs no CSRF.
+            // Display assets are not admin-only — the sidebar and app cards render them for host.user
+            // accounts too — but they are app-scoped: the same assignment policy as the apps listing
+            // applies, or a regular user could read any installed app's files by id. A safe GET needs
+            // no CSRF.
             await CoreSessionAuthorization.RequireSessionAsync(
                 request,
                 users,
                 clock,
-                _ => Task.FromResult(Serve(appId, assetPath, request, response, paths)),
+                async user =>
+                {
+                    // Requires the app to exist as well as be permitted, so an uninstalled app's stale
+                    // directory is no longer addressable.
+                    var app = await apps.GetAppAsync(appId, cancellationToken);
+                    if (app is null)
+                    {
+                        return Results.NotFound();
+                    }
+
+                    var state = await users.ReadAsync(cancellationToken);
+                    if (!AppAccessPolicy.CanAccessApp(state, user, app.Id, app.System))
+                    {
+                        // 404, not 403: a user who may not see the app should not learn it exists.
+                        return Results.NotFound();
+                    }
+
+                    return Serve(appId, assetPath, request, response, paths);
+                },
                 cancellationToken: cancellationToken));
     }
 
@@ -76,10 +97,13 @@ internal static class AppAssetEndpoints
         response.Headers["X-Content-Type-Options"] = "nosniff";
         response.Headers["Content-Security-Policy"] = "default-src 'none'; sandbox";
         // A ?v= cache-buster (the app version) makes the URL change whenever the asset does, so the body
-        // is safe to cache immutably; without it, revalidate against the ETag.
+        // is safe to cache immutably; without it, revalidate against the ETag. `private` either way:
+        // the response is authorized per session, so a shared cache must never serve it to another user.
+        // `no-cache` on its own only forces revalidation — a shared cache may still store the body,
+        // so the private directive has to be explicit in both branches.
         response.Headers.CacheControl = request.Query.ContainsKey("v")
-            ? "public, max-age=31536000, immutable"
-            : "no-cache";
+            ? "private, max-age=31536000, immutable"
+            : "private, no-cache";
 
         // Stream from disk (assets can be sizeable) and let the file result handle conditional GET
         // (If-None-Match / If-Modified-Since) against the weak ETag; range processing is disabled.
@@ -100,9 +124,18 @@ internal static class AppAssetEndpoints
         }
 
         if (!CoreDataPaths.TryResolveContainedPath(appsRoot, appId, out var appRoot) ||
+            // The app root itself, not just what is under it: if apps/<id> is a link, every path below
+            // it resolves outside the apps tree while still looking contained.
+            CoreDataPaths.ContainsSymbolicLink(appsRoot, appRoot) ||
             !CoreDataPaths.TryResolveContainedRelativePath(appRoot, assetPath, out var candidate) ||
             !File.Exists(candidate) ||
-            !IsWithin(appRoot, ResolveRealPath(candidate)))
+            // Reserved namespaces are not display assets. Vendoring refuses to write into them, but a
+            // request can still name one directly, and app runtime data lives under data/ — which is
+            // exactly the path the IDOR was read through.
+            CoreDataPaths.IsReservedAppRootPath(assetPath) ||
+            // Fails closed on a link anywhere below the app root, including an ancestor directory: the
+            // containment above is lexical and says nothing about where a link inside the tree points.
+            CoreDataPaths.ContainsSymbolicLink(appRoot, candidate))
         {
             return false;
         }
@@ -110,27 +143,5 @@ internal static class AppAssetEndpoints
         fullPath = candidate;
         contentType = resolvedType;
         return true;
-    }
-
-    private static string ResolveRealPath(string path)
-    {
-        try
-        {
-            return File.ResolveLinkTarget(path, returnFinalTarget: true)?.FullName ?? path;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException or ArgumentException)
-        {
-            // Could not resolve a link target — fall back to the already-contained path; the containment
-            // check on it still holds, so a resolution error degrades to a normal serve, not a 500.
-            return path;
-        }
-    }
-
-    private static bool IsWithin(string root, string candidate)
-    {
-        var fullRoot = Path.GetFullPath(root);
-        var prefix = fullRoot.EndsWith(Path.DirectorySeparatorChar) ? fullRoot : fullRoot + Path.DirectorySeparatorChar;
-        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-        return Path.GetFullPath(candidate).StartsWith(prefix, comparison);
     }
 }

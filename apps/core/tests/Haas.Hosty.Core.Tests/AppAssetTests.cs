@@ -125,6 +125,71 @@ public sealed class AppAssetTests
         Assert.False(AppAssetEndpoints.TryResolveAsset(appsRoot, "com.example.notes", assetPath, out _, out _));
     }
 
+    // --- Endpoint asset resolution boundaries (C-H4) ---------------------------------------------
+
+    [Theory]
+    [InlineData("data/uploads/private.png")]
+    [InlineData("logs/web.png")]
+    [InlineData("run/state.png")]
+    [InlineData("runtimes/docker/img.png")]
+    [InlineData("Data/uploads/private.png")]
+    [InlineData("manifest.json")]
+    [InlineData("state.json")]
+    public void TryResolveAsset_RefusesReservedNamespacesEvenWhenTheFileExists(string assetPath)
+    {
+        // App runtime data lives under data/ — the path the IDOR was read through. Extension and
+        // containment alone would happily serve it.
+        var appsRoot = NewTempDir();
+        var appRoot = Path.Combine(appsRoot, "com.example.notes");
+        var relativeDirectory = Path.GetDirectoryName(assetPath);
+        Directory.CreateDirectory(string.IsNullOrEmpty(relativeDirectory)
+            ? appRoot
+            : Path.Combine(appRoot, relativeDirectory));
+        File.WriteAllText(Path.Combine(appRoot, assetPath), "private");
+
+        Assert.False(AppAssetEndpoints.TryResolveAsset(appsRoot, "com.example.notes", assetPath, out _, out _));
+    }
+
+    [Fact]
+    public void TryResolveAsset_FailsClosedWhenTheAppRootItselfIsASymlink()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        // Every path below a linked app root resolves outside the apps tree while still looking
+        // contained, so the root has to be checked too, not only what sits under it.
+        var outside = NewTempDir();
+        Directory.CreateDirectory(Path.Combine(outside, "assets"));
+        File.WriteAllText(Path.Combine(outside, "assets", "icon.svg"), "<svg id='stolen'/>");
+
+        var appsRoot = NewTempDir();
+        Directory.CreateSymbolicLink(Path.Combine(appsRoot, "com.example.notes"), outside);
+
+        Assert.False(AppAssetEndpoints.TryResolveAsset(appsRoot, "com.example.notes", "assets/icon.svg", out _, out _));
+    }
+
+    [Fact]
+    public void TryResolveAsset_FailsClosedOnASymlinkedAncestorDirectory()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        // The leaf is a real file, so resolving only the final component would serve it.
+        var outside = NewTempDir();
+        File.WriteAllText(Path.Combine(outside, "icon.svg"), "<svg id='stolen'/>");
+
+        var appsRoot = NewTempDir();
+        var appRoot = Path.Combine(appsRoot, "com.example.notes");
+        Directory.CreateDirectory(appRoot);
+        Directory.CreateSymbolicLink(Path.Combine(appRoot, "assets"), outside);
+
+        Assert.False(AppAssetEndpoints.TryResolveAsset(appsRoot, "com.example.notes", "assets/icon.svg", out _, out _));
+    }
+
     // --- Vendoring boundaries (C-M1) ------------------------------------------------------------
 
     [Fact]

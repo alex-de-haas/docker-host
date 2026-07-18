@@ -177,25 +177,15 @@ internal static class DomainEndpoints
         UserDirectoryState state,
         HostUserRecord user)
     {
-        if (string.Equals(user.Role, "host.admin", StringComparison.Ordinal))
+        if (AppAccessPolicy.IsAdmin(user))
         {
             return apps;
         }
 
         return apps
-            .Where(app => !app.System && IsUserAssignedToApp(state, user, app.Id))
+            .Where(app => AppAccessPolicy.CanAccessApp(state, user, app.Id, app.System))
             .ToArray();
     }
-
-    // Assignments are a per-user allowlist: a non-admin sees an app only when a row names them. An app
-    // nobody is assigned to is visible to nobody (except admins), never to everybody — the admin picker
-    // grants access by checking a box, so an unchecked app must stay out of reach.
-    // The `?? []` guards a persisted document that predates the field or was hand-edited: the store only
-    // substitutes a default state for a missing file, so a present-but-partial one leaves this null.
-    private static bool IsUserAssignedToApp(UserDirectoryState state, HostUserRecord user, string appId)
-        => (state.Assignments ?? []).Any(assignment =>
-            string.Equals(assignment.AppId, appId, StringComparison.Ordinal) &&
-            string.Equals(assignment.UserId, user.Id, StringComparison.Ordinal));
 
     // Session ids ARE the bearer credential (they are compared directly to the hosty_session cookie), so
     // they must never leave Core. Expose only a non-reversible fingerprint plus lifecycle timestamps so
