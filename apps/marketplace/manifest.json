@@ -31,7 +31,7 @@
           "type": "docker",
           "image": {
             "repository": "ghcr.io/alex-de-haas/hosty-marketplace",
-            "tag": "0.3.2"
+            "tag": "0.3.3"
           },
           "environment": {
             "PORT": "3000",
