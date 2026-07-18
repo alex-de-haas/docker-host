@@ -16,7 +16,7 @@ import { IconButton, InlineError } from "../ui";
 // to publish `https://<label>.<domain>` (synchronized to DNS + the tunnel route by Core) or unpublishes an
 // existing one. Self-contained via context; host-admin only, and only for `public: true` endpoints.
 export function CloudflarePublishControl({ app, endpoint }: { app: CoreApp; endpoint: CoreEndpoint }) {
-  const { canManageApps } = useShellState();
+  const { canManageApps, state } = useShellState();
   const { coreOrigin, sendCsrfJson, refresh } = useShellActions();
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -26,7 +26,12 @@ export function CloudflarePublishControl({ app, endpoint }: { app: CoreApp; endp
   const [publication, setPublication] = useState<CloudflarePublicationSummary | null>(null);
   const [label, setLabel] = useState("");
 
-  if (!canManageApps || !endpoint.public) {
+  // Publishing only means something when Core actually manages public origins (ingress provider
+  // "cloudflared"). With ingress off there is nowhere to publish to, so hide the control instead of
+  // offering a dialog whose only outcome is "connect Cloudflare first". Mirrors Core's own
+  // IngressSettings.ManagesPublicOrigins predicate.
+  const ingressManagesPublicOrigins = state.status?.ingressProvider === "cloudflared";
+  if (!canManageApps || !endpoint.public || !ingressManagesPublicOrigins) {
     return null;
   }
 
