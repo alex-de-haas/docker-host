@@ -125,7 +125,13 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock, ILogge
     {
         var record = (await ListBackupsAsync(appId, cancellationToken))
             .FirstOrDefault(candidate => string.Equals(candidate.BackupId, backupId, StringComparison.Ordinal));
-        if (record is null || !File.Exists(record.ArchivePath))
+        // The archive path comes out of an operator-editable metadata file, so it is not trusted to
+        // point anywhere in particular: a hand-written record could otherwise make Core hash and
+        // extract an arbitrary host file into the app's data directory. Deletion already enforces the
+        // same containment rule; restore is the read side of it.
+        if (record is null ||
+            !IsSafeBackupPath(record.ArchivePath, GetBackupRoot(appId), ".zip") ||
+            !File.Exists(record.ArchivePath))
         {
             return null;
         }
@@ -280,9 +286,14 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock, ILogge
     // faulting the read: one bad file must not break a listing, and the retention sweep runs from a
     // BackgroundService where an escaping exception takes the whole host down.
     //
-    // Callers may assume every returned record has a non-empty AppId/BackupId/Reason and that BackupId
-    // is unique within the result — those are dictionary keys, path segments and policy lookups
-    // downstream, where a null throws far away from the file that caused it.
+    // Callers may assume every returned record has a non-empty BackupId/Reason, an AppId equal to the
+    // requested one, and a BackupId unique within the result — those are dictionary keys, path segments
+    // and policy lookups downstream, where a null throws far away from the file that caused it.
+    //
+    // ArchivePath is deliberately *not* validated here: a record pointing nowhere is still worth
+    // returning so the sweep can collect it as a missing-archive candidate, and an operator who moves
+    // HOSTY_DATA_ROOT leaves every stored path stale without their backups deserving to vanish from the
+    // listing. Every path that reads, extracts or deletes an archive runs IsSafeBackupPath first.
     private async Task<IReadOnlyList<AppBackupRecord>> ReadBackupRecordsAsync(string appId, CancellationToken cancellationToken)
     {
         var backupRoot = GetBackupRoot(appId);
@@ -320,6 +331,19 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock, ILogge
                 logger?.LogWarning(
                     "Skipping Hosty backup metadata file {MetadataPath}: appId, backupId or reason is missing.",
                     metadataPath);
+                continue;
+            }
+
+            // The directory owns the identity, not the file's contents. A record claiming a different
+            // app would otherwise produce a cleanup candidate that resolves against *that* app's backup
+            // root, letting one app's stray metadata file delete another app's archives.
+            if (!string.Equals(record.AppId, appId, StringComparison.Ordinal))
+            {
+                logger?.LogWarning(
+                    "Skipping Hosty backup metadata file {MetadataPath}: it claims app {ClaimedAppId} but sits in the backup directory of {AppId}.",
+                    metadataPath,
+                    record.AppId,
+                    appId);
                 continue;
             }
 
@@ -593,8 +617,15 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock, ILogge
     private string GetBackupRoot(string appId)
         => CoreDataPaths.ResolveContainedPath(paths.BackupsRoot, appId);
 
-    private static bool IsSafeBackupPath(string path, string backupRoot, string extension)
+    // Nullable path: a metadata file may omit archivePath entirely, and Path.GetFullPath(null) throws.
+    // An absent path is never a safe path, so callers get "false" instead of an exception.
+    private static bool IsSafeBackupPath(string? path, string backupRoot, string extension)
     {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return false;
+        }
+
         var fullPath = Path.GetFullPath(path);
         var fullRoot = EnsureTrailingSeparator(Path.GetFullPath(backupRoot));
         var comparison = OperatingSystem.IsWindows()

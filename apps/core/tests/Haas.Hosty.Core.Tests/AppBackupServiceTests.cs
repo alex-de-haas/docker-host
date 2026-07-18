@@ -125,17 +125,110 @@ public sealed class AppBackupServiceTests
         Assert.True(File.Exists(good.ArchivePath));
     }
 
+    // A metadata file may omit archivePath entirely. Deleting such a backup must still clear the
+    // record instead of throwing out of Path.GetFullPath(null) deep inside the containment check.
+    [Fact]
+    public async Task DeleteBackupAsync_RemovesMetadataWhenArchivePathIsMissing()
+    {
+        var fixture = BackupFixture.Create();
+        Directory.CreateDirectory(fixture.BackupRoot);
+        var metadataPath = Path.Combine(fixture.BackupRoot, "b2.json");
+        await File.WriteAllTextAsync(metadataPath, MetadataJson("com.example.notes", "b2", archivePath: null));
+
+        var deleted = await fixture.Service.DeleteBackupAsync("com.example.notes", "b2");
+
+        Assert.True(deleted);
+        Assert.False(File.Exists(metadataPath));
+    }
+
+    // The directory owns the app identity. A record claiming another app must not reach the cleanup
+    // plan, where the candidate would resolve against that app's backup root and delete its files.
+    [Fact]
+    public async Task CleanupPlan_IgnoresMetadataClaimingAnotherApp()
+    {
+        var fixture = BackupFixture.Create();
+        await File.WriteAllTextAsync(Path.Combine(fixture.DataPath, "notes.txt"), "original");
+        var good = await fixture.Service.CreateBackupAsync("com.example.notes", "manual");
+        Assert.NotNull(good);
+
+        var otherBackupRoot = Path.Combine(Path.GetDirectoryName(fixture.BackupRoot)!, "com.example.other");
+        Directory.CreateDirectory(otherBackupRoot);
+        await File.WriteAllTextAsync(
+            Path.Combine(fixture.BackupRoot, "impostor.json"),
+            MetadataJson("com.example.other", "impostor", Path.Combine(otherBackupRoot, "impostor.zip")));
+
+        var listed = await fixture.Service.ListBackupsAsync("com.example.notes");
+        Assert.Equal([good.BackupId], listed.Select(record => record.BackupId));
+
+        var plan = await fixture.Service.CreateCleanupPlanAsync("com.example.notes");
+        Assert.All(plan.Candidates, candidate => Assert.Equal("com.example.notes", candidate.AppId));
+    }
+
+    // archivePath is operator-editable, so restore must refuse a path outside the app's backup root:
+    // otherwise a hand-written record makes Core extract an arbitrary host archive over app data.
+    [Fact]
+    public async Task RestoreBackupAsync_RefusesArchivePathOutsideBackupRoot()
+    {
+        var fixture = BackupFixture.Create();
+        await File.WriteAllTextAsync(Path.Combine(fixture.DataPath, "notes.txt"), "live");
+
+        // A real, intact archive that simply does not belong to this app's backup root.
+        var plantedSource = Path.Combine(fixture.Root, "planted-source");
+        Directory.CreateDirectory(plantedSource);
+        await File.WriteAllTextAsync(Path.Combine(plantedSource, "pwned.txt"), "planted");
+        var plantedArchive = Path.Combine(fixture.Root, "planted.zip");
+        System.IO.Compression.ZipFile.CreateFromDirectory(plantedSource, plantedArchive);
+        var plantedSha256 = Convert.ToHexString(
+            System.Security.Cryptography.SHA256.HashData(await File.ReadAllBytesAsync(plantedArchive))).ToLowerInvariant();
+
+        Directory.CreateDirectory(fixture.BackupRoot);
+        await File.WriteAllTextAsync(
+            Path.Combine(fixture.BackupRoot, "escape.json"),
+            MetadataJson("com.example.notes", "escape", plantedArchive, plantedSha256));
+
+        var restored = await fixture.Service.RestoreBackupAsync("com.example.notes", "escape", createPreRestoreBackup: false);
+
+        Assert.Null(restored);
+        Assert.False(File.Exists(Path.Combine(fixture.DataPath, "pwned.txt")));
+        Assert.Equal("live", await File.ReadAllTextAsync(Path.Combine(fixture.DataPath, "notes.txt")));
+    }
+
+    // Hand-rolled rather than serialized from AppBackupRecord: these tests need shapes the record
+    // cannot express, such as an absent archivePath.
+    private static string MetadataJson(string appId, string backupId, string? archivePath, string archiveSha256 = "")
+    {
+        var archive = archivePath is null
+            ? string.Empty
+            : $"\"archivePath\":{System.Text.Json.JsonSerializer.Serialize(archivePath)},";
+        return $$"""
+            {
+              "appId": {{System.Text.Json.JsonSerializer.Serialize(appId)}},
+              "backupId": {{System.Text.Json.JsonSerializer.Serialize(backupId)}},
+              "reason": "manual",
+              "createdAt": "2026-06-05T10:00:00+00:00",
+              "dataPath": "",
+              {{archive}}
+              "archiveSha256": {{System.Text.Json.JsonSerializer.Serialize(archiveSha256)}},
+              "archiveSize": 0,
+              "fileCount": 0
+            }
+            """;
+    }
+
     private sealed class BackupFixture
     {
-        private BackupFixture(AppBackupService service, string dataPath, string backupRoot, FakeClock clock)
+        private BackupFixture(AppBackupService service, string root, string dataPath, string backupRoot, FakeClock clock)
         {
             Service = service;
+            Root = root;
             DataPath = dataPath;
             BackupRoot = backupRoot;
             Clock = clock;
         }
 
         public AppBackupService Service { get; }
+
+        public string Root { get; }
 
         public string DataPath { get; }
 
@@ -159,6 +252,7 @@ public sealed class AppBackupServiceTests
             var clock = new FakeClock(DateTimeOffset.Parse("2026-06-05T10:00:00Z"));
             return new BackupFixture(
                 new AppBackupService(paths, clock),
+                root,
                 dataPath,
                 Path.Combine(paths.BackupsRoot, "com.example.notes"),
                 clock);
