@@ -51,6 +51,16 @@ public sealed class SecretComparisonTests
     }
 
     [Fact]
+    public void HexEquals_RejectsAnOverlongExpectedSecretInsteadOfAllocatingForIt()
+    {
+        // The buffers are sized from `expected`. Callers pass a Core-minted 64-char secret today; the
+        // bound keeps that safety inside this method rather than resting on a caller invariant.
+        var overlong = new string('a', 4096);
+
+        Assert.False(SecretComparison.HexEquals(overlong, overlong));
+    }
+
+    [Fact]
     public void Equals_MatchesOpaqueSecretsExactly()
     {
         Assert.True(SecretComparison.Equals("proxy-secret", "proxy-secret"));
