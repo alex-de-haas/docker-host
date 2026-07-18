@@ -42,6 +42,13 @@ export type CoreSetting = {
   options?: CoreSettingOption[] | null;
 };
 
+// "error" means the app is broken; "warning" means it needs attention but may still work.
+export type AlertSeverity = "error" | "warning";
+
+// One problem an app has, as derived by collectAppProblems. Rendered both as a severity icon on the
+// collapsed row and as an alert in the details panel, from that single derivation.
+export type AppProblem = { severity: AlertSeverity; title: string; detail?: string };
+
 export type CoreEndpoint = {
   key: string;
   protocol: string;
