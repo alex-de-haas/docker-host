@@ -99,9 +99,11 @@ internal static class AppAssetEndpoints
         // A ?v= cache-buster (the app version) makes the URL change whenever the asset does, so the body
         // is safe to cache immutably; without it, revalidate against the ETag. `private` either way:
         // the response is authorized per session, so a shared cache must never serve it to another user.
+        // `no-cache` on its own only forces revalidation — a shared cache may still store the body,
+        // so the private directive has to be explicit in both branches.
         response.Headers.CacheControl = request.Query.ContainsKey("v")
             ? "private, max-age=31536000, immutable"
-            : "no-cache";
+            : "private, no-cache";
 
         // Stream from disk (assets can be sizeable) and let the file result handle conditional GET
         // (If-None-Match / If-Modified-Since) against the weak ETag; range processing is disabled.
@@ -122,6 +124,9 @@ internal static class AppAssetEndpoints
         }
 
         if (!CoreDataPaths.TryResolveContainedPath(appsRoot, appId, out var appRoot) ||
+            // The app root itself, not just what is under it: if apps/<id> is a link, every path below
+            // it resolves outside the apps tree while still looking contained.
+            CoreDataPaths.ContainsSymbolicLink(appsRoot, appRoot) ||
             !CoreDataPaths.TryResolveContainedRelativePath(appRoot, assetPath, out var candidate) ||
             !File.Exists(candidate) ||
             // Reserved namespaces are not display assets. Vendoring refuses to write into them, but a
