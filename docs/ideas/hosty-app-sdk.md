@@ -439,6 +439,18 @@ Haas.Hosty.AppSdk              # NuGet — auth handler, cached validator, HOSTY
 
 Config object passed by each app: `{ appId, identityCookieName, internalHeaderPrefix, mapHostRole? }`.
 
+**Package granularity (owner-decided 2026-07-18): `@hosty-sdk/app` is an umbrella — one
+dependency per app, forever.** Second-wave functions (theme, OTel, storage helpers, manifest
+types) arrive as *subpaths* (`@hosty-sdk/app/theme`, …), not as packages: they are 50–150-line
+utilities, and package-per-utility would mean micro-package noise plus a shared "internals"
+base package whose bumps cascade — exactly the version-sync machinery decision 7 rejects. The
+split axis, when splitting ever happens, is **function/audience — never runtime**:
+server/react/embedder stay subpaths inside whatever package owns the domain, so auth can never
+end up smeared across packages. A domain earns its own package only when it has a *different
+audience or a life of its own*; the one visible candidate is `embedder` (its consumers are
+shells, not apps), which stays a subpath until a third-party shell actually exists. Splitting
+later is cheap (auto-merged bot bumps); merging packages back is not.
+
 ## Migration Plan (by risk)
 
 1. **media-server** — no recovery at all; will dead-end like the incident. Highest priority.
