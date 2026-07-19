@@ -7,7 +7,7 @@
 // The re-open must take the full launch-code path — an "already open → reuse the URL
 // without a code" optimization must not short-circuit recovery.
 
-import { AUTH_REQUIRED_INTENT_TYPE } from "./index";
+import { AUTH_REQUIRED_INTENT_TYPE } from "./index.ts";
 
 export interface AuthRequiredMessage {
   data: unknown;

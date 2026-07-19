@@ -7,7 +7,7 @@ import {
   type AppSessionFailureStatus,
   type AppSessionStatus,
   type SessionRecoveryParams,
-} from "./index";
+} from "./index.ts";
 
 /** Per-app parameters: everything that legitimately diverges between apps stays a
  * parameter — cookie namespaces and role models are per-app by decision, never unified. */
