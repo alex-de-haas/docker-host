@@ -254,7 +254,7 @@ async function revalidateWithCore(
     // A non-JSON / truncated body means the session is unverifiable, not proof it is invalid.
     return {
       status: "unavailable",
-      error: { status: 200, code: "core_response_invalid", message: "Core returned an unreadable revalidation body." },
+      error: { status: response.status, code: "core_response_invalid", message: "Core returned an unreadable revalidation body." },
     };
   }
 
@@ -263,7 +263,7 @@ async function revalidateWithCore(
     // A token minted for a different app is Core's token_app_mismatch — terminal, like 403.
     return {
       status: "forbidden",
-      error: { status: null, code: "app_identity_app_mismatch", message: "Identity token was issued for a different app." },
+      error: { status: response.status, code: "app_identity_app_mismatch", message: "Identity token was issued for a different app." },
     };
   }
 

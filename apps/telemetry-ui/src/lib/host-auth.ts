@@ -1,5 +1,6 @@
 import {
   getAppId,
+  getCoreOrigin,
   getRecoveryParams as readSdkRecoveryParams,
   readAppIdentityToken,
   resolveAppSession,
@@ -80,7 +81,7 @@ export function getRecoveryParams(): RecoveryParams {
 /** Core endpoint builder for this app's service-token calls (not part of the identity flow). */
 export function buildCoreEndpoint(path: string): string | null {
   try {
-    return new URL(path, process.env.HOSTY_CORE_ORIGIN ?? "http://localhost:7070").toString();
+    return new URL(path, getCoreOrigin() ?? "http://localhost:7070").toString();
   } catch {
     return null;
   }
