@@ -1,0 +1,49 @@
+name: Publish App SDK (.NET)
+
+# Publishes HostySdk.App to NuGet.org via Trusted Publishing (OIDC) — no long-lived keys.
+# The NuGet-side policy lives under the hosty-sdk organization's Trusted Publishing settings
+# (repository owner alex-de-haas, repository docker-host, this workflow's filename). The
+# NuGet/login step exchanges the job's OIDC token for a short-lived (~1h) API key.
+# Triggered manually; NuGet rejects an already-published version, so a re-run is safe.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    name: Publish HostySdk.App
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - name: Test
+        run: dotnet test packages/app-sdk-dotnet/HostySdk.App.Tests/HostySdk.App.Tests.csproj --configuration Release
+
+      - name: Pack
+        run: dotnet pack packages/app-sdk-dotnet/HostySdk.App/HostySdk.App.csproj --configuration Release --output out/nuget
+
+      - name: NuGet login (OIDC → short-lived key)
+        uses: NuGet/login@v1
+        id: nuget-login
+        with:
+          # The nuget.org PROFILE name of the account holding the policy (policies live under
+          # the user's account even when owned by the organization) — a repository variable so
+          # the workflow does not hard-code it. Settings → Secrets and variables → Actions →
+          # Variables → NUGET_USER.
+          user: ${{ vars.NUGET_USER }}
+
+      - name: Publish
+        run: >
+          dotnet nuget push out/nuget/*.nupkg
+          --source https://api.nuget.org/v3/index.json
+          --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}"
+          --skip-duplicate
