@@ -457,8 +457,10 @@ later is cheap (auto-merged bot bumps); merging packages back is not.
 2. **marketplace + telemetry-ui** — have recovery but are blind to `misconfigured`; the
    in-tree apps that fixing the workspace package covers immediately.
 3. **project-manager** — already correct; becomes the SDK's verification reference.
-4. **solitaire** — last, and only the embedding-awareness slice (no auth gate needed; theme
-   is out of the SDK per decision 11).
+4. **solitaire** — verified 2026-07-19: **nothing to adopt today.** Its only Hosty surface
+   is two localStorage key names — no embedding detection, no postMessage, no auth, and zero
+   npm dependencies. Adding the package now would be a dependency with no consumer; its SDK
+   moment arrives with the theme slice (deferred by decision 11).
 
 Each phase is independently shippable. Start by extracting `core` + `server` + `react` from
 demo-app (the reference), wire the three in-tree apps against `packages/hosty-app-sdk`, then
