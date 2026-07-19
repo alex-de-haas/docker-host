@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - "apps/shell/**"
+      - "packages/app-sdk/**"
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/shell-image.yml"
