@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.Extensions.Caching.Memory;
 
 namespace HostySdk.App;
@@ -42,5 +44,8 @@ public sealed class CachingIdentityValidator(
         return session;
     }
 
-    private static string CacheKey(string token) => $"hosty-identity:{token}";
+    // Keyed by a hash so the opaque token does not sit in cache keys for the eviction
+    // window in cleartext (the token itself is never cached, only the validated session).
+    private static string CacheKey(string token)
+        => $"hosty-identity:{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)))}";
 }

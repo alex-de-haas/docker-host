@@ -43,6 +43,14 @@ public sealed class CoreIdentityValidator(
             logger.LogWarning(ex, "Identity revalidation request to Core failed.");
             return null;
         }
+        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            // HttpClient timeouts surface as TaskCanceledException; only genuine caller
+            // cancellation may propagate — a Core timeout must fail closed, not crash the
+            // authentication pipeline.
+            logger.LogWarning(ex, "Identity revalidation request to Core timed out.");
+            return null;
+        }
 
         using (response)
         {
@@ -56,7 +64,7 @@ public sealed class CoreIdentityValidator(
             {
                 payload = await response.Content.ReadFromJsonAsync<RevalidateResponse>(cancellationToken);
             }
-            catch (Exception ex) when (ex is System.Text.Json.JsonException or InvalidOperationException)
+            catch (Exception ex) when (ex is System.Text.Json.JsonException or NotSupportedException or InvalidOperationException)
             {
                 logger.LogWarning(ex, "Core returned an unreadable revalidation body.");
                 return null;

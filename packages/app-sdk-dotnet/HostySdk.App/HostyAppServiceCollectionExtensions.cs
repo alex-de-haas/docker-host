@@ -15,7 +15,8 @@ public static class HostyAppServiceCollectionExtensions
     public static AuthenticationBuilder AddHostyAppAuthentication(
         this IServiceCollection services,
         HostyAppOptions options,
-        Action<HostyAuthenticationOptions>? configure = null)
+        Action<HostyAuthenticationOptions>? configure = null,
+        bool useAsDefaultScheme = true)
     {
         services.AddSingleton(options);
         services.AddMemoryCache();
@@ -31,10 +32,13 @@ public static class HostyAppServiceCollectionExtensions
             provider.GetRequiredService<Microsoft.Extensions.Caching.Memory.IMemoryCache>(),
             CachingIdentityValidator.DefaultTimeToLive));
 
-        return services
-            .AddAuthentication(HostyAuthenticationHandler.SchemeName)
-            .AddScheme<HostyAuthenticationOptions, HostyAuthenticationHandler>(
-                HostyAuthenticationHandler.SchemeName,
-                configure ?? (_ => { }));
+        // Registering a default scheme is opt-out so composing with an app's existing
+        // authentication setup never silently overrides its default.
+        var builder = useAsDefaultScheme
+            ? services.AddAuthentication(HostyAuthenticationHandler.SchemeName)
+            : services.AddAuthentication();
+        return builder.AddScheme<HostyAuthenticationOptions, HostyAuthenticationHandler>(
+            HostyAuthenticationHandler.SchemeName,
+            configure ?? (_ => { }));
     }
 }
