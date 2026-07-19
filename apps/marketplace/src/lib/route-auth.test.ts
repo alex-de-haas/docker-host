@@ -1,6 +1,11 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { clearRevalidationCache } from "@hosty-sdk/app/server";
 import { authorizeMarketplaceRequest } from "@/lib/route-auth";
 import { appIdentityCookieName } from "@/lib/host-auth";
+
+beforeEach(() => {
+  clearRevalidationCache();
+});
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -18,6 +23,7 @@ describe("authorizeMarketplaceRequest", () => {
 
   it("permits only an active Host administrator", async () => {
     vi.stubEnv("HOSTY_APP_SERVICE_TOKEN", "service-token");
+    vi.stubEnv("HOSTY_CORE_ORIGIN", "http://core.local:7070");
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
       active: true,
       appId: "hosty.marketplace",
@@ -37,6 +43,7 @@ describe("authorizeMarketplaceRequest", () => {
 
   it("rejects an active non-admin identity defensively", async () => {
     vi.stubEnv("HOSTY_APP_SERVICE_TOKEN", "service-token");
+    vi.stubEnv("HOSTY_CORE_ORIGIN", "http://core.local:7070");
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
       active: true,
       appId: "hosty.marketplace",

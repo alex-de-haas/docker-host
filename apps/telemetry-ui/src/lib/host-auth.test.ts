@@ -17,19 +17,15 @@ describe("getRecoveryParams", () => {
     });
   });
 
-  it("falls back to the server origin, then to the local default", () => {
+  it("reports a missing public origin as null — a broken environment, never a fallback", () => {
+    // Core always injects HOSTY_CORE_PUBLIC_ORIGIN, so an absent value means the environment
+    // is broken; the old fallback produced a browser-useless container-internal URL.
     vi.stubEnv("HOSTY_APP_ID", "");
     vi.stubEnv("HOSTY_CORE_PUBLIC_ORIGIN", "");
     vi.stubEnv("HOSTY_CORE_ORIGIN", "http://hosty-core:7070");
     expect(getRecoveryParams()).toEqual({
       appId: "hosty.telemetry",
-      corePublicOrigin: "http://hosty-core:7070",
-    });
-
-    vi.stubEnv("HOSTY_CORE_ORIGIN", "");
-    expect(getRecoveryParams()).toEqual({
-      appId: "hosty.telemetry",
-      corePublicOrigin: "http://localhost:7070",
+      corePublicOrigin: null,
     });
   });
 });
