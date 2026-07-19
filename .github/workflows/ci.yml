@@ -15,6 +15,7 @@ on:
       - "package.json"
       - "package-lock.json"
       - "packages/app-sdk/**"
+      - "packages/app-sdk-dotnet/**"
       - "global.json"
       - ".github/workflows/ci.yml"
       - ".github/workflows/shell-image.yml"
@@ -115,6 +116,21 @@ jobs:
 
       - name: Test App SDK
         run: npm run sdk:test
+
+  app-sdk-dotnet:
+    name: App SDK (.NET)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - name: Test HostySdk.App
+        run: dotnet test packages/app-sdk-dotnet/HostySdk.App.Tests/HostySdk.App.Tests.csproj
 
   demo-app:
     name: Demo App

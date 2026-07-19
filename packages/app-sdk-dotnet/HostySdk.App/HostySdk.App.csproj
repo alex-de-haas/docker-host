@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Exception to the Directory.Build.props no-Version rule: that rule keeps PLATFORM
+         components (Core/CLI) in lockstep, while the SDK versions independently like its npm
+         twin @hosty-sdk/app (docs/ideas/hosty-app-sdk.md, decision 13). -->
+    <Version>0.1.0</Version>
+    <PackageId>HostySdk.App</PackageId>
+    <Description>Hosty app auth for .NET services: Core identity revalidation with caching, the Hosty authentication handler, and HOSTY_* options binding.</Description>
+    <Authors>Alex de Haas</Authors>
+    <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/alex-de-haas/docker-host</RepositoryUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <None Include="README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+
+</Project>
