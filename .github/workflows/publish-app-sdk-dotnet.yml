@@ -35,7 +35,11 @@ jobs:
         uses: NuGet/login@v1
         id: nuget-login
         with:
-          user: hosty-sdk
+          # The nuget.org PROFILE name of the account holding the policy (policies live under
+          # the user's account even when owned by the organization) — a repository variable so
+          # the workflow does not hard-code it. Settings → Secrets and variables → Actions →
+          # Variables → NUGET_USER.
+          user: ${{ vars.NUGET_USER }}
 
       - name: Publish
         run: >
