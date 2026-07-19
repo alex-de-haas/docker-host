@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
-import { AppIdentityBridge } from "@haas/hosty-app-sdk/react";
+import { AppIdentityBridge } from "@hosty-sdk/app/react";
 import { AppShell } from "@/components/app-shell";
 import { HostThemeBridge } from "@/components/host-theme-bridge";
 import "./globals.css";

@@ -1,4 +1,4 @@
-import { createAppCodeRouteHandler } from "@haas/hosty-app-sdk/server";
+import { createAppCodeRouteHandler } from "@hosty-sdk/app/server";
 import { appIdentityCookieName } from "@/lib/host-auth";
 
 export const dynamic = "force-dynamic";

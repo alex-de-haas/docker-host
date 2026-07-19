@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { AppIdentityBridge } from "@haas/hosty-app-sdk/react";
+import { AppIdentityBridge } from "@hosty-sdk/app/react";
 import { HostThemeBridge } from "@/components/HostThemeBridge";
 import "./globals.css";
 

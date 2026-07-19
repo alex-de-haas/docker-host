@@ -8,7 +8,7 @@
     "apps/marketplace",
     "apps/shell",
     "apps/telemetry-ui",
-    "packages/hosty-app-sdk"
+    "packages/app-sdk"
   ],
   "overrides": {
     "next": {
@@ -56,6 +56,6 @@
     "demo-app:lint": "npm run lint --workspace @haas/hosty-demo-app",
     "demo-app:docker:build": "docker build -f apps/demo-app/Dockerfile -t ghcr.io/alex-de-haas/demo-app:latest .",
     "demo-app:docker:build:local": "docker build -f apps/demo-app/Dockerfile -t hosty-demo-app:dev .",
-    "sdk:test": "npm run test --workspace @haas/hosty-app-sdk"
+    "sdk:test": "npm run test --workspace @hosty-sdk/app"
   }
 }
