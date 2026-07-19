@@ -1,6 +1,9 @@
 name: Marketplace Image
 
 on:
+  # Manual trigger: GitHub occasionally fails to deliver push events (observed
+  # 2026-07-19, #245 merge produced zero runs); this keeps image publishing unblockable.
+  workflow_dispatch:
   push:
     branches:
       - main
