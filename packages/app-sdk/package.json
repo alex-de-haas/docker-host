@@ -1,6 +1,6 @@
 {
   "name": "@hosty-sdk/app",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Hosty app auth: session state machine, recovery bridge, Core revalidation, and the embedder responder.",
   "license": "AGPL-3.0-only",
   "type": "module",
@@ -12,7 +12,7 @@
   },
   "scripts": {
     "test": "vitest run",
-    "build": "tsc -p tsconfig.build.json"
+    "build": "tsc -p tsconfig.build.json && node scripts/fix-dist-extensions.mjs"
   },
   "dependencies": {
     "server-only": "^0.0.1"
