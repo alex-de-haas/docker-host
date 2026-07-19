@@ -7,6 +7,7 @@ WORKDIR /repo
 FROM base AS deps
 COPY package.json package-lock.json ./
 COPY apps/marketplace/package.json apps/marketplace/package.json
+COPY packages/app-sdk/package.json packages/app-sdk/package.json
 RUN npm ci --workspace @haas/hosty-marketplace
 
 FROM base AS builder

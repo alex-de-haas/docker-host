@@ -4,6 +4,7 @@ WORKDIR /repo
 FROM base AS deps
 COPY package.json package-lock.json ./
 COPY apps/demo-app/package.json apps/demo-app/package.json
+COPY packages/app-sdk/package.json packages/app-sdk/package.json
 RUN npm ci --workspace @haas/hosty-demo-app
 
 FROM base AS builder

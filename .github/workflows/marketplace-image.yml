@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - "apps/marketplace/**"
+      - "packages/app-sdk/**"
       - "global.json"
       - "Directory.Build.props"
       - ".github/workflows/marketplace-image.yml"

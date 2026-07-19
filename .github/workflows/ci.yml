@@ -14,6 +14,7 @@ on:
       - "scripts/install.ps1"
       - "package.json"
       - "package-lock.json"
+      - "packages/app-sdk/**"
       - "global.json"
       - ".github/workflows/ci.yml"
       - ".github/workflows/shell-image.yml"

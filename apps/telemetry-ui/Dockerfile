@@ -8,6 +8,7 @@ WORKDIR /repo
 FROM base AS deps
 COPY package.json package-lock.json ./
 COPY apps/telemetry-ui/package.json apps/telemetry-ui/package.json
+COPY packages/app-sdk/package.json packages/app-sdk/package.json
 RUN npm ci --workspace @haas/hosty-telemetry-ui
 
 FROM base AS builder
