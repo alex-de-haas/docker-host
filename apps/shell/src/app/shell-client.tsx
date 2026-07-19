@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { findAppPageLink, getAppPageLinks } from "./shell/app-helpers";
 import { isAuthRequiredRedirectError, readCoreError, redirectToCoreLogin, redirectToCoreLoginIfAuthRequired } from "./shell/core-api";
+import { createReissueRateLimiter } from "@hosty-sdk/app/embedder";
 import { AppDetailsDialog } from "./shell/dialogs/app-details-dialog";
 import { InstallReviewDialog } from "./shell/dialogs/install-review-dialog";
 import { PlatformDialog } from "./shell/dialogs/platform-dialog";
@@ -69,7 +70,7 @@ import type {
 } from "./shell/types";
 
 // Minimum spacing between launch-code reissues for one app, a loop guard against a frame that keeps
-// re-posting hosty:auth-required.
+// re-posting hosty:auth-required. Enforced by the SDK's per-app rate limiter.
 const AUTH_REISSUE_MIN_INTERVAL_MS = 3_000;
 
 // Refresh cadence while server-side update work (a fleet check or a background apply) is in flight.
@@ -173,7 +174,7 @@ export function ShellClient({
   const detailRequestRef = useRef(0);
   const installRequestRef = useRef(0);
   // Last launch-code reissue per app id, so a chatty frame cannot storm Core with reissues.
-  const authReissueAtRef = useRef<Map<string, number>>(new Map());
+  const authReissueLimiter = useRef(createReissueRateLimiter(AUTH_REISSUE_MIN_INTERVAL_MS));
   // Core CSRF is a cookie/header pair, so token refresh + mutation must stay ordered.
   const csrfOperationQueue = useRef<Promise<void>>(Promise.resolve());
   const shellThemePreference = normalizeThemePreference(theme);
@@ -1705,12 +1706,9 @@ export function ShellClient({
 
       // Loop guard: a frame that keeps re-posting (e.g. it never accepts the new code) must not
       // drive an unbounded reissue storm. One reissue per app per interval is plenty for recovery.
-      const now = Date.now();
-      const last = authReissueAtRef.current.get(appId) ?? 0;
-      if (now - last < AUTH_REISSUE_MIN_INTERVAL_MS) {
+      if (!authReissueLimiter.current.tryAcquire(appId)) {
         return;
       }
-      authReissueAtRef.current.set(appId, now);
 
       void (async () => {
         try {

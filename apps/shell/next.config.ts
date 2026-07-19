@@ -14,6 +14,8 @@ const nextConfig: NextConfig = {
     optimizePackageImports: ["lucide-react"],
   },
   output: "standalone",
+  // The SDK ships TypeScript source from the workspace; Next transpiles it in place.
+  transpilePackages: ["@hosty-sdk/app"],
   outputFileTracingRoot: path.join(__dirname, "../.."),
   // The Shell embeds runtime apps, but is never embedded itself.
   async headers() {
