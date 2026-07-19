@@ -20,7 +20,7 @@ export async function authorizeTelemetryRequest(headers: HeaderReader): Promise<
     };
   }
 
-  if (identity.status === "unavailable" || identity.status === "error") {
+  if (identity.status === "unavailable" || identity.status === "misconfigured") {
     return {
       ok: false,
       status: 503,

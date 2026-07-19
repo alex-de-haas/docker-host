@@ -44,9 +44,19 @@ export interface HostIdentity {
   expiresAt: string | null;
 }
 
+/** Structured detail for a failed resolution: the Core HTTP status (null when Core was
+ * never reached) plus a machine-readable code and human-readable message. Codes pass
+ * through from Core's error body where one exists; classification never branches on them
+ * (decision 10) — they exist for diagnostics and API responses. */
+export interface ResolutionError {
+  status: number | null;
+  code: string;
+  message: string;
+}
+
 export type AppSessionResolution =
   | { status: "active"; identity: HostIdentity }
-  | { status: AppSessionFailureStatus };
+  | { status: AppSessionFailureStatus; error?: ResolutionError };
 
 export function getAppId(config: HostyAppConfig): string {
   return process.env.HOSTY_APP_ID?.trim() || config.appIdFallback;
@@ -153,7 +163,12 @@ export async function resolveAppSession(
   const serviceToken = getServiceToken();
   const coreOrigin = getCoreOrigin();
   if (!serviceToken || !coreOrigin) {
-    return { status: "misconfigured" };
+    return {
+      status: "misconfigured",
+      error: serviceToken
+        ? { status: null, code: "core_origin_missing", message: "HOSTY_CORE_ORIGIN is not configured." }
+        : { status: null, code: "app_service_token_missing", message: "HOSTY_APP_SERVICE_TOKEN is not configured." },
+    };
   }
 
   const now = Date.now();
@@ -189,7 +204,10 @@ async function revalidateWithCore(
   try {
     endpoint = new URL("/api/auth/apps/revalidate", coreOrigin).toString();
   } catch {
-    return { status: "misconfigured" };
+    return {
+      status: "misconfigured",
+      error: { status: null, code: "core_origin_invalid", message: "HOSTY_CORE_ORIGIN is not a valid URL." },
+    };
   }
 
   let response: Response;
@@ -204,13 +222,29 @@ async function revalidateWithCore(
       cache: "no-store",
       signal: AbortSignal.timeout(CORE_AUTH_TIMEOUT_MS),
     });
-  } catch {
+  } catch (error) {
     // Network failure or timeout — transient either way; never cached.
-    return { status: "unavailable" };
+    const timeout = error instanceof DOMException && (error.name === "AbortError" || error.name === "TimeoutError");
+    return {
+      status: "unavailable",
+      error: {
+        status: null,
+        code: timeout ? "core_revalidation_timeout" : "app_session_revalidation_error",
+        message: error instanceof Error ? error.message : "Core identity revalidation failed.",
+      },
+    };
   }
 
   if (!response.ok) {
-    return { status: classifyRevalidationHttpStatus(response.status) };
+    const body = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+    return {
+      status: classifyRevalidationHttpStatus(response.status),
+      error: {
+        status: response.status,
+        code: readErrorField(body, "code") ?? "app_session_revalidation_failed",
+        message: readErrorField(body, "message") ?? `Core revalidation returned HTTP ${response.status}.`,
+      },
+    };
   }
 
   let payload: Record<string, unknown> | null;
@@ -218,13 +252,19 @@ async function revalidateWithCore(
     payload = (await response.json()) as Record<string, unknown> | null;
   } catch {
     // A non-JSON / truncated body means the session is unverifiable, not proof it is invalid.
-    return { status: "unavailable" };
+    return {
+      status: "unavailable",
+      error: { status: 200, code: "core_response_invalid", message: "Core returned an unreadable revalidation body." },
+    };
   }
 
   const appId = readString(payload?.appId);
   if (appId && appId !== getAppId(config)) {
     // A token minted for a different app is Core's token_app_mismatch — terminal, like 403.
-    return { status: "forbidden" };
+    return {
+      status: "forbidden",
+      error: { status: null, code: "app_identity_app_mismatch", message: "Identity token was issued for a different app." },
+    };
   }
 
   const userId = readString(payload?.userId);
@@ -431,6 +471,17 @@ function readCookie(cookieHeader: string | null, name: string): string | null {
     }
   }
   return null;
+}
+
+function readErrorField(payload: unknown, field: "code" | "message"): string | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const nested = (payload as Record<string, unknown>).error;
+  if (nested && typeof nested === "object") {
+    return readString((nested as Record<string, unknown>)[field]);
+  }
+  return readString((payload as Record<string, unknown>)[field]);
 }
 
 function readString(value: unknown): string | null {

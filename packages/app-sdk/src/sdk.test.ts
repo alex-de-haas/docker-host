@@ -85,10 +85,16 @@ describe("resolveAppSession", () => {
 
   it("classifies missing service token or core origin as misconfigured", async () => {
     delete process.env.HOSTY_APP_SERVICE_TOKEN;
-    expect(await resolveAppSession("hostyg_x", config)).toEqual({ status: "misconfigured" });
+    expect(await resolveAppSession("hostyg_x", config)).toMatchObject({
+      status: "misconfigured",
+      error: { code: "app_service_token_missing" },
+    });
     process.env.HOSTY_APP_SERVICE_TOKEN = "t";
     delete process.env.HOSTY_CORE_ORIGIN;
-    expect(await resolveAppSession("hostyg_x", config)).toEqual({ status: "misconfigured" });
+    expect(await resolveAppSession("hostyg_x", config)).toMatchObject({
+      status: "misconfigured",
+      error: { code: "core_origin_missing" },
+    });
   });
 
   it("maps Core statuses and network failures", async () => {
@@ -312,5 +318,39 @@ describe("embedder", () => {
     expect(limiter.tryAcquire("b")).toBe(true);
     now = 3001;
     expect(limiter.tryAcquire("a")).toBe(true);
+  });
+});
+
+describe("resolution error detail", () => {
+  it("passes Core's error code and HTTP status through on failures", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(401, { code: "token_revoked", message: "App session has been revoked." })),
+    );
+    expect(await resolveAppSession("hostyg_detail_a", config)).toMatchObject({
+      status: "expired",
+      error: { status: 401, code: "token_revoked", message: "App session has been revoked." },
+    });
+  });
+
+  it("labels network failures distinctly from Core-reported ones", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new TypeError("fetch failed");
+    }));
+    expect(await resolveAppSession("hostyg_detail_b", config)).toMatchObject({
+      status: "unavailable",
+      error: { status: null, code: "app_session_revalidation_error" },
+    });
+  });
+
+  it("marks a cross-app token with the mismatch code", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(200, { ...activePayload, appId: "other.app" })),
+    );
+    expect(await resolveAppSession("hostyg_detail_c", config)).toMatchObject({
+      status: "forbidden",
+      error: { code: "app_identity_app_mismatch" },
+    });
   });
 });

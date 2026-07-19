@@ -1,5 +1,11 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { clearRevalidationCache } from "@hosty-sdk/app/server";
 import { appIdentityCookieName, getMarketplaceIdentity, getRecoveryParams } from "@/lib/host-auth";
+
+beforeEach(() => {
+  // The SDK keeps a process-global positive cache; isolate every test.
+  clearRevalidationCache();
+});
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -40,14 +46,15 @@ describe("getMarketplaceIdentity", () => {
       displayName: "Host Admin",
       hostRole: "host.admin",
     });
-    expect(coreFetch).toHaveBeenCalledWith("http://core.local:7070/api/auth/apps/revalidate", expect.objectContaining({
-      headers: expect.objectContaining({ Authorization: "Bearer service-token" }),
-      body: JSON.stringify({ accessToken: "identity-token" }),
-    }));
+    const [url, init] = coreFetch.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("http://core.local:7070/api/auth/apps/revalidate");
+    expect(new Headers(init.headers).get("authorization")).toBe("Bearer service-token");
+    expect(init.body).toBe(JSON.stringify({ accessToken: "identity-token" }));
   });
 
   it("fails closed when Core returns identity for another app", async () => {
     vi.stubEnv("HOSTY_APP_SERVICE_TOKEN", "service-token");
+    vi.stubEnv("HOSTY_CORE_ORIGIN", "http://core.local:7070");
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
       active: true,
       appId: "com.example.other",
@@ -76,19 +83,16 @@ describe("getRecoveryParams", () => {
     });
   });
 
-  it("falls back to the server origin, then to the local default", () => {
+  it("reports a missing public origin as null — a broken environment, never a fallback", () => {
+    // Core always injects HOSTY_CORE_PUBLIC_ORIGIN (EffectiveCorePublicOrigin falls back to
+    // its loopback listen URL), so an absent value means the environment is broken; the old
+    // fallback to the server origin produced a browser-useless container-internal URL.
     vi.stubEnv("HOSTY_APP_ID", "");
     vi.stubEnv("HOSTY_CORE_PUBLIC_ORIGIN", "");
     vi.stubEnv("HOSTY_CORE_ORIGIN", "http://hosty-core:7070");
     expect(getRecoveryParams()).toEqual({
       appId: "hosty.marketplace",
-      corePublicOrigin: "http://hosty-core:7070",
-    });
-
-    vi.stubEnv("HOSTY_CORE_ORIGIN", "");
-    expect(getRecoveryParams()).toEqual({
-      appId: "hosty.marketplace",
-      corePublicOrigin: "http://localhost:7070",
+      corePublicOrigin: null,
     });
   });
 });
