@@ -458,7 +458,7 @@ later is cheap (auto-merged bot bumps); merging packages back is not.
    in-tree apps that fixing the workspace package covers immediately.
 3. **project-manager** — already correct; becomes the SDK's verification reference.
 4. **solitaire** — verified 2026-07-19: **nothing to adopt today.** Its only Hosty surface
-   is two localStorage key names — no embedding detection, no postMessage, no auth, and zero
+   is two `localStorage` key names — no embedding detection, no `postMessage`, no auth, and zero
    npm dependencies. Adding the package now would be a dependency with no consumer; its SDK
    moment arrives with the theme slice (deferred by decision 11).
 
