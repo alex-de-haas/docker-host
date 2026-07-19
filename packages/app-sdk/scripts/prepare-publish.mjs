@@ -17,6 +17,10 @@ if (!existsSync(join(packageDir, "dist", "index.js"))) {
 const pkg = JSON.parse(readFileSync(packagePath, "utf8"));
 pkg.exports = Object.fromEntries(
   Object.entries(pkg.exports).map(([subpath, source]) => {
+    if (typeof source !== "string") {
+      // Already transformed (the script ran twice without a restore) — keep it as-is.
+      return [subpath, source];
+    }
     const stem = source.replace(/^\.\/src\//, "").replace(/\.(tsx|ts)$/, "");
     return [subpath, { types: `./dist/${stem}.d.ts`, default: `./dist/${stem}.js` }];
   }),

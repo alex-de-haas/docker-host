@@ -12,7 +12,7 @@ import {
   readRecoveryParams,
   type AppSessionStatus,
   type RecoveryAction,
-} from "./index.ts";
+} from "./index";
 
 // Once-per-tab guard so a standalone app that returns from Core still unauthorized does
 // not bounce through /open forever. Cleared on a successful code exchange.

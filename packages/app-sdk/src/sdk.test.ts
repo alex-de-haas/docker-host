@@ -7,7 +7,7 @@ import {
   detectLaunchMode,
   isLoopbackHost,
   readRecoveryParams,
-} from "./index.ts";
+} from "./index";
 import { createReissueRateLimiter, parseActiveFrameAuthRequired } from "./embedder";
 import {
   clearRevalidationCache,
