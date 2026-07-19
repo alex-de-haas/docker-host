@@ -56,3 +56,6 @@ next-env.d.ts
 # dotnet
 **/bin/
 **/obj/
+
+# Built SDK package output (publish-time artifact, never committed)
+packages/*/dist/

@@ -1,0 +1,48 @@
+name: Publish App SDK
+
+# Publishes @hosty-sdk/app to npmjs via OIDC trusted publishing — no tokens, no secrets.
+# The npm-side binding lives in the package's Trusted Publisher settings (this repository +
+# this workflow filename). Triggered manually; the version comes from the package.json in
+# the checked-out ref, and npm rejects an already-published version, so a re-run is safe.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    name: Publish @hosty-sdk/app
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      # OIDC publishing needs a current npm CLI regardless of what ships with Node.
+      - name: Update npm
+        run: npm install -g npm@latest
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Test
+        run: npm run sdk:test
+
+      - name: Build
+        run: npm run build --workspace @hosty-sdk/app
+
+      - name: Point the manifest at dist
+        run: node scripts/prepare-publish.mjs
+        working-directory: packages/app-sdk
+
+      - name: Publish
+        run: npm publish
+        working-directory: packages/app-sdk

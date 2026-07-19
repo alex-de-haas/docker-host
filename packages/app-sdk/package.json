@@ -11,7 +11,8 @@
     "./embedder": "./src/embedder.ts"
   },
   "scripts": {
-    "test": "vitest run"
+    "test": "vitest run",
+    "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
     "server-only": "^0.0.1"
@@ -33,5 +34,18 @@
     "vitest": "^4",
     "@types/node": "^24",
     "@types/react": "^19"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alex-de-haas/docker-host.git",
+    "directory": "packages/app-sdk"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
   }
 }
