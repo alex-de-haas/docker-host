@@ -39,7 +39,7 @@ describe("Marketplace app-code exchange", () => {
     const cookie = response.headers.get("set-cookie");
     expect(cookie).toContain("hosty_marketplace_identity=app-identity-token");
     expect(cookie).toContain("HttpOnly");
-    expect(cookie).toContain("SameSite=lax");
+    expect(cookie).toContain("SameSite=Lax");
     expect(cookie).not.toContain("Secure");
   });
 
@@ -57,7 +57,7 @@ describe("Marketplace app-code exchange", () => {
     }));
 
     const cookie = response.headers.get("set-cookie");
-    expect(cookie).toContain("SameSite=none");
+    expect(cookie).toContain("SameSite=None");
     expect(cookie).toContain("Secure");
   });
 });

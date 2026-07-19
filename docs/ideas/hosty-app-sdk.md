@@ -162,9 +162,11 @@ Ratified by the owner 2026-07-17 (session review of the live media-server incide
    URL. And .NET settles it: NuGet has no git dependencies at all, so NuGet.org is
    unavoidable — at which point
    avoiding npmjs saves nothing. The git-tag channel stays as a free *auxiliary* for
-   installing the SDK from a branch or commit during debugging. Pre-flight before first
-   publish: confirm the `@haas` npm scope is actually available (common name; fall back to
-   another scope if taken).
+   installing the SDK from a branch or commit during debugging. Scope settled 2026-07-18:
+   `@hosty` was taken on npmjs, so the owner registered **`@hosty-sdk`**. Package names
+   under it are short role names with no `hosty`/`sdk` stutter — the app-side package is
+   **`@hosty-sdk/app`** (monorepo folder `packages/app-sdk`), leaving room for future role
+   packages under the same scope.
 
 6. **Enforce the server/client boundary with subpath exports + `server-only`.** The service
    token and Core fetches must never reach a client bundle. `core` stays pure; `server` is
@@ -425,15 +427,29 @@ OpenTelemetry wiring (`OTEL_*`), storage / `HOSTY_APP_DATA_DIR` helpers, SSRF-sa
 ## Package Shape
 
 ```
-@haas/hosty-app-sdk            # npmjs — pure types, constants, state machine, message schema
-@haas/hosty-app-sdk/server     # import "server-only": routes, middleware, revalidate, directory
-@haas/hosty-app-sdk/react      # 'use client': HostyAuthGate, useHostSession
-@haas/hosty-app-sdk/embedder   # 'use client': verified auth-required responder for shells
+@hosty-sdk/app                 # npmjs — pure types, constants, state machine, message schema
+@hosty-sdk/app/server          # import "server-only": routes, middleware, revalidate, directory
+@hosty-sdk/app/react           # 'use client': the identity bridge, useHostSession
+@hosty-sdk/app/embedder        # 'use client': verified auth-required responder for shells
 
 Haas.Hosty.AppSdk              # NuGet — auth handler, cached validator, HOSTY_* options
+                               # (naming to be aligned with the npm scope when the .NET
+                               # slice ships and the NuGet account/prefix is set up)
 ```
 
 Config object passed by each app: `{ appId, identityCookieName, internalHeaderPrefix, mapHostRole? }`.
+
+**Package granularity (owner-decided 2026-07-18): `@hosty-sdk/app` is an umbrella — one
+dependency per app, forever.** Second-wave functions (theme, OTel, storage helpers, manifest
+types) arrive as *subpaths* (`@hosty-sdk/app/theme`, …), not as packages: they are 50–150-line
+utilities, and package-per-utility would mean micro-package noise plus a shared "internals"
+base package whose bumps cascade — exactly the version-sync machinery decision 7 rejects. The
+split axis, when splitting ever happens, is **function/audience — never runtime**:
+server/react/embedder stay subpaths inside whatever package owns the domain, so auth can never
+end up smeared across packages. A domain earns its own package only when it has a *different
+audience or a life of its own*; the one visible candidate is `embedder` (its consumers are
+shells, not apps), which stays a subpath until a third-party shell actually exists. Splitting
+later is cheap (auto-merged bot bumps); merging packages back is not.
 
 ## Migration Plan (by risk)
 

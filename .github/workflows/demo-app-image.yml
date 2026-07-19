@@ -8,6 +8,7 @@ on:
       - "apps/demo-app/**"
       - "package.json"
       - "package-lock.json"
+      - "packages/app-sdk/**"
       - ".github/workflows/demo-app-image.yml"
 
 permissions:

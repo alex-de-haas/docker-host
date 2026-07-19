@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - "apps/telemetry-ui/**"
+      - "packages/app-sdk/**"
       - "apps/telemetry/manifest.json"
       - ".github/workflows/telemetry-ui-image.yml"
 

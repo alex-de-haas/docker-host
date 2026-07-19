@@ -7,7 +7,8 @@
     "apps/demo-app",
     "apps/marketplace",
     "apps/shell",
-    "apps/telemetry-ui"
+    "apps/telemetry-ui",
+    "packages/app-sdk"
   ],
   "overrides": {
     "next": {
@@ -20,7 +21,7 @@
     "check-versions": "node scripts/check-versions.mjs",
     "lint": "npm run shell:lint && npm run demo-app:lint && npm run marketplace:lint && npm run telemetry-ui:lint",
     "build": "npm run core:build && npm run cli:build && npm run telemetry-backend:build && npm run marketplace:build && npm run telemetry-ui:build && npm run shell:build && npm run demo-app:build",
-    "test": "npm run core:test && npm run cli:test && npm run telemetry-backend:test && npm run marketplace:test && npm run telemetry-ui:test && npm run shell:test",
+    "test": "npm run sdk:test && npm run core:test && npm run cli:test && npm run telemetry-backend:test && npm run marketplace:test && npm run telemetry-ui:test && npm run shell:test",
     "ci": "npm run lint && npm run build && npm run test",
     "core:dev": "dotnet run --project apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj --launch-profile dev",
     "core:build": "dotnet build apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj",
@@ -54,6 +55,7 @@
     "demo-app:start": "npm run start --workspace @haas/hosty-demo-app",
     "demo-app:lint": "npm run lint --workspace @haas/hosty-demo-app",
     "demo-app:docker:build": "docker build -f apps/demo-app/Dockerfile -t ghcr.io/alex-de-haas/demo-app:latest .",
-    "demo-app:docker:build:local": "docker build -f apps/demo-app/Dockerfile -t hosty-demo-app:dev ."
+    "demo-app:docker:build:local": "docker build -f apps/demo-app/Dockerfile -t hosty-demo-app:dev .",
+    "sdk:test": "npm run test --workspace @hosty-sdk/app"
   }
 }

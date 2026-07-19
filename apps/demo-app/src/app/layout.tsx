@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { AppIdentityBridge } from "@/components/AppIdentityBridge";
+import { AppIdentityBridge } from "@hosty-sdk/app/react";
 import { HostThemeBridge } from "@/components/HostThemeBridge";
 import "./globals.css";
 
