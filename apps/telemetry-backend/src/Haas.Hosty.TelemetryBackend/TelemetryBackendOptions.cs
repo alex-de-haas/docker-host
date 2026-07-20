@@ -63,8 +63,12 @@ internal sealed record TelemetryBackendOptions
         {
             DatabasePath = FirstNonEmpty(Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_DB_PATH"))
                 ?? Path.Combine(appData, "telemetry.db"),
-            // Collector Prometheus URL: explicit, else derived from the sibling-service URL Core injects
-            // via `dependsOn` (reachable over the per-app docker network, unlike a host-loopback URL).
+            // Collector Prometheus URL. The manifest pins this explicitly, and must: the `dependsOn`
+            // fallback below resolves the collector's FIRST port, which is the OTLP receiver (4318), not
+            // the Prometheus exporter (9464) — so it yields a 404 and silently drops every app metric.
+            // The fallback stays for a collector that declares only the one port; it is not a default to
+            // rely on. Both forms use the sibling service name, reachable over the per-app docker
+            // network, unlike a host-loopback URL.
             MetricsScrapeUrl = FirstNonEmpty(
                 Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_METRICS_URL"),
                 Append(Environment.GetEnvironmentVariable("HOSTY_SERVICE_COLLECTOR_URL"), "/metrics")),
