@@ -40,6 +40,10 @@ internal sealed class TelemetryIngestService(
     // Skips re-inserting unchanged metric samples (the exporter re-serves last values every scrape).
     private readonly MetricDeduplicator metricDeduplicator = new();
 
+    // Scrape targets currently failing, so each outage is logged on its edges (once when it starts, once
+    // when it recovers) rather than on every scrape tick.
+    private readonly HashSet<string> failingScrapeUrls = new(StringComparer.Ordinal);
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         await Task.Yield();
@@ -110,10 +114,24 @@ internal sealed class TelemetryIngestService(
             return;
         }
 
-        var text = await FetchAsync(url, cancellationToken);
+        var (text, failure) = await FetchAsync(url, cancellationToken);
         if (text is null)
         {
+            // Log the transition, not every tick: a misconfigured or down target fails on the scrape
+            // cadence forever, and a warning every 15 s would drown the log it is meant to surface in.
+            // Silence here is what hid a target pointed at the wrong port — the whole signal was simply
+            // missing from the UI with nothing anywhere to say why.
+            if (failingScrapeUrls.Add(url))
+            {
+                logger.LogWarning("Metrics scrape of {Url} failed ({Failure}); this target contributes no metrics until it recovers.", url, failure);
+            }
+
             return;
+        }
+
+        if (failingScrapeUrls.Remove(url))
+        {
+            logger.LogInformation("Metrics scrape of {Url} recovered.", url);
         }
 
         foreach (var sample in PrometheusTextParser.Parse(text))
@@ -185,22 +203,24 @@ internal sealed class TelemetryIngestService(
         }
     }
 
-    // GETs the scrape endpoint, returning null on any transport/timeout/non-success so the loop treats
-    // an unreachable collector as "no data", never an error. Ported from Core's HttpMetricsScrapeClient.
-    private async Task<string?> FetchAsync(string url, CancellationToken cancellationToken)
+    // GETs the scrape endpoint. A null body on any transport/timeout/non-success keeps the loop treating
+    // an unreachable collector as "no data", never an error — but the paired reason string lets the
+    // caller say *why* once, which distinguishes the two failures that look identical from the UI:
+    // a target that is down (connection refused) and one pointed at the wrong port (404).
+    private async Task<(string? Body, string? Failure)> FetchAsync(string url, CancellationToken cancellationToken)
     {
         try
         {
             using var response = await httpClient.GetAsync(url, cancellationToken);
             return response.IsSuccessStatusCode
-                ? await response.Content.ReadAsStringAsync(cancellationToken)
-                : null;
+                ? (await response.Content.ReadAsStringAsync(cancellationToken), null)
+                : (null, $"HTTP {(int)response.StatusCode}");
         }
         catch (Exception ex) when (
             ex is HttpRequestException or IOException or UriFormatException or InvalidOperationException ||
             (ex is TaskCanceledException && !cancellationToken.IsCancellationRequested))
         {
-            return null;
+            return (null, ex.Message);
         }
     }
 
