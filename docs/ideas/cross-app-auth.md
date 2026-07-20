@@ -127,7 +127,7 @@ No new credential is minted, no new env is injected, no lifecycle changes:
 2. **SDK:** provider middleware + consumer handler in `HostySdk.App` (.NET first — every
    edge today is .NET on both sides; the TS server-slice twin waits for a TS provider to
    exist). This folds naturally into the Second Wave's Core-capability-client area
-   (hosty-app-sdk.md), same package, no new distribution channel.
+   ([hosty-app-sdk.md](hosty-app-sdk.md)), same package, no new distribution channel.
 3. **torrent-engine:** adopt the middleware. (The interim `CONTROL_API_TOKEN` was already
    removed unused in 0.5.0, torrent-engine#22 — no legacy-header window is needed, since
    nothing ever sent it.)
