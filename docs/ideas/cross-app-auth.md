@@ -12,26 +12,29 @@ what this note proposes: "A cross-app dependency is **not** an access barrier �
 single-tenant homelab". That decision was coherent when it was made. Three things have
 changed or surfaced since:
 
-1. **A provider already voted with its feet.** torrent-engine shipped an interim
-   shared-secret guard on its own initiative: when `CONTROL_API_TOKEN` is set, every
-   control request except `/healthz` must carry it in `X-Api-Token`, compared in fixed
-   time (`TorrentEngine.Api/Program.cs`). The code comment states the motive — "This
-   removes the 'anything on the docker bridge can drive the engine' exposure **until the
-   platform's app-identity tokens land**" — i.e. the app author considered the trusted-host
-   assumption insufficient for *this* app and is explicitly waiting for a platform
-   mechanism. When apps start hand-rolling a security contract the platform declined to
-   provide, the pre-SDK auth story is restarting: independent copies, drift, then an
-   incident.
+1. **A provider already voted with its feet.** torrent-engine shipped (through 0.4.x) an
+   interim shared-secret guard on its own initiative: when `CONTROL_API_TOKEN` was set,
+   every control request except `/healthz` had to carry it in `X-Api-Token`, compared in
+   fixed time. The code comment stated the motive — "This removes the 'anything on the
+   docker bridge can drive the engine' exposure **until the platform's app-identity tokens
+   land**" — i.e. the app author considered the trusted-host assumption insufficient for
+   *this* app and was explicitly waiting for a platform mechanism. When apps start
+   hand-rolling a security contract the platform declined to provide, the pre-SDK auth
+   story is restarting: independent copies, drift, then an incident.
 
-2. **The interim guard is a live footgun.** The setting is surfaced in torrent-engine's
-   manifest (`secret: true`) and documented in its README and store listing — an operator
-   can turn it on today. But media-server, the only consumer, sends no token of any kind
-   (`RemoteTorrentEngine` / `RemoteTranscodeEngine` attach no auth header; verified
-   2026-07-20 — zero `X-Api-Token` references in the media-server repo, and
-   `MediaServerSettings` has no field to hold one). Enabling the documented setting
-   silently 401s every control call. There is also no channel to distribute the secret:
-   Core injects `HOSTY_DEPENDENCY_{ALIAS}_URL` and nothing else, so pairing is manual
-   env-editing on both sides. transcode-engine has no guard at all.
+2. **The interim guard proved the pairing problem, then was removed.** The setting was
+   operator-visible (manifest `secret: true`, README, store listing), but media-server —
+   the only consumer — sends no token of any kind (`RemoteTorrentEngine` /
+   `RemoteTranscodeEngine` attach no auth header; verified 2026-07-20 — zero `X-Api-Token`
+   references in the media-server repo, and `MediaServerSettings` has no field to hold
+   one), and Core injects `HOSTY_DEPENDENCY_{ALIAS}_URL` and nothing else, so there was no
+   channel to distribute the secret. Enabling the documented setting could only silently
+   401 the one integration that exists. **Owner call 2026-07-20: removed outright, unused,
+   in torrent-engine 0.5.0
+   ([torrent-engine#22](https://github.com/alex-de-haas/torrent-engine/pull/22))** rather
+   than carrying a legacy transition for deployments that cannot exist. The episode stands
+   as evidence for this note: a per-edge operator secret dies on distribution and pairing
+   even with a single edge. transcode-engine never had a guard at all.
 
 3. **The trusted-host assumption has a shelf life.** The marketplace and third-party app
    feeds are the platform's stated direction; "every installed app is trusted" weakens
@@ -55,7 +58,7 @@ SDK trust model. App→Core calls are already authenticated by `HOSTY_APP_SERVIC
 
 | Edge | Dependency | Consumer sends | Provider checks |
 | --- | --- | --- | --- |
-| media-server → torrent-engine | required | nothing | optional `X-Api-Token` (off by default; **no consumer can satisfy it**) |
+| media-server → torrent-engine | required | nothing | nothing (the interim `X-Api-Token` guard was removed unused in 0.5.0, [torrent-engine#22](https://github.com/alex-de-haas/torrent-engine/pull/22)) |
 | media-server → transcode-engine | optional | nothing | nothing |
 
 These two edges are the entire cross-app surface today: one consumer, two providers, all
@@ -95,12 +98,12 @@ No new credential is minted, no new env is injected, no lifecycle changes:
   token, body `{ "token": "…" }`, response `{ appId, installed, running }` and optionally
   `dependsOnCaller: bool`. Resolution is `ResolveAppId` + an app-record lookup. Rate
   limiting mirrors whatever `/launch-code` gets.
-- **Provider middleware** (SDK, see below): reads `Authorization: Bearer` (accepting
-  `X-Api-Token` during migration), exempts `/healthz` (Core probes it unauthenticated —
-  torrent-engine's guard already carves this out), introspects with the 30s
-  positive-cache/no-negative-cache numbers, and disables itself entirely when the app is
-  not Core-managed (no `HOSTY_APP_SERVICE_TOKEN` in env — the same `IsCoreManaged` gate
-  media-server's `HostyOptions` already uses for standalone dev runs).
+- **Provider middleware** (SDK, see below): reads `Authorization: Bearer`, exempts
+  `/healthz` (Core probes it unauthenticated — the retired torrent-engine guard carved out
+  the same exemption), introspects with the 30s positive-cache/no-negative-cache numbers,
+  and disables itself entirely when the app is not Core-managed (no
+  `HOSTY_APP_SERVICE_TOKEN` in env — the same `IsCoreManaged` gate media-server's
+  `HostyOptions` already uses for standalone dev runs).
 - **Consumer side** (SDK): a `DelegatingHandler` that attaches the app's own service
   token to the `HttpClient`s built from `HOSTY_DEPENDENCY_*` URLs. media-server adds it
   to `RemoteTorrentEngine` / `RemoteTranscodeEngine` in one registration.
@@ -125,20 +128,20 @@ No new credential is minted, no new env is injected, no lifecycle changes:
    edge today is .NET on both sides; the TS server-slice twin waits for a TS provider to
    exist). This folds naturally into the Second Wave's Core-capability-client area
    (hosty-app-sdk.md), same package, no new distribution channel.
-3. **torrent-engine:** adopt the middleware; keep `CONTROL_API_TOKEN` accepted for one
-   release as the legacy header, then retire it and update README + store listing (both
-   currently document it as the interim measure it is).
+3. **torrent-engine:** adopt the middleware. (The interim `CONTROL_API_TOKEN` was already
+   removed unused in 0.5.0, torrent-engine#22 — no legacy-header window is needed, since
+   nothing ever sent it.)
 4. **transcode-engine:** adopt the middleware.
 5. **media-server:** register the handler on both engine clients.
 6. **Enforcement staged like the token-adoption boot check:** providers first run
    accept-and-log (warn on anonymous calls), flip to require once the consumer handler
    has shipped. Default becomes require.
 
-**Immediate stopgap, independent of ratification:** until step 5 exists,
-`CONTROL_API_TOKEN` must stay unset on any host where media-server consumes
-torrent-engine — the setting's own description should say so. (Alternatively wire the
-secret into media-server's settings as a bridge; given the small step count above, the
-bridge is probably not worth building.)
+**Stopgap resolved 2026-07-20:** the original draft required `CONTROL_API_TOKEN` to stay
+unset until step 5 exists (enabling it silently 401'd the only consumer). The owner chose
+the stronger option — the setting was removed outright in torrent-engine 0.5.0
+(torrent-engine#22), so the footgun no longer exists and the providers are plainly
+unauthenticated until this proposal's middleware ships.
 
 ## Rejected Alternatives
 
@@ -181,8 +184,9 @@ exist), keep the network hardening on its own track.
 3. Does the consumer handler belong in `HostySdk.App` immediately, or wait and ship with
    the Second Wave capability client so the engines take one dependency bump instead of
    two?
-4. Is the `CONTROL_API_TOKEN` bridge worth wiring into media-server settings, or is the
-   stopgap documentation note enough? (Proposal assumes the latter.)
+
+(A fourth question — whether to bridge `CONTROL_API_TOKEN` into media-server settings —
+was resolved 2026-07-20 by deleting the token instead: torrent-engine#22.)
 
 ## References
 
@@ -190,8 +194,9 @@ exist), keep the network hardening on its own track.
   no-auth decision this note revisits, and the discovery contract it builds on.
 - [hosty-app-sdk.md](hosty-app-sdk.md) — trust model (decision 1), online-validation rule
   and cache numbers (decisions 9–10), Second Wave packaging.
-- torrent-engine `README.md` / `docs/store.md` — the interim `CONTROL_API_TOKEN`
-  contract this proposal retires.
+- [torrent-engine#22](https://github.com/alex-de-haas/torrent-engine/pull/22) — removal
+  of the unused interim `CONTROL_API_TOKEN` (0.5.0); the engine's README keeps the 0.4.x
+  history as the motivating precedent for this note.
 - [PR #220](https://github.com/alex-de-haas/docker-host/pull/220) — durable
   app-service signing key; the rotation and adopt-vs-recreate machinery this design
   leans on.
