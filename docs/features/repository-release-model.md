@@ -47,62 +47,65 @@ Builds are independent:
 - `cli-release.yml` - build and publish standalone CLI and Core executable artifacts;
 - optional future workflows - desktop Shell packages.
 
-Recommended path filters:
+### Path filtering in `ci.yml`
+
+`ci.yml` carries every component's checks as sibling jobs, so its filtering is **per job, not per
+workflow**. A `changes` job runs [`dorny/paths-filter`](https://github.com/dorny/paths-filter) and each
+component job gates on the matching output.
+
+A workflow-level `paths:` filter cannot do this. It is a union over every component, so a change to any
+one of them starts all of them - which is what the repository did until this was split out. It is also
+incompatible with required status checks: when the filter excludes a change the workflow never starts,
+its checks never report, and the pull request waits on them forever. A job skipped by `if:` reports as
+skipped, which GitHub counts as success.
+
+The filters, as implemented:
 
 ```text
-Shell build:
-  apps/shell/**
+global (included by every filter below):
   package.json
   package-lock.json
-
-Shell image build:
-  apps/shell/**
-  package.json
-  package-lock.json
-  .github/workflows/shell-image.yml
-
-Marketplace build:
-  apps/marketplace/**
-  package.json
-  package-lock.json
-
-Marketplace image build:
-  apps/marketplace/**
-  package.json
-  package-lock.json
-  .github/workflows/marketplace-image.yml
-
-Demo App build:
-  apps/demo-app/**
-  package.json
-  package-lock.json
-
-Demo App image build:
-  apps/demo-app/**
-  package.json
-  package-lock.json
-  .github/workflows/demo-app-image.yml
-
-Core build:
-  apps/core/**
   global.json
+  Directory.Build.props
+  .github/workflows/ci.yml
 
-CLI/Core release build:
-  apps/core/**
-  apps/cli/**
-  scripts/install.sh
-  scripts/install.ps1
-  global.json
-  .github/workflows/cli-release.yml
+Shell / Demo App / Marketplace / Telemetry UI:
+  <global>
+  packages/app-sdk/**          # all four depend on the @hosty-sdk/app workspace package
+  apps/<component>/**
 
-Docs-only changes:
-  docs/**
-  README.md
+App SDK:            <global> + packages/app-sdk/**
+App SDK (.NET):     <global> + packages/app-sdk-dotnet/**
+Core:               <global> + apps/core/**
+Telemetry Backend:  <global> + apps/telemetry-backend/**
+CLI:                <global> + apps/cli/** + scripts/install.sh + scripts/install.ps1
 ```
 
-Full CI runs Shell build, Marketplace lint/test/build, Demo App lint/build, Core build/tests, installer syntax validation for shell and PowerShell installers, CLI build, and CLI xUnit tests. The root `npm run ci` script mirrors the primary Shell, Marketplace, Demo App, Core, and CLI validation sequence for local validation.
+Two deliberate exceptions:
 
-Pull request CI is intentionally lighter than default-branch CI. Pull requests run build-only checks for Shell, Demo App, Core, and CLI so reviewers get a fast compile signal without publishing artifacts. Pushes to `main` run the fuller validation path, including lint and tests where configured.
+- **Version consistency is ungated.** `scripts/check-versions.mjs` reads version fields from every
+  manifest and `package.json` in the repository, so any filter narrow enough to be useful would also be
+  wrong. It needs no `npm ci` and finishes in seconds.
+- **Pushes to `main` always run the full matrix**, ignoring the filter. `main` is the release path - the
+  image and CLI publish workflows fire off the same commits - so it is verified in full rather than
+  against a diff. The filter only narrows pull requests.
+
+The `global` list is what makes this safe to narrow: anything that can change how a component builds
+(the npm workspace root and its lockfile, the shared .NET SDK pin and MSBuild props, and `ci.yml`
+itself) runs everything. Under-triggering on a shared dependency bump is the failure worth avoiding, so
+when in doubt a path belongs in `global`.
+
+The single-purpose image and release workflows keep their own workflow-level `paths:` filters; with one
+component each, the union problem does not arise.
+
+Full CI runs Shell build, Marketplace lint/test/build, Demo App lint/build, Telemetry UI
+lint/test/build, Core build/tests, Telemetry Backend build/tests, App SDK tests (Node and .NET),
+installer syntax validation for shell and PowerShell installers, CLI build, and CLI xUnit tests. The
+root `npm run ci` script mirrors the primary Shell, Marketplace, Demo App, Core, and CLI validation
+sequence for local validation.
+
+Pull request CI therefore runs the same checks as default-branch CI, restricted to the components the
+diff touches; pushes to `main` run all of them.
 
 ## Release Artifacts
 
