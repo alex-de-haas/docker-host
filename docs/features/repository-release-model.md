@@ -59,27 +59,41 @@ incompatible with required status checks: when the filter excludes a change the 
 its checks never report, and the pull request waits on them forever. A job skipped by `if:` reports as
 skipped, which GitHub counts as success.
 
-The filters, as implemented:
+Shared paths are scoped **by runtime**, not pooled into one list:
 
 ```text
-global (included by every filter below):
-  package.json
-  package-lock.json
-  global.json
-  Directory.Build.props
-  .github/workflows/ci.yml
+node_shared:                    dotnet_shared:
+  package.json                    package.json
+  package-lock.json               global.json
+  .github/workflows/ci.yml        Directory.Build.props
+                                  .github/workflows/ci.yml
 
 Shell / Demo App / Marketplace / Telemetry UI:
-  <global>
+  <node_shared>
   packages/app-sdk/**          # all four depend on the @hosty-sdk/app workspace package
   apps/<component>/**
 
-App SDK:            <global> + packages/app-sdk/**
-App SDK (.NET):     <global> + packages/app-sdk-dotnet/**
-Core:               <global> + apps/core/**
-Telemetry Backend:  <global> + apps/telemetry-backend/**
-CLI:                <global> + apps/cli/** + scripts/install.sh + scripts/install.ps1
+App SDK:            <node_shared>   + packages/app-sdk/**
+App SDK (.NET):     <dotnet_shared> + packages/app-sdk-dotnet/**
+Core:               <dotnet_shared> + apps/core/**
+Telemetry Backend:  <dotnet_shared> + apps/telemetry-backend/**
+CLI:                <dotnet_shared> + apps/cli/** + scripts/install.sh + scripts/install.ps1
+Workflow lint:      .github/workflows/**
 ```
+
+The split is not cosmetic. A single shared pool was tried first and made the filtering nearly inert:
+every version bump touches either `package-lock.json` (npm workspaces record their version there) or
+`Directory.Build.props` (the platform version), and the versioning policy above requires that bump in
+the same commit - so almost every pull request matched every filter. An npm lockfile cannot change a
+.NET build and the .NET SDK pin cannot change a Node one, so scoping them costs nothing in safety.
+
+`package.json` is in both lists: the root manifest holds the `core:build` / `cli:build` /
+`telemetry-backend:build` scripts the .NET jobs invoke, so it is not Node-only.
+
+Within a runtime the filters still err toward over-triggering - a `package-lock.json` change runs all
+four Node apps, because a version-only bump and a real dependency bump are indistinguishable by path.
+Under-triggering on a shared dependency change is the failure worth avoiding, so when in doubt a path
+belongs in the shared list for its runtime.
 
 Two deliberate exceptions:
 
@@ -90,10 +104,20 @@ Two deliberate exceptions:
   image and CLI publish workflows fire off the same commits - so it is verified in full rather than
   against a diff. The filter only narrows pull requests.
 
-The `global` list is what makes this safe to narrow: anything that can change how a component builds
-(the npm workspace root and its lockfile, the shared .NET SDK pin and MSBuild props, and `ci.yml`
-itself) runs everything. Under-triggering on a shared dependency bump is the failure worth avoiding, so
-when in doubt a path belongs in `global`.
+### Workflow lint
+
+A `Workflow lint` job runs [`actionlint`](https://github.com/rhysd/actionlint) (pinned image, not
+`latest`) over `.github/workflows/**`: expression syntax, `needs`/`outputs` references, action input
+names, and shellcheck across every `run:` block.
+
+It exists because a hyphenated `needs.changes.outputs.app-sdk` reference shipped in the first version of
+the filtering above. A `-` in an expression property name parses as **subtraction**, so the expression
+evaluated to something other than the output it named, and nothing in CI could have caught it. Property
+names referenced from expressions are therefore underscored, while job ids stay hyphenated.
+
+Note that shellcheck cannot see through `${{ }}` interpolation - `[[ "${{ matrix.rid }}" == win-* ]]`
+reads to it as a comparison that can never match (SC2193). Bind workflow values to `env:` and reference
+them as shell variables, which is the recommended shape anyway.
 
 The single-purpose image and release workflows keep their own workflow-level `paths:` filters; with one
 component each, the union problem does not arise.

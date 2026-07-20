@@ -114,14 +114,20 @@ jobs:
             -p:Version=${{ steps.product_version.outputs.version }} \
             --output artifacts
 
+      # The matrix values reach the script through env rather than inline `${{ }}`: shellcheck cannot see
+      # through the interpolation and reads the guard as a comparison that can never match (SC2193).
+      # Binding them first is also the idiomatic way to keep workflow values out of a script body.
       - name: Normalize artifact name
         shell: bash
+        env:
+          RID: ${{ matrix.rid }}
+          ARTIFACT: ${{ matrix.artifact }}
         run: |
-          if [[ "${{ matrix.rid }}" == win-* ]]; then
-            mv artifacts/hosty.exe "artifacts/${{ matrix.artifact }}"
+          if [[ "$RID" == win-* ]]; then
+            mv artifacts/hosty.exe "artifacts/$ARTIFACT"
           else
-            mv artifacts/hosty "artifacts/${{ matrix.artifact }}"
-            chmod +x "artifacts/${{ matrix.artifact }}"
+            mv artifacts/hosty "artifacts/$ARTIFACT"
+            chmod +x "artifacts/$ARTIFACT"
           fi
 
       - name: Upload CLI artifact
@@ -140,14 +146,18 @@ jobs:
             -p:Version=${{ steps.product_version.outputs.version }} \
             --output core-artifacts
 
+      # Same SC2193 shape as "Normalize artifact name" above.
       - name: Normalize Core artifact name
         shell: bash
+        env:
+          RID: ${{ matrix.rid }}
+          CORE_ARTIFACT: ${{ matrix.core_artifact }}
         run: |
-          if [[ "${{ matrix.rid }}" == win-* ]]; then
-            mv core-artifacts/hosty-core.exe "core-artifacts/${{ matrix.core_artifact }}"
+          if [[ "$RID" == win-* ]]; then
+            mv core-artifacts/hosty-core.exe "core-artifacts/$CORE_ARTIFACT"
           else
-            mv core-artifacts/hosty-core "core-artifacts/${{ matrix.core_artifact }}"
-            chmod +x "core-artifacts/${{ matrix.core_artifact }}"
+            mv core-artifacts/hosty-core "core-artifacts/$CORE_ARTIFACT"
+            chmod +x "core-artifacts/$CORE_ARTIFACT"
           fi
 
       - name: Upload Core artifact

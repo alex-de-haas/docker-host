@@ -542,7 +542,9 @@ examples are the argument, exactly as they were for auth.
    fleet's only implementation of the backup trigger and operator notifications; any
    stateful app wants both, and the directory client (item 1) is the same surface.
    Adjacent: the data-dir ownership pattern (project-manager's `docker-entrypoint.sh`
-   mkdir/chown/drop-privileges dance) for stateful Docker apps.
+   mkdir/chown/drop-privileges dance) for stateful Docker apps. If
+   [cross-app-auth.md](cross-app-auth.md) is ratified, its provider middleware and
+   consumer handler land in this same area of the package.
 
 6. **Small standardizers.** A `healthz` route factory — marketplace and telemetry-ui are
    identical, while demo-app, project-manager, and media-server use three different
