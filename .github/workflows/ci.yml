@@ -41,6 +41,7 @@ jobs:
       telemetry_backend: ${{ steps.filter.outputs.telemetry_backend }}
       marketplace: ${{ steps.filter.outputs.marketplace }}
       telemetry_ui: ${{ steps.filter.outputs.telemetry_ui }}
+      workflows: ${{ steps.filter.outputs.workflows }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -50,63 +51,75 @@ jobs:
         if: github.event_name == 'pull_request'
         uses: dorny/paths-filter@v3
         with:
-          # `global` is everything that can change how any component builds: the npm workspace root and
-          # its lockfile, the shared .NET SDK pin and MSBuild props, and this file. A change there runs
-          # the full matrix — under-triggering on a dependency bump is exactly the failure worth
-          # avoiding. Every filter includes it.
+          # Shared paths are scoped by runtime rather than pooled into one list. A single `global` pool
+          # looked safe but made the filtering nearly inert: every version bump touches either
+          # `package-lock.json` (npm workspaces record their version there) or `Directory.Build.props`
+          # (the platform version), and AGENTS.md requires the bump in the same commit — so almost every
+          # PR matched every filter. An npm lockfile cannot change a .NET build and the .NET SDK pin
+          # cannot change a Node one, so the split costs nothing in safety.
+          #
+          # `package.json` is in both: the root manifest holds the `core:build` / `cli:build` /
+          # `telemetry-backend:build` scripts the .NET jobs invoke, so it is not Node-only.
           #
           # The four Node apps also depend on the `@hosty-sdk/app` workspace package, so they list
           # `packages/app-sdk/**` too. The .NET projects reference nothing outside their own tree
           # (verified: each test csproj references only its sibling src csproj), so they stay narrow.
           filters: |
-            global: &global
+            node_shared: &node_shared
               - 'package.json'
               - 'package-lock.json'
+              - '.github/workflows/ci.yml'
+
+            dotnet_shared: &dotnet_shared
+              - 'package.json'
               - 'global.json'
               - 'Directory.Build.props'
               - '.github/workflows/ci.yml'
 
             app_sdk:
-              - *global
+              - *node_shared
               - 'packages/app-sdk/**'
 
             app_sdk_dotnet:
-              - *global
+              - *dotnet_shared
               - 'packages/app-sdk-dotnet/**'
 
             shell:
-              - *global
+              - *node_shared
               - 'packages/app-sdk/**'
               - 'apps/shell/**'
 
             demo_app:
-              - *global
+              - *node_shared
               - 'packages/app-sdk/**'
               - 'apps/demo-app/**'
 
             marketplace:
-              - *global
+              - *node_shared
               - 'packages/app-sdk/**'
               - 'apps/marketplace/**'
 
             telemetry_ui:
-              - *global
+              - *node_shared
               - 'packages/app-sdk/**'
               - 'apps/telemetry-ui/**'
 
             core:
-              - *global
+              - *dotnet_shared
               - 'apps/core/**'
 
             cli:
-              - *global
+              - *dotnet_shared
               - 'apps/cli/**'
               - 'scripts/install.sh'
               - 'scripts/install.ps1'
 
             telemetry_backend:
-              - *global
+              - *dotnet_shared
               - 'apps/telemetry-backend/**'
+
+            workflows:
+              - '.github/workflows/**'
 
   # Ungated on purpose: it reads version fields out of every manifest and package.json in the repo, so
   # any filter narrow enough to be useful would also be wrong. It needs no `npm ci` and finishes in
@@ -125,6 +138,25 @@ jobs:
 
       - name: Check version consistency
         run: node scripts/check-versions.mjs
+
+  # Type-checks the workflows themselves: expression syntax, `needs`/`outputs` references, action input
+  # names, and shellcheck over every `run:` block. Added after a hyphenated `needs.changes.outputs.*`
+  # reference shipped in #256 — a `-` there parses as subtraction, so the expression silently evaluated
+  # to the wrong thing and nothing in CI could have noticed. The image is pinned; `latest` would let a
+  # new release fail unrelated PRs.
+  actionlint:
+    name: Workflow lint
+    runs-on: ubuntu-latest
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.workflows == 'true'
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Lint workflows
+        uses: docker://rhysd/actionlint:1.7.12
+        with:
+          args: -color
 
   shell:
     name: Shell
