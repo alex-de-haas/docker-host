@@ -1,69 +1,116 @@
 name: CI
 
+# The workflow itself has no `paths:` filter — it runs on every PR to main and every push to main, and
+# each job decides for itself whether it has anything to do (see the `changes` job below).
+#
+# A workflow-level `paths:` filter cannot express this: it is a union over every component, so touching
+# any one of them ran all ten jobs. It is also incompatible with required status checks — when the
+# filter excludes a change the workflow never starts, the required checks never report, and the PR sits
+# pending forever. A job skipped by `if:` reports as skipped, which counts as success.
 on:
   pull_request:
     branches:
       - main
-    paths:
-      - "apps/core/**"
-      - "apps/shell/**"
-      - "apps/demo-app/**"
-      - "apps/cli/**"
-      - "docs/features/core-api.md"
-      - "scripts/install.sh"
-      - "scripts/install.ps1"
-      - "package.json"
-      - "package-lock.json"
-      - "packages/app-sdk/**"
-      - "packages/app-sdk-dotnet/**"
-      - "global.json"
-      - ".github/workflows/ci.yml"
-      - ".github/workflows/shell-image.yml"
-      - ".github/workflows/demo-app-image.yml"
-      - ".github/workflows/cli-release.yml"
-      - "apps/telemetry-backend/**"
-      - "apps/telemetry/manifest.json"
-      - "channels/**"
-      - "scripts/**"
-      - "Directory.Build.props"
-      - ".github/workflows/telemetry-backend-image.yml"
-      - "apps/marketplace/**"
-      - ".github/workflows/marketplace-image.yml"
-      - "apps/telemetry-ui/**"
-      - ".github/workflows/telemetry-ui-image.yml"
   push:
     branches:
       - main
-    paths:
-      - "apps/core/**"
-      - "apps/shell/**"
-      - "apps/demo-app/**"
-      - "apps/cli/**"
-      - "docs/features/core-api.md"
-      - "scripts/install.sh"
-      - "scripts/install.ps1"
-      - "package.json"
-      - "package-lock.json"
-      - "global.json"
-      - ".github/workflows/ci.yml"
-      - ".github/workflows/shell-image.yml"
-      - ".github/workflows/demo-app-image.yml"
-      - ".github/workflows/cli-release.yml"
-      - "apps/telemetry-backend/**"
-      - "apps/telemetry/manifest.json"
-      - "channels/**"
-      - "scripts/**"
-      - "Directory.Build.props"
-      - ".github/workflows/telemetry-backend-image.yml"
-      - "apps/marketplace/**"
-      - ".github/workflows/marketplace-image.yml"
-      - "apps/telemetry-ui/**"
-      - ".github/workflows/telemetry-ui-image.yml"
 
 permissions:
   contents: read
 
 jobs:
+  # Maps the changed files onto the components they affect. Only consulted for pull requests: a push to
+  # main is the release path (the image and CLI publish workflows fire off the same commits), so it
+  # always runs the full matrix rather than trusting a diff.
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    # Underscored, not hyphenated, and deliberately out of step with the hyphenated job ids: a `-` in an
+    # expression property name parses as subtraction, so an `outputs.app-sdk` reference would silently
+    # evaluate to something other than the output it appears to name.
+    outputs:
+      shell: ${{ steps.filter.outputs.shell }}
+      app_sdk: ${{ steps.filter.outputs.app_sdk }}
+      app_sdk_dotnet: ${{ steps.filter.outputs.app_sdk_dotnet }}
+      demo_app: ${{ steps.filter.outputs.demo_app }}
+      core: ${{ steps.filter.outputs.core }}
+      cli: ${{ steps.filter.outputs.cli }}
+      telemetry_backend: ${{ steps.filter.outputs.telemetry_backend }}
+      marketplace: ${{ steps.filter.outputs.marketplace }}
+      telemetry_ui: ${{ steps.filter.outputs.telemetry_ui }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Filter changed paths
+        id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@v3
+        with:
+          # `global` is everything that can change how any component builds: the npm workspace root and
+          # its lockfile, the shared .NET SDK pin and MSBuild props, and this file. A change there runs
+          # the full matrix — under-triggering on a dependency bump is exactly the failure worth
+          # avoiding. Every filter includes it.
+          #
+          # The four Node apps also depend on the `@hosty-sdk/app` workspace package, so they list
+          # `packages/app-sdk/**` too. The .NET projects reference nothing outside their own tree
+          # (verified: each test csproj references only its sibling src csproj), so they stay narrow.
+          filters: |
+            global: &global
+              - 'package.json'
+              - 'package-lock.json'
+              - 'global.json'
+              - 'Directory.Build.props'
+              - '.github/workflows/ci.yml'
+
+            app_sdk:
+              - *global
+              - 'packages/app-sdk/**'
+
+            app_sdk_dotnet:
+              - *global
+              - 'packages/app-sdk-dotnet/**'
+
+            shell:
+              - *global
+              - 'packages/app-sdk/**'
+              - 'apps/shell/**'
+
+            demo_app:
+              - *global
+              - 'packages/app-sdk/**'
+              - 'apps/demo-app/**'
+
+            marketplace:
+              - *global
+              - 'packages/app-sdk/**'
+              - 'apps/marketplace/**'
+
+            telemetry_ui:
+              - *global
+              - 'packages/app-sdk/**'
+              - 'apps/telemetry-ui/**'
+
+            core:
+              - *global
+              - 'apps/core/**'
+
+            cli:
+              - *global
+              - 'apps/cli/**'
+              - 'scripts/install.sh'
+              - 'scripts/install.ps1'
+
+            telemetry_backend:
+              - *global
+              - 'apps/telemetry-backend/**'
+
+  # Ungated on purpose: it reads version fields out of every manifest and package.json in the repo, so
+  # any filter narrow enough to be useful would also be wrong. It needs no `npm ci` and finishes in
+  # seconds.
   versions:
     name: Version consistency
     runs-on: ubuntu-latest
@@ -82,6 +129,8 @@ jobs:
   shell:
     name: Shell
     runs-on: ubuntu-latest
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.shell == 'true'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -101,6 +150,8 @@ jobs:
   app-sdk:
     name: App SDK
     runs-on: ubuntu-latest
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.app_sdk == 'true'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -120,6 +171,8 @@ jobs:
   app-sdk-dotnet:
     name: App SDK (.NET)
     runs-on: ubuntu-latest
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.app_sdk_dotnet == 'true'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -135,6 +188,8 @@ jobs:
   demo-app:
     name: Demo App
     runs-on: ubuntu-latest
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.demo_app == 'true'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -157,6 +212,8 @@ jobs:
   core:
     name: Core
     runs-on: ubuntu-latest
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.core == 'true'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -175,6 +232,8 @@ jobs:
   cli:
     name: CLI
     runs-on: ubuntu-latest
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.cli == 'true'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -198,6 +257,8 @@ jobs:
   telemetry-backend:
     name: Telemetry Backend
     runs-on: ubuntu-latest
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.telemetry_backend == 'true'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -216,6 +277,8 @@ jobs:
   marketplace:
     name: Marketplace
     runs-on: ubuntu-latest
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.marketplace == 'true'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -241,6 +304,8 @@ jobs:
   telemetry-ui:
     name: Telemetry UI
     runs-on: ubuntu-latest
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.telemetry_ui == 'true'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
