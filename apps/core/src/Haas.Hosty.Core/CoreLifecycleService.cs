@@ -33,7 +33,11 @@ internal sealed class CoreLifecycleService(
     // Application lifetime for detaching background update applies from the triggering HTTP request
     // (a page reload must not abort a half-done apply). Optional only for unit fixtures; production
     // DI always supplies it. When absent, background applies run unlinked from any token.
-    IHostApplicationLifetime? hostLifetime = null)
+    IHostApplicationLifetime? hostLifetime = null,
+    // How long the start half of a stop->start pair waits for the app's own host port to come back before
+    // starting anyway. Overridable only so tests can reach the give-up path without a real 15s wait;
+    // production DI never passes it.
+    TimeSpan? selfRestartPortReleaseTimeout = null)
 {
     private static readonly Regex BackupReasonPattern = new("^[a-z0-9][a-z0-9-]{0,30}$", RegexOptions.Compiled);
     private static readonly Regex MountLabelPattern = new("^[a-z0-9][a-z0-9._-]{0,62}$", RegexOptions.Compiled);
@@ -44,6 +48,7 @@ internal sealed class CoreLifecycleService(
     // (both only need CoreDataPaths); DI supplies the singletons.
     private readonly GlobalMountStore globalMounts = globalMounts ?? new GlobalMountStore(paths);
     private readonly MountPathPolicy mountPathPolicy = mountPathPolicy ?? new MountPathPolicy(paths);
+    private readonly TimeSpan selfRestartPortReleaseTimeout = selfRestartPortReleaseTimeout ?? SelfRestartLoopbackReleaseTimeout;
 
     // Per-app operation lock. AppRegistryStore.appLocks only serializes a single record write; a whole
     // lifecycle verb reads a record, runs a long operation, then commits a rebuilt record, so two verbs
@@ -299,7 +304,7 @@ internal sealed class CoreLifecycleService(
         {
             try
             {
-                await StartCoreAsync(installed.Id, cancellationToken);
+                await StartCoreAsync(installed.Id, afterOwnStop: false, cancellationToken);
             }
             catch (Exception ex) when (IsRecordableLifecycleFailure(ex))
             {
@@ -556,7 +561,7 @@ internal sealed class CoreLifecycleService(
             // the snapshot (via the returned hint) before the reviewed version boots onto migrated data.
             if (wasRunning && restoreHint is null)
             {
-                var restarted = await StartCoreAsync(appId, cancellationToken);
+                var restarted = await StartCoreAsync(appId, afterOwnStop: wasRunning, cancellationToken);
                 return new AppLifecycleResponse(restarted.App, backup, "configured", restoreHint);
             }
 
@@ -569,7 +574,7 @@ internal sealed class CoreLifecycleService(
             // a cancelled operation still restarts; a restart failure surfaces through StartAsync.
             if (wasRunning && !completed)
             {
-                _ = await StartCoreAsync(appId, CancellationToken.None);
+                _ = await StartCoreAsync(appId, afterOwnStop: true, CancellationToken.None);
             }
         }
     }
@@ -684,9 +689,12 @@ internal sealed class CoreLifecycleService(
         => OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 
     public Task<AppLifecycleResponse> StartAsync(string appId, CancellationToken cancellationToken = default)
-        => WithAppLockAsync(appId, () => StartCoreAsync(appId, cancellationToken), cancellationToken);
+        => WithAppLockAsync(appId, () => StartCoreAsync(appId, afterOwnStop: false, cancellationToken), cancellationToken);
 
-    private async Task<AppLifecycleResponse> StartCoreAsync(string appId, CancellationToken cancellationToken)
+    // `afterOwnStop` marks the start half of a stop->start pair this same operation performed (update
+    // apply, runtime switch, dev-mode toggle, operator backup) — as opposed to a cold start, where the app
+    // was already down when we were called. It only governs the port preflight below.
+    private async Task<AppLifecycleResponse> StartCoreAsync(string appId, bool afterOwnStop, CancellationToken cancellationToken)
     {
         var app = await RequireAppAsync(appId, cancellationToken);
         IAppRuntimeAdapter? adapter = null;
@@ -704,10 +712,34 @@ internal sealed class CoreLifecycleService(
             }
 
             await EnsureRequiredSettingsConfiguredAsync(app, cancellationToken);
-            // Fail a start with a clear, reassign-able error when a reserved port was taken by another
-            // process, rather than letting the adapter hit a generic bind failure — but wait out the app's
-            // own port lingering after a stop, so a restart (update/switch-runtime) does not trip on it.
-            await WaitForLoopbackAssignmentsReleasedAsync(app, LoopbackReleaseTimeout, cancellationToken);
+            // A reserved port that is still busy means two different things, and treating them alike was
+            // the defect. On a cold start nothing of ours holds it, so it is a genuine conflict and the
+            // structured, reassign-able error is exactly right. On the start half of a stop->start pair it
+            // is almost always the app's *own* port still being torn down: docker frees a published host
+            // port a beat after the container exits, and Docker Desktop's forwarder regularly outlives it
+            // by longer than the 5s a cold start is willing to give. Waiting is still the right move — the
+            // adapter would only hit its own bind failure otherwise — but *failing* on expiry was not: it
+            // turned a slow teardown into "update failed: port already in use" and stranded the app
+            // stopped, which is why the operator's Restart button then fixed it (by then the port was long
+            // free, and RestartCoreAsync runs no preflight of its own anyway). So wait longer here, and on
+            // expiry start regardless: the runtime's real bind is a better arbiter than our probe, and a
+            // start that does fail reports the runtime's own error instead of a preflight guess.
+            if (afterOwnStop)
+            {
+                var lingering = await PollLoopbackAssignmentsReleaseAsync(app, selfRestartPortReleaseTimeout, cancellationToken);
+                if (lingering.Count > 0)
+                {
+                    logger.LogWarning(
+                        "App {AppId} still holds host port(s) {Ports} {Seconds}s after its own stop; starting anyway and letting the runtime decide.",
+                        appId,
+                        string.Join(", ", lingering.Select(assignment => assignment.HostPort)),
+                        selfRestartPortReleaseTimeout.TotalSeconds);
+                }
+            }
+            else
+            {
+                await WaitForLoopbackAssignmentsReleasedAsync(app, LoopbackReleaseTimeout, cancellationToken);
+            }
             app = await EnsureLocalCommandSourceReadyAsync(app, selection, cancellationToken);
             app = await EnsureIngressPublicOriginsAsync(app, selection, cancellationToken);
             adapter = ResolveAdapter(selection.RuntimeProfile.Type);
@@ -861,10 +893,16 @@ internal sealed class CoreLifecycleService(
 
     private const int LoopbackReleasePollMs = 250;
 
-    // How long a start waits for a reserved loopback port to become bindable before failing. Sized for
-    // docker releasing a published host port a beat after the container it belonged to exits — see
-    // WaitForLoopbackAssignmentsReleasedAsync.
+    // How long a *cold* start waits for a reserved loopback port to become bindable before failing with
+    // the structured conflict error — see WaitForLoopbackAssignmentsReleasedAsync.
     private static readonly TimeSpan LoopbackReleaseTimeout = TimeSpan.FromSeconds(5);
+
+    // The same wait on the start half of a stop->start pair, where the port is almost certainly our own
+    // still being torn down. Longer because it costs nothing to be patient here: the window expiring no
+    // longer fails the operation, it just stops waiting (see the branch in StartCoreAsync). Docker Desktop
+    // routinely keeps a published host port forwarded for several seconds after `docker stop` returns —
+    // well past the 5s a cold start is willing to give it.
+    private static readonly TimeSpan SelfRestartLoopbackReleaseTimeout = TimeSpan.FromSeconds(15);
 
     // Reserved loopback ports that are not currently bindable. Empty when the app is already running (a
     // restart or docker adoption legitimately holds its own ports, and this must never flag them as
@@ -909,20 +947,19 @@ internal sealed class CoreLifecycleService(
         }
     }
 
-    // Start-path variant that tolerates the app's *own* port still lingering right after a stop. A restart
-    // (update, switch-runtime, dev-mode toggle) stops the container then immediately restarts it, but
-    // docker frees a published host port a beat after the container exits — the docker-proxy binding
-    // outlives the container, TIME_WAIT lingers — so a bare probe flags the app's own just-freed port as
-    // stolen and the restart fails (the reported symptom: updating a *running* app hit
-    // runtime_port_unavailable on its own port, while updating a stopped one did not). Poll briefly: a
-    // genuine external conflict persists and still fails with the structured error; a self-release race
-    // clears within the window. The common no-conflict case does a single probe and returns immediately.
-    internal static async Task WaitForLoopbackAssignmentsReleasedAsync(AppRecord app, TimeSpan timeout, CancellationToken cancellationToken)
+    // Polls until every reserved loopback port is bindable, returning whatever is still held when the
+    // window expires (empty on success). Deliberately returns rather than throws: what an expired window
+    // *means* depends on whether we just stopped this app ourselves, and only the caller knows that — see
+    // the two wrappers below. The common no-conflict case does a single probe and returns immediately.
+    private static async Task<IReadOnlyList<AppPortAssignment>> PollLoopbackAssignmentsReleaseAsync(
+        AppRecord app,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
     {
         var conflicts = FindUnavailableLoopbackAssignments(app);
         if (conflicts.Count == 0)
         {
-            return;
+            return conflicts;
         }
 
         // Track the deadline rather than counting fixed-length polls: a poll count truncates a timeout
@@ -935,11 +972,24 @@ internal sealed class CoreLifecycleService(
             conflicts = FindUnavailableLoopbackAssignments(app);
             if (conflicts.Count == 0)
             {
-                return;
+                return conflicts;
             }
         }
 
-        throw PortsUnavailable(app, conflicts);
+        return conflicts;
+    }
+
+    // Strict wait, for a *cold* start (install, operator Start, autostart): nothing of ours was just
+    // stopped, so a reserved port still held after the window is a genuine conflict — an unrelated process
+    // took it. Fail with the structured, reassign-able error naming the endpoints instead of letting the
+    // adapter hit a generic bind failure.
+    internal static async Task WaitForLoopbackAssignmentsReleasedAsync(AppRecord app, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        var conflicts = await PollLoopbackAssignmentsReleaseAsync(app, timeout, cancellationToken);
+        if (conflicts.Count > 0)
+        {
+            throw PortsUnavailable(app, conflicts);
+        }
     }
 
     // `allowOperatorPinned` admits a port the operator already pinned. Without it a manual pin would be a
@@ -1609,7 +1659,7 @@ internal sealed class CoreLifecycleService(
         updateAvailability.TryRemove(appId, out _);
         if (wasRunning)
         {
-            var restarted = await StartCoreAsync(appId, cancellationToken);
+            var restarted = await StartCoreAsync(appId, afterOwnStop: wasRunning, cancellationToken);
             return new AppLifecycleResponse(restarted.App, backup, "updated");
         }
 
@@ -1713,7 +1763,7 @@ internal sealed class CoreLifecycleService(
         {
             try
             {
-                var restarted = await StartCoreAsync(appId, cancellationToken);
+                var restarted = await StartCoreAsync(appId, afterOwnStop: wasRunning, cancellationToken);
                 return new AppLifecycleResponse(restarted.App, backup, "runtime-switched");
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -1878,7 +1928,7 @@ internal sealed class CoreLifecycleService(
             // surfaces through StartAsync (recorded + thrown), which is the right signal.
             if (wasRunning)
             {
-                _ = await StartCoreAsync(appId, CancellationToken.None);
+                _ = await StartCoreAsync(appId, afterOwnStop: true, CancellationToken.None);
             }
         }
     }

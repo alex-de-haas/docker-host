@@ -4793,6 +4793,62 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task ApplyUpdateAsync_LingeringOwnHostPort_StartsAnywayInsteadOfFailingTheUpdate()
+    {
+        // The reported symptom: updating a *running* app reported "update failed: assigned host port(s)
+        // already in use" naming the app's own port, and the operator's Restart button then started it
+        // fine. The port was ours, still being released — Docker Desktop keeps a published host port
+        // forwarded for a while after `docker stop` returns, sometimes past the old 5s window — and
+        // expiring that window failed the whole update and left the app stopped. The window now bounds
+        // how long we *wait*, not whether we start: on expiry the update proceeds and the runtime's own
+        // bind decides. Held here for the whole (shrunk) window, so this exercises the give-up path.
+        var fixture = await LifecycleFixture.CreateAsync(selfRestartPortReleaseTimeout: TimeSpan.FromMilliseconds(300));
+        var manifestV1 = await fixture.WriteManifestAsync("1.0.0");
+        var manifestV2 = await fixture.WriteManifestAsync("2.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestV1));
+        _ = await fixture.Service.StartAsync("com.example.notes");
+
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        // Give the running app a loopback reservation on the port the listener is squatting, so the
+        // post-stop probe inside the update sees it as taken exactly like the real teardown did.
+        _ = await fixture.Apps.UpdateAppAsync(
+            "com.example.notes",
+            current => current with { PortAssignments = [ReassignAssignment("app", "http", port)] });
+
+        var plan = await fixture.Service.CreateUpdatePlanAsync("com.example.notes", new AppUpdatePlanRequest(manifestV2));
+        var result = await fixture.Service.ApplyUpdateAsync("com.example.notes", new AppUpdateApplyRequest(plan.PlanDigest, manifestV2));
+
+        Assert.Equal("updated", result.Status);
+        Assert.Equal("2.0.0", result.App?.Version);
+        // The whole point: the app is back up, not stranded stopped waiting for a manual restart.
+        Assert.Equal("running", result.App?.RuntimeState);
+    }
+
+    [Fact]
+    public async Task StartAsync_ColdStartOntoATakenPort_StillFailsWithTheStructuredConflict()
+    {
+        // The other half of the split: with nothing of ours just stopped, a busy reserved port really is
+        // someone else's, and the operator gets the actionable error rather than a runtime bind failure.
+        var fixture = await LifecycleFixture.CreateAsync(selfRestartPortReleaseTimeout: TimeSpan.FromMilliseconds(300));
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        _ = await fixture.Apps.UpdateAppAsync(
+            "com.example.notes",
+            current => current with { PortAssignments = [ReassignAssignment("app", "http", port)] });
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() => fixture.Service.StartAsync("com.example.notes"));
+
+        Assert.Equal("runtime_port_unavailable", error.Code);
+        Assert.Contains($"app.http → {port}", error.Message);
+    }
+
+    [Fact]
     public void PreflightLoopbackAssignments_HostNetworkAssignment_IsNotProbed()
     {
         // Host-network ports bind a fixed container port and are outside the loopback pool; even if the
@@ -4888,7 +4944,13 @@ public sealed class CoreLifecycleServiceTests
 
         public FakeClock Clock { get; }
 
-        public static async Task<LifecycleFixture> CreateAsync(AppManifestService? manifests = null, string? ingressBaseDomain = null, bool withPortAllocator = false)
+        public static async Task<LifecycleFixture> CreateAsync(
+            AppManifestService? manifests = null,
+            string? ingressBaseDomain = null,
+            bool withPortAllocator = false,
+            // Shrinks the self-restart port-release window so a test can reach the give-up path in
+            // milliseconds instead of the production 15s. Null keeps the production window.
+            TimeSpan? selfRestartPortReleaseTimeout = null)
         {
             var root = Path.Combine(Path.GetTempPath(), $"hosty-core-lifecycle-tests-{Guid.NewGuid():N}");
             Directory.CreateDirectory(root);
@@ -4937,7 +4999,7 @@ public sealed class CoreLifecycleServiceTests
 
             IIngressController ingress = new CloudflaredIngressController(coreSettings, runtimeConfig, Microsoft.Extensions.Logging.Abstractions.NullLogger<CloudflaredIngressController>.Instance);
             var portAllocator = withPortAllocator ? new RuntimePortAllocator(runtimeConfig) : null;
-            var service = new CoreLifecycleService(paths, apps, manifests, backups, sources, [adapter, localAdapter], ingress, Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreLifecycleService>.Instance, notifications: null, clock: clock, portAllocator: portAllocator);
+            var service = new CoreLifecycleService(paths, apps, manifests, backups, sources, [adapter, localAdapter], ingress, Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreLifecycleService>.Instance, notifications: null, clock: clock, portAllocator: portAllocator, selfRestartPortReleaseTimeout: selfRestartPortReleaseTimeout);
             return new LifecycleFixture(root, paths, apps, backups, manifests, sources, service, adapter, localProcesses, clock);
         }
 
