@@ -1,8 +1,41 @@
 # Hosty App SDK — Shared Auth And Host Integration For Runtime Apps
 
-Status: Idea (agreed 2026-07-17)
+Status: Phase 1 (auth) shipped and adopted — second wave open (see Adoption Status)
 Created: 2026-07-15
-Updated: 2026-07-17
+Updated: 2026-07-20
+
+## Adoption Status (2026-07-20)
+
+Phase 1 (auth) is built, published, and adopted across the fleet, with two debts noted
+in the table. The sections below are kept as the ratified design record; findings dated
+2026-07-17 describe the pre-SDK state and are superseded by this table where they disagree.
+
+Shipped artifacts:
+
+- **`@hosty-sdk/app` — npmjs, latest 0.2.0.** All four slices: `core`, `server`, `react`,
+  `embedder` (extraction #241, publishing chain #242–#244, rich resolution detail #248).
+  Still missing from the design's `server`/`react` scope: the identity/session/logout
+  route factories, the middleware/proxy factory, the scoped app-directory client, and the
+  headless `useHostSession()` — tracked in
+  [Second Wave](#second-wave-inventoried-2026-07-20) item 1.
+- **`HostySdk.App` — NuGet, 0.1.0.** The .NET slice (#249; Trusted Publishing #250): Core
+  revalidation behind the decided 30s positive cache, the `Hosty` authentication scheme,
+  `HOSTY_*` options binding, cookie-name/`MapHostRole` parameterization. The package-shape
+  placeholder `Haas.Hosty.AppSdk` is settled as **`HostySdk.App`**.
+- **Shell** consumes the embedder slice (#245) — the reference implementation and the
+  shipped artifact are the same code, as planned.
+
+Per-app adoption:
+
+| App | Status | Remaining auth debt |
+| --- | --- | --- |
+| marketplace | full (server + react + app-code factory; #241, #248) | — |
+| telemetry-ui | full (#241, #248) | — |
+| media-server web | full (media-server #63/#64) | on `^0.1.2` — a 0.x caret never reaches 0.2.0; needs an explicit bump |
+| media-server .NET | full (`HostySdk.App` 0.1.0, media-server #65; a Core timeout now fails closed as 401) | none — `HostyKestrel`/`HostyTelemetry`/`HostyCoreClient` stay app-side as second-wave material, not auth |
+| project-manager | adopted (PM #27) | on `^0.1.2`; a pre-SDK wrapper layer still duplicates SDK exports: `module-runtime.ts` (env), `host-app-code.ts` (own code exchange), `host-app-cookie.ts` (cookie attrs), own token reading in `host-identity.ts`/`proxy.ts` |
+| demo-app | partial — `AppIdentityBridge` + the app-code factory only | **server slice unadopted**: `host-auth.ts` (~550 lines) still hand-rolls `resolveAppSession` and holds the fleet's only in-tree scoped app-directory client — ironic for the extraction source |
+| solitaire | n/a | nothing to adopt until the theme slice (#247 verdict) |
 
 ## Motivation
 
@@ -26,7 +59,10 @@ recoverable) with *app misconfiguration* (an operator problem, terminal). The
 app-side work triples across demo-app, telemetry-ui, and marketplace (no shared package …
 independent copies)" — and the copies keep multiplying as new apps ship.
 
-## Current Architecture Findings
+## Current Architecture Findings (snapshot 2026-07-17, pre-SDK)
+
+This section records the state the design was ratified against; the Adoption Status
+table above is current.
 
 Six runtime apps, at least five incompatible copies of the same security-sensitive logic,
 and one app that is not React at all:
@@ -369,6 +405,11 @@ slices — but it is also nearly free, since the code already exists in Shell.
 
 ## What To Extract
 
+Status 2026-07-20: shipped, except the `server` route factories beyond app-code
+(identity/session/logout), the middleware/proxy factory, the scoped app-directory client,
+and the headless `useHostSession()`; the .NET slice shipped as `HostySdk.App` with the
+auth scope only.
+
 **`core` (pure TS, safe anywhere):**
 - Contract types/constants: `AppSessionStatus` (+ `misconfigured`), `TrustedHostIdentity`, claims.
 - `classifyAppSessionStatus` — the 401/403/503/misconfigured table (single source of truth).
@@ -419,10 +460,9 @@ reference):**
   endpoints (media-server's Jellyfin/Infuse API being the live example); private intra-app
   endpoints keep trusting the per-app network.
 
-**Second-wave candidates (also duplicated, not auth):** theme bridging (`HostThemeBridge` +
-bootstrap script — excluded from v1 by decision 11, pending the owner's theming redesign),
-OpenTelemetry wiring (`OTEL_*`), storage / `HOSTY_APP_DATA_DIR` helpers, SSRF-safe Core fetch
-(timeouts + dispatcher), debug logging (`host-auth-debug`), manifest types. Auth is phase 1.
+**Second wave:** the original shortlist (theme, OTel, storage, SSRF-safe fetch, debug
+logging, manifest types) is superseded by a fleet-wide inventory — see
+[Second Wave (inventoried 2026-07-20)](#second-wave-inventoried-2026-07-20). Auth was phase 1.
 
 ## Package Shape
 
@@ -432,9 +472,8 @@ OpenTelemetry wiring (`OTEL_*`), storage / `HOSTY_APP_DATA_DIR` helpers, SSRF-sa
 @hosty-sdk/app/react           # 'use client': the identity bridge, useHostSession
 @hosty-sdk/app/embedder        # 'use client': verified auth-required responder for shells
 
-Haas.Hosty.AppSdk              # NuGet — auth handler, cached validator, HOSTY_* options
-                               # (naming to be aligned with the npm scope when the .NET
-                               # slice ships and the NuGet account/prefix is set up)
+HostySdk.App                   # NuGet — auth handler, cached validator, HOSTY_* options
+                               # (shipped 0.1.0 — #249, Trusted Publishing #250)
 ```
 
 Config object passed by each app: `{ appId, identityCookieName, internalHeaderPrefix, mapHostRole? }`.
@@ -451,20 +490,98 @@ audience or a life of its own*; the one visible candidate is `embedder` (its con
 shells, not apps), which stays a subpath until a third-party shell actually exists. Splitting
 later is cheap (auto-merged bot bumps); merging packages back is not.
 
+## Second Wave (inventoried 2026-07-20)
+
+A fleet-wide sweep (media-server, project-manager, the three in-tree apps, Shell — run
+2026-07-19/20, after the media-server migration) confirms the original second-wave
+shortlist and replaces it with evidence-ranked items. Ordering is by payoff; the drift
+examples are the argument, exactly as they were for auth.
+
+1. **Finish the auth slice (adoption + the missing factories — not new extraction).**
+   Route-handler factories for `/api/auth/identity`, `/api/auth/session`, and optional
+   `/logout` — every app hand-writes them today, and media-server maps status↔HTTP twice
+   (once in its session route, back again in `app-shell.tsx`). The middleware/proxy
+   factory (public paths, launch-code pass-through, header stripping, trusted-identity
+   injection) — project-manager's `proxy.ts` is the live reference. The scoped
+   app-directory client — three parallel implementations exist (demo-app `host-auth.ts`,
+   project-manager `host-directory.ts`, media-server .NET `HostyCoreClient`). The
+   headless `useHostSession()`. Plus the two adoption debts from the Adoption Status
+   table: demo-app's server slice and project-manager's wrapper layer.
+
+2. **`/otel` — OpenTelemetry wiring.** The drift is already real and it is the auth
+   story again: `instrumentation.ts` + `otel-logs.ts` (the console→OTLP logs bridge with
+   trace correlation and SIGTERM flush) are copied in media-server and project-manager,
+   but secret redaction and the 200-records/10s rate limit exist **only in the
+   project-manager copy**. ~200 lines of platform glue whose only app-specific value is
+   the service-name default. The .NET counterpart is media-server's `HostyTelemetry.cs`
+   → `HostySdk.App`. The three in-tree Next apps wire no OTel today and would gain
+   tracing for free.
+
+3. **`/theme` — theme bridging.** Still gated by decision 11, but the pre-SDK auth drift
+   is repeating in slow motion: five `HostThemeBridge` copies (marketplace and
+   telemetry-ui byte-identical; demo-app, project-manager, and media-server each
+   divergent), four independent theme normalizers, and the anti-FOUC bootstrap script
+   present in demo-app and project-manager but **not** in media-server. The protocol
+   surface to freeze is small: `hosty:shell-theme`, the
+   `?hosty_theme`/`?hosty_theme_preference` launch params, and the
+   `hosty.theme.resolved`/`hosty.theme.preference` `sessionStorage` keys. Shell's sender
+   half (`postTheme`, `appendHostyThemeParams`) belongs to the embedder slice. Either
+   the theming redesign lands first, or the extraction carries the current protocol and
+   the redesign happens inside the SDK — leaving five copies to drift further is the
+   worst of the three options.
+
+4. **`/env` — the non-auth environment contract.** The SDK reads only the auth
+   variables; every app hand-parses the rest: `HOSTY_PORT_{KEY}` (media-server
+   `HostyKestrel`), `HOSTY_SERVICE_{KEY}_URL` (telemetry-ui `backend.ts`),
+   `HOSTY_DEPENDENCY_{KEY}_URL`, `HOSTY_PUBLIC_ORIGIN_{ENDPOINT}`, `HOSTY_APP_DATA_DIR`
+   (project-manager `storage.ts`), and the `HOSTY_MOUNT_{KEY}` `label=path,…` parser —
+   duplicated across languages (demo-app `demo-config.ts` and media-server
+   `MediaServerSettings.cs`). Cheap to type once; it is platform contract, not app logic.
+
+5. **Core capability client (`server` + .NET).** media-server's `HostyCoreClient` is the
+   fleet's only implementation of the backup trigger and operator notifications; any
+   stateful app wants both, and the directory client (item 1) is the same surface.
+   Adjacent: the data-dir ownership pattern (project-manager's `docker-entrypoint.sh`
+   mkdir/chown/drop-privileges dance) for stateful Docker apps.
+
+6. **Small standardizers.** A `healthz` route factory — marketplace and telemetry-ui are
+   identical, while demo-app, project-manager, and media-server use three different
+   paths and response shapes for the same manifest `healthcheck` contract. The BFF proxy
+   route factory (media-server `api/proxy/[...path]`: hop-by-hop stripping, identity
+   bearer injection, body streaming) together with the bearer-fallback browser transport
+   (media-server `api.ts` + the fetch-based SSE client in `sse.ts` — the
+   cross-site-cookie workaround every app with its own backend service re-derives).
+   `host-auth-debug` (project-manager) per the original shortlist. The manifest render
+   script (project-manager `render-app-manifest.mjs`) as shared release tooling.
+
+Checked and rejected as non-candidates: `app.0.1` manifest types (Core is the only
+parser — there is no app-side duplication to collapse); `hosty:install-feed` (a single
+producer and a single consumer; it stays a marketplace/Shell private protocol until a
+second party appears); project-manager's `safe-fetch.ts` (an SSRF guard for
+user-configured outbound URLs — app business logic that only looks like platform glue).
+
 ## Migration Plan (by risk)
 
-1. **media-server** — no recovery at all; will dead-end like the incident. Highest priority.
+1. **media-server** — no recovery at all; will dead-end like the incident. Highest
+   priority. **Done 2026-07-19**: recovery + SDK on the web side (media-server #63/#64),
+   `HostySdk.App` on the .NET side (media-server #65).
 2. **marketplace + telemetry-ui** — have recovery but are blind to `misconfigured`; the
-   in-tree apps that fixing the workspace package covers immediately.
+   in-tree apps that fixing the workspace package covers immediately. **Done** (#241, #248).
 3. **project-manager** — already correct; becomes the SDK's verification reference.
+   **Adopted** (PM #27) — the pre-SDK wrapper layer remains to be deleted (see Adoption
+   Status).
 4. **solitaire** — verified 2026-07-19: **nothing to adopt today.** Its only Hosty surface
    is two `localStorage` key names — no embedding detection, no `postMessage`, no auth, and zero
    npm dependencies. Adding the package now would be a dependency with no consumer; its SDK
    moment arrives with the theme slice (deferred by decision 11).
+5. **demo-app** — added 2026-07-20: the extraction source itself never adopted the server
+   slice; migrating it deletes the last hand-rolled revalidation copy in-tree and frees
+   the app-directory client for extraction (Second Wave item 1).
 
 Each phase is independently shippable. Start by extracting `core` + `server` + `react` from
 demo-app (the reference), wire the three in-tree apps against `packages/hosty-app-sdk`, then
-publish for the external repos.
+publish for the external repos. (Done — the packages live at `packages/app-sdk` and
+`packages/app-sdk-dotnet`, published as `@hosty-sdk/app` and `HostySdk.App`.)
 
 ## Boundaries / Non-Goals
 
