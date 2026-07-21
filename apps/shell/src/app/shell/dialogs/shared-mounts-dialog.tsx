@@ -2,7 +2,7 @@
 
 import type { FormEvent } from "react";
 import { useState } from "react";
-import { HardDrive, LoaderCircle, Lock, Pencil, Plus, Trash2 } from "lucide-react";
+import { HardDrive, LoaderCircle, Lock, Pencil, Plus, Trash2, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -184,6 +184,15 @@ export function SharedMountsDialog({
                       <TableCell className="max-w-[200px] truncate font-mono text-xs text-muted-foreground">
                         <span className="inline-flex items-center gap-1">
                           {mount.mode === "ro" && <Lock className="h-3 w-3 shrink-0" />}
+                          {/* Explicit === false: an older Core omits the field, and absent must not read as missing. */}
+                          {mount.hostPathExists === false && (
+                            <span
+                              className="inline-flex shrink-0 text-amber-600 dark:text-amber-500"
+                              title="Host path not found. Apps using this mount will fail to start until it exists — expected if the drive is not attached."
+                            >
+                              <TriangleAlert className="h-3 w-3" aria-label="Host path not found" />
+                            </span>
+                          )}
                           {mount.hostPath}
                         </span>
                       </TableCell>

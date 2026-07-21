@@ -46,6 +46,12 @@ internal sealed class MountPathPolicy(CoreDataPaths paths)
         return normalized;
     }
 
+    // Whether a validated host path is currently present as a directory. Deliberately NOT part of
+    // NormalizeAndValidate: registration must keep accepting paths on drives that are not attached yet
+    // (network/removable). Callers decide what a false means — the start gate refuses to start, while
+    // the shared-mounts library only flags it, so an operator typo is visible before start time.
+    public static bool HostPathExists(string fullPath) => Directory.Exists(fullPath);
+
     // Rejects host paths that would breach isolation: anything inside the Hosty data root (would
     // expose core/backups/other-app data) or a sensitive system root. Applied to both the operator
     // path and its symlink-resolved target.

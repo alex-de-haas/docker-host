@@ -107,7 +107,10 @@ entry currently resolves to at start time.
   inline config call it — one policy, two callers.
 - **Registration** (`GlobalMountService.UpsertAsync`): run `MountPathPolicy` on the host path;
   validate `name` shape + uniqueness; `maxMode` is `ro`/`rw` (default `rw`). Existence is **not**
-  required at registration (network/removable drives), matching inline paths.
+  required at registration (network/removable drives), matching inline paths — but it *is* reported:
+  every response carries `hostPathExists` (`MountPathPolicy.HostPathExists`, resolved per read, never
+  cached), so the CLI and Shell flag a path that will fail the start gate. Advisory only; the write
+  always succeeds. This is what turns a typo'd path from a start-time failure into a visible one.
 - **Per-app config** (`ValidateMountBindings`): for a ref input, the named entry must exist in the
   library and the slot must be declared; `Label` is set to the name (operator cannot override);
   `multiple`/label-uniqueness still apply, so the same global entry can be attached at most once per
@@ -141,7 +144,8 @@ changes unless an operator deliberately restricts a shared folder to read-only l
 - `AppMountBindingSummary`: new `source` (`"global"`/`"local"`) and `globalMountName` so clients can
   render the source and badge.
 - Endpoints (admin session + CSRF, with `/control/v1` mirrors on the control secret for CLI):
-  - `GET /api/global-mounts` → entries with a computed `usedBy` count (scan of all apps' `Mounts`).
+  - `GET /api/global-mounts` → entries with a computed `usedBy` count (scan of all apps' `Mounts`) and
+    `hostPathExists` (advisory presence of the host path; see Validation).
   - `POST /api/global-mounts` → upsert by `name` (`{ name, hostPath, mode?, description? }`).
   - `DELETE /api/global-mounts/{name}` → delete; `409 global_mount_in_use` when `usedBy > 0` unless
     `?force=true`.
@@ -175,8 +179,10 @@ changes unless an operator deliberately restricts a shared folder to read-only l
 
 ### CLI
 
-- `hosty storage list` — list library entries with `usedBy`.
-- `hosty storage add <name> <host-path> [--mode ro|rw] [--description <text>]` — upsert.
+- `hosty storage list` — list library entries with `usedBy`; a host path that is not present is marked
+  `(missing)`.
+- `hosty storage add <name> <host-path> [--mode ro|rw] [--description <text>]` — upsert. Still exits 0
+  when the path is absent, printing a warning (the drive may not be attached yet).
 - `hosty storage rm <name> [--force]` — delete (refuses when in use without `--force`).
 - `hosty apps mounts set <app-id> --ref <key>=<name> [--mount <key>=<label>=<host-path>] …` — the
   existing `--mount` (inline) gains a sibling `--ref` (global) form; replace-all semantics

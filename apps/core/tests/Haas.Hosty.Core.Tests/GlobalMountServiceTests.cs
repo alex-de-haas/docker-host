@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Haas.Hosty.Core;
 
 namespace Haas.Hosty.Core.Tests;
@@ -41,6 +42,69 @@ public sealed class GlobalMountServiceTests
         Assert.Equal("rw", entry.Mode);
         Assert.Equal("Catalog", entry.Description);
         Assert.Equal(0, entry.UsedBy);
+    }
+
+    [Fact]
+    public async Task UpsertAsync_AcceptsMissingHostPathButReportsItAsNotPresent()
+    {
+        var (service, _) = Create();
+        // Never created: stands in for a drive that is not attached yet — and for a typo'd path.
+        var missing = Path.Combine(Path.GetTempPath(), $"hosty-global-mount-absent-{Guid.NewGuid():N}");
+
+        var mounts = await service.UpsertAsync(new GlobalMountUpsertRequest("media", missing));
+
+        // Registration must still succeed (network/removable drives), but the entry is flagged so the
+        // CLI and Shell can warn instead of letting the typo surface only when an app fails to start.
+        var entry = Assert.Single(mounts);
+        Assert.Equal(Path.GetFullPath(missing), entry.HostPath);
+        Assert.False(entry.HostPathExists);
+    }
+
+    [Fact]
+    public async Task ListAsync_ReportsHostPathPresence()
+    {
+        var (service, _) = Create();
+        var present = ExternalDirectory();
+        var missing = Path.Combine(Path.GetTempPath(), $"hosty-global-mount-absent-{Guid.NewGuid():N}");
+        await service.UpsertAsync(new GlobalMountUpsertRequest("present", present));
+        await service.UpsertAsync(new GlobalMountUpsertRequest("missing", missing));
+
+        var mounts = await service.ListAsync();
+
+        Assert.True(Assert.Single(mounts, mount => mount.Name == "present").HostPathExists);
+        Assert.False(Assert.Single(mounts, mount => mount.Name == "missing").HostPathExists);
+    }
+
+    [Fact]
+    public async Task ListAsync_ReportsAPathThatDisappearedAfterRegistration()
+    {
+        var (service, _) = Create();
+        var host = ExternalDirectory();
+        await service.UpsertAsync(new GlobalMountUpsertRequest("media", host));
+        Assert.True(Assert.Single(await service.ListAsync()).HostPathExists);
+
+        // Presence is resolved per read, not cached at registration: a detached drive shows up as missing.
+        Directory.Delete(host);
+
+        Assert.False(Assert.Single(await service.ListAsync()).HostPathExists);
+    }
+
+    [Fact]
+    public async Task GlobalMountListResponse_SerializesHostPathPresenceForClients()
+    {
+        var (service, _) = Create();
+        var missing = Path.Combine(Path.GetTempPath(), $"hosty-global-mount-absent-{Guid.NewGuid():N}");
+        await service.UpsertAsync(new GlobalMountUpsertRequest("media", missing));
+
+        // Source-generated, trim/AOT-safe serialization: assert the field actually reaches the wire under
+        // the camelCase name the CLI and Shell read, not just that the service computed it.
+        var json = JsonSerializer.Serialize(
+            new GlobalMountListResponse(await service.ListAsync()),
+            CoreJsonSerializerContext.Default.GlobalMountListResponse);
+
+        using var document = JsonDocument.Parse(json);
+        var entry = Assert.Single(document.RootElement.GetProperty("mounts").EnumerateArray());
+        Assert.False(entry.GetProperty("hostPathExists").GetBoolean());
     }
 
     [Fact]

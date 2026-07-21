@@ -3111,7 +3111,7 @@ internal sealed class CoreLifecycleService(
             // config time could have been repointed at a forbidden location since (TOCTOU).
             mountPathPolicy.EnsureAllowed(mount.HostPath);
             mountPathPolicy.EnsureAllowed(MountPathPolicy.ResolveRealPath(mount.HostPath));
-            if (!Directory.Exists(mount.HostPath))
+            if (!MountPathPolicy.HostPathExists(mount.HostPath))
             {
                 throw new AppLifecycleException(
                     "app_mount_source_missing",

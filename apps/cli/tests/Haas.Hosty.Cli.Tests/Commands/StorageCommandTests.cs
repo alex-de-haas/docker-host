@@ -18,6 +18,14 @@ public sealed class StorageCommandTests : IDisposable
         }
         """;
 
+    private const string MissingPathResponse = """
+        {
+          "mounts": [
+            { "name": "media", "hostPath": "/srv/typo", "mode": "rw", "description": null, "usedBy": 0, "hostPathExists": false }
+          ]
+        }
+        """;
+
     private readonly string? previousRoot;
     private readonly string rootDirectory;
 
@@ -74,6 +82,53 @@ public sealed class StorageCommandTests : IDisposable
         var rendered = output.ToString();
         Assert.Contains("media", rendered);
         Assert.Contains("/srv/media", rendered);
+    }
+
+    [Fact]
+    public async Task AddAsync_WarnsWhenCoreReportsTheHostPathIsMissing()
+    {
+        using var server = new FakeCoreServer(MissingPathResponse);
+        WriteCoreDiscovery(server);
+        var (console, output) = CreateConsole();
+
+        var exitCode = await CommandLine.RunAsync(["storage", "add", "media", "/srv/typo"], console);
+        await server.WaitForRequestAsync();
+
+        // Advisory only: the mount is saved (exit 0) because the drive may simply not be attached yet.
+        Assert.Equal(0, exitCode);
+        var rendered = output.ToString();
+        Assert.Contains("saved:", rendered);
+        Assert.Contains("warning:", rendered);
+        Assert.Contains("/srv/typo", rendered);
+    }
+
+    [Fact]
+    public async Task ListAsync_MarksAMissingHostPath()
+    {
+        using var server = new FakeCoreServer(MissingPathResponse);
+        WriteCoreDiscovery(server);
+        var (console, output) = CreateConsole();
+
+        var exitCode = await CommandLine.RunAsync(["storage", "list"], console);
+        await server.WaitForRequestAsync();
+
+        Assert.Equal(0, exitCode);
+        Assert.Contains("(missing)", output.ToString());
+    }
+
+    [Fact]
+    public async Task ListAsync_DoesNotMarkPathsWhenCoreOmitsThePresenceField()
+    {
+        // ListResponse predates hostPathExists; an older Core must not make every path read as missing.
+        using var server = new FakeCoreServer(ListResponse);
+        WriteCoreDiscovery(server);
+        var (console, output) = CreateConsole();
+
+        var exitCode = await CommandLine.RunAsync(["storage", "list"], console);
+        await server.WaitForRequestAsync();
+
+        Assert.Equal(0, exitCode);
+        Assert.DoesNotContain("(missing)", output.ToString());
     }
 
     [Fact]
