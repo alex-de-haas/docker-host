@@ -46,6 +46,31 @@ public sealed class AppFeedLifecycleTests
     }
 
     [Fact]
+    public async Task FeedInstallApply_RejectsWhenTheAppIsAlreadyInstalled()
+    {
+        using var fixture = CreateFixture();
+        fixture.Set(FeedsUrl, FeedDocument(MainManifestUrl));
+        fixture.Set(MainManifestUrl, Manifest("1.0.0"));
+        var plan = await fixture.Lifecycle.CreateFeedInstallPlanAsync(new AppFeedInstallPlanRequest(FeedsUrl, Autostart: false));
+        await fixture.Lifecycle.ApplyFeedInstallAsync(new AppFeedInstallApplyRequest(
+            FeedsUrl, FeedId: null, SelectedRuntime: null, Settings: null, Autostart: false,
+            PlanDigest: plan.PlanDigest, StartOnInstall: false));
+
+        // A fresh plan for the same app carries a valid digest and Action "already-installed": the
+        // digest check passes, so the guard in the shared install core is what has to reject it.
+        var repeat = await fixture.Lifecycle.CreateFeedInstallPlanAsync(new AppFeedInstallPlanRequest(FeedsUrl, Autostart: false));
+        Assert.Equal("already-installed", repeat.Install.Action);
+
+        var ex = await Assert.ThrowsAsync<AppLifecycleException>(() => fixture.Lifecycle.ApplyFeedInstallAsync(
+            new AppFeedInstallApplyRequest(
+                FeedsUrl, FeedId: null, SelectedRuntime: null, Settings: null, Autostart: false,
+                PlanDigest: repeat.PlanDigest, StartOnInstall: false)));
+
+        Assert.Equal("already_installed", ex.Code);
+        Assert.Equal("1.0.0", (await fixture.Apps.GetAppAsync("com.example.notes"))!.Version);
+    }
+
+    [Fact]
     public async Task FeedInstallApply_RejectsChangedFeedDocumentAfterReview()
     {
         using var fixture = CreateFixture();

@@ -804,9 +804,14 @@ internal static class LifecycleEndpoints
         }
         catch (AppLifecycleException ex)
         {
-            var statusCode = string.Equals(ex.Code, "app_not_found", StringComparison.Ordinal)
-                ? StatusCodes.Status404NotFound
-                : StatusCodes.Status400BadRequest;
+            var statusCode = ex.Code switch
+            {
+                "app_not_found" => StatusCodes.Status404NotFound,
+                // Conflict with current state, not a malformed request: the same install succeeds
+                // once the app is removed, and an update is the way to change it in place.
+                "already_installed" => StatusCodes.Status409Conflict,
+                _ => StatusCodes.Status400BadRequest,
+            };
             return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: statusCode);
         }
         catch (InvalidOperationException ex)

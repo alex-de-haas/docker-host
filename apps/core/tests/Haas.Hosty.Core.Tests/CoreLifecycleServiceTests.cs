@@ -289,6 +289,36 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task InstallAsync_RejectsASecondInstallAndLeavesTheRecordUntouched()
+    {
+        // Planning has always reported "already-installed"; this is the enforcement (C-H2). A repeat
+        // install used to rebuild the record from scratch — resetting settings and dropping port
+        // reservations while the old runtime kept running and kept holding those ports.
+        var fixture = await LifecycleFixture.CreateAsync(withPortAllocator: true);
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        await fixture.Service.ConfigureAsync(
+            "com.example.notes",
+            new AppConfigureRequest(Settings: new Dictionary<string, string?> { ["APP_MODE"] = "staging" }));
+        var before = await fixture.Apps.GetAppAsync("com.example.notes");
+        var reservedPort = Assert.Single(before!.PortAssignments!).HostPort;
+
+        var laterManifest = await fixture.WriteManifestAsync("2.0.0");
+        var ex = await Assert.ThrowsAsync<AppLifecycleException>(
+            () => fixture.Service.InstallAsync(new AppInstallRequest(laterManifest)));
+
+        Assert.Equal("already_installed", ex.Code);
+        var after = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal("1.0.0", after!.Version);
+        Assert.Equal("staging", after.Settings["APP_MODE"].Value);
+        Assert.Equal(reservedPort, Assert.Single(after.PortAssignments!).HostPort);
+        // The guard runs before the manifest copy and asset vendoring touch the app root, so the
+        // reviewed copy on disk still matches the installed version.
+        Assert.Contains(
+            "\"version\": \"1.0.0\"",
+            await File.ReadAllTextAsync(Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "manifest.json")));
+    }
+
+    [Fact]
     public async Task InstallAsync_StartsAppImmediatelyWhenStartOnInstallAndAutostartEnabled()
     {
         var fixture = await LifecycleFixture.CreateAsync();
