@@ -103,7 +103,10 @@ internal sealed partial class GlobalMountService(GlobalMountStore store, AppRegi
                 mount.HostPath,
                 NormalizeMode(mount.MaxMode),
                 mount.Description,
-                usage.GetValueOrDefault(mount.Name)))
+                usage.GetValueOrDefault(mount.Name),
+                // Advisory only — registration deliberately accepts not-yet-attached drives. Reported on
+                // every response so clients can flag a path that will fail the start gate (typically a typo).
+                MountPathPolicy.HostPathExists(mount.HostPath)))
             .ToArray();
     }
 
@@ -147,6 +150,6 @@ internal sealed partial class GlobalMountService(GlobalMountStore store, AppRegi
 
 internal sealed record GlobalMountUpsertRequest(string? Name = null, string? HostPath = null, string? Mode = null, string? Description = null);
 
-internal sealed record GlobalMountSummary(string Name, string HostPath, string Mode, string? Description, int UsedBy);
+internal sealed record GlobalMountSummary(string Name, string HostPath, string Mode, string? Description, int UsedBy, bool HostPathExists);
 
 internal sealed record GlobalMountListResponse(IReadOnlyList<GlobalMountSummary> Mounts);

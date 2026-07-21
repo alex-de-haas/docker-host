@@ -229,6 +229,9 @@ export type CoreGlobalMount = {
   mode: string;
   description?: string | null;
   usedBy: number;
+  // Advisory: registration accepts a path on a drive that is not attached yet, so this flags a path
+  // that would fail the start gate. Optional for older Core builds that do not send it.
+  hostPathExists?: boolean;
 };
 
 export type AppsResponse = {

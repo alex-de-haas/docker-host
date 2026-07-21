@@ -53,6 +53,20 @@ internal sealed partial class StorageCommand(CommandContext context)
             "global-mounts",
             new GlobalMountUpsertRequest(options.Name, options.HostPath, options.Mode, options.Description));
         context.Console.MarkupLine($"[green]saved:[/] {Markup.Escape(options.Name)}");
+
+        // Registration accepts a path that is not there yet (network/removable drives), so a typo would
+        // otherwise stay silent until an app fails to start. Warn without failing the command.
+        // Mounts is null-guarded the same way RenderMounts guards it: the deserializer does not enforce the
+        // non-nullable contract, so a response without the property would otherwise throw here.
+        var saved = response?.Mounts?.FirstOrDefault(mount => mount.Name == options.Name);
+        if (saved is { HostPathExists: false })
+        {
+            context.Console.MarkupLine(
+                $"[yellow]warning:[/] host path does not exist yet: {Markup.Escape(saved.HostPath)}");
+            context.Console.MarkupLine(
+                "[grey]Apps using this mount will fail to start until it exists. Expected if the drive is not attached.[/]");
+        }
+
         RenderMounts(response);
         return 0;
     }
@@ -102,9 +116,14 @@ internal sealed partial class StorageCommand(CommandContext context)
         var table = ConsoleUi.CreateTable("Name", "Host path", "Mode", "Used by", "Description");
         foreach (var mount in mounts)
         {
+            // Flag the path inline rather than in a separate column: a missing path is the exception, and
+            // it has to be impossible to miss when scanning the table for why an app will not start.
+            var hostPath = mount.HostPathExists
+                ? Markup.Escape(mount.HostPath)
+                : $"[yellow]{Markup.Escape(mount.HostPath)} (missing)[/]";
             table.AddRow(
                 Markup.Escape(mount.Name),
-                Markup.Escape(mount.HostPath),
+                hostPath,
                 Markup.Escape(mount.Mode),
                 Markup.Escape(mount.UsedBy.ToString()),
                 Markup.Escape(mount.Description ?? string.Empty));
@@ -198,7 +217,9 @@ internal sealed partial class StorageCommand(CommandContext context)
 
     internal sealed record GlobalMountListResponse(IReadOnlyList<GlobalMountSummary> Mounts);
 
-    internal sealed record GlobalMountSummary(string Name, string HostPath, string Mode, string? Description, int UsedBy);
+    // HostPathExists defaults to true so an older Core that does not send the field never renders a
+    // false "(missing)" marker.
+    internal sealed record GlobalMountSummary(string Name, string HostPath, string Mode, string? Description, int UsedBy, bool HostPathExists = true);
 
     internal sealed record GlobalMountUpsertRequest(string Name, string HostPath, string? Mode, string? Description);
 }
