@@ -224,6 +224,20 @@ internal sealed class CoreLifecycleService(
 
     private async Task<AppLifecycleResponse> InstallCoreAsync(AppInstallRequest request, RuntimeAppManifestSelection selection, CancellationToken cancellationToken)
     {
+        // Planning reports an existing record as "already-installed"; this is the enforcement. Without
+        // it, apply rebuilt the record with existing: null — resetting settings, mounts, source state,
+        // artifact locks and port reservations while the old runtime kept running (and kept its ports).
+        // Checked first, before the manifest copy and asset vendoring touch the app root. Both callers
+        // hold this app's operation lock. Changing an installed app is the update flow's job: it stops
+        // the runtime, takes a pre-update backup, and diffs the manifest for review.
+        var alreadyInstalled = await apps.GetAppAsync(selection.Manifest.Id!, cancellationToken);
+        if (alreadyInstalled is not null)
+        {
+            throw new AppLifecycleException(
+                "already_installed",
+                $"App '{selection.Manifest.Id}' is already installed (version {alreadyInstalled.Version}). Apply an update to change it, or remove it first.");
+        }
+
         var appRoot = GetAppRoot(selection.Manifest.Id!);
         var manifestCopyPath = Path.Combine(appRoot, "manifest.json");
 
