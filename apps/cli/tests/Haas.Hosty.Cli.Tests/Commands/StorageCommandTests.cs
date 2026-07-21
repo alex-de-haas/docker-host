@@ -103,6 +103,22 @@ public sealed class StorageCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task AddAsync_SurvivesAResponseWithoutAMountsCollection()
+    {
+        // The deserializer does not enforce the non-nullable contract on Mounts, so a response missing the
+        // property must not crash the command after the mount was already saved.
+        using var server = new FakeCoreServer("{ }");
+        WriteCoreDiscovery(server);
+        var (console, output) = CreateConsole();
+
+        var exitCode = await CommandLine.RunAsync(["storage", "add", "media", "/srv/media"], console);
+        await server.WaitForRequestAsync();
+
+        Assert.Equal(0, exitCode);
+        Assert.Contains("saved:", output.ToString());
+    }
+
+    [Fact]
     public async Task ListAsync_MarksAMissingHostPath()
     {
         using var server = new FakeCoreServer(MissingPathResponse);

@@ -56,7 +56,9 @@ internal sealed partial class StorageCommand(CommandContext context)
 
         // Registration accepts a path that is not there yet (network/removable drives), so a typo would
         // otherwise stay silent until an app fails to start. Warn without failing the command.
-        var saved = response?.Mounts.FirstOrDefault(mount => mount.Name == options.Name);
+        // Mounts is null-guarded the same way RenderMounts guards it: the deserializer does not enforce the
+        // non-nullable contract, so a response without the property would otherwise throw here.
+        var saved = response?.Mounts?.FirstOrDefault(mount => mount.Name == options.Name);
         if (saved is { HostPathExists: false })
         {
             context.Console.MarkupLine(
