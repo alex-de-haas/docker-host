@@ -181,6 +181,119 @@ public sealed class SqliteTelemetryStoreTests : IDisposable
         Assert.Equal(2.0, Assert.Single(series.Points).Value);
     }
 
+    [Fact]
+    public void SizeCeiling_EvictsTheBloatedSignalAndSparesScarceOnes()
+    {
+        // Ceiling far below the metrics flood but far above the handful of log/span rows: the trim
+        // must land on metric_points only. (The regression this guards: trimming the oldest chunk from
+        // EVERY table per iteration wiped the scarce signals' few rows while metrics pinned the file.)
+        var s = Store(maxBytes: 4L * 1024 * 1024);
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var nowNano = nowMs * 1_000_000L;
+
+        var pad = new string('x', 400);
+        var samples = new List<MetricSample>(20_000);
+        for (var i = 0; i < 20_000; i++)
+        {
+            samples.Add(new MetricSample("app", "cpu", Labels(("pad", pad)), i, nowMs - i));
+        }
+
+        s.RecordMetrics(samples);
+        var logs = new List<ParsedOtlpLog>(20);
+        for (var i = 0; i < 20; i++)
+        {
+            logs.Add(Log("app", nowMs - i, 9, $"log {i}"));
+        }
+
+        s.RecordLogs(logs);
+        s.RecordSpans([Span("app", "trace1", "s1", null, nowNano - 1000, nowNano)]);
+
+        s.Prune(DateTimeOffset.UtcNow);
+
+        Assert.Equal(20, s.QueryOtlpLogs("app", 0, null, 100).Count);
+        Assert.Single(s.QueryTraceSpans("trace1"));
+        var metricPoints = s.QueryMetrics("app", 0).Sum(x => x.Points.Count);
+        Assert.InRange(metricPoints, 1, 19_999); // trimmed, but not wiped: the ceiling was reached first
+    }
+
+    [Fact]
+    public void TrimSelection_TargetsTheDominantTableOnly()
+    {
+        var targets = SqliteTelemetryStore.SelectTrimTargets(
+        [
+            new TableSizeEstimate("metric_points", Rows: 1_000_000, AvgRowBytes: 1000),
+            new TableSizeEstimate("log_records", Rows: 100, AvgRowBytes: 200),
+            new TableSizeEstimate("spans", Rows: 1000, AvgRowBytes: 500),
+        ]);
+
+        Assert.Equal(["metric_points"], targets.Select(t => t.Table));
+    }
+
+    [Fact]
+    public void TrimSelection_TrimsEvenlyWhenSizesComparable()
+    {
+        // All within ComparableSizeFactor of the largest → no single signal is at fault.
+        var targets = SqliteTelemetryStore.SelectTrimTargets(
+        [
+            new TableSizeEstimate("metric_points", Rows: 1000, AvgRowBytes: 400),
+            new TableSizeEstimate("log_records", Rows: 1000, AvgRowBytes: 200),
+            new TableSizeEstimate("spans", Rows: 1000, AvgRowBytes: 100),
+        ]);
+
+        Assert.Equal(["metric_points", "log_records", "spans"], targets.Select(t => t.Table));
+    }
+
+    [Fact]
+    public void TrimSelection_SparesSmallAndEmptyTables()
+    {
+        var targets = SqliteTelemetryStore.SelectTrimTargets(
+        [
+            new TableSizeEstimate("metric_points", Rows: 10_000, AvgRowBytes: 400),
+            new TableSizeEstimate("log_records", Rows: 4000, AvgRowBytes: 300), // within factor 4
+            new TableSizeEstimate("spans", Rows: 0, AvgRowBytes: 0),
+        ]);
+        Assert.Equal(["metric_points", "log_records"], targets.Select(t => t.Table));
+
+        Assert.Empty(SqliteTelemetryStore.SelectTrimTargets(
+        [
+            new TableSizeEstimate("metric_points", Rows: 0, AvgRowBytes: 0),
+            new TableSizeEstimate("log_records", Rows: 0, AvgRowBytes: 0),
+        ]));
+    }
+
+    [Fact]
+    public void PruneStep_BoundedBudgetMakesIncrementalProgressAndCompletes()
+    {
+        var s = Store(metricsRetention: TimeSpan.FromMinutes(30));
+        var now = DateTimeOffset.UtcNow;
+        var oldMs = now.AddHours(-2).ToUnixTimeMilliseconds();
+        var samples = new List<MetricSample>(12_000);
+        for (var i = 0; i < 12_000; i++)
+        {
+            samples.Add(new MetricSample("app", "cpu", Labels(), i, oldMs - i));
+        }
+
+        s.RecordMetrics(samples);
+
+        // Zero budget: one bounded chunk per call, so a caller interleaving ingest with steps gets the
+        // store back promptly instead of waiting out the whole pass.
+        Assert.False(s.PruneStep(now, TimeSpan.Zero));
+        var afterFirstStep = s.QueryMetrics("app", 0).Sum(x => x.Points.Count);
+        Assert.InRange(afterFirstStep, 1, 11_999);
+
+        // Ingest keeps landing between steps of an in-progress pass.
+        s.RecordLogs([Log("app", now.ToUnixTimeMilliseconds(), 9, "mid-prune")]);
+
+        var steps = 0;
+        while (!s.PruneStep(now, TimeSpan.Zero) && ++steps < 1000)
+        {
+        }
+
+        Assert.True(steps < 1000, "prune pass never completed");
+        Assert.Empty(s.QueryMetrics("app", 0)); // every sample was past the age cap
+        Assert.Equal("mid-prune", Assert.Single(s.QueryOtlpLogs("app", 0, null, 10)).Body);
+    }
+
     private static ParsedOtlpLog Log(string appId, long tsMs, int severity, string body)
         => new(appId, new OtlpLogRecord(tsMs, severity, "", body,
             new Dictionary<string, string>(StringComparer.Ordinal), null, null));

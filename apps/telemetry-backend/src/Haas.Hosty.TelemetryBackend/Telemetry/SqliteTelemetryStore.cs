@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Data.Sqlite;
 
 namespace Haas.Hosty.TelemetryBackend;
@@ -10,6 +11,15 @@ internal readonly record struct MetricSample(
     IReadOnlyDictionary<string, string> Labels,
     double Value,
     long TimestampUnixMs);
+
+// Estimated live payload of one signal table, used by the size-ceiling trim to decide which signal
+// is responsible for the bloat. Row count × sampled average row bytes — coarse (indexes and page
+// overhead excluded), which is fine: the trim selection compares tables against each other with a
+// generous factor, it never needs absolute sizes.
+internal readonly record struct TableSizeEstimate(string Table, long Rows, long AvgRowBytes)
+{
+    public long EstimatedBytes => Rows * AvgRowBytes;
+}
 
 // Embedded SQLite telemetry store (observability Phase 2). Persists metrics/logs/spans so a restart no
 // longer drops the window (unlike Core's old in-memory stores), and answers the range/fleet queries the
@@ -458,52 +468,186 @@ internal sealed class SqliteTelemetryStore : IDisposable
 
     // ---- Retention ------------------------------------------------------------------------------
 
-    // Evicts data past its per-signal age cap, then trims oldest rows until the file is under the size
-    // ceiling, then reclaims freed pages. Called periodically by the ingest loop. Ported from Core's
-    // Prune but persistent + size-bounded.
+    // The three signal tables, with the column age eviction / oldest-first trims order by and the TEXT
+    // columns that dominate each row's payload (for the ceiling's per-table size estimation).
+    private sealed record SignalTable(string Table, string OrderColumn, string PayloadSizeExpr);
+
+    private static readonly SignalTable MetricPointsTable = new("metric_points", "ts_ms",
+        "length(app_id) + length(name) + length(labels_json)");
+    private static readonly SignalTable LogRecordsTable = new("log_records", "ts_ms",
+        "length(app_id) + length(severity_text) + length(body) + coalesce(length(trace_id), 0) + coalesce(length(span_id), 0) + length(attrs_json)");
+    private static readonly SignalTable SpansTable = new("spans", "start_nano",
+        "length(app_id) + length(trace_id) + length(span_id) + coalesce(length(parent_span_id), 0) + length(name) + length(kind) + length(status_code) + coalesce(length(status_message), 0) + length(attrs_json)");
+
+    private static readonly SignalTable[] SignalTables = [MetricPointsTable, LogRecordsTable, SpansTable];
+
+    // Rows deleted per chunk: small enough that one chunk is milliseconds of work (the budget check in
+    // PruneStep runs between chunks, so a chunk is also the worst-case budget overshoot).
+    private const int PruneChunkRows = 5000;
+    // Newest rows sampled per table when estimating average row bytes.
+    private const int SizeSampleRows = 1000;
+    // Fixed per-row bytes on top of the sampled TEXT payload (record header, rowid, integer columns).
+    private const int RowOverheadBytes = 48;
+    // Freelist pages reclaimed per incremental_vacuum chunk (~4 MiB at the default 4 KiB page size).
+    private const int VacuumChunkPages = 1000;
+
+    // Runs prune passes to completion. Tests and small stores use this; the production ingest loop
+    // calls PruneStep directly so one pass never monopolizes the store.
     public void Prune(DateTimeOffset now)
+    {
+        while (!PruneStep(now, TimeSpan.FromSeconds(1)))
+        {
+        }
+    }
+
+    // One bounded slice of a prune pass: age eviction, size-ceiling trims, freed-page reclaim, WAL
+    // checkpoint — in that order, chunked, stopping once `budget` elapses. Returns true when the pass
+    // completed, false when work remains (call again to resume; every call makes at least one chunk of
+    // progress, so a pass always terminates). Bounding the slice is what keeps log/trace tailing
+    // responsive: the old all-at-once Prune held the store for minutes on a ceiling-pinned ~1 GiB
+    // database, and ingest stalled for exactly that long.
+    public bool PruneStep(DateTimeOffset now, TimeSpan budget)
     {
         lock (gate)
         {
+            var clock = Stopwatch.StartNew();
             var nowMs = now.ToUnixTimeMilliseconds();
-            DeleteWhere("metric_points", "ts_ms", nowMs - (long)options.MetricsRetention.TotalMilliseconds);
-            DeleteWhere("log_records", "ts_ms", nowMs - (long)options.LogsRetention.TotalMilliseconds);
-            DeleteWhere("spans", "start_nano", (nowMs - (long)options.TracesRetention.TotalMilliseconds) * 1_000_000L);
 
-            EnforceSizeCeiling();
-            Execute("PRAGMA incremental_vacuum;");
+            // Age eviction, oldest first in bounded chunks. A short chunk (< PruneChunkRows deleted)
+            // means the table is caught up; a full chunk means more may remain, so check the budget.
+            (SignalTable Signal, long Cutoff)[] ageCutoffs =
+            [
+                (MetricPointsTable, nowMs - (long)options.MetricsRetention.TotalMilliseconds),
+                (LogRecordsTable, nowMs - (long)options.LogsRetention.TotalMilliseconds),
+                (SpansTable, (nowMs - (long)options.TracesRetention.TotalMilliseconds) * 1_000_000L),
+            ];
+            foreach (var (signal, cutoff) in ageCutoffs)
+            {
+                while (DeleteOldest(signal, cutoff, PruneChunkRows) == PruneChunkRows)
+                {
+                    if (clock.Elapsed >= budget)
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            // Hard safety cap: while the database exceeds the ceiling, trim the oldest chunk from the
+            // signal(s) actually responsible for the bloat — not from every table, which let a metrics
+            // flood evict the last few days of scarce log rows down to a minutes-wide window. Sizes are
+            // estimated once per call and decremented as trims land (the lock makes them consistent).
+            List<TableSizeEstimate>? estimates = null;
+            while (DatabaseBytes() > options.MaxDatabaseBytes)
+            {
+                estimates ??= SignalTables.Select(EstimateTableSize).ToList();
+                var targets = SelectTrimTargets(estimates);
+                if (targets.Count == 0)
+                {
+                    break; // every table is empty; the residue is file overhead the vacuum handles
+                }
+
+                var trimmedAny = false;
+                foreach (var target in targets)
+                {
+                    var signal = Array.Find(SignalTables, s => s.Table == target.Table)!;
+                    var trimmed = DeleteOldest(signal, cutoff: null, PruneChunkRows);
+                    trimmedAny |= trimmed > 0;
+                    var index = estimates.FindIndex(e => e.Table == target.Table);
+                    estimates[index] = estimates[index] with { Rows = Math.Max(0, estimates[index].Rows - trimmed) };
+                }
+
+                if (!trimmedAny)
+                {
+                    break; // estimates disagree with the tables; never spin inside the lock
+                }
+
+                if (clock.Elapsed >= budget)
+                {
+                    return false;
+                }
+            }
+
+            // Reclaim freed pages in bounded chunks (a full incremental_vacuum after a big eviction is
+            // one of the slow statements the old inline Prune stalled on).
+            var freelist = QueryScalarLong("PRAGMA freelist_count;");
+            while (freelist > 0)
+            {
+                Execute($"PRAGMA incremental_vacuum({VacuumChunkPages});");
+                var remaining = QueryScalarLong("PRAGMA freelist_count;");
+                if (remaining >= freelist)
+                {
+                    break; // cannot shrink further
+                }
+
+                freelist = remaining;
+                if (clock.Elapsed >= budget)
+                {
+                    return false;
+                }
+            }
+
             // Fold the WAL back into the main db and truncate it, so on-disk usage (db + wal) stays
             // near the logical size the ceiling measures rather than growing unbounded under writes.
+            // Auto-checkpointing keeps the WAL modest between passes, so this stays cheap.
             Execute("PRAGMA wal_checkpoint(TRUNCATE);");
+            return true;
         }
     }
 
-    private void DeleteWhere(string table, string column, long cutoff)
-    {
-        using var cmd = connection.CreateCommand();
-        cmd.CommandText = $"DELETE FROM {table} WHERE {column} < $cutoff;";
-        AddParam(cmd, "$cutoff", cutoff);
-        cmd.ExecuteNonQuery();
-    }
+    // The tables the ceiling should trim this iteration: every table whose estimated bytes are within
+    // ComparableSizeFactor of the largest. A flooded signal dominates and is trimmed alone, sparing the
+    // scarce ones; when sizes are comparable no signal is at fault, so all of them share the trim.
+    internal const int ComparableSizeFactor = 4;
 
-    // Hard safety cap: while the database exceeds the ceiling, drop the oldest slice from each signal
-    // table and re-measure. Bounded iterations so a pathological state cannot spin.
-    private void EnforceSizeCeiling()
+    internal static IReadOnlyList<TableSizeEstimate> SelectTrimTargets(IReadOnlyList<TableSizeEstimate> estimates)
     {
-        for (var iteration = 0; iteration < 32 && DatabaseBytes() > options.MaxDatabaseBytes; iteration++)
+        var largest = 0L;
+        foreach (var estimate in estimates)
         {
-            TrimOldest("metric_points", "ts_ms", 5000);
-            TrimOldest("log_records", "ts_ms", 5000);
-            TrimOldest("spans", "start_nano", 5000);
+            largest = Math.Max(largest, estimate.EstimatedBytes);
         }
+
+        if (largest == 0)
+        {
+            return [];
+        }
+
+        return estimates
+            .Where(e => e.EstimatedBytes > 0 && e.EstimatedBytes * ComparableSizeFactor >= largest)
+            .ToList();
     }
 
-    private void TrimOldest(string table, string column, int count)
+    private TableSizeEstimate EstimateTableSize(SignalTable signal)
+    {
+        var rows = QueryScalarLong($"SELECT COUNT(*) FROM {signal.Table};");
+        if (rows == 0)
+        {
+            return new TableSizeEstimate(signal.Table, 0, 0);
+        }
+
+        // Average payload from the newest rows (rowid order needs no index sort); dbstat would give
+        // exact per-table pages but isn't guaranteed in the bundled SQLite, and coarse is enough here.
+        var avgPayload = QueryScalarLong(
+            $"SELECT CAST(coalesce(avg({signal.PayloadSizeExpr}), 0) AS INTEGER) " +
+            $"FROM (SELECT * FROM {signal.Table} ORDER BY rowid DESC LIMIT {SizeSampleRows});");
+        return new TableSizeEstimate(signal.Table, rows, avgPayload + RowOverheadBytes);
+    }
+
+    // Deletes up to `limit` oldest rows — only those older than `cutoff` when given (age eviction),
+    // unconditionally when null (ceiling trim). Returns the number of rows deleted.
+    private int DeleteOldest(SignalTable signal, long? cutoff, int limit)
     {
         using var cmd = connection.CreateCommand();
-        cmd.CommandText = $"DELETE FROM {table} WHERE rowid IN (SELECT rowid FROM {table} ORDER BY {column} ASC LIMIT $count);";
-        AddParam(cmd, "$count", count);
-        cmd.ExecuteNonQuery();
+        cmd.CommandText = cutoff is null
+            ? $"DELETE FROM {signal.Table} WHERE rowid IN (SELECT rowid FROM {signal.Table} ORDER BY {signal.OrderColumn} ASC LIMIT $limit);"
+            : $"DELETE FROM {signal.Table} WHERE rowid IN (SELECT rowid FROM {signal.Table} WHERE {signal.OrderColumn} < $cutoff ORDER BY {signal.OrderColumn} ASC LIMIT $limit);";
+        if (cutoff is { } value)
+        {
+            AddParam(cmd, "$cutoff", value);
+        }
+
+        AddParam(cmd, "$limit", limit);
+        return cmd.ExecuteNonQuery();
     }
 
     // Logical active size = (allocated − freelist) pages × page size. Excluding freelist pages is
