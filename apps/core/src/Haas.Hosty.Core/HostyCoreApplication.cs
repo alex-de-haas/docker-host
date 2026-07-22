@@ -37,6 +37,7 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton(sp => AppServiceSigningKey.LoadOrCreate(sp.GetRequiredService<CoreDataPaths>()));
         builder.Services.AddSingleton<AppServiceTokenService>();
         builder.Services.AddSingleton<AppRegistryStore>();
+        builder.Services.AddSingleton<AppSecretsStore>();
         builder.Services.AddSingleton<ShellPublicOriginResolver>();
         builder.Services.AddSingleton<MountPathPolicy>();
         builder.Services.AddSingleton<GlobalMountStore>();
@@ -319,6 +320,7 @@ internal static class HostyCoreApplication
         AppDirectoryEndpoints.Map(app);
         AppAssetEndpoints.Map(app);
         AppBackupEndpoints.Map(app);
+        AppSecretsEndpoints.Map(app);
         NotificationEndpoints.Map(app);
     }
 

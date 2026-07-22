@@ -6,6 +6,7 @@ namespace Haas.Hosty.Core;
 internal sealed class AppRegistryStore(CoreDataPaths paths)
 {
     private readonly ConcurrentDictionary<string, SemaphoreSlim> appLocks = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, long> dataRemovalGenerations = new(StringComparer.Ordinal);
 
     public async Task<IReadOnlyList<AppSummary>> ListAppsAsync(CancellationToken cancellationToken = default)
         => (await ListAppRecordsAsync(cancellationToken))
@@ -121,8 +122,22 @@ internal sealed class AppRegistryStore(CoreDataPaths paths)
         return document;
     }
 
-    private SemaphoreSlim GetAppLock(string appId)
+    // Shared with AppSecretsStore: secrets mutations, state.json writes, and the RemoveAppAsync
+    // subtree delete serialize on the same per-app semaphore, so an in-flight secret write cannot
+    // recreate files under an app root that a removal just deleted.
+    internal SemaphoreSlim GetAppLock(string appId)
         => appLocks.GetOrAdd(appId, _ => new SemaphoreSlim(1, 1));
+
+    // Monotonic per-app counter bumped when an app's data is deleted. It lives here, beside the lock
+    // it is checked under, so any collaborator holding this registry shares one fence by
+    // construction — a second AppSecretsStore over the same registry cannot silently opt out of it.
+    // Needed because `--delete-data --keep-state` leaves state.json in place, so file existence alone
+    // cannot tell a write that straddled a removal from a legitimate later one.
+    internal long ReadDataRemovalGeneration(string appId)
+        => dataRemovalGenerations.TryGetValue(appId, out var generation) ? generation : 0;
+
+    internal void BumpDataRemovalGeneration(string appId)
+        => dataRemovalGenerations.AddOrUpdate(appId, 1, (_, current) => current + 1);
 
     private string GetAppStatePath(string appId)
         => Path.Combine(CoreDataPaths.ResolveContainedPath(paths.AppsRoot, appId), "state.json");
