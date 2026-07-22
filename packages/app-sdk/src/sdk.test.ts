@@ -10,11 +10,17 @@ import {
 } from "./index";
 import { createReissueRateLimiter, parseActiveFrameAuthRequired } from "./embedder";
 import {
+  clearAppSecretsCache,
   clearRevalidationCache,
   createAppCodeRouteHandler,
+  deleteAppSecret,
+  getAppSecret,
+  HostySecretsError,
   identityCookieAttributes,
+  listAppSecretKeys,
   readAppIdentityToken,
   resolveAppSession,
+  setAppSecret,
   type HostyAppConfig,
 } from "./server";
 
@@ -53,6 +59,7 @@ beforeEach(() => {
   process.env.HOSTY_APP_ID = "com.example.app";
   process.env.HOSTY_APP_SERVICE_TOKEN = "hosty_app_service.1.x.y";
   clearRevalidationCache();
+  clearAppSecretsCache();
 });
 
 afterEach(() => {
@@ -352,5 +359,145 @@ describe("resolution error detail", () => {
       status: "forbidden",
       error: { code: "app_identity_app_mismatch" },
     });
+  });
+});
+
+describe("app secrets", () => {
+  it("reads a stored secret from the per-key route with the service token", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse(200, { value: "token-payload" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await getAppSecret("trakt.connection.1.tokens", config)).toBe("token-payload");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://core.test/api/internal/apps/com.example.app/secrets/trakt.connection.1.tokens");
+    expect(init.method).toBe("GET");
+    expect((init.headers as Record<string, string>).authorization).toBe("Bearer hosty_app_service.1.x.y");
+  });
+
+  it("returns null for an absent secret instead of throwing", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(404, { code: "app_secret_not_found" })));
+    expect(await getAppSecret("absent", config)).toBeNull();
+  });
+
+  it("serves repeat reads from the cache, including a miss", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, { value: "cached" }))
+      .mockResolvedValueOnce(jsonResponse(404, { code: "app_secret_not_found" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await getAppSecret("present", config)).toBe("cached");
+    expect(await getAppSecret("present", config)).toBe("cached");
+    expect(await getAppSecret("absent", config)).toBeNull();
+    expect(await getAppSecret("absent", config)).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("bypasses the cache when refresh is requested", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, { value: "first" }))
+      .mockResolvedValueOnce(jsonResponse(200, { value: "second" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await getAppSecret("key", config)).toBe("first");
+    expect(await getAppSecret("key", config, { refresh: true })).toBe("second");
+    expect(await getAppSecret("key", config)).toBe("second");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("preserves a value's significant whitespace rather than trimming it", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(200, { value: "  padded\n" })));
+    expect(await getAppSecret("key", config)).toBe("  padded\n");
+  });
+
+  it("writes through the cache on set, so a later read needs no round-trip", async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await setAppSecret("key", "written", config);
+    expect(await getAppSecret("key", config)).toBe("written");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://core.test/api/internal/apps/com.example.app/secrets/key");
+    expect(init.method).toBe("PUT");
+    expect(init.body).toBe(JSON.stringify({ value: "written" }));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears the cached value on delete", async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await setAppSecret("key", "written", config);
+    await deleteAppSecret("key", config);
+
+    expect(await getAppSecret("key", config)).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect((fetchMock.mock.calls[1] as [string, RequestInit])[1].method).toBe("DELETE");
+  });
+
+  it("lists key names live from the collection route", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse(200, { keys: ["a.key", "b.key"] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await listAppSecretKeys(config)).toEqual(["a.key", "b.key"]);
+    await listAppSecretKeys(config);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect((fetchMock.mock.calls[0] as [string])[0]).toBe(
+      "http://core.test/api/internal/apps/com.example.app/secrets",
+    );
+  });
+
+  it("surfaces Core's rejection code and does not cache a failed write", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(400, { code: "app_secret_value_invalid", message: "too big" }))
+      .mockResolvedValueOnce(jsonResponse(404, { code: "app_secret_not_found" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(setAppSecret("key", "too-big", config)).rejects.toMatchObject({
+      name: "HostySecretsError",
+      status: 400,
+      code: "app_secret_value_invalid",
+    });
+    expect(await getAppSecret("key", config)).toBeNull();
+  });
+
+  it("treats a 404 on a mutation as an error, unlike a missing secret on read", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(404, { code: "app_not_found" })));
+    await expect(deleteAppSecret("key", config)).rejects.toBeInstanceOf(HostySecretsError);
+  });
+
+  it("fails without calling Core when the service token is missing", async () => {
+    delete process.env.HOSTY_APP_SERVICE_TOKEN;
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getAppSecret("key", config)).rejects.toMatchObject({ code: "app_service_token_missing" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("labels a transport failure distinctly from a Core-reported one", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new TypeError("fetch failed");
+    }));
+    await expect(getAppSecret("key", config)).rejects.toMatchObject({
+      status: null,
+      code: "core_secrets_unavailable",
+    });
+  });
+
+  it("escapes the key in the request path", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse(200, { value: "v" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getAppSecret("weird key/with-slash", config);
+
+    expect((fetchMock.mock.calls[0] as [string])[0]).toBe(
+      "http://core.test/api/internal/apps/com.example.app/secrets/weird%20key%2Fwith-slash",
+    );
   });
 });

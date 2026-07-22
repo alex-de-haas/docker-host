@@ -1,10 +1,26 @@
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace HostySdk.App;
 
 public static class HostyAppServiceCollectionExtensions
 {
+    /// <summary>
+    /// Registers <see cref="HostySecretsClient"/> for the app's Core-managed secrets store.
+    /// Independent of the auth stack — a headless service may need secrets without owning a
+    /// public endpoint — and safe to combine with
+    /// <see cref="AddHostyAppAuthentication"/> in either order, since both only add the shared
+    /// Core client and options when they are missing.
+    /// </summary>
+    public static IServiceCollection AddHostySecrets(this IServiceCollection services, HostyAppOptions options)
+    {
+        services.TryAddSingleton(options);
+        AddCoreHttpClient(services, options);
+        services.TryAddSingleton<HostySecretsClient>();
+        return services;
+    }
+
     /// <summary>
     /// Wires the Hosty app auth stack: the Core-backed identity validator behind the
     /// platform-decided 30s positive cache, an <c>IHttpClientFactory</c> client aimed at
@@ -18,13 +34,9 @@ public static class HostyAppServiceCollectionExtensions
         Action<HostyAuthenticationOptions>? configure = null,
         bool useAsDefaultScheme = true)
     {
-        services.AddSingleton(options);
+        services.TryAddSingleton(options);
         services.AddMemoryCache();
-        services.AddHttpClient(CoreIdentityValidator.HttpClientName, client =>
-        {
-            client.BaseAddress = new Uri(options.CoreOrigin);
-            client.Timeout = TimeSpan.FromSeconds(5);
-        });
+        AddCoreHttpClient(services, options);
 
         services.AddSingleton<CoreIdentityValidator>();
         services.AddSingleton<IHostyIdentityValidator>(provider => new CachingIdentityValidator(
@@ -41,4 +53,24 @@ public static class HostyAppServiceCollectionExtensions
             HostyAuthenticationHandler.SchemeName,
             configure ?? (_ => { }));
     }
+
+    // One named client serves every app→Core call. AddHttpClient is additive per name, so the
+    // configure delegate would run twice if both entry points registered it; the guard keeps a
+    // single registration regardless of which is called first.
+    private static void AddCoreHttpClient(IServiceCollection services, HostyAppOptions options)
+    {
+        if (services.Any(descriptor => descriptor.ServiceType == typeof(CoreHttpClientMarker)))
+        {
+            return;
+        }
+
+        services.AddSingleton<CoreHttpClientMarker>();
+        services.AddHttpClient(CoreIdentityValidator.HttpClientName, client =>
+        {
+            client.BaseAddress = new Uri(options.CoreOrigin);
+            client.Timeout = TimeSpan.FromSeconds(5);
+        });
+    }
+
+    private sealed class CoreHttpClientMarker;
 }
