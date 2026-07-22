@@ -103,6 +103,9 @@ DELETE .../secrets/{key}      → 204                          // idempotent
 - Key naming `^[a-z0-9][a-z0-9._-]{0,127}$`; value is a non-empty UTF-8 string
   of at most 16 KiB; at most 256 keys per app. Violations return 400 with the
   existing internal-endpoint error conventions; values are never truncated.
+  The store enforces the same bounds independently of the endpoint — they are
+  the persisted document's invariant, and the store is reachable from other
+  Core code.
 - A `GET` 404 for an absent key is an expected state (reconnect-required), not
   an error path.
 - List returns key names only; values are never enumerable.
@@ -128,12 +131,22 @@ in `HostyCoreApplication`), modeled on `AppRegistryStore`:
   secrets operations, `state.json` writes, and the `RemoveAppAsync` recursive
   delete all contend on the same per-app semaphore. Store reads take the lock
   too (cheap, and it removes torn-read reasoning entirely).
-- **App existence is checked inside the lock, immediately before the
-  mutation** — not only in the endpoint prologue. A write that loses the race
-  to removal observes the deleted `state.json` under the lock, returns 404, and
-  recreates nothing. This is the removal fence: without it, an in-flight PUT
-  could finish after removal deleted the subtree and `WriteOwnerFileAsync`
-  would resurrect the app root with a stale `secrets.json`.
+- **Two removal fences, both re-checked inside the lock** immediately before the
+  mutation — not only in the endpoint prologue. Without them an in-flight PUT
+  could finish after removal deleted the secrets and `WriteOwnerFileAsync`
+  would write the credential it was carrying back to disk:
+  1. **`state.json` existence** — covers an ordinary removal, which deletes it.
+     A write that loses the race observes the deletion and returns 404.
+  2. **A per-app data-removal generation** held on `AppRegistryStore` beside the
+     shared lock, bumped by `DeleteAllAsync`. This covers
+     `hosty apps remove --delete-data --keep-state`, a supported combination
+     where `state.json` deliberately survives and existence alone proves
+     nothing. A mutation samples the generation on entry and re-checks it under
+     the lock, so only writes that *straddle* a removal are refused — a request
+     that starts afterwards samples the new value and proceeds, which matters
+     because a kept-state app is still installed. It lives on the registry, not
+     the secrets store, so any collaborator sharing the registry shares the
+     fence by construction rather than by DI wiring.
 - Request/response records registered in `CoreJsonSerializerContext`.
 
 ### Lifecycle
@@ -171,10 +184,11 @@ bodies; log statements reference key names at most.
 - [ ] Keep-data removal retains `secrets.json` and a reinstall can read it;
   delete-data removal deletes it; hard subtree deletion covers it.
 - [ ] A secret write racing app removal cannot leave or recreate `secrets.json`
-  after delete-data removal completes: mutations re-check app existence under
-  the shared per-app lock, removal deletes the store under that same lock, and
-  post-removal writes return 404 — covered by interleaving tests for both the
-  lifecycle removal and the hard subtree-delete path.
+  after delete-data removal completes: mutations re-check both fences under the
+  shared per-app lock, removal deletes the store under that same lock, and
+  straddling writes return 404 — covered by interleaving tests for the ordinary
+  removal, the `--delete-data --keep-state` variant, and the hard
+  subtree-delete path.
 - [ ] A malformed `secrets.json` fails loud; a missing one reads as empty.
 - [ ] Concurrent writes to one app's store are serialized; a Core kill mid-write
   never leaves a torn file (temp + rename).

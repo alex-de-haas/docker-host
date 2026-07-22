@@ -83,6 +83,12 @@ internal static class AppSecretsEndpoints
                         "app_secret_limit_exceeded",
                         $"An app can store at most {AppSecretsStore.MaxKeysPerApp} secrets."),
                     statusCode: StatusCodes.Status400BadRequest),
+                // Unreachable via this route (ValidateWrite ran above); mapped so the store's own
+                // bounds can never surface as a misleading success.
+                AppSecretsStatus.KeyInvalid => CoreJson.Json(
+                    ValidateKey(key)!, statusCode: StatusCodes.Status400BadRequest),
+                AppSecretsStatus.ValueInvalid => CoreJson.Json(
+                    ValidateWrite(key, input.Value)!, statusCode: StatusCodes.Status400BadRequest),
                 _ => Results.NoContent(),
             };
         });

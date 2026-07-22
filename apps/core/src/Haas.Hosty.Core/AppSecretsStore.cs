@@ -9,10 +9,11 @@ namespace Haas.Hosty.Core;
 // AppSecretsEndpoints with their service token; containers never see the file.
 //
 // Serializes on AppRegistryStore's per-app lock rather than its own: secrets mutations, state.json
-// writes, and the RemoveAppAsync subtree delete contend on one semaphore, and every mutation
-// re-checks state.json existence inside the lock. A write that loses the race to removal observes
-// the deleted state.json and returns AppNotFound instead of resurrecting the app root with a stale
-// secrets.json. See docs/planning/app-secrets-store.md.
+// writes, and the RemoveAppAsync subtree delete contend on one semaphore. Two fences keep a write
+// that loses the race to a removal from resurrecting credentials the operator asked to delete:
+// state.json existence (covers the default removal, which deletes it) and the registry's per-app
+// data-removal generation (covers `--delete-data --keep-state`, where state.json survives).
+// See docs/planning/app-secrets-store.md.
 internal sealed class AppSecretsStore(AppRegistryStore apps, CoreDataPaths paths)
 {
     public const int MaxValueBytes = 16 * 1024;
@@ -83,18 +84,34 @@ internal sealed class AppSecretsStore(AppRegistryStore apps, CoreDataPaths paths
 
     public async Task<AppSecretsStatus> SetAsync(string appId, string key, string value, CancellationToken cancellationToken = default)
     {
+        // Bounds are enforced here as well as at the endpoint: the store is reachable from other Core
+        // code, and the persisted document's limits are its own invariant, not the HTTP layer's.
+        if (!IsValidKey(key))
+        {
+            return AppSecretsStatus.KeyInvalid;
+        }
+
+        if (!IsValidValue(value))
+        {
+            return AppSecretsStatus.ValueInvalid;
+        }
+
         if (!TryResolveSecretsPath(appId, out var secretsPath, out var statePath))
         {
             return AppSecretsStatus.AppNotFound;
         }
 
+        // Sampled before queueing on the lock, re-checked inside it (see the fences below).
+        var generation = apps.ReadDataRemovalGeneration(appId);
         var mutex = apps.GetAppLock(appId);
         await mutex.WaitAsync(cancellationToken);
         try
         {
-            // The removal fence: state.json is deleted by removal before DeleteAllAsync runs, so a
-            // write arriving after that point must refuse rather than recreate the app root.
-            if (!File.Exists(statePath))
+            // Removal fences. state.json is deleted by an ordinary removal before DeleteAllAsync
+            // runs; under `--delete-data --keep-state` it survives, so the generation is what
+            // catches a write already queued on this lock when the secrets were deleted. A request
+            // that starts after the removal samples the new generation and proceeds normally.
+            if (!File.Exists(statePath) || apps.ReadDataRemovalGeneration(appId) != generation)
             {
                 return AppSecretsStatus.AppNotFound;
             }
@@ -148,7 +165,8 @@ internal sealed class AppSecretsStore(AppRegistryStore apps, CoreDataPaths paths
     }
 
     // Removal path (delete-data). Runs under the same lock as every mutation, so an in-flight write
-    // either lands first and is deleted here, or arrives after and fails the state.json fence.
+    // either lands first and is deleted here, or arrives after and is refused: by the state.json
+    // fence on an ordinary removal, and by the epoch bump when the operator kept the runtime state.
     public async Task DeleteAllAsync(string appId, CancellationToken cancellationToken = default)
     {
         if (!TryResolveSecretsPath(appId, out var secretsPath, out _))
@@ -160,6 +178,7 @@ internal sealed class AppSecretsStore(AppRegistryStore apps, CoreDataPaths paths
         await mutex.WaitAsync(cancellationToken);
         try
         {
+            apps.BumpDataRemovalGeneration(appId);
             if (File.Exists(secretsPath))
             {
                 File.Delete(secretsPath);
@@ -213,6 +232,8 @@ internal enum AppSecretsStatus
     AppNotFound,
     KeyNotFound,
     TooManyKeys,
+    KeyInvalid,
+    ValueInvalid,
 }
 
 internal sealed record AppSecretsListResult(AppSecretsStatus Status, IReadOnlyList<string> Keys);

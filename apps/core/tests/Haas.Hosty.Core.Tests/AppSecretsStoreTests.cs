@@ -160,6 +160,67 @@ public sealed class AppSecretsStoreTests
         Assert.False(File.Exists(fixture.SecretsPath));
     }
 
+    // `hosty apps remove --delete-data --keep-state` deletes the secrets while state.json survives,
+    // so the existence fence cannot catch a straddling write — the data-removal generation must.
+    [Fact]
+    public async Task SetAsync_LosingTheRaceToRemovalThatKeptRuntimeState_StillRefuses()
+    {
+        var fixture = SecretsFixture.Create();
+        await fixture.Store.SetAsync(AppId, "key", "value");
+
+        var mutex = fixture.Registry.GetAppLock(AppId);
+        await mutex.WaitAsync();
+        Task<AppSecretsStatus> blockedWrite;
+        try
+        {
+            // Sampled the current generation on entry, now queued behind this lock.
+            blockedWrite = fixture.Store.SetAsync(AppId, "key", "written-after-removal");
+            Assert.False(blockedWrite.IsCompleted);
+
+            // The removal's critical section, run inline because the waiter would otherwise win the
+            // FIFO handoff: delete-data with runtime state kept leaves state.json in place, so the
+            // generation bump is the only thing that can fence the queued write.
+            fixture.Registry.BumpDataRemovalGeneration(AppId);
+            File.Delete(fixture.SecretsPath);
+        }
+        finally
+        {
+            mutex.Release();
+        }
+
+        Assert.Equal(AppSecretsStatus.AppNotFound, await blockedWrite);
+        Assert.True(File.Exists(fixture.StatePath));
+        Assert.False(File.Exists(fixture.SecretsPath));
+    }
+
+    // The generation fences only writes that straddle a removal: an app whose runtime state was kept is
+    // still installed, so a request that starts afterwards must be able to store secrets again.
+    [Fact]
+    public async Task SetAsync_StartingAfterRemovalThatKeptRuntimeState_Succeeds()
+    {
+        var fixture = SecretsFixture.Create();
+        await fixture.Store.SetAsync(AppId, "key", "value");
+
+        await fixture.Store.DeleteAllAsync(AppId);
+
+        Assert.Equal(AppSecretsStatus.Ok, await fixture.Store.SetAsync(AppId, "key", "fresh"));
+        Assert.Equal("fresh", (await fixture.Store.GetAsync(AppId, "key")).Value);
+    }
+
+    [Fact]
+    public async Task SetAsync_EnforcesBoundsIndependentlyOfTheEndpoint()
+    {
+        var fixture = SecretsFixture.Create();
+
+        Assert.Equal(AppSecretsStatus.KeyInvalid, await fixture.Store.SetAsync(AppId, "Bad Key", "value"));
+        Assert.Equal(AppSecretsStatus.ValueInvalid, await fixture.Store.SetAsync(AppId, "key", ""));
+        Assert.Equal(
+            AppSecretsStatus.ValueInvalid,
+            await fixture.Store.SetAsync(AppId, "key", new string('a', AppSecretsStore.MaxValueBytes + 1)));
+
+        Assert.False(File.Exists(fixture.SecretsPath));
+    }
+
     // The hard-delete path: AppRegistryStore.RemoveAppAsync deletes the whole subtree under the same
     // shared lock, so a later write finds no state.json and must not recreate the app root.
     [Fact]

@@ -851,6 +851,25 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task RemoveAsync_DeletesStoredSecretsWithData_EvenWhenRuntimeStateIsKept()
+    {
+        // `hosty apps remove --delete-data --keep-state`: state.json survives, so the store's
+        // existence fence cannot be what protects the deleted credentials here.
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        var secrets = new AppSecretsStore(fixture.Apps, fixture.Paths);
+        Assert.Equal(AppSecretsStatus.Ok, await secrets.SetAsync("com.example.notes", "provider.tokens", "credential"));
+
+        await fixture.Service.RemoveAsync(
+            "com.example.notes",
+            new AppRemoveRequest(DeleteRuntimeState: false, DeleteData: true));
+
+        Assert.True(File.Exists(Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "state.json")));
+        Assert.False(File.Exists(Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "secrets.json")));
+    }
+
+    [Fact]
     public async Task RemoveAsync_RetainsStoredSecretsWhenDataKept_ReadableAfterReinstall()
     {
         var fixture = await LifecycleFixture.CreateAsync();
