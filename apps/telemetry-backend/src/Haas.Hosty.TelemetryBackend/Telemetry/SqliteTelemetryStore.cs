@@ -625,8 +625,11 @@ internal sealed class SqliteTelemetryStore : IDisposable
             return new TableSizeEstimate(signal.Table, 0, 0);
         }
 
-        // Average payload from the newest rows (rowid order needs no index sort); dbstat would give
-        // exact per-table pages but isn't guaranteed in the bundled SQLite, and coarse is enough here.
+        // Average payload over the most recently *inserted* rows — descending rowid, which is insertion
+        // order, not timestamp order (a late-arriving out-of-order record still samples as recent).
+        // That is deliberate: rowid needs no index sort, and row width is what's being estimated, which
+        // barely correlates with event time. dbstat would give exact per-table pages but isn't
+        // guaranteed in the bundled SQLite, and the trim selection only compares tables to each other.
         var avgPayload = QueryScalarLong(
             $"SELECT CAST(coalesce(avg({signal.PayloadSizeExpr}), 0) AS INTEGER) " +
             $"FROM (SELECT * FROM {signal.Table} ORDER BY rowid DESC LIMIT {SizeSampleRows});");
@@ -651,9 +654,10 @@ internal sealed class SqliteTelemetryStore : IDisposable
     }
 
     // Logical active size = (allocated − freelist) pages × page size. Excluding freelist pages is
-    // essential for EnforceSizeCeiling: DELETE moves pages to the freelist without shrinking page_count
-    // (that waits for the vacuum), so a raw page_count would not fall between loop iterations and the
-    // loop would over-delete. The freed pages are reclaimed by incremental_vacuum after the loop.
+    // essential for the size-ceiling trim loop in PruneStep: DELETE moves pages to the freelist without
+    // shrinking page_count (that waits for the vacuum), so a raw page_count would not fall between loop
+    // iterations and the loop would over-delete. The freed pages are reclaimed by the chunked
+    // incremental_vacuum that follows the trim loop.
     private long DatabaseBytes()
     {
         var pageCount = QueryScalarLong("PRAGMA page_count;");
