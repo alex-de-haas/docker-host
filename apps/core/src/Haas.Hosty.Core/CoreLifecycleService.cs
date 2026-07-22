@@ -1207,6 +1207,15 @@ internal sealed class CoreLifecycleService(
         // the plan digest the operator confirms. See runtime-app-marketplace.md (Reviewed update / A4).
         var artifactProbes = await ProbeServiceArtifactsAsync(app, selection, cancellationToken);
         changes.AddRange(BuildArtifactDigestChanges(artifactProbes));
+        // The source-artifact counterpart of the registry probe: a source app's "artifact" is the
+        // commit its manifest ref points at, so a moved branch tip must show up in the reviewed plan
+        // (and fold into its digest) the same way image digest movement does.
+        var (resolvedSourceCommit, sourceChange) = await ProbeSourceCommitAsync(app, selection, cancellationToken);
+        if (sourceChange is not null)
+        {
+            changes.Add(sourceChange);
+        }
+
         var seed = new AppUpdatePlanDigestSeed(
             appId,
             app.Version,
@@ -1242,7 +1251,7 @@ internal sealed class CoreLifecycleService(
         // the feed seed fields, mismatching every time) and re-hit the registry (a blip flipped an
         // artifact digest to "unknown", mismatching the rest). currentSelection.ManifestDigest rides along
         // for the base-state guard in apply. Overwrites any prior pending plan for this app.
-        var cached = new CachedUpdatePlan(plan, selection, currentSelection.ManifestDigest, artifactProbes, clock.UtcNow);
+        var cached = new CachedUpdatePlan(plan, selection, currentSelection.ManifestDigest, artifactProbes, resolvedSourceCommit, clock.UtcNow);
         reviewedUpdatePlans[appId] = cached;
         // Every successful plan build — sweep, dialog open, status probe — refreshes the app's
         // availability projection, so the apps-list verdict and the plan cache never disagree.
@@ -1537,6 +1546,12 @@ internal sealed class CoreLifecycleService(
         // Structured per-service registry probe results from the plan build, so the update-status
         // projection can report per-service digests without re-hitting the registry.
         IReadOnlyList<AppServiceArtifactProbe> ArtifactProbes,
+        // The commit the target manifest's source ref resolved to at plan time, for a selection that
+        // runs from the managed checkout (see UpdateMovesSourcePin). Apply stamps exactly this commit
+        // into SourceState — the operator reviewed this commit, not whatever the branch tip is at
+        // apply time. Null when the selection has no managed source or the probe could not resolve
+        // one (apply then resolves fresh itself).
+        string? ResolvedSourceCommit,
         DateTimeOffset CreatedAt);
 
     // Non-throwing read of the pending reviewed plan: returns it while fresh, evicts and returns null
@@ -1634,6 +1649,21 @@ internal sealed class CoreLifecycleService(
         }
 
         var selection = confirmed.Selection;
+
+        // The ghost-version fix (digest pinning phase 2b): a reviewed update of a source app must move
+        // the source pin along with the manifest — BuildSourceState keeps the existing Commit whenever
+        // the manifest ref didn't change (a branch staying "main"), so without this the next start
+        // force-checkouts the old pin and the app visibly updates while running the old code. Prefer
+        // the commit the plan resolved (the operator reviewed exactly that commit; the branch may have
+        // moved since), and resolve fresh only when the plan probe could not. Resolved before any
+        // teardown so an unreachable repository fails the update while the app is still untouched.
+        string? sourcePinCommit = null;
+        if (UpdateMovesSourcePin(app, selection))
+        {
+            sourcePinCommit = confirmed.ResolvedSourceCommit
+                ?? await sources.ResolveManifestCommitAsync(app, selection.Manifest.Source!, cancellationToken);
+        }
+
         var adapter = ResolveAdapter(currentSelection.RuntimeProfile.Type);
         var wasRunning = string.Equals(app.RuntimeState, "running", StringComparison.Ordinal);
         if (wasRunning)
@@ -1663,6 +1693,14 @@ internal sealed class CoreLifecycleService(
             LastOperation = "update",
             LastError = null,
         };
+        if (sourcePinCommit is not null && next.SourceState is not null)
+        {
+            next = next with
+            {
+                SourceState = next.SourceState with { Commit = sourcePinCommit, UpdatedAt = clock.UtcNow },
+            };
+        }
+
         var document = await apps.UpsertAppAsync(next, cancellationToken);
         // Consumed: the app is now at the target, so the pending plan (built against the old base) would
         // only fail the base-state guard from here on. Drop it so a fresh review starts clean.
@@ -3882,6 +3920,49 @@ internal sealed class CoreLifecycleService(
 
     private const int MaxConcurrentArtifactProbes = 4;
 
+    // A reviewed update moves the source pin when the target runs from the managed checkout: a
+    // URL/feed install whose selected runtime is localCommand with a declared source repository —
+    // the same shape EnsureLocalCommandSourceReadyAsync pins at start. A folder install runs live
+    // from the operator's own folder (no pin to move), and a relative repository is rejected at
+    // start time, so neither is probed or reconciled here.
+    private static bool UpdateMovesSourcePin(AppRecord app, RuntimeAppManifestSelection selection)
+        => string.Equals(selection.RuntimeProfile.Type, "localCommand", StringComparison.Ordinal)
+            && !string.IsNullOrWhiteSpace(app.ManifestUrl)
+            && !string.IsNullOrWhiteSpace(selection.Manifest.Source?.Repository)
+            && !IsRelativeSourceRepository(selection.Manifest.Source.Repository);
+
+    // Source-artifact counterpart of ProbeServiceArtifactsAsync: resolves the commit the target
+    // manifest's source ref points at now (fetching the managed checkout) and compares it to the
+    // recorded pin, yielding a `source:{current}->{candidate}` change entry when they differ. An
+    // unreachable repository degrades to `source:{current}->unknown` (surfaced only when a pin
+    // exists) instead of failing the plan, matching the artifact probe's semantics (A4).
+    private async Task<(string? ResolvedCommit, string? Change)> ProbeSourceCommitAsync(
+        AppRecord app,
+        RuntimeAppManifestSelection selection,
+        CancellationToken cancellationToken)
+    {
+        if (!UpdateMovesSourcePin(app, selection))
+        {
+            return (null, null);
+        }
+
+        var current = app.SourceState?.Commit;
+        string candidate;
+        try
+        {
+            candidate = await sources.ResolveManifestCommitAsync(app, selection.Manifest.Source!, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Failed to resolve the source commit for app {AppId} from {Repository}.", app.Id, selection.Manifest.Source!.Repository);
+            return (null, string.IsNullOrWhiteSpace(current) ? null : $"source:{current}->unknown");
+        }
+
+        return (candidate, string.Equals(current, candidate, StringComparison.Ordinal)
+            ? null
+            : $"source:{current ?? "none"}->{candidate}");
+    }
+
     // Reviewed-update plan classification: a plan whose changes are all routine may be applied without
     // a human reading it (the one-click "Update" path); anything else must go through the review
     // dialog. Routine is an allow-list — a version bump, a manifest-body delta, a compiled artifact
@@ -3895,15 +3976,18 @@ internal sealed class CoreLifecycleService(
     internal static bool PlanRequiresReview(IReadOnlyList<string> changes)
         => changes.Any(change => !IsRoutineChange(change));
 
-    // An update exists when the plan carries any change except an unresolved artifact target — an
-    // `artifact:...->unknown` entry is "cannot tell", not "update available".
+    // An update exists when the plan carries any change except an unresolved artifact or source
+    // target — a `...->unknown` entry is "cannot tell", not "update available".
     internal static bool PlanIndicatesUpdateAvailable(IReadOnlyList<string> changes)
-        => changes.Any(change => !IsUnknownArtifactChange(change));
+        => changes.Any(change => !IsUnknownArtifactChange(change) && !IsUnknownSourceChange(change));
 
     private static bool IsRoutineChange(string change)
         => change.StartsWith("version:", StringComparison.Ordinal)
             || string.Equals(change, "manifest", StringComparison.Ordinal)
             || (change.StartsWith("artifact:", StringComparison.Ordinal) && !IsUnknownArtifactChange(change))
+            // A source pin advancing to a commit that actually resolved is the source app's shape of
+            // an ordinary release, exactly like a compiled artifact moving to a resolved digest.
+            || (change.StartsWith("source:", StringComparison.Ordinal) && !IsUnknownSourceChange(change))
             || IsSameRepositoryImageChange(change);
 
     // `image:{service}:{currentRef}->{targetRef}` moves are routine only while both references point
@@ -3959,6 +4043,12 @@ internal sealed class CoreLifecycleService(
     // the artifact would be re-pulled blind at apply.
     private static bool IsUnknownArtifactChange(string change)
         => change.StartsWith("artifact:", StringComparison.Ordinal)
+            && change.EndsWith("->unknown", StringComparison.Ordinal);
+
+    // Source counterpart of IsUnknownArtifactChange: the manifest ref could not be resolved to a
+    // commit (repository unreachable at plan time), so apply would have to re-resolve blind.
+    private static bool IsUnknownSourceChange(string change)
+        => change.StartsWith("source:", StringComparison.Ordinal)
             && change.EndsWith("->unknown", StringComparison.Ordinal);
 
     private static void AddUpdateServiceChanges(

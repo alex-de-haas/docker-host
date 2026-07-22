@@ -110,6 +110,26 @@ internal sealed class AppSourceService(CoreDataPaths paths, AppRegistryStore app
         return new AppSourceResponse(appId, document.App.SourceState);
     }
 
+    // Resolves the commit the manifest-declared source ref points at right now, fetching the managed
+    // checkout first so a moved branch tip is seen (digest pinning phase 2b). Deliberately does not
+    // touch the app record: the update plan caches the result so the operator reviews the exact
+    // current→new commit pair, and apply persists it inside its own record write — the pin only ever
+    // moves as part of a reviewed update.
+    public async Task<string> ResolveManifestCommitAsync(AppRecord app, RuntimeAppSource source, CancellationToken cancellationToken = default)
+    {
+        if (source.Repository is null)
+        {
+            throw new AppLifecycleException("source_not_configured", $"Runtime app '{app.Id}' does not declare a source repository.");
+        }
+
+        ValidateManagedRepository(source.Repository);
+        var checkoutPath = app.SourceState?.ManagedCheckoutPath ?? Path.Combine(paths.SourcesRoot, app.Id);
+        await EnsureCheckoutAsync(source.Repository, checkoutPath, cancellationToken);
+        _ = await RunGitAsync(checkoutPath, ["fetch", "--all", "--tags", "--prune"], cancellationToken);
+        var request = new AppSourceResolveRequest(Branch: source.Branch, Tag: source.Tag, Commit: source.Commit);
+        return await ResolveCommitAsync(checkoutPath, request, source.Commit ?? source.Tag ?? source.Branch ?? "HEAD", cancellationToken);
+    }
+
     // Runs a git-backed operation against the managed checkout, fetching once and retrying if it fails
     // because the required object/ref isn't present locally yet. A genuine failure (e.g. the ref does not
     // exist upstream) surfaces on the retry. Cancellation propagates (never caught here).
@@ -359,19 +379,41 @@ internal sealed class AppSourceService(CoreDataPaths paths, AppRegistryStore app
 
         if (!string.IsNullOrWhiteSpace(request.Branch))
         {
+            // Prefer the remote-tracking ref: the managed checkout's local branch is a clone-time
+            // artifact that `git fetch` never advances, so resolving `refs/heads/{branch}` first
+            // returns the clone-time tip forever no matter how often the checkout is fetched. The
+            // local branch stays as the fallback for checkouts without an origin remote (or a branch
+            // that only exists locally).
             try
             {
-                return await RunGitAsync(checkoutPath, ["rev-parse", $"refs/heads/{request.Branch}^{{commit}}"], cancellationToken);
+                return await RunGitAsync(checkoutPath, ["rev-parse", $"refs/remotes/origin/{request.Branch}^{{commit}}"], cancellationToken);
             }
             catch (AppLifecycleException)
             {
-                return await RunGitAsync(checkoutPath, ["rev-parse", $"refs/remotes/origin/{request.Branch}^{{commit}}"], cancellationToken);
+                return await RunGitAsync(checkoutPath, ["rev-parse", $"refs/heads/{request.Branch}^{{commit}}"], cancellationToken);
             }
         }
 
         if (fallbackRef.StartsWith('-'))
         {
             throw new AppLifecycleException("source_ref_invalid", "Source ref must not start with '-'.");
+        }
+
+        // The recorded ref may be a plain branch name (the manifest declared a branch), which has the
+        // same stale-local-branch problem as the explicit branch case above — and it resolves
+        // "successfully", so a caller's fetch-and-retry never fires. Prefer the remote-tracking
+        // counterpart; a tag or commit id has none and falls through to the plain resolution. HEAD is
+        // deliberately excluded: a pin re-resolve must return the stable checked-out commit, not chase
+        // origin's default branch.
+        if (!string.Equals(fallbackRef, "HEAD", StringComparison.Ordinal))
+        {
+            try
+            {
+                return await RunGitAsync(checkoutPath, ["rev-parse", $"refs/remotes/origin/{fallbackRef}^{{commit}}"], cancellationToken);
+            }
+            catch (AppLifecycleException)
+            {
+            }
         }
 
         return await RunGitAsync(checkoutPath, ["rev-parse", $"{fallbackRef}^{{commit}}"], cancellationToken);
