@@ -196,7 +196,7 @@ bodies; log statements reference key names at most.
   no error body; the list endpoint returns names only.
 - [ ] `EndpointAuthorizationTests` sees the new endpoint file and passes
   (service-token endpoints are CSRF-exempt by design).
-- [ ] SDK clients in both packages cover all four operations; the .NET client's
+- [x] SDK clients in both packages cover all four operations; the .NET client's
   write-through cache serves reads when Core is briefly unavailable and stays
   consistent through its own writes.
 - [ ] `docs/features/` documentation describes only implemented behavior;
@@ -219,14 +219,14 @@ bodies; log statements reference key names at most.
   `NotificationEndpointsTests` pattern), store CRUD + permissions + bounds
   against a temp directory (the `AppBackupServiceTests` pattern), removal-flow
   coverage, `EndpointAuthorizationTests.EndpointFiles` extended.
-- [ ] `HostySecretsClient` in `packages/app-sdk-dotnet/HostySdk.App/`
+- [x] `HostySecretsClient` in `packages/app-sdk-dotnet/HostySdk.App/`
   (mirroring `CoreIdentityValidator`: `GetAsync` null on 404, `SetAsync`,
   `DeleteAsync`, `ListKeysAsync`, write-through in-memory cache with a bypass
   option) plus tests in `HostySdk.App.Tests`.
-- [ ] Secrets functions in `packages/app-sdk/src/server.ts` (server-only,
+- [x] Secrets functions in `packages/app-sdk/src/server.ts` (server-only,
   following the `revalidateWithCore` pattern), re-exported through the
   `./server` entry point, plus tests.
-- [ ] SDK package minor bumps and changelogs per the
+- [x] SDK package minor bumps and changelogs per the
   [repository release model](../features/repository-release-model.md).
 - [ ] `docs/features/app-secrets-store.md` describing implemented behavior;
   `docs/root.md` index updated (ideas entry annotated, features entry added,
@@ -304,9 +304,9 @@ with the feature. Ratified 2026-07-22.
 
 ### Phase 2: SDK Clients
 
-- [ ] `HostySecretsClient` (.NET) with write-through cache + tests.
-- [ ] `server.ts` secrets functions (TypeScript) + tests.
-- [ ] Package version bumps and changelogs.
+- [x] `HostySecretsClient` (.NET) with write-through cache + tests.
+- [x] `server.ts` secrets functions (TypeScript) + tests.
+- [x] Package version bumps and changelogs.
 
 ### Phase 3: Documentation and Release
 

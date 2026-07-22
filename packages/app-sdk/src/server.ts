@@ -487,3 +487,234 @@ function readErrorField(payload: unknown, field: "code" | "message"): string | n
 function readString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
+
+// ---------------------------------------------------------------------------
+// App secrets — the Core-managed keychain for runtime-acquired credentials.
+// ---------------------------------------------------------------------------
+
+// Secrets are small and Core is local, but a stalled call must not hold a route open. Slightly
+// more generous than the auth budget: a secret read blocks real work, not just a session check.
+const CORE_SECRETS_TIMEOUT_MS = 3_000;
+
+/** Thrown when the secrets store could not be reached or rejected a request. A *missing* secret
+ * is not an error — {@link getAppSecret} returns null for that. */
+export class HostySecretsError extends Error {
+  /** Core's HTTP status, or null when Core was never reached. */
+  readonly status: number | null;
+  /** Machine-readable code from Core's error body, or a local code when Core was unreachable. */
+  readonly code: string;
+
+  constructor(message: string, status: number | null, code: string) {
+    super(message);
+    this.name = "HostySecretsError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
+// Write-through cache, process-global like the revalidation cache above: reads populate it,
+// mutations update it, so a briefly unavailable Core does not break an app that already read its
+// secret. Values are only ever what this process wrote or fetched, so no invalidation is needed.
+// Unbounded is fine here (unlike the token cache): keys are the app's own, and Core caps them at
+// 256 per app.
+//
+// Entries are namespaced by Core origin + effective app id, not by the bare secret name: the app
+// id comes from the environment with a per-config fallback, so one process can legitimately serve
+// more than one identity (multi-tenant hosting, or tests reusing the process). Sharing a cache
+// slot across identities would hand app B a value that only app A's service token could fetch,
+// silently bypassing the isolation Core enforces.
+const secretsCache = new Map<string, string | null>();
+
+// Per-entry mutation counter. A read samples it before calling Core and only writes its result
+// back if it has not changed: without this a GET issued before a set/delete but completing after
+// it would overwrite the newer state, and later cached reads would serve the stale credential
+// (or a stale miss) until someone passed `refresh`.
+const secretsMutations = new Map<string, number>();
+
+/** Test hook: the cache is process-global by design (route handlers are stateless). */
+export function clearAppSecretsCache(): void {
+  secretsCache.clear();
+  secretsMutations.clear();
+}
+
+function secretsCacheKey(key: string, config: HostyAppConfig): string {
+  // NUL cannot appear in an origin, an app id, or a Core-accepted secret key, so it is an
+  // unambiguous separator.
+  return `${getCoreOrigin() ?? ""}\u0000${getAppId(config)}\u0000${key}`;
+}
+
+function recordSecretMutation(cacheKey: string, value: string | null): void {
+  secretsMutations.set(cacheKey, (secretsMutations.get(cacheKey) ?? 0) + 1);
+  secretsCache.set(cacheKey, value);
+}
+
+/**
+ * Reads a secret from the app's Core-managed store. Returns `null` when no secret is stored under
+ * the key — an expected state (never connected, or the app was reinstalled on a new host), which
+ * callers should treat as "reconnect required" rather than an error.
+ *
+ * Served from a write-through cache unless `refresh` is set.
+ */
+export async function getAppSecret(
+  key: string,
+  config: HostyAppConfig,
+  options?: { refresh?: boolean },
+): Promise<string | null> {
+  const cacheKey = secretsCacheKey(key, config);
+  if (!options?.refresh && secretsCache.has(cacheKey)) {
+    return secretsCache.get(cacheKey) ?? null;
+  }
+
+  const generation = secretsMutations.get(cacheKey) ?? 0;
+  const response = await secretsFetch("GET", key, config, undefined);
+  let value: string | null = null;
+  if (response !== null) {
+    // Deliberately not readString: a secret is opaque bytes, so trimming it would corrupt a value
+    // whose whitespace is significant. Core stores and returns it verbatim.
+    const raw = ((await readJsonOrThrow(response)) as { value?: unknown } | null)?.value;
+    if (typeof raw !== "string") {
+      // A 200 without a usable value is a broken Core/proxy, not an absent secret; reporting it
+      // as "no value" would send the app into a reconnect loop instead of surfacing the fault.
+      throw new HostySecretsError(
+        "Core returned a secret response without a value.",
+        response.status,
+        "core_response_invalid",
+      );
+    }
+    value = raw;
+  }
+
+  // Skip the cache write when a set/delete landed while this read was in flight: its state is
+  // newer than ours, and overwriting it would serve the stale value to every later reader.
+  if ((secretsMutations.get(cacheKey) ?? 0) === generation) {
+    secretsCache.set(cacheKey, value);
+  }
+
+  return value;
+}
+
+/** Stores (or replaces) a secret. Throws {@link HostySecretsError} when Core rejects the value
+ * (malformed key, empty/oversize value, per-app key limit) or is unreachable. */
+export async function setAppSecret(key: string, value: string, config: HostyAppConfig): Promise<void> {
+  await secretsFetch("PUT", key, config, JSON.stringify({ value }));
+  recordSecretMutation(secretsCacheKey(key, config), value);
+}
+
+/** Deletes a secret. Deleting an absent key succeeds. */
+export async function deleteAppSecret(key: string, config: HostyAppConfig): Promise<void> {
+  await secretsFetch("DELETE", key, config, undefined);
+  recordSecretMutation(secretsCacheKey(key, config), null);
+}
+
+/** Lists the keys this app has stored. Always a live read — Core never returns values here, and
+ * the cache only knows the keys this process has touched. */
+export async function listAppSecretKeys(config: HostyAppConfig): Promise<string[]> {
+  // Only a per-key GET can resolve to null (an absent secret); the collection route throws instead.
+  const response = await secretsFetch("GET", null, config, undefined);
+  const payload = response === null ? null : ((await readJsonOrThrow(response)) as { keys?: unknown } | null);
+  if (!Array.isArray(payload?.keys)) {
+    // Same reasoning as a valueless secret response: an unusable 200 is a fault to surface, not
+    // an app that happens to have stored nothing.
+    throw new HostySecretsError(
+      "Core returned a secret listing without a keys array.",
+      response?.status ?? null,
+      "core_response_invalid",
+    );
+  }
+
+  return payload.keys.filter((entry): entry is string => typeof entry === "string");
+}
+
+// Returns null only for a GET whose key is absent (404), which callers translate to "no value";
+// every other non-2xx throws. A null key targets the collection route.
+async function secretsFetch(
+  method: "GET" | "PUT" | "DELETE",
+  key: string | null,
+  config: HostyAppConfig,
+  body: string | undefined,
+): Promise<Response | null> {
+  const serviceToken = getServiceToken();
+  const coreOrigin = getCoreOrigin();
+  if (!serviceToken || !coreOrigin) {
+    throw new HostySecretsError(
+      serviceToken ? "HOSTY_CORE_ORIGIN is not configured." : "HOSTY_APP_SERVICE_TOKEN is not configured.",
+      null,
+      serviceToken ? "core_origin_missing" : "app_service_token_missing",
+    );
+  }
+
+  const appId = getAppId(config);
+  const path =
+    key === null
+      ? `/api/internal/apps/${encodeURIComponent(appId)}/secrets`
+      : `/api/internal/apps/${encodeURIComponent(appId)}/secrets/${encodeURIComponent(key)}`;
+
+  let endpoint: string;
+  try {
+    endpoint = new URL(path, coreOrigin).toString();
+  } catch {
+    throw new HostySecretsError("HOSTY_CORE_ORIGIN is not a valid URL.", null, "core_origin_invalid");
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(endpoint, {
+      method,
+      headers: {
+        authorization: `Bearer ${serviceToken}`,
+        ...(body === undefined ? {} : { "content-type": "application/json" }),
+      },
+      body,
+      cache: "no-store",
+      signal: AbortSignal.timeout(CORE_SECRETS_TIMEOUT_MS),
+    });
+  } catch (error) {
+    const timeout = error instanceof DOMException && (error.name === "AbortError" || error.name === "TimeoutError");
+    throw new HostySecretsError(
+      error instanceof Error ? error.message : "The app secrets request to Core failed.",
+      null,
+      timeout ? "core_secrets_timeout" : "core_secrets_unavailable",
+    );
+  }
+
+  if (response.ok) {
+    return response;
+  }
+
+  // Core 404s a per-key GET when no secret is stored; on a mutation the same status means the app
+  // itself is unknown, which is a real failure.
+  if (method === "GET" && key !== null && response.status === 404) {
+    return null;
+  }
+
+  const payload = (await readJson(response)) as Record<string, unknown> | null;
+  throw new HostySecretsError(
+    readErrorField(payload, "message") ?? `Core returned HTTP ${response.status} for an app secrets request.`,
+    response.status,
+    readErrorField(payload, "code") ?? "app_secrets_request_failed",
+  );
+}
+
+// Lenient: used only for error bodies, where a missing code/message costs nothing.
+async function readJson(response: Response): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+// Strict: on a 2xx an unparseable body means Core or something in front of it is broken, and
+// degrading that to "no secret" / "no keys" would hide the fault behind a plausible-looking
+// answer. Mirrors the .NET client and the revalidation path's core_response_invalid outcome.
+async function readJsonOrThrow(response: Response): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch {
+    throw new HostySecretsError(
+      "Core returned an unreadable app secrets response.",
+      response.status,
+      "core_response_invalid",
+    );
+  }
+}

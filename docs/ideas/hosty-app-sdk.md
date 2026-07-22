@@ -12,15 +12,17 @@ in the table. The sections below are kept as the ratified design record; finding
 
 Shipped artifacts:
 
-- **`@hosty-sdk/app` — npmjs, latest 0.2.0.** All four slices: `core`, `server`, `react`,
-  `embedder` (extraction #241, publishing chain #242–#244, rich resolution detail #248).
-  Still missing from the design's `server`/`react` scope: the identity/session/logout
-  route factories, the middleware/proxy factory, the scoped app-directory client, and the
-  headless `useHostSession()` — tracked in
+- **`@hosty-sdk/app` — npmjs, latest 0.3.0.** All four slices: `core`, `server`, `react`,
+  `embedder` (extraction #241, publishing chain #242–#244, rich resolution detail #248),
+  plus the app secrets client in `server` (0.3.0). Still missing from the design's
+  `server`/`react` scope: the identity/session/logout route factories, the
+  middleware/proxy factory, the scoped app-directory client, and the headless
+  `useHostSession()` — tracked in
   [Second Wave](#second-wave-inventoried-2026-07-20) item 1.
-- **`HostySdk.App` — NuGet, 0.1.0.** The .NET slice (#249; Trusted Publishing #250): Core
+- **`HostySdk.App` — NuGet, 0.2.0.** The .NET slice (#249; Trusted Publishing #250): Core
   revalidation behind the decided 30s positive cache, the `Hosty` authentication scheme,
-  `HOSTY_*` options binding, cookie-name/`MapHostRole` parameterization. The package-shape
+  `HOSTY_*` options binding, cookie-name/`MapHostRole` parameterization, and
+  `HostySecretsClient` for the app secrets store (0.2.0). The package-shape
   placeholder `Haas.Hosty.AppSdk` is settled as **`HostySdk.App`**.
 - **Shell** consumes the embedder slice (#245) — the reference implementation and the
   shipped artifact are the same code, as planned.
@@ -508,7 +510,16 @@ examples are the argument, exactly as they were for auth.
    headless `useHostSession()`. Plus the two adoption debts from the Adoption Status
    table: demo-app's server slice and project-manager's wrapper layer.
 
-2. **`/otel` — OpenTelemetry wiring.** The drift is already real and it is the auth
+2. **App secrets client — shipped 2026-07-22.** Both packages wrap the Core-managed
+   keychain (`/api/internal/apps/{appId}/secrets…`) so no app hand-rolls the HTTP
+   contract: `HostySecretsClient` (.NET, `AddHostySecrets`) and
+   `getAppSecret`/`setAppSecret`/`deleteAppSecret`/`listAppSecretKeys` (TypeScript,
+   server-only), both with a write-through cache so a briefly unavailable Core does not
+   break an app that already read its secret. Design and plan:
+   [app-secrets-store](app-secrets-store.md) and
+   [../planning/app-secrets-store.md](../planning/app-secrets-store.md).
+
+3. **`/otel` — OpenTelemetry wiring.** The drift is already real and it is the auth
    story again: `instrumentation.ts` + `otel-logs.ts` (the console→OTLP logs bridge with
    trace correlation and SIGTERM flush) are copied in media-server and project-manager,
    but secret redaction and the 200-records/10s rate limit exist **only in the
@@ -517,7 +528,7 @@ examples are the argument, exactly as they were for auth.
    → `HostySdk.App`. The three in-tree Next apps wire no OTel today and would gain
    tracing for free.
 
-3. **`/theme` — theme bridging.** Still gated by decision 11, but the pre-SDK auth drift
+4. **`/theme` — theme bridging.** Still gated by decision 11, but the pre-SDK auth drift
    is repeating in slow motion: five `HostThemeBridge` copies (marketplace and
    telemetry-ui byte-identical; demo-app, project-manager, and media-server each
    divergent), four independent theme normalizers, and the anti-FOUC bootstrap script
@@ -530,7 +541,7 @@ examples are the argument, exactly as they were for auth.
    the redesign happens inside the SDK — leaving five copies to drift further is the
    worst of the three options.
 
-4. **`/env` — the non-auth environment contract.** The SDK reads only the auth
+5. **`/env` — the non-auth environment contract.** The SDK reads only the auth
    variables; every app hand-parses the rest: `HOSTY_PORT_{KEY}` (media-server
    `HostyKestrel`), `HOSTY_SERVICE_{KEY}_URL` (telemetry-ui `backend.ts`),
    `HOSTY_DEPENDENCY_{KEY}_URL`, `HOSTY_PUBLIC_ORIGIN_{ENDPOINT}`, `HOSTY_APP_DATA_DIR`
@@ -538,7 +549,7 @@ examples are the argument, exactly as they were for auth.
    duplicated across languages (demo-app `demo-config.ts` and media-server
    `MediaServerSettings.cs`). Cheap to type once; it is platform contract, not app logic.
 
-5. **Core capability client (`server` + .NET).** media-server's `HostyCoreClient` is the
+6. **Core capability client (`server` + .NET).** media-server's `HostyCoreClient` is the
    fleet's only implementation of the backup trigger and operator notifications; any
    stateful app wants both, and the directory client (item 1) is the same surface.
    Adjacent: the data-dir ownership pattern (project-manager's `docker-entrypoint.sh`
@@ -546,7 +557,7 @@ examples are the argument, exactly as they were for auth.
    [cross-app-auth.md](cross-app-auth.md) is ratified, its provider middleware and
    consumer handler land in this same area of the package.
 
-6. **Small standardizers.** A `healthz` route factory — marketplace and telemetry-ui are
+7. **Small standardizers.** A `healthz` route factory — marketplace and telemetry-ui are
    identical, while demo-app, project-manager, and media-server use three different
    paths and response shapes for the same manifest `healthcheck` contract. The BFF proxy
    route factory (media-server `api/proxy/[...path]`: hop-by-hop stripping, identity
