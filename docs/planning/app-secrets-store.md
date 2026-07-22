@@ -54,15 +54,21 @@ Verified 2026-07-22 against the working tree:
   `CoreDataPaths.ResolveContainedPath(paths.AppsRoot, appId)`, writes through
   `JsonStorage.WriteOwnerFileAsync` — atomic temp-file + rename, 0600 file mode,
   containing directory left traversable so a container running as another uid
-  can still reach `data/`.
+  can still reach `data/`. `GetAppAsync` reads are lock-free.
 - `AppBackupService.CreateBackupAsync` zips exactly `apps/<id>/data`; nothing
   beside it enters an archive.
+- There are **two per-app lock families today**, and they do not overlap:
+  `CoreLifecycleService.operationLocks` (`WithAppLockAsync`) serializes
+  lifecycle verbs — including `RemoveAsync` — while `AppRegistryStore.appLocks`
+  (`GetAppLock`) serializes `state.json` writes and the hard subtree delete in
+  `RemoveAppAsync`. `RemoveCoreAsync` deletes `state.json`/`manifest.json`/
+  `data/` as direct file operations under the lifecycle lock only.
 - `CoreLifecycleService.RemoveCoreAsync` takes
   `AppRemoveRequest(DeleteRuntimeState = true, DeleteData = false, …)`. When
   data is kept it writes `retained-config.json` (settings including secrets,
   mounts, autostart) for reinstall; when `DeleteData` is set it deletes the
   retained config and `data/`. `AppRegistryStore.RemoveAppAsync` hard-deletes
-  the whole app subtree.
+  the whole app subtree under the registry's `GetAppLock`.
 - JSON serialization uses the AOT source-generated `CoreJsonSerializerContext`;
   unregistered request/response types fail at runtime, not compile time.
 - `EndpointAuthorizationTests` mechanically scans a fixed list of endpoint
@@ -116,8 +122,18 @@ in `HostyCoreApplication`), modeled on `AppRegistryStore`:
   (atomic temp + rename, 0600 file, traversable directory). A missing file
   reads as an empty store; a malformed file fails loud rather than being
   silently replaced.
-- Per-app `SemaphoreSlim` serializes read-modify-write; reads take the same
-  lock (cheap, and it removes torn-read reasoning entirely).
+- **Locking: the store serializes on the registry's per-app lock family, not a
+  third one.** `AppRegistryStore.GetAppLock` becomes shareable (exposed to the
+  secrets store, or both consume one extracted per-app lock registry), so
+  secrets operations, `state.json` writes, and the `RemoveAppAsync` recursive
+  delete all contend on the same per-app semaphore. Store reads take the lock
+  too (cheap, and it removes torn-read reasoning entirely).
+- **App existence is checked inside the lock, immediately before the
+  mutation** — not only in the endpoint prologue. A write that loses the race
+  to removal observes the deleted `state.json` under the lock, returns 404, and
+  recreates nothing. This is the removal fence: without it, an in-flight PUT
+  could finish after removal deleted the subtree and `WriteOwnerFileAsync`
+  would resurrect the app root with a stale `secrets.json`.
 - Request/response records registered in `CoreJsonSerializerContext`.
 
 ### Lifecycle
@@ -128,8 +144,15 @@ in `HostyCoreApplication`), modeled on `AppRegistryStore`:
   rolls the database back, not the secrets; the app reconciles rows referencing
   secrets that no longer exist (or the reverse) as its defined reconnect state.
 - Removal: `DeleteData: false` (default) retains `secrets.json` alongside
-  `retained-config.json`; `DeleteData: true` deletes it in the same branch that
-  deletes `data/`. The hard-delete path removes it with the subtree.
+  `retained-config.json`. `DeleteData: true` deletes it **through
+  `AppSecretsStore.DeleteAllAsync(appId)`** — which takes the shared per-app
+  lock — ordered after the `state.json` deletion and before the empty-root
+  cleanup, so a concurrent write either lands first and is then deleted, or
+  arrives after and 404s on the existence re-check. The hard-delete path
+  (`RemoveAppAsync`) already runs its recursive delete under the same shared
+  lock, so in-flight secret writes serialize against it and late writes 404.
+  A PUT that completes just before removal deletes the store is benign: its
+  write is removed with everything else.
 
 ### Observability and redaction
 
@@ -147,6 +170,11 @@ bodies; log statements reference key names at most.
 - [ ] A restored backup leaves stored secrets untouched.
 - [ ] Keep-data removal retains `secrets.json` and a reinstall can read it;
   delete-data removal deletes it; hard subtree deletion covers it.
+- [ ] A secret write racing app removal cannot leave or recreate `secrets.json`
+  after delete-data removal completes: mutations re-check app existence under
+  the shared per-app lock, removal deletes the store under that same lock, and
+  post-removal writes return 404 — covered by interleaving tests for both the
+  lifecycle removal and the hard subtree-delete path.
 - [ ] A malformed `secrets.json` fails loud; a missing one reads as empty.
 - [ ] Concurrent writes to one app's store are serialized; a Core kill mid-write
   never leaves a torn file (temp + rename).
@@ -163,13 +191,16 @@ bodies; log statements reference key names at most.
 
 ## Deliverables
 
-- [ ] `AppSecretsStore` with document schema, per-app lock, atomic owner-only
-  writes, bounds enforcement, and fail-loud malformed-file behavior.
+- [ ] `AppSecretsStore` with document schema, atomic owner-only writes, bounds
+  enforcement, fail-loud malformed-file behavior, and serialization on the
+  registry's shared per-app lock (extracted or exposed from
+  `AppRegistryStore.GetAppLock`) with the in-lock existence re-check.
 - [ ] `AppSecretsEndpoints` (four minimal-API routes, inline service-token
   guard + app existence check), registered in `HostyCoreApplication`; DTOs in
   `CoreJsonSerializerContext`.
 - [ ] Removal integration in `CoreLifecycleService.RemoveCoreAsync` for both
-  `DeleteData` values.
+  `DeleteData` values, deleting through `AppSecretsStore.DeleteAllAsync` under
+  the shared lock, plus removal-race interleaving tests.
 - [ ] Core tests: pure validation statics tested directly (the
   `NotificationEndpointsTests` pattern), store CRUD + permissions + bounds
   against a temp directory (the `AppBackupServiceTests` pattern), removal-flow
@@ -198,18 +229,21 @@ bodies; log statements reference key names at most.
 flowchart LR
   APP["Runtime app service"] -->|"Bearer HOSTY_APP_SERVICE_TOKEN"| EP["AppSecretsEndpoints"]
   EP -->|"ValidateToken(appId)"| TOK["AppServiceTokenService"]
-  EP --> STORE["AppSecretsStore<br/>per-app lock · bounds"]
+  EP --> STORE["AppSecretsStore<br/>shared per-app lock · in-lock existence check · bounds"]
   STORE -->|"JsonStorage.WriteOwnerFileAsync<br/>atomic · 0600"| FILE[("apps/&lt;id&gt;/secrets.json")]
-  REMOVE["CoreLifecycleService.RemoveCoreAsync"] -->|"DeleteData branch"| FILE
+  LOCK["Registry per-app lock<br/>(AppRegistryStore.GetAppLock)"] --- STORE
+  LOCK --- REG["AppRegistryStore<br/>state.json · RemoveAppAsync"]
+  REMOVE["CoreLifecycleService.RemoveCoreAsync"] -->|"DeleteData branch → DeleteAllAsync"| STORE
   BACKUP["AppBackupService"] -.->|"zips only data/ — never sees it"| FILE
   SDKN["HostySdk.App · HostySecretsClient"] --> EP
   SDKT["@hosty-sdk/app · server.ts"] --> EP
 ```
 
-The store is deliberately boring: one JSON document per app, one lock per app,
-the existing atomic write path, and the existing auth guard. No new
-authentication, no new mounts, no runtime-adapter changes, no backup-service
-changes.
+The store is deliberately boring: one JSON document per app, the registry's
+existing per-app lock (shared, not a third lock family — so secret mutations,
+`state.json` writes, and subtree deletion serialize together), the existing
+atomic write path, and the existing auth guard. No new authentication, no new
+mounts, no runtime-adapter changes, no backup-service changes.
 
 ## Risks
 
@@ -228,6 +262,13 @@ changes.
 - **A malformed `secrets.json` blocks the app's secret operations** until the
   operator intervenes (fail-loud, no silent replacement). Preferable to silent
   credential loss, but the error surface must name the file.
+- **The removal race is designed out, not assumed away** (review finding,
+  2026-07-22): the lifecycle `operationLocks` and the registry `appLocks` are
+  disjoint today, so a store with its own third lock would let an in-flight
+  write resurrect `secrets.json` after delete-data removal. The shared-lock +
+  in-lock existence re-check + store-mediated `DeleteAllAsync` design closes
+  both removal paths; the interleaving tests in Acceptance Criteria keep it
+  closed.
 
 ## Open Questions
 

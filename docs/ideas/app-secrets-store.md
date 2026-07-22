@@ -81,9 +81,10 @@ a missing secret as a defined reconnect-required state, not an error.
    directory/backups/notifications. No container-mount change in either runtime
    profile.
 2. **Storage: Core-owned `apps/<id>/secrets.json`,** sibling of `state.json`,
-   written through the existing atomic owner-only path and serialized per app.
-   Being outside `data/` keeps it out of every backup archive without touching
-   the backup service.
+   written through the existing atomic owner-only path and serialized on the
+   registry's per-app lock — shared with `state.json` writes and subtree
+   deletion, not a new lock family. Being outside `data/` keeps it out of every
+   backup archive without touching the backup service.
 3. **At-rest posture: plaintext 0600, parity with `state.json` — not encrypted
    in v1.** Core has zero encryption-at-rest today; the Cloudflare API token
    and every `secret: true` setting are plaintext 0600 by design. A one-file
@@ -95,8 +96,11 @@ a missing secret as a defined reconnect-required state, not an error.
 4. **Removal follows the operator's data choice.** Keep-data removal (the
    default) retains `secrets.json`, exactly like `retained-config.json` retains
    secret settings — "keep my data" keeps the app's persistent identity, and a
-   reinstall resumes working connections. Delete-data removal deletes
-   `secrets.json` in the same branch that deletes `data/`.
+   reinstall resumes working connections. Delete-data removal deletes the store
+   through the same per-app lock the mutation path uses, and mutations re-check
+   app existence inside that lock — so an in-flight write cannot resurrect
+   `secrets.json` after removal, and a post-removal write gets 404 (see the
+   planning doc for the exact fence).
 5. **Keychain, not blob store.** Key naming `^[a-z0-9][a-z0-9._-]{0,127}$`;
    value is a non-empty UTF-8 string of at most 16 KiB; at most 256 keys per
    app. Oversize or malformed requests are rejected, never truncated.
