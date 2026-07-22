@@ -22,6 +22,12 @@ internal sealed record CoreDataPaths(
             Path.Combine(coreRoot, "audit", "audit.ndjson"));
     }
 
+    // Default managed source checkout for an app. Lives inside the app root so uninstalling an app
+    // removes everything about it in one subtree; SourcesRoot remains only as the legacy location
+    // that pre-existing records may still point at via AppSourceState.ManagedCheckoutPath.
+    public string ResolveManagedCheckoutPath(string appId)
+        => Path.Combine(ResolveContainedPath(AppsRoot, appId), "source");
+
     public static bool IsSafePathSegment(string segment)
         => TryResolveContainedPath(Path.GetTempPath(), segment, out _);
 
@@ -117,7 +123,7 @@ internal sealed record CoreDataPaths(
     // Namespaces under apps/<id> that Core and the runtime own. Display-asset vendoring resolves
     // manifest-chosen relative paths against the whole app root, so without this an app-supplied
     // asset reference could land on app data, runtime logs, or Core's own manifest copy.
-    private static readonly string[] ReservedAppRootDirectories = ["data", "logs", "run", "runtimes"];
+    private static readonly string[] ReservedAppRootDirectories = ["data", "logs", "run", "runtimes", "source"];
     private static readonly string[] ReservedAppRootFiles = ["manifest.json", "state.json"];
 
     public static bool IsReservedAppRootPath(string? rootRelativePath)

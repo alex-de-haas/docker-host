@@ -136,12 +136,12 @@ Runtime apps can declare one app-level source repository. Core stores source sta
 - repository type and URL/path;
 - resolved ref;
 - immutable commit;
-- managed checkout path under `sources/<app-id>/`;
+- managed checkout path under `apps/<app-id>/source/`;
 - optional local source override path selected by an administrator.
 
 Local source overrides are never written back to public app manifests.
 
-For `localCommand` runtimes, Core resolves the source root before runtime start. Local manifest file and app directory installs record a local worktree and do not clone source; remote manifest URL installs require an absolute clonable source repository and prepare the managed checkout under `sources/<app-id>/`.
+For `localCommand` runtimes, Core resolves the source root before runtime start. Local manifest file and app directory installs record a local worktree and do not clone source; remote manifest URL installs require an absolute clonable source repository and prepare the managed checkout under `apps/<app-id>/source/`.
 
 Runtime apps may publish `app-feeds.0.1` in their own repository. Core stores the feed document URL, followed feed id, and last resolved manifest URL independently of Marketplace. Update planning re-resolves a followed feed before loading the candidate manifest. The Shell exposes feed selection, and actual app changes reuse reviewed update planning/apply. Direct manifest and folder installs remain feed-less. The removed `switch-channel` contract is not part of the system.
 

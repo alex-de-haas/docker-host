@@ -137,68 +137,6 @@ public sealed class AppsCommandTests : IDisposable
     }
 
     [Fact]
-    public async Task SourceCleanupPlanAsync_UsesCleanupPlanRoute()
-    {
-        using var server = new FakeCoreServer("""
-            {
-              "candidates": [
-                {
-                  "appId": "com.haas.old-app",
-                  "path": "/tmp/hosty/sources/com.haas.old-app",
-                  "reason": "app-not-installed"
-                }
-              ]
-            }
-            """);
-        WriteCoreDiscovery(server);
-        var (console, output) = CreateConsole();
-
-        var exitCode = await CommandLine.RunAsync([
-            "apps",
-            "source-cleanup-plan",
-            "--format",
-            "json",
-        ], console);
-        await server.WaitForRequestAsync();
-
-        Assert.Equal(0, exitCode);
-        Assert.Equal("GET", server.Method);
-        Assert.Equal("/control/v1/sources/cleanup/plan", server.PathAndQuery);
-        Assert.Contains("com.haas.old-app", output.ToString());
-    }
-
-    [Fact]
-    public async Task SourceCleanupAsync_UsesCleanupApplyRoute()
-    {
-        using var server = new FakeCoreServer("""
-            {
-              "deleted": [
-                {
-                  "appId": "com.haas.old-app",
-                  "path": "/tmp/hosty/sources/com.haas.old-app",
-                  "reason": "app-not-installed"
-                }
-              ]
-            }
-            """);
-        WriteCoreDiscovery(server);
-        var (console, output) = CreateConsole();
-
-        var exitCode = await CommandLine.RunAsync([
-            "apps",
-            "source-cleanup",
-            "--format",
-            "json",
-        ], console);
-        await server.WaitForRequestAsync();
-
-        Assert.Equal(0, exitCode);
-        Assert.Equal("POST", server.Method);
-        Assert.Equal("/control/v1/sources/cleanup", server.PathAndQuery);
-        Assert.Contains("com.haas.old-app", output.ToString());
-    }
-
-    [Fact]
     public async Task InstallAsync_PreservesRemoteManifestUrl()
     {
         const string manifestUrl = "https://github.com/alex-de-haas/project-manager/releases/download/latest/manifest.json";

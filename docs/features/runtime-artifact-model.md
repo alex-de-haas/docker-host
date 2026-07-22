@@ -97,6 +97,8 @@ flowchart TB
 
 Move all runtime assets under the app directory, keyed by **(app, runtime)** so switching a runtime never clobbers another runtime's materialized artifact. Retire the top-level `sources/` tree.
 
+> **Status: first step implemented.** The managed source checkout now defaults to `apps/<app-id>/source/` (per-app, matching today's single `AppSourceState`), the top-level `sources/` tree is retired for new installs (existing records keep their persisted path; uninstall's "Delete source checkout" covers both locations), and the `source-cleanup` commands/endpoints were removed. The per-runtime `runtimes/<runtime-key>/…` keying below arrives with `RuntimeArtifactState`.
+
 ```
 ~/.hosty/apps/<app-id>/
   state.json                         # AppRecord (unchanged)
@@ -270,9 +272,9 @@ Switching remains the reviewed [`switch-runtime-plan` / `switch-runtime`](runtim
 
 ## Migration
 
-- **Path move.** Installed apps with `sources/<app-id>/` migrate to `apps/<app-id>/runtimes/<selected-key>/source/`. Provide a one-time migration on Core start (move + rewrite `ManagedCheckoutPath`), with back-compat resolution that still reads the old path until migrated.
+- **Path move.** Done for the per-app step: new installs check out to `apps/<app-id>/source/`; existing records keep their persisted `ManagedCheckoutPath` (no migration), and uninstall's "Delete source checkout" removes both the in-root and the legacy `sources/<app-id>/` location. The per-runtime move to `apps/<app-id>/runtimes/<selected-key>/source/` remains, and can reuse the same no-migration approach.
 - **State shape.** `AppSourceState` + `ArtifactLocks` → per-runtime `RuntimeArtifactState`. Additive `state.json` change with lazy backfill (TOFU), consistent with how `ArtifactLocks` backfills today.
-- **CLI.** `source-*` commands keep working against `kind=source` runtimes; `source-cleanup` scans the new per-app runtime dirs instead of the retired `sources/` root.
+- **CLI.** `source-*` commands keep working against `kind=source` runtimes; `source-cleanup` was removed with the top-level `sources/` root (an in-root checkout cannot be orphaned).
 
 ## Phasing
 

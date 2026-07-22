@@ -11,6 +11,8 @@ public sealed class CoreDataPathsTests
     [InlineData("logs")]
     [InlineData("run/state.png")]
     [InlineData("runtimes/docker/img.png")]
+    [InlineData("source")]
+    [InlineData("source/assets/icon.png")]
     // Case-insensitive: a case-insensitive filesystem reaches the same directory.
     [InlineData("Data/uploads/private.png")]
     // Reserved files, bare and as a path head. Selecting one list by whether a separator is present
@@ -32,6 +34,7 @@ public sealed class CoreDataPathsTests
     // Only an exact head matches: a directory that merely starts with a reserved name is fine.
     [InlineData("database/icon.png")]
     [InlineData("logs-archive/icon.png")]
+    [InlineData("sources/icon.png")]
     public void IsReservedAppRootPath_AllowsOrdinaryDisplayAssets(string rootRelativePath)
         => Assert.False(CoreDataPaths.IsReservedAppRootPath(rootRelativePath));
 
