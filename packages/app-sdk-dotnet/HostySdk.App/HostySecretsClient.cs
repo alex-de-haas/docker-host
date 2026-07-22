@@ -76,7 +76,10 @@ public sealed class HostySecretsClient(
                 // A 200 without a usable value is a broken Core/proxy, not an absent secret;
                 // reporting it as "no value" would send the app into a reconnect loop instead of
                 // surfacing the fault.
-                throw new HostySecretsException("Core returned a secret response without a value.");
+                throw new HostySecretsException(
+                    "Core returned a secret response without a value.",
+                    HostySecretsErrorCodes.ResponseInvalid,
+                    (int)response.StatusCode);
             }
         }
 
@@ -115,7 +118,10 @@ public sealed class HostySecretsClient(
         // An app with no secrets returns an empty array, so an absent one is a broken response,
         // not an empty store — surface it rather than reporting "no secrets".
         return (await ReadJsonAsync<SecretKeysResponse>(response, cancellationToken))?.Keys
-            ?? throw new HostySecretsException("Core returned a secret listing without a keys array.");
+            ?? throw new HostySecretsException(
+                "Core returned a secret listing without a keys array.",
+                HostySecretsErrorCodes.ResponseInvalid,
+                (int)response.StatusCode);
     }
 
     // Write-through for a mutation: bumps the key's generation so a read still in flight discards
@@ -151,9 +157,10 @@ public sealed class HostySecretsClient(
         }
     }
 
-    // A null key targets the collection route (list); otherwise the per-key route. 404 is returned
-    // to the caller for GET (an absent secret) but is an error for every other verb, because Core
-    // only 404s those when the app itself is unknown.
+    // A null key targets the collection route (list); otherwise the per-key route. A per-key GET
+    // 404 is returned to the caller only when it is the "no secret stored" one — Core answers the
+    // same status with app_not_found when the routed app is unknown or has been removed, and
+    // collapsing the two would report a removed app as a routine reconnect.
     private async Task<HttpResponseMessage> SendAsync(
         HttpMethod method,
         string? key,
@@ -163,7 +170,8 @@ public sealed class HostySecretsClient(
         if (string.IsNullOrWhiteSpace(options.ServiceToken))
         {
             throw new HostySecretsException(
-                "HOSTY_APP_SERVICE_TOKEN is not set; the app secrets store is only reachable under Hosty Core.");
+                "HOSTY_APP_SERVICE_TOKEN is not set; the app secrets store is only reachable under Hosty Core.",
+                HostySecretsErrorCodes.ServiceTokenMissing);
         }
 
         var path = $"/api/internal/apps/{Uri.EscapeDataString(options.AppId)}/secrets";
@@ -182,33 +190,68 @@ public sealed class HostySecretsClient(
         }
         catch (HttpRequestException ex)
         {
-            throw new HostySecretsException("The app secrets request to Core failed.", ex);
+            throw new HostySecretsException(
+                "The app secrets request to Core failed.", HostySecretsErrorCodes.Unavailable, ex);
         }
         catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
         {
             // HttpClient timeouts surface as TaskCanceledException; only genuine caller
             // cancellation may propagate.
-            throw new HostySecretsException("The app secrets request to Core timed out.", ex);
+            throw new HostySecretsException(
+                "The app secrets request to Core timed out.", HostySecretsErrorCodes.Timeout, ex);
         }
 
-        if (response.IsSuccessStatusCode ||
-            (method == HttpMethod.Get && key is not null && response.StatusCode == HttpStatusCode.NotFound))
+        if (response.IsSuccessStatusCode)
         {
             return response;
         }
 
         using (response)
         {
-            // The message is safe to surface: Core's error bodies carry codes and limits, never
-            // secret values.
+            // The body is safe to read and surface: Core's error bodies carry codes and limits,
+            // never secret values.
             var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            var code = ReadErrorCode(body);
+
+            // The one 404 that is an answer rather than a failure: this app has no secret stored
+            // under this key. Any other 404 (app_not_found) means the app itself is gone.
+            if (method == HttpMethod.Get &&
+                key is not null &&
+                response.StatusCode == HttpStatusCode.NotFound &&
+                code is not "app_not_found")
+            {
+                return new HttpResponseMessage(HttpStatusCode.NotFound);
+            }
+
             logger.LogWarning(
-                "Core rejected an app secrets {Method} for key {Key} with HTTP {Status}.",
+                "Core rejected an app secrets {Method} for key {Key} with HTTP {Status} ({Code}).",
                 method.Method,
                 key ?? "(list)",
-                (int)response.StatusCode);
+                (int)response.StatusCode,
+                code ?? "no code");
             throw new HostySecretsException(
-                $"Core returned HTTP {(int)response.StatusCode} for an app secrets {method.Method} request. {body}".TrimEnd());
+                $"Core returned HTTP {(int)response.StatusCode} for an app secrets {method.Method} request. {body}".TrimEnd(),
+                code ?? HostySecretsErrorCodes.RequestFailed,
+                (int)response.StatusCode);
+        }
+    }
+
+    // Best-effort: an unparseable error body only costs the passed-through code, so the caller
+    // falls back to the client's own classification.
+    private static string? ReadErrorCode(string body)
+    {
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(body);
+            return document.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object &&
+                document.RootElement.TryGetProperty("code", out var code) &&
+                code.ValueKind == System.Text.Json.JsonValueKind.String
+                ? code.GetString()
+                : null;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
         }
     }
 
@@ -220,7 +263,11 @@ public sealed class HostySecretsClient(
         }
         catch (Exception ex) when (ex is System.Text.Json.JsonException or NotSupportedException or InvalidOperationException)
         {
-            throw new HostySecretsException("Core returned an unreadable app secrets response.", ex);
+            throw new HostySecretsException(
+                "Core returned an unreadable app secrets response.",
+                HostySecretsErrorCodes.ResponseInvalid,
+                ex,
+                (int)response.StatusCode);
         }
     }
 
@@ -237,15 +284,50 @@ public sealed class HostySecretsClient(
 /// </summary>
 public sealed class HostySecretsException : Exception
 {
-    /// <summary>Creates the exception with a message.</summary>
-    public HostySecretsException(string message)
+    /// <summary>Creates the exception with a message and machine-readable classification.</summary>
+    public HostySecretsException(string message, string code, int? status = null)
         : base(message)
     {
+        Code = code;
+        Status = status;
     }
 
-    /// <summary>Creates the exception with a message and the underlying failure.</summary>
-    public HostySecretsException(string message, Exception innerException)
+    /// <summary>Creates the exception with a message, classification, and the underlying failure.</summary>
+    public HostySecretsException(string message, string code, Exception innerException, int? status = null)
         : base(message, innerException)
     {
+        Code = code;
+        Status = status;
     }
+
+    /// <summary>
+    /// Machine-readable cause, so callers can branch without matching on the message. Either a
+    /// code passed through from Core's error body (e.g. <c>app_not_found</c>,
+    /// <c>app_secret_value_invalid</c>) or one raised locally by this client — see
+    /// <see cref="HostySecretsErrorCodes"/>. Mirrors the TypeScript client's codes.
+    /// </summary>
+    public string Code { get; }
+
+    /// <summary>Core's HTTP status, or <see langword="null"/> when Core was never reached.</summary>
+    public int? Status { get; }
+}
+
+/// <summary>Codes <see cref="HostySecretsClient"/> raises itself, as opposed to passing through
+/// from Core's error body. Shared verbatim with the TypeScript client.</summary>
+public static class HostySecretsErrorCodes
+{
+    /// <summary>No service token in the environment; the store is only reachable under Core.</summary>
+    public const string ServiceTokenMissing = "app_service_token_missing";
+
+    /// <summary>Core could not be reached.</summary>
+    public const string Unavailable = "core_secrets_unavailable";
+
+    /// <summary>The request to Core timed out.</summary>
+    public const string Timeout = "core_secrets_timeout";
+
+    /// <summary>Core answered 2xx with a body this client cannot use.</summary>
+    public const string ResponseInvalid = "core_response_invalid";
+
+    /// <summary>Core rejected the request and supplied no usable code of its own.</summary>
+    public const string RequestFailed = "app_secrets_request_failed";
 }

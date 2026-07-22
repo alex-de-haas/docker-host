@@ -466,6 +466,14 @@ describe("app secrets", () => {
     expect(await getAppSecret("key", config)).toBeNull();
   });
 
+  it("distinguishes a removed app from a missing secret on a per-key read", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(404, { code: "app_not_found" })));
+    await expect(getAppSecret("key", config)).rejects.toMatchObject({
+      status: 404,
+      code: "app_not_found",
+    });
+  });
+
   it("treats a 404 on a mutation as an error, unlike a missing secret on read", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(404, { code: "app_not_found" })));
     await expect(deleteAppSecret("key", config)).rejects.toBeInstanceOf(HostySecretsError);

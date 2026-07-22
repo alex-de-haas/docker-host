@@ -12,17 +12,17 @@ in the table. The sections below are kept as the ratified design record; finding
 
 Shipped artifacts:
 
-- **`@hosty-sdk/app` — npmjs, latest 0.3.0.** All four slices: `core`, `server`, `react`,
+- **`@hosty-sdk/app` — npmjs, latest 0.4.0.** All four slices: `core`, `server`, `react`,
   `embedder` (extraction #241, publishing chain #242–#244, rich resolution detail #248),
-  plus the app secrets client in `server` (0.3.0). Still missing from the design's
+  plus the app secrets client in `server` (0.3.0; classified errors 0.4.0). Still missing from the design's
   `server`/`react` scope: the identity/session/logout route factories, the
   middleware/proxy factory, the scoped app-directory client, and the headless
   `useHostSession()` — tracked in
   [Second Wave](#second-wave-inventoried-2026-07-20) item 1.
-- **`HostySdk.App` — NuGet, 0.2.0.** The .NET slice (#249; Trusted Publishing #250): Core
+- **`HostySdk.App` — NuGet, 0.3.0.** The .NET slice (#249; Trusted Publishing #250): Core
   revalidation behind the decided 30s positive cache, the `Hosty` authentication scheme,
   `HOSTY_*` options binding, cookie-name/`MapHostRole` parameterization, and
-  `HostySecretsClient` for the app secrets store (0.2.0). The package-shape
+  `HostySecretsClient` for the app secrets store (0.2.0; classified errors 0.3.0). The package-shape
   placeholder `Haas.Hosty.AppSdk` is settled as **`HostySdk.App`**.
 - **Shell** consumes the embedder slice (#245) — the reference implementation and the
   shipped artifact are the same code, as planned.

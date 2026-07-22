@@ -1,6 +1,6 @@
 # App Secrets Store — Core-Managed Keychain for Runtime-Acquired App Secrets
 
-Status: Promoted
+Status: Promoted (shipped — see [features/app-secrets-store.md](../features/app-secrets-store.md))
 Created: 2026-07-22
 Updated: 2026-07-22
 

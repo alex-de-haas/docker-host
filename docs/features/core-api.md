@@ -32,6 +32,10 @@ Hosty Core exposes browser APIs for Shell and app auth, plus a local control API
 - `GET /api/apps/{appId}/feeds` - list the feeds resolved from an installed app's stored `FeedsUrl` and return its followed feed id.
 - `POST /api/apps/{appId}/feed` - select a future update feed from the installed app's stored feed document without changing the running app.
 - `GET /api/internal/apps/{appId}/directory/users` - scoped app directory for runtime apps with `HOSTY_APP_SERVICE_TOKEN`.
+- `GET /api/internal/apps/{appId}/secrets` - list the app's stored secret **key names** (never values); `HOSTY_APP_SERVICE_TOKEN`.
+- `GET /api/internal/apps/{appId}/secrets/{key}` - read one stored secret; `404` means no secret is stored, an expected reconnect-required state.
+- `PUT /api/internal/apps/{appId}/secrets/{key}` - store or replace a secret (`{ "value": … }`, non-empty UTF-8 ≤ 16 KiB, ≤ 256 keys per app).
+- `DELETE /api/internal/apps/{appId}/secrets/{key}` - delete a secret; idempotent. See [App Secrets Store](app-secrets-store.md).
 
 Core exposes no catalog or Marketplace proxy endpoints. The optional `hosty.marketplace` system app owns its source and storefront. Shell accepts its bounded install intent and calls the generic feed endpoints above; Core independently validates the feed and manifest.
 

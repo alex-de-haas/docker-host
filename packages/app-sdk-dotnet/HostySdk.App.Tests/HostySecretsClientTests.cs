@@ -70,6 +70,16 @@ public sealed class HostySecretsClientTests
             => new(status) { Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json") };
     }
 
+    // Answers with a non-JSON body, so the error-code passthrough has nothing to read.
+    private sealed class ThrowingBodyHandler(HttpStatusCode status, string body) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(new HttpResponseMessage(status)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "text/html"),
+            });
+    }
+
     private sealed class StubFactory(HttpMessageHandler handler) : IHttpClientFactory
     {
         public HttpClient CreateClient(string name) => new(handler) { BaseAddress = new Uri("http://core.test") };
@@ -215,6 +225,56 @@ public sealed class HostySecretsClientTests
 
         await Assert.ThrowsAsync<HostySecretsException>(() => client.SetAsync("key", "value"));
         await Assert.ThrowsAsync<HostySecretsException>(() => client.DeleteAsync("key"));
+    }
+
+    // Core answers 404 on a per-key GET for two different reasons; only the missing-secret one is
+    // an answer. A removed app must not look like a routine reconnect.
+    [Fact]
+    public async Task AReadOfAnUnknownApp_ThrowsRatherThanReportingAMissingSecret()
+    {
+        var handler = new RecordingHandler((HttpStatusCode.NotFound, new { code = "app_not_found" }));
+
+        var error = await Assert.ThrowsAsync<HostySecretsException>(() => Client(handler).GetAsync("key"));
+
+        Assert.Equal("app_not_found", error.Code);
+        Assert.Equal(404, error.Status);
+    }
+
+    [Fact]
+    public async Task Errors_CarryAMachineReadableCodeAndStatus()
+    {
+        var rejected = new RecordingHandler((HttpStatusCode.BadRequest, new { code = "app_secret_value_invalid" }));
+        var rejectedError = await Assert.ThrowsAsync<HostySecretsException>(() => Client(rejected).SetAsync("key", "v"));
+        Assert.Equal("app_secret_value_invalid", rejectedError.Code);
+        Assert.Equal(400, rejectedError.Status);
+
+        var unusable = new RecordingHandler((HttpStatusCode.OK, new { unexpected = "shape" }));
+        var unusableError = await Assert.ThrowsAsync<HostySecretsException>(() => Client(unusable).GetAsync("key"));
+        Assert.Equal(HostySecretsErrorCodes.ResponseInvalid, unusableError.Code);
+
+        var offline = Client(new ThrowingHandler(new HttpRequestException("connection refused")));
+        var offlineError = await Assert.ThrowsAsync<HostySecretsException>(() => offline.GetAsync("key"));
+        Assert.Equal(HostySecretsErrorCodes.Unavailable, offlineError.Code);
+        Assert.Null(offlineError.Status);
+
+        var timedOut = Client(new ThrowingHandler(new TaskCanceledException("timed out")));
+        var timeoutError = await Assert.ThrowsAsync<HostySecretsException>(() => timedOut.GetAsync("key"));
+        Assert.Equal(HostySecretsErrorCodes.Timeout, timeoutError.Code);
+
+        var unconfigured = Client(new RecordingHandler((HttpStatusCode.OK, null)), Options(serviceToken: null));
+        var unconfiguredError = await Assert.ThrowsAsync<HostySecretsException>(() => unconfigured.GetAsync("key"));
+        Assert.Equal(HostySecretsErrorCodes.ServiceTokenMissing, unconfiguredError.Code);
+    }
+
+    [Fact]
+    public async Task AnUnparseableErrorBody_FallsBackToTheClientsOwnCode()
+    {
+        var handler = new ThrowingBodyHandler(HttpStatusCode.BadGateway, "<html>gateway</html>");
+
+        var error = await Assert.ThrowsAsync<HostySecretsException>(() => Client(handler).GetAsync("key"));
+
+        Assert.Equal(HostySecretsErrorCodes.RequestFailed, error.Code);
+        Assert.Equal(502, error.Status);
     }
 
     [Fact]

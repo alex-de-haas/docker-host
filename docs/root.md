@@ -41,6 +41,7 @@ flowchart LR
 - [Local Password Login](features/local-password-login.md) - Core-owned local password setup, recovery, invitations, and login.
 - [App Data Backup Retention](features/app-data-backup-retention.md) - backup cleanup and retention.
 - [Notifications](features/notifications.md) - Core-owned user-targeted notification stream (v1 backend): opt-in app producers, client-agnostic consumer, SSE live delivery, and retention.
+- [App Secrets Store](features/app-secrets-store.md) - Core-managed keychain for runtime-acquired app secrets (OAuth tokens and the like): service-token API, `apps/<id>/secrets.json` beside `state.json` and therefore outside backup scope, removal following the operator's keep-data choice, and SDK clients in both packages.
 - [Observability (telemetry collection)](features/observability.md) - OpenTelemetry from runtime apps → OTel collector → Core read boundary → Shell Observability section (metrics, structured logs, traces). Phases P2–P6 shipped.
 - [Observability Phase 2 — telemetry backend](features/observability-phase-2-backend.md) - moves the telemetry store and query API out of Core into a dedicated telemetry-backend system app; Core stays a producer (`docker stats`/`docker logs`) and read-proxy. 2a–2c shipped; only SSE realtime (2d) remains.
 - [Marketplace System App](features/runtime-app-marketplace.md) - optional first-party storefront that owns one catalog source and hands app-owned feed URLs to Shell without lifecycle authority.
@@ -63,7 +64,7 @@ flowchart LR
 - [Install-Time Runtime Port Reservations](planning/install-time-runtime-port-reservations.md) - Implemented plan (shipped in #187–#191) for persistent service-scoped ports assigned during install, migration, collision handling, and explicit reassignment.
 - [One-Click Cloudflare Public Ingress](planning/one-click-cloudflare-public-ingress.md) - Ready implementation plan for API-token-based remote Tunnel adoption, per-app hostname publication, Dashboard-safe reconciliation, diagnostics, and cleanup (phase-0 spike verified against a live account).
 - [Marketplace System App - Vertical Slice](planning/marketplace-system-app.md) - approved replacement of the Core-owned catalog with a Marketplace system app and generic Core feed lifecycle.
-- [App Secrets Store](planning/app-secrets-store.md) - Ready implementation plan for the Core-managed runtime-secrets keychain: `AppSecretsStore` + app-callable endpoints under the service token, removal integration following the operator's keep-data choice, SDK clients in both packages, and release steps.
+- [App Secrets Store](planning/app-secrets-store.md) - Implemented plan (shipped in #266-#267) for the Core-managed runtime-secrets keychain; the behavior now lives in [features/app-secrets-store.md](features/app-secrets-store.md).
 
 ## Ideas
 
@@ -81,7 +82,7 @@ Draft, exploratory, or backlog items that are not current implementation commitm
 - [Gateway and app wrapping ideas](ideas/gateway-and-app-wrapping.md) - future gateway, ingress, and third-party app wrapping boundaries.
 - [Auth session lifecycle and recovery](ideas/auth-session-lifecycle.md) - agreed design: split identity error contract (401/403/503), standalone and embedded session recovery through app-open + login continuation, opaque server-side app session grants replacing the browser JWT, and sliding idle+absolute Core sessions.
 - [Hosty App SDK](ideas/hosty-app-sdk.md) - agreed design: shared auth/recovery SDK for runtime apps (TypeScript on npmjs + .NET on NuGet) packaging the session state machine with a `misconfigured` class, silent embedded recovery, standalone redirect recovery, the embedder contract for shells, and the no-version-sync compatibility policy.
-- [App Secrets Store](ideas/app-secrets-store.md) - promoted design for a Core-managed keychain for runtime-acquired app secrets (e.g. OAuth tokens): app-callable API under the service token, Core-owned `secrets.json` outside backup scope, plaintext-0600 parity with existing secret storage, and ten ratified decisions; implementation plan under planning.
+- [App Secrets Store](ideas/app-secrets-store.md) - promoted design (shipped) for the Core-managed runtime-secrets keychain: ten ratified decisions, including plaintext-0600 parity with existing secret storage and the deferred platform-wide at-rest pass. Implemented behavior: [features/app-secrets-store.md](features/app-secrets-store.md).
 - [Replaceable UI Clients](ideas/replaceable-ui-clients.md) - concept for shells as ordinary apps: a `ui-client` provides slot replacing the hardcoded `hosty.shell` lookup, primary-UI selection as pure resolution (setting > sole > earliest-installed), CORS for every installed UI client, and uninstall of the last shell always allowed with the CLI as recovery path.
 - [Auth provider extensions](ideas/auth-provider-extensions.md) - future OIDC, trusted-proxy provisioning, password reset, and durable throttling directions.
 - [Runtime source extensions](ideas/runtime-source-extensions.md) - future multi-repository source and private repository credential handling.
