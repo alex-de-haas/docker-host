@@ -121,7 +121,10 @@ internal sealed class AppRegistryStore(CoreDataPaths paths)
         return document;
     }
 
-    private SemaphoreSlim GetAppLock(string appId)
+    // Shared with AppSecretsStore: secrets mutations, state.json writes, and the RemoveAppAsync
+    // subtree delete serialize on the same per-app semaphore, so an in-flight secret write cannot
+    // recreate files under an app root that a removal just deleted.
+    internal SemaphoreSlim GetAppLock(string appId)
         => appLocks.GetOrAdd(appId, _ => new SemaphoreSlim(1, 1));
 
     private string GetAppStatePath(string appId)

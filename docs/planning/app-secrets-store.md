@@ -191,17 +191,17 @@ bodies; log statements reference key names at most.
 
 ## Deliverables
 
-- [ ] `AppSecretsStore` with document schema, atomic owner-only writes, bounds
+- [x] `AppSecretsStore` with document schema, atomic owner-only writes, bounds
   enforcement, fail-loud malformed-file behavior, and serialization on the
   registry's shared per-app lock (extracted or exposed from
   `AppRegistryStore.GetAppLock`) with the in-lock existence re-check.
-- [ ] `AppSecretsEndpoints` (four minimal-API routes, inline service-token
+- [x] `AppSecretsEndpoints` (four minimal-API routes, inline service-token
   guard + app existence check), registered in `HostyCoreApplication`; DTOs in
   `CoreJsonSerializerContext`.
-- [ ] Removal integration in `CoreLifecycleService.RemoveCoreAsync` for both
+- [x] Removal integration in `CoreLifecycleService.RemoveCoreAsync` for both
   `DeleteData` values, deleting through `AppSecretsStore.DeleteAllAsync` under
   the shared lock, plus removal-race interleaving tests.
-- [ ] Core tests: pure validation statics tested directly (the
+- [x] Core tests: pure validation statics tested directly (the
   `NotificationEndpointsTests` pattern), store CRUD + permissions + bounds
   against a temp directory (the `AppBackupServiceTests` pattern), removal-flow
   coverage, `EndpointAuthorizationTests.EndpointFiles` extended.
@@ -282,10 +282,10 @@ with the feature. Ratified 2026-07-22.
 
 ### Phase 1: Core Store and API
 
-- [ ] `AppSecretsStore` + document schema + bounds + locking + atomic writes.
-- [ ] `AppSecretsEndpoints` + registration + serializer-context entries.
-- [ ] Removal integration for both `DeleteData` values.
-- [ ] Core tests per Deliverables, including `EndpointAuthorizationTests`
+- [x] `AppSecretsStore` + document schema + bounds + locking + atomic writes.
+- [x] `AppSecretsEndpoints` + registration + serializer-context entries.
+- [x] Removal integration for both `DeleteData` values.
+- [x] Core tests per Deliverables, including `EndpointAuthorizationTests`
   extension.
 
 ### Phase 2: SDK Clients

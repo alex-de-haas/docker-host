@@ -835,6 +835,41 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task RemoveAsync_DeletesStoredSecretsWithData()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        var secrets = new AppSecretsStore(fixture.Apps, fixture.Paths);
+        Assert.Equal(AppSecretsStatus.Ok, await secrets.SetAsync("com.example.notes", "provider.tokens", "credential"));
+
+        await fixture.Service.RemoveAsync("com.example.notes", new AppRemoveRequest(DeleteData: true));
+
+        Assert.False(File.Exists(Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "secrets.json")));
+        // The fence holds after removal: a late write refuses instead of recreating the app root.
+        Assert.Equal(AppSecretsStatus.AppNotFound, await secrets.SetAsync("com.example.notes", "provider.tokens", "late"));
+    }
+
+    [Fact]
+    public async Task RemoveAsync_RetainsStoredSecretsWhenDataKept_ReadableAfterReinstall()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        var secrets = new AppSecretsStore(fixture.Apps, fixture.Paths);
+        Assert.Equal(AppSecretsStatus.Ok, await secrets.SetAsync("com.example.notes", "provider.tokens", "credential"));
+
+        await fixture.Service.RemoveAsync("com.example.notes", new AppRemoveRequest(DeleteData: false));
+        Assert.True(File.Exists(Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "secrets.json")));
+
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        var restored = await secrets.GetAsync("com.example.notes", "provider.tokens");
+        Assert.Equal(AppSecretsStatus.Ok, restored.Status);
+        Assert.Equal("credential", restored.Value);
+    }
+
+    [Fact]
     public async Task CreateUpdatePlanAsync_FolderInstall_DetectsUpdatedManifest()
     {
         var fixture = await LifecycleFixture.CreateAsync();

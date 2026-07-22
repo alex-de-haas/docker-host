@@ -26,6 +26,10 @@ internal sealed class CoreLifecycleService(
     // Bootstrap-choices writer for the uninstall hook on distribution-origin apps. Optional only for
     // unit fixtures; production DI always supplies it.
     BootstrapChoicesStore? bootstrapChoices = null,
+    // App secrets keychain, deleted with app data on removal. Optional only for unit fixtures;
+    // production DI always supplies it. The fallback shares the same AppRegistryStore instance, so
+    // the per-app lock still fences removal against in-flight secret writes.
+    AppSecretsStore? appSecrets = null,
     // Install-time port-reservation coordinator. Optional only for unit fixtures that do not exercise
     // allocation; production DI always supplies it. When absent, install skips reservation and ports are
     // resolved at first start as before. See RuntimePortAllocator.
@@ -48,9 +52,11 @@ internal sealed class CoreLifecycleService(
     // (both only need CoreDataPaths); DI supplies the singletons.
     private readonly GlobalMountStore globalMounts = globalMounts ?? new GlobalMountStore(paths);
     private readonly MountPathPolicy mountPathPolicy = mountPathPolicy ?? new MountPathPolicy(paths);
+    private readonly AppSecretsStore appSecrets = appSecrets ?? new AppSecretsStore(apps, paths);
     private readonly TimeSpan selfRestartPortReleaseTimeout = selfRestartPortReleaseTimeout ?? SelfRestartLoopbackReleaseTimeout;
 
-    // Per-app operation lock. AppRegistryStore.appLocks only serializes a single record write; a whole
+    // Per-app operation lock. AppRegistryStore.appLocks only serializes a single record write (and,
+    // shared with AppSecretsStore, secrets mutations and the subtree delete); a whole
     // lifecycle verb reads a record, runs a long operation, then commits a rebuilt record, so two verbs
     // on one app can still interleave — a concurrent Configure committing mid-update is silently reverted,
     // concurrent Starts interleave docker rm -f/run. This holds one app's verb to completion. Keyed by app
@@ -1893,6 +1899,18 @@ internal sealed class CoreLifecycleService(
         if (request.DeleteData)
         {
             TryDeleteDirectory(GetAppDataPath(appId));
+            // Through the store, not TryDelete: its shared per-app lock fences an in-flight secret
+            // write, which could otherwise recreate secrets.json after this removal completes. Runs
+            // after the state.json deletion above so late writes fail the store's existence check.
+            // Best-effort like the sibling deletions, but a failure here retains credentials, so warn.
+            try
+            {
+                await appSecrets.DeleteAllAsync(appId, cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning(ex, "Failed to delete stored secrets for app {AppId} during uninstall.", appId);
+            }
         }
 
         if (request.DeleteBackups)
