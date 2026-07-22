@@ -16,7 +16,8 @@ namespace HostySdk.App;
 /// Reads are served from a write-through in-memory cache, so a briefly unavailable Core does not
 /// break an app that already read its secret. The cache is authoritative only for values this
 /// process wrote or fetched: <see cref="GetAsync"/> caches both hits and misses, and every
-/// mutation updates it, so no invalidation round-trip is needed.
+/// mutation updates it, so no invalidation round-trip is needed. A read that overlaps a
+/// concurrent write discards its own result rather than overwriting the newer one.
 /// </remarks>
 public sealed class HostySecretsClient(
     IHttpClientFactory httpClientFactory,
@@ -29,6 +30,12 @@ public sealed class HostySecretsClient(
     // A missing entry and a cached "no value" are different states, so the cache stores the
     // nullable value rather than relying on presence.
     private readonly Dictionary<string, string?> cache = new(StringComparer.Ordinal);
+
+    // Per-key mutation counter. A read samples it before calling Core and only writes its result
+    // back if it is unchanged: the lock guards individual cache accesses, not a whole operation,
+    // so without this a GET issued before a concurrent Set/Delete but completing after it would
+    // overwrite the newer state and later cached reads would serve the stale value.
+    private readonly Dictionary<string, long> mutations = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim cacheLock = new(1, 1);
 
     /// <summary>
@@ -43,28 +50,37 @@ public sealed class HostySecretsClient(
     /// <exception cref="HostySecretsException">Core was unreachable or rejected the request.</exception>
     public async Task<string?> GetAsync(string key, bool refresh = false, CancellationToken cancellationToken = default)
     {
-        if (!refresh)
+        long generation;
+        await cacheLock.WaitAsync(cancellationToken);
+        try
         {
-            await cacheLock.WaitAsync(cancellationToken);
-            try
+            if (!refresh && cache.TryGetValue(key, out var cached))
             {
-                if (cache.TryGetValue(key, out var cached))
-                {
-                    return cached;
-                }
+                return cached;
             }
-            finally
-            {
-                cacheLock.Release();
-            }
+
+            generation = mutations.TryGetValue(key, out var current) ? current : 0;
+        }
+        finally
+        {
+            cacheLock.Release();
         }
 
         using var response = await SendAsync(HttpMethod.Get, key, content: null, cancellationToken);
-        var value = response.StatusCode == HttpStatusCode.NotFound
-            ? null
-            : (await ReadJsonAsync<SecretValueResponse>(response, cancellationToken))?.Value;
+        string? value = null;
+        if (response.StatusCode != HttpStatusCode.NotFound)
+        {
+            value = (await ReadJsonAsync<SecretValueResponse>(response, cancellationToken))?.Value;
+            if (value is null)
+            {
+                // A 200 without a usable value is a broken Core/proxy, not an absent secret;
+                // reporting it as "no value" would send the app into a reconnect loop instead of
+                // surfacing the fault.
+                throw new HostySecretsException("Core returned a secret response without a value.");
+            }
+        }
 
-        await StoreAsync(key, value, cancellationToken);
+        await StoreReadAsync(key, value, generation, cancellationToken);
         return value;
     }
 
@@ -77,7 +93,7 @@ public sealed class HostySecretsClient(
     {
         using var content = JsonContent.Create(new SecretWriteRequest(value));
         using var _ = await SendAsync(HttpMethod.Put, key, content, cancellationToken);
-        await StoreAsync(key, value, cancellationToken);
+        await StoreMutationAsync(key, value, cancellationToken);
     }
 
     /// <summary>Deletes the secret under <paramref name="key"/>. Deleting an absent key succeeds.</summary>
@@ -85,7 +101,7 @@ public sealed class HostySecretsClient(
     public async Task DeleteAsync(string key, CancellationToken cancellationToken = default)
     {
         using var _ = await SendAsync(HttpMethod.Delete, key, content: null, cancellationToken);
-        await StoreAsync(key, null, cancellationToken);
+        await StoreMutationAsync(key, null, cancellationToken);
     }
 
     /// <summary>
@@ -96,15 +112,38 @@ public sealed class HostySecretsClient(
     public async Task<IReadOnlyList<string>> ListKeysAsync(CancellationToken cancellationToken = default)
     {
         using var response = await SendAsync(HttpMethod.Get, key: null, content: null, cancellationToken);
-        return (await ReadJsonAsync<SecretKeysResponse>(response, cancellationToken))?.Keys ?? [];
+        // An app with no secrets returns an empty array, so an absent one is a broken response,
+        // not an empty store — surface it rather than reporting "no secrets".
+        return (await ReadJsonAsync<SecretKeysResponse>(response, cancellationToken))?.Keys
+            ?? throw new HostySecretsException("Core returned a secret listing without a keys array.");
     }
 
-    private async Task StoreAsync(string key, string? value, CancellationToken cancellationToken)
+    // Write-through for a mutation: bumps the key's generation so a read still in flight discards
+    // its now-stale result instead of overwriting this value.
+    private async Task StoreMutationAsync(string key, string? value, CancellationToken cancellationToken)
     {
         await cacheLock.WaitAsync(cancellationToken);
         try
         {
+            mutations[key] = (mutations.TryGetValue(key, out var current) ? current : 0) + 1;
             cache[key] = value;
+        }
+        finally
+        {
+            cacheLock.Release();
+        }
+    }
+
+    // Write-back for a completed read: only lands when no mutation happened while it was running.
+    private async Task StoreReadAsync(string key, string? value, long generation, CancellationToken cancellationToken)
+    {
+        await cacheLock.WaitAsync(cancellationToken);
+        try
+        {
+            if ((mutations.TryGetValue(key, out var current) ? current : 0) == generation)
+            {
+                cache[key] = value;
+            }
         }
         finally
         {

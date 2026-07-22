@@ -42,6 +42,34 @@ public sealed class HostySecretsClientTests
             => Task.FromException<HttpResponseMessage>(error);
     }
 
+    // Parks the first GET inside its Core call so a write can complete while the read is in
+    // flight; every other request (the write, later reads) completes immediately.
+    private sealed class GateableHandler(
+        TaskCompletionSource readReachedCore,
+        TaskCompletionSource releaseRead,
+        string readValue) : HttpMessageHandler
+    {
+        private bool gated;
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.Method == HttpMethod.Get && !gated)
+            {
+                gated = true;
+                readReachedCore.SetResult();
+                await releaseRead.Task;
+                return Json(HttpStatusCode.OK, new { value = readValue });
+            }
+
+            return request.Method == HttpMethod.Get
+                ? Json(HttpStatusCode.NotFound, new { code = "app_secret_not_found" })
+                : new HttpResponseMessage(HttpStatusCode.NoContent);
+        }
+
+        private static HttpResponseMessage Json(HttpStatusCode status, object body)
+            => new(status) { Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json") };
+    }
+
     private sealed class StubFactory(HttpMessageHandler handler) : IHttpClientFactory
     {
         public HttpClient CreateClient(string name) => new(handler) { BaseAddress = new Uri("http://core.test") };
@@ -216,6 +244,45 @@ public sealed class HostySecretsClientTests
         var client = Client(new ThrowingHandler(new TaskCanceledException("cancelled")));
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.GetAsync("key", cancellationToken: cancellation.Token));
+    }
+
+    // The lock guards individual cache accesses, not whole operations, so a read that started
+    // before a write must not write its now-stale result back over the newer value.
+    [Fact]
+    public async Task AReadOverlappingAWrite_DoesNotOverwriteTheNewerCachedValue()
+    {
+        var readReachedCore = new TaskCompletionSource();
+        var releaseRead = new TaskCompletionSource();
+        var handler = new GateableHandler(readReachedCore, releaseRead, "stale-from-core");
+        var client = Client(handler);
+
+        var read = client.GetAsync("key");
+        await readReachedCore.Task;
+
+        // The write lands entirely while the read is parked inside its Core call.
+        await client.SetAsync("key", "fresh");
+
+        releaseRead.SetResult();
+        Assert.Equal("stale-from-core", await read);
+
+        // The later reader must see the write, not the value the overlapping read observed.
+        Assert.Equal("fresh", await client.GetAsync("key"));
+    }
+
+    [Fact]
+    public async Task A200WithoutAUsableValue_IsAnErrorRatherThanAMissingSecret()
+    {
+        var handler = new RecordingHandler((HttpStatusCode.OK, new { unexpected = "shape" }));
+
+        await Assert.ThrowsAsync<HostySecretsException>(() => Client(handler).GetAsync("key"));
+    }
+
+    [Fact]
+    public async Task A200WithoutAKeysArray_IsAnErrorRatherThanAnEmptyStore()
+    {
+        var handler = new RecordingHandler((HttpStatusCode.OK, new { unexpected = "shape" }));
+
+        await Assert.ThrowsAsync<HostySecretsException>(() => Client(handler).ListKeysAsync());
     }
 
     [Fact]

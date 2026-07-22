@@ -43,7 +43,8 @@ const tokens = await getAppSecret("trakt.connection.1.tokens", config);
 await setAppSecret("trakt.connection.1.tokens", refreshed, config);
 ```
 
-Reads are served from a write-through cache; pass `{ refresh: true }` to force a live read.
+Reads are served from a write-through cache, namespaced by Core origin and app id; pass
+`{ refresh: true }` to force a live read.
 
 The design contract lives in the Hosty repository:
 [`docs/ideas/hosty-app-sdk.md`](https://github.com/alex-de-haas/docker-host/blob/main/docs/ideas/hosty-app-sdk.md).

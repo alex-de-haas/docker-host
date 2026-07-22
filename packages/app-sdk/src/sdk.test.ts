@@ -490,6 +490,76 @@ describe("app secrets", () => {
     });
   });
 
+  it("namespaces cached values by app id, so one process cannot leak them across apps", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, { value: "app-a-secret" }))
+      .mockResolvedValueOnce(jsonResponse(200, { value: "app-b-secret" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    process.env.HOSTY_APP_ID = "com.example.app-a";
+    expect(await getAppSecret("oauth.token", config)).toBe("app-a-secret");
+
+    // Same process, same secret name, different identity: the cache must not answer for it.
+    process.env.HOSTY_APP_ID = "com.example.app-b";
+    expect(await getAppSecret("oauth.token", config)).toBe("app-b-secret");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    process.env.HOSTY_APP_ID = "com.example.app-a";
+    expect(await getAppSecret("oauth.token", config)).toBe("app-a-secret");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not let a read that overlaps a write overwrite the newer cached value", async () => {
+    let releaseRead: () => void = () => {};
+    const readReachedCore = new Promise<void>((resolve) => {
+      let firstGet = true;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (_url: string, init: RequestInit) => {
+          if (init.method === "GET" && firstGet) {
+            firstGet = false;
+            resolve();
+            await new Promise<void>((release) => {
+              releaseRead = release;
+            });
+            return jsonResponse(200, { value: "stale-from-core" });
+          }
+          return init.method === "GET"
+            ? jsonResponse(404, { code: "app_secret_not_found" })
+            : new Response(null, { status: 204 });
+        }),
+      );
+    });
+
+    const read = getAppSecret("key", config);
+    await readReachedCore;
+    await setAppSecret("key", "fresh", config);
+    releaseRead();
+
+    expect(await read).toBe("stale-from-core");
+    // The later reader must see the write, not what the overlapping read observed.
+    expect(await getAppSecret("key", config)).toBe("fresh");
+  });
+
+  it("treats a 200 without a usable value as a fault, not a missing secret", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(200, { unexpected: "shape" })));
+    await expect(getAppSecret("key", config)).rejects.toMatchObject({ code: "core_response_invalid" });
+  });
+
+  it("treats an unreadable 200 body as a fault rather than a reconnect-required state", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("<html>gateway</html>", { status: 200, headers: { "content-type": "text/html" } })),
+    );
+    await expect(getAppSecret("key", config)).rejects.toMatchObject({ code: "core_response_invalid" });
+  });
+
+  it("treats a listing without a keys array as a fault rather than an empty store", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(200, { unexpected: "shape" })));
+    await expect(listAppSecretKeys(config)).rejects.toMatchObject({ code: "core_response_invalid" });
+  });
+
   it("escapes the key in the request path", async () => {
     const fetchMock = vi.fn(async () => jsonResponse(200, { value: "v" }));
     vi.stubGlobal("fetch", fetchMock);
