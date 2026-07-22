@@ -2898,6 +2898,50 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task ResolveManifestCommitAsync_ResolvesRefsWithoutMaterializingACheckout()
+    {
+        // The update sweep builds a plan for every app, so the source probe must stay a lightweight
+        // remote lookup: cloning/fetching per app would populate disk with checkouts for apps that
+        // were never started and pay a full fetch on every routine update check. The pinned checkout
+        // is materialized at start instead (EnsurePinnedCommitAsync, which fetch-and-retries for a
+        // commit the clone has not seen yet).
+        var fixture = await LifecycleFixture.CreateAsync();
+        var repository = await CreateGitRepositoryAsync(fixture.Root);
+        var branchCommit = await RunGitAsync(repository, ["rev-parse", "HEAD"]);
+        // An *annotated* tag: the tag object has its own id, so a naive lookup pins the tag rather
+        // than the commit it points at.
+        _ = await RunGitAsync(repository, ["-c", "user.name=Hosty Test", "-c", "user.email=hosty@example.test", "tag", "-a", "v1", "-m", "Release 1"]);
+        var checkoutPath = Path.Combine(fixture.Paths.SourcesRoot, "com.example.notes");
+
+        var byBranch = await fixture.Sources.ResolveManifestCommitAsync(
+            new RuntimeAppSource("git", repository, "main", null, null));
+        var byTag = await fixture.Sources.ResolveManifestCommitAsync(
+            new RuntimeAppSource("git", repository, null, "v1", null));
+        var byCommit = await fixture.Sources.ResolveManifestCommitAsync(
+            new RuntimeAppSource("git", repository, null, null, branchCommit));
+
+        Assert.Equal(branchCommit, byBranch);
+        // Peeled to the commit, not the annotated tag object.
+        Assert.Equal(branchCommit, byTag);
+        Assert.Equal(branchCommit, byCommit);
+        Assert.False(Directory.Exists(checkoutPath));
+    }
+
+    [Fact]
+    public async Task ResolveManifestCommitAsync_ReportsARefMissingFromTheRepository()
+    {
+        // `git ls-remote` exits 0 with empty output for a ref that does not exist, so an unmatched
+        // lookup must be turned into an explicit failure rather than resolving to nothing.
+        var fixture = await LifecycleFixture.CreateAsync();
+        var repository = await CreateGitRepositoryAsync(fixture.Root);
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Sources.ResolveManifestCommitAsync(new RuntimeAppSource("git", repository, "no-such-branch", null, null)));
+
+        Assert.Equal("source_ref_not_found", error.Code);
+    }
+
+    [Fact]
     public async Task ApplyUpdateAsync_AdvancesTheSourcePinWhenTheBranchTipMoved()
     {
         // The "ghost version" defect: a reviewed update of a URL-installed source app saved the new

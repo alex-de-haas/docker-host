@@ -1661,7 +1661,7 @@ internal sealed class CoreLifecycleService(
         if (UpdateMovesSourcePin(app, selection))
         {
             sourcePinCommit = confirmed.ResolvedSourceCommit
-                ?? await sources.ResolveManifestCommitAsync(app, selection.Manifest.Source!, cancellationToken);
+                ?? await sources.ResolveManifestCommitAsync(selection.Manifest.Source!, cancellationToken);
         }
 
         var adapter = ResolveAdapter(currentSelection.RuntimeProfile.Type);
@@ -3932,10 +3932,11 @@ internal sealed class CoreLifecycleService(
             && !IsRelativeSourceRepository(selection.Manifest.Source.Repository);
 
     // Source-artifact counterpart of ProbeServiceArtifactsAsync: resolves the commit the target
-    // manifest's source ref points at now (fetching the managed checkout) and compares it to the
-    // recorded pin, yielding a `source:{current}->{candidate}` change entry when they differ. An
-    // unreachable repository degrades to `source:{current}->unknown` (surfaced only when a pin
-    // exists) instead of failing the plan, matching the artifact probe's semantics (A4).
+    // manifest's source ref points at now (one `git ls-remote`, nothing materialized on disk — this
+    // runs for every eligible app on every sweep) and compares it to the recorded pin, yielding a
+    // `source:{current}->{candidate}` change entry when they differ. An unreachable repository
+    // degrades to `source:{current}->unknown` (surfaced only when a pin exists) instead of failing
+    // the plan, matching the artifact probe's semantics (A4).
     private async Task<(string? ResolvedCommit, string? Change)> ProbeSourceCommitAsync(
         AppRecord app,
         RuntimeAppManifestSelection selection,
@@ -3950,7 +3951,7 @@ internal sealed class CoreLifecycleService(
         string candidate;
         try
         {
-            candidate = await sources.ResolveManifestCommitAsync(app, selection.Manifest.Source!, cancellationToken);
+            candidate = await sources.ResolveManifestCommitAsync(selection.Manifest.Source!, cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
