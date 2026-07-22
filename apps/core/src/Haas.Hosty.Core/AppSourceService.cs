@@ -110,6 +110,80 @@ internal sealed class AppSourceService(CoreDataPaths paths, AppRegistryStore app
         return new AppSourceResponse(appId, document.App.SourceState);
     }
 
+    // Resolves the commit the manifest-declared source ref points at right now (digest pinning phase
+    // 2b), using a single `git ls-remote` round trip — an explicit commit pin costs no round trip at
+    // all. Deliberately materializes nothing: it neither clones nor fetches the managed checkout, and
+    // does not touch the app record. The update sweep builds a plan for every app, so a routine update
+    // check must not populate disk with clones for apps that were never started, nor pay a full fetch
+    // per app. The update plan caches the result so the operator reviews the exact current→new commit
+    // pair, and apply persists it inside its own record write — the pin only ever moves as part of a
+    // reviewed update. The checkout catches up at the next start: EnsurePinnedCommitAsync fetches and
+    // retries when the pinned commit is not present locally yet.
+    public async Task<string> ResolveManifestCommitAsync(RuntimeAppSource source, CancellationToken cancellationToken = default)
+    {
+        if (source.Repository is null)
+        {
+            throw new AppLifecycleException("source_not_configured", "Source repository is required to resolve a source commit.");
+        }
+
+        ValidateManagedRepository(source.Repository);
+        var repository = source.Repository.Trim();
+        if (!string.IsNullOrWhiteSpace(source.Commit))
+        {
+            var commit = source.Commit.Trim();
+            return CommitPattern.IsMatch(commit)
+                ? commit
+                : throw new AppLifecycleException("source_commit_invalid", "Source commit must be a 4-64 character hexadecimal object id.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(source.Tag))
+        {
+            return await ResolveRemoteRefAsync(repository, $"refs/tags/{source.Tag.Trim()}", cancellationToken);
+        }
+
+        return string.IsNullOrWhiteSpace(source.Branch)
+            ? await ResolveRemoteRefAsync(repository, "HEAD", cancellationToken)
+            : await ResolveRemoteRefAsync(repository, $"refs/heads/{source.Branch.Trim()}", cancellationToken);
+    }
+
+    // One `git ls-remote` lookup of a single fully-qualified ref. The peeled form is requested
+    // alongside it because an annotated tag lists the *tag object* under its own name and the commit
+    // it points at under `{ref}^{}` — the peeled line is the one to pin, so it wins. Both patterns are
+    // passed literally rather than as a glob, which would over-match siblings (`v1*` also matching
+    // `v1.1`); for a branch or HEAD the peeled pattern simply matches nothing. A ref that does not
+    // exist upstream is NOT a git failure — ls-remote exits 0 with empty output — so an unmatched
+    // lookup is turned into an explicit error here rather than silently resolving to nothing.
+    private static async Task<string> ResolveRemoteRefAsync(string repository, string reference, CancellationToken cancellationToken)
+    {
+        var peeled = $"{reference}^{{}}";
+        var output = await RunGitProcessAsync(null, ["ls-remote", "--", repository, reference, peeled], cancellationToken);
+        string? exact = null;
+        foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var separator = line.IndexOf('\t', StringComparison.Ordinal);
+            if (separator <= 0)
+            {
+                continue;
+            }
+
+            var commit = line[..separator];
+            var listed = line[(separator + 1)..].Trim();
+            if (string.Equals(listed, peeled, StringComparison.Ordinal))
+            {
+                return commit;
+            }
+
+            if (exact is null && string.Equals(listed, reference, StringComparison.Ordinal))
+            {
+                exact = commit;
+            }
+        }
+
+        return exact ?? throw new AppLifecycleException(
+            "source_ref_not_found",
+            $"Source ref '{reference}' was not found in the source repository.");
+    }
+
     // Runs a git-backed operation against the managed checkout, fetching once and retrying if it fails
     // because the required object/ref isn't present locally yet. A genuine failure (e.g. the ref does not
     // exist upstream) surfaces on the retry. Cancellation propagates (never caught here).
@@ -359,19 +433,41 @@ internal sealed class AppSourceService(CoreDataPaths paths, AppRegistryStore app
 
         if (!string.IsNullOrWhiteSpace(request.Branch))
         {
+            // Prefer the remote-tracking ref: the managed checkout's local branch is a clone-time
+            // artifact that `git fetch` never advances, so resolving `refs/heads/{branch}` first
+            // returns the clone-time tip forever no matter how often the checkout is fetched. The
+            // local branch stays as the fallback for checkouts without an origin remote (or a branch
+            // that only exists locally).
             try
             {
-                return await RunGitAsync(checkoutPath, ["rev-parse", $"refs/heads/{request.Branch}^{{commit}}"], cancellationToken);
+                return await RunGitAsync(checkoutPath, ["rev-parse", $"refs/remotes/origin/{request.Branch}^{{commit}}"], cancellationToken);
             }
             catch (AppLifecycleException)
             {
-                return await RunGitAsync(checkoutPath, ["rev-parse", $"refs/remotes/origin/{request.Branch}^{{commit}}"], cancellationToken);
+                return await RunGitAsync(checkoutPath, ["rev-parse", $"refs/heads/{request.Branch}^{{commit}}"], cancellationToken);
             }
         }
 
         if (fallbackRef.StartsWith('-'))
         {
             throw new AppLifecycleException("source_ref_invalid", "Source ref must not start with '-'.");
+        }
+
+        // The recorded ref may be a plain branch name (the manifest declared a branch), which has the
+        // same stale-local-branch problem as the explicit branch case above — and it resolves
+        // "successfully", so a caller's fetch-and-retry never fires. Prefer the remote-tracking
+        // counterpart; a tag or commit id has none and falls through to the plain resolution. HEAD is
+        // deliberately excluded: a pin re-resolve must return the stable checked-out commit, not chase
+        // origin's default branch.
+        if (!string.Equals(fallbackRef, "HEAD", StringComparison.Ordinal))
+        {
+            try
+            {
+                return await RunGitAsync(checkoutPath, ["rev-parse", $"refs/remotes/origin/{fallbackRef}^{{commit}}"], cancellationToken);
+            }
+            catch (AppLifecycleException)
+            {
+            }
         }
 
         return await RunGitAsync(checkoutPath, ["rev-parse", $"{fallbackRef}^{{commit}}"], cancellationToken);

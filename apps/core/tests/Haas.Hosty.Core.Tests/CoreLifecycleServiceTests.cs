@@ -2842,6 +2842,153 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task ResolveManagedAsync_BranchFetchResolvesTheMovedOriginTip_NotTheStaleLocalBranch()
+    {
+        // `git fetch` advances refs/remotes/origin/* but never the clone-time local branch, so a
+        // branch resolve that preferred refs/heads/{branch} returned the clone-time tip forever — a
+        // reviewed source-resolve with fetch could never advance a branch-pinned app.
+        var fixture = await LifecycleFixture.CreateAsync();
+        var repository = await CreateGitRepositoryAsync(fixture.Root);
+        var commit1 = await RunGitAsync(repository, ["rev-parse", "HEAD"]);
+        var manifest = await fixture.WriteManifestAsync("1.0.0", sourceRepository: repository);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        var first = await fixture.Sources.ResolveManagedAsync("com.example.notes", new AppSourceResolveRequest(Branch: "main"));
+        Assert.Equal(commit1, first.Source?.Commit);
+
+        // Upstream advances after the clone.
+        await File.WriteAllTextAsync(Path.Combine(repository, "advance.txt"), "v2");
+        _ = await RunGitAsync(repository, ["add", "advance.txt"]);
+        _ = await RunGitAsync(repository, ["-c", "user.name=Hosty Test", "-c", "user.email=hosty@example.test", "commit", "-m", "Advance"]);
+        var commit2 = await RunGitAsync(repository, ["rev-parse", "HEAD"]);
+
+        var resolved = await fixture.Sources.ResolveManagedAsync(
+            "com.example.notes",
+            new AppSourceResolveRequest(Branch: "main", Fetch: true));
+
+        Assert.Equal(commit2, resolved.Source?.Commit);
+    }
+
+    [Fact]
+    public async Task EnsurePinnedCommit_ReResolvesABranchRefFromOrigin_NotTheStaleLocalBranch()
+    {
+        // The re-resolve path (no recorded commit) resolves the recorded ref against the checkout,
+        // and a stale local branch resolves "successfully" — the fetch-retry only fires on failure —
+        // so the pin stuck at the clone-time tip even after the checkout had fetched the moved branch.
+        var fixture = await LifecycleFixture.CreateAsync();
+        var repository = await CreateLocalCommandGitRepositoryAsync(fixture.Root);
+        var manifest = await fixture.WriteManifestAsync("1.0.0", sourceRepository: repository);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        var first = await fixture.Sources.EnsurePinnedCommitAsync("com.example.notes");
+        var checkout = Assert.IsType<string>(first.Source?.ManagedCheckoutPath);
+
+        // The branch moves upstream and the checkout has fetched it (a reviewed operation fetches),
+        // but the recorded pin is unset (e.g. the manifest ref changed and BuildSourceState reset it).
+        await File.WriteAllTextAsync(Path.Combine(repository, "advance.txt"), "v2");
+        _ = await RunGitAsync(repository, ["add", "advance.txt"]);
+        _ = await RunGitAsync(repository, ["-c", "user.name=Hosty Test", "-c", "user.email=hosty@example.test", "commit", "-m", "Advance"]);
+        var commit2 = await RunGitAsync(repository, ["rev-parse", "HEAD"]);
+        _ = await RunGitAsync(checkout, ["fetch", "--all", "--tags", "--prune"]);
+        var record = await fixture.Apps.GetAppAsync("com.example.notes");
+        await fixture.Apps.UpsertAppAsync(record! with { SourceState = record.SourceState! with { Commit = null } });
+
+        var repinned = await fixture.Sources.EnsurePinnedCommitAsync("com.example.notes");
+
+        Assert.Equal(commit2, repinned.Source?.Commit);
+        Assert.Equal(commit2, await RunGitAsync(checkout, ["rev-parse", "HEAD"]));
+    }
+
+    [Fact]
+    public async Task ResolveManifestCommitAsync_ResolvesRefsWithoutMaterializingACheckout()
+    {
+        // The update sweep builds a plan for every app, so the source probe must stay a lightweight
+        // remote lookup: cloning/fetching per app would populate disk with checkouts for apps that
+        // were never started and pay a full fetch on every routine update check. The pinned checkout
+        // is materialized at start instead (EnsurePinnedCommitAsync, which fetch-and-retries for a
+        // commit the clone has not seen yet).
+        var fixture = await LifecycleFixture.CreateAsync();
+        var repository = await CreateGitRepositoryAsync(fixture.Root);
+        var branchCommit = await RunGitAsync(repository, ["rev-parse", "HEAD"]);
+        // An *annotated* tag: the tag object has its own id, so a naive lookup pins the tag rather
+        // than the commit it points at.
+        _ = await RunGitAsync(repository, ["-c", "user.name=Hosty Test", "-c", "user.email=hosty@example.test", "tag", "-a", "v1", "-m", "Release 1"]);
+        var checkoutPath = Path.Combine(fixture.Paths.SourcesRoot, "com.example.notes");
+
+        var byBranch = await fixture.Sources.ResolveManifestCommitAsync(
+            new RuntimeAppSource("git", repository, "main", null, null));
+        var byTag = await fixture.Sources.ResolveManifestCommitAsync(
+            new RuntimeAppSource("git", repository, null, "v1", null));
+        var byCommit = await fixture.Sources.ResolveManifestCommitAsync(
+            new RuntimeAppSource("git", repository, null, null, branchCommit));
+
+        Assert.Equal(branchCommit, byBranch);
+        // Peeled to the commit, not the annotated tag object.
+        Assert.Equal(branchCommit, byTag);
+        Assert.Equal(branchCommit, byCommit);
+        Assert.False(Directory.Exists(checkoutPath));
+    }
+
+    [Fact]
+    public async Task ResolveManifestCommitAsync_ReportsARefMissingFromTheRepository()
+    {
+        // `git ls-remote` exits 0 with empty output for a ref that does not exist, so an unmatched
+        // lookup must be turned into an explicit failure rather than resolving to nothing.
+        var fixture = await LifecycleFixture.CreateAsync();
+        var repository = await CreateGitRepositoryAsync(fixture.Root);
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Sources.ResolveManifestCommitAsync(new RuntimeAppSource("git", repository, "no-such-branch", null, null)));
+
+        Assert.Equal("source_ref_not_found", error.Code);
+    }
+
+    [Fact]
+    public async Task ApplyUpdateAsync_AdvancesTheSourcePinWhenTheBranchTipMoved()
+    {
+        // The "ghost version" defect: a reviewed update of a URL-installed source app saved the new
+        // manifest but left SourceState.Commit at the old pin (BuildSourceState keeps it while the
+        // manifest ref stays "main"), so the next start force-checked-out the old commit — the app
+        // showed the new version while running the old code. The reviewed update must surface the
+        // commit movement in the plan and move the pin to exactly the reviewed commit on apply.
+        const string manifestUrl = "https://apps.example.test/remote-local/manifest.json";
+        string? repository = null;
+        var manifestVersion = "1.0.0";
+        var manifests = new AppManifestService(new HttpClient(new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(CreateRemoteLocalCommandManifestJson(repository!, manifestVersion), Encoding.UTF8, "application/json"),
+        })));
+        var fixture = await LifecycleFixture.CreateAsync(manifests);
+        repository = await CreateLocalCommandGitRepositoryAsync(fixture.Root);
+        var commit1 = await RunGitAsync(repository, ["rev-parse", "HEAD"]);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestUrl, SelectedRuntime: "dev"));
+
+        // First start-equivalent: pin the reviewed commit into the managed checkout.
+        var pinned = await fixture.Sources.EnsurePinnedCommitAsync("com.example.remote-local");
+        var checkout = Assert.IsType<string>(pinned.Source?.ManagedCheckoutPath);
+        Assert.Equal(commit1, pinned.Source?.Commit);
+
+        // Upstream releases: the branch tip moves and the published manifest bumps its version.
+        await File.WriteAllTextAsync(Path.Combine(repository, "advance.txt"), "v2");
+        _ = await RunGitAsync(repository, ["add", "advance.txt"]);
+        _ = await RunGitAsync(repository, ["-c", "user.name=Hosty Test", "-c", "user.email=hosty@example.test", "commit", "-m", "Advance"]);
+        var commit2 = await RunGitAsync(repository, ["rev-parse", "HEAD"]);
+        manifestVersion = "1.1.0";
+
+        // The plan surfaces the current→new commit pair for review, like image digests for docker apps.
+        var plan = await fixture.Service.CreateUpdatePlanAsync("com.example.remote-local", new AppUpdatePlanRequest());
+        Assert.Contains($"source:{commit1}->{commit2}", plan.Changes);
+
+        var result = await fixture.Service.ApplyUpdateAsync("com.example.remote-local", new AppUpdateApplyRequest(plan.PlanDigest));
+        var app = await fixture.Apps.GetAppAsync("com.example.remote-local");
+        Assert.Equal("1.1.0", result.App?.Version);
+        Assert.Equal(commit2, app?.SourceState?.Commit);
+
+        // The next start pins the checkout to the advanced commit — the running code moves with the
+        // update instead of staying at the old tip.
+        _ = await fixture.Sources.EnsurePinnedCommitAsync("com.example.remote-local");
+        Assert.Equal(commit2, await RunGitAsync(checkout, ["rev-parse", "HEAD"]));
+    }
+
+    [Fact]
     public async Task InstallAsync_DerivesManifestSubpathFromRawManifestUrl()
     {
         const string manifestUrl = "https://raw.githubusercontent.com/acme/monorepo/main/apps/web/manifest.json";
@@ -4464,13 +4611,13 @@ public sealed class CoreLifecycleServiceTests
             }
             """;
 
-    private static string CreateRemoteLocalCommandManifestJson(string sourceRepository)
+    private static string CreateRemoteLocalCommandManifestJson(string sourceRepository, string version = "1.0.0")
         => $$"""
             {
               "schemaVersion": "app.0.1",
               "id": "com.example.remote-local",
               "name": "Remote Local App",
-              "version": "1.0.0",
+              "version": "{{version}}",
               "source": {
                 "type": "git",
                 "repository": "{{JsonEscape(sourceRepository)}}",
