@@ -1,6 +1,6 @@
 # App Secrets Store
 
-Status: Ready
+Status: Implemented (Core 0.60.0; `HostySdk.App` 0.2.0, `@hosty-sdk/app` 0.3.0)
 Created: 2026-07-22
 Updated: 2026-07-22
 
@@ -174,32 +174,32 @@ bodies; log statements reference key names at most.
 
 ## Acceptance Criteria
 
-- [ ] An app can list/get/put/delete its own secrets with its service token;
+- [x] An app can list/get/put/delete its own secrets with its service token;
   another app's token yields 401; an unknown app yields 404.
-- [ ] `secrets.json` is created beside `state.json` with mode 0600 via the
+- [x] `secrets.json` is created beside `state.json` with mode 0600 via the
   atomic write path, and never appears in a backup archive.
-- [ ] Bounds enforced: malformed key, empty or oversize value, and the 257th
+- [x] Bounds enforced: malformed key, empty or oversize value, and the 257th
   key are rejected with 400 and no partial write.
-- [ ] A restored backup leaves stored secrets untouched.
-- [ ] Keep-data removal retains `secrets.json` and a reinstall can read it;
+- [x] A restored backup leaves stored secrets untouched.
+- [x] Keep-data removal retains `secrets.json` and a reinstall can read it;
   delete-data removal deletes it; hard subtree deletion covers it.
-- [ ] A secret write racing app removal cannot leave or recreate `secrets.json`
+- [x] A secret write racing app removal cannot leave or recreate `secrets.json`
   after delete-data removal completes: mutations re-check both fences under the
   shared per-app lock, removal deletes the store under that same lock, and
   straddling writes return 404 — covered by interleaving tests for the ordinary
   removal, the `--delete-data --keep-state` variant, and the hard
   subtree-delete path.
-- [ ] A malformed `secrets.json` fails loud; a missing one reads as empty.
-- [ ] Concurrent writes to one app's store are serialized; a Core kill mid-write
+- [x] A malformed `secrets.json` fails loud; a missing one reads as empty.
+- [x] Concurrent writes to one app's store are serialized; a Core kill mid-write
   never leaves a torn file (temp + rename).
-- [ ] Secret values appear in no log output, no Shell/admin API response, and
+- [x] Secret values appear in no log output, no Shell/admin API response, and
   no error body; the list endpoint returns names only.
-- [ ] `EndpointAuthorizationTests` sees the new endpoint file and passes
+- [x] `EndpointAuthorizationTests` sees the new endpoint file and passes
   (service-token endpoints are CSRF-exempt by design).
 - [x] SDK clients in both packages cover all four operations; the .NET client's
   write-through cache serves reads when Core is briefly unavailable and stays
   consistent through its own writes.
-- [ ] `docs/features/` documentation describes only implemented behavior;
+- [x] `docs/features/` documentation describes only implemented behavior;
   `core-api.md` lists the endpoints; the `hosty-app-sdk.md` second-wave
   inventory includes the clients.
 
@@ -228,12 +228,12 @@ bodies; log statements reference key names at most.
   `./server` entry point, plus tests.
 - [x] SDK package minor bumps and changelogs per the
   [repository release model](../features/repository-release-model.md).
-- [ ] `docs/features/app-secrets-store.md` describing implemented behavior;
+- [x] `docs/features/app-secrets-store.md` describing implemented behavior;
   `docs/root.md` index updated (ideas entry annotated, features entry added,
   this plan marked Implemented); `core-api.md` and `hosty-app-sdk.md` updated.
-- [ ] Notify the first consumer: media-server platform request #15 flips to
+- [x] Notify the first consumer: media-server platform request #15 flips to
   Implemented; its Trakt plan drops the fallback encryption-key design.
-- [ ] One platform **minor** version bump in `Directory.Build.props`
+- [x] One platform **minor** version bump in `Directory.Build.props`
   (`0.59.0` → `0.60.0`, unless the tree has moved by then) in the same change
   that ships the work, per `AGENTS.md`.
 
@@ -310,11 +310,11 @@ with the feature. Ratified 2026-07-22.
 
 ### Phase 3: Documentation and Release
 
-- [ ] Feature doc, `docs/root.md` index updates, `core-api.md`,
+- [x] Feature doc, `docs/root.md` index updates, `core-api.md`,
   `hosty-app-sdk.md` second-wave inventory.
-- [ ] media-server request #15 status flip and Trakt-plan fallback removal
+- [x] media-server request #15 status flip and Trakt-plan fallback removal
   (separate repo).
-- [ ] Platform minor version bump in the shipping change.
+- [x] Platform minor version bump in the shipping change.
 
 ## Verification
 
@@ -349,7 +349,20 @@ Manual, against a dev install (`.hosty-dev`):
 
 ## Notes
 
-The plan follows the completion rule used by the other planning documents: on
-ship, the behavior moves to `docs/features/app-secrets-store.md`, this document
-is marked Implemented in the index, and the version bump lands in the same
-change as the feature.
+Shipped in three parts: the Core store and API (#266, platform 0.60.0), the SDK
+clients (#267, `HostySdk.App` 0.2.0 and `@hosty-sdk/app` 0.3.0), and this
+documentation pass. Implemented behavior lives in
+[features/app-secrets-store.md](../features/app-secrets-store.md); the design
+record with its ten ratified decisions stays in
+[ideas/app-secrets-store.md](../ideas/app-secrets-store.md).
+
+Two defects surfaced in review rather than in testing, and both are worth
+remembering. The removal fence originally keyed on `state.json` existence alone,
+which `--delete-data --keep-state` defeats; it needed the per-app data-removal
+generation. The SDK caches originally keyed on the bare secret name and let a
+straddling read overwrite a newer write; both were fixed before merge.
+
+The live verification pass (2026-07-22) found one thing the automated tests
+could not: secret **key names** appear in Core's Development request log via the
+URL path. Names are listable by design, so nothing leaks, but it is recorded in
+the feature document so apps do not encode sensitive data in a key name.
