@@ -1,6 +1,6 @@
 # App Secrets Store
 
-Status: Implemented (Core store + API in Core 0.60.0; SDK clients in `HostySdk.App` 0.2.0 and `@hosty-sdk/app` 0.3.0). Verified against a live Core 2026-07-22.
+Status: Implemented (Core store + API in Core 0.60.0; SDK clients in `HostySdk.App` 0.3.0 and `@hosty-sdk/app` 0.4.0). Verified against a live Core 2026-07-22.
 
 ## Description
 
@@ -51,9 +51,12 @@ DELETE .../secrets/{key}      → 204                          // idempotent
 - The bearer token must resolve to the route's `{appId}`, else `401`. Cross-app rejection is
   structural: the app id is HMAC-signed into the token, so a token minted for another app
   cannot validate here.
-- `404` on a per-key `GET` means **no secret is stored** — an expected state (the app has never
-  connected, or was restored onto a new host), which callers treat as "reconnect required". On a
-  mutation the same status means Core does not know the app.
+- `404` carries two distinct meanings, separated by the error code in the body. On a per-key
+  `GET`, `app_secret_not_found` means **no secret is stored** — an expected state (the app has
+  never connected, or was restored onto a new host), which callers treat as "reconnect required".
+  `app_not_found` on any route means Core does not know the routed app, e.g. it has been removed;
+  that is a fault, not an answer, and both SDK clients raise rather than reporting an absent
+  secret.
 - `400` for a malformed key, an empty or oversize value, or exceeding the per-app key count.
   Values are rejected, never truncated.
 - Listing returns key names only. Values are never returned by any Shell or admin API.
@@ -142,9 +145,14 @@ and a failed write is never cached as if it had landed. The TypeScript cache is 
 Core origin and effective app id, since one Node process can legitimately serve more than one
 identity; the .NET client is bound to a single `HostyAppOptions` and needs no equivalent.
 
-An unusable `2xx` — an unreadable body, no `value`, no `keys` array — raises
-`core_response_invalid` in both clients rather than degrading to "no secret", so a broken Core or
-proxy cannot masquerade as a reconnect-required state.
+Errors are classified rather than stringly-typed in both clients: the TypeScript
+`HostySecretsError` and the .NET `HostySecretsException` each carry Core's HTTP `status` and a
+machine-readable `code`, either passed through from Core's error body (`app_not_found`,
+`app_secret_value_invalid`, …) or raised locally (`core_response_invalid`,
+`core_secrets_unavailable`, `core_secrets_timeout`, `app_service_token_missing`,
+`app_secrets_request_failed` — `HostySecretsErrorCodes` in .NET). An unusable `2xx` — unreadable
+body, no `value`, no `keys` array — raises `core_response_invalid` rather than degrading to "no
+secret", so a broken Core or proxy cannot masquerade as a reconnect-required state.
 
 ## Security Posture
 

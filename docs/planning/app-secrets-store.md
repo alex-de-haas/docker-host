@@ -1,6 +1,6 @@
 # App Secrets Store
 
-Status: Implemented (Core 0.60.0; `HostySdk.App` 0.2.0, `@hosty-sdk/app` 0.3.0)
+Status: Implemented (Core 0.60.0; `HostySdk.App` 0.3.0, `@hosty-sdk/app` 0.4.0)
 Created: 2026-07-22
 Updated: 2026-07-22
 
@@ -350,7 +350,7 @@ Manual, against a dev install (`.hosty-dev`):
 ## Notes
 
 Shipped in three parts: the Core store and API (#266, platform 0.60.0), the SDK
-clients (#267, `HostySdk.App` 0.2.0 and `@hosty-sdk/app` 0.3.0), and this
+clients (#267, later refined to `HostySdk.App` 0.3.0 and `@hosty-sdk/app` 0.4.0), and this
 documentation pass. Implemented behavior lives in
 [features/app-secrets-store.md](../features/app-secrets-store.md); the design
 record with its ten ratified decisions stays in
@@ -366,3 +366,10 @@ The live verification pass (2026-07-22) found one thing the automated tests
 could not: secret **key names** appear in Core's Development request log via the
 URL path. Names are listable by design, so nothing leaks, but it is recorded in
 the feature document so apps do not encode sensitive data in a key name.
+
+Documentation review then caught two SDK gaps the code had to close rather than
+the prose soften: the .NET exception carried no machine-readable code, so the
+cross-SDK error contract the feature document described was unimplementable in
+.NET; and both clients collapsed every per-key `GET` 404, reporting a removed
+app (`app_not_found`) as a routine missing secret. Fixed in `HostySdk.App` 0.3.0
+and `@hosty-sdk/app` 0.4.0.

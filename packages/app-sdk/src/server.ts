@@ -681,13 +681,20 @@ async function secretsFetch(
     return response;
   }
 
-  // Core 404s a per-key GET when no secret is stored; on a mutation the same status means the app
-  // itself is unknown, which is a real failure.
-  if (method === "GET" && key !== null && response.status === 404) {
+  const payload = (await readJson(response)) as Record<string, unknown> | null;
+
+  // Core answers 404 on a per-key GET in two distinct cases, and only one is an answer: no secret
+  // stored under the key (`app_secret_not_found`) versus the routed app being unknown or removed
+  // (`app_not_found`). Collapsing them would report a removed app as a routine reconnect.
+  if (
+    method === "GET" &&
+    key !== null &&
+    response.status === 404 &&
+    readErrorField(payload, "code") !== "app_not_found"
+  ) {
     return null;
   }
 
-  const payload = (await readJson(response)) as Record<string, unknown> | null;
   throw new HostySecretsError(
     readErrorField(payload, "message") ?? `Core returned HTTP ${response.status} for an app secrets request.`,
     response.status,
