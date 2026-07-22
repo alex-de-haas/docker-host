@@ -1133,7 +1133,7 @@ public sealed class CoreLifecycleServiceTests
         var overridden = (await fixture.Service.ListAppsAsync()).Single(summary => summary.Id == "com.example.src");
         Assert.True(overridden.SupportsSource);
         Assert.Equal(Path.GetFullPath(overrideFolder), overridden.SourceOverridePath);
-        Assert.Equal(Path.Combine(fixture.Paths.SourcesRoot, "com.example.src"), overridden.SourceManagedPath);
+        Assert.Equal(Path.Combine(fixture.Paths.AppsRoot, "com.example.src", "source"), overridden.SourceManagedPath);
         // Still on the docker runtime, so it is not running live and no live source path is surfaced.
         Assert.Null(overridden.SourceLivePath);
 
@@ -2606,9 +2606,14 @@ public sealed class CoreLifecycleServiceTests
         await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
         var dataPath = Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "data", "notes.db");
         await File.WriteAllTextAsync(dataPath, "local-data");
-        var sourcePath = Path.Combine(fixture.Paths.SourcesRoot, "com.example.notes");
+        // Both checkout locations: the current default inside the app root and the legacy
+        // top-level sources tree a pre-move install may still occupy.
+        var sourcePath = Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "source");
         Directory.CreateDirectory(sourcePath);
         await File.WriteAllTextAsync(Path.Combine(sourcePath, "README.md"), "source");
+        var legacySourcePath = Path.Combine(fixture.Paths.SourcesRoot, "com.example.notes");
+        Directory.CreateDirectory(legacySourcePath);
+        await File.WriteAllTextAsync(Path.Combine(legacySourcePath, "README.md"), "legacy-source");
         _ = await fixture.Backups.CreateBackupAsync("com.example.notes", "manual");
 
         await fixture.Service.RemoveAsync("com.example.notes", new AppRemoveRequest(
@@ -2621,6 +2626,7 @@ public sealed class CoreLifecycleServiceTests
         Assert.True(File.Exists(dataPath));
         Assert.True((await fixture.Backups.ListBackupsAsync("com.example.notes")).Count > 0);
         Assert.False(Directory.Exists(sourcePath));
+        Assert.False(Directory.Exists(legacySourcePath));
     }
 
     [Fact]
@@ -2726,7 +2732,7 @@ public sealed class CoreLifecycleServiceTests
 
         Assert.Equal(expectedCommit, response.Source?.Commit);
         Assert.Equal("main", response.Source?.ResolvedRef);
-        Assert.True(Directory.Exists(Path.Combine(fixture.Paths.SourcesRoot, "com.example.notes", ".git")));
+        Assert.True(Directory.Exists(Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "source", ".git")));
     }
 
     [Fact]
@@ -3196,7 +3202,7 @@ public sealed class CoreLifecycleServiceTests
         {
             var start = await fixture.Service.StartAsync("com.example.remote-local");
             var app = await fixture.Apps.GetAppAsync("com.example.remote-local");
-            var managedCheckoutPath = Path.Combine(fixture.Paths.SourcesRoot, "com.example.remote-local");
+            var managedCheckoutPath = Path.Combine(fixture.Paths.AppsRoot, "com.example.remote-local", "source");
             var cwdPath = Path.Combine(fixture.Paths.AppsRoot, "com.example.remote-local", "data", "cwd.txt");
 
             Assert.Equal("running", start.App?.RuntimeState);
@@ -3207,7 +3213,7 @@ public sealed class CoreLifecycleServiceTests
             Assert.True(File.Exists(cwdPath));
             var serviceWorkingDirectory = (await File.ReadAllTextAsync(cwdPath)).Trim();
             Assert.EndsWith(
-                $"{Path.DirectorySeparatorChar}sources{Path.DirectorySeparatorChar}com.example.remote-local{Path.DirectorySeparatorChar}apps{Path.DirectorySeparatorChar}remote-app",
+                $"{Path.DirectorySeparatorChar}com.example.remote-local{Path.DirectorySeparatorChar}source{Path.DirectorySeparatorChar}apps{Path.DirectorySeparatorChar}remote-app",
                 serviceWorkingDirectory,
                 StringComparison.Ordinal);
         }
@@ -3252,31 +3258,6 @@ public sealed class CoreLifecycleServiceTests
         var app = await fixture.Apps.GetAppAsync("com.example.remote-local");
         Assert.Equal("dev", app?.SelectedRuntime);
         Assert.Equal(manifestUrl, app?.ManifestUrl);
-    }
-
-    [Fact]
-    public async Task ApplyCleanupAsync_RemovesOnlyAbandonedManagedSourceCheckouts()
-    {
-        var fixture = await LifecycleFixture.CreateAsync();
-        var repository = await CreateGitRepositoryAsync(fixture.Root);
-        var manifest = await fixture.WriteManifestAsync("1.0.0", sourceRepository: repository);
-        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
-        _ = await fixture.Sources.ResolveManagedAsync("com.example.notes", new AppSourceResolveRequest(Branch: "main"));
-        var managedPath = Path.Combine(fixture.Paths.SourcesRoot, "com.example.notes");
-        var orphanPath = Path.Combine(fixture.Paths.SourcesRoot, "com.example.orphan");
-        Directory.CreateDirectory(orphanPath);
-        await File.WriteAllTextAsync(Path.Combine(orphanPath, "README.md"), "orphan");
-
-        var plan = await fixture.Sources.CreateCleanupPlanAsync();
-        var result = await fixture.Sources.ApplyCleanupAsync();
-
-        var candidate = Assert.Single(plan.Candidates);
-        Assert.Equal("com.example.orphan", candidate.AppId);
-        Assert.Equal("app-not-installed", candidate.Reason);
-        var deleted = Assert.Single(result.Deleted);
-        Assert.Equal(orphanPath, deleted.Path);
-        Assert.True(Directory.Exists(managedPath));
-        Assert.False(Directory.Exists(orphanPath));
     }
 
     [Fact]

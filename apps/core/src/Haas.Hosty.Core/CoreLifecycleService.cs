@@ -1864,6 +1864,9 @@ internal sealed class CoreLifecycleService(
 
         if (request.DeleteSource)
         {
+            // Both locations: the current default inside the app root, and the legacy top-level
+            // sources tree that pre-move installs still use (their records were never migrated).
+            TryDeleteDirectory(paths.ResolveManagedCheckoutPath(appId));
             TryDeleteDirectory(CoreDataPaths.ResolveContainedPath(paths.SourcesRoot, appId));
         }
 
@@ -2594,7 +2597,7 @@ internal sealed class CoreLifecycleService(
                     Repository: null,
                     ResolvedRef: null,
                     Commit: null,
-                    ManagedCheckoutPath: Path.Combine(paths.SourcesRoot, selection.Manifest.Id!),
+                    ManagedCheckoutPath: paths.ResolveManagedCheckoutPath(selection.Manifest.Id!),
                     LocalOverridePath: localOverridePath,
                     UpdatedAt: null,
                     ManifestSubpath: ResolveInstallManifestSubpath(selection, localOverridePath)));
@@ -2612,7 +2615,7 @@ internal sealed class CoreLifecycleService(
                 Repository = source.Repository,
                 ResolvedRef = resolvedRef ?? existing.SourceState.ResolvedRef,
                 Commit = source.Commit ?? (resolvedRefChanged ? null : existing.SourceState.Commit),
-                ManagedCheckoutPath = existing.SourceState.ManagedCheckoutPath ?? Path.Combine(paths.SourcesRoot, selection.Manifest.Id!),
+                ManagedCheckoutPath = existing.SourceState.ManagedCheckoutPath ?? paths.ResolveManagedCheckoutPath(selection.Manifest.Id!),
                 LocalOverridePath = existing.SourceState.LocalOverridePath ?? localOverridePath,
                 ManifestSubpath = manifestSubpath ?? existing.SourceState.ManifestSubpath,
             };
@@ -2623,7 +2626,7 @@ internal sealed class CoreLifecycleService(
             Repository: source.Repository,
             ResolvedRef: resolvedRef,
             Commit: source.Commit,
-            ManagedCheckoutPath: Path.Combine(paths.SourcesRoot, selection.Manifest.Id!),
+            ManagedCheckoutPath: paths.ResolveManagedCheckoutPath(selection.Manifest.Id!),
             LocalOverridePath: localOverridePath,
             UpdatedAt: null,
             ManifestSubpath: manifestSubpath);
@@ -3072,7 +3075,7 @@ internal sealed class CoreLifecycleService(
         // matching EnsurePinnedCommitAsync so the resolved root and the pinned checkout stay consistent.
         var checkout = app.SourceState?.ManagedCheckoutPath is { Length: > 0 } stored
             ? stored
-            : Path.Combine(paths.SourcesRoot, app.Id);
+            : paths.ResolveManagedCheckoutPath(app.Id);
         return !string.IsNullOrWhiteSpace(app.ManifestUrl)
             && !string.IsNullOrWhiteSpace(app.SourceState?.Repository)
             && Directory.Exists(Path.Combine(checkout, ".git"))
@@ -3202,7 +3205,7 @@ internal sealed class CoreLifecycleService(
                 $"Remote manifest runtime '{selection.RuntimeProfile.Key}' uses localCommand, so source.repository must be an absolute Git URL or local repository path.");
         }
 
-        var checkoutPath = source?.ManagedCheckoutPath ?? Path.Combine(paths.SourcesRoot, app.Id);
+        var checkoutPath = source?.ManagedCheckoutPath ?? paths.ResolveManagedCheckoutPath(app.Id);
         if (Directory.Exists(Path.Combine(checkoutPath, ".git")) &&
             !string.IsNullOrWhiteSpace(source?.Commit))
         {

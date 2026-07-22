@@ -25,7 +25,7 @@ internal sealed class AppSourceService(CoreDataPaths paths, AppRegistryStore app
         }
 
         ValidateManagedRepository(source.Repository);
-        var checkoutPath = source.ManagedCheckoutPath ?? Path.Combine(paths.SourcesRoot, appId);
+        var checkoutPath = source.ManagedCheckoutPath ?? paths.ResolveManagedCheckoutPath(appId);
         await EnsureCheckoutAsync(source.Repository, checkoutPath, cancellationToken);
         if (request.Fetch)
         {
@@ -60,7 +60,7 @@ internal sealed class AppSourceService(CoreDataPaths paths, AppRegistryStore app
         }
 
         ValidateManagedRepository(source.Repository);
-        var checkoutPath = source.ManagedCheckoutPath ?? Path.Combine(paths.SourcesRoot, appId);
+        var checkoutPath = source.ManagedCheckoutPath ?? paths.ResolveManagedCheckoutPath(appId);
         await EnsureCheckoutAsync(source.Repository, checkoutPath, cancellationToken);
 
         // The reviewed commit to pin to. Prefer the recorded commit, but re-resolve from the reviewed ref
@@ -155,7 +155,7 @@ internal sealed class AppSourceService(CoreDataPaths paths, AppRegistryStore app
             Repository: existing?.Repository,
             ResolvedRef: existing?.ResolvedRef,
             Commit: string.IsNullOrWhiteSpace(commit) ? existing?.Commit : commit.Trim(),
-            ManagedCheckoutPath: existing?.ManagedCheckoutPath ?? Path.Combine(paths.SourcesRoot, appId),
+            ManagedCheckoutPath: existing?.ManagedCheckoutPath ?? paths.ResolveManagedCheckoutPath(appId),
             LocalOverridePath: overridePath,
             UpdatedAt: clock.UtcNow,
             // Preserve the install-time manifest subpath: an override points at the same repo root, so
@@ -182,95 +182,9 @@ internal sealed class AppSourceService(CoreDataPaths paths, AppRegistryStore app
         return new AppSourceResponse(appId, state);
     }
 
-    public async Task<AppSourceCleanupPlan> CreateCleanupPlanAsync(CancellationToken cancellationToken = default)
-    {
-        if (!Directory.Exists(paths.SourcesRoot))
-        {
-            return new AppSourceCleanupPlan([]);
-        }
-
-        var candidates = new List<AppSourceCleanupCandidate>();
-        foreach (var sourceDirectory in Directory.EnumerateDirectories(paths.SourcesRoot).Order(StringComparer.Ordinal))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var appId = Path.GetFileName(sourceDirectory);
-            if (string.IsNullOrWhiteSpace(appId))
-            {
-                continue;
-            }
-
-            var app = await apps.GetAppAsync(appId, cancellationToken);
-            var reason = GetCleanupReason(app, sourceDirectory);
-            if (reason is not null)
-            {
-                candidates.Add(new AppSourceCleanupCandidate(appId, Path.GetFullPath(sourceDirectory), reason));
-            }
-        }
-
-        return new AppSourceCleanupPlan(candidates);
-    }
-
-    public async Task<AppSourceCleanupApplyResponse> ApplyCleanupAsync(CancellationToken cancellationToken = default)
-    {
-        var plan = await CreateCleanupPlanAsync(cancellationToken);
-        var deleted = new List<AppSourceCleanupCandidate>();
-        foreach (var candidate in plan.Candidates)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (!IsManagedSourceRootChild(candidate.Path))
-            {
-                continue;
-            }
-
-            if (Directory.Exists(candidate.Path))
-            {
-                Directory.Delete(candidate.Path, recursive: true);
-                deleted.Add(candidate);
-            }
-        }
-
-        return new AppSourceCleanupApplyResponse(deleted);
-    }
-
     private async Task<AppRecord> RequireAppAsync(string appId, CancellationToken cancellationToken)
         => await apps.GetAppAsync(appId, cancellationToken) ??
             throw new AppLifecycleException("app_not_found", $"Runtime app '{appId}' was not found.");
-
-    private string? GetCleanupReason(AppRecord? app, string sourceDirectory)
-    {
-        if (app is null)
-        {
-            return "app-not-installed";
-        }
-
-        var source = app.SourceState;
-        if (source is null || string.IsNullOrWhiteSpace(source.Repository))
-        {
-            return "source-not-configured";
-        }
-
-        var fullSourceDirectory = Path.GetFullPath(sourceDirectory);
-        if (!string.IsNullOrWhiteSpace(source.LocalOverridePath) &&
-            string.Equals(Path.GetFullPath(source.LocalOverridePath), fullSourceDirectory, StringComparison.Ordinal))
-        {
-            return null;
-        }
-
-        var managedCheckoutPath = source.ManagedCheckoutPath ?? Path.Combine(paths.SourcesRoot, app.Id);
-        if (!string.Equals(Path.GetFullPath(managedCheckoutPath), fullSourceDirectory, StringComparison.Ordinal))
-        {
-            return "managed-checkout-path-changed";
-        }
-
-        return null;
-    }
-
-    private bool IsManagedSourceRootChild(string candidatePath)
-    {
-        var root = Path.GetFullPath(paths.SourcesRoot);
-        var candidate = Path.GetFullPath(candidatePath);
-        return string.Equals(Path.GetDirectoryName(candidate), root, StringComparison.Ordinal);
-    }
 
     private static async Task EnsureCheckoutAsync(string repository, string checkoutPath, CancellationToken cancellationToken)
     {
@@ -454,9 +368,3 @@ internal sealed record AppSourceResolveRequest(
 internal sealed record AppSourceOverrideRequest(string Path, string? Commit = null);
 
 internal sealed record AppSourceResponse(string AppId, AppSourceState? Source);
-
-internal sealed record AppSourceCleanupPlan(IReadOnlyList<AppSourceCleanupCandidate> Candidates);
-
-internal sealed record AppSourceCleanupCandidate(string AppId, string Path, string Reason);
-
-internal sealed record AppSourceCleanupApplyResponse(IReadOnlyList<AppSourceCleanupCandidate> Deleted);

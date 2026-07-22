@@ -5,7 +5,7 @@ Runtime source workflows let administrators and local operators inspect and upda
 ```mermaid
 flowchart LR
   A["app.0.1 manifest source"] --> B["Core app record"]
-  B --> C["Managed checkout under sources/app-id"]
+  B --> C["Managed checkout under apps/app-id/source"]
   B --> D["Local override worktree"]
   C --> E["Runtime start"]
   D --> E
@@ -20,7 +20,7 @@ Core stores source state as Host installation state, not as public manifest meta
 - repository type and URL/path;
 - resolved ref;
 - immutable commit SHA;
-- managed checkout path under the Hosty `sources/<app-id>/` root;
+- managed checkout path, by default `apps/<app-id>/source/` inside the app root (pre-existing records may still point at the retired top-level `sources/<app-id>/` location);
 - optional administrator-selected local source override path;
 - update timestamp.
 
@@ -32,8 +32,6 @@ Managed checkouts are for public-readable `http`/`https` Git repositories or loc
 - `hosty apps source-resolve <app-id> [--branch <name>|--tag <tag>|--commit <sha>] [--fetch]` prepares or refreshes the managed checkout and records an immutable commit SHA.
 - `hosty apps source-override <app-id> --path <worktree> [--commit <sha>]` stores an administrator-selected local worktree override in installation state.
 - `hosty apps source-clear-override <app-id>` removes the local override and leaves managed source state intact.
-- `hosty apps source-cleanup-plan` previews abandoned managed checkout directories under the Hosty `sources/` root.
-- `hosty apps source-cleanup` deletes the abandoned managed checkout directories returned by the cleanup plan.
 - `hosty apps health <app-id>` reports runtime health. For `localCommand` runtimes, Core reports each service process status, PID, exit code, log path, and working directory.
 - Add `--format json` to any source command for scripting.
 
@@ -45,7 +43,7 @@ Local command runtime profiles require a source root. Core resolves it in this o
 
 - administrator-selected `source-override` path, when configured;
 - local worktree inferred at install/update time when the manifest was loaded from a local filesystem path;
-- managed checkout under `sources/<app-id>` when the manifest was loaded from an HTTP(S) URL.
+- managed checkout under `apps/<app-id>/source` when the manifest was loaded from an HTTP(S) URL.
 
 When a manifest is installed from a local manifest file or app directory, Core treats that filesystem location as a developer/operator-owned worktree. It does not clone or fetch `source.repository`; instead it records the nearest Git root above the manifest when one exists, or falls back to the manifest directory/relative `workingDirectory` inference.
 
@@ -55,7 +53,7 @@ Docker runtime profiles do not need a source root and ignore source checkout sta
 
 Docker-only apps remain valid without source metadata. Resolving source for an app with no source repository returns a Core validation error instead of changing the app.
 
-Cleanup only considers immediate child directories under Hosty's managed `sources/` root. It does not delete local source override paths or arbitrary administrator worktrees.
+The managed checkout lives inside the app root, so removing the app with "Delete source checkout" enabled removes it (both the current in-root location and the retired top-level `sources/<app-id>` location, for installs that predate the move). The dedicated `source-cleanup` commands and Core cleanup endpoints were removed together with the top-level `sources/` root.
 
 Local command runtimes are Core-supervised process runtimes. Core starts each service command from the resolved working directory, injects app data/settings/dependency/port/Core identity environment, captures stdout/stderr into app logs, and reports per-service health with process state, PID, exit code, log path, and working directory. Core fails the start when the resolved working directory does not exist; it does not create missing source directories on behalf of the app.
 
