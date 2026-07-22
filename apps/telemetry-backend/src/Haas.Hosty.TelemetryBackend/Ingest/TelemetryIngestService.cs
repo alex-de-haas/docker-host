@@ -27,6 +27,13 @@ internal sealed class TelemetryIngestService(
     // rather than every ingest tick; retention is coarse-grained so once a minute is ample.
     private static readonly TimeSpan PruneInterval = TimeSpan.FromMinutes(1);
 
+    // Most a tick may spend pruning. The prune shares the ingest loop (and the store's lock) with the
+    // log/trace tails, so an unbounded pass starves them: on a ceiling-pinned ~1 GiB database one
+    // inline prune ran for minutes and the observed effect was logs/traces arriving in 3–4 minute
+    // bursts. A quarter-second slice per one-second tick keeps tailing near-real-time while giving an
+    // in-progress pass a ~25% duty cycle until it completes.
+    private static readonly TimeSpan PruneStepBudget = TimeSpan.FromMilliseconds(250);
+
     private readonly FileTailReader tailReader = new();
     private readonly HttpClient httpClient = new() { Timeout = TimeSpan.FromSeconds(5) };
 
@@ -36,6 +43,10 @@ internal sealed class TelemetryIngestService(
     private long traceTailOffset;
     private DateTimeOffset lastPruneUtc = DateTimeOffset.MinValue;
     private DateTimeOffset lastMetricsScrapeUtc = DateTimeOffset.MinValue;
+
+    // True while a prune pass has used up its per-tick budget and still has work left; the next ticks
+    // keep resuming it (after tailing) until the store reports the pass complete.
+    private bool prunePassInProgress;
 
     // Skips re-inserting unchanged metric samples (the exporter re-serves last values every scrape).
     private readonly MetricDeduplicator metricDeduplicator = new();
@@ -87,12 +98,16 @@ internal sealed class TelemetryIngestService(
         await TailLogsAsync(now, cancellationToken);
         await TailTracesAsync(cancellationToken);
 
-        // Prune on its own cadence, not every tick — the deletes/vacuum/checkpoint are far heavier than
-        // an ingest tick and retention is coarse.
-        if (now - lastPruneUtc >= PruneInterval)
+        // Prune on its own cadence, not every tick — and in bounded slices, never as one blocking
+        // pass: each tick spends at most PruneStepBudget, and an unfinished pass resumes next tick
+        // (tailing above always runs first, so a heavy pass cannot stall the tail).
+        if (prunePassInProgress || now - lastPruneUtc >= PruneInterval)
         {
-            store.Prune(now);
-            lastPruneUtc = now;
+            prunePassInProgress = !store.PruneStep(now, PruneStepBudget);
+            if (!prunePassInProgress)
+            {
+                lastPruneUtc = now;
+            }
         }
     }
 
