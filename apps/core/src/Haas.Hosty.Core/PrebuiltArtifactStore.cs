@@ -8,7 +8,9 @@ namespace Haas.Hosty.Core;
 // already-compiled build (v1: a folder); Core hashes it, materializes an immutable copy under
 // apps/<id>/runtimes/<key>/artifact/<hash>/, and runs the service `command` from there. The hash is
 // the run-lock (ArtifactLock.BundleHash), mirroring the docker image digest lock: `pinned` re-runs the
-// locked copy; the lock advances only through a reviewed update. Greenfield storage — no migration.
+// locked copy. The lock is created on first start (TOFU) and re-created when its materialized copy
+// is missing; once present, it advances only through a reviewed update. Greenfield storage — no
+// migration.
 // See docs/features/runtime-artifact-model.md.
 internal static class PrebuiltArtifactStore
 {

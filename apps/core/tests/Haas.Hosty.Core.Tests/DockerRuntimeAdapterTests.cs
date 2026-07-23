@@ -373,7 +373,7 @@ public sealed class DockerRuntimeAdapterTests
         => new(service, status, null, null, null, null, null, Health: health);
 
     [Fact]
-    public async Task StartAsync_RollingPolicy_PullsTagResolvesDigestAndRecordsLock()
+    public async Task StartAsync_NoLock_PullsTagResolvesDigestAndRecordsLock()
     {
         var digest = "sha256:" + new string('a', 64);
         var runner = new FakeDockerCommandRunner(args =>
@@ -390,7 +390,7 @@ public sealed class DockerRuntimeAdapterTests
     }
 
     [Fact]
-    public async Task StartAsync_RollingPolicy_FallsBackToInspectWhenPullHasNoDigestLine()
+    public async Task StartAsync_NoLock_FallsBackToInspectWhenPullHasNoDigestLine()
     {
         var digest = "sha256:" + new string('e', 64);
         var runner = new FakeDockerCommandRunner(args => args[0] switch
@@ -407,7 +407,7 @@ public sealed class DockerRuntimeAdapterTests
     }
 
     [Fact]
-    public async Task StartAsync_RollingPullFailsButImagePresentLocally_FallsBackToLocalDigest()
+    public async Task StartAsync_NoLockPullFailsButImagePresentLocally_FallsBackToLocalDigest()
     {
         var digest = "sha256:" + new string('9', 64);
         var runner = new FakeDockerCommandRunner(args => args switch
@@ -425,7 +425,7 @@ public sealed class DockerRuntimeAdapterTests
     }
 
     [Fact]
-    public async Task StartAsync_RollingPullFailsAndImageAbsent_Throws()
+    public async Task StartAsync_NoLockPullFailsAndImageAbsent_Throws()
     {
         var runner = new FakeDockerCommandRunner(args => args switch
         {
