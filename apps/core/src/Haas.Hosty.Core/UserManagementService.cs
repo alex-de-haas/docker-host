@@ -97,7 +97,7 @@ internal sealed class UserManagementService(
         return new UserInvitationCreateResponse(SummarizeInvitation(invitation, now), token, setupUrl);
     }
 
-    public async Task<UserInvitationPreview> PreviewInvitationAsync(string setupToken, CancellationToken cancellationToken = default)
+    public async Task<UserInvitationPreview> PreviewInvitationAsync(string? setupToken, CancellationToken cancellationToken = default)
     {
         var state = await users.ReadAsync(cancellationToken);
         var invitation = FindValidInvitation(state, setupToken, clock.UtcNow) ??

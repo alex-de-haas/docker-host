@@ -29,18 +29,21 @@ public sealed class InvitationAcceptHttpTests
         Assert.Contains("invitation_invalid", payload, StringComparison.Ordinal);
     }
 
-    // The preview sibling reads the token from the query string, where "absent" and "blank" are both
-    // reachable without a body at all.
+    // The preview sibling reads the token from the query string, where "absent" (no setupToken key at
+    // all), "blank", and "unknown" are all reachable without a body. The absent case matters: a
+    // non-nullable query binding would 400 on the missing key before the handler runs, so absent and
+    // wrong would diverge — the route binds string? and lets the service answer uniformly instead.
     [Theory]
-    [InlineData("")]
-    [InlineData("%20")]
-    [InlineData("dhstp_definitely-not-a-real-token")]
-    public async Task Get_AnswersInvitationInvalid_ForABlankOrUnknownToken(string token)
+    [InlineData("/api/auth/invitations/accept")]
+    [InlineData("/api/auth/invitations/accept?setupToken=")]
+    [InlineData("/api/auth/invitations/accept?setupToken=%20")]
+    [InlineData("/api/auth/invitations/accept?setupToken=dhstp_definitely-not-a-real-token")]
+    public async Task Get_AnswersInvitationInvalid_ForAMissingBlankOrUnknownToken(string url)
     {
         await using var harness = await CoreHttpHarness.StartAsync();
         using var client = harness.CreateClient();
 
-        using var response = await client.GetAsync($"/api/auth/invitations/accept?setupToken={token}");
+        using var response = await client.GetAsync(url);
         var payload = await response.Content.ReadAsStringAsync();
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
