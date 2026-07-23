@@ -3,11 +3,16 @@ using System.Text.RegularExpressions;
 
 namespace Haas.Hosty.Core.Tests;
 
-// Authorization matrix guardrail. C-M9 shipped because a state-changing /api POST (install/plan) was
-// session-authenticated but silently missed `requireCsrf: true`, unlike its apply twin. Rather than a
-// full HTTP harness, this asserts the invariant mechanically over the endpoint source: every
-// state-changing (POST/PUT/DELETE) /api route that authenticates with a session MUST require CSRF.
-// A new session-guarded mutation that forgets the header now fails this test instead of review.
+// CSRF axis of the authorization guardrail. C-M9 shipped because a state-changing /api POST
+// (install/plan) was session-authenticated but silently missed `requireCsrf: true`, unlike its apply
+// twin. This asserts the invariant mechanically over the endpoint source: every state-changing
+// (POST/PUT/DELETE) /api route that authenticates with a session MUST require CSRF.
+//
+// The source scan is kept for the CSRF axis specifically because an HTTP probe is unreliable here — a
+// missing-CSRF mutation with an unbindable body answers 400 rather than 2xx, hiding the hole. The
+// authentication axis (every non-public /api route rejects an anonymous caller) is covered over real
+// HTTP by Http/EndpointAuthorizationHttpTests, which enumerates the live EndpointDataSource and so
+// catches PATCH/service-token/misrouted cases this source scan cannot see.
 public sealed class EndpointAuthorizationTests
 {
     private static readonly string[] EndpointFiles =
