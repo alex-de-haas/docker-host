@@ -179,6 +179,28 @@ public sealed class AuthBootstrapServiceTests
         Assert.Equal(1, admins);
     }
 
+    [Fact]
+    public async Task RecoverAsync_WithInvalidToken_DoesNotRewriteTokenState()
+    {
+        // A failed claim must stay read-only: the bootstrap/recovery routes are unauthenticated, so a
+        // write per bad token would let garbage requests force serialized disk writes under the gate.
+        var fixture = await AuthBootstrapFixture.CreateAsync();
+        await fixture.Users.WriteAsync(new UserDirectoryState(
+            1, [CreateUser("user_1", "host.user") with { Email = "user@example.test" }], [], [], []));
+        _ = await fixture.Service.CreateRecoveryTokenAsync();
+
+        // Stamp the state file an hour into the past; any rewrite would move it to ~now.
+        var stale = DateTime.UtcNow.AddHours(-1);
+        File.SetLastWriteTimeUtc(fixture.TokenStatePath, stale);
+
+        var error = await Assert.ThrowsAsync<AuthBootstrapException>(() =>
+            fixture.Service.RecoverAsync(new AuthRecoveryRequest(
+                "dhrec_not-a-real-token", "user@example.test", Password: "replacement horse battery staple")));
+
+        Assert.Equal("recovery_token_invalid", error.Code);
+        Assert.Equal(stale, File.GetLastWriteTimeUtc(fixture.TokenStatePath));
+    }
+
     private static HostUserRecord CreateUser(string id, string role)
         => new(
             Id: id,
@@ -195,12 +217,14 @@ public sealed class AuthBootstrapServiceTests
             UserDirectoryStore users,
             AuthBootstrapTokenStore tokens,
             AuthBootstrapService service,
-            FakeClock clock)
+            FakeClock clock,
+            string tokenStatePath)
         {
             Users = users;
             Tokens = tokens;
             Service = service;
             Clock = clock;
+            TokenStatePath = tokenStatePath;
         }
 
         public UserDirectoryStore Users { get; }
@@ -210,6 +234,8 @@ public sealed class AuthBootstrapServiceTests
         public AuthBootstrapService Service { get; }
 
         public FakeClock Clock { get; }
+
+        public string TokenStatePath { get; }
 
         public static async Task<AuthBootstrapFixture> CreateAsync()
         {
@@ -240,7 +266,7 @@ public sealed class AuthBootstrapServiceTests
             var passwords = new LocalPasswordAuthService(users, audit, clock);
             var service = new AuthBootstrapService(users, tokens, audit, passwords, config, clock);
             await users.WriteAsync(new UserDirectoryState(1, [], [], [], []));
-            return new AuthBootstrapFixture(users, tokens, service, clock);
+            return new AuthBootstrapFixture(users, tokens, service, clock, Path.Combine(paths.AuthRoot, "bootstrap-tokens.json"));
         }
     }
 

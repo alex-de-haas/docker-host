@@ -30,7 +30,16 @@ internal sealed class AuthBootstrapTokenStore(CoreDataPaths paths)
         {
             var current = await ReadAsync(cancellationToken);
             var (next, result) = mutate(current);
-            await WriteAsync(next, cancellationToken);
+            // Skip the write when the mutation was a no-op (the delegate returned the same instance):
+            // a failed token claim — an invalid/expired/used token — must not rewrite the file. The
+            // bootstrap/recovery routes are unauthenticated, so writing on every bad token would let a
+            // request with any syntactically valid email force serialized disk writes and stall a real
+            // claim, where before it only read.
+            if (!ReferenceEquals(next, current))
+            {
+                await WriteAsync(next, cancellationToken);
+            }
+
             return result;
         }
         finally
