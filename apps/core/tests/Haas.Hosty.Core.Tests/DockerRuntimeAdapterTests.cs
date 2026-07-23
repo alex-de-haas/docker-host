@@ -239,13 +239,14 @@ public sealed class DockerRuntimeAdapterTests
     }
 
     [Theory]
-    [InlineData("rolling", "rolling")]
-    [InlineData("Rolling", "rolling")]
+    // "rolling" was removed; a record that persisted it before the removal surfaces as pinned.
+    [InlineData("rolling", "pinned")]
+    [InlineData("Rolling", "pinned")]
     [InlineData("pinned", "pinned")]
     [InlineData(null, "pinned")]
     [InlineData("", "pinned")]
     [InlineData("anything-else", "pinned")]
-    public void ResolveUpdatePolicy_DefaultsToPinned(string? input, string expected)
+    public void ResolveUpdatePolicy_AlwaysPinned(string? input, string expected)
         => Assert.Equal(expected, DockerRuntimeAdapter.ResolveUpdatePolicy(input));
 
     [Fact]
@@ -372,7 +373,7 @@ public sealed class DockerRuntimeAdapterTests
         => new(service, status, null, null, null, null, null, Health: health);
 
     [Fact]
-    public async Task StartAsync_RollingPolicy_PullsTagResolvesDigestAndRecordsLock()
+    public async Task StartAsync_NoLock_PullsTagResolvesDigestAndRecordsLock()
     {
         var digest = "sha256:" + new string('a', 64);
         var runner = new FakeDockerCommandRunner(args =>
@@ -380,7 +381,7 @@ public sealed class DockerRuntimeAdapterTests
                 ? new DockerCommandResult(0, $"latest: Pulling from example/app\nDigest: {digest}\nStatus: Downloaded", "")
                 : new DockerCommandResult(0, "", ""));
 
-        var result = await CreateAdapter(runner).StartAsync(CreateDockerContext(CreateDockerAppRecord("rolling", locks: null)));
+        var result = await CreateAdapter(runner).StartAsync(CreateDockerContext(CreateDockerAppRecord("pinned", locks: null)));
 
         Assert.True(runner.Ran("pull", "ghcr.io/example/app:latest"));
         Assert.Equal($"ghcr.io/example/app@{digest}", runner.Find("run")![^1]);
@@ -389,7 +390,7 @@ public sealed class DockerRuntimeAdapterTests
     }
 
     [Fact]
-    public async Task StartAsync_RollingPolicy_FallsBackToInspectWhenPullHasNoDigestLine()
+    public async Task StartAsync_NoLock_FallsBackToInspectWhenPullHasNoDigestLine()
     {
         var digest = "sha256:" + new string('e', 64);
         var runner = new FakeDockerCommandRunner(args => args[0] switch
@@ -399,14 +400,14 @@ public sealed class DockerRuntimeAdapterTests
             _ => new DockerCommandResult(0, "", ""),
         });
 
-        var result = await CreateAdapter(runner).StartAsync(CreateDockerContext(CreateDockerAppRecord("rolling", locks: null)));
+        var result = await CreateAdapter(runner).StartAsync(CreateDockerContext(CreateDockerAppRecord("pinned", locks: null)));
 
         Assert.Equal(digest, result.ArtifactLocks?["app"].ImageDigest);
         Assert.Equal($"ghcr.io/example/app@{digest}", runner.Find("run")![^1]);
     }
 
     [Fact]
-    public async Task StartAsync_RollingPullFailsButImagePresentLocally_FallsBackToLocalDigest()
+    public async Task StartAsync_NoLockPullFailsButImagePresentLocally_FallsBackToLocalDigest()
     {
         var digest = "sha256:" + new string('9', 64);
         var runner = new FakeDockerCommandRunner(args => args switch
@@ -417,14 +418,14 @@ public sealed class DockerRuntimeAdapterTests
             _ => new DockerCommandResult(0, "", ""),
         });
 
-        var result = await CreateAdapter(runner).StartAsync(CreateDockerContext(CreateDockerAppRecord("rolling", locks: null)));
+        var result = await CreateAdapter(runner).StartAsync(CreateDockerContext(CreateDockerAppRecord("pinned", locks: null)));
 
         Assert.Equal(digest, result.ArtifactLocks?["app"].ImageDigest);
         Assert.Equal($"ghcr.io/example/app@{digest}", runner.Find("run")![^1]);
     }
 
     [Fact]
-    public async Task StartAsync_RollingPullFailsAndImageAbsent_Throws()
+    public async Task StartAsync_NoLockPullFailsAndImageAbsent_Throws()
     {
         var runner = new FakeDockerCommandRunner(args => args switch
         {
@@ -434,7 +435,7 @@ public sealed class DockerRuntimeAdapterTests
         });
 
         await Assert.ThrowsAsync<AppLifecycleException>(() =>
-            CreateAdapter(runner).StartAsync(CreateDockerContext(CreateDockerAppRecord("rolling", locks: null))));
+            CreateAdapter(runner).StartAsync(CreateDockerContext(CreateDockerAppRecord("pinned", locks: null))));
     }
 
     [Fact]
@@ -912,7 +913,7 @@ public sealed class DockerRuntimeAdapterTests
                 ? new DockerCommandResult(0, $"Digest: {digest}\nStatus: Downloaded", "")
                 : new DockerCommandResult(0, "", ""));
 
-        await CreateAdapter(runner).StartAsync(CreateDockerContext(CreateDockerAppRecord("rolling", locks: null)));
+        await CreateAdapter(runner).StartAsync(CreateDockerContext(CreateDockerAppRecord("pinned", locks: null)));
 
         Assert.NotNull(runner.Find("run"));
     }

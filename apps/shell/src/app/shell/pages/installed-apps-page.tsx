@@ -378,17 +378,8 @@ function AppServiceDetailsPanel({
   const healthByService = new Map(
     (healthState?.health?.services ?? []).map((service) => [service.service, service]),
   );
-  const hasImageInfo =
-    Object.keys(lockedByService).length > 0 ||
-    [...runningByService.values()].some((digest) => digest) ||
-    statusByService.size > 0;
-  // The policy badge and the health-probe spinner share one bar. Carrying the spinner inline here rather
-  // than as its own row is what keeps the panel from shifting on every open: for an app with a policy badge
-  // the row is already there, so starting and finishing the probe changes only its contents. The bar still
-  // needs a reason to exist — the badge renders nothing without an explicit policy from Core, and an older
-  // Core would otherwise leave an empty strip behind — so it appears when either half has something to say.
-  const showsUpdatePolicy = app.updatePolicy === "pinned" || app.updatePolicy === "rolling";
-  const showsPolicyBadge = hasImageInfo && showsUpdatePolicy;
+  // With "rolling" removed every app runs pinned, so a policy badge would say the same thing on
+  // every row and is gone; the bar that used to host it now only appears while the health probe runs.
   const healthLoading = healthState?.loading ?? false;
 
   // The same derivation the collapsed row's icons use, so expanding an app explains exactly the problems
@@ -423,15 +414,12 @@ function AppServiceDetailsPanel({
           )}
         </div>
       )}
-      {(showsPolicyBadge || healthLoading) && (
+      {healthLoading && (
         <div className="flex flex-wrap items-center gap-2 rounded-md bg-muted/30 px-2 py-1.5">
-          {showsPolicyBadge && <UpdatePolicyBadge policy={app.updatePolicy} />}
-          {healthLoading && (
-            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-              Loading services
-            </span>
-          )}
+          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+            Loading services
+          </span>
         </div>
       )}
       {/* Only ever set for an app whose digests the operator explicitly checked, so this reports a
@@ -566,20 +554,6 @@ function AppServiceDetailsPanel({
   );
 }
 
-function UpdatePolicyBadge({ policy }: { policy?: string | null }) {
-  // updatePolicy is optional for backwards compatibility with older Core builds; only render the
-  // badge when Core reported an explicit policy so an absent value is not mislabelled as "Pinned".
-  if (policy !== "pinned" && policy !== "rolling") {
-    return null;
-  }
-  const rolling = policy === "rolling";
-  return (
-    <Badge variant={rolling ? "secondary" : "outline"} className="gap-1" title={rolling ? "Re-resolves the tag on every restart (drift accepted)" : "Runs the locked digest; advancing it needs a reviewed update"}>
-      {rolling ? <RefreshCw className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
-      {rolling ? "Rolling" : "Pinned"}
-    </Badge>
-  );
-}
 
 function ServiceDigestRow({ label, digest, tone }: { label: string; digest: string; tone?: "warning" | "update" }) {
   const toneClass =

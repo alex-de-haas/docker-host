@@ -8,7 +8,9 @@ namespace Haas.Hosty.Core;
 // already-compiled build (v1: a folder); Core hashes it, materializes an immutable copy under
 // apps/<id>/runtimes/<key>/artifact/<hash>/, and runs the service `command` from there. The hash is
 // the run-lock (ArtifactLock.BundleHash), mirroring the docker image digest lock: `pinned` re-runs the
-// locked copy, `rolling` adopts the current delivery each start. Greenfield storage — no migration.
+// locked copy. The lock is created on first start (TOFU) and re-created when its materialized copy
+// is missing; once present, it advances only through a reviewed update. Greenfield storage — no
+// migration.
 // See docs/features/runtime-artifact-model.md.
 internal static class PrebuiltArtifactStore
 {
@@ -22,21 +24,19 @@ internal static class PrebuiltArtifactStore
         AttributesToSkip = FileAttributes.None,
     };
 
-    // Resolves the run directory and lock for a prebuilt service. Under `pinned` with a recorded hash
-    // whose materialized copy still exists, the locked copy is re-run untouched; otherwise (rolling,
-    // first start, backfill, or a missing copy) the current delivery is hashed and materialized.
+    // Resolves the run directory and lock for a prebuilt service. With a recorded hash whose
+    // materialized copy still exists, the locked copy is re-run untouched; otherwise (first start,
+    // backfill, or a missing copy) the current delivery is hashed and materialized.
     public static (string ArtifactRoot, ArtifactLock Lock) Resolve(
         string appRoot,
         string runtimeKey,
         string sourceRoot,
         RuntimePrebuiltDeliveryManifest delivery,
-        ArtifactLock? existingLock,
-        string policy)
+        ArtifactLock? existingLock)
     {
         var storeRoot = Path.Combine(appRoot, "runtimes", SanitizeSegment(runtimeKey), "artifact");
 
-        if (string.Equals(policy, "pinned", StringComparison.Ordinal) &&
-            !string.IsNullOrWhiteSpace(existingLock?.BundleHash))
+        if (!string.IsNullOrWhiteSpace(existingLock?.BundleHash))
         {
             var pinnedPath = Path.Combine(storeRoot, existingLock!.BundleHash!);
             if (Directory.Exists(pinnedPath))

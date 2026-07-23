@@ -361,8 +361,11 @@ internal sealed class CoreLifecycleService(
         return new AppLifecycleResponse(await BuildAppSummaryAsync(document.App, cancellationToken), null, "configured");
     }
 
-    // Validates an operator-supplied update policy. null leaves the policy unchanged; otherwise it
-    // must be "pinned" or "rolling" (case-insensitive), normalized to lowercase for storage.
+    // Validates an operator-supplied update policy. null leaves the policy unchanged; the only valid
+    // value is "pinned" (case-insensitive), normalized to lowercase for storage. "rolling" — which
+    // re-resolved the mutable tag on every start — was removed: every artifact advance goes through a
+    // reviewed update, so start-time drift cannot bypass the review boundary. It is rejected rather
+    // than silently coerced so a caller that still asks for it learns the semantics are gone.
     private static string? NormalizeConfiguredUpdatePolicy(string? policy)
     {
         if (string.IsNullOrWhiteSpace(policy))
@@ -371,10 +374,9 @@ internal sealed class CoreLifecycleService(
         }
 
         var trimmed = policy.Trim();
-        if (!string.Equals(trimmed, "pinned", StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(trimmed, "rolling", StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(trimmed, "pinned", StringComparison.OrdinalIgnoreCase))
         {
-            throw new AppLifecycleException("app_update_policy_invalid", $"Update policy '{policy}' must be 'pinned' or 'rolling'.");
+            throw new AppLifecycleException("app_update_policy_invalid", $"Update policy '{policy}' must be 'pinned'. The 'rolling' policy was removed; artifact changes arrive through reviewed updates.");
         }
 
         return trimmed.ToLowerInvariant();
@@ -785,7 +787,7 @@ internal sealed class CoreLifecycleService(
                 LastOperation = "start",
                 LastError = null,
                 Endpoints = MergeEndpointUrls(current.Endpoints, result.Endpoints, selection),
-                // Persist the run-locks the adapter resolved (TOFU backfill / rolling advance);
+                // Persist the run-locks the adapter resolved (TOFU backfill);
                 // a runtime with nothing to pin returns null, leaving any existing locks intact.
                 ArtifactLocks = result.ArtifactLocks ?? current.ArtifactLocks,
                 // A live source app records the last invalid-folder error (null clears it once the
@@ -5064,8 +5066,9 @@ internal sealed record AppFeedRequest(string? FeedId = null);
 internal sealed record AppConfigureRequest(
     IReadOnlyDictionary<string, string?>? Settings = null,
     bool? Autostart = null,
-    // "pinned" | "rolling"; null leaves the current policy unchanged. The authoritative pull/lock
-    // policy for compiled artifacts (replaces the removed manifest pullPolicy).
+    // Only "pinned" is accepted; null leaves the current policy unchanged. The authoritative
+    // pull/lock policy for compiled artifacts (replaces the removed manifest pullPolicy; the
+    // "rolling" opt-out is gone).
     string? UpdatePolicy = null);
 
 internal sealed record AppAutostartRequest(bool Autostart);
@@ -5292,7 +5295,7 @@ internal sealed record AppRuntimeHealthResponse(
 internal sealed record AppHealthObservation(string AppId, string Status, RuntimeRestartPolicy RestartPolicy);
 
 // Read-only update-available report for a runtime app (see GetUpdateStatusAsync). `UpdateAvailable`
-// aggregates feed-manifest and compiled-service movement; `UpdatePolicy` is "pinned"/"rolling".
+// aggregates feed-manifest and compiled-service movement; `UpdatePolicy` is always "pinned".
 internal sealed record AppUpdateStatusResponse(
     string AppId,
     string Runtime,

@@ -851,9 +851,9 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
             return null;
         }
 
-        // pullPolicy is intentionally not read: pull behaviour now derives from the app-level
-        // pinned/rolling policy (see runtime-app-marketplace.md, A8). A digest is never authored
-        // into the manifest — it is resolved at install/update and stored in the lock.
+        // pullPolicy is intentionally not read: pull behaviour derives from the app-level pinned
+        // policy (see runtime-app-marketplace.md, A8). A digest is never authored into the
+        // manifest — it is resolved at install/update and stored in the lock.
         return new RuntimeDockerImage(repository, tag);
     }
 
@@ -1454,7 +1454,6 @@ internal sealed class DockerRuntimeAdapter(
         var endpoints = new List<AppEndpointContract>();
         var services = OrderServices(context.Manifest.Services);
         var resolvedLocks = new Dictionary<string, ArtifactLock>(StringComparer.Ordinal);
-        var policy = ResolveUpdatePolicy(context.App.UpdatePolicy);
 
         MaybeAdviseWslMirroredNetworking(context, services);
 
@@ -1504,10 +1503,10 @@ internal sealed class DockerRuntimeAdapter(
 
             await RemoveContainerIfOwnedAsync(context.App.Id, containerName, cancellationToken);
 
-            // Resolve what to run from the lock + policy instead of blindly running the mutable tag:
-            // pinned reuses the locked digest (pulling it only if missing), rolling re-resolves the
-            // tag and advances the lock, and a lockless app is backfilled (TOFU). See A3/A4/A8.
-            var (runReference, resolvedLock) = await ResolveImageRunReferenceAsync(service.Image, existingLock, policy, cancellationToken);
+            // Resolve what to run from the lock instead of blindly running the mutable tag: a locked
+            // digest is reused (pulled only if missing), a lockless app is backfilled once (TOFU).
+            // See A3/A4/A8.
+            var (runReference, resolvedLock) = await ResolveImageRunReferenceAsync(service.Image, existingLock, cancellationToken);
             resolvedLocks[service.Key] = resolvedLock;
 
             // Secret-bearing env (app settings + the service token) is passed by NAME on the argv and by
@@ -1782,7 +1781,7 @@ internal sealed class DockerRuntimeAdapter(
 
     // Inspects a single service container in one `docker inspect` call, then resolves the running
     // image's first repo digest (`repository@sha256:...`) so clients can detect "running != lock"
-    // drift on rolling apps. A missing container or unavailable docker is reported as "stopped" —
+    // drift. A missing container or unavailable docker is reported as "stopped" —
     // health is best-effort observation and never throws.
     private async Task<AppRuntimeServiceHealth> InspectServiceHealthAsync(string appId, string serviceKey, CancellationToken cancellationToken)
     {
@@ -1871,20 +1870,18 @@ internal sealed class DockerRuntimeAdapter(
         int? RestartCount = null,
         string? StartedAt = null);
 
-    // Resolves the reference to actually run and the lock to persist, from the manifest image, any
-    // existing per-service lock, and the app's update policy. See runtime-app-marketplace.md
-    // ("Start / restart" and "Core start (lock backfill)"):
-    //   - pinned + existing digest: run the locked digest, pulling it only if absent (deterministic).
-    //   - rolling, or pinned with no lock (legacy/TOFU backfill): pull the tag, resolve its digest,
-    //     run the digest, and record the advanced lock.
+    // Resolves the reference to actually run and the lock to persist, from the manifest image and any
+    // existing per-service lock. See runtime-app-marketplace.md ("Start / restart" and "Core start
+    // (lock backfill)"):
+    //   - existing digest lock: run the locked digest, pulling it only if absent (deterministic).
+    //   - no lock (first start / legacy backfill): pull the tag, resolve its digest, run the digest,
+    //     and record the lock. From then on only a reviewed update advances it.
     private async Task<(string RunReference, ArtifactLock Lock)> ResolveImageRunReferenceAsync(
         RuntimeDockerImage image,
         ArtifactLock? existingLock,
-        string policy,
         CancellationToken cancellationToken)
     {
-        if (string.Equals(policy, "pinned", StringComparison.Ordinal) &&
-            !string.IsNullOrWhiteSpace(existingLock?.ImageDigest))
+        if (!string.IsNullOrWhiteSpace(existingLock?.ImageDigest))
         {
             var pinnedReference = (image with { Digest = existingLock!.ImageDigest }).Reference;
             if (!await ImageExistsLocallyAsync(pinnedReference, cancellationToken))
@@ -1895,7 +1892,7 @@ internal sealed class DockerRuntimeAdapter(
             return (pinnedReference, existingLock);
         }
 
-        // rolling, or first resolve / backfill: pull the mutable tag and capture the resolved digest.
+        // First resolve / backfill: pull the mutable tag and capture the resolved digest.
         var tagReference = image.TagReference;
         string? pullOutput = null;
         AppLifecycleException? pullFailure = null;
@@ -2294,10 +2291,11 @@ internal sealed class DockerRuntimeAdapter(
         return candidate.Length == "sha256:".Length + 64 ? candidate.ToLowerInvariant() : null;
     }
 
-    // The app-level pull/lock policy: pinned (default) or rolling. Anything unrecognized (or null)
-    // is treated as pinned — the safe, deterministic default.
-    internal static string ResolveUpdatePolicy(string? policy)
-        => string.Equals(policy, "rolling", StringComparison.OrdinalIgnoreCase) ? "rolling" : "pinned";
+    // The app-level pull/lock policy. Only "pinned" exists: every start runs the locked artifact and
+    // the lock advances solely through a reviewed update. "rolling" (re-resolve the tag each start)
+    // was removed — records that persisted it before the removal surface as pinned, which merely
+    // turns silent start-time drift into a visible update plan.
+    internal static string ResolveUpdatePolicy(string? policy) => "pinned";
 
     private static string? NullIfBlank(string? value)
         => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
@@ -2669,7 +2667,7 @@ internal sealed record RuntimeDockerImage(string Repository, string Tag, string?
         : $"{Repository}@{Digest}";
 
     // The mutable pointer (`repository:tag`), always tag-shaped. Used to (re-)resolve a digest at
-    // install/update/rolling-start and to describe the manifest intent in update plans.
+    // install/update and to describe the manifest intent in update plans.
     public string TagReference => $"{Repository}:{Tag}";
 }
 
@@ -2884,7 +2882,7 @@ internal sealed record RuntimeServiceProfileManifest
     public string? Type { get; init; }
 
     // How the running code is delivered for this runtime (A1). `image` is a compiled, lockable
-    // OCI artifact (pinned/rolling, digest in ArtifactLocks); `source` runs live from the operator's
+    // OCI artifact (pinned, digest in ArtifactLocks); `source` runs live from the operator's
     // own folder (no run-lock, manifest reconciled each start); `prebuilt` is a compiled non-container
     // build (localCommand only) delivered via `delivery`, content-hash-locked in ArtifactLocks and
     // materialized under the app's artifact store. Absent infers per runtime type — docker → `image`,
