@@ -451,8 +451,16 @@ internal sealed class UserManagementService(
         return invitation.ExpiresAt <= now ? "expired" : "pending";
     }
 
-    private HostInvitationRecord? FindValidInvitation(UserDirectoryState state, string token, DateTimeOffset now)
+    // A missing token is simply no match: callers turn null into the same invalid/expired answer an
+    // unknown token gets, so an absent one cannot be told apart from a wrong one — and never reaches
+    // the hash, which an unauthenticated caller could otherwise fault with a body that omits it.
+    private HostInvitationRecord? FindValidInvitation(UserDirectoryState state, string? token, DateTimeOffset now)
     {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return null;
+        }
+
         var hash = HashToken(token);
         return state.Invitations.FirstOrDefault(invitation =>
             !string.IsNullOrWhiteSpace(invitation.TokenHash) &&

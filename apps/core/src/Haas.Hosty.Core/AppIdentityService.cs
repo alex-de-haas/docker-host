@@ -63,11 +63,18 @@ internal sealed class AppIdentityService(
     }
 
     public async Task<AppSessionValidationResult> RevalidateAsync(
-        string token,
+        string? token,
         string callingAppId,
         CancellationToken cancellationToken = default)
     {
         var now = clock.UtcNow;
+        // A body that omits the token is an unrecognized token, not a server fault: the hash below
+        // would throw on null, and the caller's contract for "no usable token" is already token_invalid.
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            throw new AppIdentityException("token_invalid", "App session token is not recognized.");
+        }
+
         var tokenHash = HashToken(token);
         var grant = await grants.TryResolveAsync(tokenHash, cancellationToken) ??
             throw new AppIdentityException("token_invalid", "App session token is not recognized.");
