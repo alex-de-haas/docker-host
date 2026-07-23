@@ -594,6 +594,64 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task GetSettingValueAsync_RevealsAStoredSecretOnExplicitDemand()
+    {
+        // The admin owns these values and can already read them off the container env; masking them
+        // in the UI with no way back turns a wrong paste into an invisible misconfiguration. The
+        // summary still never carries the value -- only this per-key call does.
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0", settingsJson: """
+              "settings": [{
+                "key": "API_TOKEN",
+                "type": "string",
+                "secret": true
+              }],
+            """);
+        var install = await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        await fixture.Service.ConfigureAsync(
+            "com.example.notes",
+            new AppConfigureRequest(Settings: new Dictionary<string, string?> { ["API_TOKEN"] = "s3cr3t-value" }));
+
+        var revealed = await fixture.Service.GetSettingValueAsync("com.example.notes", "API_TOKEN");
+
+        Assert.Equal("API_TOKEN", revealed.Key);
+        Assert.Equal("s3cr3t-value", revealed.Value);
+
+        // The summary keeps masking the value but now says one is set, so the Shell can render
+        // "Unchanged" vs "Not set" honestly.
+        var summary = Assert.Single(
+            (await fixture.Service.ListAppsAsync()).Single().Settings, setting => setting.Key == "API_TOKEN");
+        Assert.Null(summary.Value);
+        Assert.True(summary.HasValue);
+
+        // Unconfigured at install time: no value yet, and the flag says so.
+        var installSetting = Assert.Single(install.App!.Settings, setting => setting.Key == "API_TOKEN");
+        Assert.False(installSetting.HasValue);
+
+        // Whitespace is "unset", matching the required-setting check -- otherwise the Shell would
+        // show "Unchanged" for a value Core itself refuses to count.
+        await fixture.Service.ConfigureAsync(
+            "com.example.notes",
+            new AppConfigureRequest(Settings: new Dictionary<string, string?> { ["API_TOKEN"] = "   " }));
+        var blanked = Assert.Single(
+            (await fixture.Service.ListAppsAsync()).Single().Settings, setting => setting.Key == "API_TOKEN");
+        Assert.False(blanked.HasValue);
+    }
+
+    [Fact]
+    public async Task GetSettingValueAsync_RejectsAKeyTheAppDoesNotDeclare()
+    {
+        // A typo'd key must be an error, not a null that reads as "the secret is empty".
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+
+        var ex = await Assert.ThrowsAsync<AppLifecycleException>(
+            () => fixture.Service.GetSettingValueAsync("com.example.notes", "NO_SUCH_KEY"));
+
+        Assert.Equal("app_setting_unknown", ex.Code);
+    }
+
+    [Fact]
     public async Task CreateInstallPlanAsync_CarriesRequiredSettingFlag()
     {
         var fixture = await LifecycleFixture.CreateAsync();

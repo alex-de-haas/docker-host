@@ -59,6 +59,7 @@ export function AppDetailsDialog({
   onApplyUpdate,
   onSetFeed,
   onRemove,
+  onRevealSetting,
 }: {
   app: CoreApp;
   view: DetailView;
@@ -86,6 +87,8 @@ export function AppDetailsDialog({
   onApplyUpdate: (app: CoreApp, plan: CoreUpdatePlan, manifestPath?: string) => void;
   onSetFeed: (app: CoreApp, feedId: string) => void;
   onRemove: (app: CoreApp, options: RemoveOptions) => void;
+  // Fetches one setting's stored value on the operator's explicit reveal click (admin-gated in Core).
+  onRevealSetting?: (app: CoreApp, key: string) => Promise<string | null>;
 }) {
   // Settings, reviewed updates, lifecycle, and backups are all available for system apps too — the
   // Installed Apps rows carry the same set. Remove is the one verb that stays system-gated: Core
@@ -129,6 +132,7 @@ export function AppDetailsDialog({
             onConfigureSource={onConfigureSource}
             onClearSource={onClearSource}
             onSetDevelopmentMode={onSetDevelopmentMode}
+            onRevealSetting={onRevealSetting}
           />
         ) : (
           <InlineError message="You do not have permission to manage app settings." />
@@ -358,6 +362,7 @@ function SettingsDialog({
   onConfigureSource,
   onClearSource,
   onSetDevelopmentMode,
+  onRevealSetting,
 }: {
   app: CoreApp;
   busyAction: string | null;
@@ -369,6 +374,7 @@ function SettingsDialog({
   onConfigureSource: (app: CoreApp, path: string) => void;
   onClearSource: (app: CoreApp) => void;
   onSetDevelopmentMode: (app: CoreApp, runtime: string, enabled: boolean) => void;
+  onRevealSetting?: (app: CoreApp, key: string) => Promise<string | null>;
 }) {
   const settings = app.settings || [];
   const hasPublicOrigins = settings.some((setting) => isPublicOriginSettingKey(setting.key));
@@ -424,6 +430,7 @@ function SettingsDialog({
           busyAction={busyAction}
           canManageApps={canManageApps}
           onConfigure={onConfigure}
+          onRevealSetting={onRevealSetting}
         />
       </div>
       {hasMounts && (
@@ -459,12 +466,14 @@ function SettingsForm({
   busyAction,
   canManageApps,
   onConfigure,
+  onRevealSetting,
 }: {
   app: CoreApp;
   section: "app" | "publicOrigins";
   busyAction: string | null;
   canManageApps: boolean;
   onConfigure: (app: CoreApp, settings: Record<string, string | null>, autostart?: boolean) => void;
+  onRevealSetting?: (app: CoreApp, key: string) => Promise<string | null>;
 }) {
   const settings = app.settings || [];
   const appSettings = settings.filter((setting) => !isPublicOriginSettingKey(setting.key));
@@ -509,7 +518,14 @@ function SettingsForm({
             {appSettings.length > 0 ? (
               <div className="space-y-3">
                 {appSettings.map((setting) => (
-                  <SettingInput key={setting.key} setting={setting} value={draft[setting.key] ?? ""} disabled={!canManageApps} onChange={(value) => setDraft((current) => ({ ...current, [setting.key]: value }))} />
+                  <SettingInput
+                    key={setting.key}
+                    setting={setting}
+                    value={draft[setting.key] ?? ""}
+                    disabled={!canManageApps}
+                    onChange={(value) => setDraft((current) => ({ ...current, [setting.key]: value }))}
+                    onReveal={onRevealSetting && setting.secret ? () => onRevealSetting(app, setting.key) : undefined}
+                  />
                 ))}
               </div>
             ) : (

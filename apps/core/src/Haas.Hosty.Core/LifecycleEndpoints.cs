@@ -193,6 +193,28 @@ internal static class LifecycleEndpoints
         // Browser twins of the control-API source routes in SourceEndpoints.cs. Let the Shell change
         // an installed app's live source folder (set/clear the local override) with the same admin
         // session + CSRF guard the other mutating app endpoints use. GET reads current source state.
+        app.MapGet("/api/apps/{appId}/settings/{settingKey}/value", async (
+            string appId,
+            string settingKey,
+            HttpRequest request,
+            HttpResponse response,
+            UserDirectoryStore users,
+            IClock clock,
+            CoreLifecycleService lifecycle,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                users,
+                clock,
+                async () =>
+                {
+                    // Served on explicit demand only (the Shell's reveal click), never in the app
+                    // summaries, and never cached: a secret in a shared cache outlives the click.
+                    response.Headers.CacheControl = "no-store";
+                    return await HandleLifecycleError(() => lifecycle.GetSettingValueAsync(appId, settingKey, cancellationToken));
+                },
+                cancellationToken: cancellationToken));
+
         app.MapGet("/api/apps/{appId}/source", async (
             string appId,
             HttpRequest request,

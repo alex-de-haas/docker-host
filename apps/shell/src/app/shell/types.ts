@@ -35,6 +35,9 @@ export type CoreSetting = {
   type: string;
   value?: string | null;
   secret: boolean;
+  // Whether a value is stored. For secrets `value` is always masked to null, so this is the only
+  // signal separating "set (shown as Unchanged)" from "never configured".
+  hasValue?: boolean;
   required?: boolean;
   label?: string | null;
   description?: string | null;
