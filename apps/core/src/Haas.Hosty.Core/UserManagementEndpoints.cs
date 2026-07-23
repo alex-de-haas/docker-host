@@ -75,7 +75,9 @@ internal static class UserManagementEndpoints
                 cancellationToken: cancellationToken));
 
         app.MapGet("/api/auth/invitations/accept", async (
-            string setupToken,
+            // Nullable so an absent setupToken reaches the handler and gets the same invitation_invalid
+            // answer as a blank or wrong one; a non-nullable binding would 400 on the missing key first.
+            string? setupToken,
             UserManagementService management,
             CancellationToken cancellationToken) =>
             await HandleUserManagementError(() => management.PreviewInvitationAsync(setupToken, cancellationToken)));

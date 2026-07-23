@@ -101,6 +101,23 @@ public sealed class AppIdentityServiceTests
         Assert.Equal("token_invalid", error.Code);
     }
 
+    // A revalidate body that omits the token must answer on the same contract as a wrong one, not fault
+    // in the hash: the caller gets token_invalid (401), never a 500.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task RevalidateAsync_RejectsMissingToken(string? token)
+    {
+        var fixture = await IdentityFixture.CreateAsync();
+        await fixture.WriteUsersAsync([CreateUser("user_1")], [new AppAssignmentRecord("com.example.notes", "user_1", fixture.Clock.UtcNow)]);
+
+        var error = await Assert.ThrowsAsync<AppIdentityException>(() =>
+            fixture.Service.RevalidateAsync(token, "com.example.notes"));
+
+        Assert.Equal("token_invalid", error.Code);
+    }
+
     [Fact]
     public async Task RevalidateAsync_RejectsGrantPastAbsoluteLifetime()
     {
