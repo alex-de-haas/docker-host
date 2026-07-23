@@ -15,6 +15,11 @@ Where the version lives:
 - **`apps/telemetry`** (collector + backend + `apps/telemetry-ui`) ships as one app: bump `version` in `apps/telemetry/manifest.json` and keep the first-party service image tags (`backend`, `ui`) and `apps/telemetry-ui/package.json` in step (`scripts/check-versions.mjs` enforces this). The collector is a third-party image and is exempt.
 - **Runtime app manifests** (including external apps like project-manager, media-server, torrent-engine) follow the hosty-app-skill rules in `skills/hosty-app-skill/references/app-manifest.md`. Do not bump `schemaVersion` for ordinary changes - it only tracks the manifest contract format.
 
+## Pull Requests
+
+- **Do not squash-merge PRs.** Parallel PRs are common here, and squash merges rewrite the merged branch's history — the other in-flight branches can no longer rebase cleanly onto main. Use a regular merge commit instead.
+- **One PR per feature, not per phase.** When a feature plan is split into phases, implement all phases on one branch and open a single PR. Individual phases rarely deliver complete functionality on their own, and under the versioning rules above each per-phase PR would pointlessly bump the version.
+
 ## Hosty Runtime App Development
 
 - Do not validate Hosty identity, Shell embedding, app assignments, or scoped directory behavior by running an app only in standalone mode.
