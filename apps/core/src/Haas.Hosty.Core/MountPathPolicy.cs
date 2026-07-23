@@ -60,7 +60,11 @@ internal sealed class MountPathPolicy(CoreDataPaths paths)
     // — and does the same for each protected root, so a symlinked ancestor on the root itself
     // (macOS /var -> /private/var, an operator's symlinked home) cannot make the containment check miss
     // in one direction while the other catches nothing. Resolution fails closed via ResolveRealPath.
-    public void EnsureAllowed(string fullPath)
+    //
+    // Returns the fully-resolved real path it validated, so the start gate mounts EXACTLY that value
+    // instead of resolving a second time — a second resolve would open a fresh TOCTOU window between
+    // the path Core validated and the path it mounts.
+    public string EnsureAllowed(string fullPath)
     {
         var lexical = Path.GetFullPath(fullPath);
         var real = ResolveRealPath(lexical);
@@ -76,6 +80,8 @@ internal sealed class MountPathPolicy(CoreDataPaths paths)
         {
             EnsureNotWithin(lexical, real, denied, "app_mount_path_forbidden", $"External mount host path may not be inside the system path '{denied}'");
         }
+
+        return real;
     }
 
     // Rejects when the lexical path is within the lexical root OR the resolved path is within the

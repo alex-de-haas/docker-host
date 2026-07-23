@@ -3318,10 +3318,10 @@ internal sealed class CoreLifecycleService(
         foreach (var mount in context.Mounts)
         {
             // Re-check the path and its real target: one validated at config time could have been
-            // repointed at a forbidden location since (TOCTOU). EnsureAllowed resolves internally and
-            // fails closed on a resolution error rather than falling back to the lexical path.
-            mountPathPolicy.EnsureAllowed(mount.HostPath);
-            var realPath = MountPathPolicy.ResolveRealPath(mount.HostPath);
+            // repointed at a forbidden location since (TOCTOU). EnsureAllowed resolves internally, fails
+            // closed on a resolution error, and returns the exact real path it validated so existence
+            // and the mount both use that single resolution (no second resolve to race against).
+            var realPath = mountPathPolicy.EnsureAllowed(mount.HostPath);
             if (!MountPathPolicy.HostPathExists(realPath))
             {
                 throw new AppLifecycleException(
