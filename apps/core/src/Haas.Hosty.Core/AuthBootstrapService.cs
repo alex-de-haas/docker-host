@@ -5,14 +5,39 @@ namespace Haas.Hosty.Core;
 
 internal sealed class AuthBootstrapTokenStore(CoreDataPaths paths)
 {
+    // Serializes read-modify-write so token issuance and single-use consumption never race on a stale
+    // snapshot — the whole point of C-M2 (mirrors UserDirectoryStore.gate).
+    private readonly SemaphoreSlim gate = new(1, 1);
+
     private string StatePath => Path.Combine(paths.AuthRoot, "bootstrap-tokens.json");
 
     public async Task<AuthBootstrapTokenState> ReadAsync(CancellationToken cancellationToken = default)
         => await JsonStorage.ReadAsync<AuthBootstrapTokenState>(StatePath, cancellationToken) ??
             new AuthBootstrapTokenState(1, []);
 
-    public async Task WriteAsync(AuthBootstrapTokenState state, CancellationToken cancellationToken = default)
+    private async Task WriteAsync(AuthBootstrapTokenState state, CancellationToken cancellationToken = default)
         => await JsonStorage.WriteAsync(StatePath, state, restrictToOwner: true, cancellationToken);
+
+    // Atomic read-modify-write under the gate. The mutate delegate sees the freshest state and its
+    // result is written before the gate releases, so a concurrent consumer cannot observe or overwrite
+    // an intermediate value.
+    public async Task<T> UpdateAsync<T>(
+        Func<AuthBootstrapTokenState, (AuthBootstrapTokenState State, T Result)> mutate,
+        CancellationToken cancellationToken = default)
+    {
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            var current = await ReadAsync(cancellationToken);
+            var (next, result) = mutate(current);
+            await WriteAsync(next, cancellationToken);
+            return result;
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
 }
 
 internal sealed class AuthBootstrapService(
@@ -70,13 +95,20 @@ internal sealed class AuthBootstrapService(
     public async Task<HostUserRecord> BootstrapAsync(AuthBootstrapRequest request, CancellationToken cancellationToken = default)
     {
         var now = clock.UtcNow;
-        var tokenState = await tokens.ReadAsync(cancellationToken);
-        var token = FindValidToken(tokenState, SetupKind, request.SetupToken, now) ??
-            throw new AuthBootstrapException("setup_token_invalid", "Setup token is invalid or expired.", StatusCodes.Status404NotFound);
         var email = NormalizeEmail(request.Email);
         if (string.IsNullOrWhiteSpace(email))
         {
+            // Cheap input check before touching the token, so a client-preventable typo does not burn it.
             throw new AuthBootstrapException("invalid_email", "Enter a valid email address.", StatusCodes.Status400BadRequest);
+        }
+
+        // Consume the token in a single atomic pending->used transition BEFORE the privileged mutation
+        // (C-M2): the transition is the claim, so two concurrent requests carrying the same token cannot
+        // both proceed to create an admin. A consumed token is spent even if the mutation below fails —
+        // request a fresh token to retry.
+        if (await TryConsumeTokenAsync(SetupKind, request.SetupToken, now, cancellationToken) is null)
+        {
+            throw new AuthBootstrapException("setup_token_invalid", "Setup token is invalid or expired.", StatusCodes.Status404NotFound);
         }
 
         var user = new HostUserRecord(
@@ -111,7 +143,6 @@ internal sealed class AuthBootstrapService(
                 PasswordCredentials = credentials,
             };
         }, cancellationToken);
-        await MarkTokenUsedAsync(tokenState, token.Id, now, cancellationToken);
         await AppendAuditAsync("auth.bootstrap.completed", "auth.user", user.Id, "succeeded", new Dictionary<string, string>
         {
             ["email"] = email,
@@ -122,13 +153,19 @@ internal sealed class AuthBootstrapService(
     public async Task<HostUserRecord> RecoverAsync(AuthRecoveryRequest request, CancellationToken cancellationToken = default)
     {
         var now = clock.UtcNow;
-        var tokenState = await tokens.ReadAsync(cancellationToken);
-        var token = FindValidToken(tokenState, RecoveryKind, request.RecoveryToken, now) ??
-            throw new AuthBootstrapException("recovery_token_invalid", "Recovery token is invalid or expired.", StatusCodes.Status404NotFound);
         var email = NormalizeEmail(request.Email);
         if (string.IsNullOrWhiteSpace(email))
         {
+            // Cheap input check before touching the token, so a client-preventable typo does not burn it.
             throw new AuthBootstrapException("invalid_email", "Enter a valid email address.", StatusCodes.Status400BadRequest);
+        }
+
+        // Atomic single-use claim before the privileged mutation (C-M2): two concurrent requests with
+        // the same recovery token can no longer both promote an account. A consumed token is spent even
+        // if the mutation below fails — request a fresh token to retry.
+        if (await TryConsumeTokenAsync(RecoveryKind, request.RecoveryToken, now, cancellationToken) is null)
+        {
+            throw new AuthBootstrapException("recovery_token_invalid", "Recovery token is invalid or expired.", StatusCodes.Status404NotFound);
         }
 
         var (recovered, hadExistingUser) = await users.UpdateAsync<(HostUserRecord Recovered, bool HadExisting)>(userState =>
@@ -168,7 +205,6 @@ internal sealed class AuthBootstrapService(
             }, (restored, true));
         }, cancellationToken);
 
-        await MarkTokenUsedAsync(tokenState, token.Id, now, cancellationToken);
         await AppendAuditAsync("auth.recovery.completed", "auth.user", recovered.Id, "succeeded", new Dictionary<string, string>
         {
             ["email"] = email,
@@ -188,44 +224,51 @@ internal sealed class AuthBootstrapService(
             Status: "pending",
             ExpiresAt: now.Add(TokenTtl),
             CreatedAt: now);
-        var state = await tokens.ReadAsync(cancellationToken);
-        var records = state.Tokens
-            .Select(token => string.Equals(token.Kind, kind, StringComparison.Ordinal) &&
-                    GetTokenStatus(token, now) == "pending"
-                ? token with { Status = "revoked", RevokedAt = now }
-                : token)
-            .Append(record)
-            .ToArray();
-        await tokens.WriteAsync(state with { Tokens = records }, cancellationToken);
+        // Under the store gate: revoke any still-pending token of the same kind and append the new one
+        // in one write, so a concurrent issue/consume cannot lose either change (C-M2).
+        await tokens.UpdateAsync<object?>(state =>
+        {
+            var records = state.Tokens
+                .Select(token => string.Equals(token.Kind, kind, StringComparison.Ordinal) &&
+                        GetTokenStatus(token, now) == "pending"
+                    ? token with { Status = "revoked", RevokedAt = now }
+                    : token)
+                .Append(record)
+                .ToArray();
+            return (state with { Tokens = records }, null);
+        }, cancellationToken);
         return new IssuedAuthBootstrapToken(record.Id, rawToken, record.ExpiresAt);
     }
 
-    private AuthBootstrapTokenRecord? FindValidToken(AuthBootstrapTokenState state, string kind, string token, DateTimeOffset now)
+    // Atomically claims a pending token: finds the matching pending record and flips it to used in a
+    // single gated read-modify-write, returning the consumed record or null when no pending token
+    // matches (invalid, expired, already used, or lost the race to a concurrent consumer). This one
+    // transition is the single-use guarantee — callers do the privileged mutation only after it wins.
+    private Task<AuthBootstrapTokenRecord?> TryConsumeTokenAsync(string kind, string? rawToken, DateTimeOffset now, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(token))
+        if (string.IsNullOrWhiteSpace(rawToken))
         {
-            return null;
+            return Task.FromResult<AuthBootstrapTokenRecord?>(null);
         }
 
-        var hash = HashToken(token);
-        return state.Tokens.FirstOrDefault(record =>
-            string.Equals(record.Kind, kind, StringComparison.Ordinal) &&
-            string.Equals(record.TokenHash, hash, StringComparison.Ordinal) &&
-            GetTokenStatus(record, now) == "pending");
-    }
+        var hash = HashToken(rawToken);
+        return tokens.UpdateAsync<AuthBootstrapTokenRecord?>(state =>
+        {
+            var match = state.Tokens.FirstOrDefault(record =>
+                string.Equals(record.Kind, kind, StringComparison.Ordinal) &&
+                string.Equals(record.TokenHash, hash, StringComparison.Ordinal) &&
+                GetTokenStatus(record, now) == "pending");
+            if (match is null)
+            {
+                return (state, null);
+            }
 
-    private async Task MarkTokenUsedAsync(
-        AuthBootstrapTokenState state,
-        string tokenId,
-        DateTimeOffset now,
-        CancellationToken cancellationToken)
-    {
-        var records = state.Tokens
-            .Select(token => string.Equals(token.Id, tokenId, StringComparison.Ordinal)
-                ? token with { Status = "used", UsedAt = now }
-                : token)
-            .ToArray();
-        await tokens.WriteAsync(state with { Tokens = records }, cancellationToken);
+            var consumed = match with { Status = "used", UsedAt = now };
+            var records = state.Tokens
+                .Select(token => string.Equals(token.Id, match.Id, StringComparison.Ordinal) ? consumed : token)
+                .ToArray();
+            return (state with { Tokens = records }, consumed);
+        }, cancellationToken);
     }
 
     private async Task AppendAuditAsync(
