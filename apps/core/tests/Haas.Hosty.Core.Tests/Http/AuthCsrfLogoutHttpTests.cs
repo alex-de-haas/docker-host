@@ -41,8 +41,17 @@ public sealed class AuthCsrfLogoutHttpTests
         Assert.Equal(HttpStatusCode.OK, withCsrf.StatusCode);
     }
 
-    [Fact]
-    public async Task GetLogout_RedirectsToLoginWithoutRevokingTheSession()
+    [Theory]
+    // A genuine top-level navigation (the old Shell's <a href> logout, a typed URL) carries
+    // Sec-Fetch-Dest "document"; a non-browser client sends nothing. Both log out.
+    [InlineData("document", true)]
+    [InlineData("", true)]
+    // The silent CSRF-logout vectors — an <img src>/hidden-iframe/prefetch to /logout — carry an
+    // embedded destination and must NOT revoke the session.
+    [InlineData("image", false)]
+    [InlineData("iframe", false)]
+    [InlineData("empty", false)]
+    public async Task GetLogout_RevokesOnlyForATopLevelNavigation(string secFetchDest, bool expectRevoked)
     {
         await using var harness = await CoreHttpHarness.StartAsync();
         var users = harness.Services.GetRequiredService<UserDirectoryStore>();
@@ -55,13 +64,18 @@ public sealed class AuthCsrfLogoutHttpTests
         using var client = harness.CreateClient();
         using var request = new HttpRequestMessage(HttpMethod.Get, "/logout");
         request.Headers.Add("Cookie", $"{CoreSessionAuthorization.SessionCookieName}={session.Id}");
+        if (secFetchDest.Length > 0)
+        {
+            request.Headers.Add("Sec-Fetch-Dest", secFetchDest);
+        }
+
         using var response = await client.SendAsync(request);
 
-        // Redirect to login, and — critically — a GET must not have revoked the session (CSRF-via-GET).
+        // Always redirects to login; whether the session was revoked depends on the fetch destination.
         Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
         Assert.StartsWith("/login", response.Headers.Location?.OriginalString ?? "");
         var stored = Assert.Single((await users.ReadAsync()).Sessions);
-        Assert.Null(stored.RevokedAt);
+        Assert.Equal(expectRevoked, stored.RevokedAt is not null);
     }
 
     private static IEnumerable<string> SetCookie(HttpResponseMessage response)

@@ -280,11 +280,30 @@ internal static class HostyCoreApplication
         app.MapGet("/recovery", async (string? recoveryToken, ShellPublicOriginResolver shellOrigins, CancellationToken cancellationToken) => Results.Content(
             RenderRecoveryPage(await shellOrigins.ResolveAsync(cancellationToken), recoveryToken),
             "text/html"));
-        // A GET must not change state: a stray <img src>/prefetch/link to /logout would otherwise revoke
-        // the session (CSRF-via-GET, C-L2). Logout now happens through the CSRF-protected
-        // POST /api/auth/logout the UI issues; this stays only as a compatibility redirect so an old
-        // bookmark or link lands on the login page (Core's own, not Shell — a host may run without one).
-        app.MapGet("/logout", () => Results.Redirect("/login"));
+        // Logout's real path is the CSRF-protected POST /api/auth/logout the current Shell issues. This
+        // GET stays for the old Shell (a <a href>/logout link) and bookmarks, but it must not be a
+        // silent CSRF-logout vector: a stray <img src>/prefetch/hidden-iframe to /logout would otherwise
+        // revoke the session. Fetch Metadata distinguishes those — an embedded subresource load carries
+        // Sec-Fetch-Dest != "document" — so revoke only for a genuine top-level navigation (Dest
+        // "document", or absent for non-browser clients) and never for an embedded load (C-L2). A host
+        // may run without a Shell, so the redirect target is Core's own login page.
+        app.MapGet("/logout", async (
+            HttpRequest request,
+            HttpResponse response,
+            UserDirectoryStore users,
+            AppSessionGrantStore grants,
+            IClock clock,
+            CancellationToken cancellationToken) =>
+        {
+            var fetchDest = request.Headers["Sec-Fetch-Dest"].ToString();
+            var isEmbeddedSubresource = !string.IsNullOrEmpty(fetchDest) && !string.Equals(fetchDest, "document", StringComparison.Ordinal);
+            if (!isEmbeddedSubresource)
+            {
+                await AuthEndpoints.LogoutAsync(request, response, users, grants, clock, cancellationToken);
+            }
+
+            return Results.Redirect("/login");
+        });
         app.MapGet("/api/auth/callback/oidc", async (
             HostyCoreRuntimeConfig config,
             ShellPublicOriginResolver shellOrigins,
