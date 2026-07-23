@@ -886,7 +886,7 @@ internal sealed class CoreLifecycleService(
             app = await EnsureIngressPublicOriginsAsync(app, selection, cancellationToken);
             adapter = ResolveAdapter(selection.RuntimeProfile.Type);
             context = await CreateRuntimeContextAsync(app, selection, cancellationToken);
-            EnsureMountsReadyForStart(context);
+            context = EnsureMountsReadyForStart(context);
             // Core-owned provisioning for the platform capability slots this app provides (e.g. the
             // OTLP collector's config + sink dirs), run before the services launch. Keyed by the
             // manifest's `provides`, not the app id or install path, so a marketplace/direct install
@@ -1224,7 +1224,7 @@ internal sealed class CoreLifecycleService(
 
             adapter = ResolveAdapter(selection.RuntimeProfile.Type);
             context = await CreateRuntimeContextAsync(app, selection, cancellationToken);
-            EnsureMountsReadyForStart(context);
+            context = EnsureMountsReadyForStart(context);
             _ = await stopAdapter.StopAsync(stopContext, cancellationToken);
             // Re-run capability provisioning on restart too, so a config-template change ships forward
             // and the app comes back with fresh Core-owned files (see PlatformCapabilities). Ordered
@@ -3295,7 +3295,10 @@ internal sealed class CoreLifecycleService(
     // configured host path must still pass the path policy (defense-in-depth against a binding
     // tampered on disk), and must exist as a directory. We check existence in Core rather than
     // let docker bind a missing path, which would silently create an empty root-owned dir.
-    private void EnsureMountsReadyForStart(RuntimeLifecycleContext context)
+    // Validates the mounts and returns the context with each mount's HostPath rewritten to its
+    // fully-resolved real path, so Docker binds the exact location Core validated rather than a path it
+    // would re-traverse through a symlink (C-H3). Callers must use the returned context.
+    private RuntimeLifecycleContext EnsureMountsReadyForStart(RuntimeLifecycleContext context)
     {
         // Required check runs over the resolved mounts (context.Mounts): a global binding whose
         // library entry was deleted is already dropped there, so a required slot left with only such
@@ -3311,19 +3314,26 @@ internal sealed class CoreLifecycleService(
             }
         }
 
+        var canonicalized = new List<RuntimeMount>(context.Mounts.Count);
         foreach (var mount in context.Mounts)
         {
-            // Re-check both the stored path and its symlink-resolved target: a path validated at
-            // config time could have been repointed at a forbidden location since (TOCTOU).
-            mountPathPolicy.EnsureAllowed(mount.HostPath);
-            mountPathPolicy.EnsureAllowed(MountPathPolicy.ResolveRealPath(mount.HostPath));
-            if (!MountPathPolicy.HostPathExists(mount.HostPath))
+            // Re-check the path and its real target: one validated at config time could have been
+            // repointed at a forbidden location since (TOCTOU). EnsureAllowed resolves internally, fails
+            // closed on a resolution error, and returns the exact real path it validated so existence
+            // and the mount both use that single resolution (no second resolve to race against).
+            var realPath = mountPathPolicy.EnsureAllowed(mount.HostPath);
+            if (!MountPathPolicy.HostPathExists(realPath))
             {
                 throw new AppLifecycleException(
                     "app_mount_source_missing",
                     $"External mount '{mount.Key}/{mount.Label}' host path was not found or is not a directory: {mount.HostPath}");
             }
+
+            // Bind the resolved real path, not the operator's (possibly symlinked) path.
+            canonicalized.Add(mount with { HostPath = realPath });
         }
+
+        return context with { Mounts = canonicalized };
     }
 
     private async Task<AppRecord> EnsureLocalCommandSourceReadyAsync(
