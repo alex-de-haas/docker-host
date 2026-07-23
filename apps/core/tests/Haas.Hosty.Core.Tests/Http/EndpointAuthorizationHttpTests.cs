@@ -18,10 +18,10 @@ public sealed class EndpointAuthorizationHttpTests
     // pattern. Anything not here MUST reject an anonymous caller.
     private static readonly string[] AnonymousAllowedApiPatterns =
     [
-        // Auth handshake and login surface — public by definition.
+        // Auth handshake and login surface — public by definition. (Logout is intentionally NOT here:
+        // it now requires CSRF, so it answers 403 to an anonymous caller like any other mutation.)
         "/api/auth/csrf",
         "/api/auth/session",
-        "/api/auth/logout",
         "/api/auth/bootstrap",
         "/api/auth/recovery",
         "/api/auth/trusted-proxy/session",

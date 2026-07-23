@@ -280,6 +280,13 @@ internal static class HostyCoreApplication
         app.MapGet("/recovery", async (string? recoveryToken, ShellPublicOriginResolver shellOrigins, CancellationToken cancellationToken) => Results.Content(
             RenderRecoveryPage(await shellOrigins.ResolveAsync(cancellationToken), recoveryToken),
             "text/html"));
+        // Logout's real path is the CSRF-protected POST /api/auth/logout the current Shell issues. This
+        // GET stays for the old Shell (a <a href>/logout link) and bookmarks, but it must not be a
+        // silent CSRF-logout vector: a stray <img src>/prefetch/hidden-iframe to /logout would otherwise
+        // revoke the session. Fetch Metadata distinguishes those — an embedded subresource load carries
+        // Sec-Fetch-Dest != "document" — so revoke only for a genuine top-level navigation (Dest
+        // "document", or absent for non-browser clients) and never for an embedded load (C-L2). A host
+        // may run without a Shell, so the redirect target is Core's own login page.
         app.MapGet("/logout", async (
             HttpRequest request,
             HttpResponse response,
@@ -288,11 +295,13 @@ internal static class HostyCoreApplication
             IClock clock,
             CancellationToken cancellationToken) =>
         {
-            await AuthEndpoints.LogoutAsync(request, response, users, grants, clock, cancellationToken);
-            // Core's own login page, not Shell. The session is gone, so bouncing to Shell only made it
-            // bounce straight back here — and it needed a Shell origin to do it, which a host that runs
-            // without Shell (an optional distribution app) does not have. Dropping the hop removes the
-            // dependency rather than teaching it to cope with a missing one.
+            var fetchDest = request.Headers["Sec-Fetch-Dest"].ToString();
+            var isEmbeddedSubresource = !string.IsNullOrEmpty(fetchDest) && !string.Equals(fetchDest, "document", StringComparison.Ordinal);
+            if (!isEmbeddedSubresource)
+            {
+                await AuthEndpoints.LogoutAsync(request, response, users, grants, clock, cancellationToken);
+            }
+
             return Results.Redirect("/login");
         });
         app.MapGet("/api/auth/callback/oidc", async (

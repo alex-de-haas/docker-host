@@ -126,7 +126,11 @@ internal static class CoreSessionAuthorization
             : null;
     }
 
-    private static bool HasValidCsrfToken(HttpRequest request)
+    // Double-submit check: the CSRF cookie (readable JS, set by /api/auth/csrf) must equal the
+    // X-Hosty-CSRF header. Both values are client-supplied and identical by construction, so there is
+    // no secret to leak — ordinary equality is fine here (unlike the server-held secrets in C-L1).
+    // Internal so the logout endpoint can gate on CSRF without pulling in a full session requirement.
+    internal static bool HasValidCsrfToken(HttpRequest request)
     {
         var cookie = request.Cookies[CsrfCookieName];
         var header = request.Headers[CsrfHeaderName].ToString();

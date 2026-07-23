@@ -474,6 +474,34 @@ function AppNavigationItem({
   );
 }
 
+// Logs out via the CSRF-protected POST /api/auth/logout (C-L2), then navigates to Core's login page.
+// The CSRF token is a cookie+header double-submit pair; a concurrent CSRF-protected operation elsewhere
+// in the Shell can refresh (overwrite) the cookie between our token fetch and the POST, so a single 403
+// is retried once with a fresh token before giving up. The redirect runs regardless of the outcome —
+// the destination is the same and leaving the user on a half-logged-out sidebar is worse.
+async function logout(coreOrigin: string) {
+  const postLogout = async () => {
+    const csrfResponse = await fetch(`${coreOrigin}/api/auth/csrf`, { credentials: "include" });
+    const { token } = (await csrfResponse.json()) as { token: string };
+    return fetch(`${coreOrigin}/api/auth/logout`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "X-Hosty-CSRF": token },
+    });
+  };
+
+  try {
+    let response = await postLogout();
+    if (response.status === 403) {
+      response = await postLogout();
+    }
+  } catch {
+    // Ignore — navigate to login regardless below.
+  } finally {
+    window.location.href = `${coreOrigin}/login`;
+  }
+}
+
 function SidebarFooterAccount({
   compact,
   coreOrigin,
@@ -534,11 +562,17 @@ function SidebarFooterAccount({
             <Badge variant="outline">{activeUser.role}</Badge>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
-          <DropdownMenuItem asChild>
-            <a href={`${coreOrigin}/logout`}>
-              <LogOut className="h-4 w-4" />
-              Logout
-            </a>
+          <DropdownMenuItem
+            onSelect={(event) => {
+              // Logout is a state change, so it goes through the CSRF-protected POST rather than a GET
+              // link (C-L2): fetch a token, POST it, then land on Core's login page regardless of the
+              // POST's outcome (an already-expired session logs out to the same place).
+              event.preventDefault();
+              void logout(coreOrigin);
+            }}
+          >
+            <LogOut className="h-4 w-4" />
+            Logout
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
