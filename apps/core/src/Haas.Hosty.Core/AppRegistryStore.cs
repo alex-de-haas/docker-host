@@ -888,7 +888,7 @@ internal sealed record AppSummary(
         IReadOnlyList<AppEndpointContract> endpoints)
     {
         var summaries = settings.Values
-            .ToDictionary(setting => setting.Key, setting => new AppSettingSummary(setting.Key, setting.Type, setting.Secret ? null : setting.Value, setting.Secret, setting.Required, setting.Label, setting.Description), StringComparer.Ordinal);
+            .ToDictionary(setting => setting.Key, setting => new AppSettingSummary(setting.Key, setting.Type, setting.Secret ? null : setting.Value, setting.Secret, setting.Required, setting.Label, setting.Description, HasValue: !string.IsNullOrEmpty(setting.Value)), StringComparer.Ordinal);
         foreach (var endpoint in endpoints.Where(endpoint => endpoint.Public))
         {
             var key = PublicOriginSettings.BuildSettingKey(endpoint.Key);
@@ -1008,7 +1008,9 @@ internal sealed record AppSummary(
     }
 }
 
-internal sealed record AppSettingSummary(string Key, string Type, string? Value, bool Secret, bool Required = false, string? Label = null, string? Description = null);
+// HasValue lets the Shell say "set" vs "not set" for a secret without receiving the value itself —
+// the value of a secret setting is only served by the explicit per-key reveal endpoint.
+internal sealed record AppSettingSummary(string Key, string Type, string? Value, bool Secret, bool Required = false, string? Label = null, string? Description = null, bool HasValue = false);
 
 internal sealed record AppNavigationSummary(string Label, string Path, string? EntryPath, string? EmbeddedUrl, string? IconUrl = null);
 

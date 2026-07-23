@@ -910,6 +910,22 @@ export function ShellClient({
     [appEndpoint, loadAppBackups, sendCsrfJson],
   );
 
+  const revealAppSetting = useCallback(
+    async (app: CoreApp, key: string) => {
+      // On-demand only: the app summaries never carry a secret's value, so this is the single path
+      // that does, gated on the admin session server-side.
+      const response = await fetch(appEndpoint(app, `/settings/${encodeURIComponent(key)}/value`), { credentials: "include" });
+      redirectToCoreLoginIfAuthRequired(response, coreOrigin);
+      if (!response.ok) {
+        throw new Error(await readCoreError(response));
+      }
+
+      const payload = (await response.json()) as { key: string; value: string | null };
+      return payload.value;
+    },
+    [appEndpoint, coreOrigin],
+  );
+
   const configureApp = useCallback(
     async (app: CoreApp, settings: Record<string, string | null>, autostart?: boolean) => {
       const actionKey = `${app.id}:configure`;
@@ -1929,6 +1945,7 @@ export function ShellClient({
             onApplyUpdate={applyUpdate}
             onSetFeed={setAppFeed}
             onRemove={removeApp}
+            onRevealSetting={revealAppSetting}
           />
         )}
 

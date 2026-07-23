@@ -54,7 +54,7 @@ export function PublicOriginInput({ setting, endpoint, value, disabled, onChange
   );
 }
 
-export function SettingInput({ setting, value, disabled, onChange }: { setting: CoreInstallSetting | CoreSetting; value: string; disabled?: boolean; onChange: (value: string) => void }) {
+export function SettingInput({ setting, value, disabled, onChange, onReveal }: { setting: CoreInstallSetting | CoreSetting; value: string; disabled?: boolean; onChange: (value: string) => void; onReveal?: () => Promise<string | null> }) {
   const controlId = `setting-${setting.key}`;
   const label = setting.label?.trim() || formatSettingLabel(setting.key);
   const description = setting.description?.trim();
@@ -68,7 +68,7 @@ export function SettingInput({ setting, value, disabled, onChange }: { setting: 
         {description && <SettingDescriptionHint description={description} />}
       </div>
       <div className="min-w-0">
-        <SettingControl controlId={controlId} setting={setting} value={value} disabled={disabled} onChange={onChange} />
+        <SettingControl controlId={controlId} setting={setting} value={value} disabled={disabled} onChange={onChange} onReveal={onReveal} />
       </div>
     </div>
   );
@@ -106,21 +106,47 @@ function isBooleanSettingChecked(value: string) {
 
 // Renders the editor matched to the setting's declared type: a toggle for booleans, a numeric field
 // for numbers, an icon-prefixed URL field, a reveal-able password for secrets, and plain text otherwise.
-function SettingControl({ controlId, setting, value, disabled, onChange }: { controlId: string; setting: CoreInstallSetting | CoreSetting; value: string; disabled?: boolean; onChange: (value: string) => void }) {
+function SettingControl({ controlId, setting, value, disabled, onChange, onReveal }: { controlId: string; setting: CoreInstallSetting | CoreSetting; value: string; disabled?: boolean; onChange: (value: string) => void; onReveal?: () => Promise<string | null> }) {
   const [revealed, setRevealed] = useState(false);
+  // The stored value fetched on demand for a secret whose draft is untouched. Display-only: it never
+  // enters the draft, so revealing cannot mark the form dirty or resave the value.
+  const [stored, setStored] = useState<string | null>(null);
+  const [revealError, setRevealError] = useState(false);
   // The value prop is typed string, but upstream setting values are nullable; coalesce so .trim()
   // never throws and the Input stays controlled even if a null slips through.
   const safeValue = value ?? "";
 
   if (setting.secret) {
+    const hasStored = "hasValue" in setting && setting.hasValue === true;
+    // A typed draft always wins; otherwise show the fetched stored value while revealed.
+    const displayValue = safeValue.length > 0 ? safeValue : revealed && stored !== null ? stored : "";
+    const toggleReveal = () => {
+      setRevealError(false);
+      if (revealed) {
+        setRevealed(false);
+        setStored(null);
+        return;
+      }
+      setRevealed(true);
+      // Fetch the stored value only when there is nothing typed to show and one exists to fetch.
+      if (safeValue.length === 0 && hasStored && onReveal && stored === null) {
+        onReveal().then(
+          (fetched) => setStored(fetched ?? ""),
+          () => {
+            setRevealError(true);
+            setRevealed(false);
+          },
+        );
+      }
+    };
     return (
       <div className="relative">
         <Input
           id={controlId}
           type={revealed ? "text" : "password"}
           className="pr-9"
-          value={safeValue}
-          placeholder="Unchanged"
+          value={displayValue}
+          placeholder={hasStored || !("hasValue" in setting) ? "Unchanged" : "Not set"}
           disabled={disabled}
           onChange={(event) => onChange(event.target.value)}
         />
@@ -130,10 +156,11 @@ function SettingControl({ controlId, setting, value, disabled, onChange }: { con
           aria-pressed={revealed}
           className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
           disabled={disabled}
-          onClick={() => setRevealed((current) => !current)}
+          onClick={toggleReveal}
         >
           {revealed ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
         </button>
+        {revealError && <p className="mt-1 text-xs text-destructive">Couldn&rsquo;t load the stored value.</p>}
       </div>
     );
   }

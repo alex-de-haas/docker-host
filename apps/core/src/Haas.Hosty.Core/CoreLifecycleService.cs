@@ -502,6 +502,24 @@ internal sealed class CoreLifecycleService(
         return trimmed.ToLowerInvariant();
     }
 
+    /// <summary>
+    /// Returns one setting's stored value, secrets included. Admin-only at the edge; exists so the
+    /// operator can verify what is actually stored instead of guessing behind an "Unchanged" mask —
+    /// they own these values and can already read them off the container env, so hiding them here
+    /// only obscures misconfiguration (a wrong paste stays invisible until something downstream 403s).
+    /// </summary>
+    public async Task<AppSettingValueResponse> GetSettingValueAsync(
+        string appId, string settingKey, CancellationToken cancellationToken = default)
+    {
+        var app = await RequireAppAsync(appId, cancellationToken);
+        if (!app.Settings.TryGetValue(settingKey, out var setting))
+        {
+            throw new AppLifecycleException("app_setting_unknown", $"Runtime app '{appId}' has no setting '{settingKey}'.");
+        }
+
+        return new AppSettingValueResponse(setting.Key, setting.Value);
+    }
+
     public Task<AppLifecycleResponse> ConfigureAutostartAsync(
         string appId,
         AppAutostartRequest request,
@@ -5225,6 +5243,9 @@ internal sealed record AppConfigureRequest(
     string? UpdatePolicy = null);
 
 internal sealed record AppAutostartRequest(bool Autostart);
+
+/// <summary>One setting's stored value, served only through the admin-gated reveal endpoint.</summary>
+internal sealed record AppSettingValueResponse(string Key, string? Value);
 
 internal sealed record AppDevelopmentModeRequest(string Runtime, bool Enabled);
 

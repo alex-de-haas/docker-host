@@ -175,6 +175,7 @@ internal static class CoreJson
 [JsonSerializable(typeof(AppFeedInstallPlanDigestSeed))]
 [JsonSerializable(typeof(AppFeedsResponse))]
 [JsonSerializable(typeof(AppLifecycleResponse))]
+[JsonSerializable(typeof(AppSettingValueResponse))]
 // Reachable via AppLifecycleResponse, but rooted explicitly for parity with the other nested DTOs:
 // the Development-Mode disable rollback recommendation.
 [JsonSerializable(typeof(AppDevelopmentModeRestoreHint))]
