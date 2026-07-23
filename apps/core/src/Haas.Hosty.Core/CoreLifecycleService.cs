@@ -102,11 +102,23 @@ internal sealed class CoreLifecycleService(
 
         // The apply path consumes this cached selection verbatim instead of re-fetching the manifest,
         // so the fetch that produced the reviewed digest is the fetch that installs — a source that
-        // answers the plan and the apply differently gains nothing (C-CR1). Expired leftovers are
-        // swept on each mint so abandoned plans cannot accumulate.
+        // answers the plan and the apply differently gains nothing (C-CR1). The TTL is enforced on
+        // consume; the sweep here is best-effort cleanup of abandoned entries, and the hard cap
+        // below bounds the cache even under a burst of plan requests within one TTL window.
         foreach (var entry in reviewedInstallPlans.Where(entry => clock.UtcNow - entry.Value.CreatedAt > ReviewedInstallPlanTtl))
         {
             reviewedInstallPlans.TryRemove(entry);
+        }
+
+        while (reviewedInstallPlans.Count >= MaxPendingInstallPlans)
+        {
+            // Evict the oldest pending plan rather than rejecting the new one: the operator asking
+            // now is the active one, and whoever held the evicted plan just re-reviews.
+            var oldest = reviewedInstallPlans.MinBy(entry => entry.Value.CreatedAt);
+            if (!reviewedInstallPlans.TryRemove(oldest))
+            {
+                break;
+            }
         }
 
         reviewedInstallPlans[plan.PlanId!] = new CachedInstallPlan(plan, selection, clock.UtcNow);
@@ -119,6 +131,10 @@ internal sealed class CoreLifecycleService(
     private readonly ConcurrentDictionary<string, CachedInstallPlan> reviewedInstallPlans = new(StringComparer.Ordinal);
 
     private static readonly TimeSpan ReviewedInstallPlanTtl = TimeSpan.FromHours(1);
+
+    // Hard bound on pending install plans. Far above any interactive use (a plan per open dialog),
+    // low enough that runaway automation cannot grow Core's memory with cached manifest selections.
+    private const int MaxPendingInstallPlans = 64;
 
     private sealed record CachedInstallPlan(AppInstallPlan Plan, RuntimeAppManifestSelection Selection, DateTimeOffset CreatedAt);
 

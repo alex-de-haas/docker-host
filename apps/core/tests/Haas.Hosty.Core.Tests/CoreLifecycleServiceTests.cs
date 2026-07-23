@@ -5217,6 +5217,26 @@ public sealed class CoreLifecycleServiceTests
         Assert.True(app!.System);
     }
 
+    [Fact]
+    public async Task CreateInstallPlanAsync_CapsPendingPlansByEvictingTheOldest()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+
+        var first = await fixture.Service.CreateInstallPlanAsync(new AppInstallPlanRequest(manifest));
+        for (var i = 0; i < 64; i++)
+        {
+            fixture.Clock.UtcNow += TimeSpan.FromSeconds(1);
+            _ = await fixture.Service.CreateInstallPlanAsync(new AppInstallPlanRequest(manifest));
+        }
+
+        // 65 plans minted against a cap of 64: the first (oldest) one is gone, applying it re-reviews.
+        var ex = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.InstallAsync(new AppInstallRequest(manifest, PlanId: first.PlanId)));
+
+        Assert.Equal("install_plan_expired", ex.Code);
+    }
+
     private sealed class LifecycleFixture
     {
         private LifecycleFixture(

@@ -820,7 +820,7 @@ internal static class LifecycleEndpoints
         {
             throw new AppLifecycleException(
                 "install_plan_required",
-                "Install requires a reviewed plan. Request POST apps/install/plan first and echo its planId.");
+                "Install requires a reviewed plan. Request POST /api/apps/install/plan (or /control/v1/apps/install/plan) first and echo its planId.");
         }
     }
 
