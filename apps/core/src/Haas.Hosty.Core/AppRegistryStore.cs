@@ -888,7 +888,7 @@ internal sealed record AppSummary(
         IReadOnlyList<AppEndpointContract> endpoints)
     {
         var summaries = settings.Values
-            .ToDictionary(setting => setting.Key, setting => new AppSettingSummary(setting.Key, setting.Type, setting.Secret ? null : setting.Value, setting.Secret, setting.Required, setting.Label, setting.Description, HasValue: !string.IsNullOrEmpty(setting.Value)), StringComparer.Ordinal);
+            .ToDictionary(setting => setting.Key, setting => new AppSettingSummary(setting.Key, setting.Type, setting.Secret ? null : setting.Value, setting.Secret, setting.Required, setting.Label, setting.Description, HasValue: !string.IsNullOrWhiteSpace(setting.Value)), StringComparer.Ordinal);
         foreach (var endpoint in endpoints.Where(endpoint => endpoint.Public))
         {
             var key = PublicOriginSettings.BuildSettingKey(endpoint.Key);

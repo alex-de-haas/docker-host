@@ -627,6 +627,15 @@ public sealed class CoreLifecycleServiceTests
         // Unconfigured at install time: no value yet, and the flag says so.
         var installSetting = Assert.Single(install.App!.Settings, setting => setting.Key == "API_TOKEN");
         Assert.False(installSetting.HasValue);
+
+        // Whitespace is "unset", matching the required-setting check -- otherwise the Shell would
+        // show "Unchanged" for a value Core itself refuses to count.
+        await fixture.Service.ConfigureAsync(
+            "com.example.notes",
+            new AppConfigureRequest(Settings: new Dictionary<string, string?> { ["API_TOKEN"] = "   " }));
+        var blanked = Assert.Single(
+            (await fixture.Service.ListAppsAsync()).Single().Settings, setting => setting.Key == "API_TOKEN");
+        Assert.False(blanked.HasValue);
     }
 
     [Fact]

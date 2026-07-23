@@ -117,6 +117,9 @@ function SettingControl({ controlId, setting, value, disabled, onChange, onRevea
   const safeValue = value ?? "";
 
   if (setting.secret) {
+    // Install-time settings never carry hasValue -- nothing is stored yet -- so they read "Not
+    // set" until the operator types something. Platform rows never mark secret, so only app
+    // summaries (which always carry the flag) can show "Unchanged".
     const hasStored = "hasValue" in setting && setting.hasValue === true;
     // A typed draft always wins; otherwise show the fetched stored value while revealed.
     const displayValue = safeValue.length > 0 ? safeValue : revealed && stored !== null ? stored : "";
@@ -146,7 +149,7 @@ function SettingControl({ controlId, setting, value, disabled, onChange, onRevea
           type={revealed ? "text" : "password"}
           className="pr-9"
           value={displayValue}
-          placeholder={hasStored || !("hasValue" in setting) ? "Unchanged" : "Not set"}
+          placeholder={hasStored ? "Unchanged" : "Not set"}
           disabled={disabled}
           onChange={(event) => onChange(event.target.value)}
         />
