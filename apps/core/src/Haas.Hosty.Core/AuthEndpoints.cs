@@ -10,14 +10,17 @@ internal static class AuthEndpoints
 
     public static void Map(WebApplication app)
     {
-        app.MapGet("/api/auth/csrf", (HttpResponse response) =>
+        app.MapGet("/api/auth/csrf", (HttpRequest request, HttpResponse response) =>
         {
             var token = CreateSessionId();
             response.Cookies.Append(CoreSessionAuthorization.CsrfCookieName, token, new CookieOptions
             {
                 HttpOnly = false,
                 SameSite = SameSiteMode.Lax,
-                Secure = false,
+                // Mirror the session cookie's HTTPS behavior (C-L2): a Secure cookie over plain HTTP is
+                // silently dropped, but on an HTTPS origin the CSRF cookie must be Secure like the
+                // session it protects, so it is not exposed on an accidental cleartext request.
+                Secure = request.IsHttps,
             });
 
             return CoreJson.Json(new CsrfResponse(token));
@@ -92,6 +95,15 @@ internal static class AuthEndpoints
 
         app.MapPost("/api/auth/logout", async (HttpRequest request, HttpResponse response, UserDirectoryStore users, AppSessionGrantStore grants, IClock clock, CancellationToken cancellationToken) =>
         {
+            // Logout revokes the session (and cascades to app grants), so it is a state change that must
+            // carry CSRF — otherwise a cross-site POST could log the user out (C-L2). No session is
+            // required beyond that: logging out an already-gone session is a harmless no-op, so gate on
+            // CSRF alone rather than a full session to keep it idempotent near expiry.
+            if (!CoreSessionAuthorization.HasValidCsrfToken(request))
+            {
+                return CoreJson.Json(new ErrorResponse("csrf_invalid", "CSRF token is missing or invalid."), statusCode: StatusCodes.Status403Forbidden);
+            }
+
             await LogoutAsync(request, response, users, grants, clock, cancellationToken);
             return CoreJson.Json(new LogoutResponse("logged_out"));
         });

@@ -280,21 +280,11 @@ internal static class HostyCoreApplication
         app.MapGet("/recovery", async (string? recoveryToken, ShellPublicOriginResolver shellOrigins, CancellationToken cancellationToken) => Results.Content(
             RenderRecoveryPage(await shellOrigins.ResolveAsync(cancellationToken), recoveryToken),
             "text/html"));
-        app.MapGet("/logout", async (
-            HttpRequest request,
-            HttpResponse response,
-            UserDirectoryStore users,
-            AppSessionGrantStore grants,
-            IClock clock,
-            CancellationToken cancellationToken) =>
-        {
-            await AuthEndpoints.LogoutAsync(request, response, users, grants, clock, cancellationToken);
-            // Core's own login page, not Shell. The session is gone, so bouncing to Shell only made it
-            // bounce straight back here — and it needed a Shell origin to do it, which a host that runs
-            // without Shell (an optional distribution app) does not have. Dropping the hop removes the
-            // dependency rather than teaching it to cope with a missing one.
-            return Results.Redirect("/login");
-        });
+        // A GET must not change state: a stray <img src>/prefetch/link to /logout would otherwise revoke
+        // the session (CSRF-via-GET, C-L2). Logout now happens through the CSRF-protected
+        // POST /api/auth/logout the UI issues; this stays only as a compatibility redirect so an old
+        // bookmark or link lands on the login page (Core's own, not Shell — a host may run without one).
+        app.MapGet("/logout", () => Results.Redirect("/login"));
         app.MapGet("/api/auth/callback/oidc", async (
             HostyCoreRuntimeConfig config,
             ShellPublicOriginResolver shellOrigins,
