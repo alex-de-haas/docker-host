@@ -5237,6 +5237,68 @@ public sealed class CoreLifecycleServiceTests
         Assert.Equal("install_plan_expired", ex.Code);
     }
 
+    [Fact]
+    public async Task InstallAsync_WithPlanId_PinsThePlanTimeDigestNotTheApplyTimeOne()
+    {
+        // The C-CR1 Fix B adversarial case for installs: the registry answers the plan with digest A
+        // and would answer a start-time resolve with digest B. The bound apply pins A — the digest
+        // the operator reviewed — so the first start runs A.
+        var fixture = await LifecycleFixture.CreateAsync();
+        var planned = "sha256:" + new string('a', 64);
+        var repushed = "sha256:" + new string('b', 64);
+        fixture.Adapter.RemoteDigest = planned;
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+
+        var plan = await fixture.Service.CreateInstallPlanAsync(new AppInstallPlanRequest(manifest));
+        var surfaced = Assert.Single(plan.ArtifactDigests ?? []);
+        Assert.Equal(planned, surfaced.CandidateDigest);
+
+        fixture.Adapter.RemoteDigest = repushed;
+        _ = await fixture.Service.InstallAsync(new AppInstallRequest(manifest, PlanId: plan.PlanId));
+
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        var installLock = Assert.Single(app!.ArtifactLocks!).Value;
+        Assert.Equal(planned, installLock.ImageDigest);
+        Assert.Equal("image", installLock.Kind);
+    }
+
+    [Fact]
+    public async Task InstallAsync_WithUnresolvablePlanDigest_LeavesTheLockForStartTimeBackfill()
+    {
+        // Offline registry / local-only image: the plan shows no digest, so there is nothing reviewed
+        // to pin — first start TOFU-backfills exactly as before.
+        var fixture = await LifecycleFixture.CreateAsync();
+        fixture.Adapter.RemoteDigest = null;
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+
+        var plan = await fixture.Service.CreateInstallPlanAsync(new AppInstallPlanRequest(manifest));
+        _ = await fixture.Service.InstallAsync(new AppInstallRequest(manifest, PlanId: plan.PlanId));
+
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Null(app!.ArtifactLocks);
+    }
+
+    [Fact]
+    public async Task ApplyUpdateAsync_PersistsTheReviewedCandidateDigestAsTheLock()
+    {
+        // The plan surfaced artifact:{svc}:{old}->{candidate}; apply must persist that candidate as
+        // the run-lock. A tag re-pushed between apply and start previously swapped unreviewed bytes
+        // in, because apply dropped the lock and start re-resolved the tag.
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        var reviewedDigest = "sha256:" + new string('c', 64);
+        fixture.Adapter.RemoteDigest = reviewedDigest;
+        var target = await fixture.WriteManifestAsync("2.0.0");
+
+        var plan = await fixture.Service.CreateUpdatePlanAsync("com.example.notes", new AppUpdatePlanRequest(target));
+        fixture.Adapter.RemoteDigest = "sha256:" + new string('d', 64);
+        _ = await fixture.Service.ApplyUpdateAsync("com.example.notes", new AppUpdateApplyRequest(plan.PlanDigest));
+
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        var updateLock = Assert.Single(app!.ArtifactLocks!).Value;
+        Assert.Equal(reviewedDigest, updateLock.ImageDigest);
+    }
+
     private sealed class LifecycleFixture
     {
         private LifecycleFixture(

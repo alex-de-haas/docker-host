@@ -95,9 +95,19 @@ internal sealed class CoreLifecycleService(
     public async Task<AppInstallPlan> CreateInstallPlanAsync(AppInstallPlanRequest request, CancellationToken cancellationToken = default)
     {
         var selection = await manifests.LoadAsync(request.ManifestPath, request.SelectedRuntime, cancellationToken);
+        // Resolve each image service's tag to its current remote digest at plan time: what the plan
+        // shows is what the bound apply pins (C-CR1 Fix B). An unresolvable candidate (offline
+        // registry, local-only image) stays null — that service surfaces without a digest and
+        // TOFU-backfills at first start, as before.
+        var probes = await ProbeServiceArtifactsAsync(
+            selection.Manifest.Id!,
+            currentLocks: null,
+            selection,
+            cancellationToken);
         var plan = await BuildInstallPlanAsync(request, selection, cancellationToken) with
         {
             PlanId = $"instp_{Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16)).ToLowerInvariant()}",
+            ArtifactDigests = probes,
         };
 
         // The apply path consumes this cached selection verbatim instead of re-fetching the manifest,
@@ -121,7 +131,7 @@ internal sealed class CoreLifecycleService(
             }
         }
 
-        reviewedInstallPlans[plan.PlanId!] = new CachedInstallPlan(plan, selection, clock.UtcNow);
+        reviewedInstallPlans[plan.PlanId!] = new CachedInstallPlan(plan, selection, probes, clock.UtcNow);
         return plan;
     }
 
@@ -136,7 +146,33 @@ internal sealed class CoreLifecycleService(
     // low enough that runaway automation cannot grow Core's memory with cached manifest selections.
     private const int MaxPendingInstallPlans = 64;
 
-    private sealed record CachedInstallPlan(AppInstallPlan Plan, RuntimeAppManifestSelection Selection, DateTimeOffset CreatedAt);
+    private sealed record CachedInstallPlan(AppInstallPlan Plan, RuntimeAppManifestSelection Selection, IReadOnlyList<AppServiceArtifactProbe> Probes, DateTimeOffset CreatedAt);
+
+    // Digest probes → run-locks: only services whose candidate resolved at plan time get one; the
+    // lock records the digest the operator reviewed and the tag it was resolved from.
+    private IReadOnlyDictionary<string, ArtifactLock>? BuildReviewedArtifactLocks(
+        RuntimeAppManifestSelection selection,
+        IReadOnlyList<AppServiceArtifactProbe> probes)
+    {
+        var locks = new Dictionary<string, ArtifactLock>(StringComparer.Ordinal);
+        foreach (var probe in probes)
+        {
+            if (string.IsNullOrWhiteSpace(probe.CandidateDigest))
+            {
+                continue;
+            }
+
+            var service = selection.Services.FirstOrDefault(candidate => string.Equals(candidate.Key, probe.Service, StringComparison.Ordinal));
+            if (service?.Image is null)
+            {
+                continue;
+            }
+
+            locks[probe.Service] = new ArtifactLock("image", probe.CandidateDigest, service.Image.TagReference, null, null, clock.UtcNow);
+        }
+
+        return locks.Count > 0 ? locks : null;
+    }
 
     // Single-use, consume-on-attempt: the TryRemove is the atomic claim, so two applies echoing the
     // same plan id cannot both run — the loser gets the same error as an expired plan and re-reviews.
@@ -296,7 +332,7 @@ internal sealed class CoreLifecycleService(
             };
             return await WithAppLockAsync(
                 reviewed.Selection.Manifest.Id!,
-                () => InstallCoreAsync(bound, reviewed.Selection, cancellationToken),
+                () => InstallCoreAsync(bound, reviewed.Selection, cancellationToken, reviewed.Probes),
                 cancellationToken);
         }
 
@@ -307,7 +343,7 @@ internal sealed class CoreLifecycleService(
         return await WithAppLockAsync(selection.Manifest.Id!, () => InstallCoreAsync(request, selection, cancellationToken), cancellationToken);
     }
 
-    private async Task<AppLifecycleResponse> InstallCoreAsync(AppInstallRequest request, RuntimeAppManifestSelection selection, CancellationToken cancellationToken)
+    private async Task<AppLifecycleResponse> InstallCoreAsync(AppInstallRequest request, RuntimeAppManifestSelection selection, CancellationToken cancellationToken, IReadOnlyList<AppServiceArtifactProbe>? reviewedArtifacts = null)
     {
         // Planning reports an existing record as "already-installed"; this is the enforcement. Without
         // it, apply rebuilt the record with existing: null — resetting settings, mounts, source state,
@@ -340,6 +376,11 @@ internal sealed class CoreLifecycleService(
             system: request.System || IsSystemManifest(selection.Manifest),
             existing: null) with
         {
+            // The digests the reviewed plan displayed become the initial run-locks, so the first
+            // start pulls repository@sha256 from the review instead of whatever the tag means by
+            // then. Null on the unbound bootstrap path and for plan-time-unresolvable services —
+            // those TOFU-backfill at first start.
+            ArtifactLocks = reviewedArtifacts is null ? null : BuildReviewedArtifactLocks(selection, reviewedArtifacts),
             OperationStatus = "installed",
             RuntimeState = "stopped",
             LastOperation = "install",
@@ -1788,6 +1829,16 @@ internal sealed class CoreLifecycleService(
             };
         }
 
+        // The plan surfaced artifact:{svc}:{locked}->{candidate}; the operator confirmed exactly those
+        // candidates. Persist them as the run-locks so the next start pulls the reviewed digest — a tag
+        // re-pushed between apply and start no longer swaps unreviewed bytes in (C-CR1 Fix B). Services
+        // whose candidate was unresolvable at plan time carry no lock and TOFU-backfill at start.
+        var reviewedLocks = BuildReviewedArtifactLocks(selection, confirmed.ArtifactProbes);
+        if (reviewedLocks is not null)
+        {
+            next = next with { ArtifactLocks = reviewedLocks };
+        }
+
         var document = await apps.UpsertAppAsync(next, cancellationToken);
         // Consumed: the app is now at the target, so the pending plan (built against the old base) would
         // only fail the base-state guard from here on. Drop it so a fresh review starts clean.
@@ -2521,9 +2572,10 @@ internal sealed class CoreLifecycleService(
                     && !IsInternalAppPath(manifest.Id!, selection.ManifestPath)
                     ? Path.GetFullPath(selection.ManifestPath)
                     : null),
-            // ArtifactLocks is deliberately left null on (re)build: install has nothing to lock yet,
-            // and update/runtime-switch must drop the old lock so the next start re-resolves the new
-            // target (a re-pushed tag advances the digest). The policy is operator config, preserved.
+            // ArtifactLocks is left null on (re)build; the callers that reviewed digests overlay them
+            // afterwards (bound install seeds them from the plan probes, update apply persists the
+            // confirmed candidates), so a start runs the reviewed digest. Runtime-switch still drops
+            // the lock for a start-time re-resolve of the new profile's target.
             UpdatePolicy: existing?.UpdatePolicy,
             // App-owned feed state is lifecycle bookkeeping, not manifest contract — preserve it
             // across update/switch/reconcile like UpdatePolicy.
@@ -3981,8 +4033,15 @@ internal sealed class CoreLifecycleService(
     // Probes run concurrently under a small cap: each spawns a docker CLI process and waits out a
     // registry round-trip, and an app's services are independent — but an unbounded fan-out would
     // burst-spawn processes for image-heavy apps. Task.WhenAll keeps the service-key order.
-    private async Task<IReadOnlyList<AppServiceArtifactProbe>> ProbeServiceArtifactsAsync(
+    private Task<IReadOnlyList<AppServiceArtifactProbe>> ProbeServiceArtifactsAsync(
         AppRecord app,
+        RuntimeAppManifestSelection targetSelection,
+        CancellationToken cancellationToken)
+        => ProbeServiceArtifactsAsync(app.Id, app.ArtifactLocks, targetSelection, cancellationToken);
+
+    private async Task<IReadOnlyList<AppServiceArtifactProbe>> ProbeServiceArtifactsAsync(
+        string appId,
+        IReadOnlyDictionary<string, ArtifactLock>? currentLocks,
         RuntimeAppManifestSelection targetSelection,
         CancellationToken cancellationToken)
     {
@@ -3993,7 +4052,7 @@ internal sealed class CoreLifecycleService(
             .OrderBy(service => service.Key, StringComparer.Ordinal)
             .Select(async service =>
             {
-                var lockedDigest = app.ArtifactLocks?.GetValueOrDefault(service.Key)?.ImageDigest;
+                var lockedDigest = currentLocks?.GetValueOrDefault(service.Key)?.ImageDigest;
                 string? candidateDigest = null;
                 if (resolver is not null)
                 {
@@ -4007,7 +4066,7 @@ internal sealed class CoreLifecycleService(
                         // The resolver's contract is "null when unresolvable", but IImageDigestResolver
                         // is an injectable seam — degrade the one service to unknown rather than failing
                         // the whole pass.
-                        logger.LogWarning(ex, "Failed to resolve remote image digest for app {AppId} service {Service}.", app.Id, service.Key);
+                        logger.LogWarning(ex, "Failed to resolve remote image digest for app {AppId} service {Service}.", appId, service.Key);
                     }
                     finally
                     {
@@ -5301,7 +5360,11 @@ internal sealed record AppInstallPlan(
     // request), so review UIs can surface the escalation before the operator confirms.
     bool System,
     IReadOnlyList<AppRuntimeProfileSummary> RuntimeProfiles,
-    IReadOnlyList<AppInstallSetting> Settings);
+    IReadOnlyList<AppInstallSetting> Settings,
+    // Per-service image digests resolved at plan time (C-CR1 Fix B): CandidateDigest is what the
+    // bound apply pins as the run-lock; null when unresolvable (offline / local-only image), in
+    // which case that service TOFU-backfills at first start. Absent on the feed-embedded plan.
+    IReadOnlyList<AppServiceArtifactProbe>? ArtifactDigests = null);
 
 internal sealed record AppFeedInstallPlan(
     AppInstallPlan Install,
