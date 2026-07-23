@@ -1,4 +1,5 @@
 using Haas.Hosty.Core;
+using Microsoft.AspNetCore.Http;
 
 namespace Haas.Hosty.Core.Tests;
 
@@ -70,6 +71,30 @@ public sealed class UserManagementServiceTests
                 SetupToken: invitation.Token)));
 
         Assert.Equal("password_invalid", error.Code);
+    }
+
+    // Both invitation flows are public — the token is the credential — so a caller who sends no token at
+    // all has to get the ordinary invalid/expired answer instead of faulting the hash into a 500.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task InvitationFlows_RejectMissingSetupTokenAsInvalid(string? setupToken)
+    {
+        var fixture = await UserManagementFixture.CreateAsync();
+        await fixture.Users.WriteAsync(new UserDirectoryState(1, [CreateUser("admin_1", "host.admin")], [], [], []));
+
+        var accept = await Assert.ThrowsAsync<UserManagementException>(() =>
+            fixture.Service.AcceptInvitationAsync(new UserInvitationAcceptRequest(
+                SetupToken: setupToken!,
+                Password: "correct horse battery staple")));
+        var preview = await Assert.ThrowsAsync<UserManagementException>(() =>
+            fixture.Service.PreviewInvitationAsync(setupToken!));
+
+        Assert.Equal("invitation_invalid", accept.Code);
+        Assert.Equal(StatusCodes.Status404NotFound, accept.StatusCode);
+        Assert.Equal("invitation_invalid", preview.Code);
+        Assert.Equal(StatusCodes.Status404NotFound, preview.StatusCode);
     }
 
     [Fact]
