@@ -1854,11 +1854,40 @@ public sealed class CoreLifecycleServiceTests
 
         var configured = await fixture.Service.ConfigureAsync(
             "com.example.notes",
-            new AppConfigureRequest(UpdatePolicy: "rolling"));
+            new AppConfigureRequest(UpdatePolicy: "Pinned"));
 
-        Assert.Equal("rolling", configured.App?.UpdatePolicy);
+        Assert.Equal("pinned", configured.App?.UpdatePolicy);
         var app = await fixture.Apps.GetAppAsync("com.example.notes");
-        Assert.Equal("rolling", app!.UpdatePolicy);
+        Assert.Equal("pinned", app!.UpdatePolicy);
+    }
+
+    [Fact]
+    public async Task ConfigureAsync_RejectsTheRemovedRollingPolicy()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        var ex = await Assert.ThrowsAsync<AppLifecycleException>(() => fixture.Service.ConfigureAsync(
+            "com.example.notes",
+            new AppConfigureRequest(UpdatePolicy: "rolling")));
+
+        Assert.Equal("app_update_policy_invalid", ex.Code);
+    }
+
+    [Fact]
+    public async Task ListAppsAsync_SurfacesALegacyRollingRecordAsPinned()
+    {
+        // Records written before the removal may still persist "rolling"; the projection normalizes
+        // so clients never see semantics that no longer exist.
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        await fixture.Apps.UpdateAppAsync("com.example.notes", app => app with { UpdatePolicy = "rolling" });
+
+        var summaries = await fixture.Apps.ListAppsAsync();
+
+        Assert.Equal("pinned", Assert.Single(summaries).UpdatePolicy);
     }
 
     [Fact]

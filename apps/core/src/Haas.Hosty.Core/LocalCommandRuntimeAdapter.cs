@@ -50,14 +50,12 @@ internal sealed class LocalCommandRuntimeAdapter(
                 if (string.Equals(service.Artifact, "prebuilt", StringComparison.Ordinal) &&
                     service.Runtime.Delivery is { } delivery)
                 {
-                    var policy = DockerRuntimeAdapter.ResolveUpdatePolicy(context.App.UpdatePolicy);
                     var (artifactRoot, resolvedLock) = PrebuiltArtifactStore.Resolve(
                         context.AppRoot,
                         context.Manifest.RuntimeProfile.Key,
                         ResolveSourceRoot(context),
                         delivery,
-                        context.App.ArtifactLocks?.GetValueOrDefault(service.Key),
-                        policy);
+                        context.App.ArtifactLocks?.GetValueOrDefault(service.Key));
                     workingDirectory = CombineWorkingDirectory(artifactRoot, service.Runtime.WorkingDirectory);
                     resolvedLocks[service.Key] = resolvedLock;
                 }

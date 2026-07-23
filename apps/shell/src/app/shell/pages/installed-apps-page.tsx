@@ -387,7 +387,7 @@ function AppServiceDetailsPanel({
   // the row is already there, so starting and finishing the probe changes only its contents. The bar still
   // needs a reason to exist — the badge renders nothing without an explicit policy from Core, and an older
   // Core would otherwise leave an empty strip behind — so it appears when either half has something to say.
-  const showsUpdatePolicy = app.updatePolicy === "pinned" || app.updatePolicy === "rolling";
+  const showsUpdatePolicy = app.updatePolicy === "pinned";
   const showsPolicyBadge = hasImageInfo && showsUpdatePolicy;
   const healthLoading = healthState?.loading ?? false;
 
@@ -569,14 +569,15 @@ function AppServiceDetailsPanel({
 function UpdatePolicyBadge({ policy }: { policy?: string | null }) {
   // updatePolicy is optional for backwards compatibility with older Core builds; only render the
   // badge when Core reported an explicit policy so an absent value is not mislabelled as "Pinned".
-  if (policy !== "pinned" && policy !== "rolling") {
+  // "pinned" is the only policy — the "rolling" opt-out was removed; a legacy Core that still
+  // reports it gets no badge rather than a label for semantics this build no longer describes.
+  if (policy !== "pinned") {
     return null;
   }
-  const rolling = policy === "rolling";
   return (
-    <Badge variant={rolling ? "secondary" : "outline"} className="gap-1" title={rolling ? "Re-resolves the tag on every restart (drift accepted)" : "Runs the locked digest; advancing it needs a reviewed update"}>
-      {rolling ? <RefreshCw className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
-      {rolling ? "Rolling" : "Pinned"}
+    <Badge variant="outline" className="gap-1" title="Runs the locked digest; advancing it needs a reviewed update">
+      <Lock className="h-3 w-3" />
+      Pinned
     </Badge>
   );
 }

@@ -30,7 +30,7 @@ public sealed class PrebuiltArtifactStoreTests
         {
             var (artifactRoot, lockRecord) = PrebuiltArtifactStore.Resolve(
                 appRoot, "release", source, new RuntimePrebuiltDeliveryManifest { Type = "folder", Path = "dist" },
-                existingLock: null, policy: "pinned");
+                existingLock: null);
 
             Assert.Equal("prebuilt", lockRecord.Kind);
             Assert.False(string.IsNullOrWhiteSpace(lockRecord.BundleHash));
@@ -52,13 +52,13 @@ public sealed class PrebuiltArtifactStoreTests
         {
             var (_, first) = PrebuiltArtifactStore.Resolve(
                 appRoot, "release", source, new RuntimePrebuiltDeliveryManifest { Type = "folder", Path = "dist" },
-                existingLock: null, policy: "pinned");
+                existingLock: null);
 
             // Change the delivery, then resolve pinned with the recorded lock: the locked copy re-runs.
             File.WriteAllText(Path.Combine(source, "dist", "server.js"), "v2");
             var (pinnedRoot, pinned) = PrebuiltArtifactStore.Resolve(
                 appRoot, "release", source, new RuntimePrebuiltDeliveryManifest { Type = "folder", Path = "dist" },
-                existingLock: first, policy: "pinned");
+                existingLock: first);
 
             Assert.Equal(first.BundleHash, pinned.BundleHash);
             Assert.Equal("v1", File.ReadAllText(Path.Combine(pinnedRoot, "server.js")));
@@ -70,23 +70,25 @@ public sealed class PrebuiltArtifactStoreTests
     }
 
     [Fact]
-    public void Resolve_Rolling_AdoptsChangedDelivery()
+    public void Resolve_WithLock_IgnoresAChangedDelivery()
     {
+        // The inversion of the removed "rolling" behaviour: a changed delivery no longer rides in on
+        // restart. The locked copy runs until a reviewed update advances the lock.
         var appRoot = CreateDir();
         var source = CreateTree(("dist/server.js", "v1"));
         try
         {
             var (_, first) = PrebuiltArtifactStore.Resolve(
                 appRoot, "release", source, new RuntimePrebuiltDeliveryManifest { Type = "folder", Path = "dist" },
-                existingLock: null, policy: "rolling");
+                existingLock: null);
 
             File.WriteAllText(Path.Combine(source, "dist", "server.js"), "v2");
-            var (rollingRoot, rolling) = PrebuiltArtifactStore.Resolve(
+            var (lockedRoot, locked) = PrebuiltArtifactStore.Resolve(
                 appRoot, "release", source, new RuntimePrebuiltDeliveryManifest { Type = "folder", Path = "dist" },
-                existingLock: first, policy: "rolling");
+                existingLock: first);
 
-            Assert.NotEqual(first.BundleHash, rolling.BundleHash);
-            Assert.Equal("v2", File.ReadAllText(Path.Combine(rollingRoot, "server.js")));
+            Assert.Equal(first.BundleHash, locked.BundleHash);
+            Assert.Equal("v1", File.ReadAllText(Path.Combine(lockedRoot, "server.js")));
         }
         finally
         {
@@ -103,7 +105,7 @@ public sealed class PrebuiltArtifactStoreTests
         {
             var error = Assert.Throws<AppLifecycleException>(() => PrebuiltArtifactStore.Resolve(
                 appRoot, "release", source, new RuntimePrebuiltDeliveryManifest { Type = "folder", Path = "dist" },
-                existingLock: null, policy: "pinned"));
+                existingLock: null));
             Assert.Equal("prebuilt_delivery_not_found", error.Code);
         }
         finally

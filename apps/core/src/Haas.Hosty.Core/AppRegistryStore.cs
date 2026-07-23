@@ -246,9 +246,9 @@ internal sealed record AppRecord(
     // truthful. Null/absent = not yet resolved; lazily backfilled on next start (TOFU). Additive and
     // nullable, so no AppStateDocument.SchemaVersion bump is needed (A3/A9).
     IReadOnlyDictionary<string, ArtifactLock>? ArtifactLocks = null,
-    // Pull/lock policy for compiled artifacts: "pinned" (default) runs the locked digest and requires
-    // a reviewed update to advance it; "rolling" re-resolves the tag every start and accepts drift.
-    // Null = pinned. Operator-set via configure; the single source of truth (pullPolicy is gone, A8).
+    // Pull/lock policy for compiled artifacts. Only "pinned" exists: the locked digest runs and a
+    // reviewed update advances it. Null = pinned; a legacy persisted "rolling" is surfaced as pinned.
+    // Operator-set via configure; the single source of truth (pullPolicy is gone, A8).
     string? UpdatePolicy = null,
     // Set when a live source app's operator folder manifest failed validation on the last start (2b):
     // Core kept running the last-good reviewed copy and surfaces the error so the operator sees the
@@ -680,7 +680,7 @@ internal sealed record AppSummary(
     IReadOnlyList<AppNavigationSummary> Navigation,
     IReadOnlyList<AppMountSummary> Mounts,
     // Compiled-artifact run-locks per service (the running/locked image digest) and the effective
-    // pull/lock policy ("pinned"/"rolling"), for version legibility and drift badges on clients.
+    // pull/lock policy (always "pinned"), for version legibility and lock badges on clients.
     string UpdatePolicy,
     IReadOnlyDictionary<string, ArtifactLock>? ArtifactLocks,
     // Set when the live source folder manifest was invalid on the last start and Core fell back to

@@ -155,8 +155,8 @@ export type CoreApp = {
   // Null/absent = no feed set. Optional for older Core builds.
   followedFeedId?: string | null;
   mounts?: CoreMountSlot[];
-  // Compiled-artifact pull/lock policy ("pinned"/"rolling") and per-service run-locks (the locked
-  // image digest). Optional for backwards compatibility with older Core builds. See digest pinning.
+  // Compiled-artifact pull/lock policy (always "pinned"; the "rolling" opt-out was removed) and
+  // per-service run-locks (the locked image digest). Optional for older Core builds. See digest pinning.
   updatePolicy?: string | null;
   artifactLocks?: Record<string, CoreArtifactLock> | null;
   // True when the selected runtime is a development runtime (a localCommand profile with
