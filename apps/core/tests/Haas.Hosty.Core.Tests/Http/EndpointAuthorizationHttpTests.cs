@@ -36,7 +36,23 @@ public sealed class EndpointAuthorizationHttpTests
         // OAuth/OIDC callback: the IdP redirects an unauthenticated user here with a code+state, so
         // it is public by construction — it establishes the session rather than requiring one.
         "/api/auth/callback/",
-        // Service-token authenticated app->Core endpoints (bearer token is the credential).
+    ];
+
+    // Browser-navigation endpoints: still protected, but they DENY an anonymous caller by redirecting
+    // to /login (a top-level GET the browser can act on) rather than a JSON 401. Excluded from the
+    // 401/403 loop and asserted precisely below (AppOpenNavigation_RedirectsAnonymousToLogin) so their
+    // redirect denial can't hide a dropped guard either.
+    private static readonly string[] NavigationApiPatterns =
+    [
+        "/api/apps/{appId}/open",
+    ];
+
+    // Service-token (bearer) app->Core routes. The no-credential loop already proves they reject a
+    // missing token, but that only exercises the null-token half of their guard — a dropped
+    // ValidateToken would slip through. These are additionally probed with a present-but-invalid bearer
+    // (see EveryServiceTokenEndpoint_RejectsAnInvalidBearer) so the signature check itself is covered.
+    private static readonly string[] ServiceTokenApiPrefixes =
+    [
         "/api/internal/",
     ];
 
@@ -56,7 +72,8 @@ public sealed class EndpointAuthorizationHttpTests
                 continue;
             }
 
-            if (AnonymousAllowedApiPatterns.Any(allowed => pattern.StartsWith(allowed, StringComparison.Ordinal)))
+            if (AnonymousAllowedApiPatterns.Any(allowed => pattern.StartsWith(allowed, StringComparison.Ordinal)) ||
+                NavigationApiPatterns.Contains(pattern))
             {
                 continue;
             }
@@ -64,9 +81,13 @@ public sealed class EndpointAuthorizationHttpTests
             foreach (var method in HttpMethodsFor(endpoint))
             {
                 var status = await SendAnonymousAsync(client, method, ConcretePath(endpoint.RoutePattern));
-                // Anonymous callers must be turned away: 401 (no session) or 403 (CSRF checked first on
-                // a session mutation). Anything 2xx means the route served an unauthenticated request.
-                if ((int)status is >= 200 and < 300)
+                // Require a positive authorization denial, not merely a non-success. A session route
+                // rejects an anonymous caller with 401 (no session) or 403 (CSRF checked first on a
+                // mutation); a service-token route with 401 (no bearer). The auth check runs BEFORE the
+                // handler resolves the route's resource, so a protected resource-scoped route (bogus id)
+                // still answers 401/403 up front — whereas a route whose guard was dropped would fall
+                // through to its handler and answer 200/400/404, all of which fail here.
+                if ((int)status is not (401 or 403))
                 {
                     offenders.Add($"{method} {pattern} -> {(int)status}");
                 }
@@ -77,6 +98,65 @@ public sealed class EndpointAuthorizationHttpTests
             offenders.Count == 0,
             "These /api routes served an anonymous request (add a session guard, or add to the public allowlist):\n"
                 + string.Join("\n", offenders));
+    }
+
+    [Fact]
+    public async Task EveryServiceTokenEndpoint_RejectsAnInvalidBearer()
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        using var client = harness.CreateClient();
+        var source = harness.Services.GetRequiredService<EndpointDataSource>();
+
+        var probed = 0;
+        var offenders = new List<string>();
+        foreach (var endpoint in source.Endpoints.OfType<RouteEndpoint>())
+        {
+            var pattern = endpoint.RoutePattern.RawText ?? "";
+            if (!ServiceTokenApiPrefixes.Any(prefix => pattern.StartsWith(prefix, StringComparison.Ordinal)))
+            {
+                continue;
+            }
+
+            foreach (var method in HttpMethodsFor(endpoint))
+            {
+                probed++;
+                using var request = new HttpRequestMessage(new HttpMethod(method), ConcretePath(endpoint.RoutePattern));
+                request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "hosty_app_service.invalid");
+                if (!HttpMethods.IsGet(method) && !HttpMethods.IsDelete(method))
+                {
+                    request.Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json");
+                }
+
+                using var response = await client.SendAsync(request);
+                // A garbage bearer must be rejected by the token signature check (401), not accepted
+                // and served — this is the half a missing-token probe cannot reach.
+                if ((int)response.StatusCode != 401)
+                {
+                    offenders.Add($"{method} {pattern} -> {(int)response.StatusCode}");
+                }
+            }
+        }
+
+        Assert.True(probed > 0, "No service-token endpoints were probed; the prefix list is stale.");
+        Assert.True(offenders.Count == 0, "Service-token routes accepting an invalid bearer:\n" + string.Join("\n", offenders));
+    }
+
+    [Fact]
+    public async Task AppOpenNavigation_RedirectsAnonymousToLogin()
+    {
+        // The one navigation endpoint's denial contract: an anonymous caller is sent to /login (302),
+        // never served the resource. Asserted directly so the generic loop's exclusion above cannot
+        // hide a dropped guard here. redirectUri is supplied so the request clears input validation and
+        // actually reaches the session check.
+        await using var harness = await CoreHttpHarness.StartAsync();
+        // TestServer's client does not auto-follow redirects, so the 302 is observed directly.
+        using var client = harness.CreateClient();
+
+        using var response = await client.GetAsync(
+            "/api/apps/com.example.notes/open?redirectUri=https://app.example.test/");
+
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        Assert.StartsWith("/login", response.Headers.Location?.OriginalString ?? "");
     }
 
     private static async Task<HttpStatusCode> SendAnonymousAsync(HttpClient client, string method, string path)
