@@ -5139,6 +5139,84 @@ public sealed class CoreLifecycleServiceTests
     private static AppEndpointContract ReassignEndpoint(string service, string key, string? url)
         => new($"{service}.{key}", "http", url, Public: true, Service: service, Port: key);
 
+    [Fact]
+    public async Task InstallAsync_WithPlanId_InstallsTheReviewedBytesNotTheCurrentFile()
+    {
+        // The C-CR1 adversarial case: the source answers the plan with manifest A and the apply with
+        // manifest B. A bound apply must install exactly A — the reviewed bytes — or nothing.
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        var plan = await fixture.Service.CreateInstallPlanAsync(new AppInstallPlanRequest(manifest));
+        Assert.NotNull(plan.PlanId);
+
+        var swapped = await fixture.WriteManifestAsync("2.0.0");
+        File.Copy(swapped, manifest, overwrite: true);
+
+        var response = await fixture.Service.InstallAsync(new AppInstallRequest(manifest, PlanId: plan.PlanId));
+
+        Assert.Equal("1.0.0", response.App?.Version);
+        var vendoredCopy = await File.ReadAllTextAsync(Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "manifest.json"));
+        Assert.Contains("1.0.0", vendoredCopy);
+        Assert.DoesNotContain("2.0.0", vendoredCopy);
+    }
+
+    [Fact]
+    public async Task InstallAsync_WithUnknownPlanId_Rejects()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+
+        var ex = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.InstallAsync(new AppInstallRequest(manifest, PlanId: "instp_missing")));
+
+        Assert.Equal("install_plan_expired", ex.Code);
+    }
+
+    [Fact]
+    public async Task InstallAsync_PlanIdIsSingleUse()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        var plan = await fixture.Service.CreateInstallPlanAsync(new AppInstallPlanRequest(manifest));
+
+        _ = await fixture.Service.InstallAsync(new AppInstallRequest(manifest, PlanId: plan.PlanId));
+        await fixture.Service.RemoveAsync("com.example.notes", new AppRemoveRequest());
+        var second = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.InstallAsync(new AppInstallRequest(manifest, PlanId: plan.PlanId)));
+
+        Assert.Equal("install_plan_expired", second.Code);
+    }
+
+    [Fact]
+    public async Task InstallAsync_WithExpiredPlan_Rejects()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        var plan = await fixture.Service.CreateInstallPlanAsync(new AppInstallPlanRequest(manifest));
+
+        fixture.Clock.UtcNow += TimeSpan.FromMinutes(61);
+
+        var ex = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.InstallAsync(new AppInstallRequest(manifest, PlanId: plan.PlanId)));
+
+        Assert.Equal("install_plan_expired", ex.Code);
+    }
+
+    [Fact]
+    public async Task InstallAsync_WithPlanId_BindsSystemnessFromTheReviewedPlan()
+    {
+        // What was reviewed is what installs: an apply that claims System=false cannot demote a plan
+        // that was reviewed as a system install (and vice versa a plain apply cannot escalate).
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0");
+        var plan = await fixture.Service.CreateInstallPlanAsync(new AppInstallPlanRequest(manifest, System: true));
+
+        _ = await fixture.Service.InstallAsync(new AppInstallRequest(manifest, System: false, PlanId: plan.PlanId));
+
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.True(app!.System);
+    }
+
     private sealed class LifecycleFixture
     {
         private LifecycleFixture(
