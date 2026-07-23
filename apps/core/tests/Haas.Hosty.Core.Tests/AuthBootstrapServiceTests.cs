@@ -138,6 +138,69 @@ public sealed class AuthBootstrapServiceTests
         Assert.NotEqual("replacement horse battery staple", credential.Hash);
     }
 
+    [Fact]
+    public async Task RecoverAsync_WithTwoConcurrentRequestsForOneToken_PromotesExactlyOne()
+    {
+        // C-M2: a stale-snapshot consume let two requests carrying the same recovery token both pass
+        // validation and each promote a DIFFERENT account from one single-use token. The atomic
+        // pending->used claim must let exactly one win.
+        var fixture = await AuthBootstrapFixture.CreateAsync();
+        await fixture.Users.WriteAsync(new UserDirectoryState(
+            1, [CreateUser("user_1", "host.user") with { Email = "user@example.test" }], [], [], []));
+        var token = await fixture.Service.CreateRecoveryTokenAsync();
+
+        var barrier = new Barrier(2);
+        async Task<(bool Succeeded, string? Code)> Attempt(string email)
+        {
+            // Yield first so the async method returns its Task before the blocking barrier wait —
+            // otherwise the first call blocks the caller and the second task is never even created.
+            await Task.Yield();
+            barrier.SignalAndWait();
+            try
+            {
+                _ = await fixture.Service.RecoverAsync(new AuthRecoveryRequest(
+                    token.Token, email, Password: "replacement horse battery staple"));
+                return (true, null);
+            }
+            catch (AuthBootstrapException ex)
+            {
+                return (false, ex.Code);
+            }
+        }
+
+        var results = await Task.WhenAll(Attempt("a@example.test"), Attempt("b@example.test"));
+
+        Assert.Equal(1, results.Count(result => result.Succeeded));
+        Assert.Contains(results, result => !result.Succeeded && result.Code == "recovery_token_invalid");
+        // The token is spent exactly once, and only one admin was minted from it.
+        Assert.Equal("used", Assert.Single((await fixture.Tokens.ReadAsync()).Tokens).Status);
+        var admins = (await fixture.Users.ReadAsync()).Users
+            .Count(user => string.Equals(user.Role, "host.admin", StringComparison.Ordinal));
+        Assert.Equal(1, admins);
+    }
+
+    [Fact]
+    public async Task RecoverAsync_WithInvalidToken_DoesNotRewriteTokenState()
+    {
+        // A failed claim must stay read-only: the bootstrap/recovery routes are unauthenticated, so a
+        // write per bad token would let garbage requests force serialized disk writes under the gate.
+        var fixture = await AuthBootstrapFixture.CreateAsync();
+        await fixture.Users.WriteAsync(new UserDirectoryState(
+            1, [CreateUser("user_1", "host.user") with { Email = "user@example.test" }], [], [], []));
+        _ = await fixture.Service.CreateRecoveryTokenAsync();
+
+        // Stamp the state file an hour into the past; any rewrite would move it to ~now.
+        var stale = DateTime.UtcNow.AddHours(-1);
+        File.SetLastWriteTimeUtc(fixture.TokenStatePath, stale);
+
+        var error = await Assert.ThrowsAsync<AuthBootstrapException>(() =>
+            fixture.Service.RecoverAsync(new AuthRecoveryRequest(
+                "dhrec_not-a-real-token", "user@example.test", Password: "replacement horse battery staple")));
+
+        Assert.Equal("recovery_token_invalid", error.Code);
+        Assert.Equal(stale, File.GetLastWriteTimeUtc(fixture.TokenStatePath));
+    }
+
     private static HostUserRecord CreateUser(string id, string role)
         => new(
             Id: id,
@@ -154,12 +217,14 @@ public sealed class AuthBootstrapServiceTests
             UserDirectoryStore users,
             AuthBootstrapTokenStore tokens,
             AuthBootstrapService service,
-            FakeClock clock)
+            FakeClock clock,
+            string tokenStatePath)
         {
             Users = users;
             Tokens = tokens;
             Service = service;
             Clock = clock;
+            TokenStatePath = tokenStatePath;
         }
 
         public UserDirectoryStore Users { get; }
@@ -169,6 +234,8 @@ public sealed class AuthBootstrapServiceTests
         public AuthBootstrapService Service { get; }
 
         public FakeClock Clock { get; }
+
+        public string TokenStatePath { get; }
 
         public static async Task<AuthBootstrapFixture> CreateAsync()
         {
@@ -199,7 +266,7 @@ public sealed class AuthBootstrapServiceTests
             var passwords = new LocalPasswordAuthService(users, audit, clock);
             var service = new AuthBootstrapService(users, tokens, audit, passwords, config, clock);
             await users.WriteAsync(new UserDirectoryState(1, [], [], [], []));
-            return new AuthBootstrapFixture(users, tokens, service, clock);
+            return new AuthBootstrapFixture(users, tokens, service, clock, Path.Combine(paths.AuthRoot, "bootstrap-tokens.json"));
         }
     }
 
