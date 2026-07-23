@@ -4155,7 +4155,9 @@ public sealed class CoreLifecycleServiceTests
         await fixture.Service.StartAsync("com.example.notes");
 
         var mount = Assert.Single(fixture.Adapter.LastContext!.Mounts);
-        Assert.Equal(Path.GetFullPath(host), mount.HostPath);
+        // The start gate binds the fully-resolved real path (C-H3), so the docker adapter mounts the
+        // exact location Core validated rather than a path it would re-traverse through a symlink.
+        Assert.Equal(MountPathPolicy.ResolveRealPath(host), mount.HostPath);
         Assert.Equal("/mnt/catalogRoots/media", mount.ContainerPath);
     }
 
