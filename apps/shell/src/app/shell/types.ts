@@ -493,6 +493,9 @@ export type CoreInstallPlan = {
   displayName: string;
   description?: string | null;
   action: string;
+  // Single-use handle echoed back on apply so Core installs exactly the reviewed manifest bytes.
+  // Absent on the plan embedded in a feed-install flow (that flow binds by plan digest).
+  planId?: string | null;
   currentVersion?: string | null;
   targetVersion: string;
   currentRuntime?: string | null;

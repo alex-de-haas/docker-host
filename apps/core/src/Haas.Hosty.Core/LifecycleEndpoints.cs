@@ -67,13 +67,17 @@ internal static class LifecycleEndpoints
                 // Interactive installs start the app immediately unless the client opts out (StartOnInstall
                 // false); an absent value defaults to true so autostart apps run without a Core restart.
                 // System is coerced off for the same reason as the plan endpoint above.
-                async () => await HandleLifecycleError(() => lifecycle.InstallAsync(input with
+                async () => await HandleLifecycleError(() =>
                 {
-                    StartOnInstall = input.StartOnInstall ?? true,
-                    System = false,
-                    FeedsUrl = null,
-                    FeedId = null,
-                }, cancellationToken)),
+                    RequireInstallPlanId(input);
+                    return lifecycle.InstallAsync(input with
+                    {
+                        StartOnInstall = input.StartOnInstall ?? true,
+                        System = false,
+                        FeedsUrl = null,
+                        FeedId = null,
+                    }, cancellationToken);
+                }),
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
@@ -568,6 +572,18 @@ internal static class LifecycleEndpoints
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
+        // The control plane gets the same plan-then-apply contract as the browser: the CLI requests a
+        // plan (no System coercion here — installing system apps from trusted local manifests is a CLI
+        // capability) and echoes its plan id back on install.
+        app.MapPost("/control/v1/apps/install/plan", async (
+            HttpRequest request,
+            ControlSecret secret,
+            CoreLifecycleService lifecycle,
+            AppInstallPlanRequest input,
+            CancellationToken cancellationToken) =>
+            await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
+                await HandleLifecycleError(() => lifecycle.CreateInstallPlanAsync(input, cancellationToken))));
+
         app.MapPost("/control/v1/apps/install", async (
             HttpRequest request,
             ControlSecret secret,
@@ -577,12 +593,16 @@ internal static class LifecycleEndpoints
             await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
                 // Interactive installs start the app immediately unless the client opts out; an absent
                 // value defaults to true so autostart apps run without a Core restart.
-                await HandleLifecycleError(() => lifecycle.InstallAsync(input with
+                await HandleLifecycleError(() =>
                 {
-                    StartOnInstall = input.StartOnInstall ?? true,
-                    FeedsUrl = null,
-                    FeedId = null,
-                }, cancellationToken))));
+                    RequireInstallPlanId(input);
+                    return lifecycle.InstallAsync(input with
+                    {
+                        StartOnInstall = input.StartOnInstall ?? true,
+                        FeedsUrl = null,
+                        FeedId = null,
+                    }, cancellationToken);
+                })));
 
         app.MapPost("/control/v1/apps/{appId}/configure", async (
             string appId,
@@ -788,6 +808,20 @@ internal static class LifecycleEndpoints
             CancellationToken cancellationToken) =>
             await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
                 await HandleLifecycleError(() => lifecycle.GetHealthAsync(appId, cancellationToken))));
+    }
+
+    // Every network install must be the apply of a reviewed plan — an install without a plan id
+    // would fetch the manifest at apply time, and whatever the source serves in that moment is what
+    // runs (C-CR1). The check lives at the endpoints so Core's own in-process bootstrap, which
+    // installs from trusted local distribution manifests, keeps its direct path.
+    private static void RequireInstallPlanId(AppInstallRequest input)
+    {
+        if (string.IsNullOrWhiteSpace(input.PlanId))
+        {
+            throw new AppLifecycleException(
+                "install_plan_required",
+                "Install requires a reviewed plan. Request POST /api/apps/install/plan (or /control/v1/apps/install/plan) first and echo its planId.");
+        }
     }
 
     private static async Task<IResult> HandleLifecycleError<T>(Func<Task<T>> action)

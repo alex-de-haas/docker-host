@@ -12,6 +12,8 @@ internal sealed partial class AppsCommand(CommandContext context)
         NumberHandling = JsonNumberHandling.AllowReadingFromString)]
     [JsonSerializable(typeof(AppsResponse))]
     [JsonSerializable(typeof(AppInstallRequest))]
+    [JsonSerializable(typeof(AppInstallPlanRequest))]
+    [JsonSerializable(typeof(AppInstallPlan))]
     [JsonSerializable(typeof(AppAutostartRequest))]
     [JsonSerializable(typeof(AppUpdatePlanRequest))]
     [JsonSerializable(typeof(AppUpdateApplyRequest))]
@@ -95,11 +97,26 @@ internal sealed partial class AppsCommand(CommandContext context)
     {
         var options = ParseInstallOptions(args);
         using var core = await OpenCoreAsync();
-        var response = await core.PostAsync<AppLifecycleResponse>("apps/install", new AppInstallRequest(
+        // Plan first, then apply the plan by id: Core installs exactly the manifest bytes the plan
+        // fetched, so a source that changes between the two requests cannot swap what gets installed.
+        // Same two-step contract the update flow already uses.
+        var plan = await core.PostAsync<AppInstallPlan>("apps/install/plan", new AppInstallPlanRequest(
             ManifestPath: options.ManifestPath,
             SelectedRuntime: options.SelectedRuntime,
             System: options.System,
             Autostart: options.Autostart));
+        if (plan?.PlanId is null)
+        {
+            context.Error.MarkupLine("[red]Hosty Core returned no install plan.[/]");
+            return 1;
+        }
+
+        var response = await core.PostAsync<AppLifecycleResponse>("apps/install", new AppInstallRequest(
+            ManifestPath: options.ManifestPath,
+            SelectedRuntime: options.SelectedRuntime,
+            System: options.System,
+            Autostart: options.Autostart,
+            PlanId: plan.PlanId));
         RenderLifecycle(response);
         return 0;
     }
@@ -1514,7 +1531,13 @@ internal sealed partial class AppsCommand(CommandContext context)
 
     internal sealed record MountsSetOptions(string AppId, IReadOnlyList<AppMountBindingInput> Bindings);
 
-    internal sealed record AppInstallRequest(string ManifestPath, string? SelectedRuntime, bool System, bool? Autostart);
+    internal sealed record AppInstallRequest(string ManifestPath, string? SelectedRuntime, bool System, bool? Autostart, string? PlanId = null);
+
+    internal sealed record AppInstallPlanRequest(string ManifestPath, string? SelectedRuntime, bool System, bool? Autostart);
+
+    // Wire subset of Core's install plan: the CLI needs only the id it must echo back on apply.
+    // Extra JSON members Core sends are ignored on deserialization.
+    internal sealed record AppInstallPlan(string? PlanId);
 
     internal sealed record AppAutostartRequest(bool Autostart);
 

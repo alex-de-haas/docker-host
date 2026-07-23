@@ -1432,6 +1432,9 @@ export function ShellClient({
             system: false,
             settings,
             autostart,
+            // Core installs exactly the manifest bytes this plan was built from; without the id the
+            // install is rejected (install_plan_required).
+            planId: plan.planId,
           });
         }
         await refresh();

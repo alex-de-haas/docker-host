@@ -142,6 +142,23 @@ public sealed class AppsCommandTests : IDisposable
         const string manifestUrl = "https://github.com/alex-de-haas/project-manager/releases/download/latest/manifest.json";
         using var server = new FakeCoreServer("""
             {
+              "appId": "com.haas.project-manager",
+              "displayName": "Project Manager",
+              "action": "install",
+              "planId": "instp_0011223344556677",
+              "targetVersion": "1.0.0",
+              "targetRuntime": "default",
+              "targetRuntimeType": "docker",
+              "manifestPath": "https://example.test/manifest.json",
+              "targetManifestDigest": "abc123",
+              "defaultAutostart": true,
+              "system": false,
+              "runtimeProfiles": [],
+              "settings": []
+            }
+            """,
+            """
+            {
               "app": {
                 "id": "com.haas.project-manager",
                 "displayName": "Project Manager",
@@ -171,11 +188,15 @@ public sealed class AppsCommandTests : IDisposable
         await server.WaitForRequestAsync();
 
         Assert.Equal(0, exitCode);
+        Assert.Equal(2, server.Requests.Count);
+        Assert.Equal("/control/v1/apps/install/plan", server.Requests[0].PathAndQuery);
         Assert.Equal("POST", server.Method);
         Assert.Equal("/control/v1/apps/install", server.PathAndQuery);
         using var body = JsonDocument.Parse(server.Body);
         Assert.Equal(manifestUrl, body.RootElement.GetProperty("manifestPath").GetString());
         Assert.Equal("default", body.RootElement.GetProperty("selectedRuntime").GetString());
+        // The apply is bound to the reviewed plan: the id from the plan response is echoed back.
+        Assert.Equal("instp_0011223344556677", body.RootElement.GetProperty("planId").GetString());
         Assert.Contains("com.haas.project-manager", output.ToString());
     }
 
@@ -185,6 +206,23 @@ public sealed class AppsCommandTests : IDisposable
         var appDirectory = Path.Combine(rootDirectory, "runtime-app");
         Directory.CreateDirectory(appDirectory);
         using var server = new FakeCoreServer("""
+            {
+              "appId": "com.haas.local-app",
+              "displayName": "Project Manager",
+              "action": "install",
+              "planId": "instp_0011223344556677",
+              "targetVersion": "1.0.0",
+              "targetRuntime": "dev",
+              "targetRuntimeType": "docker",
+              "manifestPath": "/tmp/runtime-app",
+              "targetManifestDigest": "abc123",
+              "defaultAutostart": true,
+              "system": false,
+              "runtimeProfiles": [],
+              "settings": []
+            }
+            """,
+            """
             {
               "app": {
                 "id": "com.haas.local-app",
@@ -215,11 +253,14 @@ public sealed class AppsCommandTests : IDisposable
         await server.WaitForRequestAsync();
 
         Assert.Equal(0, exitCode);
+        Assert.Equal(2, server.Requests.Count);
+        Assert.Equal("/control/v1/apps/install/plan", server.Requests[0].PathAndQuery);
         Assert.Equal("POST", server.Method);
         Assert.Equal("/control/v1/apps/install", server.PathAndQuery);
         using var body = JsonDocument.Parse(server.Body);
         Assert.Equal(appDirectory, body.RootElement.GetProperty("manifestPath").GetString());
         Assert.Equal("dev", body.RootElement.GetProperty("selectedRuntime").GetString());
+        Assert.Equal("instp_0011223344556677", body.RootElement.GetProperty("planId").GetString());
         Assert.Contains("com.haas.local-app", output.ToString());
     }
 
@@ -701,16 +742,18 @@ public sealed class AppsCommandTests : IDisposable
     {
         private readonly TcpListener listener;
         private readonly Task serverTask;
-        private readonly string responseBody;
+        private readonly string[] responses;
 
-        public FakeCoreServer(string responseBody)
+        // One canned response per expected request, served in order. Existing single-request tests
+        // pass one body and keep their exact behavior; the plan-then-apply install flow passes two.
+        public FakeCoreServer(params string[] responses)
         {
-            this.responseBody = responseBody;
+            this.responses = responses;
             listener = new TcpListener(IPAddress.Loopback, 0);
             listener.Start();
             var port = ((IPEndPoint)listener.LocalEndpoint).Port;
             ControlBaseUrl = $"http://127.0.0.1:{port}/control/v1";
-            serverTask = Task.Run(HandleOneRequestAsync);
+            serverTask = Task.Run(HandleRequestsAsync);
         }
 
         public string ControlBaseUrl { get; }
@@ -722,6 +765,9 @@ public sealed class AppsCommandTests : IDisposable
         public string Body { get; private set; } = "";
 
         public Dictionary<string, string> Headers { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+        // Every request in arrival order; Method/PathAndQuery/Body above mirror the last one.
+        public List<(string Method, string PathAndQuery, string Body)> Requests { get; } = [];
 
         public async Task WaitForRequestAsync()
         {
@@ -735,7 +781,15 @@ public sealed class AppsCommandTests : IDisposable
             listener.Stop();
         }
 
-        private async Task HandleOneRequestAsync()
+        private async Task HandleRequestsAsync()
+        {
+            foreach (var responseBody in responses)
+            {
+                await HandleOneRequestAsync(responseBody);
+            }
+        }
+
+        private async Task HandleOneRequestAsync(string responseBody)
         {
             try
             {
@@ -838,6 +892,7 @@ public sealed class AppsCommandTests : IDisposable
                     Body = body.ToString();
                 }
 
+                Requests.Add((Method, PathAndQuery, Body));
                 var payload = Encoding.UTF8.GetBytes(responseBody);
                 var responseHeader = Encoding.ASCII.GetBytes(
                     $"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {payload.Length}\r\nConnection: close\r\n\r\n");

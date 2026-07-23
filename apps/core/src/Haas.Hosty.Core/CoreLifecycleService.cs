@@ -95,7 +95,62 @@ internal sealed class CoreLifecycleService(
     public async Task<AppInstallPlan> CreateInstallPlanAsync(AppInstallPlanRequest request, CancellationToken cancellationToken = default)
     {
         var selection = await manifests.LoadAsync(request.ManifestPath, request.SelectedRuntime, cancellationToken);
-        return await BuildInstallPlanAsync(request, selection, cancellationToken);
+        var plan = await BuildInstallPlanAsync(request, selection, cancellationToken) with
+        {
+            PlanId = $"instp_{Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16)).ToLowerInvariant()}",
+        };
+
+        // The apply path consumes this cached selection verbatim instead of re-fetching the manifest,
+        // so the fetch that produced the reviewed digest is the fetch that installs — a source that
+        // answers the plan and the apply differently gains nothing (C-CR1). The TTL is enforced on
+        // consume; the sweep here is best-effort cleanup of abandoned entries, and the hard cap
+        // below bounds the cache even under a burst of plan requests within one TTL window.
+        foreach (var entry in reviewedInstallPlans.Where(entry => clock.UtcNow - entry.Value.CreatedAt > ReviewedInstallPlanTtl))
+        {
+            reviewedInstallPlans.TryRemove(entry);
+        }
+
+        while (reviewedInstallPlans.Count >= MaxPendingInstallPlans)
+        {
+            // Evict the oldest pending plan rather than rejecting the new one: the operator asking
+            // now is the active one, and whoever held the evicted plan just re-reviews.
+            var oldest = reviewedInstallPlans.MinBy(entry => entry.Value.CreatedAt);
+            if (!reviewedInstallPlans.TryRemove(oldest))
+            {
+                break;
+            }
+        }
+
+        reviewedInstallPlans[plan.PlanId!] = new CachedInstallPlan(plan, selection, clock.UtcNow);
+        return plan;
+    }
+
+    // Reviewed install plans awaiting apply, keyed by the random single-use plan id (an install has no
+    // app record yet, so unlike update plans the app id cannot key this). Same TTL rationale as
+    // ReviewedUpdatePlanTtl: a stale plan means the operator wandered off and should re-review.
+    private readonly ConcurrentDictionary<string, CachedInstallPlan> reviewedInstallPlans = new(StringComparer.Ordinal);
+
+    private static readonly TimeSpan ReviewedInstallPlanTtl = TimeSpan.FromHours(1);
+
+    // Hard bound on pending install plans. Far above any interactive use (a plan per open dialog),
+    // low enough that runaway automation cannot grow Core's memory with cached manifest selections.
+    private const int MaxPendingInstallPlans = 64;
+
+    private sealed record CachedInstallPlan(AppInstallPlan Plan, RuntimeAppManifestSelection Selection, DateTimeOffset CreatedAt);
+
+    // Single-use, consume-on-attempt: the TryRemove is the atomic claim, so two applies echoing the
+    // same plan id cannot both run — the loser gets the same error as an expired plan and re-reviews.
+    private CachedInstallPlan ConsumeReviewedInstallPlan(string planId)
+    {
+        if (!reviewedInstallPlans.TryRemove(planId, out var cached) ||
+            clock.UtcNow - cached.CreatedAt > ReviewedInstallPlanTtl)
+        {
+            throw new AppLifecycleException(
+                "install_plan_expired",
+                "Install plan was not found or has expired. Request a new plan and review it again.");
+        }
+
+        return cached;
     }
 
     private async Task<AppInstallPlan> BuildInstallPlanAsync(
@@ -122,6 +177,8 @@ internal sealed class CoreLifecycleService(
             DisplayName: selection.Manifest.Name!,
             Description: selection.Manifest.Description,
             Action: existing is null ? "install" : "already-installed",
+            // Minted (and cached) only by CreateInstallPlanAsync; the feed flow binds by digest.
+            PlanId: null,
             CurrentVersion: existing?.Version,
             TargetVersion: selection.Manifest.Version!,
             CurrentRuntime: existing?.SelectedRuntime,
@@ -224,6 +281,28 @@ internal sealed class CoreLifecycleService(
 
     public async Task<AppLifecycleResponse> InstallAsync(AppInstallRequest request, CancellationToken cancellationToken = default)
     {
+        // Plan-bound path (every HTTP install): apply exactly the selection the reviewed plan was
+        // built from. What was reviewed is binding — the manifest bytes, the runtime, and the
+        // system-ness all come from the plan; only post-review operator inputs (settings values,
+        // autostart, start-on-install) are read from this request.
+        if (!string.IsNullOrWhiteSpace(request.PlanId))
+        {
+            var reviewed = ConsumeReviewedInstallPlan(request.PlanId!);
+            var bound = request with
+            {
+                ManifestPath = reviewed.Selection.ManifestPath,
+                SelectedRuntime = reviewed.Selection.RuntimeProfile.Key,
+                System = reviewed.Plan.System,
+            };
+            return await WithAppLockAsync(
+                reviewed.Selection.Manifest.Id!,
+                () => InstallCoreAsync(bound, reviewed.Selection, cancellationToken),
+                cancellationToken);
+        }
+
+        // Unbound path: in-process callers only (the boot bootstrap installs from trusted local
+        // distribution manifests). The HTTP endpoints require a plan id, so no network caller can
+        // reach an apply-time fetch.
         var selection = await manifests.LoadAsync(request.ManifestPath, request.SelectedRuntime, cancellationToken);
         return await WithAppLockAsync(selection.Manifest.Id!, () => InstallCoreAsync(request, selection, cancellationToken), cancellationToken);
     }
@@ -5034,6 +5113,11 @@ internal sealed record AppInstallRequest(
     bool System = false,
     IReadOnlyDictionary<string, string?>? Settings = null,
     bool? Autostart = null,
+    // Handle of the reviewed install plan to apply. Required on every HTTP install (the endpoints
+    // reject its absence with install_plan_required); when present, ManifestPath/SelectedRuntime/
+    // System are taken from the reviewed plan, not from this request. Absent only for in-process
+    // callers installing from trusted local manifests (boot bootstrap).
+    string? PlanId = null,
     // Whether to start the app immediately after installing, when Autostart is enabled. Only an explicit
     // true starts it (null and false both mean "don't start now"): the interactive install endpoints coerce
     // a client's absent value to true, while internal boot bootstraps (shell/collector) pass false so the
@@ -5200,6 +5284,10 @@ internal sealed record AppInstallPlan(
     string DisplayName,
     string? Description,
     string Action,
+    // Random single-use handle the apply echoes back to install exactly the reviewed selection
+    // (see reviewedInstallPlans). Null on the plan embedded in a feed-install flow, which binds by
+    // plan digest instead.
+    string? PlanId,
     string? CurrentVersion,
     string TargetVersion,
     string? CurrentRuntime,
