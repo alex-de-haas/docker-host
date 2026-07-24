@@ -67,7 +67,7 @@ internal sealed class AppUpdateSweepService(
             if (started)
             {
                 var token = hostLifetime?.ApplicationStopping ?? CancellationToken.None;
-                running = Task.Run(() => SweepAsync(token), CancellationToken.None);
+                running = StartSweep(token);
             }
 
             return new AppUpdateCheckTriggerResponse(started, new AppUpdateCheckStatus(Running: true, lastCompletedAt));
@@ -84,17 +84,34 @@ internal sealed class AppUpdateSweepService(
                 return current;
             }
 
-            var run = Task.Run(() => SweepAsync(cancellationToken), CancellationToken.None);
+            var run = StartSweep(cancellationToken);
             running = run;
             return run;
         }
     }
 
+    // Both entry points start a sweep through here so the finish event is announced exactly once, and
+    // only once the sweep task has actually completed. Announcing from inside SweepAsync would be
+    // wrong twice over: Status derives "running" from this very task, so a client re-reading
+    // GET /api/apps on the event would still see running: true and keep spinning; and clearing the
+    // task from inside itself (the first attempt at fixing that) would open a window where Trigger
+    // sees no active run and starts a second concurrent sweep, breaking single-flight.
+    private Task StartSweep(CancellationToken cancellationToken)
+    {
+        var task = Task.Run(() => SweepAsync(cancellationToken), CancellationToken.None);
+        _ = task.ContinueWith(
+            _ => events?.PublishAppEvent(CoreEventHub.FleetUpdateCheckChanged),
+            CancellationToken.None,
+            TaskContinuationOptions.None,
+            TaskScheduler.Default);
+        return task;
+    }
+
     private async Task SweepAsync(CancellationToken cancellationToken)
     {
         // Run-state transitions drive the "Check updates" spinner in every open client, not just the
-        // one that clicked. Published from here (rather than from Trigger/RunAsync) so both entry
-        // points are covered once.
+        // one that clicked. The start is safe to announce from inside the task (Status already
+        // reports running); the finish rides a continuation — see StartSweep.
         events?.PublishAppEvent(CoreEventHub.FleetUpdateCheckChanged);
         try
         {
@@ -155,21 +172,6 @@ internal sealed class AppUpdateSweepService(
             // A sweep-level failure (the app list itself could not be read) — log and leave the
             // per-app verdicts untouched; the next trigger or scheduled run retries from scratch.
             logger.LogError(ex, "Fleet update check failed before reaching per-app checks.");
-        }
-        finally
-        {
-            // Retire the run BEFORE announcing it, and do it explicitly rather than leaving Status to
-            // notice: this code runs inside the sweep task, which is not yet completed, so a client
-            // that re-read GET /api/apps on the event would still see Running: true and keep
-            // spinning. Clearing under the same gate that Trigger/RunAsync use makes the status the
-            // event points at already correct. Unconditional clear is safe because neither entry
-            // point starts a second sweep while this task is incomplete — they join this one.
-            lock (gate)
-            {
-                running = null;
-            }
-
-            events?.PublishAppEvent(CoreEventHub.FleetUpdateCheckChanged);
         }
     }
 }

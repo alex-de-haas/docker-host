@@ -64,10 +64,12 @@ Two choke points carry every domain event, so no caller has to remember to annou
   so the store's `app.changed` does not cover them; routing every write through these two helpers
   covers sweep results, dialog-open re-plans, refresh probes and the post-apply reset alike.
 
-`AppUpdateSweepService` publishes its own run-state transitions. It retires the run under the same
-gate `Trigger`/`RunAsync` use *before* announcing the finish, because that code runs inside the sweep
-task while the task is still incomplete — a client that re-read `GET /api/apps` on the event would
-otherwise see `running: true` and keep spinning.
+`AppUpdateSweepService` publishes its own run-state transitions. The start is announced from inside
+the sweep task, but the **finish rides a continuation that runs after the task completes**, because
+`Status` derives `running` from that very task: announcing from within it would point clients at a
+status still saying `running: true`, leaving the spinner turning. The task itself is never cleared
+from inside itself either — single-flight in `Trigger`/`RunAsync` is keyed on it, so doing that would
+open a window in which a second concurrent sweep could start.
 
 ## Endpoint
 
