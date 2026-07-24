@@ -179,13 +179,13 @@ Phase 1 — Core (platform minor):
 
 Phase 2 — Shell (shell minor):
 
-- [ ] EventSource client in `ShellClient` with mandatory-`onSync` shape,
+- [x] EventSource client in `ShellClient` with mandatory-`onSync` shape,
       auto-reconnect resync, `visibilitychange` resync.
-- [ ] Debounced `/api/apps`-only refetch wired to `app.*` /
+- [x] Debounced `/api/apps`-only refetch wired to `app.*` /
       `apps.update-check.changed` events.
-- [ ] Migrate the notification bell onto the unified stream (drop its
+- [x] Migrate the notification bell onto the unified stream (drop its
       dedicated EventSource; keep the 30s polling fallback).
-- [ ] Remove the 4s update-work poll after verifying update flows live —
+- [x] Remove the 4s update-work poll —
       both of its triggers are now covered: `operationStatus: "updating"`
       is a record commit (`app.changed`) and sweep progress is
       `apps.update-check.changed`.
