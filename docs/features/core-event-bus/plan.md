@@ -50,9 +50,11 @@ transport:
 Derived from the `AppRegistryStore` choke point, which every state commit
 passes through:
 
-- `app.installed` — record added.
-- `app.changed` — record committed (covers lifecycle verbs, supervisor
-  `RuntimeState` flips, reconcile).
+- `app.changed` — record committed (covers install, every lifecycle verb,
+  supervisor `RuntimeState` flips, reconcile). One name for all commits: v1
+  consumers react identically (refetch the list), and the create-vs-update
+  distinction is derivable at the choke point if a consumer ever needs an
+  `app.installed` of its own.
 - `app.removed` — record removed.
 - `app.update-check.changed` — the app's update-availability verdict changed
   (a plan build refreshed it, a sweep check failed for it, or it was pruned).
@@ -66,9 +68,19 @@ additively from the lifecycle verbs when a consumer actually needs them.
 
 ### Publish points
 
-- `AppRegistryStore.AddAppAsync` / `UpdateAppAsync` / `RemoveAppAsync` —
-  publish after a successful commit. One choke point instead of sprinkling
-  publishes across ~10 `CoreLifecycleService` verbs.
+- `AppRegistryStore.UpsertAppCoreAsync` — the private method both public
+  writers (`UpsertAppAsync`, `UpdateAppAsync`) funnel into, so publishing
+  `app.changed` there after a successful write covers every commit by
+  construction: 28 call sites in `CoreLifecycleService` today (6 upserts
+  including install and update-apply, 22 update-in-place), and any added
+  later. Publishing from the two public methods instead would be equivalent
+  but easier to bypass; publishing from a hand-picked list of lifecycle
+  verbs would not be. `RemoveAppAsync` publishes `app.removed`.
+  Implementation notes: the publish happens while the per-app mutex is held,
+  so it must stay non-blocking (channel `TryWrite`, which the drop-oldest
+  hub guarantees); `UpsertAppCoreAsync` can distinguish create from update
+  (the record's `InstalledAt` is unset before normalization) if the
+  taxonomy ever needs it.
 - The update-availability projection — the in-memory
   `CoreLifecycleService.updateAvailability` dictionary, deliberately not part
   of `AppRecord` — is the second choke point: its three write points
@@ -148,8 +160,9 @@ Copies the proven `GET /api/notifications/stream` plumbing verbatim:
 Phase 1 — Core (platform minor):
 
 - [ ] `DomainEventHub` with bounded drop-oldest per-subscriber channels.
-- [ ] Publishes from the `AppRegistryStore` commit choke point
-      (`app.installed` / `app.changed` / `app.removed`).
+- [ ] Publishes from the `AppRegistryStore` commit choke point —
+      `app.changed` from the private `UpsertAppCoreAsync` (covering both
+      public writers), `app.removed` from `RemoveAppAsync`.
 - [ ] Publishes from the update-availability projection write points
       (`app.update-check.changed`).
 - [ ] Publishes from `AppUpdateSweepService` run-state transitions
@@ -177,10 +190,15 @@ Phase 2 — Shell (shell minor):
 
 ## Open questions
 
-None. Resolved 2026-07-24 with the owner: unified `/api/events` over a
-dedicated apps stream (endpoint decision), and the update-availability
-projection writes as the second publish choke point (verdicts verified to be
-in-memory only — `app.changed` cannot cover them).
+None. Both were resolved with the owner in chat on 2026-07-24: unified
+`/api/events` over a dedicated apps stream (endpoint decision), and the
+update-availability projection writes as the second publish choke point
+(verdicts verified to be in-memory only — `app.changed` cannot cover them).
+
+**Status approval:** the owner reviewed this plan with no open questions
+left and approved `Status: Ready` explicitly in chat on 2026-07-24, as
+AGENTS.md requires. Implementation has not started; the first implementation
+commit flips this to `In Progress`.
 
 ## Verification
 
