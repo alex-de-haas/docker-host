@@ -8,6 +8,8 @@ Hosty uses semantic versioning `major.minor.patch`, applied per release artifact
 - **minor** - new functionality, or a large/breaking change (while the project is in `0.x`).
 - **major** - reserved until `1.0`; then breaking changes (Core HTTP API, removed/renamed CLI command or flag).
 
+Documentation-only changes (`docs/`, `README.md`, `AGENTS.md`) are the exception - merge them without a version bump.
+
 Where the version lives:
 
 - **Platform (`apps/core` + `apps/cli`)** share one version in the root `Directory.Build.props`. Bump it there; do not add `<Version>` to individual `.csproj` files.
@@ -19,6 +21,10 @@ Where the version lives:
 
 - **Do not squash-merge PRs.** Parallel PRs are common here, and squash merges rewrite the merged branch's history — the other in-flight branches can no longer rebase cleanly onto main. Use a regular merge commit instead.
 - **One PR per feature, not per phase.** When a feature plan is split into phases, implement all phases on one branch and open a single PR. Individual phases rarely deliver complete functionality on their own, and under the versioning rules above each per-phase PR would pointlessly bump the version.
+
+## Documentation
+
+- Feature and planning docs under `docs/` carry a `Status:` / `Created:` / `Updated:` header. When a feature finishes development, update its doc's `Status:` (and the `Updated:` date) in the same PR that ships the work - a shipped feature must not stay marked as planned or in progress.
 
 ## Hosty Runtime App Development
 
