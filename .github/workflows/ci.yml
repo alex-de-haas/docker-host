@@ -139,6 +139,23 @@ jobs:
       - name: Check version consistency
         run: node scripts/check-versions.mjs
 
+  # Ungated for the same reason as `versions`: it validates doc headers and the generated index across
+  # the whole docs/ tree, needs no `npm ci`, and finishes in seconds.
+  docs:
+    name: Docs index
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Check docs index and headers
+        run: node scripts/docs-index.mjs --check
+
   # Type-checks the workflows themselves: expression syntax, `needs`/`outputs` references, action input
   # names, and shellcheck over every `run:` block. Added after a hyphenated `needs.changes.outputs.*`
   # reference shipped in #256 — a `-` there parses as subtraction, so the expression silently evaluated
