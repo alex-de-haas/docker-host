@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { findAppPageLink, getAppPageLinks } from "./shell/app-helpers";
 import { isAuthRequiredRedirectError, readCoreError, redirectToCoreLogin, redirectToCoreLoginIfAuthRequired } from "./shell/core-api";
 import { createReissueRateLimiter } from "@hosty-sdk/app/embedder";
+import { CoreEventNames, subscribeToCoreEvents } from "./shell/events/core-event-stream";
 import { AppDetailsDialog } from "./shell/dialogs/app-details-dialog";
 import { InstallReviewDialog } from "./shell/dialogs/install-review-dialog";
 import { PlatformDialog } from "./shell/dialogs/platform-dialog";
@@ -72,10 +73,6 @@ import type {
 // Minimum spacing between launch-code reissues for one app, a loop guard against a frame that keeps
 // re-posting hosty:auth-required. Enforced by the SDK's per-app rate limiter.
 const AUTH_REISSUE_MIN_INTERVAL_MS = 3_000;
-
-// Refresh cadence while server-side update work (a fleet check or a background apply) is in flight.
-// Quick enough that spinners and verdicts feel live, light enough for a full list poll.
-const UPDATE_WORK_POLL_INTERVAL_MS = 4_000;
 
 // Polls this page's own document URL until the restarted Shell answers again. Used after a Shell
 // self-update: the already-loaded bundle keeps working against Core while the Shell container
@@ -271,6 +268,35 @@ export function ShellClient({
         error: error instanceof Error ? error.message : "Core is unavailable.",
       }));
     }
+  }, [coreOrigin]);
+
+  // Light re-read of just the apps list, for Core's event stream. Everything a domain event can
+  // change lives on this one response; re-running the full refresh would turn every hint into four
+  // requests and flip `loading`, making the list flicker on someone else's action.
+  const refreshApps = useCallback(async () => {
+    const requestToken = refreshRequestRef.current;
+    const response = await fetch(`${coreOrigin}/api/apps`, { credentials: "include" });
+    redirectToCoreLoginIfAuthRequired(response, coreOrigin);
+    if (!response.ok) {
+      return;
+    }
+
+    const apps = (await response.json()) as AppsResponse;
+    // A full refresh started meanwhile owns the state; its response is the fresher one.
+    if (requestToken !== refreshRequestRef.current) {
+      return;
+    }
+
+    setState((current) =>
+      current.session?.authenticated
+        ? {
+            ...current,
+            apps: apps.apps ?? [],
+            updateCheck: apps.updateCheck ?? null,
+            updatedAt: new Date().toISOString(),
+          }
+        : current,
+    );
   }, [coreOrigin]);
 
   const loadCsrfToken = useCallback(async () => {
@@ -506,23 +532,26 @@ export function ShellClient({
     return () => controller.abort();
   }, [canManageApps, loadCoreUpdateStatus]);
 
-  // Poll while server-side update work is in flight — a fleet check or a background apply — so
-  // spinners and verdicts track server state without manual refreshes (and keep tracking it after a
-  // reload: both signals live on the apps list, not in this page's memory). Everything else stays
-  // on-demand; the interval tears down as soon as the work settles.
-  const updateWorkInFlight =
-    (state.updateCheck?.running ?? false) ||
-    state.apps.some((app) => app.operationStatus === "updating");
+  // Live app state, replacing the old poll-while-update-work-is-in-flight interval: Core commits and
+  // update-check verdicts now arrive as hints on the shared event stream, and the reaction is always
+  // to re-read the list. Admin-gated because Core fans domain events out to admin sessions only —
+  // a non-admin would hold a subscription that never fires (the launcher list still refreshes on
+  // navigation and on demand).
   useEffect(() => {
-    if (!updateWorkInFlight) {
+    if (!state.session?.authenticated || !canManageApps) {
       return;
     }
 
-    const timer = setInterval(() => {
-      void refresh();
-    }, UPDATE_WORK_POLL_INTERVAL_MS);
-    return () => clearInterval(timer);
-  }, [updateWorkInFlight, refresh]);
+    return subscribeToCoreEvents(coreOrigin, {
+      names: [
+        CoreEventNames.appChanged,
+        CoreEventNames.appRemoved,
+        CoreEventNames.appUpdateCheckChanged,
+        CoreEventNames.fleetUpdateCheckChanged,
+      ],
+      onSync: refreshApps,
+    });
+  }, [canManageApps, coreOrigin, refreshApps, state.session?.authenticated]);
 
   // Cancel a pending post-update re-probe timer when the shell unmounts.
   useEffect(

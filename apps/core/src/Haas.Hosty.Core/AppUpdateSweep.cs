@@ -32,7 +32,10 @@ internal sealed class AppUpdateSweepService(
     CoreLifecycleService lifecycle,
     IClock clock,
     ILogger<AppUpdateSweepService> logger,
-    IHostApplicationLifetime? hostLifetime = null)
+    IHostApplicationLifetime? hostLifetime = null,
+    // Live-event hub for the fleet run-state transitions that drive the "Check updates" spinner.
+    // Optional only for unit fixtures; production DI always supplies it.
+    CoreEventHub? events = null)
 {
     // Bounded fan-out: each app check is feed/manifest fetches plus registry probes (which are
     // themselves capped per app), so a handful in parallel saturates the useful concurrency without
@@ -64,7 +67,7 @@ internal sealed class AppUpdateSweepService(
             if (started)
             {
                 var token = hostLifetime?.ApplicationStopping ?? CancellationToken.None;
-                running = Task.Run(() => SweepAsync(token), CancellationToken.None);
+                running = StartSweep(token);
             }
 
             return new AppUpdateCheckTriggerResponse(started, new AppUpdateCheckStatus(Running: true, lastCompletedAt));
@@ -81,14 +84,35 @@ internal sealed class AppUpdateSweepService(
                 return current;
             }
 
-            var run = Task.Run(() => SweepAsync(cancellationToken), CancellationToken.None);
+            var run = StartSweep(cancellationToken);
             running = run;
             return run;
         }
     }
 
+    // Both entry points start a sweep through here so the finish event is announced exactly once, and
+    // only once the sweep task has actually completed. Announcing from inside SweepAsync would be
+    // wrong twice over: Status derives "running" from this very task, so a client re-reading
+    // GET /api/apps on the event would still see running: true and keep spinning; and clearing the
+    // task from inside itself (the first attempt at fixing that) would open a window where Trigger
+    // sees no active run and starts a second concurrent sweep, breaking single-flight.
+    private Task StartSweep(CancellationToken cancellationToken)
+    {
+        var task = Task.Run(() => SweepAsync(cancellationToken), CancellationToken.None);
+        _ = task.ContinueWith(
+            _ => events?.PublishAppEvent(CoreEventHub.FleetUpdateCheckChanged),
+            CancellationToken.None,
+            TaskContinuationOptions.None,
+            TaskScheduler.Default);
+        return task;
+    }
+
     private async Task SweepAsync(CancellationToken cancellationToken)
     {
+        // Run-state transitions drive the "Check updates" spinner in every open client, not just the
+        // one that clicked. The start is safe to announce from inside the task (Status already
+        // reports running); the finish rides a continuation — see StartSweep.
+        events?.PublishAppEvent(CoreEventHub.FleetUpdateCheckChanged);
         try
         {
             var apps = await lifecycle.ListAppsAsync(cancellationToken);

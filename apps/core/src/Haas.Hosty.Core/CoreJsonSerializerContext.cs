@@ -191,6 +191,7 @@ internal static class CoreJson
 [JsonSerializable(typeof(AppBackupResponse))]
 [JsonSerializable(typeof(AppInitiatedBackupResponse))]
 [JsonSerializable(typeof(NotificationView))]
+[JsonSerializable(typeof(AppEventView))]
 [JsonSerializable(typeof(AppNotificationCreateResponse))]
 [JsonSerializable(typeof(NotificationsResponse))]
 [JsonSerializable(typeof(NotificationMarkReadResponse))]

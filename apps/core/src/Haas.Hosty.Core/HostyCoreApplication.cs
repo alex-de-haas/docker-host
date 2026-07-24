@@ -59,7 +59,7 @@ internal static class HostyCoreApplication
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
         builder.Services.AddSingleton<AppBackupService>();
         builder.Services.AddSingleton<NotificationStore>();
-        builder.Services.AddSingleton<NotificationBroadcaster>();
+        builder.Services.AddSingleton<CoreEventHub>();
         builder.Services.AddSingleton<NotificationService>();
         builder.Services.AddSingleton<AppSourceService>();
         // Shared flag the control-plane stop endpoint sets and the runtime-app supervisor reads at
@@ -331,6 +331,7 @@ internal static class HostyCoreApplication
         AppBackupEndpoints.Map(app);
         AppSecretsEndpoints.Map(app);
         NotificationEndpoints.Map(app);
+        EventStreamEndpoints.Map(app);
     }
 
     // Query-flag parsing for control endpoints: accepts a bare `?keepApps` (empty value) plus the usual

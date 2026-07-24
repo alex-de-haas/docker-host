@@ -169,13 +169,15 @@ Optional, phase 2 — app reads back **its own** notifications for standalone-UI
 GET /api/internal/apps/{appId}/notifications?user={userId}
 ```
 
-Live delivery (phase 1.5) — Server-Sent Events, AOT-safe `text/event-stream`:
+Live delivery rides the shared Core event stream — notifications arrive as `event: notification`
+frames on the unified SSE endpoint, so a client opens one connection for everything:
 
 ```text
-GET /api/notifications/stream                        # Core session; live-only (no replay)
+GET /api/events                                      # Core session; live-only (no replay)
 ```
-Polling `GET /api/notifications` is the fallback and the v1 starting point; SSE is an additive
-upgrade, not a prerequisite.
+Polling `GET /api/notifications` remains the fallback and holds the durable history; the stream is
+an additive upgrade, not a prerequisite. See
+[core-event-bus](core-event-bus/feature.md) for the stream's semantics.
 
 ## MCP Mapping
 
@@ -257,7 +259,8 @@ persisted `NotificationState`. Endpoints return via `CoreJson.Json(...)`.
 2. Producer `POST /api/internal/apps/{appId}/notifications` + in-process Core producer + audit.
 3. Consumer `GET /api/notifications` + `POST /api/notifications/read` + Shell bell renderer.
 4. Register the built-in `notifications` interface in the Core registry.
-5. SSE `GET /api/notifications/stream`.
+5. SSE live delivery — shipped first as `GET /api/notifications/stream`, then folded into the
+   unified `GET /api/events` stream (see [core-event-bus](core-event-bus/feature.md)).
 6. (Later, on AI Agent Bridge) Core MCP resources/tools; optional app read-back endpoint;
    pluggable delivery channels (email, web/mobile push) behind a `NotificationChannel` seam.
 

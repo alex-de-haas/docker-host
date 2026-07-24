@@ -1,5 +1,3 @@
-using System.Text.Json;
-
 namespace Haas.Hosty.Core;
 
 internal static class NotificationEndpoints
@@ -42,19 +40,9 @@ internal static class NotificationEndpoints
             CancellationToken cancellationToken) =>
             MarkReadForSessionAsync(request, input, users, clock, notifications, cancellationToken));
 
-        // Live delivery for session clients (e.g. the Shell bell). Durable history stays in
-        // GET /api/notifications, so a missed live event is always recoverable.
-        app.MapGet("/api/notifications/stream", (
-            HttpRequest request,
-            HttpResponse response,
-            UserDirectoryStore users,
-            IClock clock,
-            NotificationBroadcaster broadcaster,
-            IHostApplicationLifetime lifetime,
-            CancellationToken cancellationToken) =>
-            StreamForSessionAsync(
-                request, response, users, clock, broadcaster, cancellationToken,
-                applicationStopping: lifetime.ApplicationStopping));
+        // Live delivery moved to the unified GET /api/events stream (see EventStreamEndpoints).
+        // Durable history stays here in GET /api/notifications, so a missed live event is always
+        // recoverable.
     }
 
     public static async Task<IResult> PublishFromAppAsync(
@@ -236,91 +224,6 @@ internal static class NotificationEndpoints
                 return CoreJson.Json(response);
             },
             requireCsrf: true,
-            cancellationToken: cancellationToken);
-
-    // Keep-alive cadence well under Cloudflare's ~100s origin-response timeout. A notification
-    // stream is idle most of the time; without periodic bytes an intermediary proxy closes the
-    // connection (surfacing as a Cloudflare 524), so we send a comment even when there is nothing
-    // to deliver.
-    private static readonly TimeSpan StreamHeartbeat = TimeSpan.FromSeconds(20);
-
-    public static Task<IResult> StreamForSessionAsync(
-        HttpRequest request,
-        HttpResponse response,
-        UserDirectoryStore users,
-        IClock clock,
-        NotificationBroadcaster broadcaster,
-        CancellationToken cancellationToken,
-        // Overridable only so tests can exercise the idle keep-alive without waiting the full cadence.
-        TimeSpan? heartbeat = null,
-        CancellationToken applicationStopping = default)
-        => CoreSessionAuthorization.RequireSessionAsync(
-            request,
-            users,
-            clock,
-            async user =>
-            {
-                response.Headers.ContentType = "text/event-stream";
-                response.Headers.CacheControl = "no-cache";
-                response.Headers["X-Accel-Buffering"] = "no";
-
-                using var subscription = broadcaster.Subscribe(user.Id);
-
-                // End the stream on Core shutdown, not only on client disconnect. Kestrel's graceful
-                // stop waits for in-flight requests and an SSE response never completes on its own —
-                // one open bell stream would otherwise hold shutdown for the full
-                // HostOptions.ShutdownTimeout and starve the runtime-app stop sweep behind it.
-                using var streamCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, applicationStopping);
-                var streamToken = streamCts.Token;
-
-                try
-                {
-                    // Emit an initial comment so the whole proxy chain (cloudflared -> Cloudflare edge)
-                    // forwards the response start with real body bytes. A header-only flush can be held
-                    // back until the first byte and time out as a Cloudflare 524.
-                    await response.WriteAsync(": connected\n\n", streamToken);
-                    await response.Body.FlushAsync(streamToken);
-
-                    while (true)
-                    {
-                        // Cancel only the read wait (not the request) when the heartbeat elapses, so an
-                        // idle stream sends a keep-alive comment instead of stalling past the proxy timeout.
-                        using var heartbeatCts = CancellationTokenSource.CreateLinkedTokenSource(streamToken);
-                        heartbeatCts.CancelAfter(heartbeat ?? StreamHeartbeat);
-
-                        bool dataAvailable;
-                        try
-                        {
-                            dataAvailable = await subscription.Reader.WaitToReadAsync(heartbeatCts.Token);
-                        }
-                        catch (OperationCanceledException) when (!streamToken.IsCancellationRequested)
-                        {
-                            await response.WriteAsync(": ping\n\n", streamToken);
-                            await response.Body.FlushAsync(streamToken);
-                            continue;
-                        }
-
-                        if (!dataAvailable)
-                        {
-                            break; // Subscription completed (client disposed).
-                        }
-
-                        while (subscription.Reader.TryRead(out var view))
-                        {
-                            var json = JsonSerializer.Serialize(view, CoreJsonSerializerContext.Default.NotificationView);
-                            await response.WriteAsync($"data: {json}\n\n", streamToken);
-                        }
-
-                        await response.Body.FlushAsync(streamToken);
-                    }
-                }
-                catch (OperationCanceledException)
-                {
-                    // Client disconnected or Core is shutting down; end the stream.
-                }
-
-                return Results.Empty;
-            },
             cancellationToken: cancellationToken);
 
     private static int ParseBoundedInt(string? raw, int defaultValue, int min, int max)

@@ -12,6 +12,7 @@ import {
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { isAuthRequiredRedirectError } from "../core-api";
+import { CoreEventNames, subscribeToCoreEvents } from "../events/core-event-stream";
 import { useShellActions } from "../shell-context";
 import type {
   NotificationMarkReadResponse,
@@ -63,41 +64,44 @@ export function NotificationBell({ compact }: { compact: boolean }) {
     }
   }, [coreOrigin]);
 
-  // Initial load + polling fallback.
+  // Polling fallback for when the stream is unavailable entirely. The initial load comes from the
+  // subscription below, which syncs on connect — no need to fire the same request twice on mount.
   useEffect(() => {
-    void load();
     const id = window.setInterval(() => void load(), POLL_INTERVAL_MS);
     return () => window.clearInterval(id);
   }, [load]);
 
-  // Live updates over SSE (best-effort; polling covers any gap).
-  useEffect(() => {
-    let source: EventSource | null = null;
-    try {
-      source = new EventSource(`${coreOrigin}/api/notifications/stream`, { withCredentials: true });
-      source.onmessage = (event) => {
-        if (!mounted.current) {
-          return;
-        }
+  // Live updates over Core's shared event stream (best-effort; polling covers any gap). The stream
+  // is the same connection the shell uses for app state — one per tab, not one per component.
+  // `onSync` re-reads the inbox on connect and on every reconnect, which is what the old dedicated
+  // stream lacked: a notification that arrived while the connection was down used to sit unseen
+  // until the next 30s poll.
+  useEffect(
+    () =>
+      subscribeToCoreEvents(coreOrigin, {
+        names: [CoreEventNames.notification],
+        onSync: load,
+        // A notification carries its own payload, so the row can be applied without a round trip.
+        onEvent: (_name, data) => {
+          if (!mounted.current) {
+            return;
+          }
 
-        try {
-          const view = JSON.parse(event.data) as ShellNotification;
+          const view = data as ShellNotification | null;
+          if (!view?.id) {
+            return;
+          }
+
           const isNew = !knownIds.current.has(view.id);
           knownIds.current.add(view.id);
           setItems((current) => [view, ...current.filter((n) => n.id !== view.id)].slice(0, LIST_LIMIT));
           if (isNew && !view.read) {
             setUnread((current) => current + 1);
           }
-        } catch {
-          // Ignore malformed events.
-        }
-      };
-    } catch {
-      // EventSource unavailable; polling is the fallback.
-    }
-
-    return () => source?.close();
-  }, [coreOrigin]);
+        },
+      }),
+    [coreOrigin, load],
+  );
 
   // Refresh when the panel is opened.
   useEffect(() => {

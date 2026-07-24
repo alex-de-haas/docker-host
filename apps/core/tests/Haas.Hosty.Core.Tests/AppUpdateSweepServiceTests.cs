@@ -124,6 +124,41 @@ public sealed class AppUpdateSweepServiceTests
         Assert.NotNull(fixture.Sweep.Status.LastCompletedAt);
     }
 
+    [Fact]
+    public async Task RunAsync_AnnouncesTheFinishOnlyOnceTheRunNoLongerReportsRunning()
+    {
+        // Clients re-read GET /api/apps when this event lands, so the status it points at must
+        // already be settled — announcing from inside the sweep task (which is still incomplete, and
+        // is what Status derives "running" from) would leave the spinner turning forever.
+        using var fixture = CreateFixture();
+        fixture.Set(FeedsUrl, FeedDocument(MainManifestUrl));
+        fixture.Set(MainManifestUrl, Manifest("1.0.0"));
+        await fixture.InstallFromFeedAsync();
+
+        using var subscription = fixture.Events.Subscribe("admin_1", isAdmin: true);
+        await fixture.Sweep.RunAsync(CancellationToken.None);
+
+        var fleetEvents = 0;
+        for (var attempt = 0; attempt < 100 && fleetEvents < 2; attempt++)
+        {
+            while (subscription.Reader.TryRead(out var envelope))
+            {
+                if (string.Equals(envelope.Name, CoreEventHub.FleetUpdateCheckChanged, StringComparison.Ordinal))
+                {
+                    fleetEvents++;
+                }
+            }
+
+            if (fleetEvents < 2)
+            {
+                await Task.Delay(20);
+            }
+        }
+
+        Assert.Equal(2, fleetEvents); // Start and finish.
+        Assert.False(fixture.Sweep.Status.Running);
+    }
+
     private static Fixture CreateFixture()
         => new(Path.Combine(Path.GetTempPath(), $"hosty-update-sweep-tests-{Guid.NewGuid():N}"));
 
@@ -213,13 +248,16 @@ public sealed class AppUpdateSweepServiceTests
                 NullLogger<CoreLifecycleService>.Instance,
                 clock: clock,
                 feedService: feeds);
-            Sweep = new AppUpdateSweepService(Lifecycle, clock, NullLogger<AppUpdateSweepService>.Instance);
+            Events = new CoreEventHub();
+            Sweep = new AppUpdateSweepService(Lifecycle, clock, NullLogger<AppUpdateSweepService>.Instance, events: Events);
         }
 
         public string Root { get; }
         public AppRegistryStore Apps { get; }
         public CoreLifecycleService Lifecycle { get; }
         public AppUpdateSweepService Sweep { get; }
+
+        public CoreEventHub Events { get; }
 
         public void Set(string url, string document) => documents[url] = document;
 

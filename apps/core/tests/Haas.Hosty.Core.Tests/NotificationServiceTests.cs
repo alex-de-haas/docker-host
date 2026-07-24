@@ -240,7 +240,7 @@ public sealed class NotificationServiceTests
             await users.WriteAsync(directory);
 
             var store = new NotificationStore(paths);
-            var service = new NotificationService(store, users, new NotificationBroadcaster(), clock);
+            var service = new NotificationService(store, users, new CoreEventHub(), clock);
             return new Fixture(service, store, clock);
         }
     }
