@@ -8,7 +8,7 @@ Hosty uses semantic versioning `major.minor.patch`, applied per release artifact
 - **minor** - new functionality, or a large/breaking change (while the project is in `0.x`).
 - **major** - reserved until `1.0`; then breaking changes (Core HTTP API, removed/renamed CLI command or flag).
 
-Documentation-only changes (`docs/`, `README.md`, `AGENTS.md`) are the exception - merge them without a version bump.
+Documentation-only changes (`docs/`, `README.md`, `AGENTS.md`) are the exception - merge them without a version bump. The same goes for Dependabot PRs: merge them as-is, without adding a version bump; the updated dependencies ship with the next versioned change.
 
 Where the version lives:
 
