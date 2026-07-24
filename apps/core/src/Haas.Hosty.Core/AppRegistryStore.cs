@@ -3,7 +3,9 @@ using System.Text.Json;
 
 namespace Haas.Hosty.Core;
 
-internal sealed class AppRegistryStore(CoreDataPaths paths)
+// The event hub is optional only for unit fixtures that construct the store directly; production DI
+// always supplies it. When absent, commits simply publish nothing.
+internal sealed class AppRegistryStore(CoreDataPaths paths, CoreEventHub? events = null)
 {
     private readonly ConcurrentDictionary<string, SemaphoreSlim> appLocks = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, long> dataRemovalGenerations = new(StringComparer.Ordinal);
@@ -106,6 +108,8 @@ internal sealed class AppRegistryStore(CoreDataPaths paths)
         {
             mutex.Release();
         }
+
+        events?.PublishAppEvent(CoreEventHub.AppRemoved, appId);
     }
 
     private async Task<AppStateDocument> UpsertAppCoreAsync(AppRecord app, CancellationToken cancellationToken)
@@ -119,6 +123,12 @@ internal sealed class AppRegistryStore(CoreDataPaths paths)
         var document = new AppStateDocument(1, normalized);
         // Owner-only: this document carries setting values, including ones flagged secret.
         await JsonStorage.WriteOwnerFileAsync(GetAppStatePath(app.Id), document, cancellationToken);
+        // Both public writers (UpsertAppAsync, UpdateAppAsync) funnel through here, so every commit
+        // — install, any lifecycle verb, a supervisor RuntimeState flip, a reconcile — emits exactly
+        // one hint without publishers having to remember to. Publishing runs under the per-app mutex
+        // and must therefore stay non-blocking (the hub drops instead of waiting). Create and update
+        // are not distinguished: v1 consumers re-read the list either way.
+        events?.PublishAppEvent(CoreEventHub.AppChanged, app.Id);
         return document;
     }
 

@@ -23,7 +23,7 @@ public sealed class NotificationRetentionSchedulerTests
         await users.WriteAsync(new UserDirectoryState(
             1, [new HostUserRecord("user_1", "u1@example.test", "U1", "host.user", false, clock.UtcNow, clock.UtcNow)], [], [], []));
 
-        var notifications = new NotificationService(new NotificationStore(paths), users, new NotificationBroadcaster(), clock);
+        var notifications = new NotificationService(new NotificationStore(paths), users, new CoreEventHub(), clock);
         await notifications.PublishAsync(new CoreScope(), "user_1", NotificationService.AudienceUser, "info", "Old read", null, null, null);
         var page = await notifications.QueryAsync("user_1", false, false, 50, 0);
         await notifications.MarkReadAsync("user_1", [page.Notifications[0].Id]);
@@ -58,7 +58,7 @@ public sealed class NotificationRetentionSchedulerTests
         await users.WriteAsync(new UserDirectoryState(
             1, [new HostUserRecord("user_1", "u1@example.test", "U1", "host.user", false, clock.UtcNow, clock.UtcNow)], [], [], []));
 
-        var notifications = new NotificationService(new NotificationStore(paths), users, new NotificationBroadcaster(), clock);
+        var notifications = new NotificationService(new NotificationStore(paths), users, new CoreEventHub(), clock);
         await notifications.PublishAsync(new CoreScope(), "user_1", NotificationService.AudienceUser, "info", "Fresh unread", null, null, null);
 
         var audit = new AuditStore(paths);

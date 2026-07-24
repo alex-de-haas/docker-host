@@ -6,7 +6,7 @@ namespace Haas.Hosty.Core;
 internal sealed class NotificationService(
     NotificationStore store,
     UserDirectoryStore users,
-    NotificationBroadcaster broadcaster,
+    CoreEventHub events,
     IClock clock)
 {
     public const string AudienceUser = "user";
@@ -87,7 +87,7 @@ internal sealed class NotificationService(
 
         foreach (var record in created)
         {
-            broadcaster.Publish(record);
+            events.PublishNotification(record);
         }
 
         var status = candidates.Length == 0

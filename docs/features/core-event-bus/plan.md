@@ -1,6 +1,6 @@
 # Core Event Bus — Ephemeral Domain Events With A Shell Realtime Consumer
 
-Status: Ready
+Status: In Progress
 Created: 2026-07-24
 Updated: 2026-07-24
 
@@ -159,19 +159,21 @@ Copies the proven `GET /api/notifications/stream` plumbing verbatim:
 
 Phase 1 — Core (platform minor):
 
-- [ ] `DomainEventHub` with bounded drop-oldest per-subscriber channels.
-- [ ] Publishes from the `AppRegistryStore` commit choke point —
+- [x] `CoreEventHub` with bounded drop-oldest per-subscriber channels.
+- [x] Publishes from the `AppRegistryStore` commit choke point —
       `app.changed` from the private `UpsertAppCoreAsync` (covering both
       public writers), `app.removed` from `RemoveAppAsync`.
-- [ ] Publishes from the update-availability projection write points
-      (`app.update-check.changed`).
-- [ ] Publishes from `AppUpdateSweepService` run-state transitions
+- [x] Publishes from the update-availability projection write points
+      (`app.update-check.changed`) — four sites, not the three the plan
+      assumed: the post-apply reset is one too, now routed through the same
+      `SetUpdateAvailability`/`ClearUpdateAvailability` helpers.
+- [x] Publishes from `AppUpdateSweepService` run-state transitions
       (`apps.update-check.changed`), finish via `finally`.
-- [ ] Unified `GET /api/events` SSE endpoint (session auth, admin-only
+- [x] Unified `GET /api/events` SSE endpoint (session auth, admin-only
       domain-event fan-out, notifications folded in as named events;
       heartbeat, `ApplicationStopping`-linked CTS);
       `GET /api/notifications/stream` removed.
-- [ ] Tests modeled on `NotificationConsumerEndpointsTests`: auth gate,
+- [x] Tests modeled on `NotificationConsumerEndpointsTests`: auth gate,
       event delivery, disconnect cleanup, shutdown does not hang on an open
       stream.
 

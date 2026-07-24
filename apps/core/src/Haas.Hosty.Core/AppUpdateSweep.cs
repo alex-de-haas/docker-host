@@ -32,7 +32,10 @@ internal sealed class AppUpdateSweepService(
     CoreLifecycleService lifecycle,
     IClock clock,
     ILogger<AppUpdateSweepService> logger,
-    IHostApplicationLifetime? hostLifetime = null)
+    IHostApplicationLifetime? hostLifetime = null,
+    // Live-event hub for the fleet run-state transitions that drive the "Check updates" spinner.
+    // Optional only for unit fixtures; production DI always supplies it.
+    CoreEventHub? events = null)
 {
     // Bounded fan-out: each app check is feed/manifest fetches plus registry probes (which are
     // themselves capped per app), so a handful in parallel saturates the useful concurrency without
@@ -89,6 +92,10 @@ internal sealed class AppUpdateSweepService(
 
     private async Task SweepAsync(CancellationToken cancellationToken)
     {
+        // Run-state transitions drive the "Check updates" spinner in every open client, not just the
+        // one that clicked. Published from here (rather than from Trigger/RunAsync) so both entry
+        // points are covered once.
+        events?.PublishAppEvent(CoreEventHub.FleetUpdateCheckChanged);
         try
         {
             var apps = await lifecycle.ListAppsAsync(cancellationToken);
@@ -148,6 +155,21 @@ internal sealed class AppUpdateSweepService(
             // A sweep-level failure (the app list itself could not be read) — log and leave the
             // per-app verdicts untouched; the next trigger or scheduled run retries from scratch.
             logger.LogError(ex, "Fleet update check failed before reaching per-app checks.");
+        }
+        finally
+        {
+            // Retire the run BEFORE announcing it, and do it explicitly rather than leaving Status to
+            // notice: this code runs inside the sweep task, which is not yet completed, so a client
+            // that re-read GET /api/apps on the event would still see Running: true and keep
+            // spinning. Clearing under the same gate that Trigger/RunAsync use makes the status the
+            // event points at already correct. Unconditional clear is safe because neither entry
+            // point starts a second sweep while this task is incomplete — they join this one.
+            lock (gate)
+            {
+                running = null;
+            }
+
+            events?.PublishAppEvent(CoreEventHub.FleetUpdateCheckChanged);
         }
     }
 }

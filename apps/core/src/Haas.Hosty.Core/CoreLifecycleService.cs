@@ -41,7 +41,10 @@ internal sealed class CoreLifecycleService(
     // How long the start half of a stop->start pair waits for the app's own host port to come back before
     // starting anyway. Overridable only so tests can reach the give-up path without a real 15s wait;
     // production DI never passes it.
-    TimeSpan? selfRestartPortReleaseTimeout = null)
+    TimeSpan? selfRestartPortReleaseTimeout = null,
+    // Live-event hub for the update-availability projection (record commits publish from
+    // AppRegistryStore itself). Optional only for unit fixtures; production DI always supplies it.
+    CoreEventHub? events = null)
 {
     private static readonly Regex BackupReasonPattern = new("^[a-z0-9][a-z0-9-]{0,30}$", RegexOptions.Compiled);
     private static readonly Regex MountLabelPattern = new("^[a-z0-9][a-z0-9._-]{0,62}$", RegexOptions.Compiled);
@@ -1401,12 +1404,12 @@ internal sealed class CoreLifecycleService(
         reviewedUpdatePlans[appId] = cached;
         // Every successful plan build — sweep, dialog open, status probe — refreshes the app's
         // availability projection, so the apps-list verdict and the plan cache never disagree.
-        updateAvailability[appId] = new AppUpdateAvailability(
+        SetUpdateAvailability(appId, new AppUpdateAvailability(
             UpdateAvailable: PlanIndicatesUpdateAvailable(changes),
             RequiresReview: plan.RequiresReview,
             PlanDigest: plan.PlanDigest,
             CheckedAt: clock.UtcNow,
-            Error: null);
+            Error: null));
         return cached;
     }
 
@@ -1658,16 +1661,33 @@ internal sealed class CoreLifecycleService(
     // questions in docs/planning/plan-first-app-updates.md).
     private readonly ConcurrentDictionary<string, AppUpdateAvailability> updateAvailability = new(StringComparer.Ordinal);
 
+    // The projection's own choke point. Verdicts never reach AppRecord, so the store's app.changed
+    // cannot cover them — every write goes through these two helpers instead, which keeps sweep
+    // results, dialog-open re-plans, refresh probes and the post-apply reset publishing uniformly.
+    private void SetUpdateAvailability(string appId, AppUpdateAvailability verdict)
+    {
+        updateAvailability[appId] = verdict;
+        events?.PublishAppEvent(CoreEventHub.AppUpdateCheckChanged, appId);
+    }
+
+    private void ClearUpdateAvailability(string appId)
+    {
+        if (updateAvailability.TryRemove(appId, out _))
+        {
+            events?.PublishAppEvent(CoreEventHub.AppUpdateCheckChanged, appId);
+        }
+    }
+
     // Sweep hook: a plan build failed for this app, so its row shows "check failed" instead of a
     // stale verdict. The pending plan slot is deliberately left alone — an earlier plan may still be
     // fresh and applicable even when the latest re-check could not resolve its inputs.
     internal void RecordUpdateCheckFailure(string appId, string message)
-        => updateAvailability[appId] = new AppUpdateAvailability(
+        => SetUpdateAvailability(appId, new AppUpdateAvailability(
             UpdateAvailable: false,
             RequiresReview: false,
             PlanDigest: null,
             CheckedAt: clock.UtcNow,
-            Error: message);
+            Error: message));
 
     // Sweep hook: drop projections for apps that no longer exist (or stopped being sweep targets),
     // so a removed app's verdict does not linger until Core restarts.
@@ -1676,7 +1696,7 @@ internal sealed class CoreLifecycleService(
         // ConcurrentDictionary.Keys is already a snapshot, so removing while iterating it is safe.
         foreach (var appId in updateAvailability.Keys.Where(key => !keepAppIds.Contains(key)))
         {
-            updateAvailability.TryRemove(appId, out _);
+            ClearUpdateAvailability(appId);
         }
     }
 
@@ -1864,7 +1884,7 @@ internal sealed class CoreLifecycleService(
         // The app just moved to the reviewed target: clear the availability verdict so the row's
         // update affordance disappears immediately instead of pointing at the consumed plan. The
         // next check (row refresh or sweep) re-establishes it against current upstream.
-        updateAvailability.TryRemove(appId, out _);
+        ClearUpdateAvailability(appId);
         if (wasRunning)
         {
             var restarted = await StartCoreAsync(appId, afterOwnStop: wasRunning, cancellationToken);
