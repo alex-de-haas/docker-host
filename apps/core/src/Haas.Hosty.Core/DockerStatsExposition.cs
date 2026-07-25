@@ -10,7 +10,7 @@ namespace Haas.Hosty.Core;
 // backend stores docker stats uniformly with app OTLP metrics. This replaces the docker-stats half of
 // the old TelemetryScrapeService; Core no longer keeps a metric store of its own. Gated on the
 // telemetry app being installed — the flag that used to control this folded into the bootstrap
-// choice (generic-bootstrap.md), so a live enable starts stats flowing without a Core restart —
+// catalog (removable-system-apps), so installing it starts stats flowing without a Core restart —
 // and best-effort: a docker-less host simply exposes nothing.
 // See docs/features/observability/feature.md.
 internal sealed class DockerStatsExposition(

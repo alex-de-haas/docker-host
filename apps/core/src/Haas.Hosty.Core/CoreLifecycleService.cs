@@ -23,9 +23,6 @@ internal sealed class CoreLifecycleService(
     // Generic app-owned feed loader. Optional only for legacy unit fixtures that do not exercise feeds;
     // production DI always supplies it.
     AppFeedService? feedService = null,
-    // Bootstrap-choices writer for the uninstall hook on distribution-origin apps. Optional only for
-    // unit fixtures; production DI always supplies it.
-    BootstrapChoicesStore? bootstrapChoices = null,
     // App secrets keychain, deleted with app data on removal. Optional only for unit fixtures;
     // production DI always supplies it. The fallback shares the same AppRegistryStore instance, so
     // the per-app lock still fences removal against in-flight secret writes.
@@ -2007,21 +2004,106 @@ internal sealed class CoreLifecycleService(
         return new AppLifecycleResponse(document is null ? null : await BuildAppSummaryAsync(document, cancellationToken), backup, "runtime-switched");
     }
 
-    // allowSystemRemoval distinguishes the calling surface: the local control plane (CLI) keeps full
-    // removal for operator recovery, while the browser surface refuses to remove a system app — the
-    // Shell only hides the button, so the API must be the actual boundary.
-    public Task<AppLifecycleResponse> RemoveAsync(string appId, AppRemoveRequest request, bool allowSystemRemoval = false, CancellationToken cancellationToken = default)
-        => WithAppLockAsync(appId, () => RemoveCoreAsync(appId, request, allowSystemRemoval, cancellationToken), cancellationToken);
+    // What removing this app would affect. Facts only — this never refuses a removal and never gates
+    // one; it exists so the confirmation surface can say what breaks instead of carrying hand-written
+    // copy per app. Both sources are structural, so a third-party app that takes over a first-party
+    // app's role is described exactly like the app it replaced:
+    //   * dependents — apps whose manifest declares a cross-app dependency on this one. A running
+    //     dependent keeps its wired HOSTY_DEPENDENCY_* values until it restarts, so the loss lands at
+    //     its next start, which is what the surface tells the operator.
+    //   * capability consumers — for each platform slot this app provides, the apps that consume it.
+    // An app nothing declares against returns an empty impact and gets the ordinary confirmation.
+    public async Task<AppRemovalImpact> GetRemovalImpactAsync(string appId, CancellationToken cancellationToken = default)
+    {
+        var app = await RequireAppAsync(appId, cancellationToken);
+        var installed = (await apps.ListAppRecordsAsync(cancellationToken))
+            .Where(candidate => !string.Equals(candidate.Id, appId, StringComparison.Ordinal))
+            .OrderBy(candidate => candidate.Id, StringComparer.Ordinal)
+            .ToArray();
 
-    private async Task<AppLifecycleResponse> RemoveCoreAsync(string appId, AppRemoveRequest request, bool allowSystemRemoval, CancellationToken cancellationToken)
+        var dependents = installed
+            .Select(candidate => (Record: candidate, Declared: (candidate.Dependencies ?? [])
+                .Where(dependency => string.Equals(dependency.AppId, appId, StringComparison.Ordinal))
+                .ToArray()))
+            .Where(candidate => candidate.Declared.Length > 0)
+            .Select(candidate => new AppRemovalDependent(
+                candidate.Record.Id,
+                candidate.Record.DisplayName,
+                candidate.Record.RuntimeState,
+                candidate.Declared.Any(dependency => dependency.Required),
+                candidate.Declared
+                    .SelectMany(dependency => dependency.Endpoints ?? [])
+                    .Select(endpoint => endpoint.Alias)
+                    .Distinct(StringComparer.Ordinal)
+                    .OrderBy(alias => alias, StringComparer.Ordinal)
+                    .ToArray()))
+            .ToArray();
+
+        var capabilities = new List<AppRemovalCapabilityImpact>();
+        foreach (var slot in app.Provides ?? [])
+        {
+            var consumers = await FindCapabilityConsumersAsync(slot, installed, cancellationToken);
+            if (consumers.Count > 0)
+            {
+                capabilities.Add(new AppRemovalCapabilityImpact(slot, consumers));
+            }
+        }
+
+        return new AppRemovalImpact(app.Id, app.DisplayName, app.System, dependents, capabilities);
+    }
+
+    // Consumers are resolved per capability slot, never per app id. Only slots whose consumption is
+    // observable from a manifest can be answered; an unknown slot yields no consumers rather than a
+    // guess.
+    private async Task<IReadOnlyList<AppRemovalConsumer>> FindCapabilityConsumersAsync(
+        string slot,
+        IReadOnlyList<AppRecord> installed,
+        CancellationToken cancellationToken)
+    {
+        if (!string.Equals(slot, PlatformCapabilities.OtlpCollector, StringComparison.Ordinal))
+        {
+            return [];
+        }
+
+        var consumers = new List<AppRemovalConsumer>();
+        foreach (var candidate in installed)
+        {
+            if (string.IsNullOrWhiteSpace(candidate.ManifestPath))
+            {
+                continue;
+            }
+
+            try
+            {
+                // The reviewed internal copy, not the live-source reconcile: this is a read-only
+                // preview and must not depend on a developer's folder being mid-edit.
+                var selection = await manifests.LoadAsync(candidate.ManifestPath, candidate.SelectedRuntime, cancellationToken);
+                if (RuntimeTelemetrySettings.FromManifest(selection.Manifest.Telemetry).Enabled)
+                {
+                    consumers.Add(new AppRemovalConsumer(candidate.Id, candidate.DisplayName, candidate.RuntimeState));
+                }
+            }
+            catch (Exception ex) when (ex is AppLifecycleException or AppManifestException or IOException or JsonException)
+            {
+                // An unreadable manifest costs one row in an advisory list; it must not fail the
+                // preview the operator is waiting on.
+                logger.LogDebug(ex, "Could not read the manifest of {AppId} while computing removal impact.", candidate.Id);
+            }
+        }
+
+        return consumers;
+    }
+
+    // Every app removes the same way on every surface. A system app carries no lifecycle immunity —
+    // "system" governs who may see and reach it, not whether it can be uninstalled — so the browser
+    // and the control plane behave identically here. Consequences are surfaced ahead of the call by
+    // GetRemovalImpactAsync, never enforced as a refusal.
+    public Task<AppLifecycleResponse> RemoveAsync(string appId, AppRemoveRequest request, CancellationToken cancellationToken = default)
+        => WithAppLockAsync(appId, () => RemoveCoreAsync(appId, request, cancellationToken), cancellationToken);
+
+    private async Task<AppLifecycleResponse> RemoveCoreAsync(string appId, AppRemoveRequest request, CancellationToken cancellationToken)
     {
         var app = await apps.GetAppAsync(appId, cancellationToken);
-        if (app is { System: true } && !allowSystemRemoval)
-        {
-            throw new AppLifecycleException(
-                "system_app_remove_requires_control",
-                "System apps can only be removed through the local control plane (hosty CLI).");
-        }
         if (app is not null && !string.IsNullOrWhiteSpace(app.ManifestPath))
         {
             try
@@ -2101,22 +2183,8 @@ internal sealed class CoreLifecycleService(
         // (Core no longer holds a per-app store to purge here).
         await ReconcileIngressAsync(cancellationToken);
 
-        // Uninstalling a distribution-origin app records the operator's intent: without this pin the
-        // next boot's distribution reconcile would simply reinstall it. Best-effort — a choices write
-        // failure must not abort the uninstall the operator asked for.
-        if (app is { InstallOrigin: AppInstallOrigins.Distribution } && bootstrapChoices is not null)
-        {
-            try
-            {
-                await bootstrapChoices.SetEnabledAsync(appId, enabled: false, cancellationToken);
-                logger.LogInformation("Recorded bootstrap choice enabled=false for uninstalled distribution app {AppId}.", appId);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                logger.LogWarning(ex, "Failed to record bootstrap choice for uninstalled distribution app {AppId}; the boot reconcile may reinstall it.", appId);
-            }
-        }
-
+        // Nothing to record: boot seeds a host once and never reinstalls, so an uninstall is final
+        // until the operator asks for the app again (hosty setup, Marketplace).
         return new AppLifecycleResponse(app is null ? null : await BuildAppSummaryAsync(app, cancellationToken), null, "removed");
     }
 
@@ -5290,6 +5358,34 @@ internal sealed record AppRemoveRequest(
     bool DeleteBackups = false,
     bool DeleteSource = false,
     bool IgnoreRuntimeErrors = false);
+
+// Read-only preview of what an uninstall would affect, for the confirmation surfaces (Shell's remove
+// panel, `hosty setup`). Advisory by contract: nothing here blocks a removal, and an app that affects
+// nothing returns empty collections.
+internal sealed record AppRemovalImpact(
+    string AppId,
+    string DisplayName,
+    // Reported so a surface can word the confirmation for an app only administrators can see; it is
+    // not a lifecycle restriction.
+    bool System,
+    IReadOnlyList<AppRemovalDependent> Dependents,
+    IReadOnlyList<AppRemovalCapabilityImpact> Capabilities);
+
+// An installed app that declares a cross-app dependency on the app being removed. Aliases name the
+// HOSTY_DEPENDENCY_{ALIAS}_URL variables that stop resolving; a running dependent keeps its current
+// values until it restarts.
+internal sealed record AppRemovalDependent(
+    string AppId,
+    string DisplayName,
+    string RuntimeState,
+    bool Required,
+    IReadOnlyList<string> Aliases);
+
+internal sealed record AppRemovalCapabilityImpact(
+    string Slot,
+    IReadOnlyList<AppRemovalConsumer> Consumers);
+
+internal sealed record AppRemovalConsumer(string AppId, string DisplayName, string RuntimeState);
 
 internal sealed record AppManualBackupRequest(string? Reason = null);
 

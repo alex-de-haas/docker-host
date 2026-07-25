@@ -847,9 +847,9 @@ function InstalledAppRow({
   const needsReview = Boolean(verdict?.requiresReview || !verdict?.planDigest);
   // Removal, like start/stop/restart/update, is an inherent Core operation: the endpoint authorizes on
   // the admin session, never on the manifest `capabilities` list, so an app cannot decline to be
-  // uninstalled by omitting a token. It is the one verb that stays system-gated — Core rejects removing
-  // a system app anywhere but the local control plane (hosty CLI), so the menu item would only 403.
-  const canRemove = canManageApps && !app.system;
+  // uninstalled by omitting a token. System apps are removable too — "system" governs who may see and
+  // reach an app, not whether it can be uninstalled; the remove panel explains the consequences.
+  const canRemove = canManageApps;
   // Development Mode is a per-source-runtime toggle (localCommand + Core reports developmentMode).
   // Surface it in the actions menu only for the *selected* source runtime, so an operator can flip
   // live/reviewed without opening Settings → Source. See runtime-artifact-model.md.

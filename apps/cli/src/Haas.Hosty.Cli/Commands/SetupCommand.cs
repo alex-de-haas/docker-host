@@ -1,65 +1,26 @@
 namespace Haas.Hosty.Cli.Commands;
 
-using System.Text.Json;
 using System.Text.Json.Serialization;
-using Haas.Hosty.Cli.Configuration;
 using Spectre.Console;
 
 /// <summary>
-/// `hosty setup` — choose which optional first-party apps Core preinstalls at boot. Reads the
-/// release-owned distribution list (never persisted) and writes only the operator's intent into
-/// {dataRoot}/core/bootstrap-choices.json, which Core's boot reconcile consumes. See
-/// docs/ideas/generic-bootstrap.md (Phase 2).
+/// `hosty setup` — install or uninstall the first-party apps this release offers. The checkboxes are
+/// the host's actual installed state: ticking an entry installs it, unticking an installed entry
+/// uninstalls it. Both are ordinary lifecycle operations against a running Core, which owns the
+/// catalog (manifest refs and feeds never reach the CLI). This is also the recovery path for an app
+/// removed from the Shell or by mistake — including the Shell itself.
+/// See docs/features/removable-system-apps/.
 /// </summary>
 internal sealed partial class SetupCommand(CommandContext context)
 {
     private const string Usage = """
         Usage:
-          hosty setup                          Interactive checklist of optional apps
-          hosty setup --with <APP_ID>[,..]     Enable app(s) without prompting
-          hosty setup --without <APP_ID>[,..]  Disable app(s) without prompting
-          hosty setup --yes                    Accept the current selection without prompting
-          hosty setup --list                   Show the distribution list and current selection
-        """;
-
-    // Mirrors Core's DistributionAppsSchema/BootstrapChoicesSchema constants (no shared library —
-    // both binaries are Native AOT and the contract is two stable strings).
-    private const string DistributionSchemaVersion = "distribution-apps.0.1";
-    private const string DistributionFileName = "distribution-apps.json";
-    private const string DistributionPathEnvVar = "HOSTY_DISTRIBUTION_APPS_PATH";
-    private const string ChoicesSchemaVersion = "bootstrap-choices.0.1";
-    private const string ChoicesFileName = "bootstrap-choices.json";
-
-    // Official distribution for standalone binary installs — the same set Core embeds
-    // (DistributionAppsProvider.EmbeddedDefaultJson); a source tree wins via the walked repo file.
-    // Setup only consumes id/title/description/defaultEnabled; manifest refs are Core's concern.
-    private const string EmbeddedDefaultJson = /*lang=json,strict*/ """
-        {
-          "schemaVersion": "distribution-apps.0.1",
-          "apps": [
-            {
-              "id": "hosty.shell",
-              "title": "Hosty Shell",
-              "description": "Web UI client for this host.",
-              "manifestRef": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/shell/manifest.json",
-              "defaultEnabled": true
-            },
-            {
-              "id": "hosty.telemetry",
-              "title": "Telemetry",
-              "description": "OpenTelemetry collector and observability backend.",
-              "manifestRef": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/telemetry/manifest.json",
-              "defaultEnabled": false
-            },
-            {
-              "id": "hosty.marketplace",
-              "title": "Marketplace",
-              "description": "App discovery storefront.",
-              "manifestRef": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/marketplace/manifest.json",
-              "defaultEnabled": true
-            }
-          ]
-        }
+          hosty setup                          Interactive checklist of first-party apps
+          hosty setup --with <APP_ID>[,..]     Install app(s) without prompting
+          hosty setup --without <APP_ID>[,..]  Uninstall app(s) without prompting
+          hosty setup --yes                    Apply the current selection without prompting
+          hosty setup --list                   Show the catalog and what is installed
+          hosty setup --delete-data            Also delete app data when uninstalling
         """;
 
     public async Task<int> ExecuteAsync(string[] args)
@@ -71,45 +32,27 @@ internal sealed partial class SetupCommand(CommandContext context)
         }
 
         var options = ParseArguments(args);
-        var settings = context.SettingsStore.EnsureInstalled();
-        var (entries, listSource, listWarnings) = LoadDistributionList();
-        foreach (var warning in listWarnings)
+        using var core = await OpenCoreAsync();
+        var state = await LoadStateAsync(core);
+        foreach (var problem in state.Problems ?? [])
         {
-            context.Error.MarkupLine($"[yellow]Warning:[/] {Markup.Escape(warning)}");
+            context.Error.MarkupLine($"[yellow]Warning:[/] {Markup.Escape(problem)}");
         }
 
+        var entries = state.Apps ?? [];
         if (entries.Count == 0)
         {
-            context.Error.MarkupLine("[red]No usable distribution list entries were found; nothing to set up.[/]");
+            context.Error.MarkupLine("[red]This release offers no first-party apps; nothing to set up.[/]");
             return 1;
         }
 
         ValidateRequestedIds(options, entries);
 
-        var dataRoot = settings.ResolveHostDataRoot(context.Environment);
-        var choicesPath = Path.Combine(dataRoot, "core", ChoicesFileName);
-        var (existingChoices, existingUnreadable) = ReadChoices(choicesPath);
-        if (existingUnreadable)
-        {
-            context.Error.MarkupLine(
-                $"[yellow]Warning:[/] existing {Markup.Escape(ChoicesFileName)} could not be parsed; it will be rewritten from this selection.");
-        }
-
-        var effective = entries.ToDictionary(
-            entry => entry.Id,
-            entry => EffectiveEnabled(entry, existingChoices, dataRoot),
-            StringComparer.Ordinal);
-
-        if (options.List)
-        {
-            WriteSelectionTable(entries, effective, listSource);
-            return 0;
-        }
-
+        var installed = entries.ToDictionary(entry => entry.Id, entry => entry.Installed, StringComparer.Ordinal);
         IReadOnlyDictionary<string, bool> selection;
         if (options.With.Count > 0 || options.Without.Count > 0 || options.Yes)
         {
-            var adjusted = new Dictionary<string, bool>(effective, StringComparer.Ordinal);
+            var adjusted = new Dictionary<string, bool>(installed, StringComparer.Ordinal);
             foreach (var id in options.With)
             {
                 adjusted[id] = true;
@@ -122,6 +65,11 @@ internal sealed partial class SetupCommand(CommandContext context)
 
             selection = adjusted;
         }
+        else if (options.List)
+        {
+            WriteSelectionTable(entries, installed, state.Source);
+            return 0;
+        }
         else
         {
             if (!context.Console.Profile.Capabilities.Interactive)
@@ -131,24 +79,78 @@ internal sealed partial class SetupCommand(CommandContext context)
                     Usage);
             }
 
-            selection = PromptSelection(entries, effective);
+            selection = PromptSelection(entries, installed);
         }
 
-        WriteChoices(choicesPath, entries, selection, existingChoices);
-        WriteSelectionTable(entries, selection, listSource);
-        context.Console.MarkupLine($"[grey]Saved to {Markup.Escape(choicesPath)}[/]");
-
-        // Core loads choices once at boot; a live process keeps reconciling yesterday's selection.
-        using var control = await CoreControlClient.TryCreateAsync(context);
-        if (control is not null)
+        if (options.List)
         {
-            context.Console.MarkupLine("[yellow]Hosty Core is running — the new selection applies on the next 'hosty core restart'.[/]");
+            WriteSelectionTable(entries, selection, state.Source);
+            return 0;
         }
 
-        return 0;
+        var failures = await ApplySelectionAsync(core, entries, installed, selection, options.DeleteData);
+        WriteSelectionTable(entries, (await LoadStateAsync(core)).Apps ?? [], state.Source);
+        return failures == 0 ? 0 : 1;
     }
 
-    private sealed record SetupOptions(IReadOnlyList<string> With, IReadOnlyList<string> Without, bool Yes, bool List);
+    // Installs and uninstalls only where the selection differs from what is installed, so re-running
+    // setup with the same answers touches nothing.
+    private async Task<int> ApplySelectionAsync(
+        CoreControlClient core,
+        IReadOnlyList<BootstrapAppResponse> entries,
+        IReadOnlyDictionary<string, bool> installed,
+        IReadOnlyDictionary<string, bool> selection,
+        bool deleteData)
+    {
+        var failures = 0;
+        foreach (var entry in entries)
+        {
+            var want = selection[entry.Id];
+            if (want == installed[entry.Id])
+            {
+                continue;
+            }
+
+            try
+            {
+                if (want)
+                {
+                    context.Console.MarkupLine($"Installing [bold]{Markup.Escape(entry.Title)}[/]…");
+                    await core.PostAsync($"core/bootstrap/{Uri.EscapeDataString(entry.Id)}/install");
+                }
+                else
+                {
+                    context.Console.MarkupLine($"Uninstalling [bold]{Markup.Escape(entry.Title)}[/]…");
+                    // The ordinary remove, sharing AppsCommand's contract: setup has no lifecycle
+                    // powers of its own. App data is kept unless the operator asks otherwise, so a
+                    // reinstall picks up where it left off.
+                    await core.PostAsync<AppsCommand.AppLifecycleResponse>(
+                        $"apps/{Uri.EscapeDataString(entry.Id)}/remove",
+                        new AppsCommand.AppRemoveRequest(
+                            DeleteRuntimeState: true,
+                            DeleteData: deleteData,
+                            DeleteBackups: false,
+                            DeleteSource: false,
+                            IgnoreRuntimeErrors: false));
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // One app's failure must not abandon the rest of the selection; the exit code reports it.
+                failures++;
+                context.Error.MarkupLine($"[red]{Markup.Escape(entry.Id)}:[/] {Markup.Escape(ex.Message)}");
+            }
+        }
+
+        return failures;
+    }
+
+    private sealed record SetupOptions(
+        IReadOnlyList<string> With,
+        IReadOnlyList<string> Without,
+        bool Yes,
+        bool List,
+        bool DeleteData);
 
     private static SetupOptions ParseArguments(string[] args)
     {
@@ -156,6 +158,7 @@ internal sealed partial class SetupCommand(CommandContext context)
         var without = new List<string>();
         var yes = false;
         var list = false;
+        var deleteData = false;
 
         for (var index = 0; index < args.Length; index++)
         {
@@ -179,6 +182,9 @@ internal sealed partial class SetupCommand(CommandContext context)
                 case "--list":
                     list = true;
                     break;
+                case "--delete-data":
+                    deleteData = true;
+                    break;
                 default:
                     throw new CommandUsageException($"Unknown setup option '{args[index]}'.", Usage);
             }
@@ -190,52 +196,30 @@ internal sealed partial class SetupCommand(CommandContext context)
             throw new CommandUsageException($"App id '{conflict}' appears in both --with and --without.", Usage);
         }
 
-        return new SetupOptions(with, without, yes, list);
+        return new SetupOptions(with, without, yes, list, deleteData);
     }
 
-    private void ValidateRequestedIds(SetupOptions options, IReadOnlyList<DistributionEntry> entries)
+    private static void ValidateRequestedIds(SetupOptions options, IReadOnlyList<BootstrapAppResponse> entries)
     {
         var known = entries.Select(entry => entry.Id).ToHashSet(StringComparer.Ordinal);
         var unknown = options.With.Concat(options.Without).FirstOrDefault(id => !known.Contains(id));
         if (unknown is not null)
         {
             throw new CommandUsageException(
-                $"Unknown app id '{unknown}'. The distribution list declares: {string.Join(", ", entries.Select(entry => entry.Id))}.",
+                $"Unknown app id '{unknown}'. This release offers: {string.Join(", ", entries.Select(entry => entry.Id))}.",
                 Usage);
         }
     }
 
-    // Choices win, then the installed state, then the release default — mirroring the layering Core
-    // applies at boot (whose migration also pins from the installed state), so the checklist shows
-    // what the next boot would actually do.
-    private static bool EffectiveEnabled(DistributionEntry entry, ChoicesDocument? choices, string dataRoot)
-    {
-        if (choices is not null &&
-            choices.Apps.TryGetValue(entry.Id, out var choice) &&
-            choice.Enabled is bool chosen)
-        {
-            return chosen;
-        }
-
-        // An app that is already installed counts as enabled in the base selection: without a
-        // choices file that is exactly what Core's upgrade migration would pin.
-        if (File.Exists(Path.Combine(dataRoot, "apps", entry.Id, "state.json")))
-        {
-            return true;
-        }
-
-        return entry.DefaultEnabled;
-    }
-
     private IReadOnlyDictionary<string, bool> PromptSelection(
-        IReadOnlyList<DistributionEntry> entries,
-        IReadOnlyDictionary<string, bool> effective)
+        IReadOnlyList<BootstrapAppResponse> entries,
+        IReadOnlyDictionary<string, bool> installed)
     {
         var prompt = new MultiSelectionPrompt<string>()
-            .Title("Select the apps Hosty Core should preinstall on this host:")
+            .Title("Select the first-party apps this host should have installed:")
             .NotRequired()
             .PageSize(10)
-            .InstructionsText("[grey](space toggles, enter confirms; an empty selection is a headless host)[/]")
+            .InstructionsText("[grey](space toggles, enter confirms; unticking an installed app uninstalls it)[/]")
             .UseConverter(id =>
             {
                 var entry = entries.First(candidate => candidate.Id == id);
@@ -247,7 +231,7 @@ internal sealed partial class SetupCommand(CommandContext context)
         foreach (var entry in entries)
         {
             prompt.AddChoice(entry.Id);
-            if (effective[entry.Id])
+            if (installed[entry.Id])
             {
                 prompt.Select(entry.Id);
             }
@@ -257,242 +241,76 @@ internal sealed partial class SetupCommand(CommandContext context)
         return entries.ToDictionary(entry => entry.Id, entry => selected.Contains(entry.Id), StringComparer.Ordinal);
     }
 
-    // An explicit setup run pins every presented entry — confirming a value that happens to match
-    // today's release default is still operator intent, and a later default flip must not override it.
-    private static void WriteChoices(
-        string path,
-        IReadOnlyList<DistributionEntry> entries,
-        IReadOnlyDictionary<string, bool> selection,
-        ChoicesDocument? existing)
+    private void WriteSelectionTable(
+        IReadOnlyList<BootstrapAppResponse> entries,
+        IReadOnlyList<BootstrapAppResponse> state,
+        string? source)
     {
-        var apps = new Dictionary<string, ChoiceEntry>(StringComparer.Ordinal);
-        // Choices for apps outside the current list stay inert but preserved (a future release may
-        // re-add the entry).
-        foreach (var (id, choice) in existing?.Apps ?? new Dictionary<string, ChoiceEntry>(StringComparer.Ordinal))
-        {
-            apps[id] = choice;
-        }
-
-        foreach (var entry in entries)
-        {
-            apps[entry.Id] = new ChoiceEntry { Enabled = selection[entry.Id] };
-        }
-
-        var document = new ChoicesDocument { SchemaVersion = ChoicesSchemaVersion, Apps = apps };
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var tempPath = $"{path}.{Guid.NewGuid():N}.tmp";
-        try
-        {
-            File.WriteAllText(tempPath, JsonSerializer.Serialize(document, SetupJsonContext.Default.ChoicesDocument));
-            File.Move(tempPath, path, overwrite: true);
-        }
-        catch
-        {
-            try
-            {
-                File.Delete(tempPath);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                // Best-effort cleanup of the abandoned temp file.
-            }
-
-            throw;
-        }
+        var installed = state.ToDictionary(entry => entry.Id, entry => entry.Installed, StringComparer.Ordinal);
+        WriteSelectionTable(entries, installed, source);
     }
 
     private void WriteSelectionTable(
-        IReadOnlyList<DistributionEntry> entries,
-        IReadOnlyDictionary<string, bool> selection,
-        string listSource)
+        IReadOnlyList<BootstrapAppResponse> entries,
+        IReadOnlyDictionary<string, bool> installed,
+        string? source)
     {
-        var table = ConsoleUi.CreateTable("App", "Id", "Enabled");
+        var table = ConsoleUi.CreateTable("App", "Id", "Installed");
         foreach (var entry in entries)
         {
             table.AddRow(
                 Markup.Escape(entry.Title),
                 Markup.Escape(entry.Id),
-                ConsoleUi.YesNo(selection[entry.Id]));
+                ConsoleUi.YesNo(installed.GetValueOrDefault(entry.Id)));
         }
 
         context.Console.Write(table);
-        context.Console.MarkupLine($"[grey]Distribution list: {Markup.Escape(listSource)}[/]");
-    }
-
-    // --- Distribution list (read-only view: id/title/description/defaultEnabled) ---
-
-    internal sealed record DistributionEntry(string Id, string Title, string? Description, bool DefaultEnabled);
-
-    private (IReadOnlyList<DistributionEntry> Entries, string Source, IReadOnlyList<string> Warnings) LoadDistributionList()
-    {
-        var warnings = new List<string>();
-
-        var overridePath = Environment.GetEnvironmentVariable(DistributionPathEnvVar);
-        if (!string.IsNullOrWhiteSpace(overridePath))
+        if (!string.IsNullOrWhiteSpace(source))
         {
-            var fromOverride = TryParseFile(overridePath.Trim(), $"{DistributionPathEnvVar} override", warnings);
-            if (fromOverride is not null)
-            {
-                return (fromOverride, $"{DistributionPathEnvVar} override", warnings);
-            }
-        }
-
-        if (ResolveWalkedPath() is { } walkedPath)
-        {
-            var fromWalk = TryParseFile(walkedPath, walkedPath, warnings);
-            if (fromWalk is not null)
-            {
-                return (fromWalk, walkedPath, warnings);
-            }
-        }
-
-        var embedded = ParseEntries(EmbeddedDefaultJson, "embedded default", warnings);
-        return (embedded, "embedded default", warnings);
-    }
-
-    private static IReadOnlyList<DistributionEntry>? TryParseFile(string path, string source, List<string> warnings)
-    {
-        string json;
-        try
-        {
-            json = File.ReadAllText(path);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            warnings.Add($"Distribution list at '{path}' ({source}) could not be read: {ex.Message}. The next available list is used instead.");
-            return null;
-        }
-
-        var entries = ParseEntries(json, source, warnings);
-        if (entries.Count == 0)
-        {
-            warnings.Add($"Distribution list at '{path}' produced no usable entries. The next available list is used instead.");
-            return null;
-        }
-
-        return entries;
-    }
-
-    private static IReadOnlyList<DistributionEntry> ParseEntries(string json, string source, List<string> warnings)
-    {
-        DistributionDocument? document;
-        try
-        {
-            document = JsonSerializer.Deserialize(json, SetupJsonContext.Default.DistributionDocument);
-        }
-        catch (JsonException ex)
-        {
-            warnings.Add($"Distribution list ({source}) is not valid JSON: {ex.Message}");
-            return [];
-        }
-
-        if (document is null || !string.Equals(document.SchemaVersion, DistributionSchemaVersion, StringComparison.Ordinal))
-        {
-            warnings.Add($"Distribution list ({source}) does not declare schemaVersion '{DistributionSchemaVersion}'.");
-            return [];
-        }
-
-        var entries = new List<DistributionEntry>();
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var entry in document.Apps ?? [])
-        {
-            var id = entry.Id?.Trim();
-            if (string.IsNullOrWhiteSpace(id) || !seen.Add(id))
-            {
-                warnings.Add($"Distribution list ({source}) has a missing or duplicate app id ('{entry.Id}'); the entry was skipped.");
-                continue;
-            }
-
-            entries.Add(new DistributionEntry(
-                id,
-                string.IsNullOrWhiteSpace(entry.Title) ? id : entry.Title.Trim(),
-                string.IsNullOrWhiteSpace(entry.Description) ? null : entry.Description.Trim(),
-                entry.DefaultEnabled ?? false));
-        }
-
-        return entries;
-    }
-
-    // Same walk Core uses: the current dir and the binary's base dir, upward — a source tree's
-    // repo-root distribution-apps.json wins over the embedded copy.
-    private static string? ResolveWalkedPath()
-    {
-        foreach (var start in new[] { Directory.GetCurrentDirectory(), AppContext.BaseDirectory })
-        {
-            // AppContext.BaseDirectory can be empty under custom hosts; DirectoryInfo would throw.
-            if (string.IsNullOrWhiteSpace(start))
-            {
-                continue;
-            }
-
-            var directory = new DirectoryInfo(start);
-            while (directory is not null)
-            {
-                var candidate = Path.Combine(directory.FullName, DistributionFileName);
-                if (File.Exists(candidate))
-                {
-                    return candidate;
-                }
-
-                directory = directory.Parent;
-            }
-        }
-
-        return null;
-    }
-
-    // --- Choices file (Core-compatible bootstrap-choices.0.1) ---
-
-    private static (ChoicesDocument? Document, bool Unreadable) ReadChoices(string path)
-    {
-        if (!File.Exists(path))
-        {
-            return (null, false);
-        }
-
-        try
-        {
-            var document = JsonSerializer.Deserialize(File.ReadAllText(path), SetupJsonContext.Default.ChoicesDocument);
-            return document is not null && string.Equals(document.SchemaVersion, ChoicesSchemaVersion, StringComparison.Ordinal)
-                ? (document, false)
-                : (null, true);
-        }
-        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
-        {
-            return (null, true);
+            context.Console.MarkupLine($"[grey]Catalog: {Markup.Escape(source)}[/]");
         }
     }
 
-    internal sealed class DistributionDocument
+    private static async Task<BootstrapStateResponse> LoadStateAsync(CoreControlClient core)
+        => await core.GetAsync<BootstrapStateResponse>("core/bootstrap")
+            ?? throw new InvalidOperationException("Hosty Core returned no catalog state.");
+
+    private async Task<CoreControlClient> OpenCoreAsync()
     {
-        public string? SchemaVersion { get; init; }
-        public List<DistributionDocumentEntry>? Apps { get; init; }
+        // Setup performs real installs and uninstalls, so it needs the running Core rather than a
+        // file it could write on its own.
+        var core = await CoreControlClient.TryCreateAsync(context);
+        if (core is null)
+        {
+            throw new CoreNotRunningException();
+        }
+
+        return core;
     }
 
-    internal sealed class DistributionDocumentEntry
+    internal sealed class BootstrapStateResponse
     {
-        public string? Id { get; init; }
-        public string? Title { get; init; }
+        public string? Source { get; init; }
+        public List<string>? Problems { get; init; }
+        public bool Seeded { get; init; }
+        public List<BootstrapAppResponse>? Apps { get; init; }
+    }
+
+    internal sealed class BootstrapAppResponse
+    {
+        public string Id { get; init; } = "";
+        public string Title { get => field ?? Id; init; } = "";
         public string? Description { get; init; }
-        public bool? DefaultEnabled { get; init; }
-    }
-
-    internal sealed class ChoicesDocument
-    {
-        public string? SchemaVersion { get; init; }
-        public Dictionary<string, ChoiceEntry> Apps { get; init; } = new(StringComparer.Ordinal);
-    }
-
-    internal sealed class ChoiceEntry
-    {
-        public bool? Enabled { get; init; }
+        public bool DefaultEnabled { get; init; }
+        public bool Installed { get; init; }
+        public string? RuntimeState { get; init; }
+        public string? InstallOrigin { get; init; }
     }
 
     [JsonSourceGenerationOptions(
         PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true,
         WriteIndented = true)]
-    [JsonSerializable(typeof(DistributionDocument))]
-    [JsonSerializable(typeof(ChoicesDocument))]
+    [JsonSerializable(typeof(BootstrapStateResponse))]
     internal partial class SetupJsonContext : JsonSerializerContext;
 }

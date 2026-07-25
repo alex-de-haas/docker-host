@@ -20,7 +20,7 @@ Hosty needs two things that look like they pull in opposite directions:
 The tension is smaller than it looks, because most of the separation already shipped:
 
 - Bootstrap installs produce **ordinary app records** — same manifest, same lifecycle, same
-  reviewed update flow. Distribution origin is provenance, not privilege ([generic-bootstrap.md](generic-bootstrap.md),
+  reviewed update flow. Distribution origin is provenance, not privilege ([removable-system-apps](../features/removable-system-apps/feature.md),
   [capabilities are not lifecycle grants](core-extension-model.md)).
 - Core already copes with **no UI client at all**: the Shell origin resolves from the installed app
   record, and a null origin is a valid answer every caller must handle

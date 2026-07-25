@@ -12,7 +12,7 @@ Status: Implemented.
 > `hosty apps switch-runtime` and preserved across reconciles. `HOSTY_SHELL_BOOTSTRAP_RUNTIME` survives
 > only as an ambient dev/fork-only override that Core reads directly (the CLI never sets it); when it is
 > unset — the normal case — the installed-runtime reconciliation guard described below never fires and
-> `hosty.shell` reconciles like any other app. For current behavior see `docs/ideas/generic-bootstrap.md`
+> `hosty.shell` installs like any other app. For current behavior see `docs/features/removable-system-apps/feature.md`
 > and `docs/features/cli-bootstrap.md`; treat the `HOSTY_SHELL_MANIFEST_PATH` and
 > `HOSTY_SHELL_BOOTSTRAP_RUNTIME` references below as historical.
 >

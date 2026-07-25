@@ -107,7 +107,7 @@ internal static class HostyCoreApplication
         // choices drive which first-party apps the supervisor preinstalls at boot; the service is
         // shared with the host-admin bootstrap endpoints for live toggles.
         builder.Services.AddSingleton<DistributionAppsProvider>();
-        builder.Services.AddSingleton<BootstrapChoicesStore>();
+        builder.Services.AddSingleton<DistributionSeedStore>();
         builder.Services.AddSingleton<SystemAppBootstrapService>();
         // Runs before the schedulers below so an upgraded installation's existing state/backups/logs
         // are tightened before anything starts appending to them.
@@ -1052,10 +1052,7 @@ internal sealed class RuntimeAppSupervisorService(
         await Task.Yield();
 
         await ReclaimOrphanedRuntimeProcessesAsync(stoppingToken);
-        foreach (var descriptor in await bootstrap.PlanBootAsync(stoppingToken))
-        {
-            await bootstrap.EnsureInstalledAsync(descriptor, stoppingToken);
-        }
+        await bootstrap.SeedBootAsync(stoppingToken);
 
         await MigratePortAssignmentsAsync(stoppingToken);
         await RecoverInterruptedUpdatesAsync(stoppingToken);

@@ -77,11 +77,10 @@ internal static class CoreJson
 [JsonSerializable(typeof(LocalCommandPidFile))]
 [JsonSerializable(typeof(RuntimeAppManifest))]
 [JsonSerializable(typeof(AppFeedsDocument))]
-// Generic bootstrap: the release-owned distribution list, the operator's choices file, and the
-// host-admin bootstrap endpoint contracts.
+// Distribution catalog: the release-owned app list, the one-time seed marker, and the host-admin
+// catalog endpoint contracts.
 [JsonSerializable(typeof(DistributionAppsDocument))]
-[JsonSerializable(typeof(BootstrapChoicesDocument))]
-[JsonSerializable(typeof(CoreBootstrapChoiceRequest))]
+[JsonSerializable(typeof(DistributionSeedDocument))]
 [JsonSerializable(typeof(CoreBootstrapStateResponse))]
 // Core-owned behavior settings (auth lifetimes) edited from the Shell platform panel.
 [JsonSerializable(typeof(CoreSettingsDocument))]
@@ -175,6 +174,7 @@ internal static class CoreJson
 [JsonSerializable(typeof(AppFeedInstallPlanDigestSeed))]
 [JsonSerializable(typeof(AppFeedsResponse))]
 [JsonSerializable(typeof(AppLifecycleResponse))]
+[JsonSerializable(typeof(AppRemovalImpact))]
 [JsonSerializable(typeof(AppSettingValueResponse))]
 // Reachable via AppLifecycleResponse, but rooted explicitly for parity with the other nested DTOs:
 // the Development-Mode disable rollback recommendation.

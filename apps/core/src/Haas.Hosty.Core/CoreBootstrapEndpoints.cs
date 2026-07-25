@@ -1,9 +1,9 @@
 namespace Haas.Hosty.Core;
 
-// Host-admin surface over the generic bootstrap: what the release's distribution list offers, what
-// the operator chose, and a live toggle. The Shell platform panel's Extensions section is the
-// consumer; the CLI does not call these (hosty setup writes the choices file directly). See
-// docs/ideas/generic-bootstrap.md (Phase 3).
+// Host-admin view of the distribution catalog: what this release offers and what the host currently
+// has installed. There is no enable/disable here — installing and uninstalling are the only states,
+// through the ordinary app lifecycle. The control-plane install is what `hosty setup` calls to add an
+// entry back (including recovering a removed Shell). See docs/features/removable-system-apps/.
 internal static class CoreBootstrapEndpoints
 {
     public static void Map(WebApplication app)
@@ -18,82 +18,70 @@ internal static class CoreBootstrapEndpoints
                 request,
                 users,
                 clock,
-                async () => CoreJson.Json(await BuildStateAsync(bootstrap, actionError: null, cancellationToken)),
+                async () => CoreJson.Json(await BuildStateAsync(bootstrap, cancellationToken)),
                 cancellationToken: cancellationToken));
 
-        app.MapPost("/api/core/bootstrap/choices", async (
+        app.MapGet("/control/v1/core/bootstrap", async (
             HttpRequest request,
-            UserDirectoryStore users,
-            IClock clock,
+            ControlSecret secret,
             SystemAppBootstrapService bootstrap,
-            CoreBootstrapChoiceRequest? input,
             CancellationToken cancellationToken) =>
-            await CoreSessionAuthorization.RequireAdminSessionAsync(
-                request,
-                users,
-                clock,
-                async () =>
+            await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
+                CoreJson.Json(await BuildStateAsync(bootstrap, cancellationToken))));
+
+        // Installs one catalog entry by id, so the CLI never has to know manifest URLs or feed
+        // locations — those belong to the release's distribution list, which Core already resolves.
+        // Removal is not mirrored here: it is the ordinary app remove, identical for every app.
+        app.MapPost("/control/v1/core/bootstrap/{appId}/install", async (
+            string appId,
+            HttpRequest request,
+            ControlSecret secret,
+            SystemAppBootstrapService bootstrap,
+            CancellationToken cancellationToken) =>
+            await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
+            {
+                try
                 {
-                    if (input is null || string.IsNullOrWhiteSpace(input.AppId) || input.Enabled is not bool enabled)
-                    {
-                        return CoreJson.Json(
-                            new ErrorResponse("bootstrap_choice_invalid", "appId and enabled are required."),
-                            statusCode: StatusCodes.Status400BadRequest);
-                    }
+                    await bootstrap.InstallAsync(appId, cancellationToken);
+                }
+                catch (AppLifecycleException ex)
+                {
+                    var statusCode = string.Equals(ex.Code, "bootstrap_app_unknown", StringComparison.Ordinal)
+                        ? StatusCodes.Status404NotFound
+                        : StatusCodes.Status400BadRequest;
+                    return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: statusCode);
+                }
 
-                    string? actionError;
-                    try
-                    {
-                        actionError = await bootstrap.SetChoiceAsync(input.AppId.Trim(), enabled, cancellationToken);
-                    }
-                    catch (AppLifecycleException ex)
-                    {
-                        var statusCode = string.Equals(ex.Code, "bootstrap_app_unknown", StringComparison.Ordinal)
-                            ? StatusCodes.Status404NotFound
-                            : StatusCodes.Status400BadRequest;
-                        return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: statusCode);
-                    }
-
-                    return CoreJson.Json(await BuildStateAsync(bootstrap, actionError, cancellationToken));
-                },
-                requireCsrf: true,
-                cancellationToken: cancellationToken));
+                return CoreJson.Json(await BuildStateAsync(bootstrap, cancellationToken));
+            }));
     }
 
     private static async Task<CoreBootstrapStateResponse> BuildStateAsync(
         SystemAppBootstrapService bootstrap,
-        string? actionError,
         CancellationToken cancellationToken)
     {
         var state = await bootstrap.GetStateAsync(cancellationToken);
         return new CoreBootstrapStateResponse(
             state.Source,
             state.Problems,
+            state.Seeded,
             state.Apps.Select(status => new CoreBootstrapAppResponse(
                 status.Entry.Id,
                 status.Entry.Title,
                 status.Entry.Description,
                 status.Entry.DefaultEnabled,
-                status.Enabled,
-                status.Choice,
                 Installed: status.Installed is not null,
                 RuntimeState: status.Installed?.RuntimeState,
-                InstallOrigin: status.Installed?.InstallOrigin)).ToArray(),
-            actionError);
+                InstallOrigin: status.Installed?.InstallOrigin)).ToArray());
     }
 }
-
-internal sealed record CoreBootstrapChoiceRequest(string? AppId, bool? Enabled);
 
 internal sealed record CoreBootstrapAppResponse(
     string Id,
     string Title,
     string? Description,
+    // What a fresh host would have seeded. Descriptive of the release, not of this host's state.
     bool DefaultEnabled,
-    // Effective enablement for the next boot (choice > legacy env > default).
-    bool Enabled,
-    // The operator's explicit choice, when one is recorded; null means "following defaults".
-    bool? Choice,
     bool Installed,
     string? RuntimeState,
     string? InstallOrigin);
@@ -101,7 +89,6 @@ internal sealed record CoreBootstrapAppResponse(
 internal sealed record CoreBootstrapStateResponse(
     string Source,
     IReadOnlyList<string> Problems,
-    IReadOnlyList<CoreBootstrapAppResponse> Apps,
-    // Set when a live enable saved the choice but the immediate install/start did not complete;
-    // the boot reconcile retries it. Null on full success.
-    string? ActionError);
+    // False only on a host whose first-boot seeding has not completed yet.
+    bool Seeded,
+    IReadOnlyList<CoreBootstrapAppResponse> Apps);

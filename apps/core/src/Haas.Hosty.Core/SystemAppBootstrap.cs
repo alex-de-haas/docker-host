@@ -1,16 +1,14 @@
 namespace Haas.Hosty.Core;
 
-// A distribution-list app that the runtime supervisor installs and reconciles at boot. Descriptors
-// are data-driven: the release-owned distribution list (DistributionApps) merged with the operator's
-// bootstrap choices produces one descriptor per entry — adding a first-party app is a list entry,
-// not a code path. App-specific behavior (the Shell settings map, the collector's provisioning) still
-// attaches by app id here; replacing that with capability-based hooks is Phase 4 of
-// docs/ideas/generic-bootstrap.md.
+// A distribution-catalog app, resolved into everything an install needs. Descriptors are
+// data-driven: the release-owned distribution list (DistributionApps) produces one per entry —
+// adding a first-party app is a list entry, not a code path.
 internal sealed record SystemAppBootstrapDescriptor(
     string AppId,
-    // Human-readable handle used in bootstrap log messages.
+    // Human-readable handle used in log messages.
     string DisplayName,
-    // A disabled descriptor is skipped entirely (e.g. telemetry disabled means no collector install).
+    // Whether a fresh host seeds this entry. Irrelevant to an explicit install, which is intent in
+    // its own right (see SystemAppBootstrapService.InstallAsync).
     bool Enabled,
     // Fully resolved manifest path/URL from the distribution list (or a deprecated legacy env
     // override); a blank value skips the bootstrap with a warning.
@@ -22,13 +20,9 @@ internal sealed record SystemAppBootstrapDescriptor(
     string? Runtime,
     // Null uses the normal install default and preserves the operator's installed value later.
     bool? Autostart,
-    // Core-owned bootstrap settings passed at install and re-applied on every boot so operator
-    // configuration (e.g. the Shell port) follows the current Core config.
+    // Core-owned settings passed at install. Empty for every entry today — the platform owns no app
+    // setting anymore; each app declares its own in its manifest.
     IReadOnlyDictionary<string, string?>? Settings = null,
-    // Setting keys the bootstrap once stamped and no longer owns. Dropped from the record on boot:
-    // ConfigureAsync can only null a value, not remove the key, so without this a retired Core-owned
-    // setting lingers forever in the app's settings UI as an editable no-op.
-    IReadOnlyList<string>? RetiredSettings = null,
     // Optional local source override for development installs (development Shell workflow).
     string? SourceOverridePath = null,
     // When set, the first install goes through the digest-bound feed path so the record follows the
@@ -52,19 +46,18 @@ internal sealed record LegacyBootstrapEnv(
     public static readonly LegacyBootstrapEnv Empty = new();
 }
 
-// The merge result: descriptors to reconcile plus human-readable warnings (deprecated overrides,
-// inert choices) for the supervisor to log.
+// The resolved catalog: one descriptor per entry plus human-readable warnings (deprecated overrides)
+// for the caller to log.
 internal sealed record SystemAppBootstrapPlan(
     IReadOnlyList<SystemAppBootstrapDescriptor> Descriptors,
     IReadOnlyList<string> Warnings);
 
 internal static class SystemAppBootstraps
 {
-    // Bootstrap order is the distribution-list order (install/reconcile order); start order is
-    // governed by StartPriority in the autostart reconciliation instead.
+    // Seed order is the distribution-list order; start order is governed by StartPriority in the
+    // autostart reconciliation instead.
     public static SystemAppBootstrapPlan FromDistribution(
         IReadOnlyList<DistributionAppEntry> entries,
-        BootstrapChoicesDocument? choices,
         HostyCoreRuntimeConfig config)
     {
         var warnings = new List<string>();
@@ -73,7 +66,7 @@ internal static class SystemAppBootstraps
 
         foreach (var entry in entries)
         {
-            var enabled = choices?.EnabledFor(entry.Id) ?? LegacyEnabled(entry.Id, legacy) ?? entry.DefaultEnabled;
+            var enabled = LegacyEnabled(entry.Id, legacy) ?? entry.DefaultEnabled;
             var manifestPath = ApplyLegacyManifestOverride(entry, legacy, warnings);
             descriptors.Add(entry.Id switch
             {
@@ -86,7 +79,6 @@ internal static class SystemAppBootstraps
                     // install (docker), operator's switch-runtime choice preserved on later boots.
                     Runtime: config.ShellBootstrapRuntime,
                     Autostart: config.ShellAutostart,
-                    RetiredSettings: ShellBootstrap.RetiredSettings,
                     SourceOverridePath: config.ShellSourceOverridePath,
                     FeedsUrl: entry.FeedsUrl),
                 CollectorBootstrap.AppId => new SystemAppBootstrapDescriptor(
@@ -114,22 +106,12 @@ internal static class SystemAppBootstraps
             });
         }
 
-        if (choices is not null)
-        {
-            var known = entries.Select(entry => entry.Id).ToHashSet(StringComparer.Ordinal);
-            foreach (var id in choices.Apps.Keys.Where(id => !known.Contains(id)).OrderBy(id => id, StringComparer.Ordinal))
-            {
-                // Kept in the file (a future release may re-add the entry), reported as inert.
-                warnings.Add($"Bootstrap choice for '{id}' matches no distribution-list entry and is inert.");
-            }
-        }
-
         return new SystemAppBootstrapPlan(descriptors, warnings);
     }
 
-    // Explicit legacy env values sit between operator choices (which win) and release defaults.
-    // Only deviations matter: shell defaulted to enabled and observability to disabled, so the
-    // absent-var case falls through to the distribution default either way.
+    // Explicit legacy env values override the release default for what a fresh host seeds. Only
+    // deviations matter: shell defaulted to enabled and observability to disabled, so the absent-var
+    // case falls through to the distribution default either way.
     private static bool? LegacyEnabled(string appId, LegacyBootstrapEnv legacy) => appId switch
     {
         ShellBootstrap.AppId => legacy.ShellBootstrapEnabled,
@@ -191,15 +173,9 @@ internal static class ShellBootstrap
     // it from here, so an operator's edit finally sticks instead of being overwritten every boot.
     //
     // Records installed before this keep whichever values they were stamped, which is exactly right:
-    // 7171 and the configured origin, now genuinely theirs and editable. Nothing is retired — unlike
-    // HOSTNAME these are real settings an operator may want; RetiredSettings would delete them on every
-    // boot and make them impossible to set.
-    // HOSTNAME used to be stamped here from the Shell public origin's host. It never did anything: the
-    // manifest declares HOSTNAME=0.0.0.0 as the Next.js bind address, and a service's manifest
-    // environment is appended *after* the settings in the docker run args, so docker's last-wins
-    // handling of a duplicated `-e` meant the bind address always won. All the setting achieved was a
-    // row in the app's settings that looked like it controlled the public origin — it did not; Core's
-    // own HOSTY_SHELL_PUBLIC_ORIGIN drives that — while colliding with a variable that means something
-    // else entirely. Retired here so records that still carry it are cleaned up on boot.
-    public static readonly IReadOnlyList<string> RetiredSettings = ["HOSTNAME"];
+    // 7171 and the configured origin, now genuinely theirs and editable.
+    //
+    // A boot-time cleanup of the long-retired HOSTNAME setting used to live here. It is gone with the
+    // rest of the per-boot reconcile: boot no longer edits an installed app's record at all. Hosts
+    // that still carry the key see one inert row in the app's settings, which the operator can clear.
 }

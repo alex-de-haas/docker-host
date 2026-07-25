@@ -6,7 +6,7 @@ namespace Haas.Hosty.Core;
 // capability (not the app id or the install path), an app installed through the marketplace or a
 // direct install gets the same treatment as a bootstrap install — this is what lets the telemetry
 // collector, and any third-party app that declares the same slot, work outside the boot path.
-// See docs/ideas/generic-bootstrap.md (Phase 4).
+// See docs/features/removable-system-apps/feature.md.
 internal sealed record PlatformCapability(
     string Slot,
     // Higher starts earlier in autostart ordering. A provider of OTLP, for example, must be up before
