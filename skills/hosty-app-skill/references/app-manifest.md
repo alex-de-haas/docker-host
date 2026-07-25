@@ -149,6 +149,6 @@ When the app opts in **and** the host has observability enabled (`HOSTY_OBSERVAB
 - `OTEL_SERVICE_NAME` — the app id; `OTEL_RESOURCE_ATTRIBUTES` also carries `hosty.app.id` and `hosty.app.service`.
 - `OTEL_TRACES_SAMPLER=parentbased_traceidratio` with `OTEL_TRACES_SAMPLER_ARG` = `sampleRatio`.
 
-Instrument with your language's OTel SDK and read these env vars (most SDKs read them automatically). If the env is absent, observability is off or the collector is not up yet — degrade gracefully and emit nothing. See `docs/features/observability.md`.
+Instrument with your language's OTel SDK and read these env vars (most SDKs read them automatically). If the env is absent, observability is off or the collector is not up yet — degrade gracefully and emit nothing. See `docs/features/observability/feature.md`.
 
 `OTEL_EXPORTER_OTLP_ENDPOINT` is the base endpoint for all signals — traces, metrics, and **logs** (`/v1/logs`). Apps that want structured, trace-correlated logs only need to enable their OTel logs SDK (no extra Hosty config). These OTLP logs are a **separate stream** from the app's console (`docker logs`) output and are never merged with it; Core/Shell support for receiving and viewing them is planned for P4 (the collector currently has no logs pipeline).

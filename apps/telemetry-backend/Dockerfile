@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Hosty telemetry backend image. Framework-dependent (IL) multi-stage build: publish with the SDK,
 # run on the aspnet runtime. Portable output + the SQLitePCLRaw bundle's per-RID native libs make one
-# image work on linux/amd64 and linux/arm64. See docs/features/observability-phase-2-backend.md.
+# image work on linux/amd64 and linux/arm64. See docs/features/observability/feature.md.
 FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0 AS builder
 WORKDIR /repo
 

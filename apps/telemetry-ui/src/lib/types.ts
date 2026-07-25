@@ -1,7 +1,7 @@
 // Wire shapes for the telemetry UI. The backend query API serializes camelCase (ASP.NET Core Web
 // defaults) and keys everything by hosty.app.id; the UI server routes add the display name (appName)
 // from the Core roster — the same enrichment Core's former read proxy did. These mirror the shapes the
-// observability pages consume. See docs/features/observability-phase-2-backend.md.
+// observability pages consume. See docs/features/observability/feature.md.
 
 export type ApiError = { code?: string; message?: string };
 

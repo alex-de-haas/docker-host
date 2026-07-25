@@ -13,7 +13,7 @@ internal sealed record DockerContainerStat(
 // Parses the tab-separated output of
 //   docker stats --no-stream --format "{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}"
 // into per-container usage. Core collects these infra metrics itself (its host-level Docker access)
-// so the default collector container stays unprivileged — see docs/features/observability.md.
+// so the default collector container stays unprivileged — see docs/features/observability/feature.md.
 // Hand-written and tolerant: a malformed line is skipped, never thrown.
 internal static class DockerStatsParser
 {
