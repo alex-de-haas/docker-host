@@ -136,4 +136,4 @@ Gateway and external ingress readiness remain target architecture topics for ser
 ## Links
 
 - [System App Pages](../ideas/system-app-pages.md) - originating design for administrator-only pages.
-- [Marketplace System App](runtime-app-marketplace.md) - the first storefront using the generic system-app and install-intent paths.
+- [Marketplace System App](runtime-app-marketplace/feature.md) - the first storefront using the generic system-app and install-intent paths.

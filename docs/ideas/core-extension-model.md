@@ -205,7 +205,7 @@ Sequence the work so each step is independently useful:
 - [Final Hosty architecture boundaries](../features/final-hosty-architecture.md) — the Core/Shell/CLI ownership rules this model extends.
 - [Observability — telemetry backend](../features/observability/feature.md) — the de-facto first plugin; source of the sink contract.
 - [Notifications](../features/notifications.md) — the hub the first event-subscriber plugin would deliver for.
-- [Runtime app marketplace](../features/runtime-app-marketplace.md) — the storefront history; its Shell-embedded implementation was since extracted into the Marketplace system app.
+- [Runtime app marketplace](../features/runtime-app-marketplace/feature.md) — the storefront history; its Shell-embedded implementation was since extracted into the Marketplace system app.
 - [Marketplace As A System App](marketplace-system-app.md) — the read-only catalog ownership boundary and migration design.
 - [System App Pages](system-app-pages.md) — the shared admin-only page model for UI-capable system apps.
 - [Runtime App Repository Feeds](runtime-app-repository-feeds.md) — current feed behavior with repository ownership and Core resolution.

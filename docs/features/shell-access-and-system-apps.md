@@ -133,4 +133,4 @@ The change tightens ordinary user access to Shell management views. Any workflow
 ## Links
 
 - [System App Pages](../ideas/system-app-pages.md) - originating design for administrator navigation.
-- [Marketplace System App](runtime-app-marketplace.md) - first catalog UI using generic system-app navigation and settings.
+- [Marketplace System App](runtime-app-marketplace/feature.md) - first catalog UI using generic system-app navigation and settings.
