@@ -55,7 +55,7 @@ range-queryable, and it owns the durability the funnel lacks.
 
 | Service | Image | Ports | Role |
 | --- | --- | --- | --- |
-| `collector` | `otel/opentelemetry-collector-contrib` | `otlp-http` 4318 (`expose: host`, pinned `localPort`), `metrics` 9464 (loopback) | receives OTLP, re-exposes metrics, writes the logs/traces file sinks |
+| `collector` | `otel/opentelemetry-collector-contrib` | `otlp-http` 4318 (`expose: host`, pinned `localPort`), `metrics` 9464 (default `expose: loopback`) | receives OTLP, re-exposes metrics, writes the logs/traces file sinks |
 | `backend` | `ghcr.io/alex-de-haas/hosty-telemetry-backend` | `query` 8080 | ingest loops + SQLite store + query API |
 | `ui` | `ghcr.io/alex-de-haas/hosty-telemetry-ui` | `http` 3000 (`public: true`) | the Metrics / Structured logs / Traces pages |
 
@@ -129,9 +129,12 @@ the endpoint resolves to null, no `OTEL_*` env is injected, and apps degrade to 
 ## Signals
 
 **App metrics.** Apps push OTLP metrics to the collector, which re-exposes them as Prometheus text on
-its loopback `metrics` port. The backend scrapes that URL (pinned in the manifest as
-`HOSTY_TELEMETRY_METRICS_URL`; the `dependsOn` fallback would resolve the collector's *first* port —
-the OTLP receiver — so the explicit pin is required) and attributes each series to its app via the
+its `metrics` port. That port takes the default `expose: loopback`, so Core publishes it on the
+host's `127.0.0.1` like any unexposed port — but the backend does not go through that binding: it
+scrapes its sibling by service name over the per-app docker network
+(`http://collector:9464/metrics`, pinned in the manifest as `HOSTY_TELEMETRY_METRICS_URL` because the
+`dependsOn` fallback would resolve the collector's *first* port, the OTLP receiver). It attributes
+each series to its app via the
 promoted `hosty_app_id` label, which is then dropped since the row is already keyed by app.
 
 **Container infra metrics.** Core runs `docker stats` itself and renders a Prometheus snapshot every
