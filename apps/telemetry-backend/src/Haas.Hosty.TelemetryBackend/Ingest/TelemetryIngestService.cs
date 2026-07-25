@@ -117,19 +117,28 @@ internal sealed class TelemetryIngestService(
         var samples = new List<MetricSample>();
         // Two Prometheus targets: the collector (app OTLP metrics) and Core (host-privileged docker
         // stats). Both promote the app id to a `hosty_app_id` label, so attribution is identical.
-        await ScrapeIntoAsync(samples, options.MetricsScrapeUrl, nowMs, cancellationToken);
-        await ScrapeIntoAsync(samples, options.DockerMetricsScrapeUrl, nowMs, cancellationToken);
+        //
+        // Only the Core target carries our service token. The collector is a third-party image on the
+        // per-app network: sending it a Hosty credential would hand our identity to something we do not
+        // control, for a scrape it does not authenticate anyway.
+        await ScrapeIntoAsync(samples, options.MetricsScrapeUrl, nowMs, bearerToken: null, cancellationToken);
+        await ScrapeIntoAsync(samples, options.DockerMetricsScrapeUrl, nowMs, options.CoreServiceToken, cancellationToken);
         store.RecordMetrics(metricDeduplicator.Filter(samples, nowMs, (long)options.MetricsHeartbeat.TotalMilliseconds));
     }
 
-    private async Task ScrapeIntoAsync(List<MetricSample> samples, string? url, long nowMs, CancellationToken cancellationToken)
+    private async Task ScrapeIntoAsync(
+        List<MetricSample> samples,
+        string? url,
+        long nowMs,
+        string? bearerToken,
+        CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(url))
         {
             return;
         }
 
-        var (text, failure) = await FetchAsync(url, cancellationToken);
+        var (text, failure) = await FetchAsync(url, bearerToken, cancellationToken);
         if (text is null)
         {
             // Log the transition, not every tick: a misconfigured or down target fails on the scrape
@@ -222,11 +231,17 @@ internal sealed class TelemetryIngestService(
     // an unreachable collector as "no data", never an error — but the paired reason string lets the
     // caller say *why* once, which distinguishes the two failures that look identical from the UI:
     // a target that is down (connection refused) and one pointed at the wrong port (404).
-    private async Task<(string? Body, string? Failure)> FetchAsync(string url, CancellationToken cancellationToken)
+    private async Task<(string? Body, string? Failure)> FetchAsync(string url, string? bearerToken, CancellationToken cancellationToken)
     {
         try
         {
-            using var response = await httpClient.GetAsync(url, cancellationToken);
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            if (!string.IsNullOrWhiteSpace(bearerToken))
+            {
+                request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", bearerToken);
+            }
+
+            using var response = await httpClient.SendAsync(request, cancellationToken);
             return response.IsSuccessStatusCode
                 ? (await response.Content.ReadAsStringAsync(cancellationToken), null)
                 : (null, $"HTTP {(int)response.StatusCode}");

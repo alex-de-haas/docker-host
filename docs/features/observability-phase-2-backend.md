@@ -10,7 +10,7 @@ telemetry-backend system app, and the boundary that keeps Core from exiting enti
   embedded SQLite store + retention, ingest loops (Prometheus scrape + file tails, copied parsers), the
   appId-keyed query API mirroring Core's observability reads, Dockerfile + CI image, tests. Non-breaking.
 - **PR#2 (2b + 2c + manifest)** — the Core cutover: Core exposes `docker stats` at
-  `/internal/telemetry/metrics` (the backend scrapes it as a 2nd target — Prometheus, not OTLP push);
+  `/api/internal/telemetry/metrics` (the backend scrapes it as a 2nd target — Prometheus, not OTLP push);
   Core's 5 read methods proxy the backend via `TelemetryBackendClient` (enriching appId→display name);
   the in-memory stores + scrape/tail loops + parsers are deleted; the collector app becomes a
   **multi-service** app (otelcol + backend, shared `/etc/otelcol-contrib` mount, `query` endpoint Core
@@ -28,7 +28,7 @@ telemetry-backend system app, and the boundary that keeps Core from exiting enti
   Core app-token endpoint `GET /api/internal/apps/{appId}/app-directory`. **Core's telemetry read proxy is
   removed**: the 5 `/api/apps|observability/*` reads + their `control/v1` twins + `TelemetryBackendClient`
   + the wire records are deleted (only Shell consumed them; no CLI consumer existed). Core keeps only the
-  `docker stats` producer (`/internal/telemetry/metrics`, unchanged). Shell's hard-coded Observability
+  `docker stats` producer (`/api/internal/telemetry/metrics`). Shell's hard-coded Observability
   section is deleted; the telemetry app now appears under the admin **System** nav group, driven entirely
   by its manifest `ui` block (`entrypoint` + `navigation`), exactly like Marketplace.
 - **Remaining** — 2d (SSE realtime), now a direct UI↔backend concern (no Core proxy to pipe through).
@@ -249,7 +249,7 @@ light request/response polling from Shell is near-real-time. Add SSE as a later 
 | Metric/log/trace store | Core in-memory | backend, embedded persistent |
 | Query API — where data lives | Core (owns store) | backend (owns store) |
 | Query API — what the UI calls | Core (owns + serves) | **telemetry UI → its own backend directly** (Core off the read path; proxy removed 2026-07-12) |
-| `docker stats` infra metrics | Core collects → Core store | Core re-exposes `/internal/telemetry/metrics` (Prometheus); backend **scrapes** it (pull) |
+| `docker stats` infra metrics | Core collects → Core store | Core re-exposes `/api/internal/telemetry/metrics` (Prometheus, app-service-token required); backend **scrapes** it (pull) |
 | `docker logs` console tail | Core `docker logs` on-demand (not stored) | **unchanged** — stays Core on-demand; **not** in the backend |
 | `container → app` attribution | Core | Core (stamped at run; pushed with the signal) |
 | Freshness | 10 s poll | push / near-real-time |
