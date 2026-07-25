@@ -488,13 +488,20 @@ internal static class LifecycleEndpoints
         // that the caller is an installed app. Living under /api/internal/ also puts it inside the
         // endpoint-authorization harness, which enumerates /api routes — the old /internal path sat in
         // its blind spot. See docs/features/observability-phase-2-backend.md.
-        app.MapGet("/api/internal/telemetry/metrics", (
+        app.MapGet("/api/internal/telemetry/metrics", async (
             HttpRequest request,
             AppServiceTokenService serviceTokens,
-            DockerStatsExposition exposition) =>
+            AppRegistryStore apps,
+            DockerStatsExposition exposition,
+            CancellationToken cancellationToken) =>
         {
             var token = CoreSessionAuthorization.ReadBearerToken(request);
-            if (string.IsNullOrWhiteSpace(token) || serviceTokens.ResolveAppId(token) is null)
+            var callerAppId = string.IsNullOrWhiteSpace(token) ? null : serviceTokens.ResolveAppId(token);
+            // The signature alone is not enough: it is HMAC over the app id with a durable key, so a
+            // token copied before the app was removed verifies forever. Requiring the app to still be
+            // installed matches every other app-token route and bounds a leaked token to the lifetime
+            // of its installation.
+            if (callerAppId is null || await apps.GetAppAsync(callerAppId, cancellationToken) is null)
             {
                 return CoreJson.Json(
                     new ErrorResponse("telemetry_metrics_unauthorized", "App service token is missing or invalid."),

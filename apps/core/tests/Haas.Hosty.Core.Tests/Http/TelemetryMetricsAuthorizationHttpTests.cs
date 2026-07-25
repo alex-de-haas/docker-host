@@ -37,12 +37,14 @@ public sealed class TelemetryMetricsAuthorizationHttpTests
     }
 
     [Fact]
-    public async Task Metrics_AcceptsAValidAppServiceToken()
+    public async Task Metrics_AcceptsAnInstalledAppsServiceToken()
     {
         // Any installed app's token is accepted: the exposition is host-wide, so there is nothing to
         // scope per app, and the token only has to prove the caller is an app rather than the internet.
         await using var harness = await CoreHttpHarness.StartAsync();
-        var token = harness.Services.GetRequiredService<AppServiceTokenService>().CreateToken("com.haas.telemetry");
+        const string appId = "com.haas.telemetry";
+        await harness.Services.GetRequiredService<AppRegistryStore>().UpsertAppAsync(CreateApp(appId));
+        var token = harness.Services.GetRequiredService<AppServiceTokenService>().CreateToken(appId);
         using var client = harness.CreateClient();
         using var request = new HttpRequestMessage(HttpMethod.Get, MetricsPath);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -51,6 +53,23 @@ public sealed class TelemetryMetricsAuthorizationHttpTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("text/plain", response.Content.Headers.ContentType?.MediaType);
+    }
+
+    [Fact]
+    public async Task Metrics_RejectsATokenWhoseAppIsNoLongerInstalled()
+    {
+        // The signature is HMAC over the app id with a durable key, so it verifies forever. Without an
+        // installed-app check, a token copied before an uninstall would keep reading host-wide
+        // inventory and load indefinitely.
+        await using var harness = await CoreHttpHarness.StartAsync();
+        var token = harness.Services.GetRequiredService<AppServiceTokenService>().CreateToken("com.haas.removed");
+        using var client = harness.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Get, MetricsPath);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
     [Fact]
@@ -64,4 +83,28 @@ public sealed class TelemetryMetricsAuthorizationHttpTests
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
+
+    private static AppRecord CreateApp(string id)
+        => new(
+            Id: id,
+            DisplayName: "Telemetry",
+            Description: null,
+            Version: "1.0.0",
+            Kind: "runtime",
+            System: true,
+            Source: "installed",
+            ManifestPath: $"apps/{id}/manifest.json",
+            ManifestUrl: null,
+            SelectedRuntime: "docker",
+            OperationStatus: "installed",
+            RuntimeState: "running",
+            LastOperation: null,
+            LastError: null,
+            Capabilities: [],
+            Settings: new Dictionary<string, AppSettingValue>(),
+            StorageMappings: [],
+            Dependencies: [],
+            Endpoints: [],
+            InstalledAt: DateTimeOffset.UtcNow,
+            UpdatedAt: DateTimeOffset.UtcNow);
 }
