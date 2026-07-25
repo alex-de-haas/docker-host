@@ -66,9 +66,9 @@ HOSTY_SHELL_PUBLIC_ORIGIN=
 
 `HOSTY_DATA_ROOT` defines the Hosty state root used by Core. `HOSTY_CORE_PORT` and `HOSTY_SHELL_PORT` define the local ports for installed CLI launches. Public origins are unset by default; configure `HOSTY_CORE_PUBLIC_ORIGIN` and `HOSTY_SHELL_PUBLIC_ORIGIN` only when the browser-facing origin differs from the local launch port or must be explicit for deployment.
 
-Which first-party apps Core preinstalls — and where their manifests live — is decided by the release-owned distribution list (`distribution-apps.0.1`, embedded in the Core binary; a source tree's repo-root `distribution-apps.json` wins) merged with the operator's `hosty setup` choices. See `docs/ideas/generic-bootstrap.md`.
+Which first-party apps a brand-new host is seeded with — and where their manifests and feeds live — comes from the release-owned distribution catalog (`distribution-apps.0.1`, embedded in the Core binary; a source tree's repo-root `distribution-apps.json` wins). Seeding happens once; afterwards `hosty setup` installs and uninstalls catalog entries as ordinary lifecycle operations against a running Core. See [removable-system-apps](removable-system-apps/feature.md).
 
-The per-app manifest-path overrides `HOSTY_SHELL_MANIFEST_PATH`, `HOSTY_COLLECTOR_MANIFEST_PATH`, and `HOSTY_MARKETPLACE_MANIFEST_PATH` have been **removed** from the CLI: manifest locations come from the distribution list, and `hosty setup` decides which apps bootstrap. The keys are no longer valid for `hosty config set`, and a stale value left in an older `launch.env` is ignored on load and dropped on the next save. (Core still honors these as raw ambient environment variables during its own deprecation window, so an air-gapped fork can still export one directly for the Core process, but the CLI neither persists nor injects them.)
+The per-app manifest-path overrides `HOSTY_SHELL_MANIFEST_PATH`, `HOSTY_COLLECTOR_MANIFEST_PATH`, and `HOSTY_MARKETPLACE_MANIFEST_PATH` have been **removed** from the CLI: manifest locations come from the distribution catalog, and `hosty setup` decides which apps are installed. The keys are no longer valid for `hosty config set`, and a stale value left in an older `launch.env` is ignored on load and dropped on the next save. (Core still honors these as raw ambient environment variables during its own deprecation window, so an air-gapped fork can still export one directly for the Core process, but the CLI neither persists nor injects them.)
 
 `HOSTY_SHELL_BOOTSTRAP_RUNTIME` has also been **removed** from `hosty config`: a system app's runtime profile is a normal per-app choice — the manifest's `defaultRuntime` on first install (`docker` for Shell, Telemetry, and Marketplace), switchable afterwards with `hosty apps switch-runtime`, and preserved across reconciles and updates like any other app. A stale `HOSTY_SHELL_BOOTSTRAP_RUNTIME` line in an older `launch.env` is ignored on load and dropped on the next save. Core still honors `HOSTY_SHELL_BOOTSTRAP_RUNTIME` and `HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME` as **ambient dev/fork-only overrides** (the CLI never sets them): unset, the runtime is the manifest default; a source tree or air-gapped fork can export one to pin a non-default profile at first install. This is the mechanism the `npm run dev` orchestrator uses to run Shell from the working tree's `dev` localCommand profile.
 
@@ -82,18 +82,19 @@ Legacy `HOST_DATA_ROOT_HOST`, `HOSTY_CORE_DATA_ROOT`, `HOST_CORE_PUBLIC_ORIGIN`,
 
 Start does not check for newer Core builds when Core is already installed. Freshness checks and replacement are owned by `hosty update`.
 
-After Core starts, Core reconciles the distribution list against the operator's bootstrap choices and preinstalls the enabled entries (Shell and Marketplace by default; Telemetry opt-in). First installation of an entry uses the manifest's default runtime unless the entry carries Core-owned policy (the Shell); later startup reconciliation preserves the installed runtime and autostart choices. Marketplace catalog configuration remains an ordinary app setting; Core has no catalog-source setting or Marketplace proxy.
+On a brand-new host, Core seeds the distribution catalog's default entries once (Shell and Marketplace by default; Telemetry opt-in) and records that it did. Later starts install nothing at all, so an app the operator removed stays removed. Installation uses the manifest's default runtime; the installed runtime and autostart choices are the operator's from then on. Marketplace catalog configuration remains an ordinary app setting; Core has no catalog-source setting or Marketplace proxy.
 
-## Choosing preinstalled apps
+## Installing and removing first-party apps
 
 ```bash
-hosty setup                          # interactive checklist
-hosty setup --list                   # show the distribution list and current selection
-hosty setup --with hosty.telemetry   # enable an app without prompting
+hosty setup                          # interactive checklist of the catalog
+hosty setup --list                   # show the catalog and what is installed
+hosty setup --with hosty.telemetry   # install an app without prompting
 hosty setup --without hosty.marketplace --yes
+hosty setup --with hosty.shell       # reinstall a removed Shell
 ```
 
-`hosty setup` writes only the operator's intent into `{data root}/core/bootstrap-choices.json` (`bootstrap-choices.0.1`); manifest locations are never persisted and always resolve from the current release's distribution list. An explicit setup run pins every presented entry, so a later release flipping a default does not override a confirmed selection. Core's own telemetry producers follow the telemetry app itself (installed = active), so there is no observability flag to keep in step. Choices apply on the next Core start; setup warns when Core is currently running. Uninstalling a distribution-installed app records `enabled=false` automatically, so the next boot does not reinstall it.
+The checkboxes are the host's actual installed state: ticking an entry installs it, unticking an installed entry uninstalls it. Both are real lifecycle operations against a running Core — an install is `POST /control/v1/core/bootstrap/{appId}/install` (Core resolves the manifest or feed from the catalog, so no location reaches the CLI), an uninstall is the ordinary app remove. There is no intent file: `hosty setup` requires Core to be running and fails with a `hosty core start` hint when it is not. Uninstalls keep app data unless `--delete-data` is passed, so a reinstall picks up where it left off. Core's own telemetry producers follow the telemetry app itself (installed = active), so there is no observability flag to keep in step.
 
 `hosty open` opens `HOSTY_SHELL_PUBLIC_ORIGIN` when it is configured. Otherwise it opens the local Shell URL derived from `HOSTY_SHELL_PORT`.
 

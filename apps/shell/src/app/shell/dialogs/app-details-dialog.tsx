@@ -23,6 +23,7 @@ import type {
   CoreBackupCleanupPlan,
   CoreGlobalMount,
   CoreMountSlot,
+  CoreRemovalImpact,
   CoreUpdatePlan,
   DetailPanelState,
   DetailView,
@@ -59,6 +60,7 @@ export function AppDetailsDialog({
   onApplyUpdate,
   onSetFeed,
   onRemove,
+  onLoadRemovalImpact,
   onRevealSetting,
 }: {
   app: CoreApp;
@@ -87,13 +89,14 @@ export function AppDetailsDialog({
   onApplyUpdate: (app: CoreApp, plan: CoreUpdatePlan, manifestPath?: string) => void;
   onSetFeed: (app: CoreApp, feedId: string) => void;
   onRemove: (app: CoreApp, options: RemoveOptions) => void;
+  // Advisory "what does this affect" preview, loaded when the remove view opens.
+  onLoadRemovalImpact?: (appId: string) => Promise<CoreRemovalImpact | null>;
   // Fetches one setting's stored value on the operator's explicit reveal click (admin-gated in Core).
   onRevealSetting?: (app: CoreApp, key: string) => Promise<string | null>;
 }) {
-  // Settings, reviewed updates, lifecycle, and backups are all available for system apps too — the
-  // Installed Apps rows carry the same set. Remove is the one verb that stays system-gated: Core
-  // rejects removing a system app anywhere but the local control plane (hosty CLI).
-  const canRemoveApp = canManageApps && !app.system;
+  // Every verb is available for system apps, removal included: "system" governs who may see and reach
+  // an app, never whether it can be uninstalled. The remove panel explains the consequences instead.
+  const canRemoveApp = canManageApps;
   const canConfigureApp = canManageApps;
   const canUpdateApp = canManageApps;
 
@@ -142,7 +145,16 @@ export function AppDetailsDialog({
         ) : (
           <InlineError message="You do not have permission to update apps." />
         ))}
-        {view === "remove" && <RemovePanel app={app} busyAction={busyAction} canRemove={canRemoveApp} onRemove={onRemove} />}
+        {view === "remove" && (
+          <RemovePanel
+            app={app}
+            busyAction={busyAction}
+            canRemove={canRemoveApp}
+            isShell={isShell}
+            onRemove={onRemove}
+            onLoadImpact={onLoadRemovalImpact}
+          />
+        )}
         {view === "logs" && <ConsoleLogsPanel app={app} coreOrigin={coreOrigin} />}
       </DialogContent>
     </Dialog>
@@ -1146,13 +1158,67 @@ function FeedSection({
   );
 }
 
-function RemovePanel({ app, busyAction, canRemove, onRemove }: { app: CoreApp; busyAction: string | null; canRemove: boolean; onRemove: (app: CoreApp, options: RemoveOptions) => void }) {
+// The confirmation surface for an uninstall. Its warnings are computed, never authored per app: Core
+// reports which installed apps declare a dependency on this one and who consumes the platform
+// capabilities it provides, so a third-party app that took over a first-party role reads the same way.
+// See docs/features/removable-system-apps/.
+function RemovePanel({
+  app,
+  busyAction,
+  canRemove,
+  isShell,
+  onRemove,
+  onLoadImpact,
+}: {
+  app: CoreApp;
+  busyAction: string | null;
+  canRemove: boolean;
+  isShell: boolean;
+  onRemove: (app: CoreApp, options: RemoveOptions) => void;
+  onLoadImpact?: (appId: string) => Promise<CoreRemovalImpact | null>;
+}) {
   const [options, setOptions] = useState<RemoveOptions>({
     deleteData: false,
     deleteBackups: false,
     deleteSource: false,
     ignoreRuntimeErrors: false,
   });
+  // Starts loading when a loader is wired at all, so the state never has to be set synchronously
+  // from the effect.
+  const [impactState, setImpactState] = useState<{ loading: boolean; impact: CoreRemovalImpact | null }>(() => ({
+    loading: Boolean(onLoadImpact),
+    impact: null,
+  }));
+
+  useEffect(() => {
+    if (!onLoadImpact) {
+      return;
+    }
+
+    let active = true;
+    void onLoadImpact(app.id)
+      .then((result) => {
+        if (active) {
+          setImpactState({ loading: false, impact: result });
+        }
+      })
+      // An unavailable preview must not stand between the operator and the uninstall they asked for;
+      // the panel simply shows no impact section.
+      .catch(() => {
+        if (active) {
+          setImpactState({ loading: false, impact: null });
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [app.id, onLoadImpact]);
+
+  const dependents = impactState.impact?.dependents ?? [];
+  const consumers = (impactState.impact?.capabilities ?? []).flatMap((capability) =>
+    capability.consumers.map((consumer) => ({ slot: capability.slot, ...consumer })),
+  );
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
@@ -1160,6 +1226,51 @@ function RemovePanel({ app, busyAction, canRemove, onRemove }: { app: CoreApp; b
         <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           Runtime state is always removed. Optional cleanup controls app data, backups, and source checkout.
         </div>
+
+        {isShell && (
+          <div className="space-y-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+            <p className="flex items-start gap-2">
+              <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
+              <span>
+                This is the Shell serving the page you are on. Removing it takes this web UI with it — the host and its apps keep
+                running, and everything stays reachable from the terminal.
+              </span>
+            </p>
+            <p className="pl-6">
+              Reinstall with <code className="rounded bg-muted px-1">hosty setup --with {app.id}</code>.
+            </p>
+          </div>
+        )}
+
+        {impactState.loading && (
+          <p className="flex items-center gap-2 text-xs text-muted-foreground">
+            <LoaderCircle className="size-3.5 animate-spin" aria-hidden /> Checking what this affects…
+          </p>
+        )}
+
+        {(dependents.length > 0 || consumers.length > 0) && (
+          <div className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+            <p className="font-medium">Other apps depend on this one</p>
+            <ul className="space-y-1">
+              {dependents.map((dependent) => (
+                <li key={`dependent-${dependent.appId}`}>
+                  <span className="font-medium">{dependent.displayName}</span>
+                  {dependent.required ? " requires it" : " uses it"}
+                  {dependent.aliases.length > 0 && ` (${dependent.aliases.join(", ")})`}
+                  {dependent.runtimeState === "running"
+                    ? " — running now, and loses the connection at its next start."
+                    : " — loses the connection when it next starts."}
+                </li>
+              ))}
+              {consumers.map((consumer) => (
+                <li key={`consumer-${consumer.slot}-${consumer.appId}`}>
+                  <span className="font-medium">{consumer.displayName}</span> uses the {consumer.slot} this app provides; it keeps
+                  running, and what it sends goes nowhere.
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         <div className="space-y-2">
           <CheckboxRow label="Delete app data" checked={options.deleteData} disabled={!canRemove} onChange={(checked) => setOptions((current) => ({ ...current, deleteData: checked }))} />
           <CheckboxRow label="Delete backups" checked={options.deleteBackups} disabled={!canRemove} onChange={(checked) => setOptions((current) => ({ ...current, deleteBackups: checked }))} />

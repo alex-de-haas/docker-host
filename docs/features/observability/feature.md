@@ -80,7 +80,7 @@ the upstream collector image is distroless and runs as a non-root UID, Core prov
 
 Observability is **off by default** — an install with no telemetry consumer never pulls the images.
 The telemetry app is a distribution-list entry (`defaultEnabled: false`), so enabling it is a
-bootstrap choice ([generic-bootstrap.md](../../ideas/generic-bootstrap.md)):
+distribution catalog ([removable-system-apps](../removable-system-apps/feature.md)):
 
 ```sh
 hosty setup --with hosty.telemetry   # or the Shell platform panel's Extensions section

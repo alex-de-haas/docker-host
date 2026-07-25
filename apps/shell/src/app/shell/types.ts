@@ -266,25 +266,36 @@ export type AppPendingUpdatePlanResponse = {
   plan: CoreUpdatePlan | null;
 };
 
-// Generic bootstrap (docs/ideas/generic-bootstrap.md): one distribution-list entry as reported by
-// Core's host-admin bootstrap endpoint, with the operator's choice and the installed state.
-export type CoreBootstrapApp = {
-  id: string;
-  title: string;
-  description?: string | null;
-  defaultEnabled: boolean;
-  enabled: boolean;
-  choice: boolean | null;
-  installed: boolean;
-  runtimeState?: string | null;
-  installOrigin?: string | null;
+// What removing an app would affect, from GET /api/apps/{id}/remove-impact. Advisory only: Core never
+// refuses a removal, and an app nothing declares against reports empty lists.
+// See docs/features/removable-system-apps/.
+export type CoreRemovalImpact = {
+  appId: string;
+  displayName: string;
+  system: boolean;
+  dependents: CoreRemovalDependent[];
+  capabilities: CoreRemovalCapabilityImpact[];
 };
 
-export type CoreBootstrapState = {
-  source: string;
-  problems: string[];
-  apps: CoreBootstrapApp[];
-  actionError?: string | null;
+// An installed app that declares a cross-app dependency on the one being removed. A running dependent
+// keeps its wired HOSTY_DEPENDENCY_* values until it restarts, so the loss lands at its next start.
+export type CoreRemovalDependent = {
+  appId: string;
+  displayName: string;
+  runtimeState: string;
+  required: boolean;
+  aliases: string[];
+};
+
+export type CoreRemovalCapabilityImpact = {
+  slot: string;
+  consumers: CoreRemovalConsumer[];
+};
+
+export type CoreRemovalConsumer = {
+  appId: string;
+  displayName: string;
+  runtimeState: string;
 };
 
 // Core's own behavior settings (auth session/grant lifetimes for now), served in the same shape as
@@ -508,6 +519,10 @@ export type CoreInstallPlan = {
   currentManifestDigest?: string | null;
   targetManifestDigest: string;
   defaultAutostart?: boolean | null;
+  // True when this install produces a system app (manifest role: system). Surfaced in review so the
+  // escalation is visible before the operator confirms — a system app is admin-only and hidden from
+  // ordinary users.
+  system?: boolean | null;
   runtimeProfiles?: CoreInstallRuntimeProfile[];
   settings: CoreInstallSetting[];
 };

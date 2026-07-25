@@ -9,77 +9,34 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
     private readonly string root = Path.Combine(Path.GetTempPath(), $"hosty-supervisor-tests-{Guid.NewGuid():N}");
 
     [Fact]
-    public async Task StartAsync_DoesNotUpdateInstalledShell_MigratesManifestReferenceOnly()
+    public async Task StartAsync_InstalledApp_IsLeftEntirelyAlone()
     {
-        const string manifestUrl = "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/shell/manifest.json";
-        // Boot must not fetch the remote manifest at all: an installed system app updates through the
-        // operator's reviewed update flow, never at Core start (docs/ideas/system-app-updates.md).
+        // Boot neither fetches nor edits an installed app: no version movement, no pointer rewrite, no
+        // settings stamping. Everything about an installed app changes through the operator's own
+        // reviewed flows from here on.
         var fixture = CreateFixture(_ => throw new HttpRequestException("no remote fetches expected at boot"));
-        var oldManifest = Path.Combine(root, "old-shell-manifest.json");
-        await File.WriteAllTextAsync(oldManifest, CreateShellManifest("0.1.0", "hosty-shell", "local", "never"));
+        var localManifest = Path.Combine(root, "old-shell-manifest.json");
+        await File.WriteAllTextAsync(localManifest, CreateShellManifest("0.1.0", "hosty-shell", "local", "never"));
         await fixture.Lifecycle.InstallAsync(new AppInstallRequest(
-            ManifestPath: oldManifest,
+            ManifestPath: localManifest,
             SelectedRuntime: "docker",
             System: true,
             Autostart: false));
         var config = CreateConfig(fixture.Paths, shellAutostart: false);
-        var supervisor = CreateSupervisor(fixture, config, CreateDistribution(("hosty.shell", manifestUrl, true)));
+        var supervisor = CreateSupervisor(fixture, config, CreateDistribution(
+            ("hosty.shell", "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/shell/manifest.json", true)));
 
         await supervisor.StartAsync(CancellationToken.None);
         try
         {
-            var shell = await WaitForAppAsync(
-                fixture.Apps,
-                "hosty.shell",
-                app => string.Equals(app.ManifestUrl, manifestUrl, StringComparison.Ordinal) && IsDistributionStamped(app));
+            await WaitForFileAsync(Path.Combine(fixture.Paths.CoreRoot, DistributionSeedSchema.FileName));
 
-            // The update-source pointer migrated to the configured reference, but the installed app
-            // itself did not move.
+            var shell = (await fixture.Apps.GetAppAsync("hosty.shell"))!;
             Assert.Equal("0.1.0", shell.Version);
             Assert.Equal("docker", shell.SelectedRuntime);
             Assert.False(shell.Autostart);
-            // A pre-existing record is adopted by the distribution bootstrap.
-            Assert.Equal(AppInstallOrigins.Distribution, shell.InstallOrigin);
-        }
-        finally
-        {
-            await supervisor.StopAsync(CancellationToken.None);
-        }
-    }
-
-    [Fact]
-    public async Task StartAsync_DropsTheRetiredShellHostnameSettingFromAnExistingRecord()
-    {
-        // Boot used to stamp HOSTNAME onto the Shell record from the public origin's host. It never
-        // reached the container (the manifest's own HOSTNAME=0.0.0.0 bind address is appended later and
-        // wins docker's last-`-e` rule), so all it did was leave a settings row that looked like it
-        // controlled the public origin. ConfigureAsync can only null a value, not drop the key, so the
-        // bootstrap has to remove it explicitly — otherwise it lingers forever on existing installs.
-        var fixture = CreateFixture(_ => throw new HttpRequestException("no remote fetches expected at boot"));
-        var manifest = Path.Combine(root, "retired-setting-manifest.json");
-        await File.WriteAllTextAsync(manifest, CreateShellManifest("1.0.0", "hosty-shell", "local", "never"));
-        await fixture.Lifecycle.InstallAsync(new AppInstallRequest(
-            ManifestPath: manifest,
-            SelectedRuntime: "docker",
-            System: true,
-            Autostart: false));
-        await fixture.Lifecycle.ConfigureAsync(
-            "hosty.shell",
-            new AppConfigureRequest(new Dictionary<string, string?>(StringComparer.Ordinal) { ["HOSTNAME"] = "shell.example.test" }));
-        Assert.Contains("HOSTNAME", (await fixture.Apps.GetAppAsync("hosty.shell"))!.Settings.Keys);
-
-        var config = CreateConfig(fixture.Paths, shellAutostart: false);
-        var supervisor = CreateSupervisor(fixture, config, CreateDistribution(("hosty.shell", manifest, true)));
-
-        await supervisor.StartAsync(CancellationToken.None);
-        try
-        {
-            var shell = await WaitForAppAsync(fixture.Apps, "hosty.shell", app => !app.Settings.ContainsKey("HOSTNAME"));
-
-            // Retirement is targeted, not a purge: the app's own settings survive. Here that is the
-            // public-origin row the install creates for Shell's public endpoint — the one the operator
-            // fills from the Public Origins tab, and the one Core resolves Shell's origin from.
-            Assert.Contains(PublicOriginSettings.BuildSettingKey("web"), shell.Settings.Keys);
+            // The distribution entry's URL is not stamped onto a record that was installed locally.
+            Assert.Null(shell.ManifestUrl);
         }
         finally
         {
@@ -207,10 +164,11 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
         await supervisor.StartAsync(CancellationToken.None);
         try
         {
-            // Reference migration only follows http(s) reference moves; a local distribution ref (dev
-            // host walking the repo) leaves the installed record and its remote update source alone.
-            var shell = await WaitForAppAsync(fixture.Apps, "hosty.shell", IsDistributionStamped);
+            await WaitForFileAsync(Path.Combine(fixture.Paths.CoreRoot, DistributionSeedSchema.FileName));
 
+            // The installed record keeps its own remote update source; the distribution entry (here a
+            // local path, as on a dev host walking the repo) never rewrites it.
+            var shell = (await fixture.Apps.GetAppAsync("hosty.shell"))!;
             Assert.Equal("0.2.0", shell.Version);
             Assert.Equal(manifestUrl, shell.ManifestUrl);
         }
@@ -221,7 +179,7 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task StartAsync_MovedManifestUrl_MigratesReferenceWithoutFetch()
+    public async Task StartAsync_MovedManifestUrl_LeavesTheInstalledPointerAlone()
     {
         const string oldUrl = "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/collector/manifest.json";
         const string newUrl = "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/telemetry/manifest.json";
@@ -251,10 +209,13 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
         await supervisor.StartAsync(CancellationToken.None);
         try
         {
-            var shell = await WaitForShellManifestUrlAsync(fixture.Apps, expectedManifestUrl: newUrl);
+            await WaitForFileAsync(Path.Combine(fixture.Paths.CoreRoot, DistributionSeedSchema.FileName));
 
-            // The pointer moved with the distribution list; the installed app did not change.
+            // Boot no longer rewrites an installed app's update source, so a moved distribution
+            // reference is the operator's to adopt (reinstall from the catalog, or a feed-bound record).
+            var shell = (await fixture.Apps.GetAppAsync("hosty.shell"))!;
             Assert.Equal("0.2.0", shell.Version);
+            Assert.Equal(oldUrl, shell.ManifestUrl);
         }
         finally
         {
@@ -403,9 +364,10 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
         try
         {
             // A newer manifest behind the distribution entry is an ordinary update: it waits for the
-            // operator's reviewed plan/apply and must not be applied by the boot reconcile.
-            var marketplace = await WaitForAppAsync(fixture.Apps, MarketplaceBootstrap.AppId, IsDistributionStamped);
+            // operator's reviewed plan/apply and is never applied at boot.
+            await WaitForFileAsync(Path.Combine(fixture.Paths.CoreRoot, DistributionSeedSchema.FileName));
 
+            var marketplace = (await fixture.Apps.GetAppAsync(MarketplaceBootstrap.AppId))!;
             Assert.Equal("0.1.0", marketplace.Version);
             Assert.Equal("docker", marketplace.SelectedRuntime);
             Assert.False(marketplace.Autostart);
@@ -417,12 +379,12 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task StartAsync_FeedsUrlEntry_InstallsThroughFeedPathAndNormalizesMarkers()
+    public async Task StartAsync_FeedsUrlEntry_InstallsThroughFeedPathAndStampsProvenanceOnly()
     {
         const string feedsUrl = "https://example.test/demo/feeds.json";
         const string manifestUrl = "https://example.test/demo/manifest.json";
-        // Deliberately no role:system — the feed path installs with System=false, and the bootstrap
-        // must normalize the flag together with the provenance stamp.
+        // Deliberately no role:system — being in the distribution list is provenance, not privilege,
+        // so the seeded app stays an ordinary app exactly as its manifest declares it.
         const string manifest = """
             {
               "schemaVersion": "app.0.1",
@@ -450,13 +412,13 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
         await supervisor.StartAsync(CancellationToken.None);
         try
         {
-            var demo = await WaitForAppAsync(fixture.Apps, "hosty.demo", IsDistributionStamped);
+            var demo = await WaitForAppAsync(fixture.Apps, "hosty.demo", IsDistributionOrigin);
 
             Assert.Equal(feedsUrl, demo.FeedsUrl);
             Assert.Equal("stable", demo.FollowedFeedId);
-            // The feed path installs System=false; the bootstrap stamp normalizes it to true together
-            // with the provenance origin (waited for above).
-            Assert.True(demo.System);
+            // The manifest declares no role, so the app is not a system app — the distribution list
+            // never confers that on its own.
+            Assert.False(demo.System);
             Assert.Equal(AppInstallOrigins.Distribution, demo.InstallOrigin);
         }
         finally
@@ -466,17 +428,32 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task StartAsync_ChoicesDisableOutranksDefaultEnabled()
+    public async Task StartAsync_SeededHost_DoesNotReinstallARemovedApp()
     {
+        // The whole point of one-time seeding: an app the operator removed stays removed, no matter
+        // that the release still ships it as a default.
         var fixture = CreateFixture(_ => throw new HttpRequestException("no remote fetches expected"));
         var marketplaceManifest = Path.Combine(root, "marketplace-manifest.json");
         await File.WriteAllTextAsync(marketplaceManifest, CreateMarketplaceManifest("0.1.0", defaultRuntime: "dev"));
-        await fixture.Choices.SetEnabledAsync(MarketplaceBootstrap.AppId, enabled: false);
         var config = CreateConfig(fixture.Paths, shellAutostart: false);
-        var supervisor = CreateSupervisor(
-            fixture, config, CreateDistribution((MarketplaceBootstrap.AppId, marketplaceManifest, true)));
+        var distribution = CreateDistribution((MarketplaceBootstrap.AppId, marketplaceManifest, true));
 
-        await supervisor.StartAsync(CancellationToken.None);
+        var first = CreateSupervisor(fixture, config, distribution);
+        await first.StartAsync(CancellationToken.None);
+        try
+        {
+            await WaitForAppAsync(fixture.Apps, MarketplaceBootstrap.AppId);
+        }
+        finally
+        {
+            await first.StopAsync(CancellationToken.None);
+        }
+
+        await fixture.Lifecycle.RemoveAsync(MarketplaceBootstrap.AppId, new AppRemoveRequest());
+        Assert.Null(await fixture.Apps.GetAppAsync(MarketplaceBootstrap.AppId));
+
+        var second = CreateSupervisor(fixture, config, distribution);
+        await second.StartAsync(CancellationToken.None);
         try
         {
             await Task.Delay(250);
@@ -484,15 +461,15 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
         }
         finally
         {
-            await supervisor.StopAsync(CancellationToken.None);
+            await second.StopAsync(CancellationToken.None);
         }
     }
 
     [Fact]
-    public async Task StartAsync_UpgradeWithoutChoicesFile_PinsInstalledStateAsChoices()
+    public async Task StartAsync_ExistingHost_IsAdoptedAsSeededWithoutInstalling()
     {
-        // A host that already has apps (an upgrade) must not silently gain a default-enabled app it
-        // never had: the first boot pins the current effective state into the choices file.
+        // An upgrade must not gain a default app it never had: any installed app at all proves the
+        // host predates seeding, so it is marked seeded and left alone.
         var fixture = CreateFixture(_ => throw new HttpRequestException("no remote fetches expected"));
         var shellManifest = Path.Combine(root, "shell-manifest.json");
         await File.WriteAllTextAsync(shellManifest, CreateShellManifest("0.1.0", "hosty-shell", "local", "never"));
@@ -511,13 +488,81 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
         await supervisor.StartAsync(CancellationToken.None);
         try
         {
+            await WaitForFileAsync(Path.Combine(fixture.Paths.CoreRoot, DistributionSeedSchema.FileName));
+            Assert.Null(await fixture.Apps.GetAppAsync(MarketplaceBootstrap.AppId));
+        }
+        finally
+        {
+            await supervisor.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task StartAsync_HostWithLegacyChoicesFile_IsAdoptedAsSeeded()
+    {
+        // A pre-seeding host that had removed everything: the registry is empty, but its choices file
+        // proves it already made those decisions.
+        var fixture = CreateFixture(_ => throw new HttpRequestException("no remote fetches expected"));
+        var marketplaceManifest = Path.Combine(root, "marketplace-manifest.json");
+        await File.WriteAllTextAsync(marketplaceManifest, CreateMarketplaceManifest("0.1.0", defaultRuntime: "dev"));
+        Directory.CreateDirectory(fixture.Paths.CoreRoot);
+        await File.WriteAllTextAsync(
+            Path.Combine(fixture.Paths.CoreRoot, DistributionSeedSchema.LegacyChoicesFileName),
+            """{ "schemaVersion": "bootstrap-choices.0.1", "apps": { "hosty.marketplace": { "enabled": false } } }""");
+        var config = CreateConfig(fixture.Paths, shellAutostart: false);
+        var supervisor = CreateSupervisor(
+            fixture, config, CreateDistribution((MarketplaceBootstrap.AppId, marketplaceManifest, true)));
+
+        await supervisor.StartAsync(CancellationToken.None);
+        try
+        {
+            await WaitForFileAsync(Path.Combine(fixture.Paths.CoreRoot, DistributionSeedSchema.FileName));
+            Assert.Null(await fixture.Apps.GetAppAsync(MarketplaceBootstrap.AppId));
+        }
+        finally
+        {
+            await supervisor.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task StartAsync_FreshHost_SeedsDefaultsAndMarksSeeded()
+    {
+        var fixture = CreateFixture(_ => throw new HttpRequestException("no remote fetches expected"));
+        var marketplaceManifest = Path.Combine(root, "marketplace-manifest.json");
+        await File.WriteAllTextAsync(marketplaceManifest, CreateMarketplaceManifest("0.1.0", defaultRuntime: "dev"));
+        var config = CreateConfig(fixture.Paths, shellAutostart: false);
+        var supervisor = CreateSupervisor(
+            fixture, config, CreateDistribution((MarketplaceBootstrap.AppId, marketplaceManifest, true)));
+
+        await supervisor.StartAsync(CancellationToken.None);
+        try
+        {
+            await WaitForAppAsync(fixture.Apps, MarketplaceBootstrap.AppId);
+            await WaitForFileAsync(Path.Combine(fixture.Paths.CoreRoot, DistributionSeedSchema.FileName));
+        }
+        finally
+        {
+            await supervisor.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task StartAsync_SeedFailure_WithholdsMarkerSoTheNextBootRetries()
+    {
+        var fixture = CreateFixture(_ => throw new HttpRequestException("no remote fetches expected"));
+        var config = CreateConfig(fixture.Paths, shellAutostart: false);
+        var supervisor = CreateSupervisor(
+            fixture,
+            config,
+            CreateDistribution((MarketplaceBootstrap.AppId, Path.Combine(root, "missing-manifest.json"), true)));
+
+        await supervisor.StartAsync(CancellationToken.None);
+        try
+        {
             await Task.Delay(250);
             Assert.Null(await fixture.Apps.GetAppAsync(MarketplaceBootstrap.AppId));
-
-            var choices = await fixture.Choices.LoadAsync();
-            Assert.NotNull(choices);
-            Assert.True(choices!.EnabledFor("hosty.shell"));
-            Assert.False(choices.EnabledFor(MarketplaceBootstrap.AppId));
+            Assert.False(File.Exists(Path.Combine(fixture.Paths.CoreRoot, DistributionSeedSchema.FileName)));
         }
         finally
         {
@@ -526,94 +571,45 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task StartAsync_FreshInstall_WritesNoChoicesFileAndFollowsDefaults()
+    public async Task RemoveAsync_SystemApp_SucceedsOnTheOrdinaryPath()
     {
+        // No control-plane escape hatch anymore: the same call the browser makes removes a system app.
         var fixture = CreateFixture(_ => throw new HttpRequestException("no remote fetches expected"));
         var marketplaceManifest = Path.Combine(root, "marketplace-manifest.json");
         await File.WriteAllTextAsync(marketplaceManifest, CreateMarketplaceManifest("0.1.0", defaultRuntime: "dev"));
-        var config = CreateConfig(fixture.Paths, shellAutostart: false);
-        var supervisor = CreateSupervisor(
-            fixture, config, CreateDistribution((MarketplaceBootstrap.AppId, marketplaceManifest, true)));
+        await fixture.Lifecycle.InstallAsync(new AppInstallRequest(
+            ManifestPath: marketplaceManifest,
+            SelectedRuntime: "dev",
+            Autostart: false));
+        var installed = await fixture.Apps.GetAppAsync(MarketplaceBootstrap.AppId);
+        Assert.True(installed!.System);
 
-        await supervisor.StartAsync(CancellationToken.None);
-        try
-        {
-            await WaitForAppAsync(fixture.Apps, MarketplaceBootstrap.AppId);
-            Assert.False(fixture.Choices.Exists);
-        }
-        finally
-        {
-            await supervisor.StopAsync(CancellationToken.None);
-        }
-    }
-
-    [Fact]
-    public async Task RemoveAsync_DistributionOriginApp_RecordsDisabledChoice()
-    {
-        var fixture = CreateFixture(_ => throw new HttpRequestException("no remote fetches expected"));
-        var marketplaceManifest = Path.Combine(root, "marketplace-manifest.json");
-        await File.WriteAllTextAsync(marketplaceManifest, CreateMarketplaceManifest("0.1.0", defaultRuntime: "dev"));
-        var config = CreateConfig(fixture.Paths, shellAutostart: false);
-        var supervisor = CreateSupervisor(
-            fixture, config, CreateDistribution((MarketplaceBootstrap.AppId, marketplaceManifest, true)));
-
-        await supervisor.StartAsync(CancellationToken.None);
-        try
-        {
-            await WaitForAppAsync(fixture.Apps, MarketplaceBootstrap.AppId);
-        }
-        finally
-        {
-            await supervisor.StopAsync(CancellationToken.None);
-        }
-
-        await fixture.Lifecycle.RemoveAsync(MarketplaceBootstrap.AppId, new AppRemoveRequest(), allowSystemRemoval: true);
+        await fixture.Lifecycle.RemoveAsync(MarketplaceBootstrap.AppId, new AppRemoveRequest());
 
         Assert.Null(await fixture.Apps.GetAppAsync(MarketplaceBootstrap.AppId));
-        var choices = await fixture.Choices.LoadAsync();
-        Assert.False(choices?.EnabledFor(MarketplaceBootstrap.AppId));
     }
 
     [Fact]
-    public async Task SetChoiceAsync_EnableInstallsAndStartsLive()
+    public async Task InstallAsync_InstallsAndStartsACatalogEntry()
     {
         var fixture = CreateFixture(_ => throw new HttpRequestException("no remote fetches expected"));
         var marketplaceManifest = Path.Combine(root, "marketplace-manifest.json");
         await File.WriteAllTextAsync(marketplaceManifest, CreateMarketplaceManifest("0.1.0", defaultRuntime: "dev"));
         var config = CreateConfig(fixture.Paths, shellAutostart: false);
+        // defaultEnabled: false — an explicit install is intent in its own right.
         var service = CreateBootstrapService(
             fixture, config, CreateDistribution((MarketplaceBootstrap.AppId, marketplaceManifest, false)));
 
-        var actionError = await service.SetChoiceAsync(MarketplaceBootstrap.AppId, enabled: true, CancellationToken.None);
+        await service.InstallAsync(MarketplaceBootstrap.AppId, CancellationToken.None);
 
-        Assert.Null(actionError);
         var marketplace = await fixture.Apps.GetAppAsync(MarketplaceBootstrap.AppId);
         Assert.NotNull(marketplace);
         Assert.Equal("running", marketplace!.RuntimeState);
         Assert.Equal(AppInstallOrigins.Distribution, marketplace.InstallOrigin);
-        Assert.True((await fixture.Choices.LoadAsync())!.EnabledFor(MarketplaceBootstrap.AppId));
     }
 
     [Fact]
-    public async Task SetChoiceAsync_DisableRecordsChoiceWithoutUninstalling()
-    {
-        var fixture = CreateFixture(_ => throw new HttpRequestException("no remote fetches expected"));
-        var marketplaceManifest = Path.Combine(root, "marketplace-manifest.json");
-        await File.WriteAllTextAsync(marketplaceManifest, CreateMarketplaceManifest("0.1.0", defaultRuntime: "dev"));
-        var config = CreateConfig(fixture.Paths, shellAutostart: false);
-        var distribution = CreateDistribution((MarketplaceBootstrap.AppId, marketplaceManifest, true));
-        var service = CreateBootstrapService(fixture, config, distribution);
-        Assert.Null(await service.SetChoiceAsync(MarketplaceBootstrap.AppId, enabled: true, CancellationToken.None));
-
-        Assert.Null(await service.SetChoiceAsync(MarketplaceBootstrap.AppId, enabled: false, CancellationToken.None));
-
-        // Disable only stops future reconciles; the installed app stays until explicitly uninstalled.
-        Assert.NotNull(await fixture.Apps.GetAppAsync(MarketplaceBootstrap.AppId));
-        Assert.False((await fixture.Choices.LoadAsync())!.EnabledFor(MarketplaceBootstrap.AppId));
-    }
-
-    [Fact]
-    public async Task SetChoiceAsync_UnknownAppId_Throws()
+    public async Task InstallAsync_UnknownAppId_Throws()
     {
         var fixture = CreateFixture(_ => throw new HttpRequestException("no remote fetches expected"));
         var marketplaceManifest = Path.Combine(root, "marketplace-manifest.json");
@@ -623,29 +619,27 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
             fixture, config, CreateDistribution((MarketplaceBootstrap.AppId, marketplaceManifest, true)));
 
         var exception = await Assert.ThrowsAsync<AppLifecycleException>(
-            () => service.SetChoiceAsync("hosty.unknown", enabled: true, CancellationToken.None));
+            () => service.InstallAsync("hosty.unknown", CancellationToken.None));
 
         Assert.Equal("bootstrap_app_unknown", exception.Code);
     }
 
     [Fact]
-    public async Task SetChoiceAsync_EnableFailure_SavesChoiceAndReturnsActionError()
+    public async Task InstallAsync_FailedInstall_Throws()
     {
         var fixture = CreateFixture(_ => throw new HttpRequestException("no remote fetches expected"));
         var config = CreateConfig(fixture.Paths, shellAutostart: false);
         var service = CreateBootstrapService(
             fixture, config, CreateDistribution((MarketplaceBootstrap.AppId, Path.Combine(root, "missing-manifest.json"), false)));
 
-        var actionError = await service.SetChoiceAsync(MarketplaceBootstrap.AppId, enabled: true, CancellationToken.None);
+        await Assert.ThrowsAnyAsync<Exception>(
+            () => service.InstallAsync(MarketplaceBootstrap.AppId, CancellationToken.None));
 
-        Assert.NotNull(actionError);
         Assert.Null(await fixture.Apps.GetAppAsync(MarketplaceBootstrap.AppId));
-        // Intent survives the failed live install; the boot reconcile retries it.
-        Assert.True((await fixture.Choices.LoadAsync())!.EnabledFor(MarketplaceBootstrap.AppId));
     }
 
     [Fact]
-    public async Task GetStateAsync_ReportsEntriesChoicesAndInstallState()
+    public async Task GetStateAsync_ReportsCatalogEntriesAndInstallState()
     {
         var fixture = CreateFixture(_ => throw new HttpRequestException("no remote fetches expected"));
         var marketplaceManifest = Path.Combine(root, "marketplace-manifest.json");
@@ -657,20 +651,13 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
             ("hosty.shell", shellManifest, true),
             (MarketplaceBootstrap.AppId, marketplaceManifest, true));
         var service = CreateBootstrapService(fixture, config, distribution);
-        await fixture.Choices.SetEnabledAsync(MarketplaceBootstrap.AppId, enabled: false);
-        Assert.Null(await service.SetChoiceAsync("hosty.shell", enabled: true, CancellationToken.None));
+        await service.InstallAsync("hosty.shell", CancellationToken.None);
 
         var state = await service.GetStateAsync(CancellationToken.None);
 
         Assert.Equal(2, state.Apps.Count);
-        var shell = state.Apps.Single(status => status.Entry.Id == "hosty.shell");
-        Assert.True(shell.Enabled);
-        Assert.True(shell.Choice);
-        Assert.NotNull(shell.Installed);
-        var marketplace = state.Apps.Single(status => status.Entry.Id == MarketplaceBootstrap.AppId);
-        Assert.False(marketplace.Enabled);
-        Assert.False(marketplace.Choice);
-        Assert.Null(marketplace.Installed);
+        Assert.NotNull(state.Apps.Single(status => status.Entry.Id == "hosty.shell").Installed);
+        Assert.Null(state.Apps.Single(status => status.Entry.Id == MarketplaceBootstrap.AppId).Installed);
     }
 
     public void Dispose()
@@ -824,7 +811,10 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
     }
 
     private static bool IsDistributionStamped(AppRecord app)
-        => string.Equals(app.InstallOrigin, AppInstallOrigins.Distribution, StringComparison.Ordinal) && app.System;
+        => IsDistributionOrigin(app) && app.System;
+
+    private static bool IsDistributionOrigin(AppRecord app)
+        => string.Equals(app.InstallOrigin, AppInstallOrigins.Distribution, StringComparison.Ordinal);
 
     private static async Task WaitForFileAsync(string path)
     {
@@ -840,23 +830,6 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
         }
 
         throw new TimeoutException($"File '{path}' was not provisioned.");
-    }
-
-    private static async Task<AppRecord> WaitForShellManifestUrlAsync(AppRegistryStore apps, string? expectedManifestUrl)
-    {
-        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
-        while (DateTimeOffset.UtcNow < deadline)
-        {
-            var shell = await apps.GetAppAsync("hosty.shell");
-            if (shell is not null && string.Equals(shell.ManifestUrl, expectedManifestUrl, StringComparison.Ordinal))
-            {
-                return shell;
-            }
-
-            await Task.Delay(50);
-        }
-
-        throw new TimeoutException($"hosty.shell did not reach manifest URL '{expectedManifestUrl ?? "<local>"}'.");
     }
 
     private TestFixture CreateFixture(Func<HttpRequestMessage, HttpResponseMessage> manifestHandler)
@@ -875,7 +848,7 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
         var manifests = new AppManifestService(new HttpClient(new StubHttpMessageHandler(manifestHandler)));
         var backups = new AppBackupService(paths, clock);
         var sources = new AppSourceService(paths, apps, clock);
-        var choices = new BootstrapChoicesStore(paths, NullLogger<BootstrapChoicesStore>.Instance);
+        var seed = new DistributionSeedStore(paths, clock, NullLogger<DistributionSeedStore>.Instance);
         var docker = new NoopDockerRuntimeAdapter();
         var lifecycle = new CoreLifecycleService(
             paths,
@@ -886,9 +859,8 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
             [docker, new NoopLocalCommandRuntimeAdapter()],
             new NoopIngressController(),
             Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreLifecycleService>.Instance,
-            feedService: new AppFeedService(new HttpClient(new StubHttpMessageHandler(manifestHandler))),
-            bootstrapChoices: choices);
-        return new TestFixture(paths, apps, sources, lifecycle, choices, docker);
+            feedService: new AppFeedService(new HttpClient(new StubHttpMessageHandler(manifestHandler))));
+        return new TestFixture(paths, apps, sources, lifecycle, seed, docker);
     }
 
     private static HostyCoreRuntimeConfig CreateConfig(CoreDataPaths paths, bool shellAutostart)
@@ -926,7 +898,7 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
             fixture.Lifecycle,
             fixture.Sources,
             distribution,
-            fixture.Choices,
+            fixture.Seed,
             NullLogger<SystemAppBootstrapService>.Instance);
 
     private DistributionAppsProvider CreateDistributionRaw(string appsJson)
@@ -1053,7 +1025,7 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
         AppRegistryStore Apps,
         AppSourceService Sources,
         CoreLifecycleService Lifecycle,
-        BootstrapChoicesStore Choices,
+        DistributionSeedStore Seed,
         NoopDockerRuntimeAdapter Docker);
 
     private sealed class TestClock : IClock

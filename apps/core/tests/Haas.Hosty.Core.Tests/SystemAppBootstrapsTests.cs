@@ -1,7 +1,8 @@
 namespace Haas.Hosty.Core.Tests;
 
-// Merge semantics of the generic bootstrap: distribution defaults, operator choices, and the
-// deprecated legacy env layer. Pure unit tests over SystemAppBootstraps.FromDistribution.
+// How a distribution entry resolves into a descriptor: release defaults and the deprecated legacy env
+// layer. Enablement here only decides what a fresh host seeds. Pure unit tests over
+// SystemAppBootstraps.FromDistribution.
 public sealed class SystemAppBootstrapsTests
 {
     private static readonly DistributionAppEntry Shell = new(
@@ -16,7 +17,7 @@ public sealed class SystemAppBootstrapsTests
     [Fact]
     public void FromDistribution_DefaultEnabledDrivesDescriptors()
     {
-        var plan = SystemAppBootstraps.FromDistribution([Shell, Telemetry, Marketplace], choices: null, CreateConfig());
+        var plan = SystemAppBootstraps.FromDistribution([Shell, Telemetry, Marketplace], CreateConfig());
 
         Assert.Collection(
             plan.Descriptors,
@@ -27,31 +28,7 @@ public sealed class SystemAppBootstrapsTests
     }
 
     [Fact]
-    public void FromDistribution_ChoicesOutrankDefaultsAndLegacy()
-    {
-        var choices = new BootstrapChoicesDocument
-        {
-            SchemaVersion = BootstrapChoicesSchema.Version,
-            Apps = new Dictionary<string, BootstrapChoiceEntry>(StringComparer.Ordinal)
-            {
-                ["hosty.telemetry"] = new() { Enabled = true },
-                ["hosty.marketplace"] = new() { Enabled = false },
-            },
-        };
-        var config = CreateConfig() with
-        {
-            // Legacy says telemetry off; the explicit choice must still win.
-            Legacy = new LegacyBootstrapEnv(ObservabilityEnabled: false),
-        };
-
-        var plan = SystemAppBootstraps.FromDistribution([Shell, Telemetry, Marketplace], choices, config);
-
-        Assert.True(plan.Descriptors.Single(d => d.AppId == "hosty.telemetry").Enabled);
-        Assert.False(plan.Descriptors.Single(d => d.AppId == "hosty.marketplace").Enabled);
-    }
-
-    [Fact]
-    public void FromDistribution_LegacyEnablementFillsBetweenChoicesAndDefaults()
+    public void FromDistribution_LegacyEnablementOverridesDefaults()
     {
         var config = CreateConfig() with
         {
@@ -60,7 +37,7 @@ public sealed class SystemAppBootstrapsTests
                 ObservabilityEnabled: true),
         };
 
-        var plan = SystemAppBootstraps.FromDistribution([Shell, Telemetry], choices: null, config);
+        var plan = SystemAppBootstraps.FromDistribution([Shell, Telemetry], config);
 
         Assert.False(plan.Descriptors.Single(d => d.AppId == "hosty.shell").Enabled);
         Assert.True(plan.Descriptors.Single(d => d.AppId == "hosty.telemetry").Enabled);
@@ -76,7 +53,7 @@ public sealed class SystemAppBootstrapsTests
                 MarketplaceManifestPathConfigured: true),
         };
 
-        var plan = SystemAppBootstraps.FromDistribution([Marketplace], choices: null, config);
+        var plan = SystemAppBootstraps.FromDistribution([Marketplace], config);
 
         Assert.False(plan.Descriptors.Single().Enabled);
     }
@@ -91,7 +68,7 @@ public sealed class SystemAppBootstrapsTests
                 CollectorManifestPath: "/elsewhere/collector-manifest.json"),
         };
 
-        var plan = SystemAppBootstraps.FromDistribution([Shell, Telemetry], choices: null, config);
+        var plan = SystemAppBootstraps.FromDistribution([Shell, Telemetry], config);
 
         // Matching value (the CLI still injects its defaults) is not operator intent: entry wins, silently.
         Assert.Equal(Shell.ManifestRef, plan.Descriptors.Single(d => d.AppId == "hosty.shell").ManifestPath);
@@ -107,7 +84,7 @@ public sealed class SystemAppBootstrapsTests
     {
         var config = CreateConfig() with { ShellSourceOverridePath = "/repo" };
 
-        var plan = SystemAppBootstraps.FromDistribution([Shell, Telemetry, Marketplace], choices: null, config);
+        var plan = SystemAppBootstraps.FromDistribution([Shell, Telemetry, Marketplace], config);
 
         var shell = plan.Descriptors.Single(d => d.AppId == "hosty.shell");
         // Runtime is a normal per-app choice now (manifest default on first install, switch-runtime
@@ -129,29 +106,13 @@ public sealed class SystemAppBootstrapsTests
     }
 
     [Fact]
-    public void FromDistribution_ShellDescriptorRetiresHostnameInsteadOfStampingIt()
-    {
-        // HOSTNAME was stamped from the Shell public origin's host but never reached the container: the
-        // manifest declares HOSTNAME=0.0.0.0 as the Next.js bind address and its environment is appended
-        // after the settings, so docker's last-wins duplicate handling always kept the bind address. It
-        // only ever showed up as a settings row that looked like it controlled the public origin.
-        var plan = SystemAppBootstraps.FromDistribution([Shell], choices: null, CreateConfig());
-
-        var shell = plan.Descriptors.Single(d => d.AppId == "hosty.shell");
-        // The bootstrap stamps no settings at all now, so there is nothing to check for HOSTNAME's
-        // absence in — it only still retires the key from records that carry it.
-        Assert.Null(shell.Settings);
-        Assert.Contains("HOSTNAME", shell.RetiredSettings!);
-    }
-
-    [Fact]
     public void FromDistribution_AmbientRuntimeOverridePinsShellAndCollectorDescriptors()
     {
         // The ambient dev/fork override (HOSTY_SHELL_BOOTSTRAP_RUNTIME / HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME)
         // pins the descriptor runtime; unset (null) leaves the profile to the manifest default.
         var config = CreateConfig() with { ShellBootstrapRuntime = "dev", CollectorBootstrapRuntime = "podman" };
 
-        var plan = SystemAppBootstraps.FromDistribution([Shell, Telemetry, Marketplace], choices: null, config);
+        var plan = SystemAppBootstraps.FromDistribution([Shell, Telemetry, Marketplace], config);
 
         Assert.Equal("dev", plan.Descriptors.Single(d => d.AppId == "hosty.shell").Runtime);
         Assert.Equal("podman", plan.Descriptors.Single(d => d.AppId == "hosty.telemetry").Runtime);
@@ -164,29 +125,9 @@ public sealed class SystemAppBootstrapsTests
     {
         var entry = Marketplace with { FeedsUrl = "https://example.test/marketplace/feeds.json" };
 
-        var plan = SystemAppBootstraps.FromDistribution([entry], choices: null, CreateConfig());
+        var plan = SystemAppBootstraps.FromDistribution([entry], CreateConfig());
 
         Assert.Equal("https://example.test/marketplace/feeds.json", plan.Descriptors.Single().FeedsUrl);
-    }
-
-    [Fact]
-    public void FromDistribution_UnknownChoiceIsInertWithWarning()
-    {
-        var choices = new BootstrapChoicesDocument
-        {
-            SchemaVersion = BootstrapChoicesSchema.Version,
-            Apps = new Dictionary<string, BootstrapChoiceEntry>(StringComparer.Ordinal)
-            {
-                ["hosty.retired-app"] = new() { Enabled = true },
-            },
-        };
-
-        var plan = SystemAppBootstraps.FromDistribution([Shell], choices, CreateConfig());
-
-        Assert.Single(plan.Descriptors);
-        var warning = Assert.Single(plan.Warnings);
-        Assert.Contains("hosty.retired-app", warning);
-        Assert.Contains("inert", warning);
     }
 
     private static HostyCoreRuntimeConfig CreateConfig()

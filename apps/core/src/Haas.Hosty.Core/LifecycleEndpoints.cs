@@ -439,10 +439,24 @@ internal static class LifecycleEndpoints
                 request,
                 users,
                 clock,
-                // Browser surface: system apps stay non-removable here (the CLI control plane keeps
-                // removal for operator recovery) — Shell hiding the button is not the boundary.
-                async () => await HandleLifecycleError(() => lifecycle.RemoveAsync(appId, input, cancellationToken: cancellationToken)),
+                async () => await HandleLifecycleError(() => lifecycle.RemoveAsync(appId, input, cancellationToken)),
                 requireCsrf: true,
+                cancellationToken: cancellationToken));
+
+        // Advisory preview for the confirmation surface: what else declares a dependency on this app,
+        // and who consumes the platform capabilities it provides. Never gates the removal itself.
+        app.MapGet("/api/apps/{appId}/remove-impact", async (
+            string appId,
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            CoreLifecycleService lifecycle,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                users,
+                clock,
+                async () => await HandleLifecycleError(() => lifecycle.GetRemovalImpactAsync(appId, cancellationToken)),
                 cancellationToken: cancellationToken));
 
         app.MapGet("/api/apps/{appId}/logs", async (
@@ -778,7 +792,16 @@ internal static class LifecycleEndpoints
             AppRemoveRequest input,
             CancellationToken cancellationToken) =>
             await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
-                await HandleLifecycleError(() => lifecycle.RemoveAsync(appId, input, allowSystemRemoval: true, cancellationToken))));
+                await HandleLifecycleError(() => lifecycle.RemoveAsync(appId, input, cancellationToken))));
+
+        app.MapGet("/control/v1/apps/{appId}/remove-impact", async (
+            string appId,
+            HttpRequest request,
+            ControlSecret secret,
+            CoreLifecycleService lifecycle,
+            CancellationToken cancellationToken) =>
+            await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
+                await HandleLifecycleError(() => lifecycle.GetRemovalImpactAsync(appId, cancellationToken))));
 
         app.MapGet("/control/v1/apps/{appId}/backups", async (
             string appId,

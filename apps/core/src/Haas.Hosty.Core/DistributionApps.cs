@@ -3,11 +3,12 @@ using System.Text.RegularExpressions;
 
 namespace Haas.Hosty.Core;
 
-// The release-owned distribution list: which first-party apps this build can preinstall, with their
-// manifest locations and default enablement. Boot config, not a catalog — display-rich discovery
-// belongs to the marketplace app. Locations are resolved from this list at every boot (never
-// persisted), so a release update moves every ref atomically; the operator's own intent lives in
-// the separate bootstrap-choices file. See docs/ideas/generic-bootstrap.md.
+// The release-owned catalog of first-party apps: what this build offers, with manifest/feed locations
+// and which entries a brand-new host is seeded with. Not a discovery catalog — display-rich discovery
+// belongs to the marketplace app. Locations are resolved from this list on demand (never persisted),
+// so a release update moves every ref atomically. Membership implies nothing about an installed app:
+// seeding happens once, and afterwards this is simply what `hosty setup` and the catalog endpoint
+// offer. See docs/features/removable-system-apps/feature.md.
 internal static class DistributionAppsSchema
 {
     public const string Version = "distribution-apps.0.1";
@@ -67,6 +68,9 @@ internal sealed class DistributionAppsProvider(
 {
     // Official distribution for standalone binary installs. Refs are remote because the installed
     // artifact has no repo layout on disk; a source tree wins via the walked file with local refs.
+    // Every entry carries a feedsUrl, so a seeded app is feed-bound from its first install and gets
+    // the ordinary reviewed update affordance — and can be reinstalled from the same feed after an
+    // uninstall. manifestRef stays as the direct fallback when the feed cannot be resolved.
     internal const string EmbeddedDefaultJson = /*lang=json,strict*/ """
         {
           "schemaVersion": "distribution-apps.0.1",
@@ -76,6 +80,7 @@ internal sealed class DistributionAppsProvider(
               "title": "Hosty Shell",
               "description": "Web UI client for this host.",
               "manifestRef": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/shell/manifest.json",
+              "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/shell/feeds.json",
               "defaultEnabled": true
             },
             {
@@ -83,6 +88,7 @@ internal sealed class DistributionAppsProvider(
               "title": "Telemetry",
               "description": "OpenTelemetry collector and observability backend.",
               "manifestRef": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/telemetry/manifest.json",
+              "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/telemetry/feeds.json",
               "defaultEnabled": false
             },
             {
@@ -90,6 +96,7 @@ internal sealed class DistributionAppsProvider(
               "title": "Marketplace",
               "description": "App discovery storefront.",
               "manifestRef": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/marketplace/manifest.json",
+              "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/marketplace/feeds.json",
               "defaultEnabled": true
             }
           ]

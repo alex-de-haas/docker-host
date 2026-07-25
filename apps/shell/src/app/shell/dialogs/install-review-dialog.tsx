@@ -236,6 +236,15 @@ export function InstallReviewDialog({
                   </span>
                 </div>
               )}
+              {reviewedPlan.system && (
+                <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
+                  <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>
+                    This manifest declares a system app: only host administrators can open it, and it stays hidden from everyone
+                    else. It can be uninstalled like any other app.
+                  </span>
+                </div>
+              )}
               <div className="grid gap-3 sm:grid-cols-2">
                 <FactCard label="App" value={reviewedPlan.displayName} />
                 <FactCard label="Version" value={reviewedPlan.currentVersion ? `${reviewedPlan.currentVersion} to ${reviewedPlan.targetVersion}` : reviewedPlan.targetVersion} />

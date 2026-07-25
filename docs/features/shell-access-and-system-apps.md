@@ -10,7 +10,7 @@ Hosty Shell should clearly separate administrator-only Host management from ordi
 ## Non-goals
 
 - Do not expose Host management pages to `host.user` accounts.
-- Do not expose start/stop/restart/remove/backup controls for system apps in Shell. (Reviewed updates are the exception since 2026-07-13: system apps update through the same plan/apply flow as runtime apps — see [On-Demand System App Updates](../ideas/system-app-updates.md).)
+- Superseded since 2026-07-25: system apps carry the full control set — lifecycle, backups, reviewed updates, and removal — because "system" governs reach, not lifecycle. See [removable-system-apps](removable-system-apps/feature.md).
 - Do not show Hosty Shell as a normal app in the sidebar Apps navigation.
 - Do not change the app assignment model to include system apps.
 - Do not change CLI control behavior in this feature.
@@ -47,7 +47,7 @@ System app actions should stay limited in Shell:
 - runtime switching is allowed for administrators when the app exposes more than one runtime profile;
 - settings, public origins, external mounts, source override, and development-mode configuration are allowed for administrators through the ordinary app settings dialog;
 - reviewed updates are allowed for administrators whenever the app does not run a live source runtime — the same eligibility as runtime apps, served by the same check/plan/apply flow. Updating is inherent to Core managing an app and is authorized on the endpoint, never by the manifest `capabilities` list;
-- lifecycle controls such as start, stop, restart, autostart, backup, restore, and remove are hidden for all system apps.
+- lifecycle controls such as start, stop, restart, autostart, backup, restore, and remove are available for system apps too; removing one opens the same confirmation panel, with the computed impact and a recovery hint.
 
 ## User/API Scenarios
 
@@ -73,7 +73,7 @@ Shell sidebar rendering should show Host management navigation only when the act
 
 Shell main-content routing should guard management views with `canManageApps`. If the active user is not an administrator and reaches `/`, `/dashboard`, `/installed-apps`, or `/users`, Shell should route the user back to `/apps` and render the app-navigation experience rather than Dashboard or Installed Apps.
 
-Installed Apps accepts both runtime apps and system apps for administrator rendering. It renders separate sections and passes `app.system` into action eligibility. Settings and reviewed updates use administrator permission for both groups; lifecycle, backup, and remove eligibility additionally require a non-system app. The fleet "Check updates" action triggers Core's sweep, which covers system apps on the same terms as runtime apps.
+Installed Apps accepts both runtime apps and system apps for administrator rendering, marking the latter with a `System` badge. Every action — settings, reviewed updates, lifecycle, backup, and remove — is gated on administrator permission alone; `app.system` no longer narrows eligibility. The fleet "Check updates" action triggers Core's sweep, which covers system apps on the same terms as runtime apps.
 
 Dashboard should receive runtime app groups for summary metrics. System app rendering stays inside the Installed Apps System Apps section.
 

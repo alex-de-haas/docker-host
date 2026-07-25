@@ -1,101 +1,127 @@
 namespace Haas.Hosty.Core;
 
-// One snapshot row of the bootstrap state: a distribution entry merged with the operator's choice
-// and the installed record, for the bootstrap endpoints and the Shell Extensions panel.
+// One row of the distribution catalog: what the release offers, and whether this host has it
+// installed right now. There is no third state — enablement intent no longer exists.
 internal sealed record SystemAppBootstrapStatus(
     DistributionAppEntry Entry,
-    bool Enabled,
-    bool? Choice,
     AppRecord? Installed);
 
 internal sealed record SystemAppBootstrapState(
     string Source,
     IReadOnlyList<string> Problems,
+    bool Seeded,
     IReadOnlyList<SystemAppBootstrapStatus> Apps);
 
-// Owns the generic bootstrap flow: resolving the distribution list + operator choices into
-// descriptors, installing/reconciling them, and flipping choices at runtime. Shared by the boot
-// supervisor (RuntimeAppSupervisorService) and the host-admin bootstrap endpoints so a live toggle
-// takes exactly the boot path. See docs/ideas/generic-bootstrap.md (Phases 1 and 3).
+// Owns the distribution catalog: seeding a brand-new host once, and installing a catalog entry on
+// demand for `hosty setup`. After the seed pass the list is nothing but a catalog — boot installs
+// nothing, so an app the operator removed stays removed no matter which surface removed it.
+// See docs/features/removable-system-apps/.
 internal sealed class SystemAppBootstrapService(
     HostyCoreRuntimeConfig config,
     AppRegistryStore apps,
     CoreLifecycleService lifecycle,
     AppSourceService sources,
     DistributionAppsProvider distribution,
-    BootstrapChoicesStore bootstrapChoices,
+    DistributionSeedStore seed,
     ILogger<SystemAppBootstrapService> logger)
 {
-    // Resolves the boot bootstrap set: the release-owned distribution list merged with the
-    // operator's bootstrap choices (and, transitionally, the deprecated legacy env overrides).
-    // Loud but non-fatal throughout — a broken list or choices file boots Core on the embedded
-    // defaults rather than taking the host down. Runs the one-time upgrade migration first, so it
-    // belongs to the boot path; the endpoints use PlanAsync/GetStateAsync instead.
-    public async Task<IReadOnlyList<SystemAppBootstrapDescriptor>> PlanBootAsync(CancellationToken cancellationToken)
+    // Boot entry point. On a host that has never been seeded, installs the distribution entries the
+    // release enables by default; on every other boot this is a no-op beyond adopting the marker and
+    // re-applying ambient development overrides. Loud but non-fatal throughout — a broken list or a
+    // failed install must never take Core down, since Core is how the operator fixes it.
+    public async Task SeedBootAsync(CancellationToken cancellationToken)
     {
         try
         {
             var list = await distribution.LoadAsync(cancellationToken);
             distribution.LogProblems(list);
             logger.LogInformation(
-                "Distribution list ({Source}) declares {Count} app(s): {Ids}.",
+                "Distribution list ({Source}) offers {Count} app(s): {Ids}.",
                 list.Source,
                 list.Apps.Count,
                 string.Join(", ", list.Apps.Select(entry => entry.Id)));
 
-            await MigrateBootstrapChoicesAsync(list, cancellationToken);
+            var plan = SystemAppBootstraps.FromDistribution(list.Apps, config);
+            foreach (var warning in plan.Warnings)
+            {
+                logger.LogWarning("Distribution: {Warning}", warning);
+            }
 
-            return await PlanAsync(list, cancellationToken);
+            if (await IsSeededAsync(cancellationToken))
+            {
+                // Adopts pre-seeding hosts: the marker is written without installing anything, so the
+                // apps they already chose (and the ones they removed) are left exactly as they are.
+                if (await seed.MarkSeededAsync(plan.Descriptors.Select(d => d.AppId).ToArray(), cancellationToken))
+                {
+                    logger.LogInformation("Existing host adopted as seeded; the distribution list is a catalog from here on.");
+                }
+            }
+            else
+            {
+                await SeedFreshHostAsync(plan, cancellationToken);
+            }
+
+            await ApplyDevelopmentOverridesAsync(plan.Descriptors, cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            logger.LogError(ex, "System app bootstrap planning failed; no system apps will be reconciled this boot. Core remains available through CLI and control APIs.");
-            return [];
+            logger.LogError(ex, "Distribution seeding failed; no first-party apps were installed this boot. Core remains available through CLI and control APIs.");
         }
     }
 
-    private async Task<IReadOnlyList<SystemAppBootstrapDescriptor>> PlanAsync(
-        DistributionAppsResult list,
-        CancellationToken cancellationToken)
+    // A host counts as seeded when it carries the marker, the pre-seeding choices file, or any
+    // installed app at all. The last check is what keeps an upgrade from re-installing a first-party
+    // app the operator had already removed under the old boot-reconcile model.
+    private async Task<bool> IsSeededAsync(CancellationToken cancellationToken)
+        => seed.Exists ||
+            seed.HasLegacyChoices ||
+            (await apps.ListAppRecordsAsync(cancellationToken)).Count > 0;
+
+    private async Task SeedFreshHostAsync(SystemAppBootstrapPlan plan, CancellationToken cancellationToken)
     {
-        var plan = SystemAppBootstraps.FromDistribution(list.Apps, await bootstrapChoices.LoadAsync(cancellationToken), config);
-        foreach (var warning in plan.Warnings)
+        var enabled = plan.Descriptors.Where(descriptor => descriptor.Enabled).ToArray();
+        logger.LogInformation(
+            "Seeding a new host with {Count} first-party app(s): {Ids}.",
+            enabled.Length,
+            enabled.Length == 0 ? "(none)" : string.Join(", ", enabled.Select(descriptor => descriptor.AppId)));
+
+        var complete = true;
+        foreach (var descriptor in enabled)
         {
-            logger.LogWarning("Bootstrap: {Warning}", warning);
+            complete &= await TryEnsureInstalledAsync(descriptor, cancellationToken);
         }
 
-        return plan.Descriptors;
+        if (!complete)
+        {
+            // The marker is withheld so the next boot retries. Retrying is safe: seeding installs only
+            // what is absent, and a host that has anything installed is already treated as seeded —
+            // which is why the retry window closes as soon as the first app lands.
+            logger.LogWarning("Seeding did not install every default app; the seed marker is withheld so the next boot retries.");
+            return;
+        }
+
+        await seed.MarkSeededAsync(plan.Descriptors.Select(descriptor => descriptor.AppId).ToArray(), cancellationToken);
     }
 
-    // Snapshot for the bootstrap endpoints: every distribution entry with its effective enablement,
-    // the operator's explicit choice (if any), and the installed record.
+    // Snapshot for the bootstrap endpoints and `hosty setup`: every catalog entry with its live
+    // installed record.
     public async Task<SystemAppBootstrapState> GetStateAsync(CancellationToken cancellationToken)
     {
         var list = await distribution.LoadAsync(cancellationToken);
-        var choices = await bootstrapChoices.LoadAsync(cancellationToken);
-        var descriptors = SystemAppBootstraps.FromDistribution(list.Apps, choices, config).Descriptors
-            .ToDictionary(descriptor => descriptor.AppId, StringComparer.Ordinal);
-
         var statuses = new List<SystemAppBootstrapStatus>(list.Apps.Count);
         foreach (var entry in list.Apps)
         {
-            // One descriptor per entry is guaranteed by FromDistribution's construction; the guard
-            // only keeps a future planner change from turning into a 500 here.
-            statuses.Add(new SystemAppBootstrapStatus(
-                entry,
-                descriptors.TryGetValue(entry.Id, out var descriptor) && descriptor.Enabled,
-                choices?.EnabledFor(entry.Id),
-                await apps.GetAppAsync(entry.Id, cancellationToken)));
+            statuses.Add(new SystemAppBootstrapStatus(entry, await apps.GetAppAsync(entry.Id, cancellationToken)));
         }
 
-        return new SystemAppBootstrapState(list.Source, list.Problems, statuses);
+        return new SystemAppBootstrapState(list.Source, list.Problems, seed.Exists, statuses);
     }
 
-    // Flips one choice at runtime. Enabling reconciles the entry immediately (the exact boot path:
-    // install, provenance, settings, provisioning) and returns an action error when that failed —
-    // the choice itself is still persisted, matching setup's persist-intent semantics. Disabling
-    // only stops future reconciles; the installed app keeps running until explicitly uninstalled.
-    public async Task<string?> SetChoiceAsync(string appId, bool enabled, CancellationToken cancellationToken)
+    // Installs one catalog entry on demand and starts it — the operation behind `hosty setup --with`
+    // and the recovery path for an app the operator removed. Explicit intent overrides the release's
+    // defaultEnabled: asking for an entry by id is the decision. Already installed is a no-op beyond
+    // the start.
+    public async Task InstallAsync(string appId, CancellationToken cancellationToken)
     {
         var list = await distribution.LoadAsync(cancellationToken);
         var entry = list.Apps.FirstOrDefault(candidate => string.Equals(candidate.Id, appId, StringComparison.Ordinal))
@@ -103,203 +129,71 @@ internal sealed class SystemAppBootstrapService(
                 "bootstrap_app_unknown",
                 $"App id '{appId}' is not part of this release's distribution list.");
 
-        await bootstrapChoices.SetEnabledAsync(entry.Id, enabled, cancellationToken);
-        if (!enabled)
-        {
-            return null;
-        }
-
-        var descriptor = (await PlanAsync(list, cancellationToken))
+        var descriptor = SystemAppBootstraps.FromDistribution([entry], config).Descriptors
                 .FirstOrDefault(candidate => string.Equals(candidate.AppId, entry.Id, StringComparison.Ordinal))
             ?? throw new AppLifecycleException(
                 "bootstrap_plan_failed",
-                $"'{entry.Id}' could not be planned from the distribution list.");
-        try
-        {
-            await EnsureInstalledCoreAsync(descriptor, cancellationToken);
-            var app = await apps.GetAppAsync(entry.Id, cancellationToken)
-                ?? throw new AppLifecycleException("bootstrap_install_failed", $"'{entry.Id}' was not installed.");
-            if (!string.Equals(app.RuntimeState, "running", StringComparison.Ordinal))
-            {
-                await lifecycle.StartAsync(entry.Id, cancellationToken);
-            }
+                $"'{entry.Id}' could not be resolved from the distribution list.");
 
-            return null;
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        await EnsureInstalledAsync(descriptor with { Enabled = true }, cancellationToken);
+        var app = await apps.GetAppAsync(entry.Id, cancellationToken)
+            ?? throw new AppLifecycleException("bootstrap_install_failed", $"'{entry.Id}' was not installed.");
+        if (!string.Equals(app.RuntimeState, "running", StringComparison.Ordinal))
         {
-            logger.LogWarning(ex, "Live bootstrap enable for {AppId} did not complete; the choice is saved and the boot reconcile will retry.", appId);
-            return ex is AppLifecycleException lifecycleError ? lifecycleError.Message : ex.Message;
+            await lifecycle.StartAsync(entry.Id, cancellationToken);
         }
     }
 
-    // One-time upgrade migration: a host that already has apps installed but no choices file gets its
-    // current effective state pinned as explicit choices. Without this, a distribution default that
-    // differs from the legacy behavior (e.g. marketplace defaultEnabled) would silently change an
-    // existing install on the first boot after the upgrade. Fresh installs (empty registry) write
-    // nothing and follow the release defaults. A failed install attempt on a fresh host is safe: the
-    // registry only gains records on successful installs, so the entry retries next boot.
-    private async Task MigrateBootstrapChoicesAsync(DistributionAppsResult list, CancellationToken cancellationToken)
+    private async Task<bool> TryEnsureInstalledAsync(SystemAppBootstrapDescriptor descriptor, CancellationToken cancellationToken)
     {
         try
         {
-            if (bootstrapChoices.Exists)
-            {
-                return;
-            }
-
-            var installed = await apps.ListAppRecordsAsync(cancellationToken);
-            if (installed.Count == 0)
-            {
-                return;
-            }
-
-            var legacy = config.Legacy ?? LegacyBootstrapEnv.Empty;
-            var installedIds = installed.Select(app => app.Id).ToHashSet(StringComparer.Ordinal);
-            var pins = new Dictionary<string, BootstrapChoiceEntry>(StringComparer.Ordinal);
-            foreach (var entry in list.Apps)
-            {
-                var legacyEnabled = entry.Id switch
-                {
-                    ShellBootstrap.AppId => legacy.ShellBootstrapEnabled,
-                    CollectorBootstrap.AppId => legacy.ObservabilityEnabled,
-                    MarketplaceBootstrap.AppId when legacy.MarketplaceManifestPathConfigured =>
-                        !string.IsNullOrWhiteSpace(legacy.MarketplaceManifestPath),
-                    _ => null,
-                };
-                pins[entry.Id] = new BootstrapChoiceEntry
-                {
-                    Enabled = installedIds.Contains(entry.Id) || legacyEnabled == true,
-                };
-            }
-
-            if (await bootstrapChoices.SeedIfAbsentAsync(new BootstrapChoicesDocument { Apps = pins }, cancellationToken))
-            {
-                logger.LogInformation(
-                    "Migrated bootstrap choices from the installed state: {Choices}.",
-                    string.Join(", ", pins.Select(pair => $"{pair.Key}={(pair.Value.Enabled == true ? "enabled" : "disabled")}")));
-            }
+            await EnsureInstalledAsync(descriptor, cancellationToken);
+            return true;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // Non-fatal: this boot runs on the synthesized-in-memory equivalent of the defaults; the
-            // migration retries on the next boot.
-            logger.LogWarning(ex, "Bootstrap choices migration did not complete; continuing with release defaults for this boot.");
+            logger.LogWarning(ex, "{DisplayName} was not installed; Core remains available through CLI and control APIs.", descriptor.DisplayName);
+            return false;
         }
     }
 
-    // Generic install-or-reconcile for a distribution-list descriptor. Best-effort by design: a
-    // failure here must never crash the supervisor — Core stays fully usable through CLI and control
-    // APIs, just without the optional system app. The live-enable path (SetChoiceAsync) uses the
-    // throwing core so the caller can surface the error.
-    public async Task EnsureInstalledAsync(SystemAppBootstrapDescriptor descriptor, CancellationToken cancellationToken)
-    {
-        try
-        {
-            await EnsureInstalledCoreAsync(descriptor, cancellationToken);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            logger.LogWarning(ex, "{DisplayName} bootstrap did not complete; Core remains available through CLI and control APIs.", descriptor.DisplayName);
-        }
-    }
-
-    private async Task EnsureInstalledCoreAsync(SystemAppBootstrapDescriptor descriptor, CancellationToken cancellationToken)
+    private async Task EnsureInstalledAsync(SystemAppBootstrapDescriptor descriptor, CancellationToken cancellationToken)
     {
         if (!descriptor.Enabled)
         {
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(descriptor.ManifestPath))
+        if (string.IsNullOrWhiteSpace(descriptor.ManifestPath) && string.IsNullOrWhiteSpace(descriptor.FeedsUrl))
         {
-            logger.LogWarning("{DisplayName} bootstrap skipped because no manifest path or URL was configured.", descriptor.DisplayName);
-            return;
+            throw new AppLifecycleException(
+                "bootstrap_manifest_missing",
+                $"'{descriptor.AppId}' has no manifest reference or feed in the distribution list.");
         }
 
-        var app = await apps.GetAppAsync(descriptor.AppId, cancellationToken);
-        if (app is null)
+        if (await apps.GetAppAsync(descriptor.AppId, cancellationToken) is null)
         {
-            await InstallSystemAppAsync(descriptor, cancellationToken);
-            app = await apps.GetAppAsync(descriptor.AppId, cancellationToken);
-        }
-        else
-        {
-            app = await MigrateManifestReferenceAsync(descriptor, app, cancellationToken);
+            await InstallDistributionAppAsync(descriptor, cancellationToken);
         }
 
-        // Provenance + system flag: the app is installed (or adopted) by the distribution
-        // bootstrap. Stamped after install/reconcile so it covers pre-existing records from
-        // earlier Core versions too; uninstalling a distribution-origin app then records
-        // enabled=false in choices so the next boot does not resurrect it. The system flag is
-        // normalized alongside because the feed install path passes System=false and relies on
-        // the manifest role — which a distribution app is not required to declare.
-        if (app is not null &&
-            (!string.Equals(app.InstallOrigin, AppInstallOrigins.Distribution, StringComparison.Ordinal) || !app.System))
+        // Provenance only. Whether the app is a *system* app is decided by its manifest role on the
+        // normal install path, exactly as for any other install — membership in the distribution list
+        // confers no privilege of its own.
+        if (await apps.GetAppAsync(descriptor.AppId, cancellationToken) is { } app &&
+            !string.Equals(app.InstallOrigin, AppInstallOrigins.Distribution, StringComparison.Ordinal))
         {
             await apps.UpdateAppAsync(
                 descriptor.AppId,
-                record => record with { InstallOrigin = AppInstallOrigins.Distribution, System = true },
+                record => record with { InstallOrigin = AppInstallOrigins.Distribution },
                 cancellationToken);
         }
-
-        if (app is not null && descriptor.Settings is { Count: > 0 })
-        {
-            await lifecycle.ConfigureAsync(descriptor.AppId, new AppConfigureRequest(descriptor.Settings), cancellationToken);
-        }
-
-        // Drop settings the bootstrap has retired. Only touches the record when one is actually present, so
-        // a clean install never takes a needless write. AppRecord.Settings is a positional record parameter
-        // read straight from state.json and nothing enforces its non-null contract at runtime, so it is
-        // guarded the way the registry store reads its own collections (`app.PortAssignments ?? []`) —
-        // doubly worth it here, where a throw would silently skip the whole bootstrap on boot.
-        if (app is not null && descriptor.RetiredSettings is { Count: > 0 } retired)
-        {
-            var present = app.Settings is { } configured
-                ? retired.Where(configured.ContainsKey).ToArray()
-                : [];
-            if (present.Length > 0)
-            {
-                logger.LogInformation(
-                    "{DisplayName}: removing retired bootstrap setting(s) {Settings}.",
-                    descriptor.DisplayName,
-                    string.Join(", ", present));
-                app = (await apps.UpdateAppAsync(
-                    descriptor.AppId,
-                    record => record with
-                    {
-                        Settings = record.Settings is { } existing
-                            ? existing
-                                .Where(pair => !retired.Contains(pair.Key, StringComparer.Ordinal))
-                                .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal)
-                            : record.Settings,
-                    },
-                    cancellationToken)).App;
-            }
-        }
-
-        if (app is not null && descriptor.Autostart is bool configuredAutostart && app.Autostart != configuredAutostart)
-        {
-            await lifecycle.ConfigureAutostartAsync(descriptor.AppId, new AppAutostartRequest(configuredAutostart), cancellationToken);
-        }
-
-        if (app is not null && !string.IsNullOrWhiteSpace(descriptor.SourceOverridePath))
-        {
-            await sources.SetLocalOverrideAsync(
-                descriptor.AppId,
-                new AppSourceOverrideRequest(descriptor.SourceOverridePath),
-                cancellationToken);
-        }
-
-        // Core-owned provisioning (e.g. the collector's config + sink dirs) is no longer a bootstrap
-        // step: it runs on the start path keyed by the manifest's `provides` (PlatformCapabilities),
-        // so it applies to any install path, not just this one.
     }
 
-    // First install of a distribution entry. Entries carrying a feedsUrl go through the digest-bound
-    // feed path (plan + immediate apply) so the record follows the feed and gets the standard update
-    // affordance; entries without one install directly from the resolved manifest ref, as before.
-    private async Task InstallSystemAppAsync(SystemAppBootstrapDescriptor descriptor, CancellationToken cancellationToken)
+    // Entries carrying a feedsUrl go through the digest-bound feed path (plan + immediate apply) so
+    // the record follows the feed and gets the standard update affordance; entries without one
+    // install directly from the resolved manifest ref.
+    private async Task InstallDistributionAppAsync(SystemAppBootstrapDescriptor descriptor, CancellationToken cancellationToken)
     {
         if (!string.IsNullOrWhiteSpace(descriptor.FeedsUrl))
         {
@@ -323,49 +217,40 @@ internal sealed class SystemAppBootstrapService(
         await lifecycle.InstallAsync(new AppInstallRequest(
             ManifestPath: descriptor.ManifestPath!,
             SelectedRuntime: descriptor.Runtime,
-            System: true,
+            // The manifest's role decides, like every other install path.
+            System: false,
             Settings: descriptor.Settings,
             Autostart: descriptor.Autostart,
-            // Started by the boot reconciliation (StartAutostartAppsAsync) in priority order —
-            // not inline here, which would double-start and race other system-app bootstraps.
+            // Started by the boot reconciliation (StartAutostartAppsAsync) in priority order — not
+            // inline here, which would double-start and race the other seeded apps.
             StartOnInstall: false), cancellationToken);
     }
 
-    // Boot never advances an installed system app's code or manifest anymore: content movement behind
-    // the configured reference is picked up by the operator through the normal reviewed update flow
-    // (update-status, plan, apply), exactly like every other runtime app. The one thing boot still
-    // fixes is the *pointer*: when the distribution list's manifestRef itself moved (renamed raw URL,
-    // repository move), the stale URL would otherwise 404 in update-status forever. Rewriting the
-    // stored ManifestUrl is metadata-only — no plan, no artifact movement, no restart.
-    private async Task<AppRecord?> MigrateManifestReferenceAsync(
-        SystemAppBootstrapDescriptor descriptor,
-        AppRecord app,
+    // The one thing boot still applies to an already-installed app, and only in a source tree: the
+    // ambient development source override (HOSTY_SHELL_SOURCE_OVERRIDE_PATH and friends). It is a
+    // pointer to the developer's own checkout, not app content, and is unset on every real host.
+    private async Task ApplyDevelopmentOverridesAsync(
+        IReadOnlyList<SystemAppBootstrapDescriptor> descriptors,
         CancellationToken cancellationToken)
     {
-        // A feed-bound record follows its feed; the distribution manifestRef is not its update source.
-        if (!string.IsNullOrWhiteSpace(app.FeedsUrl))
+        foreach (var descriptor in descriptors.Where(descriptor => !string.IsNullOrWhiteSpace(descriptor.SourceOverridePath)))
         {
-            return app;
-        }
+            if (await apps.GetAppAsync(descriptor.AppId, cancellationToken) is null)
+            {
+                continue;
+            }
 
-        if (!IsHttpManifestReference(descriptor.ManifestPath) ||
-            string.Equals(app.ManifestUrl, descriptor.ManifestPath, StringComparison.Ordinal))
-        {
-            return app;
+            try
+            {
+                await sources.SetLocalOverrideAsync(
+                    descriptor.AppId,
+                    new AppSourceOverrideRequest(descriptor.SourceOverridePath!),
+                    cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning(ex, "Could not apply the development source override for {AppId}.", descriptor.AppId);
+            }
         }
-
-        logger.LogInformation(
-            "{DisplayName} bootstrap migrating manifest reference from {OldReference} to {NewReference}; the app itself is not updated at boot.",
-            descriptor.DisplayName,
-            app.ManifestUrl ?? "(local path)",
-            descriptor.ManifestPath);
-        return (await apps.UpdateAppAsync(
-            descriptor.AppId,
-            record => record with { ManifestUrl = descriptor.ManifestPath },
-            cancellationToken)).App;
     }
-
-    private static bool IsHttpManifestReference(string? manifestPath)
-        => Uri.TryCreate(manifestPath, UriKind.Absolute, out var uri) &&
-            (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
 }

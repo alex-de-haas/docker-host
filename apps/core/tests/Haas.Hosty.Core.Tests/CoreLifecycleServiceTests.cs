@@ -1150,32 +1150,77 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
-    public async Task RemoveAsync_SystemApp_RefusedWithoutControlSurface()
+    public async Task RemoveAsync_SystemApp_RemovesLikeAnyOtherApp()
     {
+        // "system" governs who may see and reach an app, never whether it can be uninstalled — and the
+        // surface making the call makes no difference either.
         var fixture = await LifecycleFixture.CreateAsync();
         var manifestPath = Path.Combine(fixture.Root, "manifest.json");
         await File.WriteAllTextAsync(manifestPath, CreateRoleManifestJson("1.0.0", system: true));
         await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath));
+        Assert.True((await fixture.Apps.GetAppAsync("com.example.roleapp"))!.System);
 
-        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
-            fixture.Service.RemoveAsync("com.example.roleapp", new AppRemoveRequest()));
-
-        Assert.Equal("system_app_remove_requires_control", error.Code);
-        Assert.NotNull(await fixture.Apps.GetAppAsync("com.example.roleapp"));
-    }
-
-    [Fact]
-    public async Task RemoveAsync_SystemApp_AllowedForControlSurface()
-    {
-        var fixture = await LifecycleFixture.CreateAsync();
-        var manifestPath = Path.Combine(fixture.Root, "manifest.json");
-        await File.WriteAllTextAsync(manifestPath, CreateRoleManifestJson("1.0.0", system: true));
-        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath));
-
-        await fixture.Service.RemoveAsync("com.example.roleapp", new AppRemoveRequest(), allowSystemRemoval: true);
+        await fixture.Service.RemoveAsync("com.example.roleapp", new AppRemoveRequest());
 
         Assert.Null(await fixture.Apps.GetAppAsync("com.example.roleapp"));
     }
+
+    [Fact]
+    public async Task GetRemovalImpactAsync_ReportsDeclaredDependents()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var providerPath = Path.Combine(fixture.Root, "provider.json");
+        await File.WriteAllTextAsync(providerPath, CreateRoleManifestJson("1.0.0", system: true));
+        await fixture.Service.InstallAsync(new AppInstallRequest(providerPath));
+        var dependentPath = Path.Combine(fixture.Root, "dependent.json");
+        await File.WriteAllTextAsync(dependentPath, CreateDependentManifestJson("com.example.roleapp"));
+        await fixture.Service.InstallAsync(new AppInstallRequest(dependentPath));
+
+        var impact = await fixture.Service.GetRemovalImpactAsync("com.example.roleapp");
+
+        Assert.True(impact.System);
+        var dependent = Assert.Single(impact.Dependents);
+        Assert.Equal("com.example.dependent", dependent.AppId);
+        Assert.True(dependent.Required);
+        Assert.Contains("provider", dependent.Aliases);
+    }
+
+    [Fact]
+    public async Task GetRemovalImpactAsync_AppNothingDeclaresAgainst_IsEmpty()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifestPath = Path.Combine(fixture.Root, "manifest.json");
+        await File.WriteAllTextAsync(manifestPath, CreateRoleManifestJson("1.0.0", system: false));
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath));
+
+        var impact = await fixture.Service.GetRemovalImpactAsync("com.example.roleapp");
+
+        Assert.False(impact.System);
+        Assert.Empty(impact.Dependents);
+        Assert.Empty(impact.Capabilities);
+    }
+
+    private static string CreateDependentManifestJson(string dependencyId)
+        => $$"""
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.dependent",
+              "name": "Dependent App",
+              "version": "1.0.0",
+              "dependencies": [{
+                "id": "{{dependencyId}}",
+                "required": true,
+                "endpoints": [{ "key": "web", "as": "provider" }]
+              }],
+              "runtimeProfiles": [{ "key": "docker", "type": "docker", "default": true }],
+              "services": [{
+                "key": "app",
+                "runtimes": {
+                  "docker": { "type": "docker", "image": "ghcr.io/example/dependent:1.0.0" }
+                }
+              }]
+            }
+            """;
 
     private static string CreateRoleManifestJson(string version, bool system)
         => $$"""

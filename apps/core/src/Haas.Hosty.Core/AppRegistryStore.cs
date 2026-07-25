@@ -301,7 +301,7 @@ internal sealed record AppRecord(
     // Install provenance: how this record came to exist. "distribution" marks apps installed (or
     // adopted) by the boot bootstrap from the release's distribution list — uninstalling such an app
     // records enabled=false in bootstrap choices so the next boot does not resurrect it. Null means a
-    // user/operator install. Ownership bookkeeping, not privilege (see docs/ideas/generic-bootstrap.md);
+    // user/operator install. Ownership bookkeeping, not privilege (see docs/features/removable-system-apps/);
     // additive/nullable, so no AppStateDocument schema bump.
     string? InstallOrigin = null,
     // Platform capability slots this app fulfills, from the manifest's top-level `provides` (distinct

@@ -49,11 +49,11 @@ import type {
   CoreBackup,
   CoreBackupCleanupApplyResponse,
   CoreBackupCleanupPlan,
-  CoreBootstrapState,
   CoreSettingsState,
   CoreGlobalMount,
   CoreFeedInstallPlan,
   CoreInstallPlan,
+  CoreRemovalImpact,
   CoreRuntimeSwitchPlan,
   CoreStatus,
   CoreUpdatePlan,
@@ -147,9 +147,6 @@ export function ShellClient({
   const [globalMounts, setGlobalMounts] = useState<CoreGlobalMount[]>([]);
   const [sharedMountsOpen, setSharedMountsOpen] = useState(false);
   const [platformOpen, setPlatformOpen] = useState(false);
-  const [platformState, setPlatformState] = useState<CoreBootstrapState | null>(null);
-  const [platformLoading, setPlatformLoading] = useState(false);
-  const [platformError, setPlatformError] = useState<string | null>(null);
   const [coreSettings, setCoreSettings] = useState<CoreSettingsState | null>(null);
   const [coreSettingsError, setCoreSettingsError] = useState<string | null>(null);
   const [coreUpdate, setCoreUpdate] = useState<CoreUpdateStatus | null>(null);
@@ -1139,38 +1136,15 @@ export function ShellClient({
 
   const openSharedMounts = useCallback(() => setSharedMountsOpen(true), []);
 
-  // Platform panel (Extensions): the state loads on open and every toggle returns the full updated
-  // snapshot, so the dialog always renders Core's authoritative view.
+  // Platform panel: Core's own settings, loaded fresh on open.
   const openPlatform = useCallback(async () => {
     setPlatformOpen(true);
-    setPlatformError(null);
-    setPlatformLoading(true);
     setCoreSettingsError(null);
     setCoreSettings(null);
 
     // Opening the platform panel is the operator's "check now" gesture: force a fresh Core update
     // probe (bypassing the TTL cache) so a just-released hotfix surfaces without a CLI trip.
     void loadCoreUpdateStatus(true);
-
-    // The Extensions list and Core settings load independently — one failing must not blank the other.
-    const loadBootstrap = (async () => {
-      try {
-        const response = await fetch(`${coreOrigin}/api/core/bootstrap`, { credentials: "include" });
-        redirectToCoreLoginIfAuthRequired(response, coreOrigin);
-        if (!response.ok) {
-          throw new Error(await readCoreError(response));
-        }
-
-        setPlatformState((await response.json()) as CoreBootstrapState);
-      } catch (error) {
-        if (isAuthRequiredRedirectError(error)) {
-          return;
-        }
-
-        setPlatformState(null);
-        setPlatformError(error instanceof Error ? error.message : "Unable to load the distribution list.");
-      }
-    })();
 
     const loadSettings = (async () => {
       try {
@@ -1191,17 +1165,8 @@ export function ShellClient({
       }
     })();
 
-    await Promise.allSettled([loadBootstrap, loadSettings]);
-    setPlatformLoading(false);
+    await loadSettings;
   }, [coreOrigin, loadCoreUpdateStatus]);
-
-  const togglePlatformApp = useCallback(
-    async (appId: string, enabled: boolean) => {
-      const response = await sendCsrfJson(`${coreOrigin}/api/core/bootstrap/choices`, { appId, enabled });
-      setPlatformState((await response.json()) as CoreBootstrapState);
-    },
-    [coreOrigin, sendCsrfJson],
-  );
 
   const saveCoreSettings = useCallback(
     async (values: Record<string, string>) => {
@@ -1355,6 +1320,24 @@ export function ShellClient({
       await enqueueUpdate(shellApp, shellApp.updateCheck.planDigest);
     }
   }, [appEndpoint, enqueueUpdate, refresh, sendCsrfJson, shellAppId, state.apps]);
+
+  // Advisory preview for the remove panel: what else declares a dependency on this app and who
+  // consumes the platform capabilities it provides. A failure here degrades to "no impact shown"
+  // rather than blocking the removal — Core never gates on it either.
+  const loadRemovalImpact = useCallback(
+    async (appId: string): Promise<CoreRemovalImpact | null> => {
+      const response = await fetch(`${coreOrigin}/api/apps/${encodeURIComponent(appId)}/remove-impact`, {
+        credentials: "include",
+      });
+      redirectToCoreLoginIfAuthRequired(response, coreOrigin);
+      if (!response.ok) {
+        throw new Error(await readCoreError(response));
+      }
+
+      return (await response.json()) as CoreRemovalImpact;
+    },
+    [coreOrigin],
+  );
 
   const removeApp = useCallback(
     // The RemovePanel is itself the confirmation (it names the app, lists the delete-data/backups/source
@@ -1974,6 +1957,7 @@ export function ShellClient({
             onApplyUpdate={applyUpdate}
             onSetFeed={setAppFeed}
             onRemove={removeApp}
+            onLoadRemovalImpact={loadRemovalImpact}
             onRevealSetting={revealAppSetting}
           />
         )}
@@ -1982,13 +1966,9 @@ export function ShellClient({
           open={platformOpen}
           coreVersion={state.status?.version ?? null}
           shellVersion={shellVersion}
-          state={platformState}
-          loading={platformLoading}
-          error={platformError}
           settings={coreSettings}
           settingsError={coreSettingsError}
           onSaveSettings={saveCoreSettings}
-          onToggle={togglePlatformApp}
           onClose={() => setPlatformOpen(false)}
         />
 

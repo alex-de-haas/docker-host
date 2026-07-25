@@ -1,81 +1,134 @@
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
 using System.Text.Json;
 using Haas.Hosty.Cli;
-using Haas.Hosty.Cli.Configuration;
 using Spectre.Console;
 
 namespace Haas.Hosty.Cli.Tests.Commands;
 
+// `hosty setup` performs real installs and uninstalls against a running Core, so every test here
+// drives a stub control plane and asserts on the requests the command actually made.
 public sealed class SetupCommandTests : IDisposable
 {
     private const string RootVariable = "HOSTY_HOME";
-    private const string ListVariable = "HOSTY_DISTRIBUTION_APPS_PATH";
     private readonly string? previousRoot;
-    private readonly string? previousListPath;
     private readonly string rootDirectory;
+
+    // Shell and marketplace installed, telemetry not — the shape every test starts from.
+    private const string CatalogState = """
+        {
+          "source": "test catalog",
+          "problems": [],
+          "seeded": true,
+          "apps": [
+            { "id": "hosty.shell", "title": "Hosty Shell", "defaultEnabled": true, "installed": true, "runtimeState": "running" },
+            { "id": "hosty.telemetry", "title": "Telemetry", "defaultEnabled": false, "installed": false },
+            { "id": "hosty.marketplace", "title": "Marketplace", "defaultEnabled": true, "installed": true, "runtimeState": "running" }
+          ]
+        }
+        """;
 
     public SetupCommandTests()
     {
         previousRoot = Environment.GetEnvironmentVariable(RootVariable);
-        previousListPath = Environment.GetEnvironmentVariable(ListVariable);
         rootDirectory = Path.Combine(Path.GetTempPath(), $"hosty-setup-tests-{Guid.NewGuid():N}");
         Environment.SetEnvironmentVariable(RootVariable, rootDirectory);
-        // Pin the distribution list to a test file: the walk would otherwise find the repository's
-        // own distribution-apps.json (tests run from inside the repo tree).
-        Environment.SetEnvironmentVariable(ListVariable, WriteDistributionList("""
-            {
-              "schemaVersion": "distribution-apps.0.1",
-              "apps": [
-                { "id": "hosty.shell", "title": "Hosty Shell", "manifestRef": "x", "defaultEnabled": true },
-                { "id": "hosty.telemetry", "title": "Telemetry", "manifestRef": "x", "defaultEnabled": false },
-                { "id": "hosty.marketplace", "title": "Marketplace", "manifestRef": "x", "defaultEnabled": true }
-              ]
-            }
-            """));
     }
 
     [Fact]
-    public async Task Setup_WithoutFlagsOnNonInteractiveConsole_FailsWithUsage()
+    public async Task Setup_List_ShowsTheCatalogWithoutChangingAnything()
     {
+        using var server = StartServer();
         var (console, output) = CreateConsole();
 
-        var exitCode = await CommandLine.RunAsync(["setup"], console);
+        var exitCode = await CommandLine.RunAsync(["setup", "--list"], console);
 
-        Assert.Equal(2, exitCode);
-        Assert.Contains("Interactive setup needs a terminal", output.ToString());
+        Assert.Equal(0, exitCode);
+        Assert.Contains("hosty.telemetry", output.ToString());
+        Assert.All(server.Requests, request => Assert.Equal("GET", request.Method));
     }
 
     [Fact]
-    public async Task Setup_Yes_PinsReleaseDefaults()
+    public async Task Setup_With_InstallsTheMissingApp()
     {
-        var (console, output) = CreateConsole();
+        using var server = StartServer();
+        var (console, _) = CreateConsole();
+
+        var exitCode = await CommandLine.RunAsync(["setup", "--with", "hosty.telemetry"], console);
+
+        Assert.Equal(0, exitCode);
+        Assert.Contains(
+            server.Requests,
+            request => request is { Method: "POST", Path: "/control/v1/core/bootstrap/hosty.telemetry/install" });
+    }
+
+    [Fact]
+    public async Task Setup_Without_UninstallsThroughTheOrdinaryRemoveRoute()
+    {
+        using var server = StartServer();
+        var (console, _) = CreateConsole();
+
+        var exitCode = await CommandLine.RunAsync(["setup", "--without", "hosty.marketplace"], console);
+
+        Assert.Equal(0, exitCode);
+        var remove = Assert.Single(server.Requests, request => request.Path == "/control/v1/apps/hosty.marketplace/remove");
+        Assert.Equal("POST", remove.Method);
+        Assert.Contains("\"deleteData\":false", remove.Body.Replace(" ", "", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Setup_DeleteData_PassesTheFlagThrough()
+    {
+        using var server = StartServer();
+        var (console, _) = CreateConsole();
+
+        var exitCode = await CommandLine.RunAsync(
+            ["setup", "--without", "hosty.marketplace", "--delete-data"], console);
+
+        Assert.Equal(0, exitCode);
+        var remove = Assert.Single(server.Requests, request => request.Path == "/control/v1/apps/hosty.marketplace/remove");
+        Assert.Contains("\"deleteData\":true", remove.Body.Replace(" ", "", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Setup_Yes_WithNoDifference_ChangesNothing()
+    {
+        using var server = StartServer();
+        var (console, _) = CreateConsole();
 
         var exitCode = await CommandLine.RunAsync(["setup", "--yes"], console);
 
         Assert.Equal(0, exitCode);
-        var choices = ReadChoicesDocument();
-        Assert.Equal("bootstrap-choices.0.1", choices.GetProperty("schemaVersion").GetString());
-        Assert.True(choices.GetProperty("apps").GetProperty("hosty.shell").GetProperty("enabled").GetBoolean());
-        Assert.False(choices.GetProperty("apps").GetProperty("hosty.telemetry").GetProperty("enabled").GetBoolean());
-        Assert.True(choices.GetProperty("apps").GetProperty("hosty.marketplace").GetProperty("enabled").GetBoolean());
-        // No substring assert on the styled console output: line wrapping re-emits ANSI color codes
-        // mid-path at width-dependent positions. The saved file itself is the observable outcome.
-        Assert.True(File.Exists(ChoicesPath()));
-        Assert.Contains("Saved to", output.ToString());
+        // Confirming the state a host is already in is not a reason to reinstall or remove anything.
+        Assert.All(server.Requests, request => Assert.Equal("GET", request.Method));
     }
 
     [Fact]
-    public async Task Setup_WithAndWithout_AdjustEffectiveSelection()
+    public async Task Setup_FailedInstall_ReportsAndExitsNonZero()
     {
-        var (console, _) = CreateConsole();
+        using var server = StartServer((method, path) => method == "POST"
+            ? (HttpStatusCode.BadRequest, """{"code":"bootstrap_install_failed","message":"manifest unreachable"}""")
+            : (HttpStatusCode.OK, CatalogState));
+        var (console, output) = CreateConsole();
 
-        var exitCode = await CommandLine.RunAsync(
-            ["setup", "--with", "hosty.telemetry", "--without", "hosty.marketplace"], console);
+        var exitCode = await CommandLine.RunAsync(["setup", "--with", "hosty.telemetry"], console);
 
-        Assert.Equal(0, exitCode);
-        var apps = ReadChoicesDocument().GetProperty("apps");
-        Assert.True(apps.GetProperty("hosty.telemetry").GetProperty("enabled").GetBoolean());
-        Assert.False(apps.GetProperty("hosty.marketplace").GetProperty("enabled").GetBoolean());
-        Assert.True(apps.GetProperty("hosty.shell").GetProperty("enabled").GetBoolean());
+        Assert.Equal(1, exitCode);
+        Assert.Contains("hosty.telemetry", output.ToString());
+    }
+
+    [Fact]
+    public async Task Setup_UnknownAppId_FailsListingKnownIds()
+    {
+        using var server = StartServer();
+        var (console, output) = CreateConsole();
+
+        var exitCode = await CommandLine.RunAsync(["setup", "--with", "hosty.unknown"], console);
+
+        Assert.Equal(2, exitCode);
+        Assert.Contains("Unknown app id 'hosty.unknown'", output.ToString());
+        Assert.Contains("hosty.shell", output.ToString());
     }
 
     [Fact]
@@ -91,107 +144,37 @@ public sealed class SetupCommandTests : IDisposable
     }
 
     [Fact]
-    public async Task Setup_UnknownAppId_FailsListingKnownIds()
+    public async Task Setup_WithoutRunningCore_AsksForCoreStart()
     {
-        var (console, output) = CreateConsole();
-
-        var exitCode = await CommandLine.RunAsync(["setup", "--with", "hosty.unknown"], console);
-
-        Assert.Equal(2, exitCode);
-        Assert.Contains("Unknown app id 'hosty.unknown'", output.ToString());
-        Assert.Contains("hosty.shell", output.ToString());
-    }
-
-    [Fact]
-    public async Task Setup_PreservesInertChoicesForUnknownIds()
-    {
-        var choicesPath = ChoicesPath();
-        Directory.CreateDirectory(Path.GetDirectoryName(choicesPath)!);
-        await File.WriteAllTextAsync(choicesPath, """
-            { "schemaVersion": "bootstrap-choices.0.1", "apps": { "hosty.retired": { "enabled": true } } }
-            """);
-        var (console, _) = CreateConsole();
-
-        Assert.Equal(0, await CommandLine.RunAsync(["setup", "--yes"], console));
-
-        var apps = ReadChoicesDocument().GetProperty("apps");
-        Assert.True(apps.GetProperty("hosty.retired").GetProperty("enabled").GetBoolean());
-        Assert.True(apps.GetProperty("hosty.shell").GetProperty("enabled").GetBoolean());
-    }
-
-    [Fact]
-    public async Task Setup_ExistingChoicesOutrankDefaultsInEffectiveBase()
-    {
-        var choicesPath = ChoicesPath();
-        Directory.CreateDirectory(Path.GetDirectoryName(choicesPath)!);
-        await File.WriteAllTextAsync(choicesPath, """
-            { "schemaVersion": "bootstrap-choices.0.1", "apps": { "hosty.marketplace": { "enabled": false } } }
-            """);
-        var (console, _) = CreateConsole();
-
-        // --yes keeps the current effective selection: the marketplace choice stays disabled even
-        // though the release default is enabled.
-        Assert.Equal(0, await CommandLine.RunAsync(["setup", "--yes"], console));
-
-        Assert.False(ReadChoicesDocument().GetProperty("apps").GetProperty("hosty.marketplace").GetProperty("enabled").GetBoolean());
-    }
-
-    [Fact]
-    public async Task Setup_CorruptedChoicesFile_WarnsAndRewrites()
-    {
-        var choicesPath = ChoicesPath();
-        Directory.CreateDirectory(Path.GetDirectoryName(choicesPath)!);
-        await File.WriteAllTextAsync(choicesPath, "{ not json");
         var (console, output) = CreateConsole();
 
         var exitCode = await CommandLine.RunAsync(["setup", "--yes"], console);
 
-        Assert.Equal(0, exitCode);
-        Assert.Contains("could not be parsed", output.ToString());
-        Assert.True(ReadChoicesDocument().GetProperty("apps").GetProperty("hosty.shell").GetProperty("enabled").GetBoolean());
+        Assert.Equal(1, exitCode);
+        Assert.Contains("hosty core start", output.ToString());
     }
 
     [Fact]
-    public async Task Setup_List_ShowsSelectionWithoutWriting()
+    public async Task Setup_WithoutFlagsOnNonInteractiveConsole_FailsWithUsage()
     {
+        using var server = StartServer();
         var (console, output) = CreateConsole();
 
-        var exitCode = await CommandLine.RunAsync(["setup", "--list"], console);
+        var exitCode = await CommandLine.RunAsync(["setup"], console);
 
-        Assert.Equal(0, exitCode);
-        Assert.Contains("hosty.telemetry", output.ToString());
-        Assert.False(File.Exists(ChoicesPath()));
+        Assert.Equal(2, exitCode);
+        Assert.Contains("Interactive setup needs a terminal", output.ToString());
     }
 
-    [Fact]
-    public async Task Setup_InstalledAppWithoutChoices_CountsAsEnabledInEffectiveBase()
+    private FakeCoreServer StartServer(Func<string, string, (HttpStatusCode Status, string Body)>? handler = null)
     {
-        // Mirrors Core's upgrade migration: an installed app is the operator's implicit intent.
-        var statePath = Path.Combine(rootDirectory, "apps", "hosty.telemetry", "state.json");
-        Directory.CreateDirectory(Path.GetDirectoryName(statePath)!);
-        await File.WriteAllTextAsync(statePath, "{}");
-        var (console, _) = CreateConsole();
-
-        Assert.Equal(0, await CommandLine.RunAsync(["setup", "--yes"], console));
-
-        Assert.True(ReadChoicesDocument().GetProperty("apps").GetProperty("hosty.telemetry").GetProperty("enabled").GetBoolean());
-    }
-
-    private string ChoicesPath()
-        => Path.Combine(rootDirectory, "core", "bootstrap-choices.json");
-
-    private JsonElement ReadChoicesDocument()
-    {
-        using var document = JsonDocument.Parse(File.ReadAllText(ChoicesPath()));
-        return document.RootElement.Clone();
-    }
-
-    private string WriteDistributionList(string json)
-    {
-        Directory.CreateDirectory(rootDirectory);
-        var path = Path.Combine(rootDirectory, "test-distribution-apps.json");
-        File.WriteAllText(path, json);
-        return path;
+        var server = new FakeCoreServer(handler ?? ((_, _) => (HttpStatusCode.OK, CatalogState)));
+        var runDirectory = Path.Combine(rootDirectory, "core", "run");
+        Directory.CreateDirectory(runDirectory);
+        File.WriteAllText(
+            Path.Combine(runDirectory, "control.json"),
+            JsonSerializer.Serialize(new { controlBaseUrl = server.ControlBaseUrl }));
+        return server;
     }
 
     private static (IAnsiConsole Console, StringWriter Output) CreateConsole()
@@ -208,11 +191,120 @@ public sealed class SetupCommandTests : IDisposable
     public void Dispose()
     {
         Environment.SetEnvironmentVariable(RootVariable, previousRoot);
-        Environment.SetEnvironmentVariable(ListVariable, previousListPath);
 
         if (Directory.Exists(rootDirectory))
         {
             Directory.Delete(rootDirectory, recursive: true);
+        }
+    }
+
+    internal sealed record RecordedRequest(string Method, string Path, string Body);
+
+    // Serves requests until disposed: setup issues several per run (load state, act, reload state).
+    private sealed class FakeCoreServer : IDisposable
+    {
+        private readonly TcpListener listener;
+        private readonly Func<string, string, (HttpStatusCode Status, string Body)> handler;
+        private readonly List<RecordedRequest> requests = [];
+        private readonly Lock gate = new();
+        private volatile bool stopped;
+
+        public FakeCoreServer(Func<string, string, (HttpStatusCode Status, string Body)> handler)
+        {
+            this.handler = handler;
+            listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            ControlBaseUrl = $"http://127.0.0.1:{port}/control/v1";
+            _ = Task.Run(ServeAsync);
+        }
+
+        public string ControlBaseUrl { get; }
+
+        public IReadOnlyList<RecordedRequest> Requests
+        {
+            get
+            {
+                lock (gate)
+                {
+                    return requests.ToArray();
+                }
+            }
+        }
+
+        public void Dispose()
+        {
+            stopped = true;
+            listener.Stop();
+        }
+
+        private async Task ServeAsync()
+        {
+            while (!stopped)
+            {
+                try
+                {
+                    using var client = await listener.AcceptTcpClientAsync();
+                    await HandleAsync(client);
+                }
+                catch (Exception ex) when (ex is ObjectDisposedException or InvalidOperationException or SocketException or IOException)
+                {
+                    return;
+                }
+            }
+        }
+
+        private async Task HandleAsync(TcpClient client)
+        {
+            await using var stream = client.GetStream();
+            using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 4096, leaveOpen: true);
+            var requestLine = await reader.ReadLineAsync() ?? "";
+            var requestParts = requestLine.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            var method = requestParts.ElementAtOrDefault(0) ?? "";
+            var path = requestParts.ElementAtOrDefault(1) ?? "";
+
+            var contentLength = 0;
+            string? line;
+            while (!string.IsNullOrEmpty(line = await reader.ReadLineAsync()))
+            {
+                var separator = line.IndexOf(':', StringComparison.Ordinal);
+                if (separator > 0 &&
+                    line[..separator].Trim().Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
+                {
+                    _ = int.TryParse(line[(separator + 1)..].Trim(), out contentLength);
+                }
+            }
+
+            var body = "";
+            if (contentLength > 0)
+            {
+                var buffer = new char[contentLength];
+                var read = 0;
+                while (read < contentLength)
+                {
+                    var chunk = await reader.ReadAsync(buffer.AsMemory(read, contentLength - read));
+                    if (chunk == 0)
+                    {
+                        break;
+                    }
+
+                    read += chunk;
+                }
+
+                body = new string(buffer, 0, read);
+            }
+
+            lock (gate)
+            {
+                requests.Add(new RecordedRequest(method, path, body));
+            }
+
+            var (status, responseBody) = handler(method, path);
+            var payload = Encoding.UTF8.GetBytes(responseBody);
+            var header = Encoding.ASCII.GetBytes(
+                $"HTTP/1.1 {(int)status} {status}\r\nContent-Type: application/json\r\nContent-Length: {payload.Length}\r\nConnection: close\r\n\r\n");
+            await stream.WriteAsync(header);
+            await stream.WriteAsync(payload);
         }
     }
 }
