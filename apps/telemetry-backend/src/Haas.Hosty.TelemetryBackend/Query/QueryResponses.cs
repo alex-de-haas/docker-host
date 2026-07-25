@@ -1,9 +1,10 @@
 namespace Haas.Hosty.TelemetryBackend;
 
-// Query-API response shapes. These are the appId-keyed forms Core's read proxy consumes and enriches
-// with each app's display name (AppName) from Core's registry — telemetry identity/display is Core's
-// domain, not the backend's. Otherwise the shapes mirror Core's former observability responses so the
-// proxy is a thin mapping layer. See docs/features/observability/feature.md.
+// Query-API response shapes. These are the appId-keyed forms the telemetry UI's server routes consume
+// and enrich with each app's display name (AppName) from the Core roster — telemetry identity/display
+// is Core's domain, not the backend's. Otherwise the shapes mirror Core's former observability
+// responses, so the UI's mapping layer (apps/telemetry-ui/src/lib/enrich.ts) stays thin. See
+// docs/features/observability/feature.md.
 
 internal sealed record BackendMetricsResponse(
     string AppId,
@@ -15,7 +16,7 @@ internal sealed record BackendOtlpLogsResponse(
     long RangeSeconds,
     IReadOnlyList<OtlpLogRecord> Records);
 
-// One cross-resource OTLP log record, attributed to its source app by id (Core adds the display name).
+// One cross-resource OTLP log record, attributed to its source app by id (the UI adds the display name).
 internal sealed record BackendFleetLogRecord(
     string AppId,
     long TimestampUnixMs,
@@ -33,7 +34,7 @@ internal sealed record BackendFleetLogsResponse(
 
 // One trace in the fleet list, spans collapsed to a summary. Root* describe the root span when stored
 // (HasRootSpan) else the earliest span. Timestamps are fractional unix-ms. AppIds are the contributing
-// apps in first-seen order (Core maps each to a display name).
+// apps in first-seen order (the UI maps each to a display name).
 internal sealed record BackendTraceSummary(
     string TraceId,
     string RootName,
