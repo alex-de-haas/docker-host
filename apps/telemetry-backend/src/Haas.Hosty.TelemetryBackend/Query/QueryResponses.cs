@@ -16,7 +16,7 @@ internal sealed record BackendOtlpLogsResponse(
     long RangeSeconds,
     IReadOnlyList<OtlpLogRecord> Records);
 
-// One cross-resource OTLP log record, attributed to its source app by id (Core adds the display name).
+// One cross-resource OTLP log record, attributed to its source app by id (the UI adds the display name).
 internal sealed record BackendFleetLogRecord(
     string AppId,
     long TimestampUnixMs,
@@ -34,7 +34,7 @@ internal sealed record BackendFleetLogsResponse(
 
 // One trace in the fleet list, spans collapsed to a summary. Root* describe the root span when stored
 // (HasRootSpan) else the earliest span. Timestamps are fractional unix-ms. AppIds are the contributing
-// apps in first-seen order (Core maps each to a display name).
+// apps in first-seen order (the UI maps each to a display name).
 internal sealed record BackendTraceSummary(
     string TraceId,
     string RootName,
