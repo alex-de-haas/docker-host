@@ -1,101 +1,107 @@
-# Feature: Observability (telemetry collection)
+# Feature: Observability (telemetry collection, storage, and UI)
 
-## Goal
+Created: 2026-06-28
+Updated: 2026-07-25
 
-Collect telemetry **from hosted runtime apps** and surface it in Shell, without making Core itself an
-observability backend. Apps are the OpenTelemetry producers; an OTel collector aggregates their OTLP
-push and re-exposes it for Core to read; Core is the read boundary; Shell is the (later) read-only UI.
+Runtime apps export OpenTelemetry to a collector; a Hosty-native **telemetry backend** stores the
+three signals in embedded SQLite and serves a query API; a **telemetry UI** system app renders
+Metrics / Structured logs / Traces. All three run as services of one installable system app,
+`hosty.telemetry`.
 
-This page documents **phases P2, P3, and P4**. P2 is the push path (apps → collector); P3 is Core
-scraping that into an in-memory store, adding Core-collected container infra metrics, and serving a
-metrics read API; **P4 adds OTLP-logs support** (collector `logs` pipeline → Core tails the records
-into their own store → read API) **and the Shell Observability tab** (per-app metric charts + a
-distinct structured OTLP-logs view). The Dashboard fleet heat-map is the remaining follow-up.
+Core is **not** on the telemetry read path. It contributes only what needs host Docker access —
+`docker stats` infra metrics, re-exposed as a Prometheus endpoint the backend scrapes, and the
+on-demand `docker logs` console tail Shell shows per app — plus the lifecycle and wiring that hands
+every producer its endpoint.
 
 ## Non-goals
 
-- **No second dashboard.** Shell is the dashboard; Grafana/SigNoz are deliberately not used. An
-  external backend (long retention, large-scale trace search) is a possible v2 swap that changes only
-  *where the collector exports / where Core reads* — not Shell or the Core API.
-- **No privileged collector.** The collector container is unprivileged. It does **not** mount the
-  Docker socket or host log directories. Container infra metrics (`docker stats`) and log tail
-  (`docker logs`) are collected by **Core itself** in P3, using the host-level Docker access it
-  already has — keeping the default-installed system container free of root-equivalent access.
-- **No per-app ingest authentication in v1.** The collector's OTLP port uses `expose: host`, which
-  binds `0.0.0.0` (so sibling containers reach it via `host.docker.internal`) — meaning it is also
-  reachable from the LAN unless the host firewall blocks it. v1 has no ingest auth and accepts the
-  `service.name` spoof risk among trusted local apps; **run it on a trusted network / firewall the
-  OTLP port** (default 4318) until a shared/per-app ingest secret lands. See [raw ports](raw-ports.md).
-- **No OTLP without a collector.** The collector is itself a docker app, so a fully docker-less host
-  has no collector and no OTLP — it degrades to Core-collected health + process metrics + log tail.
-  When the collector *is* running, both `docker` and `localCommand` apps export to it (the localCommand
-  process runs on the host and reaches the collector's host-published port via the loopback endpoint).
+- **No second dashboard.** Grafana / SigNoz are deliberately not used; the platform's own UI renders
+  the data.
+- **No external OSS telemetry stack.** A TSDB stores only metrics, so adopting one re-lands the
+  three-component (Prometheus + Tempo + Loki) deployment this design rejects. One SQLite covers all
+  three signals behind one query API.
+- **No privileged telemetry container.** Neither the collector nor the backend mounts the Docker
+  socket or host log directories. Infra metrics and console logs come from Core precisely so the
+  default-installed system app stays free of root-equivalent access.
+- **No OTLP without a collector.** The collector is a docker service, so a fully docker-less host has
+  no collector and no OTLP — it degrades to Core's health, process metrics, and console log tail.
+  When the collector *is* running, both `docker` and `localCommand` apps export to it (a
+  `localCommand` process runs on the host and reaches the collector's host-published port over
+  loopback).
+- **Console logs are not stored.** Docker already retains and rotates them; they are read on demand
+  and never duplicated into the backend's database.
 
 ## Architecture
 
-```
-runtime apps ──OTLP/HTTP──▶ OTel collector (Hosty system app) ──Prometheus /metrics──▶ Core ──read API──▶ Shell
-  (opt-in telemetry)         unprivileged container             ──OTLP/JSON logs file──▶ (P3 metrics, P4 logs)
-                                                                  + `docker stats` infra metrics (P3)
+```text
+                             ┌───────────── hosty.telemetry (one system app) ─────────────┐
+runtime apps ──OTLP/HTTP────▶│ collector (otelcol)                                        │
+  (opt-in telemetry)         │   ├─ Prometheus /metrics ─────────scrape────▶ backend      │
+                             │   └─ file sinks: logs.jsonl, traces.jsonl ──tail──▶ backend│
+Core ──docker stats─────────▶│ backend: embedded SQLite + query API ──────────▶ ui        │
+  /api/internal/telemetry/metrics (scraped by the backend)                                │
+                             └────────────────────────────────────────────────────────────┘
+Core ──docker logs (on demand)──────────────────────▶ Shell per-app Console logs dialog
 ```
 
-The collector is installed as a **hidden system app** (`hosty.telemetry`), like the
-Shell. Its manifest (`apps/telemetry/manifest.json`) runs the upstream
-`otel/opentelemetry-collector-contrib` image with two ports:
+The collector is a **dumb funnel, not a store**: it has no query API, no history, no retention beyond
+file rotation, and no app attribution. The backend is what turns that stream into something
+range-queryable, and it owns the durability the funnel lacks.
 
-- `otlp-http` (4318) — **host-exposed and pinned** (`expose: host`, `localPort: 4318`) so sibling
-  containers, which sit on isolated per-app networks, reach it via `host.docker.internal:4318`. The
-  pin keeps the advertised port stable across restarts.
-- `metrics` (9464) — loopback, auto-allocated. Core scrapes it as a host process in P3.
+## The telemetry system app
+
+`apps/telemetry/manifest.json` declares a hidden `role: system` app with `provides:
+["otlp-collector"]` and three services sharing one app-data mount (`/etc/otelcol-contrib`):
+
+| Service | Image | Ports | Role |
+| --- | --- | --- | --- |
+| `collector` | `otel/opentelemetry-collector-contrib` | `otlp-http` 4318 (`expose: host`, pinned `localPort`), `metrics` 9464 (loopback) | receives OTLP, re-exposes metrics, writes the logs/traces file sinks |
+| `backend` | `ghcr.io/alex-de-haas/hosty-telemetry-backend` | `query` 8080 | ingest loops + SQLite store + query API |
+| `ui` | `ghcr.io/alex-de-haas/hosty-telemetry-ui` | `http` 3000 (`public: true`) | the Metrics / Structured logs / Traces pages |
+
+`dependsOn` chains them (`backend` → `collector`, `ui` → `backend`), so each service receives its
+sibling's intra-app URL as `HOSTY_SERVICE_<KEY>_URL`. The OTLP port is host-exposed and pinned
+because sibling containers sit on isolated per-app networks and reach it via
+`host.docker.internal:4318`; the pin keeps the advertised port stable across restarts.
 
 **Core owns the collector config.** It is embedded in Core (`CollectorBootstrap.ConfigYaml`) and
-mounted over the image's default config directory (`/etc/otelcol-contrib`) so the stock `--config`
-entrypoint picks it up. Core writes it (and the sink dirs) on the **start path**, keyed by the
-manifest's `provides: ["otlp-collector"]` platform capability rather than the app id or install path
-(see `PlatformCapabilities` and docs/ideas/generic-bootstrap.md Phase 4) — so the collector is
-provisioned identically whether it was installed by the boot bootstrap, the marketplace, or a direct
-`hosty apps install`, and the config is refreshed on every start. The config is OTLP in →
-Prometheus out for metrics (with `resource_to_telemetry_conversion` so `service.name` / `hosty.app.id`
-become metric labels for P3/P4 attribution) and OTLP in → a rotated newline-delimited JSON **file** out
-for logs (P4) and traces (P6, a separate file so the two signals rotate independently). The sink files
-are written to subdirs of the same mounted app-data dir (`otlp-logs/logs.jsonl`,
-`otlp-traces/traces.jsonl`), which Core tails from the host side. Because the upstream collector image
-is distroless and runs as a non-root UID (10001), Core provisions those sink dirs world-writable on
-Unix at start (`EnsureSystemAppDataSubdirectory`, via the capability provisioner) so the container can
-create and rotate its files in the bind mount; the contents are non-secret telemetry.
+mounted over the image's default config directory, so the stock `--config` entrypoint picks it up.
+Core (re)writes it on the **start path**, keyed by the `otlp-collector` platform capability rather
+than by app id or install path — so the collector is provisioned identically whether it arrived from
+the boot bootstrap, the marketplace, or a direct `hosty apps install`. The config is OTLP in →
+Prometheus out for metrics (with `resource_to_telemetry_conversion`, so `service.name` /
+`hosty.app.id` become metric labels for attribution) and OTLP in → rotated newline-delimited JSON
+files for logs and traces (separate files, so the two signals rotate and tail independently). Because
+the upstream collector image is distroless and runs as a non-root UID, Core provisions the sink dirs
+— and the backend's `store/` dir — world-writable on Unix at start
+(`EnsureSystemAppDataSubdirectory`); the contents are non-secret telemetry.
 
 ## Enabling it
 
-Observability is **off by default** — an install with no telemetry consumer never pulls the collector
-image. The telemetry app is a distribution-list entry (`defaultEnabled: false`), so enabling it is a
-bootstrap choice (docs/ideas/generic-bootstrap.md):
+Observability is **off by default** — an install with no telemetry consumer never pulls the images.
+The telemetry app is a distribution-list entry (`defaultEnabled: false`), so enabling it is a
+bootstrap choice ([generic-bootstrap.md](../../ideas/generic-bootstrap.md)):
 
 ```sh
 hosty setup --with hosty.telemetry   # or the Shell platform panel's Extensions section
 ```
 
-From the Shell, enabling installs and starts the collector immediately; via `hosty setup` the choice
-applies on the next `hosty core start`. Everything downstream follows the app itself: Core's own
-telemetry producers (the docker-stats exposition and `/api/internal/telemetry/metrics` endpoint) run
-whenever the telemetry app is installed and running, and idle otherwise — `HOSTY_OBSERVABILITY_ENABLED`
-is no longer a supported setting. (During the deprecation window an ambient export of it is still
-honored as a legacy bootstrap override that enables the telemetry app, nothing more.) Autostart is
-the normal per-app setting (`HOSTY_COLLECTOR_AUTOSTART` is gone too): the
-first install defaults to autostart on, and the operator's later choice is preserved across boots.
+From Shell, enabling installs and starts the app immediately; via `hosty setup` the choice applies on
+the next `hosty core start`. Core's own producer follows the app: the `docker stats` exposition runs
+whenever the telemetry app is installed and idles (serving empty text) otherwise, so a live enable
+needs no Core restart. `HOSTY_OBSERVABILITY_ENABLED` is not a supported setting — an ambient export
+is honored only as a legacy bootstrap override that enables the telemetry app.
 
-The manifest location resolves from the distribution list. `HOSTY_COLLECTOR_MANIFEST_PATH` has been
-removed from `hosty config`; Core still honors it as an ambient-env-only override for a fork /
-air-gapped mirror, alongside the advanced `HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME` override. Neither is a
-`hosty config` launch setting. The collector's runtime profile is otherwise a normal per-app choice:
-the manifest default (`docker`) when the override is unset, switchable afterwards with
-`hosty apps switch-runtime`.
-
-The collector starts **before** other autostart apps so its OTLP endpoint is resolved and persisted
-before their start-time env injection reads it.
+Autostart is the normal per-app setting: the first install defaults to autostart on, and the
+operator's later choice survives boots. The manifest location resolves from the distribution list;
+`HOSTY_COLLECTOR_MANIFEST_PATH` and `HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME` remain ambient-env-only
+overrides for a fork or air-gapped mirror, not `hosty config` launch settings. The collector starts
+**before** other autostart apps, so its OTLP endpoint is resolved and persisted before their
+start-time env injection reads it.
 
 ## App opt-in
 
-An app opts in with a `telemetry` block in its manifest (additive under `app.0.1`; `docker` and
+An app opts in with a `telemetry` block in its manifest (additive under `app.0.1`; both `docker` and
 `localCommand`):
 
 ```jsonc
@@ -108,207 +114,200 @@ both share `RuntimeTelemetrySettings.BuildEnvironment`), so any OpenTelemetry SD
 app-specific wiring:
 
 - `OTEL_EXPORTER_OTLP_ENDPOINT` — the collector OTLP origin. For a **docker** app the loopback host is
-  rewritten to `host.docker.internal:<port>` (same rewrite as `HOSTY_CORE_ORIGIN`); a **localCommand**
-  app runs on the host and gets the loopback origin unchanged.
+  rewritten to `host.docker.internal:<port>` (the same rewrite as `HOSTY_CORE_ORIGIN`); a
+  **localCommand** app runs on the host and gets the loopback origin unchanged.
 - `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`
 - `OTEL_SERVICE_NAME=<app id>`; `OTEL_RESOURCE_ATTRIBUTES=service.name=…,hosty.app.id=…,hosty.app.service=…`
 - `OTEL_TRACES_SAMPLER=parentbased_traceidratio` with `OTEL_TRACES_SAMPLER_ARG=<sampleRatio>`.
 
-The collector's presence is the gate: when observability is off it is never installed, the endpoint
-resolves to null, and **no `OTEL_*` env is injected** — apps must degrade gracefully and emit nothing.
+The endpoint is the *base* OTLP URL, which every OTel SDK uses for all three signals (`/v1/metrics`,
+`/v1/logs`, `/v1/traces`) — so an app that wants structured logs or traces only enables its
+language's SDK, with no extra Hosty env or manifest field. **An app never learns about the backend**:
+it exports to a URL Core handed it. The collector's presence is the gate — when observability is off
+the endpoint resolves to null, no `OTEL_*` env is injected, and apps degrade to emitting nothing.
 
-## Core read boundary (P3): scrape, infra metrics, read API
+## Signals
 
-P3 makes Core the queryable read boundary. There is no external backend in v1 — Core itself plays the
-"storage" role, turning the collector's push stream into something range-queryable.
+**App metrics.** Apps push OTLP metrics to the collector, which re-exposes them as Prometheus text on
+its loopback `metrics` port. The backend scrapes that URL (pinned in the manifest as
+`HOSTY_TELEMETRY_METRICS_URL`; the `dependsOn` fallback would resolve the collector's *first* port —
+the OTLP receiver — so the explicit pin is required) and attributes each series to its app via the
+promoted `hosty_app_id` label, which is then dropped since the row is already keyed by app.
 
-**In-memory metric store.** `IMetricStore` (`InMemoryMetricStore`) holds a bounded rolling window of
-metric points per `(app, series)` — a 1-hour window, capped per series and per app. It is **pure
-in-memory with no persistence**: a Core restart drops the window, which is acceptable for a live
-metrics view. The interface is the seam for a later durable swap (e.g. `Microsoft.Data.Sqlite`); v1
-keeps Core framework-only.
+**Container infra metrics.** Core runs `docker stats` itself and renders a Prometheus snapshot every
+10 s (`DockerStatsExposition`), attributing each container to its app/service from the `hosty.app.id`
+/ `hosty.app.service` labels Core stamps at run, as `container.cpu.percent`,
+`container.memory.bytes`, and `container.memory.percent`. The backend scrapes it as a **second
+metrics target** at `GET /api/internal/telemetry/metrics`, so infra metrics land in the same store,
+keyed the same way, as app OTLP metrics. This is the universal baseline: it works for every running
+container regardless of instrumentation, and it keeps the telemetry containers unprivileged.
 
-**Two collectors feed the store, on a ~10s `TelemetryScrapeService` loop** (historical v1: the store
-and scrape have since moved into the telemetry backend — see observability-phase-2-backend.md — and
-Core's remaining docker-stats producer keys on the telemetry app being installed):
+That endpoint **requires an app service token**, like every other app→Core route, and rejects a token
+whose app is no longer installed. Any valid app token is accepted — the exposition is host-wide, so
+there is no per-app scoping to enforce, and the token proves only that the caller is an installed
+app. The backend presents its own `HOSTY_APP_SERVICE_TOKEN`, and only to Core — never to the
+collector, which is a third-party image. Living under `/api/internal/` also places the route inside
+the endpoint-authorization harness, which enumerates `/api` routes; the older `/internal` path sat in
+that harness's blind spot, which is how it shipped unauthenticated for months (C-M10 in the
+[2026-07-10 Core review](../../reviews/2026-07-10-core-code-review.md)). The related ingress work is
+[internal-endpoint-exposure](../internal-endpoint-exposure/plan.md).
 
-1. **App metrics** — Core scrapes the collector's loopback Prometheus `/metrics` (a host process
-   reaching the auto-allocated loopback port), parses the exposition text, and attributes each series
-   to its app via the promoted `hosty_app_id` label (then drops that label, since the series is keyed
-   by app). These only flow for apps that opted into telemetry and export OTLP metrics.
-2. **Container infra metrics** — Core runs `docker stats` itself (its host-level Docker access),
-   attributing each container to its app/service via the `hosty.app.id` / `hosty.app.service` labels
-   Core already stamps at run, and records `container.cpu.percent`, `container.memory.bytes`,
-   `container.memory.percent` (labelled with `service`). This is the **universal baseline**: it works
-   for every running container regardless of instrumentation, and keeps the collector unprivileged.
+**OTLP logs** and **traces** ride the collector's `file` exporters. The backend tails each sink every
+tick, resuming from a byte offset persisted in the store's `ingest_state` table (so a restart resumes
+instead of replaying), aligning to whole lines and resetting on rotation, and parses the records with
+tolerant OTLP/JSON walkers. Each record or span is attributed to its app via the `hosty.app.id`
+resource attribute. Spans keep OTLP nanosecond precision in the store; the query API converts to
+fractional unix-milliseconds, since raw nanos exceed the JS safe-integer range.
 
-**Read API.** `GET /api/apps/{id}/metrics?range=<seconds>` (admin session; `range` default 300,
-clamped to the 1-hour window) returns the app's series — name, labels, and timestamped points — over
-the window. A `/control/v1/...` twin exists for the CLI admin plane. The endpoint never fails on "no
-data": observability off, no telemetry, or a stopped app all return an empty series list.
+**Console logs** (`docker logs` stdout/stderr) are a separate stream that is **never merged** with
+OTLP logs. Core serves them on demand from `GET /api/apps/{id}/logs` — no store, no instrumentation,
+every app covered. Shell shows them in a per-app **Console logs** dialog opened from the Installed
+Apps actions menu, gated on the app's `logs` capability, so minimal logs stay reachable even with the
+telemetry app uninstalled or stopped. OTLP logs are the opt-in counterpart: structured records with
+severity, attributes, and `trace_id` / `span_id` correlation, only for apps that wire a logs SDK.
 
-**Console logs** are served by `GET /api/apps/{id}/logs` (`docker logs` tail) and are unchanged. So P3
-adds exactly one new read surface: metrics.
+## Store, retention, and pruning
 
-## OTLP logs read boundary (P4): collector file → Core tail → read API
+The backend's store is **embedded SQLite** (`Microsoft.Data.Sqlite`) at
+`/etc/otelcol-contrib/store/telemetry.db` on the shared app-data mount — one file, no separate server
+process, surviving restarts, and covered by the app-data backup model like any other app file.
 
-P4 adds the second read surface: structured OTLP logs, kept in their **own store, separate from the
-console (`docker logs`) stream**. The collector's `logs` pipeline writes received OTLP logs as
-newline-delimited OTLP/JSON to its sink file; Core's `TelemetryScrapeService` tail loop reads the
-newly-appended lines each tick (`FileLogTailReader` resumes from a byte offset, aligns to whole lines,
-and resets on rotation), parses them with a tolerant `JsonDocument` walker (`OtlpLogsJsonParser`),
-attributes each record to its app via the `hosty.app.id` resource attribute, and records it in an
-in-memory `ILogStore` (`InMemoryLogStore`) — the logs analogue of the metric store (bounded 1-hour
-rolling window, per-app cap, no persistence, the same durable-swap seam).
+The ingest loop ticks every second for the log and trace tails, but **metrics scrape on their own
+~15 s cadence**: the Prometheus exporter re-serves last values on every scrape, so scraping at the
+tail cadence inserted roughly a row per series per second and collapsed retention into hours of prune
+churn. A flat series is additionally skipped rather than re-inserted, with a ~60 s heartbeat so it
+stays legible as live and range queries keep an anchor point.
 
-**Read API.** `GET /api/apps/{id}/otlp-logs?range=<seconds>&severity=<minNumber>&limit=<n>` (admin
-session; a `/control/v1/...` twin exists) returns the app's structured records — timestamp, severity
-(number + text), body, attributes, and trace/span ids — over the window. Like the metrics endpoint it
-never fails on "no data". This stays addressable independently from `…/logs` end to end.
+Retention is a **per-signal age cap plus a global size ceiling** — metrics 14 days, logs and traces
+3 days, ~1 GiB total, all overridable by env. Pruning runs on its own ~1-minute cadence and is
+**budgeted to ~250 ms per tick**: the prune shares the ingest loop and the store lock with the tails,
+so an unbounded pass starves them (on a ceiling-pinned database this produced logs arriving in 3–4
+minute bursts). An in-progress pass resumes on later ticks at roughly a 25 % duty cycle.
 
-## Logs: two separate streams (console vs OTLP)
+## Query API
 
-Hosty keeps **two log streams that are never merged** — they have different shapes, sources, and
-audiences:
+The backend serves appId-keyed reads on its `query` port. All of them answer 200 with an empty result
+rather than failing when there is no data — observability just enabled, an app with no
+instrumentation, and a stopped app all look the same:
 
-1. **Console logs** (`docker logs` stdout/stderr). Collected by **Core** (P3), zero instrumentation,
-   captures *every* app including ones that know nothing about OpenTelemetry. Plain text lines, no
-   severity/attributes, no trace correlation. This is the universal baseline.
-2. **OTLP logs** (OpenTelemetry logs signal). **Opt-in** via the app's OTel logs SDK/appender.
-   Structured records with severity + attributes and — the reason to bother — `trace_id` / `span_id`
-   correlation, so a log line links to its span. Only flows for apps that wire a logs SDK.
+- `GET /api/apps/{appId}/metrics?range=<seconds>` — one app's series (name, labels, timestamped points).
+- `GET /api/apps/{appId}/otlp-logs?range&severity&limit` — one app's structured records.
+- `GET /api/observability/logs?range&severity&limit&apps&q` — records merged across apps, with the
+  severity floor and a case-insensitive body search applied, ordered chronologically and capped
+  across apps.
+- `GET /api/observability/traces?range&limit&apps&q` — the window's spans grouped by trace id into
+  summaries (root span name/kind/app, falling back to the earliest span for a partial trace and
+  flagged via `hasRootSpan`; start, duration, span/error counts, contributing apps), newest first.
+- `GET /api/observability/traces/{traceId}` — every stored span of one trace, merged across apps,
+  each tagged with its source app, ordered by start time. An unknown or aged-out id yields an empty
+  span list, never a 404.
 
-**Transport is already automatic.** The `OTEL_EXPORTER_OTLP_ENDPOINT` we inject is the *base* OTLP
-endpoint, which every OTel SDK uses for all three signals (`/v1/traces`, `/v1/metrics`, `/v1/logs`).
-So an app that wants OTLP logs only has to enable its language's logs SDK — no extra Hosty env or
-manifest field beyond `telemetry.enabled`.
+Traces are fleet-shaped by nature — one distributed trace's spans can come from several apps — so
+unlike metrics and logs they have no per-app twin.
 
-**Receiving and surfacing OTLP logs shipped in P4** (file-tail-from-collector, the shape the plan
-anticipated):
+**This query API carries no auth today, and it is not confined to an internal-only network**: the
+query port is published to host loopback and the collector's OTLP ingest port is host-exposed, so any
+local process can read the fleet's telemetry, and anything that reaches the OTLP port can inject
+spans or metrics attributed to any `hosty.app.id`. Run it on a trusted network and firewall the OTLP
+port (4318). Closing this is tracked in [plan.md](plan.md); until then nothing here may assume a
+trust boundary.
 
-- The collector now has a `logs` pipeline (OTLP → `file`), so OTLP logs are accepted and persisted to
-  the sink file Core tails.
-- Core keeps them in `ILogStore`, separate from the `docker logs` console stream, and serves them at
-  `GET /api/apps/{id}/otlp-logs`.
-- Shell shows them in the Observability tab as a **distinct, structured view** (severity filters,
-  trace-id chips, attribute chips), *never* interleaved with the console-log (`LogsPanel`) view.
+## Telemetry UI
 
-The two streams stay addressable independently end to end (`…/logs` vs `…/otlp-logs`).
+The `ui` service is a Next.js app built on the marketplace system-app pattern. It reads **its own
+backend directly**: its server routes proxy to `HOSTY_SERVICE_BACKEND_URL` and enrich the appId-keyed
+payloads with display names from a generic Core app-token endpoint,
+`GET /api/internal/apps/{appId}/app-directory` — a roster read any app can use, not a
+telemetry-specific contract.
 
-## Traces read boundary (P6): collector file → Core tail → read API
+Its three pages (`/metrics`, `/logs`, `/traces`) appear under Shell's admin **System** nav group,
+driven entirely by the manifest's `ui` block (`entrypoint` + `navigation`), exactly like Marketplace.
+Shell itself contains no observability code: the section, the per-app Observability tab, and Core's
+read proxy were all removed once the UI moved into the app. Console logs are the one telemetry view
+that stayed in Shell, because they run off Core alone.
 
-Traces reuse the exact P4 shape — the collector's `traces` pipeline (formerly a `nop` sink) writes
-received OTLP spans as newline-delimited OTLP/JSON to its own sink file (`otlp-traces/traces.jsonl`);
-Core's `TelemetryScrapeService` tails it each tick with the same reader (`FileLogTailReader`, its own
-byte offset), parses spans with a tolerant walker (`OtlpTracesJsonParser`, sharing the low-level
-OTLP/JSON readers with the logs parser via `OtlpJsonParsing`), attributes each span to its app via the
-`hosty.app.id` resource attribute, and records it in an in-memory `ITraceStore` (`InMemoryTraceStore`)
-— the spans analogue of the log store (bounded 1-hour rolling window, per-app span cap, no
-persistence, the same durable-swap seam). Spans keep OTLP nanosecond precision in the store; the read
-API converts to fractional unix-milliseconds (raw nanos exceed the JS safe-integer range).
+## Design decisions
 
-**Read API.** The read surface is **fleet-shaped from the start** — a distributed trace's spans can
-come from several apps, so unlike metrics/logs there is no per-app twin:
+**Why the store left Core.** Core does not consume telemetry for its own logic — it only re-served it
+— while owning a store in the lifecycle kernel cost a 10 s poll latency, no persistence across
+restarts, and a responsibility off-model relative to the platform's capability-provider split
+([final-hosty-architecture.md](../final-hosty-architecture.md)). The fix was not "delete the store"
+but "move it where it belongs": something has to be queryable, because the collector is a funnel, a
+browser cannot tail `traces.jsonl` or run `docker stats`, and `container → app` attribution is
+host-side knowledge.
 
-- `GET /api/observability/traces?range=<seconds>&limit=<n>&apps=<csv>&q=<substring>` (admin session;
-  `/control/v1` twin) groups the window's spans by trace id across all installed apps (or the `apps`
-  filter) into summaries — root span name/kind/app (falling back to the earliest span for a partial
-  trace, flagged via `hasRootSpan`), wall-clock start + duration, span/error counts, and the
-  contributing apps — ordered newest-first and capped to `limit` **traces**. `q` matches the root name
-  or trace id, case-insensitively.
-- `GET /api/observability/traces/{traceId}` (admin session; `/control/v1` twin) returns every stored
-  span of one trace merged across apps, each tagged with its source app, ordered by start time. An
-  unknown or aged-out trace id yields an empty span list, never a 404.
+**Why Core cannot fully exit.** Infra metrics and console logs fundamentally require host Docker
+access, which only Core has, and the whole split exists to keep the telemetry containers
+unprivileged. Giving the backend `docker.sock` is explicitly rejected — it re-introduces exactly the
+root-equivalent access this design avoids. So Core keeps a thin producer role and loses only the
+store.
 
-Like the other telemetry reads, both endpoints never fail on "no data".
+**Why SQLite over a TSDB.** A TSDB natively stores only metrics (logs need Loki, traces need Tempo),
+so "use a TSDB" re-lands the three-component external stack the non-goals reject; and at single-host
+scale, with a ~15 s cadence and days of retention, its compression and high-cardinality advantages do
+not pay for a second process, a foreign query language, and a separate ops model. SQLite is also
+AOT-clean (`SQLitePCLRaw.bundle_e_sqlite3`) and backs up by copying a file. Its cost — no columnar
+compression, and range-bucketing and eviction written by hand — is small here. Not chosen: a straight
+in-memory lift (still loses data on restart) and DuckDB (immature .NET AOT story, weaker under
+concurrent writes for a write-heavy profile). The store sits behind a store seam, so if *metrics*
+volume ever outgrows it, only metrics need to move.
 
-## Shell Observability tab (P4, superseded)
+**Why writes go direct and reads no longer proxy.** Writes must go direct: routing every app's OTLP
+through Core would re-seat Core on the high-volume data path — the exact thing this design removed —
+and break the standard OTLP contract for no gain. Reads were briefly proxied through Core to reuse
+its admin session gate; once the UI became a system app with its own origin and Hosty identity, the
+proxy was pure indirection and was deleted. The generalized platform rule
+([ai-agent-bridge.md](../ai-agent-bridge.md#authorization-and-delegation)) still holds: a thin Core
+proxy is right only for admin-only, low-volume, request/response reads whose surface already lives in
+Core.
 
-P4 originally shipped a **per-app** Observability tab (recharts metric charts + a structured OTLP-logs
-table) plus a console **Logs** tab in the Installed Apps app-action dialog. Both per-app dialog tabs
-were later **removed** in favour of the cross-resource Observability **section** below — the same read
-surfaces, but host-wide with a resource selector, so the per-app popups were pure duplication. The
-Dashboard **fleet heat-map** remains deferred.
-
-## Shell Observability section (cross-resource)
-
-Shell has a first-class **Observability** group in the sidebar (host-admin only), modelled on the .NET
-Aspire dashboard. Three top-level destinations, each its own route under `/observability` (a "Resources"
-overview was dropped — Installed Apps already covers it):
-
-- **Metrics** (`/observability/metrics`) — a resource selector (All / one app) + 5m/15m/1h range; charts
-  reuse the same `MetricSeriesCard`, fanned out over `GET …/metrics` per selected app.
-- **Console logs** (`/observability/console`) — a resource selector + the `docker logs` tail
-  (`GET …/logs`), kept strictly separate from the OTLP stream.
-- **Structured logs** (`/observability/logs`) — OTLP log records merged across **all** resources into one
-  searchable, severity-filterable stream, backed by the new fleet endpoint below.
-- **Traces** (`/observability/traces`, P6) — recent traces across all resources (resource filter +
-  5m/15m/1h range + name/trace-id search) via `GET /api/observability/traces`; selecting a trace opens
-  an indented **span waterfall** (`GET …/traces/{traceId}`): per-app accent colors, offset/width bars
-  over the trace envelope, error highlighting, and click-to-expand span attributes.
-
-The per-app dialog Observability/Logs tabs were removed (they duplicated this section); the shared
-`MetricSeriesCard` / `OtlpLogTable` components now back only the section pages. Cross-resource metrics
-and console logs deliberately fan out the existing per-app endpoints (no aggregation value in a fleet
-endpoint there — the in-memory stores are per-app keyed and charts render per app anyway). Only the
-structured-logs view needs server-side composition (a single time-merged, globally-ordered,
-globally-capped stream), so it gets one new endpoint.
-
-**Fleet read API.** `GET /api/observability/logs?range=<seconds>&severity=<minNumber>&limit=<n>&apps=<csv>&q=<substring>`
-(admin session; `/control/v1` twin) merges OTLP log records across all installed apps (or the `apps`
-filter), applies the severity floor + a case-insensitive `q` body search, orders chronologically, and
-caps to the most recent `limit` **across apps**. Each record is tagged with its source `appId` +
-`appName` (the stored `OtlpLogRecord` carries neither — attribution happens at the service layer by
-iterating `ListAppRecordsAsync` and querying `ILogStore` per app). Best-effort: an unknown id in `apps`
-is skipped, never a 404. `ILogStore` is unchanged — the cross-app composition lives in
-`CoreLifecycleService.GetFleetOtlpLogsAsync`.
+**Auth model: reuse the platform's, split by direction.** Host-user auth (Core sessions) gates the
+console-log read; app-service tokens gate app→Core routes, including the docker-stats exposition and
+the app-directory roster; app-to-app auth is deliberately absent platform-wide
+([cross-app-dependencies.md](../cross-app-dependencies.md): single-tenant homelab, all installed apps
+trusted), and telemetry inherits that. The unresolved part is a **network** concern, not a token one:
+ingest and the query port ride `host.docker.internal` and host-published ports, so they are
+LAN-reachable, and the platform's planned shared internal-only docker network is what would make "no
+auth on a trusted internal network" actually true. See [raw-ports.md](../raw-ports.md).
 
 ## Key code
 
-- `apps/telemetry/manifest.json` — collector system-app manifest.
-- `apps/core/src/Haas.Hosty.Core/CollectorBootstrap.cs` — app id, container paths, the owned config.
-- `EnsureCollectorInstalledAsync` (`HostyCoreApplication.cs`) — install + config write + autostart.
-- `RuntimeTelemetrySettings.FromManifest` / `RuntimeAppTelemetryManifest` (`RuntimeAppManifest.cs`).
-- `ResolveTelemetryEndpointAsync` (`CoreLifecycleService.cs`) — per-start endpoint resolution.
-- `DockerRuntimeAdapter.BuildTelemetryEnvironment` (`RuntimeAppManifest.cs`) — `OTEL_*` injection.
-- `MetricStore.cs` — `IMetricStore` + `InMemoryMetricStore` rolling-window store (P3).
-- `LogStore.cs` — `ILogStore` + `InMemoryLogStore` rolling-window OTLP-log store (P4).
-- `TraceStore.cs` — `ITraceStore` + `InMemoryTraceStore` rolling-window span store (P6).
-- `PrometheusTextParser.cs` / `DockerStatsParser.cs` — exposition-format and `docker stats` parsers (P3).
-- `OtlpLogsJsonParser.cs` / `OtlpTracesJsonParser.cs` — tolerant OTLP/JSON parsers for the collector
-  file output (P4/P6), sharing the low-level readers in `OtlpJsonParsing.cs`.
-- `TelemetryScrapeService.cs` — the ~10s loop that fills the stores; metrics scrape + `docker stats`
-  (P3) + the `FileLogTailReader` OTLP-logs/-traces tails (P4/P6).
-- `CoreLifecycleService.GetMetricsAsync` / `GetOtlpLogsAsync` / `GetFleetOtlpLogsAsync` /
-  `GetFleetTracesAsync` / `GetTraceAsync` + the `…/metrics`, `…/otlp-logs`,
-  `/api/observability/logs`, and `/api/observability/traces[/{traceId}]` endpoints in
-  `LifecycleEndpoints.cs`.
-- `apps/shell/src/app/shell/observability/` — shared `MetricSeriesCard` + `OtlpLogTable` components
-  (extracted from the removed per-app `observability-panel.tsx`; now used only by the section pages).
-- `apps/shell/src/app/shell/pages/observability/` — the cross-resource Metrics / Console logs /
-  Structured logs / Traces pages; routed via `apps/shell/src/app/observability/*` + `shell-routes.ts`.
+- `apps/telemetry/manifest.json` — the three-service system-app manifest, endpoints, and `ui` block.
+- `apps/core/src/Haas.Hosty.Core/CollectorBootstrap.cs` — app id, container paths, the owned collector
+  config, and the capability provisioner.
+- `apps/core/src/Haas.Hosty.Core/DockerStatsExposition.cs` — the `docker stats` producer loop and its
+  Prometheus snapshot; `DockerStatsParser.cs` parses the CLI output.
+- `apps/core/src/Haas.Hosty.Core/LifecycleEndpoints.cs` — `GET /api/internal/telemetry/metrics` (app
+  service token required) and `GET /api/apps/{id}/logs` (console tail).
+- `apps/core/src/Haas.Hosty.Core/DomainEndpoints.cs` — `GET /api/internal/apps/{appId}/app-directory`,
+  the roster the UI labels appIds from.
+- `RuntimeTelemetrySettings.FromManifest` / `BuildTelemetryEnvironment` (`RuntimeAppManifest.cs`) —
+  manifest opt-in and `OTEL_*` injection; `ResolveTelemetryEndpointAsync` (`CoreLifecycleService.cs`)
+  resolves the endpoint per start.
+- `apps/telemetry-backend/src/Haas.Hosty.TelemetryBackend/` — `TelemetryBackendOptions.cs` (env
+  contract, cadences, retention), `Ingest/TelemetryIngestService.cs` (scrape + tails + budgeted
+  prune), `Ingest/MetricDeduplicator.cs`, `Telemetry/SqliteTelemetryStore.cs`, `Query/`, and
+  `Program.cs` (the query routes).
+- `apps/telemetry-ui/src/lib/backend.ts` / `roster.ts` — backend URL resolution and appId→name
+  labelling; `src/app/api/**` — the UI's proxy routes; `src/app/{metrics,logs,traces}` — the pages.
+- `apps/shell/src/app/shell/dialogs/app-details-dialog.tsx` — the per-app Console logs dialog, opened
+  from `installed-apps-page.tsx` and gated on the `logs` capability.
 
-## Roadmap (later phases)
+## Testing Expectations
 
-- **P3 (done)** — Core scrapes the collector `/metrics` into an in-memory `IMetricStore` and collects
-  container infra metrics (`docker stats`) itself; read API `GET /api/apps/{id}/metrics?range`.
-- **P4 (done)** — **OTLP-logs support**: a `logs` pipeline in the collector config (OTLP → `file`),
-  a Core tail path (`FileLogTailReader` → `OtlpLogsJsonParser` → `ILogStore`) that stores OTLP logs as
-  their **own stream separate from the console (`docker logs`) stream**, read API
-  `GET /api/apps/{id}/otlp-logs?range&severity&limit`; **plus the Shell Observability tab** — per-app
-  metric charts and a distinct, structured OTLP-logs view (severity filters, trace-id chips), never
-  interleaved with console logs.
-- **P5 (done)** — the cross-resource **Observability section** in Shell (Aspire-style): Metrics /
-  Console logs / Structured logs as first-class destinations, reusing the per-app read surfaces, plus
-  one new fleet endpoint `GET /api/observability/logs` for cross-app structured-logs search/merge.
-  (A "Resources" overview was considered but dropped — Installed Apps already covers it.) Traces
-  deliberately out of scope.
-- **P6 (done)** — **traces**: a real collector sink replacing `nop` (`file/traces` →
-  `otlp-traces/traces.jsonl`), a Core tail path (`FileLogTailReader` → `OtlpTracesJsonParser` →
-  `ITraceStore`), fleet read APIs `GET /api/observability/traces` (trace summaries) +
-  `GET /api/observability/traces/{traceId}` (span detail), and the Shell **Traces** page — a
-  cross-resource trace list opening into a span waterfall.
-- **Later** — the Dashboard **fleet heat-map** (+ a Core fleet-summary endpoint); per-app OTLP ingest
-  auth; trace→log correlation links in the UI (the data is already there: OTLP log records carry
-  trace/span ids); external backend (SigNoz / Prometheus + Tempo + Loki) swap (changes only where the
-  collector exports / where Core reads).
+- **Collector config and bootstrap.** The provisioner writes the config and creates the logs, traces,
+  and store subdirectories, keyed off the `otlp-collector` capability rather than an app id.
+- **`OTEL_*` injection.** Opt-in manifests produce the full env set in both the docker
+  (`host.docker.internal`) and localCommand (loopback) endpoint forms; an app that has not opted in,
+  or a host with no resolvable collector endpoint, produces none.
+- **Core producer.** `DockerStatsExposition` renders the three `container.*` series with app/service
+  attribution, idles as empty text when the telemetry app is absent, and survives a docker-less host.
+  The exposition endpoint rejects a missing, invalid, or uninstalled-app token with 401 and serves a
+  valid one — the regression guard for the "internal means safe" class of mistake — and the
+  endpoint-authorization harness must keep enumerating the route.
+- **Backend ingest.** Prometheus parsing (including dotted metric names), OTLP/JSON log and span
+  parsing, tail resumption across offsets and rotation, and the metric deduplicator's unchanged-skip
+  plus heartbeat behaviour.
+- **Backend store and query.** Schema init, per-signal retention and the size ceiling, prune
+  resumption across budget slices, and every query shape returning an empty result — never an error —
+  for unknown apps, empty windows, and unknown trace ids.

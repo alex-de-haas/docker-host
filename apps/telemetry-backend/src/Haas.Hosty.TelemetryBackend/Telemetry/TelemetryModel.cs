@@ -3,7 +3,7 @@ namespace Haas.Hosty.TelemetryBackend;
 // Shared telemetry record types — the same shapes Core used to hold in its in-memory stores, now
 // persisted in SQLite and returned by the query API. Copied from Core (MetricStore/LogStore/TraceStore)
 // so the backend serves byte-identical shapes to what Core's read proxy forwards. See
-// docs/features/observability-phase-2-backend.md.
+// docs/features/observability/feature.md.
 
 // A single recorded metric value at a point in time (epoch-millis so clients render a time axis
 // without re-deriving it).

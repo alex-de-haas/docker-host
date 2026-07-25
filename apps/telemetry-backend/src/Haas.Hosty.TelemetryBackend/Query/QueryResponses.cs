@@ -3,7 +3,7 @@ namespace Haas.Hosty.TelemetryBackend;
 // Query-API response shapes. These are the appId-keyed forms Core's read proxy consumes and enriches
 // with each app's display name (AppName) from Core's registry — telemetry identity/display is Core's
 // domain, not the backend's. Otherwise the shapes mirror Core's former observability responses so the
-// proxy is a thin mapping layer. See docs/features/observability-phase-2-backend.md.
+// proxy is a thin mapping layer. See docs/features/observability/feature.md.
 
 internal sealed record BackendMetricsResponse(
     string AppId,
