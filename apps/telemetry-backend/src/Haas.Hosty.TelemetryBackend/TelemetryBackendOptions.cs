@@ -53,7 +53,10 @@ internal sealed record TelemetryBackendOptions
     public TimeSpan TracesRetention { get; init; } = TimeSpan.FromDays(3);
     public long MaxDatabaseBytes { get; init; } = 1L * 1024 * 1024 * 1024; // ~1 GiB
 
-    // The HTTP port the query API listens on (internal-network only; reached by Core's read proxy).
+    // The HTTP port the query API listens on. Its reader is the telemetry UI, which calls this API
+    // directly from its server routes (sibling-service DNS on the per-app docker network, injected as
+    // HOSTY_SERVICE_BACKEND_URL) — Core is off the read path. The port is NOT internal-network-only:
+    // it is also container-published to host loopback. See the SECURITY note in Program.cs.
     public int QueryPort { get; init; } = 8080;
 
     // Builds options from the process environment. Defaults keep a bare `dotnet run` (dev localCommand
