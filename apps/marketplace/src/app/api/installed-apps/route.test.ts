@@ -42,15 +42,8 @@ describe("Marketplace installed-apps routes", () => {
     expect(upstream).not.toHaveBeenCalled();
   });
 
-  it("rejects an active non-admin identity", async () => {
-    vi.stubEnv("HOSTY_APP_SERVICE_TOKEN", "service-token");
-    vi.stubEnv("HOSTY_CORE_ORIGIN", "http://core.local:7070");
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
-      active: true,
-      appId: "hosty.marketplace",
-      userId: "user@example.test",
-      hostRole: "host.user",
-    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+  it("rejects an active non-admin identity on the roster route", async () => {
+    const upstream = stubNonAdminIdentity();
 
     const response = await getInstalledApps(new Request("http://marketplace.local/api/installed-apps", {
       headers: { cookie: `${appIdentityCookieName}=identity-token` },
@@ -58,5 +51,36 @@ describe("Marketplace installed-apps routes", () => {
 
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toMatchObject({ code: "system_app_admin_required" });
+    // Only the identity revalidation — the roster call never follows a failed gate.
+    expect(upstream).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects an active non-admin identity on the update-status route", async () => {
+    const upstream = stubNonAdminIdentity();
+
+    const response = await getUpdateStatus(
+      new Request("http://marketplace.local/api/installed-apps/com.example.notes/update-status", {
+        headers: { cookie: `${appIdentityCookieName}=identity-token` },
+      }),
+      { params: Promise.resolve({ id: "com.example.notes" }) },
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({ code: "system_app_admin_required" });
+    expect(upstream).toHaveBeenCalledTimes(1);
   });
 });
+
+/** An active session whose Host role is below the administrator gate. */
+function stubNonAdminIdentity() {
+  vi.stubEnv("HOSTY_APP_SERVICE_TOKEN", "service-token");
+  vi.stubEnv("HOSTY_CORE_ORIGIN", "http://core.local:7070");
+  const upstream = vi.fn(async () => new Response(JSON.stringify({
+    active: true,
+    appId: "hosty.marketplace",
+    userId: "user@example.test",
+    hostRole: "host.user",
+  }), { status: 200, headers: { "Content-Type": "application/json" } }));
+  vi.stubGlobal("fetch", upstream);
+  return upstream;
+}
