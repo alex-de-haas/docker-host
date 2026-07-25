@@ -1,7 +1,7 @@
 # Marketplace System App
 
 Created: 2026-06-25
-Updated: 2026-07-11
+Updated: 2026-07-25
 
 ## Description
 
@@ -71,6 +71,10 @@ Catalog entries do not contain inline `feeds[]`, resolved manifests, installed v
 
 The Marketplace manifest declares a strict `ui.entrypoint` and administrator navigation. Shell lists it through the generic System Apps UI and opens it in the existing app-origin iframe flow. Core issues a one-time app authorization code; Marketplace exchanges it, creates its own HTTP-only app session, and revalidates identity using the standard runtime-app service token contract.
 
+Every Marketplace API route is gated on that identity: the shared authorization check requires an `active` session whose `hostRole` is `host.admin`, and it runs before the route resolves any data. A missing token is `401 app_identity_required`, an active non-admin is `403 system_app_admin_required`, and an unreachable or misconfigured Core is `503`. The gate covers the catalog routes and the two installed-state routes alike — the installed-app id roster and per-app update availability are host state, so they never leave the Marketplace origin without an administrator session, and an unauthorized request is refused before Marketplace spends its service token on Core.
+
+Storefront clients treat those refusals as missing data rather than errors: an unauthorized installed-state response leaves the installed set empty and update availability at "no update", so the catalog still renders without install badges. This is the same degradation Marketplace applies when Core is unreachable.
+
 The storefront supports search/filtering, catalog cards, detail metadata, feed choices, description rendering, source diagnostics, and install actions. It renders catalog facts only; it does not join Core registry state into its responses.
 
 ## Install Handoff
@@ -121,8 +125,35 @@ Marketplace supports a Docker runtime and a Core-managed `dev` local-command run
 
 ## Links
 
-- [Runtime App Repository Feeds](catalog-hosted-app-feeds.md)
-- [Runtime App Manifest](runtime-app-manifest.md)
-- [Direct-Origin Runtime App UI](direct-origin-runtime-app-ui.md)
-- [Shell Access And System Apps](shell-access-and-system-apps.md)
-- [Marketplace As A System App idea](../ideas/marketplace-system-app.md)
+- [Runtime App Repository Feeds](../catalog-hosted-app-feeds.md)
+- [Runtime App Manifest](../runtime-app-manifest.md)
+- [Direct-Origin Runtime App UI](../direct-origin-runtime-app-ui.md)
+- [Shell Access And System Apps](../shell-access-and-system-apps.md)
+- [Marketplace As A System App idea](../../ideas/marketplace-system-app.md)
+
+## Testing Expectations
+
+- **Route authorization.** Every API route on the Marketplace origin is covered by a test that calls
+  the handler without a session and asserts `401 app_identity_required`, and the installed-state
+  routes additionally assert that no upstream Core call is attempted — the regression guard for the
+  "it only proxies, so it needs no gate" class of mistake that left the installed-app roster and
+  update-status routes open. An active non-admin identity must produce `403
+  system_app_admin_required`, never data.
+- **Identity resolution.** A missing cookie resolves without calling Core; a present cookie is
+  revalidated with the app service token; an identity issued for another app fails closed. The
+  app-code exchange establishes an HttpOnly app-origin cookie and switches to `SameSite=None;
+  Secure` behind an HTTPS gateway.
+- **Core response parsing.** Installed-app ids and update status are extracted strictly — non-string
+  ids, non-boolean flags, and malformed payloads degrade to an empty roster and "no update" rather
+  than propagating.
+- **Catalog projection.** Catalog cards normalize and sort without installed-state projections, keep
+  the first duplicate app id case-insensitively, and never resolve a feed to a manifest or call
+  Core. An unconfigured, invalid, or unavailable source is reported, not thrown.
+- **Untrusted input.** The source URL setting rejects local paths, non-HTTP schemes, and embedded
+  credentials; description markdown resolves relative references against the description folder and
+  rejects `javascript:`, `data:`, `file:`, and credential-bearing URLs; catalog fetches refuse hosts
+  that resolve to private addresses.
+- **Install handoff.** The intent message is the exact versioned shape, omits `feedId` rather than
+  sending null, bounds the feed id, and posts only to the resolved embedding origin — never a
+  wildcard, and never when unembedded. The remembered parent origin survives a self-reload that
+  rewrites the referrer to Marketplace's own origin.

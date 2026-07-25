@@ -359,7 +359,7 @@ to verify the catalog-independent path.
 
 ## Links
 
-- [Marketplace System App](runtime-app-marketplace.md) — current catalog and storefront ownership.
+- [Marketplace System App](runtime-app-marketplace/feature.md) — current catalog and storefront ownership.
 - [Runtime app manifest](runtime-app-manifest.md) — `catalogMetadata` section
   to update when A1 ships.
 - [`hosty-catalog`](https://github.com/alex-de-haas/hosty-catalog) — publish
