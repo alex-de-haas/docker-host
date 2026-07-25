@@ -26,7 +26,7 @@ internal readonly record struct TableSizeEstimate(string Table, long Rows, long 
 // query API serves. One serialized connection guards all access — writes are small batch inserts each
 // ingest tick and reads are occasional admin queries, so contention is negligible at homelab scale.
 // Retention (per-signal age caps + a global size ceiling) keeps the file bounded, which is what lets an
-// embedded SQLite stand in for a TSDB. See docs/features/observability-phase-2-backend.md.
+// embedded SQLite stand in for a TSDB. See docs/features/observability/feature.md.
 internal sealed class SqliteTelemetryStore : IDisposable
 {
     private readonly TelemetryBackendOptions options;

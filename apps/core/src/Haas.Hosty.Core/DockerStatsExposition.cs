@@ -12,7 +12,7 @@ namespace Haas.Hosty.Core;
 // telemetry app being installed — the flag that used to control this folded into the bootstrap
 // choice (generic-bootstrap.md), so a live enable starts stats flowing without a Core restart —
 // and best-effort: a docker-less host simply exposes nothing.
-// See docs/features/observability-phase-2-backend.md.
+// See docs/features/observability/feature.md.
 internal sealed class DockerStatsExposition(
     AppRegistryStore apps,
     IDockerCommandRunner dockerRunner,

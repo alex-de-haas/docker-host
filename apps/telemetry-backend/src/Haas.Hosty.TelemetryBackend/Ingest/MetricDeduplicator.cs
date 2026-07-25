@@ -7,7 +7,7 @@ namespace Haas.Hosty.TelemetryBackend;
 // flat most of the time. A flat series is still re-recorded once it has gone `heartbeatMs` without a
 // write, so it stays legible as "live" and range queries keep an anchor point; a zero heartbeat disables
 // the skip entirely (records every scrape). Stateful across scrapes and not thread-safe — the single
-// ingest loop owns one instance. See docs/features/observability-phase-2-backend.md (T-H2).
+// ingest loop owns one instance. See docs/features/observability/feature.md (T-H2).
 internal sealed class MetricDeduplicator
 {
     // Upper bound on tracked series. Distinct series is normally in the hundreds, but app reinstalls

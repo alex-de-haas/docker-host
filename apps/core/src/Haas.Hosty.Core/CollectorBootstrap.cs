@@ -7,7 +7,7 @@ namespace Haas.Hosty.Core;
 // the config: it is written into the collector's app-data dir at bootstrap and mounted over the
 // image's default config directory, so the stock `--config /etc/otelcol-contrib/config.yaml`
 // entrypoint picks it up. Embedded here (not a repo file) so a stripped binary deployment still has
-// it, matching how Core inlines its other bootstrap templates. See docs/features/observability.md.
+// it, matching how Core inlines its other bootstrap templates. See docs/features/observability/feature.md.
 internal static class CollectorBootstrap
 {
     // Stable app id of the collector system app (referenced by the supervisor bootstrap and by the
@@ -80,7 +80,7 @@ internal static class CollectorBootstrap
     public const string ConfigYaml = """
         # Hosty telemetry collector configuration — authored and owned by Core.
         # Do not edit in place: Core rewrites this file from CollectorBootstrap.ConfigYaml on every
-        # start. See docs/features/observability.md.
+        # start. See docs/features/observability/feature.md.
         receivers:
           otlp:
             protocols:

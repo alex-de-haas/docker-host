@@ -2562,7 +2562,7 @@ internal sealed class DockerRuntimeAdapter(
     // (the same rewrite as HOSTY_CORE_ORIGIN) so the container reaches the host-published OTLP port —
     // the localCommand adapter, whose process runs on the host, uses the loopback endpoint unchanged.
     // Empty when telemetry is disabled or no endpoint resolved. No bearer token in v1: per-app ingest
-    // auth is deferred (host-internal bind). See docs/features/observability.md.
+    // auth is deferred (host-internal bind). See docs/features/observability/feature.md.
     internal static IReadOnlyList<string> BuildTelemetryEnvironment(RuntimeLifecycleContext context, string serviceKey)
     {
         var settings = RuntimeTelemetrySettings.FromManifest(context.Manifest.Manifest.Telemetry);
@@ -2767,7 +2767,7 @@ internal sealed record RuntimeRestartPolicy(string Mode, int MaxRetries, int Bac
 // Declares whether this app exports OpenTelemetry to the Hosty collector and at what trace sample
 // ratio. Opt-in: absent or enabled=false means no OTEL_* environment is injected (the app produces
 // no OTLP). Additive under schemaVersion app.0.1. Both the docker and localCommand runtimes act on
-// this (see observability.md), differing only in the collector endpoint host they inject (container
+// this (see observability/feature.md), differing only in the collector endpoint host they inject (container
 // host.docker.internal vs host loopback). sampleRatio applies to traces (head-based).
 internal sealed record RuntimeAppTelemetryManifest
 {

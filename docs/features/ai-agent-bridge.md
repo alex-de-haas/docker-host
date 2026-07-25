@@ -222,7 +222,7 @@ Initial Core MCP tools could include:
 
 Discovery responses must resolve app MCP origins from the caller's vantage point: external ingress/host-published origins for remote clients, internal origins for on-host clients — the same resolution browser login already performs. If an app is browser-reachable from a client machine, its `/mcp` must be reachable too.
 
-Read-only observability tools (`query_logs`, `get_trace`, health surfaced in `list_apps`) are a good early addition behind admin-scoped tokens: they enable the diagnostic-agent scenario (investigate an unhealthy host from chat, zero approvals) before any write surface exists. Once the telemetry backend system app ships ([observability-phase-2-backend.md](observability-phase-2-backend.md)), it can declare its own `mcp` interface and own those query tools like any other app — the connector aggregates it automatically.
+Read-only observability tools (`query_logs`, `get_trace`, health surfaced in `list_apps`) are a good early addition behind admin-scoped tokens: they enable the diagnostic-agent scenario (investigate an unhealthy host from chat, zero approvals) before any write surface exists. The telemetry backend system app ([observability](observability/feature.md)) can declare its own `mcp` interface and own those query tools like any other app — the connector aggregates it automatically.
 
 Administrative or development tools can be added later behind stronger authorization, such as source checkout discovery, branch/PR workflow creation, isolated-validation coordination, lifecycle planning, or update review. Those tools should remain explicit and approval-gated.
 
@@ -313,7 +313,7 @@ The request should be provider-neutral and capability-oriented rather than a dir
 
 Shell session authorization establishes who the actor is when Shell calls an AI Gateway system app. It should not become the credential used by the agent or the app.
 
-Decided (2026-07-11) — when Core proxies and when tokens are used. The platform-wide rule, shared with [observability-phase-2-backend.md](observability-phase-2-backend.md):
+Decided (2026-07-11) — when Core proxies and when tokens are used. The platform-wide rule, shared with [observability](observability/feature.md):
 
 - Admin-only + low-volume + request/response + a surface that already lives in Core → a thin Core proxy twin is acceptable (telemetry reads).
 - Per-user, or streaming, or high-volume, or externally reachable → direct endpoint + short-lived Core-issued token validated by the receiver. All agent-bridge traffic (Shell → ai-gateway chat, app → gateway generate, agent clients → app MCP) is in this class. Core stays the sole identity and registry authority but is out of the request path; it injects the token verification key into system apps the same way it injects `OTEL_EXPORTER_OTLP_ENDPOINT`, so the control plane remains fully Core-owned while only data-plane bytes go direct.

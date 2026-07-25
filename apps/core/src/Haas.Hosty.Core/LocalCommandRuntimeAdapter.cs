@@ -514,7 +514,7 @@ internal sealed class LocalCommandRuntimeAdapter(
         // OTLP telemetry: the localCommand process runs on the host, so it reaches the collector's
         // host-published OTLP port via the loopback endpoint unchanged (no host.docker.internal rewrite
         // the docker adapter applies). Gated on the manifest opting in and a resolved collector
-        // endpoint — emits nothing otherwise. See docs/features/observability.md.
+        // endpoint — emits nothing otherwise. See docs/features/observability/feature.md.
         foreach (var telemetry in RuntimeTelemetrySettings
             .FromManifest(context.Manifest.Manifest.Telemetry)
             .BuildEnvironment(context.TelemetryEndpoint, context.App.Id, service.Key))

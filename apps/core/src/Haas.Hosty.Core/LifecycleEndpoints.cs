@@ -487,7 +487,7 @@ internal static class LifecycleEndpoints
         // exposition is host-wide, so there is no per-app scoping to enforce, and the token proves only
         // that the caller is an installed app. Living under /api/internal/ also puts it inside the
         // endpoint-authorization harness, which enumerates /api routes — the old /internal path sat in
-        // its blind spot. See docs/features/observability-phase-2-backend.md.
+        // its blind spot. See docs/features/observability/feature.md.
         app.MapGet("/api/internal/telemetry/metrics", async (
             HttpRequest request,
             AppServiceTokenService serviceTokens,

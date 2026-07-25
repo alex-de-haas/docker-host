@@ -4,7 +4,7 @@ namespace Haas.Hosty.TelemetryBackend;
 // and enrich with each app's display name (AppName) from the Core roster — telemetry identity/display
 // is Core's domain, not the backend's. Otherwise the shapes mirror Core's former observability
 // responses, so the UI's mapping layer (apps/telemetry-ui/src/lib/enrich.ts) stays thin. See
-// docs/features/observability-phase-2-backend.md.
+// docs/features/observability/feature.md.
 
 internal sealed record BackendMetricsResponse(
     string AppId,

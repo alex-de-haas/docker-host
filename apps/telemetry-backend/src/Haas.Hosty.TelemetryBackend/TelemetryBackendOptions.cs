@@ -5,7 +5,7 @@ namespace Haas.Hosty.TelemetryBackend;
 // Runtime configuration for the telemetry backend, resolved from the environment Hosty Core injects at
 // start. The backend runs as a service inside the telemetry-backend system app alongside the otelcol
 // collector; it ingests from the collector (Prometheus scrape + the file sinks on the shared volume)
-// into an embedded SQLite store and serves a query API. See docs/features/observability-phase-2-backend.md.
+// into an embedded SQLite store and serves a query API. See docs/features/observability/feature.md.
 internal sealed record TelemetryBackendOptions
 {
     // Embedded SQLite database file. Persistent (survives restarts) — the whole point of Phase 2.
