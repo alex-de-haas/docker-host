@@ -200,7 +200,7 @@ This is not recommended.
 ## Conflicts With Existing Features
 
 - [Core Extension Model](core-extension-model.md) previously described Marketplace as proposal-scoped. The confirmed boundary requires no Core privilege or installed-state read.
-- [Runtime App Marketplace](../features/runtime-app-marketplace.md) currently documents Core-owned catalog APIs, Shell-owned UI, and catalog-hosted feeds.
+- [Runtime App Marketplace](../features/runtime-app-marketplace/feature.md) currently documents Core-owned catalog APIs, Shell-owned UI, and catalog-hosted feeds.
 - [Catalog-Hosted App Feeds](../features/catalog-hosted-app-feeds.md) puts the current feed entries in the catalog. The future direction preserves their behavior but moves `feeds.json` back to the runtime app repository.
 - [Core App Shell](../features/core-app-shell.md) and [Shell Access And System Apps](../features/shell-access-and-system-apps.md) exclude all system apps from navigation. The new model preserves the normal Apps group and adds a separate admin System group.
 - Absolute host-path catalog sources currently work because Core reads the host filesystem. A Docker Marketplace app needs an explicit import/mount decision.
@@ -245,7 +245,7 @@ Catalog entries point to runtime-app-owned `feeds.json`. Shell/CLI pass `feedsUr
 - [Core Extension Model](core-extension-model.md) - the general system-app extension mechanism.
 - [System App Pages](system-app-pages.md) - generic Shell pages for UI-capable system apps.
 - [Runtime App Repository Feeds](runtime-app-repository-feeds.md) - current feed behavior moved unchanged to app-owned `feeds.json` with Core-owned resolution.
-- [Runtime App Marketplace](../features/runtime-app-marketplace.md) - the shipped implementation being extracted.
+- [Runtime App Marketplace](../features/runtime-app-marketplace/feature.md) - the shipped implementation being extracted.
 - [Catalog-Hosted App Feeds](../features/catalog-hosted-app-feeds.md) - current feed ownership being replaced in future work.
 - [Core App Shell](../features/core-app-shell.md) - current runtime app page and iframe behavior.
 - [On-Demand System App Updates](system-app-updates.md) - safe independent system-app update work.

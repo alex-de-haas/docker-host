@@ -103,7 +103,7 @@ Once installed from feeds, an app continues updating when Marketplace is stopped
 ## Conflicts With Existing Features
 
 - [Runtime App Repository Feeds](../features/catalog-hosted-app-feeds.md) now documents the promoted ownership model implemented by the vertical slice.
-- [Marketplace System App](../features/runtime-app-marketplace.md) documents catalog `feedsUrl` handoff without installed-state enrichment.
+- [Marketplace System App](../features/runtime-app-marketplace/feature.md) documents catalog `feedsUrl` handoff without installed-state enrichment.
 - [Marketplace As A System App](marketplace-system-app.md) supplied the surrounding ownership boundary.
 
 ## Open Questions
@@ -119,7 +119,7 @@ The recommendation was accepted and promoted into the Marketplace vertical-slice
 - [Marketplace As A System App](marketplace-system-app.md) - read-only catalog ownership and `feedsUrl` handoff.
 - [Marketplace vertical-slice plan](../planning/marketplace-system-app.md) - approved implementation scope.
 - [Runtime App Repository Feeds](../features/catalog-hosted-app-feeds.md) - implemented feed contract and Core behavior.
-- [Marketplace System App](../features/runtime-app-marketplace.md) - implemented catalog and handoff boundary.
+- [Marketplace System App](../features/runtime-app-marketplace/feature.md) - implemented catalog and handoff boundary.
 - [Runtime App Update](../features/runtime-app-update.md) - existing reviewed update behavior reused unchanged.
 
 ## Notes

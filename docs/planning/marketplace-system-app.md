@@ -226,7 +226,7 @@ None.
 
 - [Marketplace As A System App](../ideas/marketplace-system-app.md)
 - [Runtime App Repository Feeds](../ideas/runtime-app-repository-feeds.md)
-- [Runtime App Marketplace](../features/runtime-app-marketplace.md)
+- [Runtime App Marketplace](../features/runtime-app-marketplace/feature.md)
 - [Catalog-Hosted App Feeds](../features/catalog-hosted-app-feeds.md)
 - [System App Pages](../ideas/system-app-pages.md)
 
