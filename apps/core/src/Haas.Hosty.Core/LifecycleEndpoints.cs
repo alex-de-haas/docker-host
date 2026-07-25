@@ -475,14 +475,41 @@ internal static class LifecycleEndpoints
                 cancellationToken: cancellationToken));
 
         // Phase 2 producer endpoint: host-collected `docker stats` infra metrics as Prometheus text for
-        // the telemetry backend to scrape (its second metrics target). Deliberately unauthenticated —
-        // it exposes only container cpu/mem on the trusted internal network, mirroring the collector's
-        // own unauthenticated scrape surface. Always mapped: the exposition itself idles (empty text)
-        // unless the telemetry app is installed, so a non-observability install exposes nothing here
-        // and a live enable needs no Core restart.
-        // See docs/features/observability-phase-2-backend.md.
-        app.MapGet("/internal/telemetry/metrics", (DockerStatsExposition exposition)
-            => Results.Text(exposition.CurrentPrometheusText, "text/plain; version=0.0.4"));
+        // the telemetry backend to scrape (its second metrics target). Always mapped: the exposition
+        // itself idles (empty text) unless the telemetry app is installed, so a non-observability
+        // install exposes nothing here and a live enable needs no Core restart.
+        //
+        // Requires an app service token like every other app->Core endpoint. It used to be
+        // unauthenticated on the theory that scrape traffic stays on a trusted internal network — but
+        // managed ingress publishes Core's whole origin (its rules are hostname->service, with no path
+        // support), so "internal" was never a boundary and this leaked the installed-app inventory
+        // plus per-service load to anyone who found the path. Any valid app token is accepted: the
+        // exposition is host-wide, so there is no per-app scoping to enforce, and the token proves only
+        // that the caller is an installed app. Living under /api/internal/ also puts it inside the
+        // endpoint-authorization harness, which enumerates /api routes — the old /internal path sat in
+        // its blind spot. See docs/features/observability-phase-2-backend.md.
+        app.MapGet("/api/internal/telemetry/metrics", async (
+            HttpRequest request,
+            AppServiceTokenService serviceTokens,
+            AppRegistryStore apps,
+            DockerStatsExposition exposition,
+            CancellationToken cancellationToken) =>
+        {
+            var token = CoreSessionAuthorization.ReadBearerToken(request);
+            var callerAppId = string.IsNullOrWhiteSpace(token) ? null : serviceTokens.ResolveAppId(token);
+            // The signature alone is not enough: it is HMAC over the app id with a durable key, so a
+            // token copied before the app was removed verifies forever. Requiring the app to still be
+            // installed matches every other app-token route and bounds a leaked token to the lifetime
+            // of its installation.
+            if (callerAppId is null || await apps.GetAppAsync(callerAppId, cancellationToken) is null)
+            {
+                return CoreJson.Json(
+                    new ErrorResponse("telemetry_metrics_unauthorized", "App service token is missing or invalid."),
+                    statusCode: StatusCodes.Status401Unauthorized);
+            }
+
+            return Results.Text(exposition.CurrentPrometheusText, "text/plain; version=0.0.4");
+        });
 
         // `refresh=true` forces a plan rebuild; otherwise a fresh cached plan is projected without
         // network work (plan-first updates, docs/planning/plan-first-app-updates.md).

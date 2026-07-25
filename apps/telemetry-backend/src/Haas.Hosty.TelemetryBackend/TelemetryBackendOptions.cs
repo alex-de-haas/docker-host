@@ -21,6 +21,12 @@ internal sealed record TelemetryBackendOptions
     // when unset (e.g. a docker-less host or dev run).
     public string? DockerMetricsScrapeUrl { get; init; }
 
+    // This app's HOSTY_APP_SERVICE_TOKEN, presented as a bearer credential when scraping Core's
+    // docker-stats endpoint (which requires it, like every other app->Core route). Sent to Core ONLY —
+    // never to the collector, which is a third-party image. Null when unset, e.g. a standalone dev run
+    // against a Core that predates the requirement.
+    public string? CoreServiceToken { get; init; }
+
     // The collector's file sinks on the shared volume (logs/traces ingest), tailed continuously.
     public required string LogsFilePath { get; init; }
     public required string TracesFilePath { get; init; }
@@ -75,7 +81,8 @@ internal sealed record TelemetryBackendOptions
             // Core's docker-stats endpoint: explicit, else derived from the Core origin Core injects.
             DockerMetricsScrapeUrl = FirstNonEmpty(
                 Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_DOCKER_METRICS_URL"),
-                Append(Environment.GetEnvironmentVariable("HOSTY_CORE_ORIGIN"), "/internal/telemetry/metrics")),
+                Append(Environment.GetEnvironmentVariable("HOSTY_CORE_ORIGIN"), "/api/internal/telemetry/metrics")),
+            CoreServiceToken = FirstNonEmpty(Environment.GetEnvironmentVariable("HOSTY_APP_SERVICE_TOKEN")),
             LogsFilePath = FirstNonEmpty(Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_LOGS_FILE"))
                 ?? Path.Combine(appData, "otlp-logs", "logs.jsonl"),
             TracesFilePath = FirstNonEmpty(Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_TRACES_FILE"))
