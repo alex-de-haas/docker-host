@@ -47,14 +47,18 @@ internal sealed class SystemAppBootstrapService(
                 logger.LogWarning("Distribution: {Warning}", warning);
             }
 
-            if (await IsSeededAsync(cancellationToken))
+            if (seed.Exists)
+            {
+                // Already seeded. The only thing left to do is finish a seed pass that was cut short:
+                // the marker lists what it could not install, and those entries are retried here.
+                await RetryPendingAsync(plan, await seed.LoadAsync(cancellationToken), cancellationToken);
+            }
+            else if (await HasPreSeedingHistoryAsync(cancellationToken))
             {
                 // Adopts pre-seeding hosts: the marker is written without installing anything, so the
                 // apps they already chose (and the ones they removed) are left exactly as they are.
-                if (await seed.MarkSeededAsync(plan.Descriptors.Select(d => d.AppId).ToArray(), cancellationToken))
-                {
-                    logger.LogInformation("Existing host adopted as seeded; the distribution list is a catalog from here on.");
-                }
+                await seed.SaveAsync(plan.Descriptors.Select(descriptor => descriptor.AppId).ToArray(), pending: [], cancellationToken: cancellationToken);
+                logger.LogInformation("Existing host adopted as seeded; the distribution list is a catalog from here on.");
             }
             else
             {
@@ -69,13 +73,11 @@ internal sealed class SystemAppBootstrapService(
         }
     }
 
-    // A host counts as seeded when it carries the marker, the pre-seeding choices file, or any
-    // installed app at all. The last check is what keeps an upgrade from re-installing a first-party
-    // app the operator had already removed under the old boot-reconcile model.
-    private async Task<bool> IsSeededAsync(CancellationToken cancellationToken)
-        => seed.Exists ||
-            seed.HasLegacyChoices ||
-            (await apps.ListAppRecordsAsync(cancellationToken)).Count > 0;
+    // Without a marker, a host still counts as pre-seeding history when it carries the old choices
+    // file or any installed app at all. The second check is what keeps an upgrade from re-installing
+    // a first-party app the operator had already removed under the old boot-reconcile model.
+    private async Task<bool> HasPreSeedingHistoryAsync(CancellationToken cancellationToken)
+        => seed.HasLegacyChoices || (await apps.ListAppRecordsAsync(cancellationToken)).Count > 0;
 
     private async Task SeedFreshHostAsync(SystemAppBootstrapPlan plan, CancellationToken cancellationToken)
     {
@@ -85,22 +87,75 @@ internal sealed class SystemAppBootstrapService(
             enabled.Length,
             enabled.Length == 0 ? "(none)" : string.Join(", ", enabled.Select(descriptor => descriptor.AppId)));
 
-        var complete = true;
+        var pending = new List<string>();
         foreach (var descriptor in enabled)
         {
-            complete &= await TryEnsureInstalledAsync(descriptor, cancellationToken);
+            if (!await TryEnsureInstalledAsync(descriptor, cancellationToken))
+            {
+                pending.Add(descriptor.AppId);
+            }
         }
 
-        if (!complete)
+        // The marker is always written, even on a partial seed: the first successful install already
+        // makes this host count as seeded, so withholding the marker would not buy a retry — it would
+        // only risk resurrecting an app uninstalled in the meantime. What earns the retry is the
+        // pending list, which names exactly the entries still owed and nothing else.
+        if (pending.Count > 0)
         {
-            // The marker is withheld so the next boot retries. Retrying is safe: seeding installs only
-            // what is absent, and a host that has anything installed is already treated as seeded —
-            // which is why the retry window closes as soon as the first app lands.
-            logger.LogWarning("Seeding did not install every default app; the seed marker is withheld so the next boot retries.");
+            logger.LogWarning(
+                "Seeding could not install {Count} default app(s): {Ids}. The next boot retries them.",
+                pending.Count,
+                string.Join(", ", pending));
+        }
+
+        await seed.SaveAsync(
+            plan.Descriptors.Select(descriptor => descriptor.AppId).ToArray(),
+            pending,
+            cancellationToken: cancellationToken);
+    }
+
+    // Finishes an interrupted seed. Only ids the marker still lists are touched, so this can never
+    // reinstall something the operator removed: an entry leaves the pending list the moment it is
+    // installed — by this retry, by `hosty setup`, or from the Marketplace — and never returns to it.
+    // An id that has since left the catalog is dropped rather than retried forever.
+    private async Task RetryPendingAsync(
+        SystemAppBootstrapPlan plan,
+        DistributionSeedDocument? marker,
+        CancellationToken cancellationToken)
+    {
+        if (marker?.Pending is not { Count: > 0 } pending)
+        {
             return;
         }
 
-        await seed.MarkSeededAsync(plan.Descriptors.Select(descriptor => descriptor.AppId).ToArray(), cancellationToken);
+        var byId = plan.Descriptors.ToDictionary(descriptor => descriptor.AppId, StringComparer.Ordinal);
+        var stillPending = new List<string>();
+        foreach (var appId in pending)
+        {
+            if (!byId.TryGetValue(appId, out var descriptor))
+            {
+                logger.LogInformation("Seeding no longer owes '{AppId}': it is not in this release's distribution list.", appId);
+                continue;
+            }
+
+            logger.LogInformation("Retrying the seed install of {DisplayName}.", descriptor.DisplayName);
+            if (!await TryEnsureInstalledAsync(descriptor with { Enabled = true }, cancellationToken))
+            {
+                stillPending.Add(appId);
+            }
+        }
+
+        if (stillPending.Count == pending.Count)
+        {
+            // Nothing changed; leave the marker (and its original seededAt) untouched.
+            return;
+        }
+
+        await seed.SaveAsync(
+            marker.Apps.Count > 0 ? marker.Apps : plan.Descriptors.Select(descriptor => descriptor.AppId).ToArray(),
+            stillPending,
+            marker.SeededAt,
+            cancellationToken);
     }
 
     // Snapshot for the bootstrap endpoints and `hosty setup`: every catalog entry with its live
@@ -114,7 +169,11 @@ internal sealed class SystemAppBootstrapService(
             statuses.Add(new SystemAppBootstrapStatus(entry, await apps.GetAppAsync(entry.Id, cancellationToken)));
         }
 
-        return new SystemAppBootstrapState(list.Source, list.Problems, seed.Exists, statuses);
+        // "Seeded" means the one-time pass finished: the marker exists and owes nothing. A host part
+        // way through seeding reports false, matching what the next boot will still try to do.
+        var marker = seed.Exists ? await seed.LoadAsync(cancellationToken) : null;
+        var seeded = seed.Exists && marker?.Pending is not { Count: > 0 };
+        return new SystemAppBootstrapState(list.Source, list.Problems, seeded, statuses);
     }
 
     // Installs one catalog entry on demand and starts it — the operation behind `hosty setup --with`

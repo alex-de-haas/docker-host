@@ -48,9 +48,14 @@ seed marker `{dataRoot}/core/distribution-seed.json` (`distribution-seed.0.1`), 
 predate seeding without reinstalling something they had removed.
 
 A host that is not seeded installs every entry whose effective enablement is true (the deprecated
-legacy env overrides still outrank `defaultEnabled` for one release) and then writes the marker. If
-any of those installs failed, the marker is withheld so the next boot retries; the retry window
-closes as soon as the first app lands, since an installed app makes the host seeded.
+legacy env overrides still outrank `defaultEnabled` for one release) and then writes the marker. The
+marker is written even when some of those installs failed — the first successful install already
+makes the host count as seeded, so withholding it would buy no retry and only risk resurrecting an
+app uninstalled in the meantime. What earns the retry is the marker's `pending` list, naming exactly
+the entries still owed. A later boot retries those and nothing else, clearing each one that lands;
+an entry that has since left the catalog is dropped rather than retried forever. Because an id
+leaves the list the moment the app exists — installed by the retry, by `hosty setup`, or from the
+Marketplace — and never returns to it, this can never reinstall something the operator removed.
 
 After seeding, boot touches installed apps in exactly one way: it re-applies an ambient development
 source override (`HOSTY_SHELL_SOURCE_OVERRIDE_PATH` and friends), which is a pointer to a developer's
@@ -123,7 +128,8 @@ control-plane twin), identical for every app.
   installs nothing on a later boot, including after the operator removed a seeded app.
 - Hosts carrying the legacy `bootstrap-choices.json`, or any installed app, are adopted as seeded
   without installing anything.
-- A failed seed withholds the marker so the next boot retries.
+- A partial seed records the entries it could not install as `pending`; the next boot retries exactly
+  those, clears the ones that land, and drops any that have left the catalog.
 - Boot leaves an installed app's version, runtime, autostart, settings, and update pointer untouched,
   and performs no remote fetches.
 - Removing a system app succeeds on the ordinary path, with no surface distinction.

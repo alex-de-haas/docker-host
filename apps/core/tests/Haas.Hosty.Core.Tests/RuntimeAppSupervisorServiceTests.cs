@@ -548,7 +548,7 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task StartAsync_SeedFailure_WithholdsMarkerSoTheNextBootRetries()
+    public async Task StartAsync_SeedFailure_RecordsThePendingEntry()
     {
         var fixture = CreateFixture(_ => throw new HttpRequestException("no remote fetches expected"));
         var config = CreateConfig(fixture.Paths, shellAutostart: false);
@@ -560,9 +560,82 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
         await supervisor.StartAsync(CancellationToken.None);
         try
         {
-            await Task.Delay(250);
+            await WaitForFileAsync(Path.Combine(fixture.Paths.CoreRoot, DistributionSeedSchema.FileName));
             Assert.Null(await fixture.Apps.GetAppAsync(MarketplaceBootstrap.AppId));
-            Assert.False(File.Exists(Path.Combine(fixture.Paths.CoreRoot, DistributionSeedSchema.FileName)));
+
+            // The marker is written even though the install failed — what earns the retry is the
+            // pending list, not a withheld marker.
+            var marker = await fixture.Seed.LoadAsync();
+            Assert.Equal([MarketplaceBootstrap.AppId], marker!.Pending);
+        }
+        finally
+        {
+            await supervisor.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task StartAsync_PartialSeed_RetriesOnlyTheMissingDefaultOnTheNextBoot()
+    {
+        // The regression this guards: one default installs, another fails. The successful app makes
+        // the host count as seeded, so without the pending list the failed one would be lost forever.
+        var shellManifest = Path.Combine(root, "shell-manifest.json");
+        var marketplaceManifest = Path.Combine(root, "marketplace-manifest.json");
+        var fixture = CreateFixture(_ => throw new HttpRequestException("no remote fetches expected"));
+        await File.WriteAllTextAsync(shellManifest, CreateShellManifest("0.1.0", "hosty-shell", "local", "never"));
+        var config = CreateConfig(fixture.Paths, shellAutostart: false);
+        var distribution = CreateDistribution(
+            ("hosty.shell", shellManifest, true),
+            (MarketplaceBootstrap.AppId, marketplaceManifest, true));
+
+        var first = CreateSupervisor(fixture, config, distribution);
+        await first.StartAsync(CancellationToken.None);
+        try
+        {
+            await WaitForAppAsync(fixture.Apps, "hosty.shell");
+            await WaitForFileAsync(Path.Combine(fixture.Paths.CoreRoot, DistributionSeedSchema.FileName));
+            Assert.Null(await fixture.Apps.GetAppAsync(MarketplaceBootstrap.AppId));
+            Assert.Equal([MarketplaceBootstrap.AppId], (await fixture.Seed.LoadAsync())!.Pending);
+        }
+        finally
+        {
+            await first.StopAsync(CancellationToken.None);
+        }
+
+        // The manifest that was unreadable during the first boot is available now.
+        await File.WriteAllTextAsync(marketplaceManifest, CreateMarketplaceManifest("0.1.0", defaultRuntime: "dev"));
+
+        var second = CreateSupervisor(fixture, config, distribution);
+        await second.StartAsync(CancellationToken.None);
+        try
+        {
+            await WaitForAppAsync(fixture.Apps, MarketplaceBootstrap.AppId);
+            await WaitForSeedMarkerAsync(fixture, marker => marker.Pending.Count == 0);
+        }
+        finally
+        {
+            await second.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task StartAsync_PendingEntryRemovedFromTheCatalog_IsDroppedNotRetried()
+    {
+        var fixture = CreateFixture(_ => throw new HttpRequestException("no remote fetches expected"));
+        Directory.CreateDirectory(fixture.Paths.CoreRoot);
+        await fixture.Seed.SaveAsync(["hosty.retired"], ["hosty.retired"]);
+        var marketplaceManifest = Path.Combine(root, "marketplace-manifest.json");
+        await File.WriteAllTextAsync(marketplaceManifest, CreateMarketplaceManifest("0.1.0", defaultRuntime: "dev"));
+        var config = CreateConfig(fixture.Paths, shellAutostart: false);
+        var supervisor = CreateSupervisor(
+            fixture, config, CreateDistribution((MarketplaceBootstrap.AppId, marketplaceManifest, true)));
+
+        await supervisor.StartAsync(CancellationToken.None);
+        try
+        {
+            await WaitForSeedMarkerAsync(fixture, marker => marker.Pending.Count == 0);
+            // The host was already seeded, so the catalog's own entry is not installed either.
+            Assert.Null(await fixture.Apps.GetAppAsync(MarketplaceBootstrap.AppId));
         }
         finally
         {
@@ -808,6 +881,22 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
         }
 
         throw new TimeoutException($"{appId} did not reach the expected state within the timeout.");
+    }
+
+    private static async Task WaitForSeedMarkerAsync(TestFixture fixture, Func<DistributionSeedDocument, bool> predicate)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (await fixture.Seed.LoadAsync() is { } marker && predicate(marker))
+            {
+                return;
+            }
+
+            await Task.Delay(50);
+        }
+
+        throw new TimeoutException("The distribution seed marker did not reach the expected state within the timeout.");
     }
 
     private static bool IsDistributionStamped(AppRecord app)
