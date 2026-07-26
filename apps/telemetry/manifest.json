@@ -3,7 +3,7 @@
   "id": "hosty.telemetry",
   "name": "Hosty Telemetry",
   "description": "OpenTelemetry collector + telemetry backend + UI: receives OTLP from Hosty runtime apps, stores metrics/logs/traces in an embedded SQLite store, and serves the Metrics/Structured logs/Traces pages that read the backend directly.",
-  "version": "0.4.8",
+  "version": "0.4.9",
   "role": "system",
   "provides": ["otlp-collector"],
   "runtimeProfiles": [
@@ -49,7 +49,7 @@
           "type": "docker",
           "image": {
             "repository": "ghcr.io/alex-de-haas/hosty-telemetry-backend",
-            "tag": "0.4.8"
+            "tag": "0.4.9"
           },
           "environment": {
             "HOSTY_TELEMETRY_LOGS_FILE": "/etc/otelcol-contrib/otlp-logs/logs.jsonl",
@@ -76,7 +76,7 @@
           "type": "docker",
           "image": {
             "repository": "ghcr.io/alex-de-haas/hosty-telemetry-ui",
-            "tag": "0.4.8"
+            "tag": "0.4.9"
           },
           "environment": {
             "PORT": "3000",
@@ -151,6 +151,20 @@
   },
   "capabilities": ["logs"],
   "catalogMetadata": {
-    "icon": "assets/icon.svg"
+    "publisher": {
+      "name": "Haas",
+      "url": "https://github.com/alex-de-haas",
+      "email": "a.zayats@outlook.com"
+    },
+    "category": "Developer Tools",
+    "tags": ["observability", "opentelemetry", "metrics", "logs", "traces", "first-party"],
+    "icon": "assets/icon.svg",
+    "license": "AGPL-3.0-only",
+    "links": {
+      "website": "https://github.com/alex-de-haas/docker-host",
+      "docs": "https://github.com/alex-de-haas/docker-host/tree/main/apps/telemetry"
+    },
+    "summary": "OpenTelemetry collector, storage backend, and UI: metrics, structured logs, and traces from every app on this host.",
+    "descriptionFile": "docs/store.md"
   }
 }
