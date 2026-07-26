@@ -20,7 +20,7 @@ ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 ENV HOSTY_APP_ID=com.haas.demo-app
 # Keep in step with apps/demo-app/manifest.json + package.json (enforced by scripts/check-versions.mjs).
-ENV HOSTY_APP_VERSION=0.5.3
+ENV HOSTY_APP_VERSION=0.5.4
 
 COPY --from=builder /repo/apps/demo-app/.next/standalone ./
 COPY --from=builder /repo/apps/demo-app/.next/static ./apps/demo-app/.next/static
