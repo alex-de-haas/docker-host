@@ -50,6 +50,21 @@ For runtime services, Core assigns available host ports when `localPort` / `host
 
 Local runtime URLs are published as `http://localhost:<assigned-port>`. Public UI/API exposure is configured after installation per public endpoint through the generated `HOSTY_PUBLIC_ORIGIN_{ENDPOINT_KEY}` app setting; empty means use the local `localhost` endpoint.
 
+## First-Party App Images
+
+The repository's own app images (`shell`, `marketplace`, `telemetry-ui`, `demo-app`) build on a base pinned by digest, and each ships the Next standalone bundle rather than a full `node_modules`. Ownership is stamped by `--chown` on each `COPY`; a recursive `chown` in the runner stage would rewrite every file's metadata and make overlayfs duplicate the whole bundle into an extra layer.
+
+None of them runs its server as root. Core sets no `--user`, so the image decides:
+
+- **Apps with no data mount** (`shell`, `telemetry-ui`) declare `USER node` and start directly.
+- **Apps with a data mount** (`marketplace`, `demo-app`) start as root through `docker-entrypoint.sh`, then drop privileges with `gosu`.
+
+The privileged step exists only to resolve which uid to run as. Core bind-mounts the app data directory from its own `apps/<id>/data` tree, owned by the user running Core — normally not root, since `hosty` installs under `$HOME`. The entrypoint therefore **adopts the mount's existing owner** rather than taking ownership of it: reassignment happens only when the directory is root-owned (a fresh volume, or a Core that genuinely runs as root), where nothing else holds a claim and root retains access regardless.
+
+Chowning a Core-owned mount to the image's own uid would be wrong in a way that fails quietly: on any host whose Core uid is not the image's, Core loses write access to the tree it manages, and `CoreLifecycleService.TryDeleteDirectory` swallows the resulting `UnauthorizedAccessException` — "remove app with data" would report success while leaving the data on disk. Backups read the same tree.
+
+Because the server may therefore run as an arbitrary uid, the Next image-optimizer cache directory in those two images is mode `1777` — sticky like `/tmp`, holding only derived, non-secret output.
+
 ## Local Demo App Workflow
 
 ```bash

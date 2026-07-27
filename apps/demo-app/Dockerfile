@@ -1,4 +1,7 @@
-FROM node:24-bookworm-slim AS base
+# syntax=docker/dockerfile:1
+# Base pinned by digest for reproducible builds. To update: re-pin with
+#   docker buildx imagetools inspect node:24-bookworm-slim --format '{{.Manifest.Digest}}'
+FROM node:24-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d AS base
 WORKDIR /repo
 
 FROM base AS deps
@@ -13,19 +16,34 @@ COPY --from=deps /repo/node_modules ./node_modules
 COPY . .
 RUN npm run demo-app:build
 
-FROM node:24-bookworm-slim AS runner
+FROM base AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 ENV HOSTY_APP_ID=com.haas.demo-app
 # Keep in step with apps/demo-app/manifest.json + package.json (enforced by scripts/check-versions.mjs).
-ENV HOSTY_APP_VERSION=0.5.4
+ENV HOSTY_APP_VERSION=0.5.5
+# gosu lets the entrypoint drop from root to the unprivileged `node` user after fixing data-dir
+# ownership (see docker-entrypoint.sh).
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends gosu \
+  && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /repo/apps/demo-app/.next/standalone ./
-COPY --from=builder /repo/apps/demo-app/.next/static ./apps/demo-app/.next/static
-COPY --from=builder /repo/apps/demo-app/public ./apps/demo-app/public
+# --chown stamps ownership as each layer is written, so `node` owns the bundle without a `chown -R`
+# pass (which would rewrite every file's metadata and duplicate the tree into an extra layer).
+COPY --from=builder --chown=node:node /repo/apps/demo-app/.next/standalone ./
+COPY --from=builder --chown=node:node /repo/apps/demo-app/.next/static ./apps/demo-app/.next/static
+COPY --from=builder --chown=node:node /repo/apps/demo-app/public ./apps/demo-app/public
+COPY apps/demo-app/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+# Next's image optimizer writes into <distDir>/cache; /app/data is the `backend` service's mount.
+# The cache is mode 1777 because the entrypoint may run the server as the data mount's owner rather
+# than `node` (see docker-entrypoint.sh) — sticky like /tmp, and it holds only derived, non-secret output.
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
+  && install -d -o node -g node -m 1777 /app/apps/demo-app/.next/cache \
+  && install -d -o node -g node /app/data
 
 EXPOSE 3000
 
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["node", "apps/demo-app/server.js"]
