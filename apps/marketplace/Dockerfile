@@ -1,7 +1,10 @@
 # syntax=docker/dockerfile:1
 # Hosty Marketplace standalone Next.js image. Built from the repository root so the workspace
 # lockfile and pinned framework override are applied consistently.
-FROM node:24-bookworm-slim AS base
+#
+# Base pinned by digest for reproducible builds. To update: re-pin with
+#   docker buildx imagetools inspect node:24-bookworm-slim --format '{{.Manifest.Digest}}'
+FROM node:24-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d AS base
 WORKDIR /repo
 
 FROM base AS deps
@@ -16,16 +19,28 @@ COPY --from=deps /repo/node_modules ./node_modules
 COPY . .
 RUN npm run marketplace:build
 
-FROM node:24-bookworm-slim AS runner
+FROM base AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
+# gosu lets the entrypoint drop from root to the unprivileged `node` user after fixing data-dir
+# ownership (see docker-entrypoint.sh).
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends gosu \
+  && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /repo/apps/marketplace/.next/standalone ./
-COPY --from=builder /repo/apps/marketplace/.next/static ./apps/marketplace/.next/static
-COPY --from=builder /repo/apps/marketplace/public ./apps/marketplace/public
+# --chown stamps ownership as each layer is written, so `node` owns the bundle without a `chown -R`
+# pass (which would rewrite every file's metadata and duplicate the tree into an extra layer).
+COPY --from=builder --chown=node:node /repo/apps/marketplace/.next/standalone ./
+COPY --from=builder --chown=node:node /repo/apps/marketplace/.next/static ./apps/marketplace/.next/static
+COPY --from=builder --chown=node:node /repo/apps/marketplace/public ./apps/marketplace/public
+COPY apps/marketplace/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+# Next's image optimizer writes into <distDir>/cache; /var/lib/hosty-marketplace is the manifest mount.
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
+  && install -d -o node -g node /app/apps/marketplace/.next/cache /var/lib/hosty-marketplace
 
 EXPOSE 3000
 
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["node", "apps/marketplace/server.js"]
