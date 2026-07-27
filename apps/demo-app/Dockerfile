@@ -37,8 +37,11 @@ COPY --from=builder --chown=node:node /repo/apps/demo-app/.next/static ./apps/de
 COPY --from=builder --chown=node:node /repo/apps/demo-app/public ./apps/demo-app/public
 COPY apps/demo-app/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 # Next's image optimizer writes into <distDir>/cache; /app/data is the `backend` service's mount.
+# The cache is mode 1777 because the entrypoint may run the server as the data mount's owner rather
+# than `node` (see docker-entrypoint.sh) — sticky like /tmp, and it holds only derived, non-secret output.
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
-  && install -d -o node -g node /app/apps/demo-app/.next/cache /app/data
+  && install -d -o node -g node -m 1777 /app/apps/demo-app/.next/cache \
+  && install -d -o node -g node /app/data
 
 EXPOSE 3000
 

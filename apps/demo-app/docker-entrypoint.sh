@@ -1,13 +1,37 @@
 #!/bin/sh
 set -e
 
-# The app runs unprivileged as the `node` user (uid 1000). The persistent data directory is a
-# Core-managed mount: Core creates it with a plain Directory.CreateDirectory, so it arrives owned by
-# whichever user runs Core (root in an installed setup). We start as root only to fix that ownership,
-# then drop privileges with gosu before exec'ing the server. Only the `backend` service mounts the
-# volume; for `frontend` this just creates an unused local directory, which is harmless.
+# Drops from root to an unprivileged user before starting the server.
+#
+# The uid is NOT fixed to the image's `node` user. Hosty Core bind-mounts the app data directory from
+# ~/.hosty/apps/<id>/data on the host (CoreLifecycleService.GetAppDataPath), owned by the user running
+# Core — which is not root: `hosty` installs under $HOME and Core binds only unprivileged ports. Chowning
+# that tree to the image's uid would take it away from Core on any host whose Core uid is not 1000, and
+# Core's uninstall path swallows the resulting UnauthorizedAccessException (TryDeleteDirectory), so
+# "remove app with data" would report success while leaving the data behind. Backups read the same tree.
+#
+# So: adopt the mount's existing owner rather than rewriting it. Ownership is only ever assigned when the
+# directory is root-owned — a fresh volume, or a Core that genuinely runs as root — and root keeps full
+# access to node-owned files either way.
+#
+# Only the `backend` service mounts the volume; for `frontend` this just creates an unused local
+# directory, which is harmless.
 DATA_DIR="${HOSTY_APP_DATA_DIR:-/app/data}"
-mkdir -p "$DATA_DIR"
-chown -R node:node "$DATA_DIR" 2>/dev/null || true
 
-exec gosu node "$@"
+# Already unprivileged (the runtime passed --user, or an operator did): nothing to drop.
+if [ "$(id -u)" -ne 0 ]; then
+    exec "$@"
+fi
+
+mkdir -p "$DATA_DIR"
+
+owner="$(stat -c '%u:%g' "$DATA_DIR" 2>/dev/null || echo '0:0')"
+case "$owner" in
+    0:*)
+        # Root-owned: nobody else has a claim on it, so hand it to the image user.
+        chown node:node "$DATA_DIR" 2>/dev/null || true
+        owner="node:node"
+        ;;
+esac
+
+exec gosu "$owner" "$@"

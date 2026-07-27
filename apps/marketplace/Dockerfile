@@ -37,8 +37,11 @@ COPY --from=builder --chown=node:node /repo/apps/marketplace/.next/static ./apps
 COPY --from=builder --chown=node:node /repo/apps/marketplace/public ./apps/marketplace/public
 COPY apps/marketplace/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 # Next's image optimizer writes into <distDir>/cache; /var/lib/hosty-marketplace is the manifest mount.
+# The cache is mode 1777 because the entrypoint may run the server as the data mount's owner rather
+# than `node` (see docker-entrypoint.sh) — sticky like /tmp, and it holds only derived, non-secret output.
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
-  && install -d -o node -g node /app/apps/marketplace/.next/cache /var/lib/hosty-marketplace
+  && install -d -o node -g node -m 1777 /app/apps/marketplace/.next/cache \
+  && install -d -o node -g node /var/lib/hosty-marketplace
 
 EXPOSE 3000
 
