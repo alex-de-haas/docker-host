@@ -1,4 +1,7 @@
-# Feature: Cross-App Dependencies
+# Cross-App Dependencies — Declared Providers, Injected URLs, And A Start-Time Advisory
+
+Created: 2026-06-22
+Updated: 2026-07-28
 
 ## Goal
 

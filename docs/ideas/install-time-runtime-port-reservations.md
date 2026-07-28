@@ -204,7 +204,7 @@ start` branch. The idea was promoted after the user approved all remaining recom
   implementation source of truth.
 - [One-Click Cloudflare Public Ingress](one-click-cloudflare-ingress.md) — consumer of install-time endpoint
   URLs for immediate public-origin configuration.
-- [Cross-app dependencies](../features/cross-app-dependencies.md) — current local endpoint injection behavior
+- [Cross-app dependencies](../features/cross-app-dependencies/feature.md) — current local endpoint injection behavior
   affected by deliberate reassignment.
 - [Raw L4 ports](../features/raw-ports.md) — transport and bind-scope considerations.
 - [Host networking](../features/host-networking.md) — fixed host namespace ports that need collision

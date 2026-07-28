@@ -65,7 +65,7 @@ A diff against [feature.md](feature.md):
    [ai-agent-bridge.md](../ai-agent-bridge.md#authorization-and-delegation) favours the latter for
    anything streaming or high-volume, which ingest is.
 2. **Does this wait for the network hardening?** The shared internal-only docker network tracked in
-   [cross-app-dependencies.md](../cross-app-dependencies.md) would take ingest and the query port off
+   [cross-app-dependencies.md](../cross-app-dependencies/feature.md) would take ingest and the query port off
    the host/LAN, which is the other half of the fix. Auth should not block on it — "internal" has
    already proven to be a boundary Hosty does not actually provide (C-M10) — but the two overlap
    enough that sequencing is worth a decision.

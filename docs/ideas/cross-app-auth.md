@@ -6,7 +6,7 @@ Updated: 2026-07-20
 
 ## Motivation — This Reopens a Settled Decision, Deliberately
 
-[cross-app-dependencies.md](../features/cross-app-dependencies.md) ratified the opposite of
+[cross-app-dependencies.md](../features/cross-app-dependencies/feature.md) ratified the opposite of
 what this note proposes: "A cross-app dependency is **not** an access barrier … There is
 **no app-to-app authentication** in this model", because "the threat model is a trusted
 single-tenant homelab". That decision was coherent when it was made. Three things have
@@ -43,7 +43,7 @@ changed or surfaced since:
    `/dev/net/tun` and writes into the catalog filesystems (`HOSTY_MOUNT_DOWNLOADS`);
    transcode-engine writes media mounts and burns GPU. Their control ports publish on the
    host's loopback, which is reachable by **every process on the machine**, not just the
-   declared consumer — and the connectivity caveat in cross-app-dependencies.md points
+   declared consumer — and the connectivity caveat in cross-app-dependencies points
    toward `expose: host` (LAN-reachable) for cross-container reachability. Reachability
    is topology-dependent (Docker Desktop and WSL2 forward host loopback into containers;
    bare Linux does not) — an implicit, topology-shaped boundary should not double as the
@@ -167,7 +167,7 @@ unauthenticated until this proposal's middleware ships.
 
 ## Relationship to the Shared-Network Hardening
 
-cross-app-dependencies.md defers a "shared cross-app docker network" so provider
+cross-app-dependencies defers a "shared cross-app docker network" so provider
 endpoints can leave the host/LAN surface. That work is **complementary, not competing**:
 network scoping shrinks *who can connect*; introspection identifies *who called*.
 Either alone is incomplete — networks do not cover localCommand/dev runtimes or
@@ -190,7 +190,7 @@ was resolved 2026-07-20 by deleting the token instead: torrent-engine#22.)
 
 ## References
 
-- [cross-app-dependencies.md](../features/cross-app-dependencies.md) — the ratified
+- [cross-app-dependencies.md](../features/cross-app-dependencies/feature.md) — the ratified
   no-auth decision this note revisits, and the discovery contract it builds on.
 - [hosty-app-sdk.md](hosty-app-sdk.md) — trust model (decision 1), online-validation rule
   and cache numbers (decisions 9–10), Second Wave packaging.
