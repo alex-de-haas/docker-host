@@ -122,7 +122,8 @@ already colours `starting` and `stopping`.
 ([CoreLifecycleService.cs:2481](../../../apps/core/src/Haas.Hosty.Core/CoreLifecycleService.cs)) and the
 dependency graph is never consulted. `waiting` needs topological ordering, a deferred queue, a wake
 trigger, a timeout, and cycle detection. Its input is the dependency projection from
-[cross-app-dependencies](../cross-app-dependencies/plan.md); build that first.
+[cross-app-dependencies](../cross-app-dependencies/feature.md), which ships it as
+`AppSummary.Dependencies`.
 
 ## Open questions
 
@@ -164,6 +165,7 @@ trigger, a timeout, and cycle detection. Its input is the dependency projection 
 
 ## Related
 
-- [cross-app-dependencies](../cross-app-dependencies/plan.md) — supplies the `waiting` trigger.
+- [cross-app-dependencies](../cross-app-dependencies/feature.md) — its `AppSummary.Dependencies`
+  projection supplies the `waiting` trigger.
 - [core-event-bus](../core-event-bus/feature.md) — the transport that makes these states visible
   without polling.

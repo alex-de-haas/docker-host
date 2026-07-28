@@ -755,8 +755,10 @@ internal sealed record AppSummary(
     // app. Attached by the lifecycle service, which owns the projection. Additive/nullable.
     AppUpdateAvailability? UpdateCheck = null,
     // Declared cross-app dependencies resolved against the installed set, so clients can surface a
-    // missing or stopped provider as app state instead of a notification. Empty when the app declares
-    // none. Attached by the lifecycle service (it needs the other apps' records). Additive/nullable.
+    // missing or stopped provider as app state instead of a notification. Null when the app declares
+    // none — the same "absent means nothing to say" shape as UpdateCheck, so a client never has to
+    // distinguish an empty list from an older Core that predates this field. Attached by the lifecycle
+    // service (it needs the other apps' records). Additive/nullable.
     IReadOnlyList<AppDependencySummary>? Dependencies = null)
 {
     // The effective Development Mode for a runtime: the operator's explicit toggle if set, else the

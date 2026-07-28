@@ -1,4 +1,4 @@
-# Cross-App Dependencies — Declared Providers, Injected URLs, And A Start-Time Advisory
+# Cross-App Dependencies — Declared Providers, Injected URLs, And Reported State
 
 Created: 2026-06-22
 Updated: 2026-07-28
@@ -6,10 +6,10 @@ Updated: 2026-07-28
 ## Goal
 
 Let one runtime app declare a dependency on **another installed app** and have Core wire up
-**discovery** (inject the dependency's endpoint URLs) and surface a **start-time advisory** when the
-dependency is missing or not running. The driving use case is a shared utility app — e.g. a
-VPN-isolated `torrent-engine` — that a consumer app (Media Server) drives over an HTTP/SSE control
-API.
+**discovery** (inject the dependency's endpoint URLs) and report each dependency's **state** —
+installed, running, and whether every wired endpoint resolves — on the app summary. The driving use
+case is a shared utility app — e.g. a VPN-isolated `torrent-engine` — that a consumer app (Media
+Server) drives over an HTTP/SSE control API.
 
 A cross-app dependency is **not** an access barrier. In a single-tenant homelab all installed apps
 are trusted; the dependency exists to tell the consumer *where* the provider is and to orchestrate
@@ -32,8 +32,8 @@ authentication** in this model.
 "dependencies": [
   {
     "id": "com.haas.torrent-engine",   // required: the dependency app's id
-    "version": "^0.1.0",                // optional: advisory only (shown in the notification)
-    "required": true,                   // optional, default true: advisory level when missing
+    "version": "^0.1.0",                // optional: informational only (reported, never enforced)
+    "required": true,                   // optional, default true: how clients weigh a missing provider
     "endpoints": [                      // which of the dependency's endpoints to wire
       { "key": "control", "as": "torrent" }
     ]
@@ -48,7 +48,7 @@ authentication** in this model.
 **Validation:** `id` is required; each endpoint `key` is required; the resulting
 `HOSTY_DEPENDENCY_{ALIAS}_URL` names must be unique across the whole app. The dependency app's
 existence and the endpoint's existence are **not** checked at manifest-validation time (the
-dependency may not be installed yet) — that surfaces as the start-time advisory. Error codes:
+dependency may not be installed yet) — that surfaces as reported state instead. Error codes:
 `app_manifest_dependency_id_required`, `app_manifest_dependency_duplicate_id`,
 `app_manifest_dependency_endpoint_key_required`, `app_manifest_dependency_alias_collision`.
 
@@ -62,11 +62,11 @@ reachable from inside the container; **localCommand** consumers get the URL as-i
 > **Connectivity caveat (current).** Reachability via `host.docker.internal:{hostPort}` requires the
 > dependency to publish that endpoint host-reachable (`expose: "host"`). A loopback-only endpoint is
 > not reachable across containers. Keeping a non-public utility endpoint **off the host/LAN** while
-> still reachable by consumers (a shared cross-app docker network) is a planned hardening; today the
-> minimal, lifecycle-decoupled `host.docker.internal` rewrite is used.
+> still reachable by consumers would need a shared cross-app docker network, which Hosty does not
+> create — see [plan.md](plan.md).
 
 If the dependency app is not installed, or the named endpoint has no URL, no variable is injected for
-it (and the advisory fires).
+it, and the summary reports that endpoint as unresolved.
 
 ## Dependency State (no auto-install/start)
 
@@ -116,9 +116,10 @@ are purged once, at boot.
 - **Injection** (`DockerRuntimeAdapter` / `LocalCommandRuntimeAdapter`):
   `HOSTY_DEPENDENCY_{ALIAS}_URL`; docker applies the `host.docker.internal` rewrite.
 - **State projection** (`CoreLifecycleService.ResolveDependencySummariesAsync` → `AppSummary.Dependencies`,
-  as `AppDependencySummary` / `AppDependencyEndpointSummary`). `ListAppsAsync` hands it the record set
-  it already holds, so listing stays one pass over `state.json` instead of re-reading every provider
-  once per consumer.
+  as `AppDependencySummary` / `AppDependencyEndpointSummary`). `ListAppsAsync` reconciles the whole
+  record set first and hands that snapshot over, so listing stays one pass over `state.json` instead of
+  re-reading every provider once per consumer — and a provider reconciled to stopped reads stopped for
+  its consumers in the same response.
 - **Client derivation** (`collectAppProblems` in `apps/shell/src/app/shell/app-problems.ts`): the sole
   place the state becomes a severity, shared by the collapsed row's icons and the expanded panel's alerts.
 - **Retired-advisory cleanup** (`NotificationService.PurgeByDedupePrefixAsync`, called once from the
@@ -146,8 +147,8 @@ The dependency is discovery + lifecycle-awareness only, with **no** app-to-app a
 threat model is a trusted single-tenant host. Connectivity uses the minimal `host.docker.internal`
 rewrite rather than a shared cross-app network: it is lifecycle-decoupled, fully unit-testable, and
 cannot break app startup — at the cost of the dependency endpoint being host-reachable. The
-shared-network variant (endpoint off the LAN) is left as a future hardening. Auto-install/start is
-deferred in favor of reporting dependency state.
+shared-network variant (endpoint off the LAN) is not built — it is tracked in [plan.md](plan.md).
+Auto-install/start is likewise not built; Core reports dependency state instead.
 
 Dependency status is state, not a notification, because it is a **condition** rather than an event: it
 becomes true and false on its own as the operator starts and stops apps, and a notification store with

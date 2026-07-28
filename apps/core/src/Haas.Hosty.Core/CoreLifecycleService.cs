@@ -82,11 +82,21 @@ internal sealed class CoreLifecycleService(
     public async Task<IReadOnlyList<AppSummary>> ListAppsAsync(CancellationToken cancellationToken = default)
     {
         var records = await apps.ListAppRecordsAsync(cancellationToken);
-        var summaries = new List<AppSummary>(records.Count);
+        // Reconcile the whole set BEFORE building any summary. Dependency state is resolved against
+        // this snapshot, so a provider that reconciles running -> stopped has to be stopped for its
+        // consumers too — otherwise one response could report the provider itself stopped while its
+        // consumer still reads dependencies[].running: true, hiding the client's error icon until a
+        // later request.
+        var reconciled = new List<AppRecord>(records.Count);
         foreach (var app in records)
         {
-            var reconciled = await ReconcileRuntimeStateForSummaryAsync(app, cancellationToken);
-            summaries.Add(await BuildAppSummaryAsync(reconciled, cancellationToken, records));
+            reconciled.Add(await ReconcileRuntimeStateForSummaryAsync(app, cancellationToken));
+        }
+
+        var summaries = new List<AppSummary>(reconciled.Count);
+        foreach (var app in reconciled)
+        {
+            summaries.Add(await BuildAppSummaryAsync(app, cancellationToken, reconciled));
         }
 
         return summaries;
