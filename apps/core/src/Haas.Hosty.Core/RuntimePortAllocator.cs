@@ -3,12 +3,13 @@ using System.Net;
 
 namespace Haas.Hosty.Core;
 
-// Install-time port reservations, phase 2: the Core-wide coordinator that resolves and persists every
+// Install-time port reservations: the Core-wide coordinator that resolves and persists every
 // published host port for an app during install, so a stopped app already has a durable endpoint before
 // its first start. A single gate serializes allocation across apps, so two concurrent installs cannot be
 // handed the same automatic port; the exclusion view spans every other installed app's loopback assignments
-// plus the Core and Shell launch ports. Resolution reuses RuntimePortHelper so install and start agree.
-// See docs/planning/install-time-runtime-port-reservations.md.
+// plus the Core port (Shell pins its own in its manifest — see ReservedLoopbackPorts). Resolution
+// reuses RuntimePortHelper so install and start agree.
+// See docs/features/automatic-runtime-app-ports/feature.md.
 internal sealed class RuntimePortAllocator(HostyCoreRuntimeConfig config)
 {
     private readonly SemaphoreSlim gate = new(1, 1);

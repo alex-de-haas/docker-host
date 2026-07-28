@@ -472,7 +472,7 @@ None.
 ## Links
 
 - [One-Click Cloudflare Public Ingress Idea](../ideas/one-click-cloudflare-ingress.md)
-- [Install-Time Runtime Port Reservations Plan](install-time-runtime-port-reservations.md)
+- [Automatic Runtime App Ports](../features/automatic-runtime-app-ports/feature.md)
 - [Ingress (Cloudflare Tunnel Provider)](../features/cloudflared-ingress.md)
 - [Core Settings](../ideas/core-settings.md)
 - [CLI Bootstrap](../features/cli-bootstrap.md)

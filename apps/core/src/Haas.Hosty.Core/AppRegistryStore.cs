@@ -313,7 +313,7 @@ internal sealed record AppRecord(
     // Service-scoped host-port reservations (install-time port reservations). Null on legacy records and
     // backfilled by the boot migration (PortAssignmentMigration); once populated, the reservation — not
     // the endpoint URL — is the durable source of a service's assigned port. Additive/nullable, so no
-    // AppStateDocument schema bump. See docs/planning/install-time-runtime-port-reservations.md.
+    // AppStateDocument schema bump. See docs/features/automatic-runtime-app-ports/feature.md.
     IReadOnlyList<AppPortAssignment>? PortAssignments = null);
 
 // Well-known InstallOrigin values. Null on the record means a user/operator install; only the
@@ -323,13 +323,13 @@ internal static class AppInstallOrigins
     public const string Distribution = "distribution";
 }
 
-// Persistent, service-scoped host-port reservation (install-time port reservations, phase 1). The
+// Persistent, service-scoped host-port reservation (install-time port reservations). The
 // reservation — not the endpoint URL — is the durable source of an assigned host port;
 // AppEndpointContract.Url becomes a projection of it. Identity is (Service, PortKey, Transport,
 // BindScope): the numeric HostPort alone is insufficient because tcp and udp are distinct collision
 // domains and a host / host-network bind is broader than a loopback one. Additive/nullable on AppRecord,
 // so older state.json deserializes with PortAssignments = null and is migrated before first lifecycle use
-// (no AppStateDocument schema bump). See docs/planning/install-time-runtime-port-reservations.md.
+// (no AppStateDocument schema bump). See docs/features/automatic-runtime-app-ports/feature.md.
 internal sealed record AppPortAssignment(
     string Service,
     string PortKey,
@@ -412,7 +412,7 @@ internal static class AppRuntimeStates
 // Endpoint availability, projected onto AppSummary endpoints only (never persisted, like PublicOrigin).
 // `assigned` — a durable target (a port assignment or an already-resolved URL) exists but the owning
 // service is stopped; `running` — the service is up; `unavailable` — the persisted target failed
-// preflight/binding (phase 2). Null only when the endpoint has neither an assignment nor a resolved URL.
+// preflight/binding. Null only when the endpoint has neither an assignment nor a resolved URL.
 // A non-null Url alone no longer implies reachability.
 internal static class EndpointAvailability
 {
@@ -976,7 +976,7 @@ internal sealed record AppSummary(
     // null-in-record, attach-on-summary shape as AttachPublicOrigins. An endpoint has a durable target when
     // it carries a matching port assignment or an already-resolved URL; it reads `running` only while the
     // owning app is running, otherwise `assigned`. A legacy endpoint with neither stays null. `unavailable`
-    // is a phase-2 preflight outcome not produced here.
+    // is a preflight outcome Core does not yet produce; see the feature's plan.md.
     private static IReadOnlyList<AppEndpointContract> AttachAvailability(
         IReadOnlyList<AppEndpointContract> endpoints,
         AppRecord app)
