@@ -106,8 +106,14 @@ disagree. Reassignment never restarts anything as a side effect: apply returns
 `restartRequiredAppIds` — the owner if it is up, plus every running dependent — and the operator
 restarts them.
 
-Only remappable assignments qualify. A manifest-declared port and a host-network port are rejected
-with `reassign_not_remappable` in both modes.
+An `automatic` assignment always qualifies. An `operator`-pinned one qualifies too — otherwise a pin
+would be a one-way door, since pinning clears `remappable` and even loading the plan to un-pin would
+be refused — but only when the request states its mode explicitly
+([RequireRemappableAssignment](../../../apps/core/src/Haas.Hosty.Core/CoreLifecycleService.cs)). The
+plan always admits a pinned port; apply admits one only when `mode` is present, so a client that
+omits the field (the pre-pinning payload) cannot move a deliberate choice by accident. A
+manifest-declared port and a host-network port are rejected with `reassign_not_remappable` in both
+modes.
 
 Shell drives both endpoints from one dialog on the endpoint row
 ([port-reassign-control.tsx](../../../apps/shell/src/app/shell/pages/port-reassign-control.tsx)),
@@ -142,8 +148,13 @@ model existed
 ([PortAssignmentMigration.cs](../../../apps/core/src/Haas.Hosty.Core/PortAssignmentMigration.cs)). It
 derives one loopback TCP assignment per endpoint that already carries a URL, keeping the port that
 URL already advertises, and classifies it as `operator` when a `HOSTY_PORT_*` setting holds that same
-number. It never changes a stored URL and never allocates: an endpoint that has never started gets no
-reservation, and is reserved the next time allocation runs for that app.
+number. It never changes a stored URL and never allocates.
+
+An endpoint that has never started gets no reservation from this pass, and none from its first start
+either: the adapter allocates a port and only the endpoint URL is persisted. The durable assignment
+appears when the migration next runs — the following Core boot. Until then that port sits outside
+every other app's exclusion view, and is protected only by the OS refusing to hand out a bound port
+while the app is running.
 
 The pass is additive and idempotent — existing assignments win, only missing identities are added, so
 a second run produces no delta. It tolerates a record carrying duplicate identities rather than
@@ -197,9 +208,11 @@ listeners. A reservation is a logical claim, not a kernel lease; the start prefl
 reassignment are what contain the gap.
 
 Two rules follow from the same reasoning and still bind the code: a host-network port is a fixed
-reservation that participates in diagnostics but is never remapped, and the `app.0.1` manifest
-contract is unchanged — assignment state is Core-owned and service-scoped, so no manifest had to
-learn about it.
+reservation that is never remapped, and the `app.0.1` manifest contract is unchanged — assignment
+state is Core-owned and service-scoped, so no manifest had to learn about it. The first rule is only
+half-realised: a host-network assignment is recorded and refused reassignment, but it is excluded
+from the cross-app exclusion set and never probed, so it contributes to no collision diagnostics
+beyond blocking its own app's reassigned ports.
 
 ## Edge cases
 
