@@ -2617,11 +2617,11 @@ internal sealed class CoreLifecycleService(
             ManifestUnknown: manifestUnknown);
     }
 
-    // Install-time port reservations, phase 1: backfill service-scoped port assignments for existing
+    // Install-time port reservations: backfill service-scoped port assignments for existing
     // records from their stored endpoint URLs, once, before autostart reconciliation consumes them.
     // Idempotent — a record whose assignments already cover its started endpoints yields no delta and is
     // skipped without a write, so steady-state boots do not rewrite state.json. Returns the number of
-    // records migrated. See PortAssignmentMigration and docs/planning/install-time-runtime-port-reservations.md.
+    // records migrated. See PortAssignmentMigration and docs/features/automatic-runtime-app-ports/feature.md.
     public async Task<int> MigratePortAssignmentsAsync(CancellationToken cancellationToken = default)
     {
         var migrated = 0;

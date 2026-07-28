@@ -3,12 +3,12 @@ using System.Net;
 
 namespace Haas.Hosty.Core;
 
-// Install-time port reservations, phase 1: derive persistent service-scoped port assignments for existing
+// Install-time port reservations: derive persistent service-scoped port assignments for existing
 // records from their stored endpoint URLs, so a later start consumes a durable reservation instead of the
 // URL. This runs at boot before autostart reconciliation and is a pure, additive, idempotent projection —
-// it never changes a stored endpoint URL and never allocates a new port (allocation moves to install in
-// phase 2). Endpoints that have never started (Url == null) get no reservation yet.
-// See docs/planning/install-time-runtime-port-reservations.md.
+// it never changes a stored endpoint URL and never allocates a new port (allocation happens at
+// install). Endpoints that have never started (Url == null) get no reservation yet.
+// See docs/features/automatic-runtime-app-ports/feature.md.
 internal static class PortAssignmentMigration
 {
     // Returns the record with backfilled PortAssignments, or null when nothing changed (idempotent: a
@@ -85,7 +85,7 @@ internal static class PortAssignmentMigration
     // operator assignment. Matching by value (rather than reconstructing the exact normalized key) keeps
     // this robust to whichever port key produced the override. Manifest-explicit ports are indistinguishable
     // from automatic at the record level — the URL carries the resolved port either way — so they read as
-    // automatic until allocation moves to install and records the precise source (phase 2).
+    // automatic; install-time allocation records the precise source for records written since.
     private static string ResolveSource(IReadOnlyDictionary<string, AppSettingValue> settings, int hostPort)
     {
         foreach (var (key, value) in settings)

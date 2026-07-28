@@ -376,8 +376,9 @@ of truth and still requires explicit approval before implementation begins.
   implementation and its operator-owned setup boundary.
 - [One-Click Cloudflare Public Ingress Plan](../planning/one-click-cloudflare-public-ingress.md) —
   implementation source of truth.
-- [Install-Time Runtime Port Reservations](install-time-runtime-port-reservations.md) — prerequisite for
-  configuring and synchronizing a public origin before an app's first start.
+- [Automatic Runtime App Ports](../features/automatic-runtime-app-ports/feature.md) — install-time port
+  reservations, the prerequisite for configuring and synchronizing a public origin before an app's
+  first start.
 - [Core settings](core-settings.md) — current Shell platform settings surface.
 - [CLI bootstrap](../features/cli-bootstrap.md) — launch-owned Core and Shell public origins and Core
   restart mechanics.
