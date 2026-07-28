@@ -313,7 +313,7 @@ internal static class CoreIngressSettings
             "How app ports are exposed to the internet. 'Cloudflare Tunnel' writes a tunnel config that an "
             + "operator-run cloudflared reads and derives https public origins; 'Disabled' leaves exposure to "
             + "you. You must create the tunnel, its credentials file, and a wildcard DNS record and run "
-            + "cloudflared yourself — Hosty only writes its config. See docs/features/cloudflared-ingress.md.",
+            + "cloudflared yourself — Hosty only writes its config. See docs/features/cloudflare-ingress/feature.md.",
             "select",
             [new(IngressSettings.ProviderNone, "Disabled"), new(IngressSettings.ProviderCloudflared, "Cloudflare Tunnel")],
             x => x.Provider, (x, v) => x with { Provider = v }),

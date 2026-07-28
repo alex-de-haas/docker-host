@@ -3,13 +3,13 @@ using Microsoft.Extensions.Logging;
 
 namespace Haas.Hosty.Core;
 
-// One-click Cloudflare public ingress, phase 2b: the read-modify-write reconciler that publishes or
+// Cloudflare ingress: the read-modify-write reconciler that publishes or
 // unpublishes one Hosty-owned hostname on the adopted remotely managed tunnel. It touches only the exact
 // hostname it owns and preserves everything else (via CloudflareTunnelConfigPatcher). Ordering follows the
 // plan: on publish the tunnel route is written before DNS (public DNS never points at a missing route); on
 // unpublish DNS is removed before the route (a partial failure leaves at worst an unreachable stale rule).
 // Every mutation is followed by a read-back, and a failure rolls back only what THIS operation created. No
-// operator/third-party route is ever changed. See docs/planning/one-click-cloudflare-public-ingress.md.
+// operator/third-party route is ever changed. See docs/features/cloudflare-ingress/feature.md.
 internal sealed class CloudflarePublicationReconciler(
     ICloudflareApiClient client,
     CloudflarePublicationStore publications,

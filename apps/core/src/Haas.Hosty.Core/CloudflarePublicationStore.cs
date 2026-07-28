@@ -1,10 +1,10 @@
 namespace Haas.Hosty.Core;
 
-// One-click Cloudflare public ingress, phase 2: the ownership authority for Hosty-published hostnames. Each
+// Cloudflare ingress: the ownership authority for Hosty-published hostnames. Each
 // publication records exactly which app endpoint owns which hostname, the DNS record id, and the last applied
 // local service URL, so reconciliation mutates and cleans up only what Hosty created (or explicitly adopted)
 // and never touches operator/third-party routes. Owner-only at rest under the core data root. Keyed by
-// (app id, endpoint key). See docs/planning/one-click-cloudflare-public-ingress.md.
+// (app id, endpoint key). See docs/features/cloudflare-ingress/feature.md.
 internal sealed class CloudflarePublicationStore(CoreDataPaths paths)
 {
     private readonly SemaphoreSlim gate = new(1, 1);

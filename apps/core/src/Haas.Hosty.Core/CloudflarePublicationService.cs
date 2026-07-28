@@ -1,11 +1,11 @@
 namespace Haas.Hosty.Core;
 
-// One-click Cloudflare public ingress, phase 3: the publication API that ties the connection, the reconciler,
+// Cloudflare ingress: the publication API that ties the connection, the reconciler,
 // and app lifecycle together. Publishing a public origin for an app endpoint synchronizes DNS + the tunnel
 // route (via the reconciler) and then records the resolved `https://<hostname>` into the app's
 // HOSTY_PUBLIC_ORIGIN_<endpoint> setting, so a running app is flagged restart-required and a stopped app
 // receives it on next start. Install-time port reservations guarantee the endpoint already has a local URL,
-// so a stopped app can be published. See docs/planning/one-click-cloudflare-public-ingress.md.
+// so a stopped app can be published. See docs/features/cloudflare-ingress/feature.md.
 internal sealed class CloudflarePublicationService(
     CloudflareIntegrationStore integration,
     CloudflareCredentialStore credentials,
