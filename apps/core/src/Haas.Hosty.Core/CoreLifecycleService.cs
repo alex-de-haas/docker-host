@@ -670,7 +670,7 @@ internal sealed class CoreLifecycleService(
         // path's stop->operate->restart so the enable snapshot below copies stopped (consistent) data —
         // and, per that pattern, the stop lives inside the try so the finally still restores a running app
         // if the snapshot or persistence step fails partway.
-        var wasRunning = targetsSelected && manageLifecycle && changing && string.Equals(app.RuntimeState, "running", StringComparison.Ordinal);
+        var wasRunning = targetsSelected && manageLifecycle && changing && AppRuntimeStates.IsUp(app.RuntimeState);
         var completed = false;
         try
         {
@@ -872,6 +872,16 @@ internal sealed class CoreLifecycleService(
         var runtimeStarted = false;
         try
         {
+            // Stamp before the preamble, not just before adapter.StartAsync: everything below — the
+            // port-release wait (up to 15s after this app's own stop), the source checkout, mount
+            // preparation, capability provisioning, an image pull — is the slow part an operator is
+            // staring at. The registry write choke point publishes app.changed, so every other client
+            // sees the transition without any new transport.
+            app = (await apps.UpdateAppAsync(appId, current => current with
+            {
+                RuntimeState = AppRuntimeStates.Starting,
+            }, cancellationToken)).App;
+
             var load = await LoadSelectionWithStatusAsync(app, cancellationToken);
             var selection = load.Selection;
             // Adopt a live source folder edit before the gates below so they see the live contract
@@ -963,19 +973,40 @@ internal sealed class CoreLifecycleService(
     private async Task<AppLifecycleResponse> StopCoreAsync(string appId, CancellationToken cancellationToken)
     {
         var app = await RequireAppAsync(appId, cancellationToken);
-        var selection = await LoadSelectionForAppAsync(app, cancellationToken);
-        var adapter = ResolveAdapter(selection.RuntimeProfile.Type);
-        var result = await adapter.StopAsync(await CreateRuntimeContextAsync(app, selection, cancellationToken), cancellationToken);
-        var updated = await apps.UpdateAppAsync(appId, current => current with
+        try
         {
-            RuntimeState = result.RuntimeState,
-            OperationStatus = "stopped",
-            LastOperation = "stop",
-            LastError = null,
-        }, cancellationToken);
+            // A docker stop can outlive its SIGTERM grace and a localCommand process tree can take a
+            // while to wind down, so the record says `stopping` for the duration.
+            app = (await apps.UpdateAppAsync(appId, current => current with
+            {
+                RuntimeState = AppRuntimeStates.Stopping,
+            }, cancellationToken)).App;
 
-        await ReconcileIngressAsync(cancellationToken);
-        return new AppLifecycleResponse(await BuildAppSummaryAsync(updated.App, cancellationToken), null, "stopped");
+            var selection = await LoadSelectionForAppAsync(app, cancellationToken);
+            var adapter = ResolveAdapter(selection.RuntimeProfile.Type);
+            var result = await adapter.StopAsync(await CreateRuntimeContextAsync(app, selection, cancellationToken), cancellationToken);
+            var updated = await apps.UpdateAppAsync(appId, current => current with
+            {
+                RuntimeState = result.RuntimeState,
+                OperationStatus = "stopped",
+                LastOperation = "stop",
+                LastError = null,
+            }, cancellationToken);
+
+            await ReconcileIngressAsync(cancellationToken);
+            return new AppLifecycleResponse(await BuildAppSummaryAsync(updated.App, cancellationToken), null, "stopped");
+        }
+        catch (Exception ex) when (IsRecordableLifecycleFailure(ex))
+        {
+            // Stop needed no failure path before the transitional states existed: a throw simply left
+            // the record on its previous value. Now it would strand the record on `stopping` forever —
+            // no reconciler observes a non-IsUp record, so nothing would ever correct it. `unknown` is
+            // the honest terminal value: the stop failed, so whether anything is still running is
+            // precisely what we do not know. The docker sweep raises it back to running if it finds a
+            // live container, and the operator can retry either way.
+            await RecordForegroundLifecycleFailureAsync(appId, "stop", AppRuntimeStates.Unknown, ex.Message, cancellationToken);
+            throw;
+        }
     }
 
     // Preview reassigning one host port: reports the current port/URL, whether that port is an operator pin,
@@ -994,7 +1025,7 @@ internal sealed class CoreLifecycleService(
             portKey,
             assignment.HostPort,
             FindEndpointUrl(app, service, portKey),
-            string.Equals(app.RuntimeState, "running", StringComparison.Ordinal),
+            AppRuntimeStates.IsUp(app.RuntimeState),
             dependents,
             string.Equals(assignment.Source, AppPortSources.Operator, StringComparison.Ordinal),
             RuntimePortAllocator.MinManualPort,
@@ -1043,7 +1074,7 @@ internal sealed class CoreLifecycleService(
         // Reassignment never restarts anything as a side effect. The owning app, if running, still binds
         // the old port until restarted; running dependents still hold the old injected local URL.
         var restartRequired = new List<string>();
-        if (string.Equals(updated.RuntimeState, "running", StringComparison.Ordinal))
+        if (AppRuntimeStates.IsUp(updated.RuntimeState))
         {
             restartRequired.Add(appId);
         }
@@ -1080,7 +1111,11 @@ internal sealed class CoreLifecycleService(
     // a fresh automatic allocation for it, see ResolveHostPort).
     private static IReadOnlyList<AppPortAssignment> FindUnavailableLoopbackAssignments(AppRecord app)
     {
-        if (string.Equals(app.RuntimeState, "running", StringComparison.Ordinal))
+        // Deliberately IsUp, never IsBusy: this exempts an app that is legitimately holding its own
+        // ports right now. An app mid-`starting` has not bound anything yet (this very preflight runs
+        // before the adapter starts), so exempting it would only blind the cold-start conflict check
+        // and turn the structured runtime_port_unavailable error back into a generic bind failure.
+        if (AppRuntimeStates.IsUp(app.RuntimeState))
         {
             return [];
         }
@@ -1195,7 +1230,7 @@ internal sealed class CoreLifecycleService(
             .OrderBy(candidate => candidate.Id, StringComparer.Ordinal)
             .Select(candidate => new ReassignDependentImpact(
                 candidate.Id,
-                string.Equals(candidate.RuntimeState, "running", StringComparison.Ordinal)))
+                AppRuntimeStates.IsUp(candidate.RuntimeState)))
             .ToArray();
 
     private static string? FindEndpointUrl(AppRecord app, string service, string portKey)
@@ -1252,7 +1287,17 @@ internal sealed class CoreLifecycleService(
             adapter = ResolveAdapter(selection.RuntimeProfile.Type);
             context = await CreateRuntimeContextAsync(app, selection, cancellationToken);
             context = EnsureMountsReadyForStart(context);
+            // A restart reports its two halves instead of a single `restarting`: both are IsBusy, so
+            // clients behave identically either way, and the operator gets to see which half is slow.
+            _ = await apps.UpdateAppAsync(appId, current => current with
+            {
+                RuntimeState = AppRuntimeStates.Stopping,
+            }, cancellationToken);
             _ = await stopAdapter.StopAsync(stopContext, cancellationToken);
+            _ = await apps.UpdateAppAsync(appId, current => current with
+            {
+                RuntimeState = AppRuntimeStates.Starting,
+            }, cancellationToken);
             // Re-run capability provisioning on restart too, so a config-template change ships forward
             // and the app comes back with fresh Core-owned files (see PlatformCapabilities). Ordered
             // after the stop so it never races the old container still holding the provisioned files
@@ -1556,6 +1601,69 @@ internal sealed class CoreLifecycleService(
         }
     }
 
+    // Boot sweep for transitional runtime states. A record left on `starting`/`stopping` means the
+    // previous Core process died mid-verb: the settling write never happened, and because every
+    // reconciler and the supervisor only observe IsUp records, nothing downstream would ever correct
+    // it — the app would sit "starting" forever and fall out of supervision entirely. `unknown` is the
+    // honest replacement (we genuinely do not know what the dead process left behind); the docker sweep
+    // raises it to running when it finds a live container, autostart starts it when it should be up,
+    // and a localCommand app the operator starts by hand settles it. Must run BEFORE autostart
+    // reconciliation, which is why its caller sequences it there. Returns the number recovered.
+    public async Task<int> RecoverStrandedLifecycleStatesAsync(CancellationToken cancellationToken = default)
+    {
+        var recovered = 0;
+        foreach (var app in await apps.ListAppRecordsAsync(cancellationToken))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!AppRuntimeStates.IsBusy(app.RuntimeState))
+            {
+                continue;
+            }
+
+            // Re-check under the record lock, and take the per-app operation lock non-blockingly first:
+            // a verb that is legitimately in flight right now (Core is already serving while this sweep
+            // runs) holds it, and stamping over that app's `starting` would be exactly the corruption
+            // this sweep exists to remove. Skipping is safe — that verb writes its own terminal state.
+            var mutex = operationLocks.GetOrAdd(app.Id, _ => new SemaphoreSlim(1, 1));
+            if (!await mutex.WaitAsync(0, cancellationToken))
+            {
+                continue;
+            }
+
+            try
+            {
+                var flipped = false;
+                await apps.UpdateAppAsync(
+                    app.Id,
+                    current =>
+                    {
+                        if (!AppRuntimeStates.IsBusy(current.RuntimeState))
+                        {
+                            return current;
+                        }
+
+                        flipped = true;
+                        return current with { RuntimeState = AppRuntimeStates.Unknown };
+                    },
+                    cancellationToken);
+                if (flipped)
+                {
+                    logger.LogWarning(
+                        "App {AppId} was mid-{State} when Core stopped; its runtime state was reset to unknown.",
+                        app.Id,
+                        app.RuntimeState);
+                    recovered++;
+                }
+            }
+            finally
+            {
+                mutex.Release();
+            }
+        }
+
+        return recovered;
+    }
+
     // Boot sweep (plan-first updates phase 3): a record still marked "updating" at startup means a
     // background apply was cut down mid-flight by a Core stop or crash — the completion write never
     // happened (a successful apply flips the record to "updated" atomically). Flip it to failed with
@@ -1837,7 +1945,7 @@ internal sealed class CoreLifecycleService(
         }
 
         var adapter = ResolveAdapter(currentSelection.RuntimeProfile.Type);
-        var wasRunning = string.Equals(app.RuntimeState, "running", StringComparison.Ordinal);
+        var wasRunning = AppRuntimeStates.IsUp(app.RuntimeState);
         if (wasRunning)
         {
             _ = await adapter.StopAsync(await CreateRuntimeContextAsync(app, currentSelection, cancellationToken), cancellationToken);
@@ -1966,7 +2074,7 @@ internal sealed class CoreLifecycleService(
 
         var app = await RequireAppAsync(appId, cancellationToken);
         var currentSelection = await LoadSelectionForAppAsync(app, cancellationToken);
-        var wasRunning = string.Equals(app.RuntimeState, "running", StringComparison.Ordinal);
+        var wasRunning = AppRuntimeStates.IsUp(app.RuntimeState);
         if (wasRunning)
         {
             await ResolveAdapter(currentSelection.RuntimeProfile.Type).StopAsync(await CreateRuntimeContextAsync(app, currentSelection, cancellationToken), cancellationToken);
@@ -2225,7 +2333,7 @@ internal sealed class CoreLifecycleService(
         // could be mid-write (e.g. an open SQLite transaction) and produce a torn archive.
         // The other Core-initiated backups (pre-update/-runtime-switch/-restore) already copy
         // stopped data; this mirrors that stop->operate->restart pattern for operator backups.
-        var wasRunning = string.Equals(app.RuntimeState, "running", StringComparison.Ordinal);
+        var wasRunning = AppRuntimeStates.IsUp(app.RuntimeState);
         try
         {
             // Stop inside the try so the finally restart still runs if the stop sequence itself
@@ -2259,7 +2367,9 @@ internal sealed class CoreLifecycleService(
     private async Task<AppBackupResponse> RestoreBackupCoreAsync(string appId, string backupId, AppRestoreBackupRequest request, CancellationToken cancellationToken)
     {
         var app = await RequireAppAsync(appId, cancellationToken);
-        if (string.Equals(app.RuntimeState, "running", StringComparison.Ordinal))
+        // IsIdle, not !IsUp: restoring over the data directory of an app that is still shutting down
+        // (or coming up) races the runtime for those files.
+        if (!AppRuntimeStates.IsIdle(app.RuntimeState))
         {
             throw new AppLifecycleException("app_must_be_stopped", "Stop the runtime app before restoring data.");
         }
@@ -2815,7 +2925,7 @@ internal sealed class CoreLifecycleService(
                 dependency.Version,
                 dependency.Required,
                 provider is not null,
-                provider is not null && string.Equals(provider.RuntimeState, "running", StringComparison.Ordinal),
+                provider is not null && AppRuntimeStates.IsUp(provider.RuntimeState),
                 endpoints));
         }
 
@@ -4998,7 +5108,7 @@ internal sealed class CoreLifecycleService(
     private async Task<AppRecord> ReconcileRuntimeStateForSummaryAsync(AppRecord app, CancellationToken cancellationToken)
     {
         if (!string.Equals(app.Kind, "runtime", StringComparison.Ordinal) ||
-            !string.Equals(app.RuntimeState, "running", StringComparison.Ordinal) ||
+            !AppRuntimeStates.IsUp(app.RuntimeState) ||
             string.IsNullOrWhiteSpace(app.ManifestPath))
         {
             return app;
@@ -5045,15 +5155,19 @@ internal sealed class CoreLifecycleService(
         return updated.App;
     }
 
-    // Maps an aggregate health status to the coarse persisted RuntimeState. "degraded"/"starting" are
-    // still live (the container is up), so they reconcile to "running"; "unhealthy" (a partial outage)
-    // is ambiguous and maps to "unknown"; anything unrecognized leaves the state untouched.
+    // Maps an aggregate health status to the coarse persisted RuntimeState. Note the two vocabularies
+    // overlap by name and not by meaning: the health "starting" here is a CONTAINER whose HEALTHCHECK
+    // has not passed yet — the container is already up, so it reconciles to `running`, and it must
+    // never be confused with the app-level AppRuntimeStates.Starting ("no container yet"). This mapper
+    // therefore only ever returns terminal states; it can never write a transitional one, which is what
+    // keeps the supervisor from fighting a lifecycle verb for the record. "unhealthy" (a partial
+    // outage) is ambiguous and maps to `unknown`; anything unrecognized leaves the state untouched.
     internal static string? ResolveRuntimeStateFromHealth(AppRuntimeHealthResult health)
         => health.Status switch
         {
-            "healthy" or "degraded" or "starting" => "running",
-            "stopped" => "stopped",
-            "unhealthy" => "unknown",
+            "healthy" or "degraded" or "starting" => AppRuntimeStates.Running,
+            "stopped" => AppRuntimeStates.Stopped,
+            "unhealthy" => AppRuntimeStates.Unknown,
             _ => null,
         };
 
@@ -5116,7 +5230,7 @@ internal sealed class CoreLifecycleService(
         foreach (var app in records)
         {
             if (!string.Equals(app.Kind, "runtime", StringComparison.Ordinal) ||
-                string.Equals(app.RuntimeState, "running", StringComparison.Ordinal) ||
+                AppRuntimeStates.IsUp(app.RuntimeState) ||
                 !runningAppIds.Contains(app.Id))
             {
                 continue;
@@ -5152,7 +5266,7 @@ internal sealed class CoreLifecycleService(
         // to advance instead of the app silently falling out of supervision after one tick.
         if (!string.Equals(app.Kind, "runtime", StringComparison.Ordinal) ||
             string.IsNullOrWhiteSpace(app.ManifestPath) ||
-            (!string.Equals(app.RuntimeState, "running", StringComparison.Ordinal) && !supervised))
+            (!AppRuntimeStates.IsUp(app.RuntimeState) && !supervised))
         {
             return null;
         }

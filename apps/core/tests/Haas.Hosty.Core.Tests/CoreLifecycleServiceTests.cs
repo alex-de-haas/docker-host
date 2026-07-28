@@ -812,10 +812,12 @@ public sealed class CoreLifecycleServiceTests
         Assert.True(startEntered.Wait(TimeSpan.FromSeconds(5)), "start never reached the adapter");
 
         // The sweep must NOT flip the record while a lifecycle verb owns the lock — otherwise it could
-        // race a concurrent Stop and overwrite its "stopped" back to "running".
+        // race a concurrent Stop and overwrite its "stopped" back to "running". The held verb owns the
+        // record meanwhile, so what survives is its own transitional stamp, untouched by the sweep.
         await fixture.Service.ObserveRuntimeHealthAsync(new HashSet<string>(StringComparer.Ordinal));
         var duringHold = await fixture.Apps.GetAppAsync("com.example.notes");
-        Assert.Equal("stopped", duringHold!.RuntimeState);
+        Assert.Equal(AppRuntimeStates.Starting, duringHold!.RuntimeState);
+        Assert.NotEqual(AppRuntimeStates.Running, duringHold.RuntimeState);
 
         releaseStart.Set();
         await startTask;
@@ -5209,6 +5211,135 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task StartAsync_PersistsStartingWhileTheVerbIsInFlight()
+    {
+        // The whole point of the feature: the record — not just the clicking tab — says a start is
+        // happening, so a second admin, a reloaded page and the CLI all see it.
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        await fixture.Service.StopAsync("com.example.notes");
+
+        string? observed = null;
+        fixture.Adapter.StartProbe = async () =>
+            observed = (await fixture.Apps.GetAppAsync("com.example.notes"))!.RuntimeState;
+        await fixture.Service.StartAsync("com.example.notes");
+
+        Assert.Equal(AppRuntimeStates.Starting, observed);
+        Assert.Equal(AppRuntimeStates.Running, (await fixture.Apps.GetAppAsync("com.example.notes"))!.RuntimeState);
+    }
+
+    [Fact]
+    public async Task StopAsync_PersistsStoppingWhileTheVerbIsInFlight()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+
+        string? observed = null;
+        fixture.Adapter.StopProbe = async () =>
+            observed = (await fixture.Apps.GetAppAsync("com.example.notes"))!.RuntimeState;
+        await fixture.Service.StopAsync("com.example.notes");
+
+        Assert.Equal(AppRuntimeStates.Stopping, observed);
+        Assert.Equal(AppRuntimeStates.Stopped, (await fixture.Apps.GetAppAsync("com.example.notes"))!.RuntimeState);
+    }
+
+    [Fact]
+    public async Task StopAsync_WhenTheRuntimeFails_LeavesATerminalStateNotStopping()
+    {
+        // Stop had no failure path at all before transitional states existed, because a throw simply
+        // left the record on its previous value. Now a throw would strand it on `stopping` forever: no
+        // reconciler observes a non-IsUp record, so nothing downstream would ever correct it.
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        fixture.Adapter.FailOnStopCount = fixture.Adapter.StopCount + 1;
+
+        await Assert.ThrowsAsync<AppLifecycleException>(() => fixture.Service.StopAsync("com.example.notes"));
+
+        var app = (await fixture.Apps.GetAppAsync("com.example.notes"))!;
+        Assert.Equal(AppRuntimeStates.Unknown, app.RuntimeState);
+        Assert.False(AppRuntimeStates.IsBusy(app.RuntimeState));
+        Assert.Equal("failed", app.OperationStatus);
+    }
+
+    [Fact]
+    public async Task RecoverStrandedLifecycleStatesAsync_ResetsAStateLeftMidTransition()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        // Exactly what a Core killed mid-start leaves behind.
+        await fixture.Apps.UpdateAppAsync("com.example.notes", app => app with { RuntimeState = AppRuntimeStates.Starting });
+
+        var recovered = await fixture.Service.RecoverStrandedLifecycleStatesAsync();
+
+        Assert.Equal(1, recovered);
+        Assert.Equal(AppRuntimeStates.Unknown, (await fixture.Apps.GetAppAsync("com.example.notes"))!.RuntimeState);
+    }
+
+    [Fact]
+    public async Task RecoverStrandedLifecycleStatesAsync_LeavesATerminalStateAlone()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        var before = (await fixture.Apps.GetAppAsync("com.example.notes"))!.RuntimeState;
+        Assert.False(AppRuntimeStates.IsBusy(before));
+
+        var recovered = await fixture.Service.RecoverStrandedLifecycleStatesAsync();
+
+        Assert.Equal(0, recovered);
+        Assert.Equal(before, (await fixture.Apps.GetAppAsync("com.example.notes"))!.RuntimeState);
+    }
+
+    [Fact]
+    public async Task RecoverStrandedLifecycleStatesAsync_SkipsAnAppWhoseVerbIsStillInFlight()
+    {
+        // Core serves requests while this sweep runs, so a start that is legitimately mid-flight must
+        // not be stamped over — that would be the very corruption the sweep exists to remove.
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        await fixture.Service.StopAsync("com.example.notes");
+
+        var recovered = -1;
+        fixture.Adapter.StartProbe = async () => recovered = await fixture.Service.RecoverStrandedLifecycleStatesAsync();
+        await fixture.Service.StartAsync("com.example.notes");
+
+        Assert.Equal(0, recovered);
+        Assert.Equal(AppRuntimeStates.Running, (await fixture.Apps.GetAppAsync("com.example.notes"))!.RuntimeState);
+    }
+
+    [Fact]
+    public async Task RestoreBackupAsync_RefusesWhileTheAppIsStillStopping()
+    {
+        // IsIdle, not !IsUp: restoring over the data directory of an app that is still shutting down
+        // races the runtime for those files. The old gate compared against "running" and let this pass.
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        await fixture.Apps.UpdateAppAsync("com.example.notes", app => app with { RuntimeState = AppRuntimeStates.Stopping });
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(
+            () => fixture.Service.RestoreBackupAsync("com.example.notes", "any", new AppRestoreBackupRequest()));
+
+        Assert.Equal("app_must_be_stopped", error.Code);
+    }
+
+    [Fact]
+    public void ResolveRuntimeStateFromHealth_NeverProducesATransitionalState()
+    {
+        // The two vocabularies share the token "starting" but not its meaning: container health
+        // "starting" means the container is already up with a pending HEALTHCHECK, so it must map to
+        // `running`. If this mapper could emit an app-level transitional value, the supervisor and a
+        // lifecycle verb would fight over the record.
+        foreach (var status in new[] { "healthy", "degraded", "starting", "stopped", "unhealthy", "unknown", "" })
+        {
+            var resolved = CoreLifecycleService.ResolveRuntimeStateFromHealth(new AppRuntimeHealthResult(status, []));
+            Assert.False(AppRuntimeStates.IsBusy(resolved));
+        }
+
+        Assert.Equal(
+            AppRuntimeStates.Running,
+            CoreLifecycleService.ResolveRuntimeStateFromHealth(new AppRuntimeHealthResult("starting", [])));
+    }
+
+    [Fact]
     public async Task ListAppsAsync_ProjectsDependencyStateForEveryMatrixRow()
     {
         // The whole point of the projection: Core reports STATE, never a verdict, so one shape serves
@@ -5980,20 +6111,33 @@ public sealed class CoreLifecycleServiceTests
         // Digest the fake resolver returns for plan-time remote lookups; null = registry unreachable.
         public string? RemoteDigest { get; set; }
 
-        public Task<AppRuntimeStartResult> StartAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
+        // Awaited inside the verb, so a test can observe the record exactly while the operation is in
+        // flight — which is the only moment the transitional state is persisted.
+        public Func<Task>? StartProbe { get; set; }
+
+        public Func<Task>? StopProbe { get; set; }
+
+        public int? FailOnStopCount { get; set; }
+
+        public async Task<AppRuntimeStartResult> StartAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
         {
             StartCount++;
             LastContext = context;
+            if (StartProbe is { } probe)
+            {
+                await probe();
+            }
+
             if (FailOnStartCount == StartCount)
             {
                 throw new AppLifecycleException("runtime_start_failed", "Runtime failed to start.");
             }
 
             OnStarted?.Invoke();
-            return Task.FromResult(new AppRuntimeStartResult(
+            return new AppRuntimeStartResult(
                 "running",
                 [new AppEndpointContract("app.http", "http", "http://localhost:3100", Public: true, Service: "app", Port: "http")],
-                StartLocks));
+                StartLocks);
         }
 
         public Task<string?> ResolveRemoteDigestAsync(RuntimeDockerImage image, CancellationToken cancellationToken = default)
@@ -6006,9 +6150,19 @@ public sealed class CoreLifecycleServiceTests
         public async Task<AppRuntimeOperationResult> StopAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
         {
             StopCount++;
+            if (StopProbe is { } probe)
+            {
+                await probe();
+            }
+
             if (StopGate is { } gate)
             {
                 await gate;
+            }
+
+            if (FailOnStopCount == StopCount)
+            {
+                throw new AppLifecycleException("runtime_stop_failed", "Runtime failed to stop.");
             }
 
             return new AppRuntimeOperationResult("stopped");

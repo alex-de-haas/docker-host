@@ -76,7 +76,7 @@ internal sealed class CloudflaredIngressController(
         try
         {
             var ingressApps = apps
-                .Where(app => string.Equals(app.RuntimeState, "running", StringComparison.Ordinal))
+                .Where(app => AppRuntimeStates.IsUp(app.RuntimeState))
                 .Select(app => new IngressApp(
                     CloudflaredIngressPlanner.ResolveSubdomain(app.Id, ReadSubdomainOverride(app)),
                     (app.Endpoints ?? [])

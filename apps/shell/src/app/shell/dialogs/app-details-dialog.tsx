@@ -34,6 +34,7 @@ import type {
   SettingsTab,
 } from "../types";
 import { CheckboxRow, EmptyState, FactCard, IconButton, InlineError } from "../ui";
+import { isAppIdle, isAppUp } from "../runtime-states";
 
 export function AppDetailsDialog({
   app,
@@ -274,7 +275,11 @@ function BackupsPanel({
 }) {
   const backups = detail.backups || [];
   const cleanupPlan = detail.backupCleanupPlan;
-  const isRunning = app.runtimeState === "running";
+  const isRunning = isAppUp(app.runtimeState);
+  // Restore writes over the app's data directory, so it needs the narrowest gate: stopped, not
+  // merely "not running". An app still shutting down would pass the latter and race the runtime
+  // for those files. Core enforces the same predicate and answers app_must_be_stopped.
+  const canRestore = isAppIdle(app.runtimeState);
 
   return (
     <DialogBody className="space-y-4">
@@ -340,7 +345,7 @@ function BackupsPanel({
                 <TableCell>{backup.retention?.reason || "unknown"}</TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-1">
-                    <IconButton title="Restore" disabled={isRunning || busyAction === `${app.id}:restore:${backup.backupId}`} onClick={() => onRestoreBackup(app, backup)}><Upload className="h-4 w-4" /></IconButton>
+                    <IconButton title="Restore" disabled={!canRestore || busyAction === `${app.id}:restore:${backup.backupId}`} onClick={() => onRestoreBackup(app, backup)}><Upload className="h-4 w-4" /></IconButton>
                     <IconButton title="Delete" disabled={busyAction === `${app.id}:delete-backup:${backup.backupId}`} onClick={() => onDeleteBackup(app, backup)} destructive><Trash2 className="h-4 w-4" /></IconButton>
                   </div>
                 </TableCell>
