@@ -64,6 +64,10 @@ test("missing required settings warn only while the app is stopped", () => {
   assert.equal(collectAppProblems(app({ settings }))[0].severity, "warning");
   // A running app already got past this gate, so repeating it would be noise.
   assert.deepEqual(collectAppProblems(app({ runtimeState: "running", settings })), []);
+  // And an app mid-verb is being validated by Core right now: warning there would blink the icon on
+  // and off on every single start. The gate is isIdle, not "!== running".
+  assert.deepEqual(collectAppProblems(app({ runtimeState: "starting", settings })), []);
+  assert.deepEqual(collectAppProblems(app({ runtimeState: "stopping", settings })), []);
 });
 
 test("a required secret is not judged, since its value is never sent to the client", () => {

@@ -50,7 +50,7 @@ internal sealed class DockerStatsExposition(
                 // consumes. Checked per tick so a live enable through the bootstrap endpoints or a
                 // plain app start takes effect without a Core restart.
                 var collector = await apps.GetAppAsync(CollectorBootstrap.AppId, stoppingToken);
-                current = string.Equals(collector?.RuntimeState, "running", StringComparison.Ordinal)
+                current = AppRuntimeStates.IsUp(collector?.RuntimeState)
                     ? await BuildSnapshotAsync(stoppingToken)
                     : string.Empty;
             }

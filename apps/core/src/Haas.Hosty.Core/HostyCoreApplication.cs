@@ -1056,6 +1056,7 @@ internal sealed class RuntimeAppSupervisorService(
 
         await MigratePortAssignmentsAsync(stoppingToken);
         await PurgeRetiredAdvisoriesAsync(stoppingToken);
+        await RecoverStrandedLifecycleStatesAsync(stoppingToken);
         await RecoverInterruptedUpdatesAsync(stoppingToken);
         await StopAutostartDisabledAppsAsync(stoppingToken);
         await StartAutostartAppsAsync(stoppingToken);
@@ -1352,6 +1353,28 @@ internal sealed class RuntimeAppSupervisorService(
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidOperationException)
         {
             logger.LogWarning(ex, "Retired-advisory cleanup did not complete.");
+        }
+    }
+
+    // Boot sweep for runtime states left mid-transition by a Core stop or crash. Sequenced before
+    // autostart reconciliation so it never fights a start this same boot is about to perform.
+    // Best-effort — a recovery failure must never abort boot.
+    private async Task RecoverStrandedLifecycleStatesAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var recovered = await lifecycle.RecoverStrandedLifecycleStatesAsync(cancellationToken);
+            if (recovered > 0)
+            {
+                logger.LogWarning("Reset {Count} runtime app state(s) left mid-transition by the previous Core stop.", recovered);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidOperationException)
+        {
+            logger.LogWarning(ex, "Stranded lifecycle-state recovery did not complete.");
         }
     }
 

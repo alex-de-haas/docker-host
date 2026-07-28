@@ -197,7 +197,7 @@ internal sealed class SystemAppBootstrapService(
         await EnsureInstalledAsync(descriptor with { Enabled = true }, cancellationToken);
         var app = await apps.GetAppAsync(entry.Id, cancellationToken)
             ?? throw new AppLifecycleException("bootstrap_install_failed", $"'{entry.Id}' was not installed.");
-        if (!string.Equals(app.RuntimeState, "running", StringComparison.Ordinal))
+        if (!AppRuntimeStates.IsUp(app.RuntimeState))
         {
             await lifecycle.StartAsync(entry.Id, cancellationToken);
         }

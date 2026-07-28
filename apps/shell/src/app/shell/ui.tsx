@@ -84,9 +84,15 @@ export function StatusBadge({ value }: { value: string }) {
   // "healthy" is matched exactly so it does not also light up on "unhealthy" (substring match).
   const running = normalized.includes("running") || normalized.includes("ok") || normalized.includes("ready") || normalized === "healthy";
   const attention = normalized.includes("error") || normalized.includes("failed") || normalized.includes("unknown") || normalized.includes("offline") || normalized.includes("unhealthy") || normalized.includes("degraded");
+  // A transitional state is neither good news nor bad news, so it gets its own tone and a pulsing dot
+  // rather than the neutral grey a terminal "stopped" gets — the point is that something is happening.
+  // Container health also reports "starting" (HEALTHCHECK pending), which reads correctly here too, so
+  // this branch serves the service rows as well as the app row. `running` is tested first because
+  // "healthy"/"running" always win when both could match.
+  const transitional = !running && (normalized.includes("starting") || normalized.includes("stopping") || normalized.includes("restarting"));
   return (
-    <Badge variant="outline" className={cn("gap-1.5", (running || attention) && "border-transparent", running && "bg-emerald-500/10 text-emerald-700", attention && "bg-amber-500/10 text-amber-700")}>
-      <span className={cn("h-2 w-2 rounded-full", running ? "bg-emerald-500" : attention ? "bg-amber-500" : "bg-muted-foreground")} />
+    <Badge variant="outline" className={cn("gap-1.5", (running || attention || transitional) && "border-transparent", running && "bg-emerald-500/10 text-emerald-700", attention && "bg-amber-500/10 text-amber-700", transitional && "bg-sky-500/10 text-sky-700 dark:text-sky-300")}>
+      <span className={cn("h-2 w-2 rounded-full", running ? "bg-emerald-500" : attention ? "bg-amber-500" : transitional ? "animate-pulse bg-sky-500" : "bg-muted-foreground")} />
       {value}
     </Badge>
   );

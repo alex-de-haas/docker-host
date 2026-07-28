@@ -51,6 +51,7 @@ import {
   shortDigest,
 } from "../app-helpers";
 import { collectAppProblems } from "../app-problems";
+import { isAppBusy, isAppUp } from "../runtime-states";
 import { AppIcon } from "../app-icon";
 import { copyTextToClipboard } from "../clipboard";
 import { isAuthRequiredRedirectError, readCoreError, redirectToCoreLoginIfAuthRequired } from "../core-api";
@@ -818,7 +819,10 @@ function InstalledAppRow({
   onCheckUpdate: (app: CoreApp) => void;
   onOpenPanel: OpenAppPanel;
 }) {
-  const running = app.runtimeState === "running";
+  const running = isAppUp(app.runtimeState);
+  // A verb is mid-flight on the server. Distinct from `busyAction`, which is only true in the tab
+  // that clicked: this one is true for every admin, in every tab, and survives a page reload.
+  const transitioning = isAppBusy(app.runtimeState);
   // Lifecycle (start/stop/restart) is not system-gated: Core's endpoints never were, reviewed updates
   // already cycle system apps, and a stopped one recovers from this page or the CLI. Stopping or
   // restarting the Shell itself takes this UI down with it, so the action handler confirms that case.
@@ -970,7 +974,18 @@ function InstalledAppRow({
               {isBusy("update") ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ArrowUpCircle className="h-4 w-4" />}
             </Button>
           ))}
-          {canControl && (running ? (
+          {canControl && (transitioning ? (
+            // Neither Start nor Stop is the right offer while the server is mid-verb: this toggle was
+            // binary before intermediate states existed, so a starting app showed a Start button that
+            // would race its own start. Report progress instead, and let the state settle.
+            <IconButton
+              title={app.runtimeState === "stopping" ? "Stopping…" : "Starting…"}
+              disabled
+              onClick={() => undefined}
+            >
+              <LoaderCircle className="h-4 w-4 animate-spin" />
+            </IconButton>
+          ) : running ? (
             <IconButton title="Stop app" disabled={isBusy("stop")} onClick={() => onAction(app, "stop")}>
               {isBusy("stop") ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Square className="h-4 w-4" />}
             </IconButton>
@@ -980,8 +995,8 @@ function InstalledAppRow({
             </IconButton>
           ))}
           {canControl && (
-            <IconButton title="Restart app" disabled={isBusy("restart")} onClick={() => onAction(app, "restart")}>
-              {isBusy("restart") ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+            <IconButton title="Restart app" disabled={transitioning || isBusy("restart")} onClick={() => onAction(app, "restart")}>
+              {transitioning || isBusy("restart") ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
             </IconButton>
           )}
           <InstalledAppActionsMenu
