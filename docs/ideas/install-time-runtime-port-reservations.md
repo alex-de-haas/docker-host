@@ -129,9 +129,10 @@ dependent apps need restart.
 
 ## Existing Feature Conflicts
 
-- [Automatic runtime app ports](../features/automatic-runtime-app-ports/feature.md) currently states that assignment
-  happens on first successful start and that no new persistent model is needed. This idea intentionally
-  replaces both decisions while preserving runtime environment compatibility.
+- [Automatic runtime app ports](../features/automatic-runtime-app-ports/feature.md) stated, when this idea
+  was written, that assignment happens on first successful start and that no new persistent model is
+  needed. This idea intentionally replaced both decisions while preserving runtime environment
+  compatibility; that document now describes install-time reservation as the shipped behavior.
 - Stored endpoint URLs currently double as proof of a successful start. Install-time URLs require endpoint
   availability/running state to be represented separately in Core summaries and Shell.
 - Cross-app dependencies currently consume the dependency's stored local endpoint URL. They can benefit from
@@ -198,8 +199,8 @@ start` branch. The idea was promoted after the user approved all remaining recom
 
 ## Links
 
-- [Automatic runtime app ports](../features/automatic-runtime-app-ports/feature.md) — current first-start allocation
-  behavior that this idea would extend.
+- [Automatic runtime app ports](../features/automatic-runtime-app-ports/feature.md) — the allocation
+  behavior this idea extended; it now documents install-time reservation as reality.
 - [Install-Time Runtime Port Reservations Plan](../planning/install-time-runtime-port-reservations.md) —
   implementation source of truth.
 - [One-Click Cloudflare Public Ingress](one-click-cloudflare-ingress.md) — consumer of install-time endpoint
