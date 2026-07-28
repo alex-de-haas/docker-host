@@ -427,6 +427,24 @@ internal sealed record AppDependencyContract(
 // it is injected under (HOSTY_DEPENDENCY_{ALIAS}_URL) in the dependent app.
 internal sealed record AppDependencyEndpointContract(string EndpointKey, string Alias);
 
+// One declared dependency with its state resolved against the installed set: state, never a verdict.
+// Clients decide what is worth warning about (a required dependency that is down is an error; an
+// optional one is a warning; an optional one that was never installed is neither) — see
+// docs/features/cross-app-dependencies/feature.md. Attached by the lifecycle service, which owns the
+// projection, because the record alone cannot know anything about the OTHER app.
+internal sealed record AppDependencySummary(
+    string AppId,
+    string? Version,
+    bool Required,
+    bool Installed,
+    bool Running,
+    IReadOnlyList<AppDependencyEndpointSummary> Endpoints);
+
+// A wired endpoint of a dependency plus whether it currently resolves to a URL. Unresolved means the
+// consumer's HOSTY_DEPENDENCY_{ALIAS}_URL is silently skipped at injection — usually a typo'd key.
+// Always false while the dependency is not installed.
+internal sealed record AppDependencyEndpointSummary(string EndpointKey, string Alias, bool Resolved);
+
 internal sealed record AppEndpointContract(
     string Key,
     string Protocol,
@@ -735,7 +753,11 @@ internal sealed record AppSummary(
     // Last-known update-availability verdict (plan-first updates): written by the fleet sweep and by
     // any successful plan build, reset by a successful apply. Null until a check has run for this
     // app. Attached by the lifecycle service, which owns the projection. Additive/nullable.
-    AppUpdateAvailability? UpdateCheck = null)
+    AppUpdateAvailability? UpdateCheck = null,
+    // Declared cross-app dependencies resolved against the installed set, so clients can surface a
+    // missing or stopped provider as app state instead of a notification. Empty when the app declares
+    // none. Attached by the lifecycle service (it needs the other apps' records). Additive/nullable.
+    IReadOnlyList<AppDependencySummary>? Dependencies = null)
 {
     // The effective Development Mode for a runtime: the operator's explicit toggle if set, else the
     // manifest profile's `development` flag as the default. Always false for a non-source runtime

@@ -52,6 +52,20 @@ export type AlertSeverity = "error" | "warning";
 // collapsed row and as an alert in the details panel, from that single derivation.
 export type AppProblem = { severity: AlertSeverity; title: string; detail?: string };
 
+// One declared cross-app dependency as Core resolved it against the installed set. `running` is only
+// meaningful when `installed`; `endpoints[].resolved` is false for everything while the provider is
+// absent. See docs/features/cross-app-dependencies/feature.md.
+export type CoreAppDependency = {
+  appId: string;
+  version?: string | null;
+  required: boolean;
+  installed: boolean;
+  running: boolean;
+  endpoints?: CoreAppDependencyEndpoint[];
+};
+
+export type CoreAppDependencyEndpoint = { endpointKey: string; alias: string; resolved: boolean };
+
 export type CoreEndpoint = {
   key: string;
   protocol: string;
@@ -171,6 +185,10 @@ export type CoreApp = {
   // Last-known update verdict from the Core fleet check (plan-first updates); null until a check has
   // run for this app. Drives the row Update/Review affordances. Optional for backwards compatibility.
   updateCheck?: AppUpdateAvailability | null;
+  // Declared cross-app dependencies with their state resolved against the installed set. Core reports
+  // state only — whether a given state is a problem is decided here, in collectAppProblems. Null/absent
+  // when the app declares none, or when talking to an older Core that predates the projection.
+  dependencies?: CoreAppDependency[] | null;
   // Set when the live source folder manifest was invalid on the last start and Core kept the last-good
   // copy running; surfaced as a non-blocking warning. Null when valid or not a live source app.
   manifestError?: string | null;

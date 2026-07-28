@@ -5208,6 +5208,89 @@ public sealed class CoreLifecycleServiceTests
         CoreLifecycleService.PreflightLoopbackAssignments(app); // host-network skipped → does not throw
     }
 
+    [Fact]
+    public async Task ListAppsAsync_ProjectsDependencyStateForEveryMatrixRow()
+    {
+        // The whole point of the projection: Core reports STATE, never a verdict, so one shape serves
+        // the required/optional split the client renders as red/amber/nothing.
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Apps.UpsertAppAsync(SeedReassignApp(
+            "com.example.provider-running",
+            "running",
+            endpoints: [ReassignEndpoint("app", "control", "http://127.0.0.1:7100")]));
+        await fixture.Apps.UpsertAppAsync(SeedReassignApp("com.example.provider-stopped", "stopped"));
+        await fixture.Apps.UpsertAppAsync(SeedReassignApp(
+            "com.example.consumer",
+            "running",
+            dependencies:
+            [
+                new AppDependencyContract("com.example.provider-running", "^1.0.0", Required: true,
+                    [new AppDependencyEndpointContract("app.control", "ctl")]),
+                new AppDependencyContract("com.example.provider-stopped", null, Required: true, []),
+                new AppDependencyContract("com.example.absent", null, Required: false, []),
+            ]));
+
+        var consumer = (await fixture.Service.ListAppsAsync()).Single(app => app.Id == "com.example.consumer");
+
+        var dependencies = Assert.IsAssignableFrom<IReadOnlyList<AppDependencySummary>>(consumer.Dependencies);
+        Assert.Equal(3, dependencies.Count);
+
+        var running = dependencies.Single(d => d.AppId == "com.example.provider-running");
+        Assert.True(running.Installed);
+        Assert.True(running.Running);
+        Assert.True(running.Required);
+        Assert.Equal("^1.0.0", running.Version);
+        var wired = Assert.Single(running.Endpoints);
+        Assert.Equal("ctl", wired.Alias);
+        Assert.True(wired.Resolved);
+
+        var stopped = dependencies.Single(d => d.AppId == "com.example.provider-stopped");
+        Assert.True(stopped.Installed);
+        Assert.False(stopped.Running);
+
+        var absent = dependencies.Single(d => d.AppId == "com.example.absent");
+        Assert.False(absent.Installed);
+        Assert.False(absent.Running);
+        Assert.False(absent.Required);
+    }
+
+    [Fact]
+    public async Task ListAppsAsync_ReportsAWiredEndpointWithNoUrlAsUnresolved()
+    {
+        // A running provider whose wired endpoint has no URL (typically a typo'd key) silently drops
+        // HOSTY_DEPENDENCY_{ALIAS}_URL at injection, so it has to stay visible after the advisory is gone.
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Apps.UpsertAppAsync(SeedReassignApp(
+            "com.example.provider",
+            "running",
+            endpoints: [ReassignEndpoint("app", "control", null)]));
+        await fixture.Apps.UpsertAppAsync(SeedReassignApp(
+            "com.example.consumer",
+            "running",
+            dependencies:
+            [
+                new AppDependencyContract("com.example.provider", null, Required: true,
+                    [new AppDependencyEndpointContract("typo", "ctl")]),
+            ]));
+
+        var consumer = (await fixture.Service.ListAppsAsync()).Single(app => app.Id == "com.example.consumer");
+
+        var dependency = Assert.Single(consumer.Dependencies!);
+        Assert.True(dependency.Running);
+        Assert.False(Assert.Single(dependency.Endpoints).Resolved);
+    }
+
+    [Fact]
+    public async Task ListAppsAsync_OmitsDependenciesWhenNoneAreDeclared()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Apps.UpsertAppAsync(SeedReassignApp("com.example.solo", "running"));
+
+        var solo = (await fixture.Service.ListAppsAsync()).Single(app => app.Id == "com.example.solo");
+
+        Assert.Null(solo.Dependencies);
+    }
+
     private static AppRecord SeedReassignApp(
         string id,
         string runtimeState,

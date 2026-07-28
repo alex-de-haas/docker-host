@@ -182,7 +182,7 @@ A top-level `dependencies` array declares dependencies on **other installed apps
 ]
 ```
 
-Each wired endpoint is injected into this app as `HOSTY_DEPENDENCY_{ALIAS}_URL` (alias defaults to the endpoint `key`). A cross-app dependency is discovery + a start-time advisory only — Core does not auto-install/auto-start the dependency, and it is **not** an access barrier. See [Cross-app dependencies](cross-app-dependencies/feature.md).
+Each wired endpoint is injected into this app as `HOSTY_DEPENDENCY_{ALIAS}_URL` (alias defaults to the endpoint `key`). A cross-app dependency is discovery + reported state only — Core does not auto-install/auto-start the dependency, and it is **not** an access barrier. See [Cross-app dependencies](cross-app-dependencies/feature.md).
 
 ## Source
 

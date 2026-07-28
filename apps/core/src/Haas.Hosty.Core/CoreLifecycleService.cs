@@ -86,7 +86,7 @@ internal sealed class CoreLifecycleService(
         foreach (var app in records)
         {
             var reconciled = await ReconcileRuntimeStateForSummaryAsync(app, cancellationToken);
-            summaries.Add(await BuildAppSummaryAsync(reconciled, cancellationToken));
+            summaries.Add(await BuildAppSummaryAsync(reconciled, cancellationToken, records));
         }
 
         return summaries;
@@ -910,7 +910,6 @@ internal sealed class CoreLifecycleService(
             // manifest's `provides`, not the app id or install path, so a marketplace/direct install
             // is provisioned exactly like a bootstrap install. See PlatformCapabilities.
             await PlatformCapabilities.ProvisionAsync(this, app.Id, app.Provides, cancellationToken);
-            await NotifyMissingDependenciesAsync(app, cancellationToken);
             if (load.ManifestError is not null)
             {
                 await NotifyManifestInvalidAsync(app, load.ManifestError, cancellationToken);
@@ -2749,7 +2748,14 @@ internal sealed class CoreLifecycleService(
     // Single choke point for building a summary so the live-source flag is computed consistently for
     // every response (list and lifecycle actions alike), not just the app list. Callers that mutate the
     // record then build a response should use this rather than AppSummary.From directly.
-    private async Task<AppSummary> BuildAppSummaryAsync(AppRecord app, CancellationToken cancellationToken)
+    // `installed` lets a caller that already holds the full record set (ListAppsAsync) hand it over:
+    // the dependency projection below would otherwise re-read every provider's state.json from disk
+    // once per consumer, turning one list request into an O(apps x dependencies) file scan. A null
+    // snapshot falls back to targeted lookups, which is right for the single-app callers.
+    private async Task<AppSummary> BuildAppSummaryAsync(
+        AppRecord app,
+        CancellationToken cancellationToken,
+        IReadOnlyList<AppRecord>? installed = null)
     {
         var profiles = await ResolveRuntimeProfilesAsync(app, cancellationToken);
         var liveSourcePath = ResolveLiveSourcePath(app, profiles);
@@ -2758,7 +2764,52 @@ internal sealed class CoreLifecycleService(
         // Suppressed for a live-source runtime — it has no reviewed-update path, so a verdict from
         // before the app went live must not keep offering an update the plan flow would refuse
         // (sweep pruning alone can't be relied on: the scheduler may be disabled).
-        return summary with { UpdateCheck = summary.Live ? null : updateAvailability.GetValueOrDefault(app.Id) };
+        return summary with
+        {
+            UpdateCheck = summary.Live ? null : updateAvailability.GetValueOrDefault(app.Id),
+            Dependencies = await ResolveDependencySummariesAsync(app, installed, cancellationToken),
+        };
+    }
+
+    // Resolve each declared dependency against the installed set. Reports state only — installed,
+    // running, and whether each wired endpoint currently has a URL — and leaves "is that a problem?"
+    // to the client, which is what lets one projection serve both the required and optional cases.
+    // Replaces the old start-time advisory: a dependency being down is a condition that resolves
+    // itself when the operator starts it, not an event worth a durable notification.
+    private async Task<IReadOnlyList<AppDependencySummary>?> ResolveDependencySummariesAsync(
+        AppRecord app,
+        IReadOnlyList<AppRecord>? installed,
+        CancellationToken cancellationToken)
+    {
+        if (app.Dependencies is not { Count: > 0 } dependencies)
+        {
+            return null;
+        }
+
+        var summaries = new List<AppDependencySummary>(dependencies.Count);
+        foreach (var dependency in dependencies)
+        {
+            var provider = installed is null
+                ? await apps.GetAppAsync(dependency.AppId, cancellationToken)
+                : installed.FirstOrDefault(candidate => string.Equals(candidate.Id, dependency.AppId, StringComparison.Ordinal));
+            var endpoints = (dependency.Endpoints ?? [])
+                .Select(wired => new AppDependencyEndpointSummary(
+                    wired.EndpointKey,
+                    wired.Alias,
+                    provider is not null && (provider.Endpoints ?? []).Any(endpoint =>
+                        string.Equals(endpoint.Key, wired.EndpointKey, StringComparison.Ordinal) &&
+                        !string.IsNullOrWhiteSpace(endpoint.Url))))
+                .ToArray();
+            summaries.Add(new AppDependencySummary(
+                dependency.AppId,
+                dependency.Version,
+                dependency.Required,
+                provider is not null,
+                provider is not null && string.Equals(provider.RuntimeState, "running", StringComparison.Ordinal),
+                endpoints));
+        }
+
+        return summaries;
     }
 
     // The app's runtime profiles, preferring the persisted record and falling back to a live load from
@@ -3545,74 +3596,6 @@ internal sealed class CoreLifecycleService(
         return true;
     }
 
-    // Best-effort advisory at start: Hosty does not auto-install/auto-start cross-app dependencies,
-    // so warn host admins when a declared dependency is missing or not running (required + missing =
-    // error, otherwise warning). Never blocks the start; failures to publish are swallowed.
-    private async Task NotifyMissingDependenciesAsync(AppRecord app, CancellationToken cancellationToken)
-    {
-        if (notifications is null || app.Dependencies?.Count is null or 0)
-        {
-            return;
-        }
-
-        // Publishes one advisory; never throws (a notification failure must not break start).
-        async Task PublishAsync(string level, string title, string body, string dedupeKey)
-        {
-            try
-            {
-                await notifications.PublishAsync(
-                    new CoreScope(), NotificationService.BroadcastTarget, NotificationService.AudienceHostAdmin,
-                    level, title, body, link: null, dedupeKey, cancellationToken);
-            }
-            catch (Exception exception)
-            {
-                logger.LogWarning(exception, "Failed to publish dependency advisory for {AppId}.", app.Id);
-            }
-        }
-
-        foreach (var dependency in app.Dependencies ?? [])
-        {
-            var version = dependency.Version is { Length: > 0 } v ? $" ({v})" : string.Empty;
-            var dependencyApp = await apps.GetAppAsync(dependency.AppId, cancellationToken);
-
-            if (dependencyApp is null)
-            {
-                await PublishAsync(
-                    dependency.Required ? "error" : "warning",
-                    $"Dependency '{dependency.AppId}' is not installed",
-                    $"'{app.Id}' depends on '{dependency.AppId}'{version}, which is not installed. Hosty does not auto-install dependencies — install it so the wired endpoints resolve.",
-                    $"dependency-missing:{app.Id}:{dependency.AppId}");
-                continue;
-            }
-
-            if (!string.Equals(dependencyApp.RuntimeState, "running", StringComparison.Ordinal))
-            {
-                await PublishAsync(
-                    "warning",
-                    $"Dependency '{dependency.AppId}' is not running",
-                    $"'{app.Id}' depends on '{dependency.AppId}'{version}, which is installed but not running. Start it so the wired endpoints resolve.",
-                    $"dependency-stopped:{app.Id}:{dependency.AppId}");
-                continue;
-            }
-
-            // Running: warn about any wired endpoint that does not resolve to a URL (e.g. a typo'd key),
-            // since that endpoint's HOSTY_DEPENDENCY_{ALIAS}_URL is silently skipped during injection.
-            foreach (var wired in dependency.Endpoints ?? [])
-            {
-                var resolved = (dependencyApp.Endpoints ?? []).Any(endpoint =>
-                    string.Equals(endpoint.Key, wired.EndpointKey, StringComparison.Ordinal) && !string.IsNullOrWhiteSpace(endpoint.Url));
-                if (!resolved)
-                {
-                    await PublishAsync(
-                        "warning",
-                        $"Dependency endpoint '{dependency.AppId}/{wired.EndpointKey}' is unavailable",
-                        $"'{app.Id}' wires endpoint '{wired.EndpointKey}' of '{dependency.AppId}', but it has no resolvable URL — HOSTY_DEPENDENCY_{wired.Alias}_URL will be missing.",
-                        $"dependency-endpoint:{app.Id}:{dependency.AppId}:{wired.EndpointKey}");
-                }
-            }
-        }
-    }
-
     // Host-admin advisory when a live source app started from its last-good copy because the operator
     // folder manifest is currently invalid (2b/R14). Best-effort, never throws — a notification
     // failure must not break a start that otherwise succeeded. Dedupe key is per-app so repeated bad
@@ -3668,8 +3651,10 @@ internal sealed class CoreLifecycleService(
             .OrderBy(key => key, StringComparer.Ordinal)
             .ToArray();
 
-    // Host-admin advisory mirroring NotifyMissingDependenciesAsync: best-effort, never throws so a
-    // notification failure cannot mask the start error. Dedupe key is per-app so re-attempts coalesce.
+    // Host-admin advisory for a start refused by unset required settings: best-effort, never throws so
+    // a notification failure cannot mask the start error. Dedupe key is per-app so re-attempts coalesce.
+    // Unlike a missing dependency — which is now app state on the summary, not a notification — this
+    // one reports a start that actually failed, so it is a genuine event.
     private async Task NotifyRequiredSettingsMissingAsync(AppRecord app, IReadOnlyList<string> missing, CancellationToken cancellationToken)
     {
         if (notifications is null)
