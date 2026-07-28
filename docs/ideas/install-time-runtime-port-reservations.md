@@ -129,7 +129,7 @@ dependent apps need restart.
 
 ## Existing Feature Conflicts
 
-- [Automatic runtime app ports](../features/automatic-runtime-app-ports.md) currently states that assignment
+- [Automatic runtime app ports](../features/automatic-runtime-app-ports/feature.md) currently states that assignment
   happens on first successful start and that no new persistent model is needed. This idea intentionally
   replaces both decisions while preserving runtime environment compatibility.
 - Stored endpoint URLs currently double as proof of a successful start. Install-time URLs require endpoint
@@ -198,7 +198,7 @@ start` branch. The idea was promoted after the user approved all remaining recom
 
 ## Links
 
-- [Automatic runtime app ports](../features/automatic-runtime-app-ports.md) — current first-start allocation
+- [Automatic runtime app ports](../features/automatic-runtime-app-ports/feature.md) — current first-start allocation
   behavior that this idea would extend.
 - [Install-Time Runtime Port Reservations Plan](../planning/install-time-runtime-port-reservations.md) —
   implementation source of truth.

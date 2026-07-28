@@ -285,7 +285,7 @@ None.
 ## Links
 
 - [Install-Time Runtime Port Reservations Idea](../ideas/install-time-runtime-port-reservations.md)
-- [Automatic Runtime App Ports](../features/automatic-runtime-app-ports.md)
+- [Automatic Runtime App Ports](../features/automatic-runtime-app-ports/feature.md)
 - [Cross-App Dependencies](../features/cross-app-dependencies/feature.md)
 - [Raw L4 Ports](../features/raw-ports.md)
 - [Host Networking](../features/host-networking.md)
