@@ -36,9 +36,14 @@ export function collectAppProblems(app: CoreApp): AppProblem[] {
     });
   }
 
-  // Only worth raising while the app is stopped: a running app already got past this, and Core does not
-  // re-validate settings mid-run.
-  if (app.runtimeState !== "running" && appHasMissingRequiredSettings(app)) {
+  // Only worth raising while the app is genuinely idle: a running app already got past this gate, and
+  // an app mid-start is being validated by Core right now — flagging it there would blink a warning on
+  // and off for every start. Deliberately `isIdle`, not `!== "running"`, which is what it used to be.
+  //
+  // Inlined rather than imported from ./runtime-states because this module is kept free of runtime
+  // imports so it stays directly testable under `node --test`, which cannot resolve extensionless
+  // relative specifiers. Keep the two in step.
+  if (app.runtimeState === "stopped" && appHasMissingRequiredSettings(app)) {
     problems.push({
       severity: "warning",
       title: "Required settings have no value",

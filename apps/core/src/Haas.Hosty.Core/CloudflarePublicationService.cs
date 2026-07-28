@@ -114,7 +114,7 @@ internal sealed class CloudflarePublicationService(
         return record with { Settings = settings };
     }
 
-    private static bool IsRunning(AppRecord app) => string.Equals(app.RuntimeState, "running", StringComparison.Ordinal);
+    private static bool IsRunning(AppRecord app) => AppRuntimeStates.IsUp(app.RuntimeState);
 }
 
 internal sealed record CloudflarePublishRequest(string EndpointKey, string Label);

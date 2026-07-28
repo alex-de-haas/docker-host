@@ -48,9 +48,11 @@ gets a named, reassignable conflict instead of a bind failure from inside docker
 
 - `runtime_port_unavailable` — a start's loopback-scoped reservations
   ([`PreflightLoopbackAssignments`](../../../apps/core/src/Haas.Hosty.Core/CoreLifecycleService.cs)).
-  A *running* app is skipped: its own bound ports are not a conflict. Cold starts wait up to 5s for
-  the port to clear; the start half of a stop→start pair waits longer and then starts anyway, since
-  the port is almost certainly our own still being torn down.
+  An app that already holds its own reserved ports is exempt — a restart or a docker adoption must
+  not have its own ports reported as stolen — and the caller passes that in rather than re-reading a
+  record the start path has already stamped `starting`. Cold starts wait up to 5s for the port to
+  clear; the start half of a stop→start pair waits longer and then starts anyway, since the port is
+  almost certainly our own still being torn down.
 - `local_command_port_unavailable` — the localCommand adapter's own preflight over fixed and sticky
   ports, which also rejects two services of one app claiming the same port.
 - `port_in_use` — an operator's manual port choice during reassignment.

@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, ArrowRight, Boxes, CircleAlert, PackageCheck, RefreshCw } from "lucide-react";
+import { Activity, ArrowRight, Boxes, CircleAlert, LoaderCircle, PackageCheck, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { getHealthSummary, getRuntimeCoverage, pluralize } from "../app-helpers";
 import type { CoreApp, CoreStatus, LoadState } from "../types";
 import { Fact, PageHeader, StatusBadge } from "../ui";
+import { isAppBusy, isAppUp } from "../runtime-states";
 
 export function DashboardPage({
   state,
@@ -20,7 +21,10 @@ export function DashboardPage({
   onRefresh: () => void;
   onOpenInstalledApps: () => void;
 }) {
-  const running = runtimeApps.filter((app) => app.runtimeState === "running").length;
+  const running = runtimeApps.filter((app) => isAppUp(app.runtimeState)).length;
+  // Apps mid-verb are counted apart from both buckets: calling them "not running" reads as a
+  // shortfall during a boot that is going fine, and calling them a problem is worse.
+  const transitioning = runtimeApps.filter((app) => isAppBusy(app.runtimeState)).length;
   const installed = runtimeApps.length;
   const attention = runtimeApps.filter((app) => app.lastError || app.operationStatus === "failed" || app.runtimeState === "unknown").length;
 
@@ -31,6 +35,7 @@ export function DashboardPage({
       <InstalledAppsWidget
         apps={runtimeApps}
         running={running}
+        transitioning={transitioning}
         installed={installed}
         attention={attention}
         loading={state.loading}
@@ -46,6 +51,7 @@ export function DashboardPage({
 function InstalledAppsWidget({
   apps,
   running,
+  transitioning,
   installed,
   attention,
   loading,
@@ -54,6 +60,7 @@ function InstalledAppsWidget({
 }: {
   apps: CoreApp[];
   running: number;
+  transitioning: number;
   installed: number;
   attention: number;
   loading: boolean;
@@ -63,6 +70,11 @@ function InstalledAppsWidget({
   const health = getHealthSummary(apps.length, running, attention);
   const metrics = [
     { label: "Running", value: running, icon: Activity, tone: "text-emerald-700 bg-emerald-500/10" },
+    // Only shown while something is actually in flight, so the steady-state widget keeps its
+    // three tiles and does not grow a permanent zero.
+    ...(transitioning > 0
+      ? [{ label: "In progress", value: transitioning, icon: LoaderCircle, tone: "text-sky-700 bg-sky-500/10 dark:text-sky-300" }]
+      : []),
     { label: "Installed", value: installed, icon: PackageCheck, tone: "text-zinc-700 bg-zinc-500/10 dark:text-zinc-300" },
     { label: "Needs attention", value: attention, icon: CircleAlert, tone: "text-amber-700 bg-amber-500/10" },
   ];

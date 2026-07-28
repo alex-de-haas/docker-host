@@ -369,6 +369,46 @@ internal static class AppPortSources
     public const string HostNetwork = "host-network";
 }
 
+// The persisted AppRecord.RuntimeState vocabulary, plus the three predicates callers actually mean.
+//
+// Before the intermediate states existed every call site asked its question as `== "running"` or
+// `!= "running"`, and those are three different questions that only coincided while the vocabulary was
+// binary. Keeping them apart is the whole point of this type: `!IsUp` is NOT `IsIdle`, and a gate that
+// means "only when nothing is happening" silently widens to include an app mid-transition if it is
+// written as the negation of `IsUp`. See docs/features/app-lifecycle-states/feature.md.
+internal static class AppRuntimeStates
+{
+    /// <summary>Up and serving traffic.</summary>
+    public const string Running = "running";
+
+    /// <summary>A start is in flight: nothing is listening yet, and the record is not terminal.</summary>
+    public const string Starting = "starting";
+
+    /// <summary>A stop is in flight: the runtime may still hold ports, and the record is not terminal.</summary>
+    public const string Stopping = "stopping";
+
+    /// <summary>Down, and nothing is operating on it.</summary>
+    public const string Stopped = "stopped";
+
+    /// <summary>Observed but not classifiable — e.g. a partial multi-service outage.</summary>
+    public const string Unknown = "unknown";
+
+    /// <summary>May traffic reach it? Only a fully started app qualifies.</summary>
+    public static bool IsUp(string? state) => string.Equals(state, Running, StringComparison.Ordinal);
+
+    /// <summary>Is a lifecycle verb mid-flight, so the app must not be disturbed and its own resources are not free?</summary>
+    public static bool IsBusy(string? state)
+        => string.Equals(state, Starting, StringComparison.Ordinal) ||
+            string.Equals(state, Stopping, StringComparison.Ordinal);
+
+    /// <summary>
+    /// Is it safe to do something destructive (restore a backup over its data, say)? Deliberately the
+    /// narrowest predicate: `stopped` only. Writing this as `!IsUp` is the bug this type exists to
+    /// prevent — that spelling also admits an app that is still shutting down.
+    /// </summary>
+    public static bool IsIdle(string? state) => string.Equals(state, Stopped, StringComparison.Ordinal);
+}
+
 // Endpoint availability, projected onto AppSummary endpoints only (never persisted, like PublicOrigin).
 // `assigned` — a durable target (a port assignment or an already-resolved URL) exists but the owning
 // service is stopped; `running` — the service is up; `unavailable` — the persisted target failed
@@ -941,7 +981,7 @@ internal sealed record AppSummary(
         IReadOnlyList<AppEndpointContract> endpoints,
         AppRecord app)
     {
-        var running = string.Equals(app.RuntimeState, "running", StringComparison.Ordinal);
+        var running = AppRuntimeStates.IsUp(app.RuntimeState);
         // Pre-index assignment identities by (service, port key) so the projection stays O(endpoints)
         // rather than scanning every assignment per endpoint.
         var assigned = new HashSet<(string?, string?)>(
