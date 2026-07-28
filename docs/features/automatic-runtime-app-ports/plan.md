@@ -132,5 +132,4 @@ Written as a diff against [feature.md](feature.md).
   a reassignment invalidates.
 - [Raw L4 Ports](../raw-ports.md) — the UDP and `expose: host` declarations phase 3 must cover.
 - [Host Networking](../host-networking.md) — fixed host-namespace ports.
-- [One-Click Cloudflare Public Ingress Plan](../../planning/one-click-cloudflare-public-ingress.md) —
-  consumer of install-time endpoint URLs.
+- [Cloudflare Ingress](../cloudflare-ingress/feature.md) — consumer of install-time endpoint URLs.

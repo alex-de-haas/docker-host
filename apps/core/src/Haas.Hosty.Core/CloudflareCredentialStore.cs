@@ -1,10 +1,10 @@
 namespace Haas.Hosty.Core;
 
-// One-click Cloudflare public ingress, phase 1: the private at-rest store for the scoped Cloudflare API
+// Cloudflare ingress: the private at-rest store for the scoped Cloudflare API
 // token. The raw token is written owner-only (0600 via JsonStorage restrictToOwner) under the private core
 // data root, is never returned to any API/UI projection (only a masked summary is), and is never logged.
 // The connector's own token is not stored — the existing connector stays externally owned. See
-// docs/planning/one-click-cloudflare-public-ingress.md ("Provider And State Boundaries").
+// docs/features/cloudflare-ingress/feature.md ("Provider And State Boundaries").
 internal sealed class CloudflareCredentialStore(CoreDataPaths paths)
 {
     private readonly SemaphoreSlim gate = new(1, 1);

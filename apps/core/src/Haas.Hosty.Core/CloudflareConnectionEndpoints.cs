@@ -1,7 +1,8 @@
 namespace Haas.Hosty.Core;
 
 // Host-admin surface for connecting Hosty to a Cloudflare account with a scoped API token and inspecting
-// the resulting connection. Read/discovery only in this phase — no DNS or tunnel mutation. All routes
+// the resulting connection. Connect/status/disconnect only — publishing a hostname is app-scoped and
+// lives in CloudflarePublicationEndpoints. All routes
 // require an admin session; mutations also require CSRF.
 internal static class CloudflareConnectionEndpoints
 {

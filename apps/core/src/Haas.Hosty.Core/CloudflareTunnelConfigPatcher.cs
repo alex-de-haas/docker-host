@@ -2,13 +2,13 @@ using System.Text.Json.Nodes;
 
 namespace Haas.Hosty.Core;
 
-// One-click Cloudflare public ingress, phase 2: the preservation-safe patcher for a remotely managed
+// Cloudflare ingress: the preservation-safe patcher for a remotely managed
 // tunnel's ingress rules. Cloudflare exposes only a whole-document PUT, so a mutation must read the latest
 // config, change ONLY the Hosty-owned hostname, and re-submit everything else verbatim. This operates on a
 // pass-through JsonObject and returns a new document, so unknown/sibling top-level keys (e.g. `warp-routing`,
 // confirmed present in the phase-0 spike), other apps' ingress rules, per-rule `originRequest`, relative
 // order, and the final catch-all all survive. Ownership/adoption decisions live in the service layer; this
-// is purely structural. See docs/planning/one-click-cloudflare-public-ingress.md ("Tunnel Configuration
+// is purely structural. See docs/features/cloudflare-ingress/feature.md ("Tunnel Configuration
 // Mutation").
 internal static class CloudflareTunnelConfigPatcher
 {

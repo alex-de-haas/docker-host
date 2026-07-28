@@ -66,7 +66,7 @@ what it would display (per core-dev-target).
   section; schema stays `core-settings.0.1`, an additive change). The single ingress controller reads
   the live values and a save re-renders `config.yml` immediately, so switching cloudflared on/off is a
   settings edit, not a restart. The provider renders as a `select`; the `config.yml` output path stays
-  launch-only. See [cloudflared ingress](../features/cloudflared-ingress.md).
+  launch-only. See [Cloudflare ingress](../features/cloudflare-ingress/feature.md).
 - **User-management retention (shipped): disabled-user retention window** — a single numeric
   `HOSTY_USERS_DISABLED_RETENTION_DAYS` setting (default 10, `0` = never) in a `users` section of the
   same `settings.json` (additive; schema stays `core-settings.0.1`). It backs the `UserRetentionScheduler`
