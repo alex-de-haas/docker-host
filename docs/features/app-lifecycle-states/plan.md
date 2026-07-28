@@ -1,6 +1,6 @@
-# App Lifecycle States — Intermediate `starting` / `stopping`, Later `waiting`
+# App Lifecycle States — Intermediate `starting` / `stopping`
 
-Status: Draft
+Status: In Progress
 Created: 2026-07-28
 Updated: 2026-07-28
 
@@ -14,16 +14,19 @@ the record says nothing changed. A start that pulls an image, resolves a source 
 a lingering host port can run for minutes with the row reading `stopped` and offering a **Start**
 button.
 
-The vocabulary becomes `running` · `starting` · `stopping` · `stopped` · `unknown`, with `waiting`
-reserved for the dependency-gated case and built last.
+The vocabulary becomes `running` · `starting` · `stopping` · `stopped` · `unknown`. A
+dependency-gated `waiting` is a separate feature — see
+[dependency-ordered-autostart](../dependency-ordered-autostart/plan.md) — because it needs machinery
+(topological autostart ordering) that does not exist yet, and nothing here depends on it.
 
 ## Why in-record state rather than a transient projection
 
 An in-memory "operation in flight" map would be cheaper and self-healing, and for `starting`/
-`stopping` alone it would be defensible. It does not survive contact with `waiting`: an app that
-should be running but whose dependency is down is in a **durable** condition that must outlive a Core
-restart. Since the vocabulary has to be persistable anyway, splitting it across two mechanisms would
-be worse than paying the persistence cost once.
+`stopping` alone it would be defensible. It does not survive contact with the `waiting` state that
+follows: an app that should be running but whose dependency is down is in a **durable** condition that
+must outlive a Core restart. Since the vocabulary has to be persistable then, splitting it across two
+mechanisms now would be worse than paying the persistence cost once. The price is a boot sweep, which
+this plan pays explicitly.
 
 ## The central refactor: one boolean becomes three predicates
 
@@ -85,14 +88,13 @@ idles a few seconds longer; `AttachAvailability`
 `assigned`; the `wasRunning` captures inside verbs (`:663`, `:1831`, `:1960`, `:2219`) are taken before
 the operation under the app lock; removal-impact reporting (`:2032`, `:2083`) passes the string to the UI.
 
-## Naming collision to resolve first
+## The `starting` naming collision
 
 Container health **already** has a `starting` value
 ([RuntimeAppManifest.cs:1765](../../../apps/core/src/Haas.Hosty.Core/RuntimeAppManifest.cs)), meaning
 "container up, HEALTHCHECK not passed yet" — nearly the opposite of an app-level `starting` ("no
-container yet"). The two meet in one render: `health?.status || app.runtimeState`
-([app-helpers.ts:329](../../../apps/shell/src/app/shell/app-helpers.ts)). Either the app-level names
-differ or the distinction is documented emphatically. This is a prerequisite decision, not a detail.
+container yet"). Resolved under Decisions below: the names stay, because the two values render in
+different places and each is correct where it appears.
 
 ## Phases
 
@@ -117,38 +119,28 @@ transient "required settings have no value" warning
 `ConsoleUi.State` ([ConsoleUi.cs:65](../../../apps/cli/src/Haas.Hosty.Cli/Commands/ConsoleUi.cs))
 already colours `starting` and `stopping`.
 
-**Phase 4 — `waiting`.** Blocked on machinery that does not exist: dependency-ordered autostart. Today
-`StartAutostartAppsAsync` sorts by capability start-priority then app id
-([CoreLifecycleService.cs:2481](../../../apps/core/src/Haas.Hosty.Core/CoreLifecycleService.cs)) and the
-dependency graph is never consulted. `waiting` needs topological ordering, a deferred queue, a wake
-trigger, a timeout, and cycle detection. Its input is the dependency projection from
-[cross-app-dependencies](../cross-app-dependencies/feature.md), which ships it as
-`AppSummary.Dependencies`.
+## Decisions
 
-## Open questions
-
-1. The `starting` naming collision above — rename, or document?
-2. Should `restarting` be its own state? Restart is stop+start under a single lock, so it is
-   distinguishable, but it adds a fourth intermediate value for modest gain.
-3. What wakes a `waiting` app — polling the reconcile tick, or reacting to the dependency's own
-   `app.changed`? The latter is cheaper and already fans out; the former is simpler to reason about.
-4. Does `waiting` have a timeout, and what does it become on expiry — `stopped` with a `LastError`, or
-   an indefinite wait that only the operator resolves?
-5. Should `waiting` be honoured by `StopRuntimeAppsAsync` at shutdown (nothing to stop) or is a
-   no-op stop harmless?
+1. **The app-level names stay `starting` / `stopping`; the collision is documented, not renamed.**
+   Checked rather than assumed: the two values never reach the same cell. Container health seeds a
+   per-**service** row and wins there (`health?.status || app.runtimeState`,
+   [app-helpers.ts:329](../../../apps/shell/src/app/shell/app-helpers.ts)), while the app-level value
+   renders in the **app** row badge. Each appears exactly where its own meaning is the true one.
+   Renaming to something unfamiliar would make the API worse to fix a conflict that does not occur;
+   docker itself carries the same pair (`State.Status` vs `State.Health.Status`).
+2. **No separate `restarting`.** A restart stamps `stopping`, then `starting`. Both are `IsBusy`, so
+   the client behaves identically to a dedicated value, and the operator gets to see which half is
+   slow. `ConsoleUi.State` already colours `restarting`; nothing will produce it, which is harmless.
 
 ## Deliverables
 
-- [ ] Resolve open question 1 (prerequisite).
 - [ ] Phase 1: `IsUp`/`IsBusy`/`IsIdle` helpers; every `RuntimeState` comparison reclassified; the port
       preflight explicitly commented as intentionally `IsUp`-only.
 - [ ] Phase 2: stamping in the three verbs; `try`/`catch` + failure recording in `StopCoreAsync`;
       boot recovery sweep for stranded intermediate states, sequenced before autostart.
 - [ ] Phase 3: Shell transitional badge, tri-state lifecycle toggle, Restore gate, dashboard counters,
-      settings-warning suppression; `waiting` added to `ConsoleUi.State`.
-- [ ] Phase 4: dependency-ordered autostart + `waiting`, gated on the dependency projection landing.
-- [ ] `feature.md` created in the PR that ships phase 2+3, documenting the vocabulary, the three
-      predicates, and the recovery guarantee.
+      settings-warning suppression.
+- [ ] `feature.md` documenting the vocabulary, the three predicates, and the recovery guarantee.
 - [ ] Version bump: platform in `Directory.Build.props`, `apps/shell` `manifest.json` + `package.json`.
 
 ## Verification
@@ -165,7 +157,9 @@ trigger, a timeout, and cycle detection. Its input is the dependency projection 
 
 ## Related
 
+- [dependency-ordered-autostart](../dependency-ordered-autostart/plan.md) — adds the `waiting` state
+  to the vocabulary this feature establishes.
 - [cross-app-dependencies](../cross-app-dependencies/feature.md) — its `AppSummary.Dependencies`
-  projection supplies the `waiting` trigger.
+  projection is what that later feature gates on.
 - [core-event-bus](../core-event-bus/feature.md) — the transport that makes these states visible
   without polling.
