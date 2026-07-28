@@ -20,7 +20,7 @@ which is exactly why it has survived.
 The two prerequisites are now in place: dependency state is resolved and projected
 ([cross-app-dependencies](../cross-app-dependencies/feature.md)), and the runtime-state vocabulary can
 carry a non-terminal value without every `!= "running"` gate misreading it
-([app-lifecycle-states](../app-lifecycle-states/plan.md)).
+([app-lifecycle-states](../app-lifecycle-states/feature.md)).
 
 ## Target behavior
 
@@ -73,7 +73,7 @@ carry a non-terminal value without every `!= "running"` gate misreading it
 
 ## Related
 
-- [app-lifecycle-states](../app-lifecycle-states/plan.md) — establishes the vocabulary and the three
-  predicates this feature extends.
+- [app-lifecycle-states](../app-lifecycle-states/feature.md) — establishes the vocabulary and the
+  three predicates this feature extends.
 - [cross-app-dependencies](../cross-app-dependencies/feature.md) — supplies the resolved dependency
   state this gates on.

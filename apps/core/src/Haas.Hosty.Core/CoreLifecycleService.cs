@@ -867,6 +867,10 @@ internal sealed class CoreLifecycleService(
     private async Task<AppLifecycleResponse> StartCoreAsync(string appId, bool afterOwnStop, CancellationToken cancellationToken)
     {
         var app = await RequireAppAsync(appId, cancellationToken);
+        // Captured BEFORE the stamp below, because the stamp destroys the evidence: an app whose runtime
+        // is already up (a Core restart that kept its containers, a repeated start) legitimately holds
+        // its own reserved ports, and the port preflight must keep exempting them.
+        var wasUp = AppRuntimeStates.IsUp(app.RuntimeState);
         IAppRuntimeAdapter? adapter = null;
         RuntimeLifecycleContext? context = null;
         var runtimeStarted = false;
@@ -906,7 +910,7 @@ internal sealed class CoreLifecycleService(
             // start that does fail reports the runtime's own error instead of a preflight guess.
             if (afterOwnStop)
             {
-                var lingering = await PollLoopbackAssignmentsReleaseAsync(app, selfRestartPortReleaseTimeout, cancellationToken);
+                var lingering = await PollLoopbackAssignmentsReleaseAsync(app, selfRestartPortReleaseTimeout, wasUp, cancellationToken);
                 if (lingering.Count > 0)
                 {
                     logger.LogWarning(
@@ -918,7 +922,7 @@ internal sealed class CoreLifecycleService(
             }
             else
             {
-                await WaitForLoopbackAssignmentsReleasedAsync(app, LoopbackReleaseTimeout, cancellationToken);
+                await WaitForLoopbackAssignmentsReleasedAsync(app, LoopbackReleaseTimeout, cancellationToken, wasUp);
             }
             app = await EnsureLocalCommandSourceReadyAsync(app, selection, cancellationToken);
             app = await EnsureIngressPublicOriginsAsync(app, selection, cancellationToken);
@@ -955,6 +959,16 @@ internal sealed class CoreLifecycleService(
             await ReconcileIngressAsync(cancellationToken);
             return new AppLifecycleResponse(await BuildAppSummaryAsync(updated.App, cancellationToken), null, "started");
         }
+        catch (OperationCanceledException)
+        {
+            // The caller went away (client disconnect, host shutdown) after the record was stamped
+            // `starting`. Without this the stamp outlives the operation: the lock is released, no
+            // reconciler observes a non-IsUp record, and the app sits `starting` until the next boot
+            // sweep. Settle it on a token of our own — the request's is already cancelled — and stay
+            // honest about what a half-run start left behind.
+            await SettleTransitionalStateAsync(appId, CancellationToken.None);
+            throw;
+        }
         catch (Exception ex) when (IsRecordableLifecycleFailure(ex))
         {
             if (runtimeStarted && adapter is not null && context is not null)
@@ -962,7 +976,7 @@ internal sealed class CoreLifecycleService(
                 await TryStopRuntimeAsync(adapter, context);
             }
 
-            await RecordForegroundLifecycleFailureAsync(appId, "start", "stopped", ex.Message, cancellationToken);
+            await RecordForegroundLifecycleFailureAsync(appId, "start", AppRuntimeStates.Stopped, ex.Message, cancellationToken);
             throw;
         }
     }
@@ -995,6 +1009,11 @@ internal sealed class CoreLifecycleService(
 
             await ReconcileIngressAsync(cancellationToken);
             return new AppLifecycleResponse(await BuildAppSummaryAsync(updated.App, cancellationToken), null, "stopped");
+        }
+        catch (OperationCanceledException)
+        {
+            await SettleTransitionalStateAsync(appId, CancellationToken.None);
+            throw;
         }
         catch (Exception ex) when (IsRecordableLifecycleFailure(ex))
         {
@@ -1109,13 +1128,19 @@ internal sealed class CoreLifecycleService(
     // stolen). Host-network ports bind a fixed container port outside the loopback pool, so they are not
     // probed; an unset/invalid reservation is skipped too (the adapter's start-time resolver falls back to
     // a fresh automatic allocation for it, see ResolveHostPort).
-    private static IReadOnlyList<AppPortAssignment> FindUnavailableLoopbackAssignments(AppRecord app)
+    // `ownsItsPorts` says the app is already holding its own reserved ports, so a busy port is its own
+    // and not a conflict. It is an explicit ARGUMENT rather than a re-read of app.RuntimeState because
+    // the start path stamps `starting` on the record before reaching here: deriving it again would drop
+    // the exemption exactly when it matters most — a Core that restarted while the app's container kept
+    // running (keep-apps light restart, docker adoption) would flag the app's own ports as stolen and
+    // fail its own autostart with runtime_port_unavailable. The caller captures it before stamping.
+    //
+    // Deliberately NOT satisfied by IsBusy: an app mid-`starting` that was down before has bound nothing
+    // yet — this preflight runs before the adapter starts — so exempting it would blind the cold-start
+    // conflict check and turn the structured error back into a generic bind failure.
+    private static IReadOnlyList<AppPortAssignment> FindUnavailableLoopbackAssignments(AppRecord app, bool ownsItsPorts)
     {
-        // Deliberately IsUp, never IsBusy: this exempts an app that is legitimately holding its own
-        // ports right now. An app mid-`starting` has not bound anything yet (this very preflight runs
-        // before the adapter starts), so exempting it would only blind the cold-start conflict check
-        // and turn the structured runtime_port_unavailable error back into a generic bind failure.
-        if (AppRuntimeStates.IsUp(app.RuntimeState))
+        if (ownsItsPorts)
         {
             return [];
         }
@@ -1144,7 +1169,7 @@ internal sealed class CoreLifecycleService(
     // bind error. No wait — used where an immediate verdict is wanted (and by the tests).
     internal static void PreflightLoopbackAssignments(AppRecord app)
     {
-        var conflicts = FindUnavailableLoopbackAssignments(app);
+        var conflicts = FindUnavailableLoopbackAssignments(app, AppRuntimeStates.IsUp(app.RuntimeState));
         if (conflicts.Count > 0)
         {
             throw PortsUnavailable(app, conflicts);
@@ -1158,9 +1183,10 @@ internal sealed class CoreLifecycleService(
     private static async Task<IReadOnlyList<AppPortAssignment>> PollLoopbackAssignmentsReleaseAsync(
         AppRecord app,
         TimeSpan timeout,
+        bool ownsItsPorts,
         CancellationToken cancellationToken)
     {
-        var conflicts = FindUnavailableLoopbackAssignments(app);
+        var conflicts = FindUnavailableLoopbackAssignments(app, ownsItsPorts);
         if (conflicts.Count == 0)
         {
             return conflicts;
@@ -1173,7 +1199,7 @@ internal sealed class CoreLifecycleService(
         for (var remaining = timeout; remaining > TimeSpan.Zero; remaining = timeout - System.Diagnostics.Stopwatch.GetElapsedTime(start))
         {
             await Task.Delay(remaining < poll ? remaining : poll, cancellationToken);
-            conflicts = FindUnavailableLoopbackAssignments(app);
+            conflicts = FindUnavailableLoopbackAssignments(app, ownsItsPorts);
             if (conflicts.Count == 0)
             {
                 return conflicts;
@@ -1187,9 +1213,13 @@ internal sealed class CoreLifecycleService(
     // stopped, so a reserved port still held after the window is a genuine conflict — an unrelated process
     // took it. Fail with the structured, reassign-able error naming the endpoints instead of letting the
     // adapter hit a generic bind failure.
-    internal static async Task WaitForLoopbackAssignmentsReleasedAsync(AppRecord app, TimeSpan timeout, CancellationToken cancellationToken)
+    internal static async Task WaitForLoopbackAssignmentsReleasedAsync(
+        AppRecord app,
+        TimeSpan timeout,
+        CancellationToken cancellationToken,
+        bool ownsItsPorts = false)
     {
-        var conflicts = await PollLoopbackAssignmentsReleaseAsync(app, timeout, cancellationToken);
+        var conflicts = await PollLoopbackAssignmentsReleaseAsync(app, timeout, ownsItsPorts, cancellationToken);
         if (conflicts.Count > 0)
         {
             throw PortsUnavailable(app, conflicts);
@@ -1328,6 +1358,11 @@ internal sealed class CoreLifecycleService(
             await ReconcileIngressAsync(cancellationToken);
             return new AppLifecycleResponse(await BuildAppSummaryAsync(updated.App, cancellationToken), null, "restarted");
         }
+        catch (OperationCanceledException)
+        {
+            await SettleTransitionalStateAsync(appId, CancellationToken.None);
+            throw;
+        }
         catch (Exception ex) when (IsRecordableLifecycleFailure(ex))
         {
             if (runtimeStarted && adapter is not null && context is not null)
@@ -1335,8 +1370,31 @@ internal sealed class CoreLifecycleService(
                 await TryStopRuntimeAsync(adapter, context);
             }
 
-            await RecordForegroundLifecycleFailureAsync(appId, "restart", "stopped", ex.Message, cancellationToken);
+            await RecordForegroundLifecycleFailureAsync(appId, "restart", AppRuntimeStates.Stopped, ex.Message, cancellationToken);
             throw;
+        }
+    }
+
+    // Replace a transitional state left behind by an abandoned verb with an honest terminal one. Used
+    // on cancellation, where — unlike a failure — we have no error to record and no idea how far the
+    // runtime got: `unknown` says exactly that, and the docker sweep raises it back to running if it
+    // finds a live container. Runs on a caller-supplied token because the request's is already
+    // cancelled. A record that is no longer transitional (the verb committed before cancellation
+    // landed) is left untouched. Best-effort: nothing useful remains to do if this write also fails.
+    private async Task SettleTransitionalStateAsync(string appId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await apps.UpdateAppAsync(
+                appId,
+                current => AppRuntimeStates.IsBusy(current.RuntimeState)
+                    ? current with { RuntimeState = AppRuntimeStates.Unknown }
+                    : current,
+                cancellationToken);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException or JsonException)
+        {
+            logger.LogWarning(ex, "Could not settle the transitional runtime state for app {AppId} after cancellation.", appId);
         }
     }
 

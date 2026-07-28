@@ -48,6 +48,11 @@ bound ports are not reported as stolen. An app mid-`starting` has bound nothing 
 runs *before* the adapter starts — so exempting it would only blind genuine cold-start conflict
 detection and turn the structured `runtime_port_unavailable` error back into a generic bind failure.
 
+That exemption is passed to the preflight as an explicit argument, captured **before** the verb stamps
+`starting`, rather than re-read from the record. Stamping destroys the evidence: an app whose runtime
+is already up — a Core restart that kept its containers, or a repeated start — would otherwise have its
+own reserved ports flagged as conflicts and fail its own autostart.
+
 ## Where the state is written
 
 Stamped at the **head** of the verb, before the slow preamble, not just before the adapter call: the
@@ -61,6 +66,12 @@ no new transport. The Shell has no app-state polling at all; it re-reads on the 
 A stop that throws records `unknown`, never `stopping`. Stop needed no failure path before these
 states existed — a throw simply left the record on its previous value — but a stranded `stopping`
 would be permanent, because no reconciler observes a non-`IsUp` record.
+
+**Cancellation settles too.** A client disconnect or host shutdown after the stamp abandons the verb
+and releases the lock, which would leave the same permanent stamp. All three verbs catch
+`OperationCanceledException` and settle the record to `unknown` on a token of their own — the
+request's is already cancelled — before rethrowing. A record that is no longer transitional (the verb
+committed just before cancellation landed) is left untouched.
 
 ## Recovery
 
@@ -101,10 +112,13 @@ emit a transitional value, the supervisor and a lifecycle verb would fight over 
 ## Testing Expectations
 
 - `CoreLifecycleServiceTests`: the record reads `starting` / `stopping` while the adapter is inside the
-  verb, and terminal afterwards; a failing stop lands on `unknown` and never on `stopping`; the boot
-  sweep resets a stranded state, leaves terminal states alone, and skips an app whose verb is still in
-  flight; restore is refused while `stopping`; `ResolveRuntimeStateFromHealth` never returns an
-  `IsBusy` value for any input.
+  verb, and terminal afterwards; a failing stop lands on `unknown` and never on `stopping`; a cancelled
+  start and a cancelled stop both settle instead of stranding; the boot sweep resets a stranded state,
+  leaves terminal states alone, and skips an app whose verb is still in flight; restore is refused
+  while `stopping`; `ResolveRuntimeStateFromHealth` never returns an `IsBusy` value for any input.
+- `CoreLifecycleServiceTests`: starting an app whose record already says `running` while it holds its
+  own reserved port must not raise `runtime_port_unavailable` — the guard for the exemption being
+  captured before the stamp rather than re-read after it.
 - Port-preflight coverage stays as the regression guard for the one site that keeps `IsUp`.
 - `apps/shell/test/runtime-states.test.mjs`: each predicate's membership, their mutual exclusivity, and
   explicitly that `isAppIdle` is narrower than the negation of `isAppUp`.

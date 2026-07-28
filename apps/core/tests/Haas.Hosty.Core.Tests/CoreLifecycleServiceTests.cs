@@ -5211,6 +5211,79 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task StartAsync_WhenTheAppIsAlreadyUp_DoesNotRejectItsOwnBoundPorts()
+    {
+        // Regression guard for the trap the transitional stamp opened: stamping `starting` overwrites
+        // the very evidence the port preflight uses to exempt an app that legitimately holds its own
+        // ports. A Core restart that kept containers running (keep-apps, docker adoption) then autostarts
+        // an app whose record already says `running` — and it would fail on its own ports.
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+
+        // Hold a port and reserve it for the app, exactly as its surviving container would.
+        using var holder = new TcpListener(IPAddress.Loopback, 0);
+        holder.Start();
+        var heldPort = ((IPEndPoint)holder.LocalEndpoint).Port;
+        await fixture.Apps.UpdateAppAsync("com.example.notes", current => current with
+        {
+            RuntimeState = AppRuntimeStates.Running,
+            PortAssignments = [ReassignAssignment("app", "http", heldPort)],
+        });
+
+        await fixture.Service.StartAsync("com.example.notes"); // must not throw runtime_port_unavailable
+
+        Assert.Equal(AppRuntimeStates.Running, (await fixture.Apps.GetAppAsync("com.example.notes"))!.RuntimeState);
+    }
+
+    [Fact]
+    public async Task StartAsync_WhenTheRequestIsCancelled_DoesNotStrandATransitionalState()
+    {
+        // A client disconnect after the stamp used to leave the record on `starting` with the lock
+        // already released: no reconciler observes a non-IsUp record, so it sat there until the next
+        // boot sweep and the Shell kept its lifecycle controls disabled.
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        await fixture.Service.StopAsync("com.example.notes");
+
+        using var cts = new CancellationTokenSource();
+        fixture.Adapter.StartProbe = () =>
+        {
+            cts.Cancel();
+            cts.Token.ThrowIfCancellationRequested();
+            return Task.CompletedTask;
+        };
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => fixture.Service.StartAsync("com.example.notes", cts.Token));
+
+        var settled = (await fixture.Apps.GetAppAsync("com.example.notes"))!;
+        Assert.False(AppRuntimeStates.IsBusy(settled.RuntimeState));
+        Assert.Equal(AppRuntimeStates.Unknown, settled.RuntimeState);
+    }
+
+    [Fact]
+    public async Task StopAsync_WhenTheRequestIsCancelled_DoesNotStrandATransitionalState()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+
+        using var cts = new CancellationTokenSource();
+        fixture.Adapter.StopProbe = () =>
+        {
+            cts.Cancel();
+            cts.Token.ThrowIfCancellationRequested();
+            return Task.CompletedTask;
+        };
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => fixture.Service.StopAsync("com.example.notes", cts.Token));
+
+        var settled = (await fixture.Apps.GetAppAsync("com.example.notes"))!;
+        Assert.False(AppRuntimeStates.IsBusy(settled.RuntimeState));
+        Assert.Equal(AppRuntimeStates.Unknown, settled.RuntimeState);
+    }
+
+    [Fact]
     public async Task StartAsync_PersistsStartingWhileTheVerbIsInFlight()
     {
         // The whole point of the feature: the record — not just the clicking tab — says a start is
