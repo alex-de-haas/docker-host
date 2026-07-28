@@ -1,4 +1,4 @@
-import type { AppProblem, CoreApp } from "./types";
+import type { AppProblem, CoreApp, CoreAppDependency } from "./types";
 
 // Kept a leaf module — types only, no runtime imports — so it stays directly testable under
 // `node --test`, which cannot resolve the extensionless specifiers app-helpers reaches for.
@@ -54,9 +54,68 @@ export function collectAppProblems(app: CoreApp): AppProblem[] {
     });
   }
 
+  problems.push(...collectDependencyProblems(app.dependencies));
+
   // A failed update check is deliberately absent: it already has its own marker beside the row's update
   // affordance, gated on the app actually supporting reviewed updates. Repeating it here would report the
   // same problem twice, and would report it for live-source apps that have no update path at all.
 
   return problems;
+}
+
+// Cross-app dependency state, rendered beside the app instead of published as a notification: a
+// dependency being down is a condition that resolves itself the moment the operator starts it, and a
+// notification store with no revoke could only ever accumulate stale ones. Core sends state; the
+// severity split lives here.
+//
+// A dependency the operator never installed is only a problem when it is REQUIRED. An optional one
+// they chose not to install is a choice, and an icon for it would teach operators to ignore the icon.
+function collectDependencyProblems(dependencies: CoreApp["dependencies"]): AppProblem[] {
+  const problems: AppProblem[] = [];
+
+  for (const dependency of dependencies ?? []) {
+    const name = describeDependency(dependency);
+
+    if (!dependency.installed) {
+      if (dependency.required) {
+        problems.push({
+          severity: "error",
+          title: `Required dependency ${dependency.appId} is not installed`,
+          detail: `This app wires ${name}, which is not installed. Hosty never auto-installs a dependency — install it so the wired endpoints resolve.`,
+        });
+      }
+      continue;
+    }
+
+    if (!dependency.running) {
+      problems.push({
+        severity: dependency.required ? "error" : "warning",
+        title: `${dependency.required ? "Required" : "Optional"} dependency ${dependency.appId} is not running`,
+        detail: `This app wires ${name}, which is installed but stopped. Start it so the wired endpoints resolve.`,
+      });
+      continue;
+    }
+
+    // Running, so the only thing left to check is whether each wired endpoint actually resolves: an
+    // unresolved one silently drops its HOSTY_DEPENDENCY_{ALIAS}_URL, which is invisible from inside
+    // the consumer. Always a warning — the dependency itself is healthy, the wiring is not.
+    const unresolved = (dependency.endpoints ?? []).filter((endpoint) => !endpoint.resolved);
+    if (unresolved.length > 0) {
+      const keys = unresolved.map((endpoint) => endpoint.endpointKey).join(", ");
+      const vars = unresolved.map((endpoint) => `HOSTY_DEPENDENCY_${endpoint.alias.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_URL`).join(", ");
+      problems.push({
+        severity: "warning",
+        title: unresolved.length === 1
+          ? `Dependency endpoint ${dependency.appId}/${keys} is unavailable`
+          : `${unresolved.length} dependency endpoints of ${dependency.appId} are unavailable`,
+        detail: `${keys} has no resolvable URL, so ${vars} is missing from this app's environment. Check the endpoint key against the dependency's manifest.`,
+      });
+    }
+  }
+
+  return problems;
+}
+
+function describeDependency(dependency: CoreAppDependency) {
+  return dependency.version ? `${dependency.appId} (${dependency.version})` : dependency.appId;
 }

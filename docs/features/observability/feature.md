@@ -267,7 +267,7 @@ Core.
 **Auth model: reuse the platform's, split by direction.** Host-user auth (Core sessions) gates the
 console-log read; app-service tokens gate app→Core routes, including the docker-stats exposition and
 the app-directory roster; app-to-app auth is deliberately absent platform-wide
-([cross-app-dependencies.md](../cross-app-dependencies.md): single-tenant homelab, all installed apps
+([cross-app-dependencies.md](../cross-app-dependencies/feature.md): single-tenant homelab, all installed apps
 trusted), and telemetry inherits that. What the telemetry data path itself has is a **network**
 posture, not a token: the collector's OTLP ingest port is `expose: host`, so it binds `0.0.0.0` and
 is reachable from the LAN unless the host firewall blocks it (see [raw-ports.md](../raw-ports.md)),

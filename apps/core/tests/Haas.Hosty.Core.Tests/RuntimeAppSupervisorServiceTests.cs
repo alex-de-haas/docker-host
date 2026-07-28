@@ -442,7 +442,13 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
         await first.StartAsync(CancellationToken.None);
         try
         {
+            // Wait for the seed MARKER, not just the installed app: SeedFreshHostAsync writes the
+            // marker after the last install, under the boot token. Stopping the supervisor as soon as
+            // the app record appears can cancel that write, and a host with no marker and no apps left
+            // (the operator removes the app below) is indistinguishable from a fresh one — so the
+            // second boot would legitimately re-seed and this test would fail for the wrong reason.
             await WaitForAppAsync(fixture.Apps, MarketplaceBootstrap.AppId);
+            await WaitForFileAsync(Path.Combine(fixture.Paths.CoreRoot, DistributionSeedSchema.FileName));
         }
         finally
         {

@@ -163,6 +163,39 @@ internal sealed class NotificationService(
         }, cancellationToken);
     }
 
+    // One-time migration sweep: drop CORE-produced notifications whose dedupe key carries one of these
+    // prefixes. Needed because the store has dedupe and ReadAt but no revoke, so an advisory that a
+    // later release turns into app state would otherwise sit in the list forever describing a world
+    // that no longer exists. Deliberately drops READ records too — they are equally obsolete, and the
+    // point is to leave nothing behind. Returns how many were removed.
+    //
+    // The source check is load-bearing, not defensive tidiness: an app picks its own dedupe key when it
+    // publishes (see NotificationEndpoints.ValidateAppRequest), so matching on the prefix alone would
+    // let a legitimate app notification that happens to start with one of these strings be deleted on
+    // every single boot. Only Core ever produced the advisories being retired here.
+    public async Task<int> PurgeByDedupePrefixAsync(
+        IReadOnlyCollection<string> prefixes,
+        CancellationToken cancellationToken = default)
+    {
+        if (prefixes.Count == 0)
+        {
+            return 0;
+        }
+
+        return await store.UpdateAsync(state =>
+        {
+            var kept = state.Notifications
+                .Where(record => !string.Equals(record.Source.Kind, "core", StringComparison.Ordinal) ||
+                    record.DedupeKey is null ||
+                    !prefixes.Any(prefix => record.DedupeKey.StartsWith(prefix, StringComparison.Ordinal)))
+                .ToList();
+            var purged = state.Notifications.Count - kept.Count;
+            return purged == 0
+                ? (state, 0)
+                : (state with { Notifications = kept }, purged);
+        }, cancellationToken);
+    }
+
     // Per recipient: keep all unread; among read, drop those older than the retention window and cap
     // the remainder at MaxPerUser. Unread records are never pruned.
     public async Task<int> ApplyRetentionAsync(CancellationToken cancellationToken = default)

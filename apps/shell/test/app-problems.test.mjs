@@ -84,6 +84,76 @@ test("a failed update check is left to the row's own update marker", () => {
   assert.deepEqual(collectAppProblems(app({ updateCheck: { updateAvailable: false, requiresReview: false, checkedAt: "now", error: "registry unreachable" } })), []);
 });
 
+function dependency(overrides = {}) {
+  return { appId: "com.haas.torrent-engine", required: true, installed: true, running: true, endpoints: [], ...overrides };
+}
+
+test("a required dependency that is not installed is an error", () => {
+  const problems = collectAppProblems(app({ dependencies: [dependency({ installed: false, running: false })] }));
+  assert.equal(problems.length, 1);
+  assert.equal(problems[0].severity, "error");
+  assert.match(problems[0].title, /Required dependency com\.haas\.torrent-engine is not installed/);
+});
+
+test("an optional dependency that is not installed is silent", () => {
+  // The one row that removes a signal: not installing an optional dependency is a choice, and an icon
+  // for it would train operators to ignore the icon.
+  const problems = collectAppProblems(app({
+    dependencies: [dependency({ required: false, installed: false, running: false })],
+  }));
+  assert.deepEqual(problems, []);
+});
+
+test("an installed dependency that is stopped takes its severity from `required`", () => {
+  const required = collectAppProblems(app({ dependencies: [dependency({ running: false })] }));
+  assert.equal(required.length, 1);
+  assert.equal(required[0].severity, "error");
+  assert.match(required[0].title, /Required dependency .* is not running/);
+
+  const optional = collectAppProblems(app({ dependencies: [dependency({ required: false, running: false })] }));
+  assert.equal(optional.length, 1);
+  assert.equal(optional[0].severity, "warning");
+  assert.match(optional[0].title, /Optional dependency .* is not running/);
+});
+
+test("a stopped dependency reports its version when one is declared", () => {
+  const problems = collectAppProblems(app({ dependencies: [dependency({ running: false, version: "^0.1.0" })] }));
+  assert.match(problems[0].detail, /com\.haas\.torrent-engine \(\^0\.1\.0\)/);
+});
+
+test("a running dependency with an unresolvable wired endpoint warns and names the env var", () => {
+  // The dependency itself is healthy; the wiring is not — the consumer just never receives the URL.
+  const problems = collectAppProblems(app({
+    dependencies: [dependency({ endpoints: [{ endpointKey: "control", alias: "torrent-ctl", resolved: false }] })],
+  }));
+  assert.equal(problems.length, 1);
+  assert.equal(problems[0].severity, "warning");
+  assert.match(problems[0].title, /Dependency endpoint com\.haas\.torrent-engine\/control is unavailable/);
+  assert.match(problems[0].detail, /HOSTY_DEPENDENCY_TORRENT_CTL_URL/);
+});
+
+test("a running dependency with resolved endpoints is silent", () => {
+  const problems = collectAppProblems(app({
+    dependencies: [dependency({ endpoints: [{ endpointKey: "control", alias: "ctl", resolved: true }] })],
+  }));
+  assert.deepEqual(problems, []);
+});
+
+test("a stopped dependency is not also reported as unresolved wiring", () => {
+  // Core reports every endpoint as unresolved while the provider is down; reporting both would be two
+  // icons for one cause.
+  const problems = collectAppProblems(app({
+    dependencies: [dependency({ running: false, endpoints: [{ endpointKey: "control", alias: "ctl", resolved: false }] })],
+  }));
+  assert.equal(problems.length, 1);
+  assert.match(problems[0].title, /is not running/);
+});
+
+test("an older Core that sends no dependencies raises nothing", () => {
+  assert.deepEqual(collectAppProblems(app({ runtimeState: "running" })), []);
+  assert.deepEqual(collectAppProblems(app({ runtimeState: "running", dependencies: null })), []);
+});
+
 test("problems accumulate, errors ahead of warnings", () => {
   const problems = collectAppProblems(app({
     lastError: "boom",

@@ -143,6 +143,40 @@ public sealed class NotificationServiceTests
     }
 
     [Fact]
+    public async Task PurgeByDedupePrefixAsync_RemovesCoreAdvisoriesReadAndUnread()
+    {
+        var fixture = await Fixture.CreateAsync();
+        await fixture.Service.PublishAsync(new CoreScope(), "user_alice", NotificationService.AudienceUser,
+            "warning", "Dependency stopped", null, null, "dependency-stopped:com.a:com.b");
+        await fixture.Service.PublishAsync(new CoreScope(), "user_alice", NotificationService.AudienceUser,
+            "info", "Unrelated", null, null, "update-applied:com.a");
+        var page = await fixture.Service.QueryAsync("user_alice", false, false, 50, 0);
+        await fixture.Service.MarkReadAsync("user_alice", [page.Notifications.Single(n => n.Title == "Dependency stopped").Id]);
+
+        var purged = await fixture.Service.PurgeByDedupePrefixAsync(["dependency-stopped:"]);
+
+        var remaining = await fixture.Service.QueryAsync("user_alice", false, false, 50, 0);
+        Assert.Equal(1, purged);
+        Assert.Equal("Unrelated", Assert.Single(remaining.Notifications).Title);
+    }
+
+    [Fact]
+    public async Task PurgeByDedupePrefixAsync_LeavesAppOwnedKeysAlone()
+    {
+        // An app picks its own dedupe key, so matching the prefix alone would delete a legitimate
+        // app notification on every single boot. Only Core produced the advisories being retired.
+        var fixture = await Fixture.CreateAsync();
+        await fixture.Service.PublishAsync(new AppScope("com.example.app"), "user_alice", NotificationService.AudienceUser,
+            "info", "App owned", null, null, "dependency-stopped:mine");
+
+        var purged = await fixture.Service.PurgeByDedupePrefixAsync(["dependency-stopped:"]);
+
+        var remaining = await fixture.Service.QueryAsync("user_alice", false, false, 50, 0);
+        Assert.Equal(0, purged);
+        Assert.Equal("App owned", Assert.Single(remaining.Notifications).Title);
+    }
+
+    [Fact]
     public async Task ApplyRetentionAsync_PrunesOldReadButKeepsUnread()
     {
         var fixture = await Fixture.CreateAsync();

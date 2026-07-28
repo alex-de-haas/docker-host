@@ -1055,6 +1055,7 @@ internal sealed class RuntimeAppSupervisorService(
         await bootstrap.SeedBootAsync(stoppingToken);
 
         await MigratePortAssignmentsAsync(stoppingToken);
+        await PurgeRetiredAdvisoriesAsync(stoppingToken);
         await RecoverInterruptedUpdatesAsync(stoppingToken);
         await StopAutostartDisabledAppsAsync(stoppingToken);
         await StartAutostartAppsAsync(stoppingToken);
@@ -1312,6 +1313,45 @@ internal sealed class RuntimeAppSupervisorService(
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
         {
             logger.LogWarning(ex, "Hosty runtime app autostart did not complete.");
+        }
+    }
+
+    // Dedupe-key prefixes of advisories that are no longer published because the condition they
+    // described became app state. Cross-app dependency status now rides on the app summary and is
+    // rendered beside the app, so the old start-time advisories are stale by construction — and the
+    // notification store has no revoke, so nothing else would ever remove them.
+    private static readonly string[] RetiredAdvisoryDedupePrefixes =
+    [
+        "dependency-missing:",
+        "dependency-stopped:",
+        "dependency-endpoint:",
+    ];
+
+    // One-time cleanup of advisories retired by an upgrade. Idempotent (a second boot finds nothing)
+    // and best-effort — leftover notifications are cosmetic, and failing boot over them would not be.
+    private async Task PurgeRetiredAdvisoriesAsync(CancellationToken cancellationToken)
+    {
+        if (notifications is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var purged = await notifications.PurgeByDedupePrefixAsync(RetiredAdvisoryDedupePrefixes, cancellationToken);
+            if (purged > 0)
+            {
+                logger.LogInformation(
+                    "Removed {Count} retired dependency advisory notification(s); dependency status is now shown on the app itself.",
+                    purged);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidOperationException)
+        {
+            logger.LogWarning(ex, "Retired-advisory cleanup did not complete.");
         }
     }
 
