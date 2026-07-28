@@ -3,7 +3,7 @@
 Status: Implemented 2026-07-18 (unit-tested; not yet exercised against a live Core)
 Created: 2026-07-18
 
-Extends [automatic-runtime-app-ports.md](../features/automatic-runtime-app-ports/feature.md). Folds into that
+Extends [automatic-runtime-app-ports](../features/automatic-runtime-app-ports/feature.md). Folds into that
 document once shipped.
 
 ## Motivation
