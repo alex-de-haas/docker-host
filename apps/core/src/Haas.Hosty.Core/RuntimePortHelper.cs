@@ -137,10 +137,23 @@ internal static class RuntimePortHelper
             "Unable to allocate a free loopback port that was not already handed to another starting service.");
     }
 
-    // True when a loopback TCP bind on `port` currently succeeds. Probes both IPv4 and IPv6 loopback so a
-    // port held only on `::1` is still reported unavailable. TCP-specific by design (the reservation model
-    // is currently TCP-only); a UDP probe would need its own helper. Used by the localCommand adapter's
-    // explicit preflight and by the lifecycle start-time reservation preflight. Point-in-time, not a lease.
+    // True when `port` is free for a loopback-published service. Probes the loopback *and* the wildcard
+    // address of both families: a loopback probe alone cannot see a holder bound to `0.0.0.0`/`::`, which
+    // is what a localCommand app that listens on "all interfaces" produces. On BSD/macOS the kernel lets a
+    // specific address bind alongside a wildcard one whenever the new socket carries SO_REUSEADDR — and
+    // .NET turns SO_REUSEADDR on *inside* Socket.Bind on Unix regardless of ExclusiveAddressUse, so no
+    // loopback-only probe can report that conflict. An exact-address match is refused whatever the reuse
+    // flags are, so probing the wildcard itself finds the wildcard holder. TCP-specific by design (the
+    // reservation model is currently TCP-only); a UDP probe would need its own helper. Used by the
+    // localCommand adapter's explicit preflight and by the lifecycle start-time reservation preflight.
+    // Point-in-time, not a lease.
+    //
+    // Only a loopback bind has to *succeed*: for the other three, just `InUse` is disqualifying, so a
+    // platform that refuses a wildcard bind for its own reasons (a Windows excluded port range answers
+    // WSAEACCES, a host without IPv6 fails the `::` probes) does not turn into a phantom conflict. A
+    // process holding the port on one specific non-loopback address is reported as a conflict even though
+    // a loopback-only bind could still squeeze in beside it — a reserved port shared with an unrelated
+    // listener is worth failing loudly for, and the error names the port and offers a reassignment.
     public static bool IsLoopbackTcpPortAvailable(int port)
     {
         if (port is <= 0 or > IPEndPoint.MaxPort)
@@ -148,21 +161,25 @@ internal static class RuntimePortHelper
             return false;
         }
 
-        if (ProbeBind(IPAddress.Loopback, port) is not PortBindProbeResult.Available)
+        if (ProbeBind(IPAddress.Loopback, port) is not PortBindProbeResult.Available ||
+            ProbeBind(IPAddress.Any, port) is PortBindProbeResult.InUse)
         {
             return false;
         }
 
         return !Socket.OSSupportsIPv6 ||
-            ProbeBind(IPAddress.IPv6Loopback, port) is not PortBindProbeResult.InUse;
+            (ProbeBind(IPAddress.IPv6Loopback, port) is not PortBindProbeResult.InUse &&
+                ProbeBind(IPAddress.IPv6Any, port) is not PortBindProbeResult.InUse);
     }
 
+    // Binds without listening: bind() is where the address conflict is decided, and the wildcard probes
+    // above would otherwise put a real listening socket on every interface for the length of the probe.
     private static PortBindProbeResult ProbeBind(IPAddress address, int port)
     {
         try
         {
-            using var listener = new TcpListener(address, port);
-            listener.Start();
+            using var socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+            socket.Bind(new IPEndPoint(address, port));
             return PortBindProbeResult.Available;
         }
         catch (SocketException ex) when (ex.SocketErrorCode == SocketError.AddressAlreadyInUse)
