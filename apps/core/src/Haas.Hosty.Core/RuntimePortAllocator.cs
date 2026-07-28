@@ -6,8 +6,9 @@ namespace Haas.Hosty.Core;
 // Install-time port reservations: the Core-wide coordinator that resolves and persists every
 // published host port for an app during install, so a stopped app already has a durable endpoint before
 // its first start. A single gate serializes allocation across apps, so two concurrent installs cannot be
-// handed the same automatic port; the exclusion view spans every other installed app's loopback assignments
-// plus the Core port (Shell pins its own in its manifest — see ReservedLoopbackPorts). Resolution
+// handed the same automatic port; the exclusion view spans every other installed app's non-host-network
+// assignments — loopback and host scope alike, since a raw-L4 `host` publish occupies the same host port
+// number — plus the Core port (Shell pins its own in its manifest; see ReservedLoopbackPorts). Resolution
 // reuses RuntimePortHelper so install and start agree.
 // See docs/features/automatic-runtime-app-ports/feature.md.
 internal sealed class RuntimePortAllocator(HostyCoreRuntimeConfig config)
@@ -377,9 +378,11 @@ internal sealed class RuntimePortAllocator(HostyCoreRuntimeConfig config)
             })
             .ToArray();
 
-    // The loopback ports no fresh automatic allocation may reuse: every non-host-network reservation held
-    // by another installed app, plus the Core port. Core's port stays because Core is not an app and has
-    // no assignment to be found in.
+    // The host port numbers no fresh automatic allocation may reuse: every non-host-network reservation
+    // held by another installed app, plus the Core port. Host-scope (raw L4) reservations are in the set
+    // alongside loopback ones — they occupy a real host port number too — and only host-network is left
+    // out, since it binds a fixed container port in another namespace. Core's port stays because Core is
+    // not an app and has no assignment to be found in.
     //
     // Shell is not special-cased any more: it pins its port in its own manifest like any app, and once
     // installed its assignment is in the set below. That does drop a guarantee — before Shell installs,
