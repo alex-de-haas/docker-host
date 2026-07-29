@@ -1,0 +1,13 @@
+# Xcode per-user state: window layout, breakpoints, scheme ordering. Machine-specific by
+# construction, and it churns on every open of the project.
+xcuserdata/
+*.xcuserstate
+
+# Resolved package versions for the local HostyKit package. It has no remote dependencies, so
+# this file records nothing worth pinning.
+*.xcworkspace/xcshareddata/swiftpm/Package.resolved
+
+# SwiftPM build products from `swift build` / `swift test` run directly in HostyKit.
+.build/
+
+.DS_Store

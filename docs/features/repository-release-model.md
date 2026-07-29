@@ -14,6 +14,7 @@ Hosty uses one repository for:
 - `apps/marketplace` - Hosty Marketplace, the optional catalog storefront system app;
 - `apps/demo-app` - the first-party example runtime app;
 - `apps/cli` - the standalone `hosty` CLI;
+- `apps/shell-swift` - the native Apple client (iOS, iPadOS, macOS) for a Hosty host;
 - `skills/hosty-app-skill` - the repository-shipped Codex skill for wrapping apps as Hosty runtime apps;
 - product/channel metadata and documentation.
 
@@ -32,9 +33,12 @@ flowchart LR
   Shell --> ShellImage["Shell image"]
   Marketplace --> MarketplaceImage["Marketplace image"]
   Demo --> DemoImage["Demo App image"]
+  SwiftShell["apps/shell-swift Hosty (Apple)"] --> Core
 ```
 
 Core owns API, auth, app lifecycle, source/feed state, backup state, local control discovery, and runtime adapters. Shell owns the host browser UI. Marketplace owns its catalog source and storefront UI. The CLI bootstraps local Core and calls Core APIs for ordinary operations.
+
+`apps/shell-swift` sits outside the runtime-app model entirely. It is a client installed on the operator's device, not on a host: it has no manifest, Core neither installs nor supervises it, and it is never a `ui-client` Core can redirect a browser to. It consumes the same browser API as Shell. Its version lives in `apps/shell-swift/Config/Version.xcconfig` and moves independently of every other artifact here.
 
 ## GitHub Actions Model
 

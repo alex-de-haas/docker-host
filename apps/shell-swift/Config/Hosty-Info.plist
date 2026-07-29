@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Only the keys Xcode cannot generate from build settings live here; GENERATE_INFOPLIST_FILE
+	  stays on and merges the rest in. NSAppTransportSecurity is a dictionary, which the
+	  INFOPLIST_KEY_* build settings cannot express, so it needs a real file.
+
+	  A Hosty host on a LAN normally speaks plain HTTP on a high port, which ATS blocks by default.
+	  NSAllowsLocalNetworking lifts that for local destinations only, leaving ATS fully in force for
+	  everything else — unlike NSAllowsArbitraryLoads, which would also silently weaken a real
+	  https:// host reached over the internet.
+
+	  Verify on a physical device before trusting this: the exact set of destinations
+	  NSAllowsLocalNetworking exempts (unqualified names, .local, link-local, private ranges) is not
+	  something the simulator exercises, and the simulator does not enforce ATS the way a device
+	  does. If a private-range host such as 192.168.x.x turns out to still be blocked, widen this
+	  deliberately and record why — do not reach for NSAllowsArbitraryLoads as a first move.
+	-->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<false/>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+
+	<!--
+	  iOS 14+ gates any connection to a local network address behind an explicit user prompt. Without
+	  this string the prompt cannot be shown and every request to a LAN host fails.
+	-->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Hosty connects to your Hosty host on the local network to show and manage its apps.</string>
+</dict>
+</plist>

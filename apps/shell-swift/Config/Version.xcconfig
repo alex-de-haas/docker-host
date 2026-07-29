@@ -1,0 +1,16 @@
+// Version of the Hosty Apple client (apps/shell-swift).
+//
+// This app versions independently from the platform (apps/core + apps/cli) and from apps/shell —
+// see AGENTS.md, "Where the version lives". The version lives here rather than buried in
+// project.pbxproj so it is a plain line a human can bump without opening Xcode, and so a second
+// copy (App Store metadata, a docs badge) can be cross-checked by scripts/check-versions.mjs when
+// one appears. There is only one copy today, so that script has nothing to assert yet.
+//
+// Bump per AGENTS.md: patch for a fix or small enhancement, minor for new functionality or a
+// breaking change while the project is in 0.x.
+
+MARKETING_VERSION = 0.1.0
+
+// Build number. Not a semantic version: it only has to increase for TestFlight/App Store uploads,
+// which this app does not do yet.
+CURRENT_PROJECT_VERSION = 1

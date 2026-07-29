@@ -9,6 +9,10 @@ Hosty Core exposes browser APIs for Shell and app auth, plus a local control API
 
 ## Browser APIs
 
+A Host user session may be presented either as the `hosty_session` cookie or as `Authorization: Bearer <session id>`. The bearer form exists for non-browser clients (the native Apple client in `apps/shell-swift`); it carries the same session record, expiry, and revocation, and mints nothing new. Two rules hold it together: the cookie takes precedence whenever both are present, and only a bearer-presented session is exempt from the CSRF pair below — a browser request cannot opt itself out. See [Auth And Gateway Model](auth-gateway.md).
+
+Mutating browser endpoints are CSRF-protected: `GET /api/auth/csrf` sets the double-submit cookie and returns the token to echo in `X-Hosty-CSRF`.
+
 - `GET /api/core/status` - public Core status.
 - `GET /login` - Core-owned login page. Development renders the local user selector; non-development renders email/password login.
 - `POST /login` - create a Core session from the development selector or from local email/password credentials, depending on environment, then redirect to the effective Shell origin.

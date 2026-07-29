@@ -121,13 +121,160 @@ public sealed class CoreSessionAuthorizationTests
         Assert.Contains("user_disabled", response.Body);
     }
 
-    private static DefaultHttpContext CreateRequest(bool includeSession, bool includeCsrf)
+    [Fact]
+    public async Task RequireSessionAsync_AuthenticatesABearerPresentedSession()
+    {
+        var fixture = await AuthorizationFixture.CreateAsync(role: "host.user");
+        var request = CreateRequest(includeSession: false, includeCsrf: false, bearer: "session_1").Request;
+
+        var result = await CoreSessionAuthorization.RequireSessionAsync(
+            request,
+            fixture.Users,
+            fixture.Clock,
+            user => Task.FromResult<IResult>(Results.Json(new { user.Id })));
+
+        var response = Inspect(result);
+
+        Assert.Equal(StatusCodes.Status200OK, response.StatusCode);
+        Assert.Contains("user_1", response.Body);
+    }
+
+    [Fact]
+    public async Task RequireAdminSessionAsync_DoesNotRequireCsrfForABearerPresentedSession()
+    {
+        var fixture = await AuthorizationFixture.CreateAsync(role: "host.admin");
+        var request = CreateRequest(includeSession: false, includeCsrf: false, bearer: "session_1").Request;
+
+        var result = await CoreSessionAuthorization.RequireAdminSessionAsync(
+            request,
+            fixture.Users,
+            fixture.Clock,
+            () => Task.FromResult<IResult>(Results.Ok()),
+            requireCsrf: true);
+
+        Assert.Equal(StatusCodes.Status200OK, Inspect(result).StatusCode);
+    }
+
+    // The rule the bearer path stands on. A browser request already carries the session cookie, so if
+    // adding an Authorization header could move it onto the CSRF-exempt path, any cross-site POST could
+    // exempt itself and the double-submit check would be worth nothing. The cookie always wins.
+    [Fact]
+    public async Task RequireAdminSessionAsync_CookieRequestCannotEscapeCsrfByAlsoSendingBearer()
+    {
+        var fixture = await AuthorizationFixture.CreateAsync(role: "host.admin");
+        var request = CreateRequest(includeSession: true, includeCsrf: false, bearer: "session_1").Request;
+
+        var result = await CoreSessionAuthorization.RequireAdminSessionAsync(
+            request,
+            fixture.Users,
+            fixture.Clock,
+            () => Task.FromResult<IResult>(Results.Ok()),
+            requireCsrf: true);
+
+        var response = Inspect(result);
+
+        Assert.Equal(StatusCodes.Status403Forbidden, response.StatusCode);
+        Assert.Contains("csrf_invalid", response.Body);
+    }
+
+    // A request with no credential at all is answered exactly as before the bearer path existed. Only a
+    // caller that actually presents a bearer session is exempt.
+    [Fact]
+    public async Task RequireAdminSessionAsync_StillRequiresCsrfWhenNoCredentialIsPresented()
+    {
+        var fixture = await AuthorizationFixture.CreateAsync(role: "host.admin");
+        var request = CreateRequest(includeSession: false, includeCsrf: false).Request;
+
+        var result = await CoreSessionAuthorization.RequireAdminSessionAsync(
+            request,
+            fixture.Users,
+            fixture.Clock,
+            () => Task.FromResult<IResult>(Results.Ok()),
+            requireCsrf: true);
+
+        var response = Inspect(result);
+
+        Assert.Equal(StatusCodes.Status403Forbidden, response.StatusCode);
+        Assert.Contains("csrf_invalid", response.Body);
+    }
+
+    [Fact]
+    public async Task RequireSessionAsync_RejectsAnUnknownBearerLikeAnUnknownCookie()
+    {
+        var fixture = await AuthorizationFixture.CreateAsync(role: "host.user");
+
+        var viaBearer = Inspect(await CoreSessionAuthorization.RequireSessionAsync(
+            CreateRequest(includeSession: false, includeCsrf: false, bearer: "not_a_session").Request,
+            fixture.Users,
+            fixture.Clock,
+            user => Task.FromResult<IResult>(Results.Ok())));
+
+        var viaCookie = Inspect(await CoreSessionAuthorization.RequireSessionAsync(
+            CreateRequest(includeSession: true, includeCsrf: false, sessionId: "not_a_session").Request,
+            fixture.Users,
+            fixture.Clock,
+            user => Task.FromResult<IResult>(Results.Ok())));
+
+        Assert.Equal(StatusCodes.Status401Unauthorized, viaBearer.StatusCode);
+        Assert.Contains("session_invalid", viaBearer.Body);
+        Assert.Equal(viaCookie.StatusCode, viaBearer.StatusCode);
+        Assert.Equal(viaCookie.Body, viaBearer.Body);
+    }
+
+    [Fact]
+    public async Task RequireSessionAsync_RejectsARevokedSessionPresentedAsBearer()
+    {
+        var fixture = await AuthorizationFixture.CreateAsync(role: "host.user");
+        await fixture.Users.UpdateAsync(state => state with
+        {
+            Sessions = [.. state.Sessions.Select(session => session with { RevokedAt = fixture.Clock.UtcNow })],
+        });
+
+        var result = await CoreSessionAuthorization.RequireSessionAsync(
+            CreateRequest(includeSession: false, includeCsrf: false, bearer: "session_1").Request,
+            fixture.Users,
+            fixture.Clock,
+            user => Task.FromResult<IResult>(Results.Ok()));
+
+        var response = Inspect(result);
+
+        Assert.Equal(StatusCodes.Status401Unauthorized, response.StatusCode);
+        Assert.Contains("session_invalid", response.Body);
+    }
+
+    [Fact]
+    public void ReadSessionCredential_ReportsHowTheSessionArrived()
+    {
+        var cookie = CoreSessionAuthorization.ReadSessionCredential(
+            CreateRequest(includeSession: true, includeCsrf: false).Request);
+        var bearer = CoreSessionAuthorization.ReadSessionCredential(
+            CreateRequest(includeSession: false, includeCsrf: false, bearer: "session_1").Request);
+        var both = CoreSessionAuthorization.ReadSessionCredential(
+            CreateRequest(includeSession: true, includeCsrf: false, bearer: "other").Request);
+        var neither = CoreSessionAuthorization.ReadSessionCredential(
+            CreateRequest(includeSession: false, includeCsrf: false).Request);
+
+        Assert.Equal(SessionCredentialSource.Cookie, cookie.Source);
+        Assert.Equal(SessionCredentialSource.Bearer, bearer.Source);
+        Assert.Equal(SessionCredentialSource.None, neither.Source);
+        Assert.Null(neither.Value);
+
+        // Precedence, stated once and directly: the cookie is the credential, and the header is ignored.
+        Assert.Equal(SessionCredentialSource.Cookie, both.Source);
+        Assert.Equal("session_1", both.Value);
+    }
+
+    private static DefaultHttpContext CreateRequest(
+        bool includeSession,
+        bool includeCsrf,
+        string? bearer = null,
+        string sessionId = "session_1")
     {
         var context = new DefaultHttpContext();
         var cookies = new List<string>();
         if (includeSession)
         {
-            cookies.Add($"{CoreSessionAuthorization.SessionCookieName}=session_1");
+            cookies.Add($"{CoreSessionAuthorization.SessionCookieName}={sessionId}");
         }
 
         if (includeCsrf)
@@ -139,6 +286,11 @@ public sealed class CoreSessionAuthorizationTests
         if (cookies.Count > 0)
         {
             context.Request.Headers.Cookie = string.Join("; ", cookies);
+        }
+
+        if (bearer is not null)
+        {
+            context.Request.Headers.Authorization = $"Bearer {bearer}";
         }
 
         return context;
