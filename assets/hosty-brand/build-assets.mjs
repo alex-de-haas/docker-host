@@ -2,9 +2,9 @@
 // Hosty brand asset generator.
 //
 // Single source of truth for the Hosty "H-graph" logomark. Writes the SVG
-// masters (assets/hosty-brand/svg/), the app-facing SVGs (apps/shell/public/),
-// and rasterizes every PNG + the multi-size favicon.ico from those SVGs so the
-// whole library stays in sync with one flat color geometry.
+// masters (assets/hosty-brand/svg/), the browser Shell assets, and the native
+// Swift app icons. It rasterizes every PNG + the multi-size favicon.ico from
+// those SVGs so the whole library stays in sync with one flat color geometry.
 //
 //   node assets/hosty-brand/build-assets.mjs
 //
@@ -19,6 +19,14 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const BRAND = __dirname; // assets/hosty-brand
 const REPO = join(BRAND, "..", "..");
 const SHELL_PUBLIC = join(REPO, "apps", "shell", "public");
+const SWIFT_APP_ICONS = join(
+  REPO,
+  "apps",
+  "shell-swift",
+  "Hosty",
+  "Assets.xcassets",
+  "AppIcon.appiconset",
+);
 
 // ---------------------------------------------------------------------------
 // Palette
@@ -63,6 +71,16 @@ const tile = (bg, color, scale = 1) =>
   svg(
     "0 0 100 100",
     `<rect width="100" height="100" rx="22" fill="${bg}"/>` +
+      `<g transform="translate(50 50) scale(${scale}) translate(-50 -50)">${markBody(color)}</g>`,
+  );
+
+// iOS applies the platform mask itself, so its source artwork is square and
+// opaque. Feeding it the rounded brand tile would create transparent corners
+// and visually double-inset the icon on the Home Screen.
+const platformTile = (bg, color, scale = 1) =>
+  svg(
+    "0 0 100 100",
+    `<rect width="100" height="100" fill="${bg}"/>` +
       `<g transform="translate(50 50) scale(${scale}) translate(-50 -50)">${markBody(color)}</g>`,
   );
 
@@ -144,6 +162,9 @@ function buildMasters() {
 const png = (svgStr, w, h = w) =>
   sharp(Buffer.from(svgStr)).resize(w, h).png().toBuffer();
 
+const opaquePng = (svgStr, w, h = w) =>
+  sharp(Buffer.from(svgStr)).resize(w, h).removeAlpha().png().toBuffer();
+
 function cleanPngs(dir) {
   mkdirSync(dir, { recursive: true });
   for (const f of readdirSync(dir)) {
@@ -184,6 +205,18 @@ function buildIco(entries) {
 // ---------------------------------------------------------------------------
 const ICON_SIZES = [16, 20, 24, 32, 48, 64, 96, 128, 256, 512];
 const FAVICON_SIZES = [16, 32, 48, 64, 128, 256];
+const MAC_APP_ICON_SLOTS = [
+  [16, 1],
+  [16, 2],
+  [32, 1],
+  [32, 2],
+  [128, 1],
+  [128, 2],
+  [256, 1],
+  [256, 2],
+  [512, 1],
+  [512, 2],
+];
 
 // Rasterize an SVG to PNG at a fixed height, preserving its aspect ratio.
 const pngH = (svgStr, h) =>
@@ -236,6 +269,36 @@ async function run() {
   writeFileSync(join(SHELL_PUBLIC, "favicon.svg"), favSvg);
   writeFileSync(join(SHELL_PUBLIC, "favicon.ico"), ico);
   writeFileSync(join(SHELL_PUBLIC, "apple-touch-icon.png"), await png(masters["hosty-icon-brand.svg"], 180));
+
+  // Native app icons. iOS gets explicit light, dark, and tinted variants; macOS gets the existing
+  // rounded brand tile at every catalog size because macOS does not apply the iOS icon mask.
+  mkdirSync(SWIFT_APP_ICONS, { recursive: true });
+  for (const file of readdirSync(SWIFT_APP_ICONS)) {
+    if (file.startsWith("HostyAppIcon-") && file.endsWith(".png")) {
+      rmSync(join(SWIFT_APP_ICONS, file));
+    }
+  }
+
+  writeFileSync(
+    join(SWIFT_APP_ICONS, "HostyAppIcon-iOS.png"),
+    await opaquePng(platformTile(C.blue, C.offWhite), 1024),
+  );
+  writeFileSync(
+    join(SWIFT_APP_ICONS, "HostyAppIcon-iOS-dark.png"),
+    await opaquePng(platformTile(C.ink, C.offWhite), 1024),
+  );
+  writeFileSync(
+    join(SWIFT_APP_ICONS, "HostyAppIcon-iOS-tinted.png"),
+    await opaquePng(platformTile(C.white, C.ink), 1024),
+  );
+
+  for (const [points, scale] of MAC_APP_ICON_SLOTS) {
+    const pixels = points * scale;
+    writeFileSync(
+      join(SWIFT_APP_ICONS, `HostyAppIcon-mac-${points}@${scale}x.png`),
+      await png(masters["hosty-icon-brand.svg"], pixels),
+    );
+  }
 
   // Preview contact sheet.
   const swatch = async (svgStr, size = 200) => png(svgStr, size);

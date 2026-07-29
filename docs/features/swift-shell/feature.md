@@ -84,6 +84,31 @@ between the tap and Core committing — the displayed state always comes from th
 App detail shows services (derived by grouping endpoints, since Core reports no services list), endpoint
 availability, ports, capabilities, artifact locks, dependencies, and the last error.
 
+## Adaptive interface and interaction
+
+The root interface is a three-column `NavigationSplitView`: saved hosts, installed apps, and app detail.
+It exposes all available columns on iPad and macOS, while compact iPhone layouts open on the active host
+and retain a native back path to the host list. Selecting another host rebuilds the authenticated session,
+its app model, and its event stream as one unit so data from two hosts cannot appear in the same hierarchy.
+
+The host sidebar supports context-menu and swipe removal, with confirmation that the saved credential is
+also removed. The app list is searchable by display name, identifier, and selected runtime. Selecting an
+app drives the detail column rather than creating a second navigation hierarchy.
+
+App rows switch to a vertical information hierarchy at accessibility Dynamic Type sizes. Lifecycle
+controls use the available horizontal width when they fit and stack when they do not. Stop and Forget are
+confirmed before dispatch; a failed per-app update refresh remains visible beside the action instead of
+being discarded.
+
+The add-host form has explicit field labels and examples, deterministic address-to-name focus order,
+keyboard submission, and an inline progress state. Its first field receives default focus when the sheet
+opens.
+
+SwiftUI previews use isolated defaults and decoded local fixtures rather than saved hosts or a running
+Core. The native App Icon catalog is generated from `assets/hosty-brand/build-assets.mjs`: iOS receives
+opaque light, dark, and tinted artwork for the system mask, while macOS receives the rounded brand
+tile at every required raster size.
+
 ## Live refresh
 
 `GET /api/events` is the same hint-only stream the browser Shell uses: events carry no state, so the
@@ -155,6 +180,10 @@ Distribution is by local Xcode build; nothing packages or publishes this app.
   kept), 503 (transient), and a non-JSON error body.
 - Requests carry the credential as a bearer header and never a cookie; `update/plan` sends a JSON body,
   which Core's model binding requires.
+- SwiftUI previews cover an empty host list, a representative app row, its accessibility-size layout,
+  and app detail at standard and accessibility text sizes without contacting Core.
+- Visual verification covers compact iPhone navigation and the expanded three-column iPad hierarchy; app
+  rows and lifecycle controls are also inspected at an accessibility Dynamic Type size.
 - Live verification against a running host covers sign-in, the app list, lifecycle verbs, an
   externally-driven change arriving over the event stream while both the list and a detail screen are
   open, a fleet update check, and a reviewed update applied end to end.

@@ -7,6 +7,7 @@ import Observation
 final class HostyModel {
     private(set) var hosts: [HostConnection]
     private(set) var session: HostSession?
+    private(set) var appsModel: AppsModel?
 
     private let store: HostStore
     private let keychain: KeychainStore
@@ -17,7 +18,7 @@ final class HostyModel {
         self.hosts = store.hosts()
 
         if let active = store.activeHost() {
-            self.session = HostSession(connection: active, keychain: keychain)
+            activate(active)
         }
     }
 
@@ -40,7 +41,7 @@ final class HostyModel {
         }
 
         store.setActiveHost(connection)
-        session = HostSession(connection: connection, keychain: keychain)
+        activate(connection)
     }
 
     func remove(_ connection: HostConnection) {
@@ -54,7 +55,20 @@ final class HostyModel {
         if session?.connection.origin == connection.origin {
             let next = hosts.first
             store.setActiveHost(next)
-            session = next.map { HostSession(connection: $0, keychain: keychain) }
+            if let next {
+                activate(next)
+            } else {
+                session = nil
+                appsModel = nil
+            }
         }
+    }
+
+    /// Builds the session and its app model together so every navigation column observes the same app
+    /// collection. This is what lets the list drive a detail column without creating a second event stream.
+    private func activate(_ connection: HostConnection) {
+        let session = HostSession(connection: connection, keychain: keychain)
+        self.session = session
+        self.appsModel = AppsModel(session: session)
     }
 }

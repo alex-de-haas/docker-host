@@ -15,7 +15,13 @@ struct AddHostView: View {
     /// The candidate that actually answered, which is what gets stored — the typed text may not name a
     /// scheme at all.
     @State private var resolved: HostOrigin?
+    @FocusState private var focusedField: Field?
     @Environment(\.dismiss) private var dismiss
+
+    private enum Field: Hashable {
+        case address
+        case name
+    }
 
     private enum ProbeState: Equatable {
         case idle
@@ -62,22 +68,33 @@ struct AddHostView: View {
     var body: some View {
         Form {
             Section {
-                TextField("192.168.1.50:7070", text: $address)
+                TextField("Host address", text: $address, prompt: Text("192.168.1.50:7070"))
                     .autocorrectionDisabled()
                     #if os(iOS)
                     .textInputAutocapitalization(.never)
                     .keyboardType(.URL)
                     #endif
+                    .focused($focusedField, equals: .address)
+                    .submitLabel(.next)
+                    .onSubmit { focusedField = .name }
                     // Only when it actually changes. Writing state on every keystroke re-renders the
                     // section around the field for no reason, which is the other half of the focus loss.
                     .onChange(of: address) {
                         if probe != .idle {
                             probe = .idle
                         }
+
+                        resolved = nil
                     }
 
-                TextField("Name (optional)", text: $label)
+                TextField("Name", text: $label, prompt: Text("Optional"))
                     .autocorrectionDisabled()
+                    .focused($focusedField, equals: .name)
+                    .submitLabel(.go)
+                    .onSubmit {
+                        guard parsedOrigin != nil, probe != .checking else { return }
+                        Task { await check() }
+                    }
             } header: {
                 Text("Address")
             } footer: {
@@ -85,16 +102,30 @@ struct AddHostView: View {
             }
 
             Section {
-                Button("Check") { Task { await check() } }
+                Button {
+                    focusedField = nil
+                    Task { await check() }
+                } label: {
+                    if probe == .checking {
+                        HStack {
+                            ProgressView().controlSize(.small)
+                            Text("Checking…")
+                        }
+                    } else {
+                        Label("Check host", systemImage: "network")
+                    }
+                }
                     .disabled(parsedOrigin == nil || probe == .checking)
 
                 if case .found = probe {
-                    Button("Add host") { add() }
+                    Button("Add host", systemImage: "plus") { add() }
+                        .buttonStyle(.borderedProminent)
                 }
             }
         }
         .formStyle(.grouped)
         .navigationTitle("Add a Hosty host")
+        .defaultFocus($focusedField, .address)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel") { dismiss() }
