@@ -8,7 +8,7 @@ on:
     paths:
       - "apps/core/**"
       - "apps/cli/**"
-      - "docs/features/core-api.md"
+      - "docs/features/core-api/feature.md"
       - "scripts/install.sh"
       - "scripts/install.ps1"
       - "global.json"
@@ -87,7 +87,7 @@ jobs:
         id: product_version
         shell: bash
         # The platform (Core + CLI) version source of truth is Directory.Build.props <Version>
-        # (docs/features/repository-release-model.md). The root package.json is the private monorepo
+        # (docs/features/repository-release-model/feature.md). The root package.json is the private monorepo
         # container, not the platform version — reading it here stamped published binaries with a stale
         # 0.5.0 while Directory.Build.props had advanced, so Core reported the wrong version.
         run: |

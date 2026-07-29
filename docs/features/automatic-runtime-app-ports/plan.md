@@ -59,7 +59,7 @@ Written as a diff against [feature.md](feature.md).
 - [ ] Disable Open for an endpoint whose owning service is stopped.
 - [ ] Cover the reassign dialog's extractable logic (manual-port bounds, request payload) with
       `node --test`, alongside the existing `app-problems` coverage.
-- [ ] Document the reassign endpoints in [core-api.md](../core-api.md) and install-time reservation
+- [ ] Document the reassign endpoints in [core-api/feature.md](../core-api/feature.md) and install-time reservation
       plus `HOSTY_PORT_{SERVICE}_{KEY}` in [local-development.md](../local-development.md).
 - [ ] Validate a never-started app end to end against a live Core: install with start disabled,
       configure a public origin, first start, Core restart.
@@ -86,7 +86,7 @@ Written as a diff against [feature.md](feature.md).
 
 ### Phase 4 — Documentation and verification
 
-- [ ] `core-api.md` and `local-development.md`.
+- [ ] `core-api/feature.md` and `local-development.md`.
 - [ ] Live end-to-end validation.
 
 ## Deliberately not doing

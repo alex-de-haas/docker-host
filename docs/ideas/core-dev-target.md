@@ -169,7 +169,7 @@ Acceptance: `hosty core target dev --source <repo> && hosty core restart` starts
 2. `POST target|restart|update` — synchronous settings change via CLI; detached spawn helper for restart/update (new process group, Windows `DETACHED_PROCESS`).
 3. Host-admin gating consistent with existing admin endpoints.
 
-Touched: new `CoreRuntimeEndpoints.cs` in `apps/core/src/Haas.Hosty.Core/`, `CoreJsonSerializerContext.cs` additions, `docs/features/core-api.md`.
+Touched: new `CoreRuntimeEndpoints.cs` in `apps/core/src/Haas.Hosty.Core/`, `CoreJsonSerializerContext.cs` additions, `docs/features/core-api/feature.md`.
 
 Acceptance: with dev target parked, `GET /api/core/runtime` reports it; `POST restart` from an HTTP client restarts Core through the CLI, and the fleet comes back via Core's own boot reconciliation of autostart-enabled apps (`StartAutostartAppsAsync`) — no OS-level autostart is involved.
 

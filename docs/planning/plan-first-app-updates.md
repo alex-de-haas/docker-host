@@ -285,7 +285,7 @@ ordering, polling cadence.
 ### Phase 5 — Documentation and end-to-end verification — DONE
 
 Feature docs rewritten against the shipped behavior ([Runtime App Update](../features/runtime-app-update.md),
-[Core API](../features/core-api.md), [Shell Access and System Apps](../features/shell-access-and-system-apps.md));
+[Core API](../features/core-api/feature.md), [Shell Access and System Apps](../features/shell-access-and-system-apps.md));
 live verification run on the owner's install (below).
 
 ## Verification

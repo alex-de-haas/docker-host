@@ -200,7 +200,7 @@ bodies; log statements reference key names at most.
   write-through cache serves reads when Core is briefly unavailable and stays
   consistent through its own writes.
 - [x] `docs/features/` documentation describes only implemented behavior;
-  `core-api.md` lists the endpoints; the `hosty-app-sdk.md` second-wave
+  `core-api/feature.md` lists the endpoints; the `hosty-app-sdk.md` second-wave
   inventory includes the clients.
 
 ## Deliverables
@@ -227,10 +227,10 @@ bodies; log statements reference key names at most.
   following the `revalidateWithCore` pattern), re-exported through the
   `./server` entry point, plus tests.
 - [x] SDK package minor bumps and changelogs per the
-  [repository release model](../features/repository-release-model.md).
+  [repository release model](../features/repository-release-model/feature.md).
 - [x] `docs/features/app-secrets-store.md` describing implemented behavior;
   `docs/root.md` index updated (ideas entry annotated, features entry added,
-  this plan marked Implemented); `core-api.md` and `hosty-app-sdk.md` updated.
+  this plan marked Implemented); `core-api/feature.md` and `hosty-app-sdk.md` updated.
 - [x] Notify the first consumer: media-server platform request #15 flips to
   Implemented; its Trakt plan drops the fallback encryption-key design.
 - [x] One platform **minor** version bump in `Directory.Build.props`
@@ -310,7 +310,7 @@ with the feature. Ratified 2026-07-22.
 
 ### Phase 3: Documentation and Release
 
-- [x] Feature doc, `docs/root.md` index updates, `core-api.md`,
+- [x] Feature doc, `docs/root.md` index updates, `core-api/feature.md`,
   `hosty-app-sdk.md` second-wave inventory.
 - [x] media-server request #15 status flip and Trakt-plan fallback removal
   (separate repo).
@@ -340,9 +340,9 @@ Manual, against a dev install (`.hosty-dev`):
 
 - [Promoted design](../ideas/app-secrets-store.md)
 - [App data backup retention](../features/app-data-backup-retention.md)
-- [Core API](../features/core-api.md)
+- [Core API](../features/core-api/feature.md)
 - [Hosty App SDK](../ideas/hosty-app-sdk.md)
-- [Repository and release model](../features/repository-release-model.md)
+- [Repository and release model](../features/repository-release-model/feature.md)
 - [2026-07-10 Core code review (C-M7)](../reviews/2026-07-10-core-code-review.md)
 - [media-server platform request #15](https://github.com/alex-de-haas/media-server/blob/main/docs/features/hosty-platform-requests.md)
 - [media-server Trakt plan](https://github.com/alex-de-haas/media-server/blob/main/docs/planning/trakt-watched-state-sync.md)

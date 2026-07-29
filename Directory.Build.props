@@ -1,6 +1,6 @@
 <Project>
   <!--
-    Platform tier version (Hosty Core + Hosty CLI). See docs/features/repository-release-model.md.
+    Platform tier version (Hosty Core + Hosty CLI). See docs/features/repository-release-model/feature.md.
 
     Core and CLI are tightly coupled and ship together as one release bundle (cli-dev / cli-v*),
     so they share a single semantic version here. Individual .csproj files must NOT set <Version>;
