@@ -49,16 +49,26 @@ struct AppListView: View {
             // here as well would just fetch it twice on every appearance.
             model.follow()
         }
-        // Coming back to the foreground is a gap like any other, and the stream cannot close it quickly on
-        // its own: a suspended app's connection dies quietly, and the reconnect that follows may be several
-        // backoff steps in — up to half a minute of showing state from before the phone was pocketed.
-        // Re-reading here is the same "resync after a gap" the bus contract already requires, just
-        // triggered by something the stream cannot observe.
+        // The stream's lifetime is the *app's* foreground, not this view's appearance.
+        //
+        // Stopping it in `onDisappear` looked right and was badly wrong: pushing the detail screen fires
+        // it, so the one screen an operator actually watches — a restart, an update applying — was the one
+        // screen with no live updates at all. It sat on "Updating…" until the list was reopened.
+        //
+        // Coming back to the foreground still forces a re-read: a suspended app's connection dies quietly,
+        // and the reconnect that follows can be several backoff steps in, so the stream alone can leave
+        // half a minute of state from before the phone was pocketed.
         .onChange(of: scenePhase) { _, phase in
-            guard phase == .active else { return }
-            Task { await model.reload() }
+            switch phase {
+            case .active:
+                model.follow()
+                Task { await model.reload() }
+            case .background:
+                model.stopFollowing()
+            default:
+                break
+            }
         }
-        .onDisappear { model.stopFollowing() }
     }
 
     @ViewBuilder
