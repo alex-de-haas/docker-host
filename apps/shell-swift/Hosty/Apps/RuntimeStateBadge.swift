@@ -25,10 +25,10 @@ struct RuntimeStateBadge: View {
     }
 
     private var title: String {
-        // An operation that owns the record (an update, say) outranks the runtime state as the thing the
-        // operator wants to know right now.
+        // An update owns the record while it applies, and that outranks the runtime state as the thing
+        // the operator wants to know right now.
         guard !operating || state.isBusy else {
-            return "Working…"
+            return "Updating…"
         }
 
         return switch state {

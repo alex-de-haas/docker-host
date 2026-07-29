@@ -110,6 +110,93 @@ struct ServerSentEventParserTests {
     }
 }
 
+/// Framing straight off the wire.
+///
+/// The suite above feeds the parser lines that a person split by hand — including the blank ones — which
+/// is a test of the parser against an assumption about the feed. That assumption was wrong:
+/// `AsyncBytes.lines` **drops empty lines**, and a blank line is precisely what dispatches an SSE frame.
+/// Fed from `.lines`, this parser could never emit a single event, and every one of those tests still
+/// passed. These start from bytes, the way the real stream does.
+@Suite("Server-sent event framing, from bytes")
+struct ServerSentEventByteFramingTests {
+    private func events(fromWire wire: String) -> [CoreEvent] {
+        var splitter = ServerSentEventLineSplitter()
+        var parser = ServerSentEventParser()
+        var events: [CoreEvent] = []
+
+        for byte in Array(wire.utf8) {
+            guard let line = splitter.consume(byte) else { continue }
+            if let event = parser.consume(line: line) {
+                events.append(event)
+            }
+        }
+
+        return events
+    }
+
+    @Test("A frame dispatches on its blank line")
+    func dispatchesOnBlankLine() {
+        let events = self.events(fromWire: "event: app.changed\ndata: {\"appId\":\"demo\"}\n\n")
+
+        #expect(events.count == 1)
+        #expect(events.first?.known == .appChanged)
+        #expect(events.first?.data == #"{"appId":"demo"}"#)
+    }
+
+    // Exactly what Core writes: a comment to open the response, then frames, with keep-alives between.
+    @Test("A realistic Core stream yields every event and no phantoms")
+    func realisticStream() {
+        let wire = """
+        : connected
+
+        event: app.changed
+        data: {"name":"app.changed","appId":"com.haas.solitaire","occurredAt":"2026-07-29T17:19:00+00:00"}
+
+        : ping
+
+        event: app.changed
+        data: {"name":"app.changed","appId":"com.haas.solitaire","occurredAt":"2026-07-29T17:19:02+00:00"}
+
+        event: apps.update-check.changed
+        data: {"name":"apps.update-check.changed","appId":null,"occurredAt":"2026-07-29T17:20:00+00:00"}
+
+
+        """
+
+        let events = self.events(fromWire: wire)
+
+        #expect(events.map(\.name) == ["app.changed", "app.changed", "apps.update-check.changed"])
+    }
+
+    @Test("A frame split across byte batches still dispatches once")
+    func framesArriveInPieces() {
+        // The wire delivers whatever the socket delivers; frames do not arrive whole.
+        var splitter = ServerSentEventLineSplitter()
+        var parser = ServerSentEventParser()
+        var events: [CoreEvent] = []
+
+        for chunk in ["event: app.re", "moved\ndat", "a: {}\n", "\n"] {
+            for byte in Array(chunk.utf8) {
+                guard let line = splitter.consume(byte) else { continue }
+                if let event = parser.consume(line: line) { events.append(event) }
+            }
+        }
+
+        #expect(events.count == 1)
+        #expect(events.first?.known == .appRemoved)
+    }
+
+    @Test("The splitter reports a blank line as an empty line, not as nothing")
+    func blankLineIsALine() {
+        var splitter = ServerSentEventLineSplitter()
+
+        #expect(splitter.consume(UInt8(ascii: "a")) == nil)
+        #expect(splitter.consume(UInt8(ascii: "\n")) == "a")
+        // The byte that makes SSE work at all.
+        #expect(splitter.consume(UInt8(ascii: "\n")) == "")
+    }
+}
+
 @Suite("Event stream reconnect backoff")
 struct BackoffTests {
     @Test("The first reconnect is immediate-ish, then it doubles")

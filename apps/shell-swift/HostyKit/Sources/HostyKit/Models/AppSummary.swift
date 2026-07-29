@@ -41,10 +41,15 @@ public struct AppSummary: Identifiable, Hashable, Sendable, Codable {
     public let updateCheck: AppUpdateAvailability?
     public let dependencies: [AppDependency]?
 
-    /// An operation Core is running right now. `operationStatus` is a free-form verb ("updating",
-    /// "installing", …); anything other than "idle" means the record is mid-change.
+    /// True while a long-running operation owns the record.
+    ///
+    /// `operationStatus` records the **outcome of the last operation** — `started`, `restarted`,
+    /// `installed`, `updated`, `stopped`, `failed`, `configured`, `runtime-switched` — and exactly one of
+    /// its values means work is in flight: `updating`, which an asynchronous apply writes while it runs.
+    /// There is no `idle` in that vocabulary, so reading "anything but idle" as busy marks every app on
+    /// the host as working, permanently.
     public var isOperating: Bool {
-        !operationStatus.isEmpty && operationStatus != "idle"
+        operationStatus == AppOperationStatus.updating
     }
 
     /// Problems worth a marker in the list, in the order a person would want to see them.
@@ -64,6 +69,12 @@ public struct AppSummary: Identifiable, Hashable, Sendable, Codable {
 
         return problems
     }
+}
+
+/// The `operationStatus` vocabulary Core writes. Only `updating` describes work still in progress.
+public enum AppOperationStatus {
+    public static let updating = "updating"
+    public static let failed = "failed"
 }
 
 /// Core's `AppRuntimeStates` vocabulary.
