@@ -28,7 +28,7 @@ internal static class CoreSessionAuthorization
         bool requireCsrf = false,
         CancellationToken cancellationToken = default)
     {
-        if (requireCsrf && !HasValidCsrfToken(request))
+        if (requireCsrf && !IsCsrfExempt(request) && !HasValidCsrfToken(request))
         {
             return CoreJson.Json(
                 new ErrorResponse("csrf_invalid", "CSRF token is missing or invalid."),
@@ -61,7 +61,7 @@ internal static class CoreSessionAuthorization
         bool requireCsrf = false,
         CancellationToken cancellationToken = default)
     {
-        if (requireCsrf && !HasValidCsrfToken(request))
+        if (requireCsrf && !IsCsrfExempt(request) && !HasValidCsrfToken(request))
         {
             return CoreJson.Json(
                 new ErrorResponse("csrf_invalid", "CSRF token is missing or invalid."),
@@ -108,10 +108,34 @@ internal static class CoreSessionAuthorization
         return new NavigationSessionResult(null, authorization.Terminal ? authorization.Error : null);
     }
 
-    // The Core session id is the session cookie value. Exposed so identity flows can stamp the grant they
-    // issue with the authorizing session, enabling the explicit-logout cascade.
+    // The Core session id, however the caller presented it. Exposed so identity flows can stamp the grant
+    // they issue with the authorizing session, enabling the explicit-logout cascade.
     public static string? ReadSessionId(HttpRequest request)
-        => request.Cookies[SessionCookieName];
+        => ReadSessionCredential(request).Value;
+
+    // How the caller presented its session, which decides whether CSRF applies.
+    //
+    // A cookie is ambient: the browser attaches it to any request to this origin, including one a hostile
+    // page provoked, which is the entire reason mutations carry a CSRF token. A bearer header is attached
+    // deliberately by a client that holds the session id — and page script cannot read it, because the
+    // session cookie is HttpOnly — so a cross-origin page cannot construct one and there is nothing for a
+    // CSRF pair to defend. Native clients use the bearer form; see docs/features/swift-shell/.
+    //
+    // The cookie is read first and wins outright. If a request that carries a session cookie could select
+    // the bearer path merely by adding a header, it would select its own way out of the CSRF check.
+    public static SessionCredential ReadSessionCredential(HttpRequest request)
+    {
+        var cookie = request.Cookies[SessionCookieName];
+        if (!string.IsNullOrWhiteSpace(cookie))
+        {
+            return new SessionCredential(cookie, SessionCredentialSource.Cookie);
+        }
+
+        var bearer = ReadBearerToken(request);
+        return string.IsNullOrWhiteSpace(bearer)
+            ? new SessionCredential(null, SessionCredentialSource.None)
+            : new SessionCredential(bearer, SessionCredentialSource.Bearer);
+    }
 
     public static string? ReadBearerToken(HttpRequest request)
     {
@@ -125,6 +149,14 @@ internal static class CoreSessionAuthorization
             ? value["Bearer ".Length..].Trim()
             : null;
     }
+
+    // Only a bearer-presented session skips the CSRF pair. A request with no credential at all is
+    // deliberately NOT exempt: it is answered exactly as before this path existed, so the only behavior
+    // that changed is the one a browser cannot produce.
+    // Internal so the logout endpoint, which gates on CSRF without requiring a session, applies the same
+    // rule — otherwise a bearer client could authenticate but never end its own session.
+    internal static bool IsCsrfExempt(HttpRequest request)
+        => ReadSessionCredential(request).Source == SessionCredentialSource.Bearer;
 
     // Double-submit check: the CSRF cookie (readable JS, set by /api/auth/csrf) must equal the
     // X-Hosty-CSRF header. Both values are client-supplied and identical by construction, so there is
@@ -145,7 +177,7 @@ internal static class CoreSessionAuthorization
         IClock clock,
         CancellationToken cancellationToken)
     {
-        var sessionId = request.Cookies[SessionCookieName];
+        var sessionId = ReadSessionCredential(request).Value;
         if (string.IsNullOrWhiteSpace(sessionId))
         {
             return Unauthorized("session_missing", "Core session cookie is missing.");
@@ -226,6 +258,16 @@ internal static class CoreSessionAuthorization
                 new ErrorResponse(code, message),
                 statusCode: StatusCodes.Status401Unauthorized));
 }
+
+// How a Core session credential reached Core. See CoreSessionAuthorization.ReadSessionCredential.
+internal enum SessionCredentialSource
+{
+    None,
+    Cookie,
+    Bearer,
+}
+
+internal readonly record struct SessionCredential(string? Value, SessionCredentialSource Source);
 
 internal sealed record CoreSessionAuthorizationResult(HostUserRecord? User, IResult? Error, bool Terminal = false);
 

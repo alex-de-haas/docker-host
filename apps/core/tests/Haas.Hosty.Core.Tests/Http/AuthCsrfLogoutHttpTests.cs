@@ -41,6 +41,30 @@ public sealed class AuthCsrfLogoutHttpTests
         Assert.Equal(HttpStatusCode.OK, withCsrf.StatusCode);
     }
 
+    // A bearer client holds no CSRF pair — the double-submit cookie is something only a browser has — so
+    // without the exemption it could authenticate but never end its own session. Logging out must also
+    // actually revoke: the exemption is worthless if the request is accepted and does nothing.
+    [Fact]
+    public async Task Logout_ByBearerNeedsNoCsrfAndRevokesTheSession()
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        var users = harness.Services.GetRequiredService<UserDirectoryStore>();
+        var now = harness.Services.GetRequiredService<IClock>().UtcNow;
+
+        var user = new HostUserRecord("user_1", "user@example.test", "User", "host.admin", false, now, now);
+        var session = new AuthSessionRecord("sess_1", user.Id, now, now.AddHours(1), null, now);
+        await users.WriteAsync(new UserDirectoryState(1, [user], [], [], [session]));
+
+        using var client = harness.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/auth/logout") { Content = EmptyJson() };
+        request.Headers.Add("Authorization", $"Bearer {session.Id}");
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.NotNull(Assert.Single((await users.ReadAsync()).Sessions).RevokedAt);
+    }
+
     [Theory]
     // A genuine top-level navigation (the old Shell's <a href> logout, a typed URL) carries
     // Sec-Fetch-Dest "document"; a non-browser client sends nothing. Both log out.

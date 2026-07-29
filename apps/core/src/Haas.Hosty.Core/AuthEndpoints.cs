@@ -29,7 +29,7 @@ internal static class AuthEndpoints
         app.MapGet("/api/auth/session", async (HttpRequest request, UserDirectoryStore users, AuthLifetimes lifetimes, CancellationToken cancellationToken) =>
         {
             var state = await users.ReadAsync(cancellationToken);
-            var sessionId = request.Cookies[CoreSessionAuthorization.SessionCookieName];
+            var sessionId = CoreSessionAuthorization.ReadSessionId(request);
             var now = DateTimeOffset.UtcNow;
             var session = state.Sessions.FirstOrDefault(candidate =>
                 string.Equals(candidate.Id, sessionId, StringComparison.Ordinal) &&
@@ -99,7 +99,7 @@ internal static class AuthEndpoints
             // carry CSRF — otherwise a cross-site POST could log the user out (C-L2). No session is
             // required beyond that: logging out an already-gone session is a harmless no-op, so gate on
             // CSRF alone rather than a full session to keep it idempotent near expiry.
-            if (!CoreSessionAuthorization.HasValidCsrfToken(request))
+            if (!CoreSessionAuthorization.IsCsrfExempt(request) && !CoreSessionAuthorization.HasValidCsrfToken(request))
             {
                 return CoreJson.Json(new ErrorResponse("csrf_invalid", "CSRF token is missing or invalid."), statusCode: StatusCodes.Status403Forbidden);
             }
@@ -326,7 +326,9 @@ internal static class AuthEndpoints
         IClock clock,
         CancellationToken cancellationToken)
     {
-        var sessionId = request.Cookies[CoreSessionAuthorization.SessionCookieName];
+        // However the caller presented the session: a bearer client must be able to end its own session,
+        // and the cascade below is the only thing that revokes the app grants it authorized.
+        var sessionId = CoreSessionAuthorization.ReadSessionId(request);
         if (!string.IsNullOrWhiteSpace(sessionId))
         {
             var now = clock.UtcNow;

@@ -41,6 +41,7 @@ jobs:
       telemetry_backend: ${{ steps.filter.outputs.telemetry_backend }}
       marketplace: ${{ steps.filter.outputs.marketplace }}
       telemetry_ui: ${{ steps.filter.outputs.telemetry_ui }}
+      swift_shell: ${{ steps.filter.outputs.swift_shell }}
       workflows: ${{ steps.filter.outputs.workflows }}
     steps:
       - name: Check out repository
@@ -117,6 +118,12 @@ jobs:
             telemetry_backend:
               - *dotnet_shared
               - 'apps/telemetry-backend/**'
+
+            # Shares nothing with the Node or .NET pools: the Apple client has its own toolchain and its
+            # own version file, and it is the only job that needs a macOS runner.
+            swift_shell:
+              - 'apps/shell-swift/**'
+              - '.github/workflows/ci.yml'
 
             workflows:
               - '.github/workflows/**'
@@ -376,3 +383,54 @@ jobs:
 
       - name: Build Telemetry UI
         run: npm run telemetry-ui:build
+
+  swift-shell:
+    name: Swift Shell
+    # The only macOS job in the workflow: Xcode exists nowhere else. The repository is public, so
+    # GitHub-hosted macOS runners are free; the paths filter keeps it off unrelated pull requests anyway.
+    runs-on: macos-latest
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.swift_shell == 'true'
+    defaults:
+      run:
+        working-directory: apps/shell-swift
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      # A runner's *default* Xcode is not necessarily its newest, and this project needs Xcode 26: it
+      # targets the iOS/macOS 26 SDKs and HostyKit declares swift-tools-version 6.2. Selecting the newest
+      # installed and asserting the major version here turns "this runner is too old" into one readable
+      # line, rather than an SDK or tools-version error several steps later that says nothing about why.
+      - name: Select Xcode
+        run: |
+          latest="$(find /Applications -maxdepth 1 -name 'Xcode*.app' | sort -V | tail -1)"
+          sudo xcode-select -s "$latest/Contents/Developer"
+          xcodebuild -version
+          major="$(xcodebuild -version | head -1 | sed -E 's/Xcode ([0-9]+).*/\1/')"
+          if [ "$major" -lt 26 ]; then
+            echo "::error::apps/shell-swift needs Xcode 26 or newer; the newest on this runner is $latest"
+            exit 1
+          fi
+
+      # The whole contract layer, without a simulator or a signing identity.
+      - name: Test HostyKit
+        run: swift test --package-path HostyKit
+
+      - name: Build for macOS
+        run: |
+          xcodebuild build \
+            -project Hosty.xcodeproj \
+            -scheme Hosty \
+            -destination 'platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO
+
+      # A generic destination rather than a named device: which simulators a runner image ships changes
+      # between image releases, and naming one would break on an image bump for no benefit.
+      - name: Build for iOS Simulator
+        run: |
+          xcodebuild build \
+            -project Hosty.xcodeproj \
+            -scheme Hosty \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO
