@@ -2,7 +2,7 @@
 
 ## Versioning
 
-Hosty uses semantic versioning `major.minor.patch`, applied per release artifact. See `docs/features/repository-release-model.md` for the full policy. When a change ships in one of these components, bump its version in the same commit:
+Hosty uses semantic versioning `major.minor.patch`, applied per release artifact. See `docs/features/repository-release-model/feature.md` for the full policy. When a change ships in one of these components, bump its version in the same commit:
 
 - **patch** - bug fix or small enhancement to existing functionality.
 - **minor** - new functionality, or a large/breaking change (while the project is in `0.x`).

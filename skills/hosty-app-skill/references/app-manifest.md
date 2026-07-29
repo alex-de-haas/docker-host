@@ -31,7 +31,7 @@ The manifest carries two independent version fields:
   - **minor** (`x.Y.0`) - new functionality, or a large change to existing functionality. While the app is in `0.x`, breaking changes also go here.
   - **major** (`X.0.0`) - reserved until the app declares a stable `1.0.0`; after that, breaking changes for the app's users (breaking data migration, removed endpoint/behavior, or requiring a higher `schemaVersion`).
 
-Each runtime app versions independently from Hosty Core/CLI and from other apps. See `docs/features/repository-release-model.md` for the repository-wide policy.
+Each runtime app versions independently from Hosty Core/CLI and from other apps. See `docs/features/repository-release-model/feature.md` for the repository-wide policy.
 
 ## Runtime Environment
 

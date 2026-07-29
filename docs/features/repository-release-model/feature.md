@@ -1,7 +1,7 @@
 # Repository And Release Model
 
 Created: 2026-05-12
-Updated: 2026-07-11
+Updated: 2026-07-29
 
 This document records the current repository layout and release artifact boundaries after the Core/Shell split and retirement of the legacy combined Host package.
 
@@ -248,3 +248,9 @@ While the project is in `0.x` (current), breaking changes go in `minor` per semv
 Bump the relevant component's version in the same change that ships the work.
 
 During early development, `cli-dev` is the main platform distribution channel. Immutable `cli-v*` releases can be introduced when the project needs stable public versions. The repository contains a local placeholder product-channel index that the CLI can read explicitly, but no generated publishing workflow is part of the current release model. The placeholder records the Core artifact family instead of a source project path.
+
+## Testing Expectations
+
+- `scripts/check-versions.mjs` fails when any two copies of one component's version disagree.
+- `ci.yml` gates each component job on its own paths filter, and a skipped job still reports a status.
+- Workflows pass `actionlint`, which type-checks expressions, `needs`/`outputs` references, and every `run:` block.

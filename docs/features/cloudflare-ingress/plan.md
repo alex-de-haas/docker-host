@@ -76,7 +76,7 @@ Written as a diff against [feature.md](feature.md).
       restart), preserving loopback recovery.
 - [ ] Explicit restart affordance in Shell after a successful publish.
 - [ ] Shell tests for connected/disconnected/stopped/error states and the label sanitizer.
-- [ ] Update `docs/features/core-api.md` with the connection and publication endpoints.
+- [ ] Update `docs/features/core-api/feature.md` with the connection and publication endpoints.
 - [ ] Live end-to-end verification against a real Cloudflare account (see Verification).
 
 ## Phases
@@ -108,7 +108,7 @@ Written as a diff against [feature.md](feature.md).
 ### Phase 5 — Verification
 
 - [ ] Shell tests.
-- [ ] `core-api.md`.
+- [ ] `core-api/feature.md`.
 - [ ] Live end-to-end run.
 
 ## Deliberately not doing

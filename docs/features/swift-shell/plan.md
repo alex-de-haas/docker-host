@@ -306,7 +306,7 @@ mode moves to Swift 6 with strict concurrency, matching the
 - [x] Ignore Xcode user state (`xcuserdata/`, `*.xcuserstate`) and remove the stray
       `.DS_Store` files under `apps/shell-swift`.
 - [x] Record the new artifact in `AGENTS.md` ("Where the version lives") and in
-      [Repository And Release Model](../repository-release-model.md).
+      [Repository And Release Model](../repository-release-model/feature.md).
 
 The unit test target is `HostyKitTests`, inside the package. The app target has no
 test bundle of its own: an app-hosted test bundle has to be signed and launched,
@@ -324,7 +324,7 @@ when the login web view first puts real logic there.
 - [x] Tests: bearer authenticates; bearer needs no CSRF; **a cookie request cannot
       escape CSRF by also sending a bearer header**; a revoked or expired session
       fails identically on both paths; logout by bearer revokes and cascades.
-- [x] Update [Core API](../core-api.md) and [Auth And Gateway Model](../auth-gateway.md).
+- [x] Update [Core API](../core-api/feature.md) and [Auth And Gateway Model](../auth-gateway/feature.md).
 
 Implementation note: the CSRF gate is expressed as "only a bearer-presented session is
 exempt" rather than "only a cookie-presented session is checked". The two differ for a

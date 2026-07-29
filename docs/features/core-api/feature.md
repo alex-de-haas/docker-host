@@ -1,7 +1,7 @@
 # Core API
 
 Created: 2026-05-13
-Updated: 2026-07-11
+Updated: 2026-07-29
 
 ## Description
 
@@ -9,7 +9,7 @@ Hosty Core exposes browser APIs for Shell and app auth, plus a local control API
 
 ## Browser APIs
 
-A Host user session may be presented either as the `hosty_session` cookie or as `Authorization: Bearer <session id>`. The bearer form exists for non-browser clients (the native Apple client in `apps/shell-swift`); it carries the same session record, expiry, and revocation, and mints nothing new. Two rules hold it together: the cookie takes precedence whenever both are present, and only a bearer-presented session is exempt from the CSRF pair below — a browser request cannot opt itself out. See [Auth And Gateway Model](auth-gateway.md).
+A Host user session may be presented either as the `hosty_session` cookie or as `Authorization: Bearer <session id>`. The bearer form exists for non-browser clients (the native Apple client in `apps/shell-swift`); it carries the same session record, expiry, and revocation, and mints nothing new. Two rules hold it together: the cookie takes precedence whenever both are present, and only a bearer-presented session is exempt from the CSRF pair below — a browser request cannot opt itself out. See [Auth And Gateway Model](../auth-gateway/feature.md).
 
 Mutating browser endpoints are CSRF-protected: `GET /api/auth/csrf` sets the double-submit cookie and returns the token to echo in `X-Hosty-CSRF`.
 
@@ -39,7 +39,7 @@ Mutating browser endpoints are CSRF-protected: `GET /api/auth/csrf` sets the dou
 - `GET /api/internal/apps/{appId}/secrets` - list the app's stored secret **key names** (never values); `HOSTY_APP_SERVICE_TOKEN`.
 - `GET /api/internal/apps/{appId}/secrets/{key}` - read one stored secret; `404` means no secret is stored, an expected reconnect-required state.
 - `PUT /api/internal/apps/{appId}/secrets/{key}` - store or replace a secret (`{ "value": … }`, non-empty UTF-8 ≤ 16 KiB, ≤ 256 keys per app).
-- `DELETE /api/internal/apps/{appId}/secrets/{key}` - delete a secret; idempotent. See [App Secrets Store](app-secrets-store.md).
+- `DELETE /api/internal/apps/{appId}/secrets/{key}` - delete a secret; idempotent. See [App Secrets Store](../app-secrets-store.md).
 
 Core exposes no catalog or Marketplace proxy endpoints. The optional `hosty.marketplace` system app owns its source and storefront. Shell accepts its bounded install intent and calls the generic feed endpoints above; Core independently validates the feed and manifest.
 
@@ -78,4 +78,12 @@ App backups cover the primary app data directory only:
 
 External mounts are excluded.
 
-An operator-triggered manual backup of a running app briefly stops it to copy a consistent snapshot, then restarts it; the Core-managed `pre-update`/`pre-runtime-switch`/`pre-restore` backups already run against stopped data. See [App Data Backup Retention](app-data-backup-retention.md) for the full consistency behavior.
+An operator-triggered manual backup of a running app briefly stops it to copy a consistent snapshot, then restarts it; the Core-managed `pre-update`/`pre-runtime-switch`/`pre-restore` backups already run against stopped data. See [App Data Backup Retention](../app-data-backup-retention.md) for the full consistency behavior.
+
+## Testing Expectations
+
+- Every browser endpoint enforces its documented authorization: session, admin session, or app service token.
+- Mutating browser endpoints reject a missing or mismatched CSRF pair unless the session was presented as a bearer.
+- Control endpoints reject a missing or wrong `X-Hosty-Control-Secret`.
+- Reviewed-plan endpoints refuse an apply whose digest does not match the plan that was built.
+- `/api/core/status` redacts host detail for an anonymous caller while still identifying the component and version.

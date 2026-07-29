@@ -160,7 +160,7 @@ a missing secret as a defined reconnect-required state, not an error.
 
 - [Implementation planning](../planning/app-secrets-store.md)
 - [App data backup retention](../features/app-data-backup-retention.md)
-- [Core API](../features/core-api.md)
+- [Core API](../features/core-api/feature.md)
 - [Cross-app auth](cross-app-auth.md) — the precedent for "platform gap →
   per-app hand-rolled security"
 - [Hosty App SDK](hosty-app-sdk.md)
