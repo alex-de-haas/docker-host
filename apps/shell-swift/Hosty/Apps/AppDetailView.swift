@@ -8,6 +8,8 @@ struct AppDetailView: View {
     @State private var reviewingUpdate = false
     @State private var updateStatus: AppUpdateStatus?
     @State private var refreshingUpdate = false
+    @State private var updateError: String?
+    @State private var confirmingStop = false
 
     private var app: AppSummary? {
         model.apps.first { $0.id == appID }
@@ -28,6 +30,18 @@ struct AppDetailView: View {
                 .navigationTitle(app.displayName)
                 .sheet(isPresented: $reviewingUpdate) {
                     UpdateReviewSheet(app: app, model: model)
+                }
+                .confirmationDialog(
+                    "Stop \(app.displayName)?",
+                    isPresented: $confirmingStop
+                ) {
+                    Button("Stop \(app.displayName)", role: .destructive) {
+                        Task { await model.stop(app) }
+                    }
+
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("Services and endpoints provided by this app will become unavailable until it is started again.")
                 }
             } else {
                 // The list is the single source of truth, so an app that leaves it (removed on the host,
@@ -51,19 +65,23 @@ struct AppDetailView: View {
                 RuntimeStateBadge(state: app.runtimeState, operating: app.isOperating)
             }
 
-            HStack {
-                Button("Start") { Task { await model.start(app) } }
-                    .disabled(model.isBusy(app) || app.runtimeState.isUp)
+            ViewThatFits(in: .horizontal) {
+                HStack {
+                    startButton(app)
+                    Spacer()
+                    restartButton(app)
+                    Spacer()
+                    stopButton(app)
+                }
 
-                Spacer()
-
-                Button("Restart") { Task { await model.restart(app) } }
-                    .disabled(model.isBusy(app))
-
-                Spacer()
-
-                Button("Stop", role: .destructive) { Task { await model.stop(app) } }
-                    .disabled(model.isBusy(app) || app.runtimeState.isIdle)
+                VStack(spacing: 12) {
+                    startButton(app)
+                        .frame(maxWidth: .infinity)
+                    restartButton(app)
+                        .frame(maxWidth: .infinity)
+                    stopButton(app)
+                        .frame(maxWidth: .infinity)
+                }
             }
             .buttonStyle(.bordered)
         } footer: {
@@ -101,6 +119,12 @@ struct AppDetailView: View {
                     }
                 }
                 .disabled(refreshingUpdate)
+
+                if let updateError {
+                    Label(updateError, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.red)
+                        .font(.footnote)
+                }
 
                 if app.updateCheck?.updateAvailable == true {
                     Button("Review update…") { reviewingUpdate = true }
@@ -151,11 +175,35 @@ struct AppDetailView: View {
 
     private func refreshUpdateStatus(_ app: AppSummary) async {
         refreshingUpdate = true
+        updateError = nil
         defer { refreshingUpdate = false }
 
-        updateStatus = try? await model.client.updateStatus(appID: app.id, refresh: true)
+        do {
+            updateStatus = try await model.refreshUpdateStatus(for: app)
+        } catch {
+            updateError = error.localizedDescription
+        }
+
         // The per-app check also refreshes the cached verdict on the record, so re-read the list.
         await model.reload()
+    }
+
+    private func startButton(_ app: AppSummary) -> some View {
+        Button("Start") { Task { await model.start(app) } }
+            .disabled(model.isBusy(app) || app.runtimeState.isUp)
+            .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private func restartButton(_ app: AppSummary) -> some View {
+        Button("Restart") { Task { await model.restart(app) } }
+            .disabled(model.isBusy(app))
+            .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private func stopButton(_ app: AppSummary) -> some View {
+        Button("Stop", role: .destructive) { confirmingStop = true }
+            .disabled(model.isBusy(app) || app.runtimeState.isIdle)
+            .fixedSize(horizontal: true, vertical: false)
     }
 
     @ViewBuilder
@@ -285,3 +333,24 @@ struct EndpointRow: View {
         }
     }
 }
+
+#if DEBUG
+#Preview("App detail") {
+    let app = PreviewFixtures.runningApp
+    let model = AppsModel(previewApps: [app])
+
+    NavigationStack {
+        AppDetailView(appID: app.id, model: model)
+    }
+}
+
+#Preview("App detail — accessibility size") {
+    let app = PreviewFixtures.runningApp
+    let model = AppsModel(previewApps: [app])
+
+    NavigationStack {
+        AppDetailView(appID: app.id, model: model)
+    }
+    .environment(\.dynamicTypeSize, .accessibility3)
+}
+#endif

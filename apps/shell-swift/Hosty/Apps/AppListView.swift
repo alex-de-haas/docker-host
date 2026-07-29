@@ -2,15 +2,13 @@ import HostyKit
 import SwiftUI
 
 struct AppListView: View {
-    @State private var model: AppsModel
+    let model: AppsModel
+    @Binding var selection: String?
+    @State private var searchText = ""
     @Environment(\.scenePhase) private var scenePhase
 
-    init(session: HostSession) {
-        _model = State(initialValue: AppsModel(session: session))
-    }
-
     var body: some View {
-        List {
+        List(selection: $selection) {
             if let loadError = model.loadError {
                 Section {
                     Label(loadError, systemImage: "exclamationmark.triangle")
@@ -18,17 +16,17 @@ struct AppListView: View {
                 }
             }
 
-            section("Apps", apps: model.userApps)
-            section("System", apps: model.systemApps)
+            section("Apps", apps: filtered(model.userApps))
+            section("System", apps: filtered(model.systemApps))
         }
         .overlay {
-            if model.apps.isEmpty {
+            if !searchText.isEmpty && !model.apps.isEmpty && filtered(model.apps).isEmpty {
+                ContentUnavailableView.search(text: searchText)
+            } else if model.apps.isEmpty {
                 emptyState
             }
         }
-        .navigationDestination(for: String.self) { appID in
-            AppDetailView(appID: appID, model: model)
-        }
+        .searchable(text: $searchText, prompt: "Search apps")
         .toolbar {
             ToolbarItem {
                 Button {
@@ -71,13 +69,23 @@ struct AppListView: View {
         }
     }
 
+    private func filtered(_ apps: [AppSummary]) -> [AppSummary] {
+        guard !searchText.isEmpty else { return apps }
+
+        return apps.filter { app in
+            app.displayName.localizedStandardContains(searchText)
+                || app.id.localizedStandardContains(searchText)
+                || app.selectedRuntime?.localizedStandardContains(searchText) == true
+        }
+    }
+
     @ViewBuilder
     private func section(_ title: String, apps: [AppSummary]) -> some View {
         if !apps.isEmpty {
             Section(title) {
                 ForEach(apps) { app in
                     NavigationLink(value: app.id) {
-                        AppRow(app: app, model: model)
+                        AppRow(app: app)
                     }
                 }
             }
@@ -100,53 +108,121 @@ struct AppListView: View {
 
 struct AppRow: View {
     let app: AppSummary
-    let model: AppsModel
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                accessibleLayout
+            } else {
+                standardLayout
+            }
+        }
+        .padding(.vertical, 2)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var standardLayout: some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(app.displayName)
-                        .font(.body)
-
-                    if app.live {
-                        // A live source app runs from the operator's own folder: its contract is adopted
-                        // on restart and it has no reviewed-update path at all.
-                        BadgeChip(text: "Live", tint: .purple)
-                    }
-                }
-
-                HStack(spacing: 8) {
-                    RuntimeStateBadge(state: app.runtimeState, operating: app.isOperating)
-
-                    Text(app.version)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    if let runtime = app.selectedRuntime {
-                        Text(runtime)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                if let problem = app.problems.first {
-                    Label(problem, systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                        .lineLimit(2)
-                }
+                title
+                metadata
+                firstProblem
             }
 
             Spacer(minLength: 0)
 
+            updateIcon
+        }
+    }
+
+    private var accessibleLayout: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            title
+            RuntimeStateBadge(state: app.runtimeState, operating: app.isOperating)
+
+            Text(accessibleMetadata)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            firstProblem
+
             if app.updateCheck?.updateAvailable == true {
-                Image(systemName: "arrow.up.circle.fill")
+                Label("Update available", systemImage: "arrow.up.circle.fill")
+                    .font(.caption)
                     .foregroundStyle(.blue)
-                    .accessibilityLabel("Update available")
             }
         }
-        .padding(.vertical, 2)
+    }
+
+    private var title: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 6) {
+                Text(app.displayName)
+                    .font(.body)
+
+                liveBadge
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(app.displayName)
+                    .font(.body)
+
+                liveBadge
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var liveBadge: some View {
+        if app.live {
+            // A live source app runs from the operator's own folder: its contract is adopted on restart
+            // and it has no reviewed-update path at all.
+            BadgeChip(text: "Live", tint: .purple)
+        }
+    }
+
+    private var metadata: some View {
+        HStack(spacing: 8) {
+            RuntimeStateBadge(state: app.runtimeState, operating: app.isOperating)
+
+            Text(app.version)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if let runtime = app.selectedRuntime {
+                Text(runtime)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var accessibleMetadata: String {
+        if let runtime = app.selectedRuntime {
+            return "Version \(app.version), runtime \(runtime)"
+        }
+
+        return "Version \(app.version)"
+    }
+
+    @ViewBuilder
+    private var firstProblem: some View {
+        if let problem = app.problems.first {
+            Label(problem, systemImage: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundStyle(.orange)
+                .lineLimit(2)
+        }
+    }
+
+    @ViewBuilder
+    private var updateIcon: some View {
+        if app.updateCheck?.updateAvailable == true {
+            Image(systemName: "arrow.up.circle.fill")
+                .foregroundStyle(.blue)
+                .accessibilityLabel("Update available")
+        }
     }
 }
 
@@ -161,5 +237,21 @@ struct BadgeChip: View {
             .padding(.vertical, 2)
             .background(tint.opacity(0.15), in: Capsule())
             .foregroundStyle(tint)
+            .fixedSize(horizontal: true, vertical: false)
     }
 }
+
+#if DEBUG
+#Preview("App row") {
+    List {
+        AppRow(app: PreviewFixtures.runningApp)
+    }
+}
+
+#Preview("App row — accessibility size") {
+    List {
+        AppRow(app: PreviewFixtures.runningApp)
+    }
+    .environment(\.dynamicTypeSize, .accessibility3)
+}
+#endif

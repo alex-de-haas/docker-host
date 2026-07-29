@@ -27,11 +27,39 @@ final class AppsModel {
         self.session = session
     }
 
+    #if DEBUG
+    /// A local-only model for SwiftUI previews. It never follows an event stream unless a preview calls
+    /// `follow()` explicitly, and its data is independent of saved hosts and live Core instances.
+    convenience init(previewApps: [AppSummary]) {
+        guard let origin = try? HostOrigin(parsing: "https://preview.hosty.invalid") else {
+            preconditionFailure("The static preview origin must be valid.")
+        }
+
+        self.init(session: HostSession(connection: HostConnection(origin: origin)))
+        apps = previewApps
+        hasLoaded = true
+    }
+    #endif
+
     var userApps: [AppSummary] { apps.filter { !$0.system } }
     var systemApps: [AppSummary] { apps.filter(\.system) }
 
     /// For screens that talk to Core directly, such as building an update plan for review.
     var client: CoreClient { session.client }
+
+    /// Refreshes one app's update verdict while preserving the session-level 401 behavior used by the
+    /// list and lifecycle calls. The caller owns the local presentation of other errors.
+    func refreshUpdateStatus(for app: AppSummary) async throws -> AppUpdateStatus {
+        do {
+            return try await session.client.updateStatus(appID: app.id, refresh: true)
+        } catch let error as CoreError {
+            if error.requiresSignIn {
+                await session.refresh()
+            }
+
+            throw error
+        }
+    }
 
     /// Whether a fleet update sweep is running right now. Read from the server's own state rather than a
     /// local flag, so the spinner is right even when another client started the sweep.
@@ -101,6 +129,18 @@ final class AppsModel {
     func stopFollowing() {
         streamTask.cancel()
         reloadTask.cancel()
+    }
+
+    /// A signed-out session must not retain app names or operational state from the previous credential.
+    /// Keep this separate from `stopFollowing()`: backgrounding pauses the stream but should preserve the
+    /// last rendered snapshot until the foreground resync arrives.
+    func resetAfterSignOut() {
+        stopFollowing()
+        apps = []
+        updateCheck = nil
+        loadError = nil
+        hasLoaded = false
+        inFlight = []
     }
 
     deinit {
