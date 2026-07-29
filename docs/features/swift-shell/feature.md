@@ -106,7 +106,7 @@ opens.
 
 SwiftUI previews use isolated defaults and decoded local fixtures rather than saved hosts or a running
 Core. The native App Icon catalog is generated from `assets/hosty-brand/build-assets.mjs`: iOS receives
-opaque light, dark, and monochrome artwork for the system mask, while macOS receives the rounded brand
+opaque light, dark, and tinted artwork for the system mask, while macOS receives the rounded brand
 tile at every required raster size.
 
 ## Live refresh

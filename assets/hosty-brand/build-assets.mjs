@@ -270,7 +270,7 @@ async function run() {
   writeFileSync(join(SHELL_PUBLIC, "favicon.ico"), ico);
   writeFileSync(join(SHELL_PUBLIC, "apple-touch-icon.png"), await png(masters["hosty-icon-brand.svg"], 180));
 
-  // Native app icons. iOS gets explicit light, dark, and monochrome variants; macOS gets the existing
+  // Native app icons. iOS gets explicit light, dark, and tinted variants; macOS gets the existing
   // rounded brand tile at every catalog size because macOS does not apply the iOS icon mask.
   mkdirSync(SWIFT_APP_ICONS, { recursive: true });
   for (const file of readdirSync(SWIFT_APP_ICONS)) {

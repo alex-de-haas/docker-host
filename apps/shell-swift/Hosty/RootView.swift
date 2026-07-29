@@ -43,9 +43,14 @@ struct RootView: View {
             presenting: hostPendingRemoval
         ) { host in
             Button("Forget \(host.displayName)", role: .destructive) {
+                let wasActiveHost = host.origin == model.activeHost?.origin
                 model.remove(host)
-                selectedAppID = nil
-                preferredCompactColumn = model.session == nil ? .sidebar : .content
+
+                if wasActiveHost {
+                    selectedAppID = nil
+                    preferredCompactColumn = model.session == nil ? .sidebar : .content
+                }
+
                 hostPendingRemoval = nil
             }
 
