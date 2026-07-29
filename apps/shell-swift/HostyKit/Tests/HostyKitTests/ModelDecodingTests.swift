@@ -85,6 +85,31 @@ struct ModelDecodingTests {
         #expect(app.problems == ["Dependency com.haas.telemetry is not running."])
     }
 
+    // Found by running against a real host: every app on it showed "Working…" forever. `operationStatus`
+    // is the outcome of the *last* operation, not a busy flag, and the `idle` this once tested against is
+    // not in Core's vocabulary at all. Only an in-flight update counts.
+    @Test("Only an in-flight update counts as operating")
+    func operationStatusIsAnOutcomeNotABusyFlag() throws {
+        func app(_ status: String) throws -> AppSummary {
+            let json = Data(#"""
+            {"id":"a","displayName":"A","description":null,"version":"1","kind":"runtime","system":false,
+             "source":"git","selectedRuntime":"docker","autostart":true,"operationStatus":"\#(status)",
+             "runtimeState":"running","lastOperation":null,"lastError":null,"capabilities":[],
+             "endpoints":[],"runtimeProfiles":[],"updatePolicy":"pinned","artifactLocks":null,
+             "manifestError":null,"live":false,"iconUrl":null,"updateCheck":null,"dependencies":null}
+            """#.utf8)
+            return try JSONDecoder.core.decode(AppSummary.self, from: json)
+        }
+
+        // Everything Core writes on a settled record — none of it means "busy".
+        for settled in ["started", "restarted", "stopped", "installed", "updated", "configured",
+                        "runtime-switched", "runtime-switch-rollback", "failed"] {
+            #expect(try !app(settled).isOperating, "\(settled) is an outcome, not work in progress")
+        }
+
+        #expect(try app("updating").isOperating)
+    }
+
     @Test("A runtime state this client has never heard of degrades to unknown instead of failing the list")
     func unknownRuntimeState() throws {
         let json = Data(#"{"runtimeState":"quiescing"}"#.utf8)

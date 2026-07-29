@@ -50,7 +50,7 @@ Builds are independent:
 - `demo-app-image.yml` - build and push the first-party Demo App Docker image;
 - `cli-release.yml` - build and publish standalone CLI and Core executable artifacts.
 
-No workflow packages or publishes `apps/shell-swift`; it is built from Xcode and checked by the `swift-shell` job in `ci.yml`. Distribution for it is tracked in [Swift Shell](../swift-shell/plan.md).
+No workflow packages or publishes `apps/shell-swift` (see [Swift Shell](../swift-shell/feature.md)); it is built from Xcode and checked by the `swift-shell` job in `ci.yml`.
 
 ### Path filtering in `ci.yml`
 

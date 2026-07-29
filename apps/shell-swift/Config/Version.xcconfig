@@ -9,7 +9,7 @@
 // Bump per AGENTS.md: patch for a fix or small enhancement, minor for new functionality or a
 // breaking change while the project is in 0.x.
 
-MARKETING_VERSION = 0.1.0
+MARKETING_VERSION = 0.1.1
 
 // Build number. Not a semantic version: it only has to increase for TestFlight/App Store uploads,
 // which this app does not do yet.

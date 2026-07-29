@@ -63,8 +63,14 @@ public struct CoreEventStream: Sendable {
                         attempt = 0
                         continuation.yield(.resync)
 
+                        // Split the bytes here rather than using `AsyncBytes.lines`, which **drops empty
+                        // lines** — and an SSE frame is dispatched by exactly that. Fed from `.lines`, a
+                        // correct parser never dispatches anything: the connection stays open, bytes keep
+                        // arriving, and no event ever reaches the consumer.
+                        var splitter = ServerSentEventLineSplitter()
                         var parser = ServerSentEventParser()
-                        for try await line in bytes.lines {
+                        for try await byte in bytes {
+                            guard let line = splitter.consume(byte) else { continue }
                             if let event = parser.consume(line: line) {
                                 continuation.yield(.event(event))
                             }
@@ -124,6 +130,28 @@ public struct CoreEventStream: Sendable {
             let scaled = initial * (1 << steps)
             return scaled > maximum ? maximum : scaled
         }
+    }
+}
+
+/// Splits a byte stream into lines, **keeping the empty ones**.
+///
+/// Exists because `AsyncBytes.lines` discards them, and in server-sent events a blank line is not
+/// whitespace — it is the frame terminator, the one byte sequence that says "dispatch what you have".
+public struct ServerSentEventLineSplitter: Sendable {
+    private var buffer: [UInt8] = []
+
+    public init() {}
+
+    /// Feeds one byte. Returns the completed line when this byte ended one, including `""` for a blank
+    /// line; `nil` while the line is still being read.
+    public mutating func consume(_ byte: UInt8) -> String? {
+        guard byte != UInt8(ascii: "\n") else {
+            defer { buffer.removeAll(keepingCapacity: true) }
+            return String(decoding: buffer, as: UTF8.self)
+        }
+
+        buffer.append(byte)
+        return nil
     }
 }
 
