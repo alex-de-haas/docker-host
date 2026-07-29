@@ -161,6 +161,27 @@ struct CoreClientTests {
             #expect(decoded["planDigest"] == "sha256:bbb")
         }
 
+        // Core binds a non-optional `AppUpdatePlanRequest` from the body, so a bodyless POST is rejected
+        // by model binding before the handler runs — the review sheet would report an error every time
+        // and no update could ever be applied. Every field on that record is optional, so `{}` is
+        // "use the defaults", but it has to be sent with a content type.
+        @Test("Building an update plan sends a JSON body, because Core requires one")
+        func updatePlanSendsBody() async throws {
+            StubURLProtocol.install(json: #"""
+            {"appId":"demo","currentVersion":"1","targetVersion":"2","currentRuntime":"docker",
+             "targetRuntime":"docker","manifestPath":"m","manifestDigest":"d","planDigest":"p",
+             "willCreatePreUpdateBackup":false,"changes":[]}
+            """#)
+
+            _ = try await client().buildUpdatePlan(appID: "demo")
+
+            let sent = try #require(StubURLProtocol.requests.first)
+            #expect(sent.request.httpMethod == "POST")
+            #expect(sent.request.url?.path == "/api/apps/demo/update/plan")
+            #expect(sent.request.value(forHTTPHeaderField: "Content-Type") == "application/json")
+            #expect(sent.body.map { String(decoding: $0, as: UTF8.self) } == "{}")
+        }
+
         @Test("A refresh is requested as a query item, and omitted otherwise")
         func updateStatusRefresh() async throws {
             let status = #"{"appId":"demo","runtime":"docker","runtimeType":"docker","updatePolicy":"pinned","updateAvailable":false,"services":[]}"#
@@ -209,6 +230,19 @@ struct CoreClientTests {
 
             #expect(await client.isAuthenticated)
             _ = try? await client.apps()
+            #expect(await client.isAuthenticated == false)
+        }
+
+        // The event stream reconnects on its own, so a 401 noticed there and not acted on would keep
+        // presenting a dead session forever with nothing else ever being told.
+        @Test("A 401 on the event stream clears the credential too")
+        func unauthorizedStreamClearsCredential() async throws {
+            StubURLProtocol.install(status: 401, json: #"{"code":"session_invalid","message":"gone"}"#)
+            let client = try client()
+
+            let request = await client.eventStreamRequest()
+            await #expect(throws: CoreError.self) { _ = try await client.bytes(for: request) }
+
             #expect(await client.isAuthenticated == false)
         }
 

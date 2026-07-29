@@ -104,7 +104,15 @@ public actor CoreClient {
 
     /// Builds (and caches) the reviewed plan. The digest it returns is what an apply must echo back.
     public func buildUpdatePlan(appID: String) async throws -> AppUpdatePlan {
-        try await decode(send(makeRequest(.post, "/api/apps/\(escape(appID))/update/plan")))
+        var request = makeRequest(.post, "/api/apps/\(escape(appID))/update/plan")
+
+        // Core binds a non-optional `AppUpdatePlanRequest` from the body, so a POST with no body and no
+        // content type is rejected by model binding before the handler ever runs. Every field on that
+        // record is optional, so an empty object is exactly "use the defaults" — but it has to be sent.
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Data("{}".utf8)
+
+        return try decode(await send(request))
     }
 
     public func pendingUpdatePlan(appID: String) async throws -> AppUpdatePlan? {
@@ -140,7 +148,16 @@ public actor CoreClient {
             }
 
             guard (200..<300).contains(http.statusCode) else {
-                throw CoreError.from(status: http.statusCode, payload: nil)
+                let error = CoreError.from(status: http.statusCode, payload: nil)
+
+                // Same rule as `send`: a 401 means this credential is finished, wherever it was noticed.
+                // The event stream reconnects on its own, so without this it would keep presenting a dead
+                // session forever and nothing else would ever be told.
+                if error.requiresSignIn {
+                    sessionID = nil
+                }
+
+                throw error
             }
 
             return (bytes, http)

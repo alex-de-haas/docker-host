@@ -29,6 +29,12 @@ public enum CoreEventStreamElement: Hashable, Sendable {
     /// Connected, or reconnected after a gap. Re-read every piece of state this subscriber renders.
     case resync
     case event(CoreEvent)
+    /// The credential this stream authenticates with is finished, and the stream has ended.
+    ///
+    /// Distinct from a dropped connection, which is ordinary and reconnects silently. Reconnecting past a
+    /// 401 would spin against the host forever while the screen kept showing state from a session that no
+    /// longer exists — so the failure is handed to the consumer, which owns what "signed out" looks like.
+    case unauthorized
 }
 
 /// Reads Core's server-sent event stream, reconnecting for as long as the consumer keeps listening.
@@ -65,10 +71,14 @@ public struct CoreEventStream: Sendable {
                         }
                     } catch is CancellationError {
                         break
+                    } catch let error as CoreError where error.requiresSignIn {
+                        // Retrying cannot help: the session is gone, and every reconnect would be another
+                        // unauthorized request. Tell the consumer and stop.
+                        continuation.yield(.unauthorized)
+                        break
                     } catch {
-                        // Includes an unauthorized stream. The consumer sees the gap as a missing resync and
-                        // recovers through its own session check; the stream itself keeps trying, because a
-                        // 401 here is usually a Core restart that a re-login will fix.
+                        // Everything else is an ordinary gap — a dropped connection, a restarting host —
+                        // and reconnecting is the whole point. The consumer sees it as the next resync.
                     }
 
                     if Task.isCancelled {

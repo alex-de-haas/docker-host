@@ -80,6 +80,10 @@ final class AppsModel {
                     case .notification, nil:
                         break
                     }
+                case .unauthorized:
+                    // The stream has already stopped. Hand it to the session, which owns the signed-out
+                    // screen — otherwise this view would sit on stale apps looking signed in.
+                    await session.refresh()
                 }
             }
         })

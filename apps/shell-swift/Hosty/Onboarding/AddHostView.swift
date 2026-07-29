@@ -121,11 +121,17 @@ struct AddHostView: View {
     }
 
     private func check() async {
+        // The address this probe is about. Editing the field while a probe is in flight resets the
+        // displayed state but cannot cancel the request, so every publish below is guarded against it:
+        // otherwise a late answer for the old address would set `.found` and arm "Add host" while the
+        // field showed something else, and the button would store the host nobody was looking at.
+        let submitted = address
+
         let candidates: [HostOrigin]
         do {
-            candidates = try HostOrigin.candidates(for: address)
+            candidates = try HostOrigin.candidates(for: submitted)
         } catch {
-            probe = .failed(error.localizedDescription)
+            publish(.failed(error.localizedDescription), resolved: nil, for: submitted)
             return
         }
 
@@ -149,23 +155,33 @@ struct AddHostView: View {
                 // Caught here rather than after signing in, where it would look like a login that keeps
                 // failing for no stated reason.
                 guard status.isSupportedVersion else {
-                    probe = .failed(
-                        """
-                        \(origin.displayName) runs Hosty \(status.version). \
-                        This app needs \(PlatformVersion.minimumSupported) or newer — update the host first.
-                        """)
+                    publish(
+                        .failed(
+                            """
+                            \(origin.displayName) runs Hosty \(status.version). \
+                            This app needs \(PlatformVersion.minimumSupported) or newer — update the host first.
+                            """),
+                        resolved: nil,
+                        for: submitted)
                     return
                 }
 
-                resolved = origin
-                probe = .found(version: status.version)
+                publish(.found(version: status.version), resolved: origin, for: submitted)
                 return
             } catch {
                 lastFailure = error.localizedDescription
             }
         }
 
-        probe = .failed(lastFailure ?? "Could not reach that address.")
+        publish(.failed(lastFailure ?? "Could not reach that address."), resolved: nil, for: submitted)
+    }
+
+    /// Publishes a probe outcome, unless the operator has moved on to a different address.
+    private func publish(_ outcome: ProbeState, resolved origin: HostOrigin?, for submitted: String) {
+        guard submitted == address else { return }
+
+        probe = outcome
+        resolved = origin
     }
 
     private func add() {
