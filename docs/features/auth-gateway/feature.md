@@ -74,7 +74,13 @@ The response includes enabled Host users explicitly assigned to the app, plus en
 
 ## Gateway Status
 
-The old Legacy Host external gateway package is retired. Future gateway or ingress work is tracked in [Gateway And App Wrapping Ideas](../../ideas/gateway-and-app-wrapping.md) and should build on app identity, app assignments, and runtime app endpoints instead of legacy metadata contracts.
+The old Legacy Host external gateway package is retired, along with its ingress UI and metadata contracts.
+
+Public traffic reaches runtime apps through [Cloudflare Ingress](../cloudflare-ingress/feature.md): services listen only on loopback, and an operator-run Cloudflare Tunnel routes by hostname to the right loopback port. Core never runs a reverse proxy itself.
+
+Browser app launch does not go through a gateway at all. A Hosty-aware runtime app redirects to Core, exchanges an app authorization code, and creates its own app-local session on its own origin — the flow described above.
+
+Gateway concerns neither of those covers, chiefly wrapping an app that has no Hosty-aware auth of its own, are recorded in [Gateway And App Wrapping Ideas](../../ideas/gateway-and-app-wrapping.md).
 
 ## Testing Expectations
 
