@@ -23,7 +23,11 @@ enum CoreTimestamp {
         return formatter.date(from: normalized.value)
     }
 
-    /// Truncates the fractional part to three digits, or removes it when every digit is dropped.
+    /// Truncates the fractional part to at most three digits, keeping it declared either way.
+    ///
+    /// Truncation never removes the fraction: three digits of a non-empty run is still non-empty, so a
+    /// string that had a fraction going in has one coming out. The two ways to come back with no fraction
+    /// are both about the input — no `.` at all, or a `.` with no digits after it.
     private static func normalizeFractionalSeconds(_ text: String) -> (value: String, hasFraction: Bool) {
         guard let dot = text.firstIndex(of: ".") else {
             return (text, false)

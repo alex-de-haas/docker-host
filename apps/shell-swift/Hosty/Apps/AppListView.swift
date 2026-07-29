@@ -3,6 +3,7 @@ import SwiftUI
 
 struct AppListView: View {
     @State private var model: AppsModel
+    @Environment(\.scenePhase) private var scenePhase
 
     init(session: HostSession) {
         _model = State(initialValue: AppsModel(session: session))
@@ -47,6 +48,15 @@ struct AppListView: View {
             // `follow` yields a resync on connect, and that resync is the first load — asking for the list
             // here as well would just fetch it twice on every appearance.
             model.follow()
+        }
+        // Coming back to the foreground is a gap like any other, and the stream cannot close it quickly on
+        // its own: a suspended app's connection dies quietly, and the reconnect that follows may be several
+        // backoff steps in — up to half a minute of showing state from before the phone was pocketed.
+        // Re-reading here is the same "resync after a gap" the bus contract already requires, just
+        // triggered by something the stream cannot observe.
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            Task { await model.reload() }
         }
         .onDisappear { model.stopFollowing() }
     }
