@@ -1400,7 +1400,7 @@ internal sealed class RuntimeAppSupervisorService(
         }
     }
 
-    // Install-time port reservations, phase 1: backfill persistent port assignments from stored endpoint
+    // Install-time port reservations: backfill persistent port assignments from stored endpoint
     // URLs before autostart reconciliation consumes them. Best-effort — a failure is logged and startup
     // continues (start still resolves ports as it does today when a record has no assignments yet).
     private async Task MigratePortAssignmentsAsync(CancellationToken cancellationToken)

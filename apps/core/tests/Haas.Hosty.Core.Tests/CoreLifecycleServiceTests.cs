@@ -5056,6 +5056,24 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public void PreflightLoopbackAssignments_WildcardBoundHolder_ThrowsRuntimePortUnavailable()
+    {
+        // A localCommand app that listens on "all interfaces" holds `0.0.0.0`/`::`, never `127.0.0.1`.
+        // On BSD/macOS that slipped past the loopback-only probe entirely, so a reserved port squatted by
+        // such a process was reported free and the operator got a generic adapter bind failure — or an app
+        // that started and never served — instead of this structured, reassign-able conflict.
+        using var holder = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        holder.Bind(new IPEndPoint(IPAddress.Any, 0));
+        holder.Listen(1);
+        var port = ((IPEndPoint)holder.LocalEndPoint!).Port;
+        var app = SeedReassignApp("com.example.api", "stopped", assignments: [ReassignAssignment("app", "http", port)]);
+
+        var error = Assert.Throws<AppLifecycleException>(() => CoreLifecycleService.PreflightLoopbackAssignments(app));
+        Assert.Equal("runtime_port_unavailable", error.Code);
+        Assert.Contains($"app.http → {port}", error.Message);
+    }
+
+    [Fact]
     public void PreflightLoopbackAssignments_FreePort_DoesNotThrow()
     {
         var freePort = RuntimePortHelper.AllocateLoopbackPort();

@@ -4,12 +4,12 @@ using System.Text.Json.Serialization;
 
 namespace Haas.Hosty.Core;
 
-// One-click Cloudflare public ingress, phase 1: a read-only Cloudflare API client used to verify a pasted
+// Cloudflare ingress: the Cloudflare API client used to verify a pasted
 // scoped API token and discover the account, zone, tunnel, and connectors to adopt. The token is passed
 // per call as a Bearer header and never logged; this client holds no credential at rest (see
-// CloudflareCredentialStore). Mutation (DNS + tunnel configuration writes) is deliberately out of scope
-// here and lands in phase 2. See docs/planning/one-click-cloudflare-public-ingress.md.
-// The read-only Cloudflare API seam. An interface so the connection/discovery service can be unit-tested
+// CloudflareCredentialStore). It also carries the DNS and tunnel-configuration writes the publication
+// path uses. See docs/features/cloudflare-ingress/feature.md.
+// The Cloudflare API seam. An interface so the connection/discovery service can be unit-tested
 // against a fake, and (per the in-Core-now, extract-later decision) so this whole client can move into a
 // future ingress-provider system app without the service depending on its concrete type.
 internal interface ICloudflareApiClient

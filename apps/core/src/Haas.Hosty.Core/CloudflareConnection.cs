@@ -4,12 +4,13 @@ using Microsoft.Extensions.Logging;
 
 namespace Haas.Hosty.Core;
 
-// One-click Cloudflare public ingress, phase 1b: the connect/discover flow. Verifies a pasted scoped token
+// Cloudflare ingress: the connect/discover flow. Verifies a pasted scoped token
 // by a resource probe, discovers the account/zone/tunnel/connectors, auto-selects the single healthy
 // remotely managed tunnel, runs the advisory connector-locality check, and persists the token (private)
-// plus the non-secret connection state. No DNS/tunnel mutation happens here (that is phase 2). Kept behind
+// plus the non-secret connection state. No DNS/tunnel mutation happens here — that is the publication
+// path (CloudflarePublicationReconciler). Kept behind
 // the existing IIngressController seam so this can move into an ingress-provider system app later.
-// See docs/planning/one-click-cloudflare-public-ingress.md.
+// See docs/features/cloudflare-ingress/feature.md.
 internal sealed class CloudflareConnectionService(
     ICloudflareApiClient client,
     CloudflareCredentialStore credentials,
@@ -110,8 +111,9 @@ internal sealed class CloudflareConnectionService(
     public async Task<CloudflareConnectionStatus> DisconnectAsync(CancellationToken cancellationToken = default)
     {
         // The scoped token cannot revoke itself, so we delete the local copy and point the operator at the
-        // dashboard. No Hosty-owned Cloudflare resources exist yet in this phase, so there is nothing to
-        // clean up remotely.
+        // dashboard. Hosty-owned DNS records and tunnel routes are deliberately NOT removed here: there
+        // are no Keep/Remove choices yet, so disconnect leaves every published resource in place and the
+        // operator unpublishes first if they want it gone. See the feature's plan.md.
         await credentials.DeleteAsync(cancellationToken);
         await integration.DeleteAsync(cancellationToken);
         return await StatusAsync(cancellationToken);
@@ -234,7 +236,7 @@ internal static class ConnectorLocality
 }
 
 // Non-secret connection state, persisted under the private core data root (the token itself lives only in
-// CloudflareCredentialStore). Per-publication ownership is added in a later phase.
+// CloudflareCredentialStore). Per-publication ownership lives in CloudflarePublicationStore.
 internal sealed record CloudflareIntegrationState(
     string Status,
     string? ReconnectReason,
