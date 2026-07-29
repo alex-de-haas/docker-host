@@ -25,9 +25,10 @@ struct RuntimeStateBadge: View {
     }
 
     private var title: String {
-        // An update owns the record while it applies, and that outranks the runtime state as the thing
-        // the operator wants to know right now.
-        guard !operating || state.isBusy else {
+        // An update owns the record while it applies, and it outranks the runtime state outright — including
+        // while that state is itself busy. Mid-apply the app legitimately cycles through stopping and
+        // starting, and reporting those describes the mechanism rather than what the operator asked for.
+        if operating {
             return "Updating…"
         }
 

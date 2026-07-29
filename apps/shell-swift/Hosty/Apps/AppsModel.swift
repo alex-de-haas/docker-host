@@ -64,10 +64,19 @@ final class AppsModel {
     func follow() {
         guard !streamTask.isRunning else { return }
 
-        streamTask.set(Task { [weak self] in
-            guard let self else { return }
+        // The stream is built here, outside the task, and `self` stays weak *inside* the loop.
+        //
+        // Promoting it once with `guard let self` would hold a strong reference for the loop's whole
+        // life, and the loop is effectively endless — closing the ring model → TaskBox → task → model.
+        // The model could then never deallocate, so `deinit` would never cancel anything, and switching
+        // or forgetting a host would leave the previous model reloading over its own live connection
+        // forever. Re-acquiring per element keeps the ring open.
+        let stream = CoreEventStream(client: session.client)
 
-            for await element in CoreEventStream(client: session.client).elements() {
+        streamTask.set(Task { [weak self] in
+            for await element in stream.elements() {
+                guard let self else { return }
+
                 switch element {
                 case .resync:
                     // A connection, or a reconnection after a gap during which anything could have
