@@ -90,6 +90,42 @@ public actor CoreClient {
         _ = try await send(makeRequest(.post, "/api/apps/\(escape(appID))/\(verb)"))
     }
 
+    // MARK: - Display assets
+
+    /// Fetches one of an app's manifest-declared display assets — in practice, its icon.
+    ///
+    /// Core reports the address in one of two shapes, and which one it is decides the credential. A
+    /// manifest-relative icon is vendored into the app's folder and served from *this* host
+    /// (`/api/apps/{id}/assets/{path}?v=<version>`), authorized by the session like any other app read; an
+    /// absolute `https://` icon points somewhere else entirely, and that somewhere is not given this host's
+    /// session id because an app author chose to host their icon on a CDN.
+    ///
+    /// This is also why an icon cannot simply be handed to `AsyncImage`: the relative form needs a bearer
+    /// header, and an image view has nowhere to put one.
+    public func asset(at url: String) async throws -> Data {
+        // Resolved against the origin rather than assembled from a path, so the relative form keeps its
+        // cache-busting query — `origin.url(path:)` would percent-encode the `?` into the path itself.
+        guard let resolved = URL(string: url, relativeTo: origin.url)?.absoluteURL,
+              let scheme = resolved.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else {
+            throw CoreError.invalidResponse("The host reported an asset address this app cannot read: \(url)")
+        }
+
+        var request = URLRequest(url: resolved)
+        if isSameOrigin(resolved), let sessionID {
+            request.setValue("Bearer \(sessionID)", forHTTPHeaderField: "Authorization")
+        }
+
+        return try await send(request)
+    }
+
+    /// Whether this host serves the URL, which is what decides whether the session travels with it.
+    /// Compared through `HostOrigin` rather than field by field so both sides get the same normalization:
+    /// default ports, letter case, and IPv6 brackets.
+    private func isSameOrigin(_ url: URL) -> Bool {
+        (try? HostOrigin(parsing: url.absoluteString)) == origin
+    }
+
     // MARK: - Updates
 
     public func updateStatus(appID: String, refresh: Bool = false) async throws -> AppUpdateStatus {
@@ -150,10 +186,11 @@ public actor CoreClient {
             guard (200..<300).contains(http.statusCode) else {
                 let error = CoreError.from(status: http.statusCode, payload: nil)
 
-                // Same rule as `send`: a 401 means this credential is finished, wherever it was noticed.
-                // The event stream reconnects on its own, so without this it would keep presenting a dead
-                // session forever and nothing else would ever be told.
-                if error.requiresSignIn {
+                // Same rule as `send`: a 401 on a request that presented the credential means that
+                // credential is finished, wherever it was noticed. The event stream reconnects on its own,
+                // so without this it would keep presenting a dead session forever and nothing else would
+                // ever be told.
+                if error.requiresSignIn, presentsCredential(request) {
                     sessionID = nil
                 }
 
@@ -220,12 +257,12 @@ public actor CoreClient {
                 status: http.statusCode,
                 payload: try? decoder.decode(CoreErrorPayload.self, from: data))
 
-            // A 401 means this credential is finished — expired, revoked, or from a Core that has since
-            // forgotten it. Dropping it here, rather than at each call site, keeps "signed out" from
-            // depending on which concurrent request happened to notice first. A 403 is deliberately left
-            // alone: the session is valid and the answer is still no, so discarding it would send the
-            // operator back through a sign-in that changes nothing.
-            if error.requiresSignIn {
+            // A 401 on a request that presented the credential means that credential is finished —
+            // expired, revoked, or from a Core that has since forgotten it. Dropping it here, rather than
+            // at each call site, keeps "signed out" from depending on which concurrent request happened to
+            // notice first. A 403 is deliberately left alone: the session is valid and the answer is still
+            // no, so discarding it would send the operator back through a sign-in that changes nothing.
+            if error.requiresSignIn, presentsCredential(request) {
                 sessionID = nil
             }
 
@@ -233,6 +270,16 @@ public actor CoreClient {
         }
 
         return data
+    }
+
+    /// Whether the request actually offered this client's credential.
+    ///
+    /// A 401 only condemns the session when the session was presented. Two requests here never present
+    /// it: the public status probe, and an off-host asset — a manifest icon on a CDN, which may sit behind
+    /// an auth wall or a signed URL that has expired. Their 401s say nothing about Core, and acting on one
+    /// would sign the operator out of a host that never complained.
+    private func presentsCredential(_ request: URLRequest) -> Bool {
+        request.value(forHTTPHeaderField: "Authorization") != nil
     }
 
     private func decode<T: Decodable>(_ data: Data) throws -> T {

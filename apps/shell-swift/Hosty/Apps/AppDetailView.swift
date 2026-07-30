@@ -19,6 +19,7 @@ struct AppDetailView: View {
         Group {
             if let app {
                 Form {
+                    header(app)
                     lifecycle(app)
                     updates(app)
                     overview(app)
@@ -56,6 +57,39 @@ struct AppDetailView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
+    }
+
+    /// Icon, name, and what marks this app out. On a compact iPhone the navigation title is inline and
+    /// tiny, so this is where the app is actually identified.
+    @ViewBuilder
+    private func header(_ app: AppSummary) -> some View {
+        Section {
+            HStack(spacing: 14) {
+                AppIconView(app: app, icons: model.icons, edge: 52)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(app.displayName)
+                        .font(.headline)
+
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 6) { badges(app) }
+                        VStack(alignment: .leading, spacing: 4) { badges(app) }
+                    }
+                }
+            }
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    @ViewBuilder
+    private func badges(_ app: AppSummary) -> some View {
+        if app.system {
+            BadgeChip(text: "System", tint: .secondary)
+        }
+
+        if app.live {
+            BadgeChip(text: "Live", tint: .purple)
+        }
     }
 
     @ViewBuilder
@@ -337,7 +371,7 @@ struct EndpointRow: View {
 #if DEBUG
 #Preview("App detail") {
     let app = PreviewFixtures.runningApp
-    let model = AppsModel(previewApps: [app])
+    let model = AppsModel(previewApps: [app], previewIcons: PreviewFixtures.icons)
 
     NavigationStack {
         AppDetailView(appID: app.id, model: model)
@@ -346,7 +380,7 @@ struct EndpointRow: View {
 
 #Preview("App detail — accessibility size") {
     let app = PreviewFixtures.runningApp
-    let model = AppsModel(previewApps: [app])
+    let model = AppsModel(previewApps: [app], previewIcons: PreviewFixtures.icons)
 
     NavigationStack {
         AppDetailView(appID: app.id, model: model)

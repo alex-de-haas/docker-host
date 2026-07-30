@@ -1,7 +1,7 @@
 # Swift Shell
 
 Created: 2026-07-29
-Updated: 2026-07-29
+Updated: 2026-07-30
 
 `apps/shell-swift` is a native SwiftUI client for iOS, iPadOS, and macOS that manages a Hosty host's
 installed apps: their state, lifecycle, and updates.
@@ -65,8 +65,26 @@ non-administrator gets an explicit explanation rather than an empty list.
 
 ## Installed apps and lifecycle
 
-The list shows each app's name, version, selected runtime, and runtime state, split into user and system
-apps, with a `Live` badge on an app whose runtime re-reads the operator's own folder.
+The list shows each app's icon, name, version, selected runtime, and runtime state, in one list — a
+system app carries a `System` badge rather than sitting in a separate section, the same shape as the
+browser Shell's Installed Apps page. A `Live` badge marks an app whose runtime re-reads the operator's
+own folder.
+
+Icons are the manifest-declared display assets Core reports as `iconUrl`. The client fetches them itself
+rather than pointing an image view at the URL, for two reasons: a manifest-relative icon is served by
+Core's session-authorized asset endpoint and this client's credential travels as a header, which an
+image view cannot attach; and the first-party icons are SVG, which no Apple image decoder reads on iOS.
+An SVG is rasterized once through an offscreen `WKWebView` — loaded via an `<img>` data URI with
+JavaScript disabled, the same inert-image guarantee the browser gets — and cached per host session,
+fetched one at a time. The credential is attached only when the icon URL resolves to the host's own
+origin; an absolute URL to a third party is fetched bare — and because it never presented the session, a
+`401` from it cannot clear the credential either. Only a request that offered the session is allowed to
+end it.
+
+An app with no icon, an icon that 404s, or a format the client cannot render gets a placeholder. That
+verdict is remembered for the session, but only for a definite answer *about the asset*: an unreachable
+host, a Core mid-restart, and an expired session are retried on the next appearance, or a screen of
+placeholders would outlive the condition that caused it — including a re-sign-in.
 
 Runtime state carries Core's full vocabulary — `running`, `starting`, `stopping`, `stopped`, `unknown` —
 and the client mirrors its three predicates rather than comparing against `"running"`: `starting` and
@@ -81,8 +99,9 @@ Start, Stop, and Restart are disabled while a lifecycle verb is in flight on the
 owns the record, and while the client's own request is outstanding. That last one covers only the gap
 between the tap and Core committing — the displayed state always comes from the record.
 
-App detail shows services (derived by grouping endpoints, since Core reports no services list), endpoint
-availability, ports, capabilities, artifact locks, dependencies, and the last error.
+App detail opens with an identity header — icon, name, and the `System`/`Live` badges — and shows
+services (derived by grouping endpoints, since Core reports no services list), endpoint availability,
+ports, capabilities, artifact locks, dependencies, and the last error.
 
 ## Adaptive interface and interaction
 
@@ -180,6 +199,11 @@ Distribution is by local Xcode build; nothing packages or publishes this app.
   kept), 503 (transient), and a non-JSON error body.
 - Requests carry the credential as a bearer header and never a cookie; `update/plan` sends a JSON body,
   which Core's model binding requires.
+- Asset fetches attach the session only for the host's own origin — a relative icon URL keeps its
+  cache-busting query and the bearer header, an absolute third-party URL gets neither, and an absolute
+  URL that normalizes back to the host's origin (default port, letter case) is recognized as the host.
+- A `401` clears the credential only when the failing request presented it: the host's own asset endpoint
+  does, an off-host icon URL does not, and both directions are pinned so the exemption cannot widen.
 - SwiftUI previews cover an empty host list, a representative app row, its accessibility-size layout,
   and app detail at standard and accessibility text sizes without contacting Core.
 - Visual verification covers compact iPhone navigation and the expanded three-column iPad hierarchy; app

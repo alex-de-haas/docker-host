@@ -16,8 +16,15 @@ struct AppListView: View {
                 }
             }
 
-            section("Apps", apps: filtered(model.userApps))
-            section("System", apps: filtered(model.systemApps))
+            // One list, not a user/system split. A system app is told apart by its badge, not by which
+            // table it sits in — the same shape the browser Shell settled on. Two sections meant an
+            // operator who knows the app's name still had to work out which half owned it, and search
+            // returned two answers to one question.
+            ForEach(filtered(model.apps)) { app in
+                NavigationLink(value: app.id) {
+                    AppRow(app: app, icons: model.icons)
+                }
+            }
         }
         .overlay {
             if !searchText.isEmpty && !model.apps.isEmpty && filtered(model.apps).isEmpty {
@@ -80,19 +87,6 @@ struct AppListView: View {
     }
 
     @ViewBuilder
-    private func section(_ title: String, apps: [AppSummary]) -> some View {
-        if !apps.isEmpty {
-            Section(title) {
-                ForEach(apps) { app in
-                    NavigationLink(value: app.id) {
-                        AppRow(app: app)
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
     private var emptyState: some View {
         if !model.hasLoaded {
             ProgressView("Loading apps…")
@@ -108,6 +102,7 @@ struct AppListView: View {
 
 struct AppRow: View {
     let app: AppSummary
+    let icons: AppIconStore
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
@@ -124,6 +119,8 @@ struct AppRow: View {
 
     private var standardLayout: some View {
         HStack(spacing: 12) {
+            AppIconView(app: app, icons: icons)
+
             VStack(alignment: .leading, spacing: 3) {
                 title
                 metadata
@@ -138,7 +135,11 @@ struct AppRow: View {
 
     private var accessibleLayout: some View {
         VStack(alignment: .leading, spacing: 8) {
-            title
+            HStack(spacing: 10) {
+                AppIconView(app: app, icons: icons)
+                title
+            }
+
             RuntimeStateBadge(state: app.runtimeState, operating: app.isOperating)
 
             Text(accessibleMetadata)
@@ -161,20 +162,27 @@ struct AppRow: View {
                 Text(app.displayName)
                     .font(.body)
 
-                liveBadge
+                badges
             }
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(app.displayName)
                     .font(.body)
 
-                liveBadge
+                HStack(spacing: 6) { badges }
             }
         }
     }
 
     @ViewBuilder
-    private var liveBadge: some View {
+    private var badges: some View {
+        if app.system {
+            // Everything the "System" section used to say, in the row that needs it. It marks ownership,
+            // not capability: the host installed and manages this app, and every lifecycle verb applies to
+            // it exactly as it does to the rest.
+            BadgeChip(text: "System", tint: .secondary)
+        }
+
         if app.live {
             // A live source app runs from the operator's own folder: its contract is adopted on restart
             // and it has no reviewed-update path at all.
@@ -242,15 +250,23 @@ struct BadgeChip: View {
 }
 
 #if DEBUG
-#Preview("App row") {
+private var previewIcons: AppIconStore { AppIconStore(previewImages: PreviewFixtures.icons) }
+
+#Preview("App rows") {
+    let icons = previewIcons
+
     List {
-        AppRow(app: PreviewFixtures.runningApp)
+        AppRow(app: PreviewFixtures.runningApp, icons: icons)
+        AppRow(app: PreviewFixtures.systemApp, icons: icons)
     }
 }
 
-#Preview("App row — accessibility size") {
+#Preview("App rows — accessibility size") {
+    let icons = previewIcons
+
     List {
-        AppRow(app: PreviewFixtures.runningApp)
+        AppRow(app: PreviewFixtures.runningApp, icons: icons)
+        AppRow(app: PreviewFixtures.systemApp, icons: icons)
     }
     .environment(\.dynamicTypeSize, .accessibility3)
 }
