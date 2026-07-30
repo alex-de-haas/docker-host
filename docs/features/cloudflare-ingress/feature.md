@@ -152,6 +152,12 @@ live `→ https://…` preview
 The control appears only under this provider — under any other one Core refuses with
 `cloudflare_provider_inactive` — and stays visible, explaining itself, when no token is connected yet.
 
+**Creating a publication is gated on the provider; removing one is not.** A stored publication outlives a
+provider change, so unpublish, the uninstall and update cleanups, and disconnect-with-Remove all keep
+working after the operator switches to `none` or `cloudflared`. Gating removal too would mean the only way
+to clean up is to switch the provider back first, and an app uninstalled in the meantime would leave a live
+route behind.
+
 One publish performs two remote mutations, route first, then DNS:
 
 1. read the tunnel's current configuration and PUT it back with the app's rule inserted;
@@ -222,10 +228,27 @@ reconnecting a fresh token with the same permissions restores the whole setup.
 ### Diagnostics
 
 `GET /api/core/cloudflare/diagnostics` compares what Hosty believes it published against what Cloudflare
-actually serves, and reports per publication: `ok`, `route_missing`, `dns_missing`, `dns_foreign`,
-`app_missing`, or `unknown`. DNS is matched on content rather than record id, so an operator who recreated a
-record by hand still reads as `ok`. It mutates nothing: a background writer would fight the operator's own
-dashboard changes.
+actually serves, and reports per publication:
+
+| State | Meaning |
+| --- | --- |
+| `ok` | route and DNS record match |
+| `app_missing` | the owning app was uninstalled without the cleanup finishing |
+| `endpoint_missing` | the app is installed but no longer declares that endpoint public |
+| `route_missing` | the tunnel has no route for the hostname, so it resolves to nothing |
+| `route_stale` | the route forwards to a local URL the endpoint no longer has, e.g. after a port reassignment |
+| `dns_missing` / `dns_foreign` | the record is gone, or points somewhere other than this tunnel |
+| `unknown` | the comparison could not run |
+
+The comparison is keyed by `(app id, endpoint key)` rather than by app id, which is what makes
+`endpoint_missing` and `route_stale` visible at all. DNS is matched on content rather than record id, so an
+operator who recreated a record by hand still reads as `ok`. It mutates nothing: a background writer would
+fight the operator's own dashboard changes.
+
+Stored publications are reported even when the comparison cannot run — under `none`, or with no connection —
+with state `unknown`. That is the case that matters most: switching the provider away retracts nothing, and
+an operator who reads "ingress is off" and believes their apps are no longer exposed is wrong until they
+unpublish. Shell turns that list into a warning naming each hostname that is still live.
 
 The same response lists public endpoints with neither a publication nor an operator-set origin — declared
 reachable from the internet and reachable from nowhere. That half needs no Cloudflare connection, so it is
@@ -249,7 +272,9 @@ The `hosty` CLI has no ingress or Cloudflare commands.
 - The tunnel is a pure L7 router: it terminates TLS and forwards plain HTTP to loopback with
   `X-Forwarded-Proto: https`. It does **not** inject Hosty auth or forward Hosty session cookies — each app
   authenticates its own public endpoints.
-- Switching the provider to `none` does not retract origins Core already persisted.
+- Switching the provider to `none` retracts nothing: the persisted origins, the tunnel routes, and the DNS
+  records all stay, and the connector keeps serving them. Shell warns and lists them; taking them offline is
+  an explicit unpublish or a disconnect with Remove.
 - Core does not check whether `cloudflared` is installed or running; it does not own the process.
 - A truly simultaneous Dashboard and Hosty write cannot be made atomic — Cloudflare exposes no conditional
   update on the tunnel configuration. A Dashboard change *completed before* a Hosty operation is read and
@@ -295,10 +320,13 @@ The `hosty` CLI has no ingress or Cloudflare commands.
   app-stopped while it is down, and error while the connection needs reconnecting.
 - Uninstall and orphan cleanup remove route and record, keep the stored publication when Cloudflare fails,
   and touch only endpoints the app no longer declares; the disconnect sweep reports what it could not remove.
-- Diagnostics report `ok` for a matching setup, `route_missing`, `dns_missing`, `dns_foreign`, and
-  `app_missing` for each kind of drift, treat a hand-recreated record as `ok`, and list public endpoints with
-  no address even with no connection
+- Diagnostics report `ok` for a matching setup and each kind of drift — `route_missing`, `dns_missing`,
+  `dns_foreign`, `app_missing`, `endpoint_missing`, `route_stale` — treat a hand-recreated record as `ok`,
+  list public endpoints with no address even with no connection, and still list stored publications after a
+  provider switch
   ([CloudflareDiagnosticsServiceTests.cs](../../../apps/core/tests/Haas.Hosty.Core.Tests/CloudflareDiagnosticsServiceTests.cs)).
+- Cleanup survives a provider switch: publishing is refused afterwards, while unpublish and the app-scoped
+  removal still remove the route, the DNS record, and the setting.
 - Shell: the publish control renders only under the API provider, the ingress predicates hold for all three
   values, the local-config fields are visible only under `cloudflared`, and the Ingress tab survives a
   refresh on its own URL ([ingress.test.mjs](../../../apps/shell/test/ingress.test.mjs),

@@ -173,11 +173,17 @@ export function CloudflareConnectionCard() {
               </div>
             </div>
           )}
-          <dl className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-muted-foreground">
-            <div>Account: <span className="text-foreground">{status?.accountName}</span></div>
-            <div>Domain: <span className="text-foreground">{status?.baseDomain}</span></div>
-            <div>Tunnel: <span className="text-foreground">{status?.tunnelName}</span></div>
-            <div>Connector: <span className="text-foreground">{status?.connectorStatus}</span></div>
+          {/* A definition list needs dt/dd pairs; the div-per-line shape it had was invalid markup that
+              read as one undifferentiated run of text to a screen reader. */}
+          <dl className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-muted-foreground sm:grid-cols-[auto_1fr_auto_1fr] sm:gap-x-4">
+            <dt>Account:</dt>
+            <dd className="text-foreground">{status?.accountName}</dd>
+            <dt>Domain:</dt>
+            <dd className="text-foreground">{status?.baseDomain}</dd>
+            <dt>Tunnel:</dt>
+            <dd className="text-foreground">{status?.tunnelName}</dd>
+            <dt>Connector:</dt>
+            <dd className="text-foreground">{status?.connectorStatus}</dd>
           </dl>
           {status?.locality === "not_local" && (
             <p className="text-amber-600 dark:text-amber-400">

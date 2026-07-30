@@ -8,6 +8,11 @@ public sealed class CloudflarePublicationServiceTests : IDisposable
 {
     private readonly string root = Path.Combine(Path.GetTempPath(), $"hosty-cf-pubsvc-{Guid.NewGuid():N}");
 
+    // The very instance the service under test reads: CoreSettingsService caches the effective settings in
+    // memory, so a second instance over the same file would write the provider without the service seeing
+    // it — which is exactly the trap a test for "cleanup survives a provider switch" must not fall into.
+    private CoreSettingsService? coreSettings;
+
     [Fact]
     public async Task PublishAsync_SyncsRouteAndDns_WritesPublicOriginSetting_AndFlagsRestart()
     {
@@ -76,6 +81,44 @@ public sealed class CloudflarePublicationServiceTests : IDisposable
 
         var error = await Assert.ThrowsAsync<CloudflareConnectionException>(() => service.PublishAsync("com.example.media", "web.http", "media"));
         Assert.Equal("cloudflare_provider_inactive", error.Code);
+    }
+
+    [Fact]
+    public async Task CleanupSurvivesAProviderSwitch()
+    {
+        // A stored publication outlives the provider that created it. If removal were gated on the active
+        // provider too, uninstalling an app after switching to "none" would silently leave its route and
+        // DNS record live, and disconnect-with-Remove could never finish.
+        var api = new StatefulApi();
+        var (service, _) = await CreateConnectedAsync(api, appRunning: false);
+        await service.PublishAsync("com.example.media", "web.http", "media");
+
+        await SwitchProviderAsync(IngressSettings.ProviderNone);
+
+        // Publishing is refused, as it should be...
+        var error = await Assert.ThrowsAsync<CloudflareConnectionException>(
+            () => service.PublishAsync("com.example.media", "web.http", "media"));
+        Assert.Equal("cloudflare_provider_inactive", error.Code);
+
+        // ...but the cleanup paths still work.
+        Assert.Equal(1, await service.RemoveAllForAppAsync("com.example.media"));
+        Assert.Empty(api.Dns);
+        Assert.DoesNotContain("media.example.test", CloudflareTunnelConfigPatcher.IngressHostnames(api.Config));
+    }
+
+    [Fact]
+    public async Task UnpublishAsync_AfterAProviderSwitch_StillRemovesEverything()
+    {
+        var api = new StatefulApi();
+        var (service, apps) = await CreateConnectedAsync(api, appRunning: false);
+        await service.PublishAsync("com.example.media", "web.http", "media");
+        await SwitchProviderAsync(IngressSettings.ProviderCloudflared);
+
+        await service.UnpublishAsync("com.example.media", "web.http");
+
+        Assert.Empty(api.Dns);
+        var app = await apps.GetAppAsync("com.example.media");
+        Assert.False(app!.Settings.ContainsKey(PublicOriginSettings.BuildSettingKey("web.http")));
     }
 
     [Fact]
@@ -213,6 +256,10 @@ public sealed class CloudflarePublicationServiceTests : IDisposable
         Assert.Equal(0, await service.RemoveAllAsync());
     }
 
+    // Flips the live ingress provider the way an operator does.
+    private Task SwitchProviderAsync(string provider)
+        => coreSettings!.UpdateAsync(new Dictionary<string, string?> { ["HOSTY_INGRESS_PROVIDER"] = provider });
+
     private async Task<(CloudflarePublicationService, AppRegistryStore)> CreateConnectedAsync(StatefulApi api, bool appRunning)
         => await CreateAsync(api, connected: true, appRunning);
 
@@ -240,6 +287,7 @@ public sealed class CloudflarePublicationServiceTests : IDisposable
 
         var settings = new CoreSettingsService(new CoreSettingsStore(paths, NullLogger<CoreSettingsStore>.Instance));
         await settings.UpdateAsync(new Dictionary<string, string?> { ["HOSTY_INGRESS_PROVIDER"] = provider });
+        coreSettings = settings;
 
         var connection = new CloudflareConnectionService(
             api, credentials, integration, NullLogger<CloudflareConnectionService>.Instance);

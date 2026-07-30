@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
 
 namespace Haas.Hosty.Core;
@@ -36,25 +37,30 @@ internal sealed class CloudflareDiagnosticsService(
             !string.IsNullOrWhiteSpace(state.ZoneId) &&
             !string.IsNullOrWhiteSpace(state.TunnelId);
 
+        var stored = await publications.ListAsync(cancellationToken);
         if (!settings.Ingress.PublishesThroughApi || !connected)
         {
-            // Nothing to compare against. Reported rather than errored: the missing-origin half of the
-            // answer is still useful, and is exactly what an operator on provider "none" wants.
-            return new CloudflareDiagnostics(Checked: false, [], unpublished);
+            // Nothing to compare against. The stored publications are still reported, with the state that
+            // says so: switching the provider away leaves every route and DNS record in place, and an
+            // operator who believes otherwise thinks they have stopped exposing something they have not.
+            return new CloudflareDiagnostics(
+                Checked: false,
+                stored.Select(publication => new CloudflarePublicationDiagnostic(
+                    publication.AppId, publication.EndpointKey, publication.Hostname, CloudflareDiagnosticStates.Unknown)).ToArray(),
+                unpublished);
         }
 
         var target = new CloudflareIngressTarget(state!.AccountId!, state.ZoneId!, state.TunnelId!, state.BaseDomain ?? "");
-        var stored = await publications.ListAsync(cancellationToken);
         if (stored.Count == 0)
         {
             return new CloudflareDiagnostics(Checked: true, [], unpublished);
         }
 
-        IReadOnlyList<string> routedHostnames;
+        IReadOnlyDictionary<string, string?> routed;
         try
         {
             var config = (await client.GetTunnelConfigurationAsync(credential!.Token, target.AccountId, target.TunnelId, cancellationToken))?.Config;
-            routedHostnames = config is null ? [] : CloudflareTunnelConfigPatcher.IngressHostnames(config);
+            routed = ReadRoutes(config);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -62,8 +68,15 @@ internal sealed class CloudflareDiagnosticsService(
             return new CloudflareDiagnostics(Checked: false, [], unpublished);
         }
 
-        var routed = routedHostnames.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var installed = records.Select(record => record.Id).ToHashSet(StringComparer.Ordinal);
+        // Keyed by (app, endpoint) rather than by app: an update that drops an endpoint, or makes it
+        // private, leaves a route and a record for a hostname the app can no longer serve. The value is the
+        // endpoint's current local URL, so a port that moved shows up as a route pointing at the old one.
+        var publicEndpoints = records
+            .SelectMany(record => (record.Endpoints ?? [])
+                .Where(endpoint => endpoint.Public && !string.IsNullOrWhiteSpace(endpoint.Key))
+                .Select(endpoint => (Key: (record.Id, endpoint.Key), endpoint.Url)))
+            .ToDictionary(entry => entry.Key, entry => entry.Url);
         var expectedDnsContent = $"{target.TunnelId}.cfargotunnel.com";
 
         var results = new List<CloudflarePublicationDiagnostic>();
@@ -73,7 +86,7 @@ internal sealed class CloudflareDiagnosticsService(
                 publication.AppId,
                 publication.EndpointKey,
                 publication.Hostname,
-                await ClassifyAsync(publication, credential!.Token, target, routed, installed, expectedDnsContent, cancellationToken)));
+                await ClassifyAsync(publication, credential!.Token, target, routed, installed, publicEndpoints, expectedDnsContent, cancellationToken)));
         }
 
         return new CloudflareDiagnostics(Checked: true, results, unpublished);
@@ -86,8 +99,9 @@ internal sealed class CloudflareDiagnosticsService(
         CloudflarePublication publication,
         string token,
         CloudflareIngressTarget target,
-        IReadOnlySet<string> routed,
+        IReadOnlyDictionary<string, string?> routed,
         IReadOnlySet<string> installed,
+        IReadOnlyDictionary<(string AppId, string EndpointKey), string?> publicEndpoints,
         string expectedDnsContent,
         CancellationToken cancellationToken)
     {
@@ -96,9 +110,25 @@ internal sealed class CloudflareDiagnosticsService(
             return CloudflareDiagnosticStates.AppMissing;
         }
 
-        if (!routed.Contains(publication.Hostname))
+        // The app is here but no longer declares this endpoint as public — an update dropped it and the
+        // best-effort cleanup did not finish. The hostname now fronts something the app cannot serve.
+        if (!publicEndpoints.TryGetValue((publication.AppId, publication.EndpointKey), out var localUrl))
+        {
+            return CloudflareDiagnosticStates.EndpointMissing;
+        }
+
+        if (!routed.TryGetValue(publication.Hostname, out var routedService))
         {
             return CloudflareDiagnosticStates.RouteMissing;
+        }
+
+        // The route survives a port reassignment; its target does not. Compared against the endpoint's
+        // current URL rather than the publication's stored one, which is only what was true at publish.
+        if (!string.IsNullOrWhiteSpace(localUrl) &&
+            !string.IsNullOrWhiteSpace(routedService) &&
+            !string.Equals(routedService, localUrl, StringComparison.OrdinalIgnoreCase))
+        {
+            return CloudflareDiagnosticStates.RouteStale;
         }
 
         try
@@ -143,6 +173,28 @@ internal sealed class CloudflareDiagnosticsService(
             .ThenBy(entry => entry.EndpointKey, StringComparer.Ordinal)
             .ToArray();
     }
+
+    // Hostname -> the local service the tunnel currently forwards it to. Rules with no hostname (the
+    // catch-all) are not routes to anything Hosty published.
+    private static IReadOnlyDictionary<string, string?> ReadRoutes(JsonObject? config)
+    {
+        var routes = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        if (config?["ingress"] is not JsonArray ingress)
+        {
+            return routes;
+        }
+
+        foreach (var rule in ingress.OfType<JsonObject>())
+        {
+            var hostname = (string?)rule["hostname"];
+            if (!string.IsNullOrWhiteSpace(hostname))
+            {
+                routes[hostname] = (string?)rule["service"];
+            }
+        }
+
+        return routes;
+    }
 }
 
 internal static class CloudflareDiagnosticStates
@@ -150,9 +202,14 @@ internal static class CloudflareDiagnosticStates
     public const string Ok = "ok";
     // The owning app was uninstalled without the cleanup completing, so the hostname is an orphan.
     public const string AppMissing = "app_missing";
+    // The app is still installed but no longer declares this endpoint as public.
+    public const string EndpointMissing = "endpoint_missing";
     // Hosty believes it published this, but the tunnel has no route for it — the hostname resolves to
     // nothing.
     public const string RouteMissing = "route_missing";
+    // The route exists but forwards to a different local URL than the endpoint now has, e.g. after a port
+    // reassignment that nothing re-published.
+    public const string RouteStale = "route_stale";
     public const string DnsMissing = "dns_missing";
     // A DNS record exists but points somewhere other than this tunnel.
     public const string DnsForeign = "dns_foreign";
@@ -161,8 +218,9 @@ internal static class CloudflareDiagnosticStates
 }
 
 // `Checked` is false when nothing could be compared — no API provider, no connection, or the tunnel
-// configuration could not be read. `Publications` is empty in that case; `UnpublishedEndpoints` is not,
-// because it needs nothing from Cloudflare.
+// configuration could not be read. `Publications` still lists what is stored in that case (with state
+// `unknown`), because a provider switch leaves every published route and record in place and an operator
+// needs to see that. `UnpublishedEndpoints` needs nothing from Cloudflare and is always answered.
 internal sealed record CloudflareDiagnostics(
     bool Checked,
     IReadOnlyList<CloudflarePublicationDiagnostic> Publications,

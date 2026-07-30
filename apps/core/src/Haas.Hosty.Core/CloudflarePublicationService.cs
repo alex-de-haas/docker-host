@@ -78,6 +78,9 @@ internal sealed class CloudflarePublicationService(
         return new CloudflarePublicationResult(appId, endpointKey, publication.Hostname, publicOrigin, restartRequired, locality);
     }
 
+    // Not gated on the active provider: a stored publication outlives a provider change, and the operator
+    // who switched to "none" still needs its route and DNS record to go away. Only the connection is
+    // required, because removing them is what the token is for.
     public async Task<CloudflarePublicationResult> UnpublishAsync(string appId, string endpointKey, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(endpointKey))
@@ -85,7 +88,7 @@ internal sealed class CloudflarePublicationService(
             throw new CloudflareConnectionException("cloudflare_endpoint_invalid", "An endpoint key is required.");
         }
 
-        var (token, target) = await RequireConnectionAsync(cancellationToken);
+        var (token, target) = await RequireConnectionAsync(cancellationToken, requireActiveProvider: false);
         // Clean the Cloudflare resources regardless (the reconciler tolerates an already-deleted record). Only
         // clear the managed setting when the app still exists: an already-uninstalled app has nothing to
         // update and must not surface as a 500 from UpdateAppAsync.
@@ -282,12 +285,18 @@ internal sealed class CloudflarePublicationService(
         }
     }
 
-    private async Task<(string Token, CloudflareIngressTarget Target)> RequireConnectionAsync(CancellationToken cancellationToken)
+    // `requireActiveProvider` separates creating a publication from removing one. Creating is gated on the
+    // provider: publication and the local-config provider are two ways to own the same
+    // HOSTY_PUBLIC_ORIGIN_* value, and allowing a publish while another provider is selected is what let a
+    // published label be overwritten on the next start. Removing is not gated, because publications
+    // outlive a provider change — an app uninstalled after switching to `none` must still take its route
+    // and DNS record with it, and disconnect-with-Remove must be able to finish. Gating removal too would
+    // mean the only way to clean up is to switch the provider back first.
+    private async Task<(string Token, CloudflareIngressTarget Target)> RequireConnectionAsync(
+        CancellationToken cancellationToken,
+        bool requireActiveProvider = true)
     {
-        // The provider is checked here rather than only in the client: publication and the local-config
-        // provider are two ways to own the same HOSTY_PUBLIC_ORIGIN_* value, so allowing a publish while
-        // another provider is selected is what let a published label be overwritten on the next start.
-        if (!settings.Ingress.PublishesThroughApi)
+        if (requireActiveProvider && !settings.Ingress.PublishesThroughApi)
         {
             throw new CloudflareConnectionException(
                 "cloudflare_provider_inactive",

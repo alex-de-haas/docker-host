@@ -4,7 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { LoaderCircle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { isAuthRequiredRedirectError } from "../core-api";
-import { useShellActions } from "../shell-context";
+import { publishesThroughCloudflareApi } from "../ingress";
+import { useShellActions, useShellState } from "../shell-context";
 import type { CloudflareDiagnostics, CloudflareDiagnosticState } from "../types";
 import { InlineError } from "../ui";
 
@@ -14,7 +15,9 @@ import { InlineError } from "../ui";
 const DIAGNOSTIC_TEXT: Record<CloudflareDiagnosticState, string> = {
   ok: "",
   app_missing: "the app is gone, so this address is an orphan — unpublish it or remove it in Cloudflare",
+  endpoint_missing: "the app no longer serves that endpoint, so the address fronts nothing — unpublish it",
   route_missing: "the tunnel has no route for it, so the address resolves to nothing — publish it again",
+  route_stale: "its tunnel route points at a local port the app no longer uses — publish it again",
   dns_missing: "its DNS record is gone — publish it again to recreate it",
   dns_foreign: "its DNS record points somewhere other than this tunnel — something else answers for it",
   unknown: "it could not be checked just now",
@@ -25,6 +28,7 @@ const DIAGNOSTIC_TEXT: Record<CloudflareDiagnosticState, string> = {
 // fight the operator's own dashboard changes.
 export function IngressDiagnostics() {
   const { coreOrigin, sendCsrfJson } = useShellActions();
+  const { state } = useShellState();
   const [diagnostics, setDiagnostics] = useState<CloudflareDiagnostics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -51,6 +55,11 @@ export function IngressDiagnostics() {
   const drifted = (diagnostics?.publications ?? []).filter((publication) => publication.state !== "ok");
   const unpublished = diagnostics?.unpublishedEndpoints ?? [];
   const publicationCount = diagnostics?.publications.length ?? 0;
+  // Switching the provider away changes nothing in Cloudflare: the routes and records stay, and the
+  // connector keeps serving them. An operator who reads "ingress is off" and believes the apps are no
+  // longer exposed is wrong until they unpublish, so say it here rather than let them find out.
+  const retained =
+    diagnostics !== null && !publishesThroughCloudflareApi(state.status?.ingressProvider) ? diagnostics.publications : [];
 
   return (
     <div className="space-y-2">
@@ -70,9 +79,28 @@ export function IngressDiagnostics() {
 
       {error && <InlineError message={error} />}
 
+      {retained.length > 0 && (
+        <div className="space-y-1 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400">
+          <p className="font-medium">
+            {retained.length} address{retained.length === 1 ? " is" : "es are"} still published on Cloudflare
+          </p>
+          <p>
+            Changing the provider does not retract them: the routes and DNS records stay, and your connector keeps
+            serving them. Unpublish each endpoint, or disconnect with Remove, to take them offline.
+          </p>
+          <ul className="space-y-0.5">
+            {retained.map((publication) => (
+              <li key={`${publication.appId}:${publication.endpointKey}`} className="font-mono">
+                {publication.hostname}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {diagnostics && (
         <div className="space-y-2 text-xs">
-          {drifted.length > 0 ? (
+          {retained.length > 0 ? null : drifted.length > 0 ? (
             <div className="space-y-1 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-amber-700 dark:text-amber-400">
               <p className="font-medium">Published addresses that no longer match Cloudflare</p>
               <ul className="space-y-0.5">

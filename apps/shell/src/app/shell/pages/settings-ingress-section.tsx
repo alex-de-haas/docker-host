@@ -102,9 +102,10 @@ function ProviderExplanation({ provider }: { provider: string }) {
 
   return (
     <p className="text-xs text-muted-foreground">
-      Ingress is off: nothing is published, and app ports stay on loopback. Reaching an app from outside is yours
-      to arrange — your own reverse proxy, a port forward, or a LAN address — and you set each app&apos;s public
-      origin by hand in its settings.
+      Ingress is off: Hosty publishes nothing new, and app ports stay on loopback. Reaching an app from outside is
+      yours to arrange — your own reverse proxy, a port forward, or a LAN address — and you set each app&apos;s
+      public origin by hand in its settings. Anything already published on Cloudflare stays published; the checks
+      below list it.
     </p>
   );
 }

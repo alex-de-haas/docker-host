@@ -127,7 +127,15 @@ export type CloudflarePublicationResult = {
 
 // GET /api/core/cloudflare/diagnostics — a read-only comparison of what Hosty believes it published
 // against what Cloudflare serves, plus the public endpoints that have no address at all.
-export type CloudflareDiagnosticState = "ok" | "app_missing" | "route_missing" | "dns_missing" | "dns_foreign" | "unknown";
+export type CloudflareDiagnosticState =
+  | "ok"
+  | "app_missing"
+  | "endpoint_missing"
+  | "route_missing"
+  | "route_stale"
+  | "dns_missing"
+  | "dns_foreign"
+  | "unknown";
 export type CloudflarePublicationDiagnostic = { appId: string; endpointKey: string; hostname: string; state: CloudflareDiagnosticState };
 export type CloudflareUnpublishedEndpoint = { appId: string; displayName: string; endpointKey: string };
 export type CloudflareDiagnostics = {

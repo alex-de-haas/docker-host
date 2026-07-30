@@ -89,6 +89,50 @@ public sealed class CloudflareDiagnosticsServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task InspectAsync_EndpointDroppedByAnUpdate_ReportsEndpointMissing()
+    {
+        // The app is still installed, so an app-id-only check would call this healthy while the hostname
+        // fronts an endpoint the app no longer serves.
+        var (service, api, apps) = await CreateAsync();
+        api.Config = Config("media.example.test");
+        api.Dns.Add(new CloudflareDnsRecord("rec", "CNAME", "media.example.test", "tunnel-123.cfargotunnel.com", true, 1));
+        await apps.UpsertAppAsync((await apps.GetAppAsync("com.example.media"))! with { Endpoints = [] });
+
+        Assert.Equal(CloudflareDiagnosticStates.EndpointMissing, Assert.Single((await service.InspectAsync()).Publications).State);
+    }
+
+    [Fact]
+    public async Task InspectAsync_RouteLeftOnAnOldPort_ReportsRouteStale()
+    {
+        // A port reassignment moves the endpoint; the tunnel route keeps forwarding to the old port until
+        // something re-publishes it.
+        var (service, api, apps) = await CreateAsync();
+        api.Config = Config("media.example.test");
+        api.Dns.Add(new CloudflareDnsRecord("rec", "CNAME", "media.example.test", "tunnel-123.cfargotunnel.com", true, 1));
+        await apps.UpsertAppAsync((await apps.GetAppAsync("com.example.media"))! with
+        {
+            Endpoints = [new AppEndpointContract("web.http", "http", "http://127.0.0.1:3999", Public: true, Service: "web", Port: "http")],
+        });
+
+        Assert.Equal(CloudflareDiagnosticStates.RouteStale, Assert.Single((await service.InspectAsync()).Publications).State);
+    }
+
+    [Fact]
+    public async Task InspectAsync_AfterAProviderSwitch_StillListsWhatIsPublished()
+    {
+        // Switching the provider away retracts nothing, so an operator who reads "ingress is off" must
+        // still be able to see what remains exposed.
+        var (service, _, _) = await CreateAsync(provider: IngressSettings.ProviderNone);
+
+        var diagnostics = await service.InspectAsync();
+
+        Assert.False(diagnostics.Checked);
+        var publication = Assert.Single(diagnostics.Publications);
+        Assert.Equal("media.example.test", publication.Hostname);
+        Assert.Equal(CloudflareDiagnosticStates.Unknown, publication.State);
+    }
+
+    [Fact]
     public async Task InspectAsync_WithoutAConnection_StillAnswersTheMissingOriginHalf()
     {
         // Useful precisely to an operator on provider "none": a public endpoint reachable from nowhere.
@@ -122,7 +166,10 @@ public sealed class CloudflareDiagnosticsServiceTests : IDisposable
         Assert.Empty((await service.InspectAsync()).UnpublishedEndpoints);
     }
 
-    private async Task<(CloudflareDiagnosticsService, StatefulApi, AppRegistryStore)> CreateAsync(bool connected = true, bool publish = true)
+    private async Task<(CloudflareDiagnosticsService, StatefulApi, AppRegistryStore)> CreateAsync(
+        bool connected = true,
+        bool publish = true,
+        string provider = IngressSettings.ProviderCloudflareRemote)
     {
         Directory.CreateDirectory(root);
         var paths = Paths;
@@ -134,7 +181,7 @@ public sealed class CloudflareDiagnosticsServiceTests : IDisposable
         var settings = new CoreSettingsService(new CoreSettingsStore(paths, NullLogger<CoreSettingsStore>.Instance));
         await settings.UpdateAsync(new Dictionary<string, string?>
         {
-            ["HOSTY_INGRESS_PROVIDER"] = IngressSettings.ProviderCloudflareRemote,
+            ["HOSTY_INGRESS_PROVIDER"] = provider,
         });
 
         if (connected)
