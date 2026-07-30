@@ -104,7 +104,7 @@ private struct HostScene: View {
                 // a host that cannot be reached is exactly when the operator needs to leave it.
                 NavigationStack {
                     gate
-                        .navigationTitle(session.connection.displayName)
+                        .navigationTitle("")
                         .toolbar { ToolbarItem(placement: .principal) { switcher } }
                 }
             }
@@ -178,6 +178,25 @@ private struct ShellTabs: View {
     let settings: SettingsView
     let switcher: HostSwitcher
     @Environment(\.scenePhase) private var scenePhase
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    private var isCompact: Bool { horizontalSizeClass == .compact }
+    #else
+    private var isCompact: Bool { false }
+    #endif
+
+    /// The app whose workspace is pushed in compact width. Nil in regular, where the same selection is
+    /// a sidebar tab instead — one router state, two presentations.
+    private var openedApp: Binding<AppSummary?> {
+        Binding(
+            get: {
+                guard isCompact, let id = router.destination.appID else { return nil }
+                return appsModel.uiApps.first { $0.id == id }
+            },
+            set: { app in
+                router.destination = app.map { .app($0.id) } ?? .apps
+            })
+    }
 
     var body: some View {
         TabView(selection: selection) {
@@ -194,20 +213,32 @@ private struct ShellTabs: View {
                 NavigationStack {
                     AppsView(model: appsModel, router: router)
                         .toolbar { ToolbarItem(placement: .principal) { switcher } }
+                        // Compact only, and the reason the section below is compact-excluded rather
+                        // than merely hidden: pushing keeps the three destinations in the tab bar.
+                        .navigationDestination(item: openedApp) { app in
+                            AppWorkspaceView(app: app, session: session, router: router)
+                        }
                 }
             }
             .hiddenFromSidebar()
 
-            TabSection("Apps") {
-                ForEach(appsModel.uiApps) { app in
-                    Tab(app.displayName, systemImage: "square.grid.2x2", value: ShellRouter.Destination.app(app.id)) {
-                        NavigationStack {
-                            AppWorkspaceView(app: app, session: session, router: router)
+            // Apps as sidebar entries, beside the destinations, the way the browser Shell lists them.
+            //
+            // Declared only in regular width. `defaultVisibility(.hidden, for: .tabBar)` does not keep
+            // them out of the compact tab bar — verified in the simulator, where the destinations
+            // themselves ended up behind a "More" item — so in compact they are not tabs at all and
+            // the Apps list pushes instead.
+            if !isCompact {
+                TabSection("Apps") {
+                    ForEach(appsModel.uiApps) { app in
+                        Tab(app.displayName, systemImage: "square.grid.2x2", value: ShellRouter.Destination.app(app.id)) {
+                            NavigationStack {
+                                AppWorkspaceView(app: app, session: session, router: router)
+                            }
                         }
                     }
                 }
             }
-            .hiddenFromTabBar()
 
             Tab("Settings", systemImage: "gearshape", value: ShellRouter.Destination.settings) {
                 NavigationStack {
@@ -253,6 +284,12 @@ private struct ShellTabs: View {
         Binding(
             get: {
                 if router.destination == .dashboard, !session.canManageApps {
+                    return .apps
+                }
+
+                // Compact has no per-app tab; the workspace is pushed inside Apps, which stays the
+                // selected destination while it is open.
+                if isCompact, router.destination.appID != nil {
                     return .apps
                 }
 

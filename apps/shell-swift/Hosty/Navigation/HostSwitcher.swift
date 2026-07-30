@@ -30,8 +30,12 @@ struct HostSwitcher: View {
             Button("Add a host…", systemImage: "plus") { onAddHost() }
         } label: {
             Label(activeHost?.displayName ?? "No host", systemImage: "server.rack")
+                // The name is the point of the control. A toolbar `Label` renders icon-only by
+                // default, which leaves the operator looking at a server glyph that could mean any
+                // of their hosts.
+                .labelStyle(.titleAndIcon)
+                .font(.subheadline)
         }
-        // The name is the point of the control, so it stays legible rather than collapsing to an icon.
         .menuStyle(.button)
         .buttonStyle(.borderless)
     }
