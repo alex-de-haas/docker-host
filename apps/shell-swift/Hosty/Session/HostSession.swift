@@ -24,11 +24,20 @@ final class HostSession {
     /// Exposed so later phases can call Core through the same authenticated client.
     let client: CoreClient
 
+    /// The web views this host's apps run in. Owned by the session because that is their lifetime: the
+    /// credential that authorized their identity grants is this session's, and when it ends they must
+    /// go with it.
+    @MainActor let workspaces = WorkspaceStore()
+
     private let keychain: KeychainStore
 
     /// The host's platform version is checked once per session rather than on every refresh: it cannot
     /// change while Core is running, and Phase 4 refreshes this often from the event stream.
     private var versionChecked = false
+
+    /// What the host reported for itself, kept from that one check so the Dashboard can show it without
+    /// a probe of its own. Nil until the check has run, or when it could not.
+    private(set) var hostVersion: String?
 
     init(connection: HostConnection, keychain: KeychainStore = .shared) {
         self.connection = connection
@@ -61,6 +70,7 @@ final class HostSession {
             if !versionChecked {
                 let status = try await client.status()
                 versionChecked = true
+                hostVersion = status.version
 
                 guard status.isSupportedVersion else {
                     state = .unsupported(hostVersion: status.version)
@@ -107,6 +117,7 @@ final class HostSession {
 
         forgetCredential()
         await client.setSessionID(nil)
+        await MainActor.run { workspaces.reset() }
         state = .signedOut
     }
 
