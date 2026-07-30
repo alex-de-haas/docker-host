@@ -141,7 +141,7 @@ Shell and native client keeps serving the old URLs until something else forces a
 
 - [ ] Shell: the field in the Settings Core tab; loopback-only marked where an endpoint URL is offered.
 - [ ] Native client: exact diagnosis from bind scope, replacing the heuristic
-      [swift-shell](../swift-shell/plan.md) ships.
+      [swift-shell](../swift-shell/feature.md) ships.
 
 ### Phase 3 — Decision from open question 1
 
@@ -178,7 +178,7 @@ Shell and native client keeps serving the old URLs until something else forces a
 
 ## Links
 
-- [Swift Shell](../swift-shell/plan.md) — the client blocked by this on a LAN; ships the diagnosis.
+- [Swift Shell](../swift-shell/feature.md) — the client blocked by this on a LAN; ships the diagnosis.
 - [Automatic Runtime App Ports](../automatic-runtime-app-ports/feature.md) — bind scopes, endpoint URL
   projection, `publicOrigin`.
 - [Auth And Gateway Model](../auth-gateway/feature.md) — the redirect allowlist, and the standing
