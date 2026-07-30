@@ -41,6 +41,26 @@ Mutating browser endpoints are CSRF-protected: `GET /api/auth/csrf` sets the dou
 - `PUT /api/internal/apps/{appId}/secrets/{key}` - store or replace a secret (`{ "value": … }`, non-empty UTF-8 ≤ 16 KiB, ≤ 256 keys per app).
 - `DELETE /api/internal/apps/{appId}/secrets/{key}` - delete a secret; idempotent. See [App Secrets Store](../app-secrets-store.md).
 
+Public ingress (see [Cloudflare Ingress](../cloudflare-ingress/feature.md)). The connection endpoints are
+host-admin; the publication ones are app-scoped and also host-admin. Both refuse when the active ingress
+provider is not `cloudflare-remote`.
+
+- `GET /api/core/cloudflare/token-template` - the dashboard token page plus the permission groups to grant.
+- `GET /api/core/cloudflare/status` - the connection projection: masked token summary, discovered
+  account/zone/tunnel, connector health, and the connector-locality verdict.
+- `POST /api/core/cloudflare/connect` - connect a scoped API token. `{ token, accountId?, zoneId?, tunnelId? }`;
+  the three ids answer an ambiguity a previous attempt reported. Answers `409` with
+  `{ code, message, selection: { kind, options } }` when a choice is required.
+- `POST /api/core/cloudflare/disconnect` - `{ removePublished? }`. Keep (the default) leaves every published
+  route and record; Remove deletes them first and answers `409 cloudflare_disconnect_incomplete` without
+  disconnecting when any deletion fails.
+- `GET /api/core/cloudflare/diagnostics` - read-only drift check of stored publications against Cloudflare,
+  plus the public endpoints that have no address at all. Mutates nothing.
+- `GET /api/apps/{appId}/public-origins` - this app's publications with their per-endpoint state.
+- `POST /api/apps/{appId}/public-origins/publish` - `{ endpointKey, label, adopt? }`. `adopt` takes over a
+  pre-existing DNS record after a `409 cloudflare_hostname_conflict`.
+- `POST /api/apps/{appId}/public-origins/unpublish` - `{ endpointKey }`.
+
 Core exposes no catalog or Marketplace proxy endpoints. The optional `hosty.marketplace` system app owns its source and storefront. Shell accepts its bounded install intent and calls the generic feed endpoints above; Core independently validates the feed and manifest.
 
 `/api/core/status` reports effective public origins. If `HOSTY_CORE_PUBLIC_ORIGIN` or `HOSTY_SHELL_PUBLIC_ORIGIN` is unset, Core falls back to `http://localhost:<core-port>` and `http://localhost:<shell-port>`.

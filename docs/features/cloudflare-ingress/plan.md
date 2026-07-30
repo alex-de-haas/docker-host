@@ -200,12 +200,12 @@ Unchanged in substance from the 2026-07-28 audit, re-stated as behavior:
       links, so a wrong or unreachable value locks the operator out of their own host. It needs the
       loopback-recovery design settled and a live run before it ships.
 - [x] Explicit restart affordance in Shell after a successful publish.
-- [ ] Shell tests for the provider-conditional Ingress tab, connected/disconnected/stopped/error states,
+- [x] Shell tests for the provider-conditional Ingress tab, connected/disconnected/stopped/error states,
       and the label sanitizer.
-- [ ] `feature.md` rewritten around the three providers, with the "Where the two paths collide" section
+- [x] `feature.md` rewritten around the three providers, with the "Where the two paths collide" section
       deleted rather than edited.
-- [ ] `docs/features/core-api/feature.md` updated with the connection and publication endpoints.
-- [ ] Platform minor bump; `apps/shell` minor bump. Regenerate the docs index.
+- [x] `docs/features/core-api/feature.md` updated with the connection and publication endpoints.
+- [x] Platform minor bump; `apps/shell` minor bump. Regenerate the docs index.
 - [ ] Live end-to-end verification against a real Cloudflare account (see Verification).
 
 ## Phases
@@ -245,7 +245,7 @@ Unchanged in substance from the 2026-07-28 audit, re-stated as behavior:
 
 ### Phase 6 — Documentation and verification
 
-- [ ] `feature.md`, `core-api/feature.md`, docs index, version bumps.
+- [x] `feature.md`, `core-api/feature.md`, docs index, version bumps.
 - [ ] Live end-to-end run.
 
 ## Deliberately not doing
