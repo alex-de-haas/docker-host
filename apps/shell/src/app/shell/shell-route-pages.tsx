@@ -3,8 +3,7 @@
 import type { ReactNode } from "react";
 import { AvailableAppsPage } from "./pages/available-apps-page";
 import { DashboardPage } from "./pages/dashboard-page";
-import { InstalledAppsPage } from "./pages/installed-apps-page";
-import { UserManagementPanel } from "./pages/user-management-page";
+import { SettingsPage } from "./pages/settings-page";
 import { useShellActions, useShellState } from "./shell-context";
 
 function AdminShellRoute({ children }: { children: ReactNode }) {
@@ -18,7 +17,7 @@ export function ShellAvailableAppsRoute() {
 
   return (
     <AvailableAppsPage
-      apps={shell.uiRuntimeApps}
+      apps={shell.uiApps}
       loading={shell.state.loading}
       busyAction={shell.busyAction}
       onLaunchApp={shellActions.launchAppPage}
@@ -34,24 +33,12 @@ export function ShellDashboardRoute() {
   return (
     <AdminShellRoute>
       <DashboardPage
-        state={shell.state}
-        runtimeApps={shell.runtimeApps}
-        onRefresh={() => void shellActions.refresh()}
-        onOpenInstalledApps={shellActions.openInstalledApps}
-      />
-    </AdminShellRoute>
-  );
-}
-
-export function ShellInstalledAppsRoute() {
-  const shell = useShellState();
-  const shellActions = useShellActions();
-
-  return (
-    <AdminShellRoute>
-      <InstalledAppsPage
         coreOrigin={shellActions.coreOrigin}
         apps={shell.state.apps}
+        status={shell.state.status}
+        coreUpdate={shell.coreUpdate}
+        coreUpdating={shell.coreUpdating}
+        onUpdateCore={() => void shellActions.updateCore()}
         shellAppId={shellActions.shellAppId}
         canManageApps={shell.canManageApps}
         loading={shell.state.loading}
@@ -67,22 +54,29 @@ export function ShellInstalledAppsRoute() {
         onCheckUpdates={shellActions.startUpdateCheck}
         onUpdateAll={shellActions.updateAllApps}
         onOpenPanel={shellActions.openAppPanel}
-        onOpenSharedMounts={shellActions.openSharedMounts}
       />
     </AdminShellRoute>
   );
 }
 
-export function ShellUsersRoute() {
+export function ShellSettingsRoute() {
   const shell = useShellState();
   const shellActions = useShellActions();
 
   return (
     <AdminShellRoute>
-      <UserManagementPanel
+      <SettingsPage
+        activeTab={shell.settingsTab}
         coreOrigin={shellActions.coreOrigin}
         activeUser={shell.activeUser}
         sendCsrfJson={shellActions.sendCsrfJson}
+        coreSettings={shell.coreSettings}
+        coreSettingsError={shell.coreSettingsError}
+        onSaveCoreSettings={shellActions.saveCoreSettings}
+        globalMounts={shell.globalMounts}
+        canManageApps={shell.canManageApps}
+        onSaveMount={shellActions.saveGlobalMount}
+        onDeleteMount={shellActions.deleteGlobalMount}
       />
     </AdminShellRoute>
   );
@@ -92,11 +86,4 @@ export function ShellWorkspaceRoute() {
   // Active workspace URLs are rendered by the persistent Shell layout from query state.
   // A bare /workspace route falls back here while the client-side route normalization runs.
   return <ShellAvailableAppsRoute />;
-}
-
-export function ShellSystemAppsRoute() {
-  // Active /system-apps/<id> URLs are rendered by the persistent Shell layout (same workspace
-  // engine as /workspace). The Installed Apps fallback shows beneath while the launch resolves and
-  // when the route is invalid; it is already admin-gated, so non-admins land on the Apps view.
-  return <ShellInstalledAppsRoute />;
 }

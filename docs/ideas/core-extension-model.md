@@ -161,7 +161,7 @@ An honest boundary statement: this approach does not allow adding functionality 
 
 ## Conflicts With Existing Features
 
-- [Shell access and system apps](../features/shell-access-and-system-apps.md) treats system apps as a separate visibility/administration class; this idea moves toward one Installed Apps list with ownership/role badges and uniform lifecycle actions, while keeping visibility itself role-gated as today.
+- [Shell access and system apps](../features/shell-access-and-system-apps/feature.md) treats system apps as a separate visibility/administration class; this idea moves toward one Installed Apps list with ownership/role badges and uniform lifecycle actions, while keeping visibility itself role-gated as today.
 - [Notifications](../features/notifications.md) deferred Core→app delivery to webhooks; this idea revises that direction to pull-based event subscriptions.
 - The manifest `capabilities` field name collides conceptually with capability contracts; the new sections need distinct names (`provides`/`requires`) and documentation.
 - [Auth provider extensions](auth-provider-extensions.md) lists OIDC and provisioning directions; the login-methods contract supplies a delivery mechanism for the OIDC half while keeping its boundaries (provider-managed roles read-only, no pre-provisioning, external identities attach on authentication). Full replacement of Core authentication by an external provider is explicitly not pursued.

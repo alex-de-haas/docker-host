@@ -13,18 +13,17 @@ import { createReissueRateLimiter } from "@hosty-sdk/app/embedder";
 import { CoreEventNames, subscribeToCoreEvents } from "./shell/events/core-event-stream";
 import { AppDetailsDialog } from "./shell/dialogs/app-details-dialog";
 import { InstallReviewDialog } from "./shell/dialogs/install-review-dialog";
-import { PlatformDialog } from "./shell/dialogs/platform-dialog";
-import { SharedMountsDialog } from "./shell/dialogs/shared-mounts-dialog";
 import { ShellSidebar } from "./shell/sidebar/shell-sidebar";
 import { ShellActionsContext, ShellStateContext } from "./shell/shell-context";
 import {
   getAuthorizedShellView,
+  getSettingsHref,
   getShellViewHref,
-  getSystemAppHref,
   getWorkspaceHref,
   getWorkspaceRouteKey,
   normalizeAppPath,
   normalizeShellPath,
+  readCanonicalRedirect,
   readShellRoute,
   SIDEBAR_COMPACT_STORAGE_KEY,
   shellViewRequiresAdmin,
@@ -108,12 +107,10 @@ async function waitForOwnOrigin(timeoutMs = 90_000): Promise<boolean> {
 export function ShellClient({
   coreOrigin,
   shellAppId,
-  shellVersion,
   children,
 }: {
   coreOrigin: string;
   shellAppId: string;
-  shellVersion: string;
   children: ReactNode;
 }) {
   const router = useRouter();
@@ -145,8 +142,6 @@ export function ShellClient({
   const [installNonce, setInstallNonce] = useState(0);
   const [installPanel, setInstallPanel] = useState<InstallPanelState>(emptyInstallPanelState);
   const [globalMounts, setGlobalMounts] = useState<CoreGlobalMount[]>([]);
-  const [sharedMountsOpen, setSharedMountsOpen] = useState(false);
-  const [platformOpen, setPlatformOpen] = useState(false);
   const [coreSettings, setCoreSettings] = useState<CoreSettingsState | null>(null);
   const [coreSettingsError, setCoreSettingsError] = useState<string | null>(null);
   const [coreUpdate, setCoreUpdate] = useState<CoreUpdateStatus | null>(null);
@@ -421,7 +416,7 @@ export function ShellClient({
         setState((current) => ({
           ...current,
           error: app.system
-            ? `System app '${app.displayName}' is ${app.runtimeState || app.operationStatus}. Manage it from Installed Apps.`
+            ? `System app '${app.displayName}' is ${app.runtimeState || app.operationStatus}. Manage it from Dashboard.`
             : "App must be running before it can be opened.",
         }));
         return;
@@ -434,12 +429,10 @@ export function ShellClient({
 
       const routePath = normalizeAppPath(page.path);
       const themedRedirectUri = appendHostyThemeParams(page.redirectUri, shellResolvedTheme, shellThemePreference);
-      // System apps use the canonical admin-only deep link; both routes share the workspace engine.
-      const isSystemApp = Boolean(app.system);
-      const workspaceHref = isSystemApp ? getSystemAppHref(app.id, routePath) : getWorkspaceHref(app.id, routePath);
-      const nextWorkspaceRoute: WorkspaceRoute = isSystemApp
-        ? { appId: app.id, path: routePath, system: true }
-        : { appId: app.id, path: routePath };
+      // One workspace route for every app. A system app used to get its own admin-gated path; the
+      // gate it expressed is Core's, not the client's.
+      const workspaceHref = getWorkspaceHref(app.id, routePath);
+      const nextWorkspaceRoute: WorkspaceRoute = { appId: app.id, path: routePath };
       setState((current) => ({ ...current, error: null }));
       setOptimisticWorkspaceRoute(nextWorkspaceRoute);
       if (workspace?.appId === app.id) {
@@ -465,10 +458,9 @@ export function ShellClient({
         const response = await sendCsrfJson(appEndpoint(app, "/launch-code"), { redirectUri: themedRedirectUri });
         const launch = (await response.json()) as AppLaunchResponse;
         const currentUrl = new URL(window.location.href);
-        const expectedPathname = isSystemApp ? `/system-apps/${encodeURIComponent(app.id)}` : "/workspace";
         if (
-          normalizeShellPath(currentUrl.pathname) !== expectedPathname ||
-          (!isSystemApp && currentUrl.searchParams.get("app") !== app.id) ||
+          normalizeShellPath(currentUrl.pathname) !== "/workspace" ||
+          currentUrl.searchParams.get("app") !== app.id ||
           normalizeAppPath(currentUrl.searchParams.get("path")) !== routePath
         ) {
           return;
@@ -1134,39 +1126,30 @@ export function ShellClient({
     [coreOrigin, sendCsrfJson],
   );
 
-  const openSharedMounts = useCallback(() => setSharedMountsOpen(true), []);
-
-  // Platform panel: Core's own settings, loaded fresh on open.
-  const openPlatform = useCallback(async () => {
-    setPlatformOpen(true);
+  // Core's own settings, loaded when the Settings page shows the Core tab. This used to be an
+  // on-open dialog fetch; the trigger moved to the route, but the "load fresh each time" behavior is
+  // deliberately kept — the values are live-applied and another admin may have changed them.
+  const loadCoreSettings = useCallback(async () => {
     setCoreSettingsError(null);
     setCoreSettings(null);
 
-    // Opening the platform panel is the operator's "check now" gesture: force a fresh Core update
-    // probe (bypassing the TTL cache) so a just-released hotfix surfaces without a CLI trip.
-    void loadCoreUpdateStatus(true);
-
-    const loadSettings = (async () => {
-      try {
-        const response = await fetch(`${coreOrigin}/api/core/settings`, { credentials: "include" });
-        redirectToCoreLoginIfAuthRequired(response, coreOrigin);
-        if (!response.ok) {
-          throw new Error(await readCoreError(response));
-        }
-
-        setCoreSettings((await response.json()) as CoreSettingsState);
-      } catch (error) {
-        if (isAuthRequiredRedirectError(error)) {
-          return;
-        }
-
-        setCoreSettings(null);
-        setCoreSettingsError(error instanceof Error ? error.message : "Unable to load Core settings.");
+    try {
+      const response = await fetch(`${coreOrigin}/api/core/settings`, { credentials: "include" });
+      redirectToCoreLoginIfAuthRequired(response, coreOrigin);
+      if (!response.ok) {
+        throw new Error(await readCoreError(response));
       }
-    })();
 
-    await loadSettings;
-  }, [coreOrigin, loadCoreUpdateStatus]);
+      setCoreSettings((await response.json()) as CoreSettingsState);
+    } catch (error) {
+      if (isAuthRequiredRedirectError(error)) {
+        return;
+      }
+
+      setCoreSettings(null);
+      setCoreSettingsError(error instanceof Error ? error.message : "Unable to load Core settings.");
+    }
+  }, [coreOrigin]);
 
   const saveCoreSettings = useCallback(
     async (values: Record<string, string>) => {
@@ -1490,14 +1473,13 @@ export function ShellClient({
     void refresh();
   }, [refresh]);
 
-  const runtimeApps = useMemo(() => state.apps.filter((app) => !app.system), [state.apps]);
-  const systemApps = useMemo(() => state.apps.filter((app) => app.system), [state.apps]);
-  const uiRuntimeApps = useMemo(() => runtimeApps.filter((app) => getAppPageLinks(app).length > 0), [runtimeApps]);
-  // UI-capable system apps for the sidebar System group. Core already filters system apps out of
-  // non-admin listings; the extra canManageApps gate keeps the group provably admin-only client-side.
-  const uiSystemApps = useMemo(
-    () => (canManageApps ? systemApps.filter((app) => getAppPageLinks(app).length > 0) : []),
-    [canManageApps, systemApps],
+  // Every app with a UI, ordinary and system together, minus the Shell itself. Core decides who sees
+  // a system app at all, so no client-side split is needed; the Shell is excluded because opening it
+  // inside itself resolves back to Dashboard, and a row that cannot lead anywhere is worse than no
+  // row.
+  const uiApps = useMemo(
+    () => state.apps.filter((app) => app.id !== shellAppId && getAppPageLinks(app).length > 0),
+    [shellAppId, state.apps],
   );
   const effectiveView = getAuthorizedShellView(shellRoute.view, Boolean(canManageApps));
   const workspaceSurfaceActive = Boolean(workspace || activeWorkspaceRoute);
@@ -1531,6 +1513,25 @@ export function ShellClient({
     }
   }, [normalizedRoutePath, router, shellRoute.workspace]);
 
+  // A path that still resolves but is no longer canonical — /installed-apps, /users, and the
+  // /system-apps/<id> deep link — renders its new surface immediately and rewrites the URL. The
+  // replacement is always a different path, so this cannot loop.
+  useEffect(() => {
+    const canonical = readCanonicalRedirect(normalizedRoutePath, searchParams ?? new URLSearchParams());
+    if (canonical) {
+      router.replace(canonical);
+    }
+  }, [normalizedRoutePath, router, searchParams]);
+
+  // Core settings belong to one tab, so they load when that tab is shown rather than with the page.
+  useEffect(() => {
+    if (!canManageApps || shellRoute.view !== "settings" || shellRoute.settingsTab !== "core") {
+      return;
+    }
+
+    void loadCoreSettings();
+  }, [canManageApps, loadCoreSettings, shellRoute.settingsTab, shellRoute.view]);
+
   useEffect(() => {
     const routeWorkspace = activeWorkspaceRoute;
     if (!routeWorkspace) {
@@ -1547,22 +1548,12 @@ export function ShellClient({
       return;
     }
 
-    // Navigation hiding is not the boundary (Core enforces host.admin server-side), but a non-admin
-    // landing on a /system-apps deep link gets a clean redirect instead of a launch-code failure.
-    if (routeWorkspace.system && !canManageApps) {
-      resetWorkspaceLaunch();
-      router.replace(getShellViewHref("available-apps"));
-      return;
-    }
-
+    // A system app is not special-cased here any more. Core answers a launch code for one only to an
+    // administrator (`system_app_admin_required`) and omits it from `GET /api/apps` for everyone
+    // else, so a non-admin reaching this point simply does not find the app below.
     const app = state.apps.find((candidate) => candidate.id === routeWorkspace.appId);
     if (!app) {
       resetWorkspaceLaunch({ error: `App '${routeWorkspace.appId}' is not installed or not visible to this user.` });
-      return;
-    }
-
-    if (routeWorkspace.system && !app.system) {
-      resetWorkspaceLaunch({ error: `App '${app.displayName}' is not a system app. Open it from the Apps section.` });
       return;
     }
 
@@ -1572,19 +1563,10 @@ export function ShellClient({
       return;
     }
 
-    // Canonicalize a legacy /workspace?app=<system-app-id> link onto /system-apps/<id>. After the
-    // replace the route re-parses with the system flag set, so this cannot loop. Placed after the
-    // Shell self-open special case so hosty.shell keeps its direct dashboard redirect.
-    if (!routeWorkspace.system && app.system) {
-      resetWorkspaceLaunch();
-      router.replace(getSystemAppHref(app.id, routeWorkspace.path));
-      return;
-    }
-
     if (app.runtimeState !== "running") {
       resetWorkspaceLaunch({
         error: app.system
-          ? `System app '${app.displayName}' is ${app.runtimeState || app.operationStatus}. Manage it from Installed Apps.`
+          ? `System app '${app.displayName}' is ${app.runtimeState || app.operationStatus}. Manage it from Dashboard.`
           : "App must be running before it can be opened.",
       });
       return;
@@ -1772,28 +1754,33 @@ export function ShellClient({
     setInstallOpen(false);
   }, []);
 
-  const openInstalledApps = useCallback(() => {
-    setOptimisticWorkspaceRoute(null);
-    router.push(getShellViewHref("installed-apps"));
-  }, [router]);
-
   const shellStateContextValue = useMemo(
     () => ({
       state,
-      runtimeApps,
-      uiRuntimeApps,
+      uiApps,
       activeUser,
       canManageApps: Boolean(canManageApps),
       busyAction,
       updateStatusInvalidations,
+      settingsTab: shellRoute.settingsTab,
+      coreSettings,
+      coreSettingsError,
+      globalMounts,
+      coreUpdate,
+      coreUpdating,
     }),
     [
       activeUser,
       busyAction,
       canManageApps,
+      coreSettings,
+      coreSettingsError,
+      coreUpdate,
+      coreUpdating,
+      globalMounts,
+      shellRoute.settingsTab,
       state,
-      runtimeApps,
-      uiRuntimeApps,
+      uiApps,
       updateStatusInvalidations,
     ],
   );
@@ -1812,25 +1799,29 @@ export function ShellClient({
       configureAppDevelopmentMode,
       createManualBackup,
       openAppPanel,
-      openInstalledApps,
-      openSharedMounts,
       applyUpdateFromRow,
       startUpdateCheck,
       updateAllApps,
+      saveCoreSettings,
+      saveGlobalMount,
+      deleteGlobalMount,
+      updateCore,
     }),
     [
+      updateCore,
       applyUpdateFromRow,
       configureAppDevelopmentMode,
       coreOrigin,
       createManualBackup,
+      deleteGlobalMount,
       getStandaloneAppHref,
       launchAppPage,
       openAppPanel,
-      openInstalledApps,
       openInstallDialog,
-      openSharedMounts,
       refresh,
       runAppAction,
+      saveCoreSettings,
+      saveGlobalMount,
       sendCsrfJson,
       shellAppId,
       startUpdateCheck,
@@ -1861,8 +1852,7 @@ export function ShellClient({
             onUpdateCore={canManageApps ? updateCore : undefined}
             activeUser={activeUser}
             canManageApps={Boolean(canManageApps)}
-            runtimeApps={uiRuntimeApps}
-            systemApps={uiSystemApps}
+            runtimeApps={uiApps}
             busyAction={busyAction}
             onCompactChange={setCompact}
             onNavigate={(view) => {
@@ -1870,9 +1860,18 @@ export function ShellClient({
               setOptimisticWorkspaceRoute(null);
               router.push(getShellViewHref(view));
             }}
+            onOpenApps={() => {
+              setWorkspace(null);
+              setOptimisticWorkspaceRoute(null);
+              router.push(getShellViewHref("available-apps"));
+            }}
             onLaunchApp={launchAppPage}
             getStandaloneHref={getStandaloneAppHref}
-            onOpenPlatform={canManageApps ? openPlatform : undefined}
+            onOpenCoreSettings={canManageApps ? () => {
+              setWorkspace(null);
+              setOptimisticWorkspaceRoute(null);
+              router.push(getSettingsHref("core"));
+            } : undefined}
           />
         </aside>
 
@@ -1962,24 +1961,6 @@ export function ShellClient({
           />
         )}
 
-        <PlatformDialog
-          open={platformOpen}
-          coreVersion={state.status?.version ?? null}
-          shellVersion={shellVersion}
-          settings={coreSettings}
-          settingsError={coreSettingsError}
-          onSaveSettings={saveCoreSettings}
-          onClose={() => setPlatformOpen(false)}
-        />
-
-        <SharedMountsDialog
-          open={sharedMountsOpen}
-          globalMounts={globalMounts}
-          canManageApps={Boolean(canManageApps)}
-          onClose={() => setSharedMountsOpen(false)}
-          onSave={saveGlobalMount}
-          onDelete={deleteGlobalMount}
-        />
       </div>
       </ShellStateContext.Provider>
     </ShellActionsContext.Provider>

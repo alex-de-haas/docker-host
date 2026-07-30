@@ -1,19 +1,35 @@
-import type { ShellRouteState, ShellSearchParams, ShellView, WorkspaceRoute } from "./types";
+import type {
+  HostSettingsTab,
+  ShellRouteState,
+  ShellSearchParams,
+  ShellView,
+  WorkspaceRoute,
+} from "./types";
 
 export const SIDEBAR_COMPACT_STORAGE_KEY = "hosty.shell.sidebar.compact";
 
 const SHELL_VIEW_HREFS: Record<ShellView, string> = {
   dashboard: "/dashboard",
   "available-apps": "/apps",
-  "installed-apps": "/installed-apps",
-  users: "/users",
+  settings: "/settings",
 };
 
-const ADMIN_SHELL_VIEWS = new Set<ShellView>([
-  "dashboard",
-  "installed-apps",
-  "users",
-]);
+const ADMIN_SHELL_VIEWS = new Set<ShellView>(["dashboard", "settings"]);
+
+const HOST_SETTINGS_TABS = new Set<string>(["users", "core", "mounts"]);
+
+// A settings surface the URL does not name resolves to Users rather than erroring — the same
+// principle that makes an unrecognized route fall through instead of blanking the screen. Every
+// link Shell builds names its tab explicitly, so nothing depends on which one this is.
+export const DEFAULT_HOST_SETTINGS_TAB: HostSettingsTab = "users";
+
+// Paths that were their own view before Dashboard absorbed Installed Apps and Settings absorbed
+// User Management. They still parse, so a bookmark or a documented link keeps working; the client
+// then replaces the URL with the canonical one.
+const LEGACY_VIEW_PATHS: Record<string, ShellView> = {
+  "/installed-apps": "dashboard",
+  "/users": "settings",
+};
 
 export function shellViewRequiresAdmin(view: ShellView) {
   return ADMIN_SHELL_VIEWS.has(view);
@@ -21,6 +37,11 @@ export function shellViewRequiresAdmin(view: ShellView) {
 
 export function getAuthorizedShellView(view: ShellView, canManageApps: boolean): ShellView {
   return canManageApps || !shellViewRequiresAdmin(view) ? view : "available-apps";
+}
+
+export function readHostSettingsTab(value: string | null | undefined): HostSettingsTab {
+  const tab = value?.trim();
+  return tab && HOST_SETTINGS_TABS.has(tab) ? (tab as HostSettingsTab) : DEFAULT_HOST_SETTINGS_TAB;
 }
 
 export function normalizeShellPath(pathname: string) {
@@ -40,64 +61,98 @@ export function normalizeAppPath(path: string | null | undefined) {
   return value.startsWith("/") ? value : `/${value}`;
 }
 
+// The app id behind a legacy `/system-apps/<id>` link, or null when this is not one. Returned
+// rather than inlined because both the parser and the canonical-redirect builder need it.
+export function readLegacySystemAppId(pathname: string): string | null {
+  const match = /^\/system-apps\/([^/]+)$/.exec(normalizeShellPath(pathname));
+  if (!match) {
+    return null;
+  }
+
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    // Malformed percent-encoding in a hand-typed link must not crash route parsing during render;
+    // the raw segment falls through to the launch flow's ordinary not-installed error.
+    return match[1];
+  }
+}
+
 export function readShellRoute(pathname: string, searchParams: ShellSearchParams): ShellRouteState {
   const path = normalizeShellPath(pathname);
+  const settingsTab = readHostSettingsTab(searchParams.get("tab"));
+  const appPath = normalizeAppPath(searchParams.get("path"));
 
   if (path === "/workspace") {
     const appId = searchParams.get("app")?.trim();
-    if (appId) {
-      return {
-        view: "available-apps",
-        workspace: {
-          appId,
-          path: normalizeAppPath(searchParams.get("path")),
-        },
-      };
-    }
-
-    return { view: "available-apps", workspace: null };
+    return {
+      view: "available-apps",
+      workspace: appId ? { appId, path: appPath } : null,
+      settingsTab,
+    };
   }
 
-  // Canonical admin-only deep link for a UI-capable system app's pages. Reuses the same workspace
-  // launch/iframe engine as /workspace; the separate route keeps admin guards and links explicit
-  // (docs/ideas/system-app-pages.md).
-  const systemAppMatch = /^\/system-apps\/([^/]+)$/.exec(path);
-  if (systemAppMatch) {
-    let appId = systemAppMatch[1];
-    try {
-      appId = decodeURIComponent(appId);
-    } catch {
-      // Malformed percent-encoding in a hand-typed link must not crash route parsing during render;
-      // the raw segment falls through to the launch flow's ordinary not-installed error.
-    }
-
+  // `/system-apps/<id>` existed to gate a system app's pages behind an explicit admin route. Core
+  // enforces that gate itself — a launch code for a system app requires host.admin — so the client
+  // route was a second copy of an authorization decision, and the two collapse into one workspace.
+  const legacySystemAppId = readLegacySystemAppId(path);
+  if (legacySystemAppId) {
     return {
-      view: "installed-apps",
-      workspace: {
-        appId,
-        path: normalizeAppPath(searchParams.get("path")),
-        system: true,
-      },
+      view: "available-apps",
+      workspace: { appId: legacySystemAppId, path: appPath },
+      settingsTab,
     };
   }
 
   if (path === "/apps") {
-    return { view: "available-apps", workspace: null };
+    return { view: "available-apps", workspace: null, settingsTab };
+  }
+
+  if (path === "/settings") {
+    return { view: "settings", workspace: null, settingsTab };
+  }
+
+  const legacyView = LEGACY_VIEW_PATHS[path];
+  if (legacyView) {
+    return { view: legacyView, workspace: null, settingsTab };
+  }
+
+  return { view: "dashboard", workspace: null, settingsTab };
+}
+
+// The canonical URL for a path that still resolves but is no longer where its surface lives; null
+// when the path is already canonical. `/system-apps/<id>?path=/x` keeps `/x` — dropping it would
+// silently send a deep link to the app's entry page instead of the page it named.
+export function readCanonicalRedirect(
+  pathname: string,
+  searchParams: ShellSearchParams,
+): string | null {
+  const path = normalizeShellPath(pathname);
+
+  const legacySystemAppId = readLegacySystemAppId(path);
+  if (legacySystemAppId) {
+    return getWorkspaceHref(legacySystemAppId, normalizeAppPath(searchParams.get("path")));
   }
 
   if (path === "/installed-apps") {
-    return { view: "installed-apps", workspace: null };
+    return getShellViewHref("dashboard");
   }
 
   if (path === "/users") {
-    return { view: "users", workspace: null };
+    return getSettingsHref("users");
   }
 
-  return { view: "dashboard", workspace: null };
+  return null;
 }
 
 export function getShellViewHref(view: ShellView) {
   return SHELL_VIEW_HREFS[view];
+}
+
+export function getSettingsHref(tab: HostSettingsTab) {
+  const params = new URLSearchParams();
+  params.set("tab", tab);
+  return `/settings?${params.toString()}`;
 }
 
 export function getWorkspaceHref(appId: string, appPath: string) {
@@ -105,12 +160,6 @@ export function getWorkspaceHref(appId: string, appPath: string) {
   params.set("app", appId);
   params.set("path", normalizeAppPath(appPath));
   return `/workspace?${params.toString()}`;
-}
-
-export function getSystemAppHref(appId: string, appPath: string) {
-  const params = new URLSearchParams();
-  params.set("path", normalizeAppPath(appPath));
-  return `/system-apps/${encodeURIComponent(appId)}?${params.toString()}`;
 }
 
 export function getWorkspaceRouteKey(route: WorkspaceRoute | null) {

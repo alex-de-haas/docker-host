@@ -1,7 +1,7 @@
 # Core App Shell
 
 Created: 2026-05-19
-Updated: 2026-07-11
+Updated: 2026-07-30
 
 Hosty Shell is the Core-managed browser UI runtime app. It renders a single authenticated Shell surface backed by Hosty Core APIs; it does not own Core lifecycle logic and it does not reintroduce the retired combined Next.js Host package.
 
@@ -9,11 +9,14 @@ Hosty Shell is the Core-managed browser UI runtime app. It renders a single auth
 
 The implemented Shell provides:
 
-- administrator-only Dashboard overview widgets for Core status and installed runtime app summary;
-- administrator-only Installed Apps management for runtime app install, lifecycle, configuration, updates, logs, backups, restore, prune, and removal;
-- administrator-only User Management for local invitations, user role changes, disabling users, and app assignments;
+- an administrator-only Dashboard: Core's status and version beside every installed app, with install,
+  lifecycle, configuration, updates, logs, backups, restore, prune, and removal;
+- administrator-only Settings: users and invitations, Core's own settings and ingress connection, and
+  host-wide shared mounts;
 - Apps navigation for app manifests that declare shell UI metadata;
 - embedded app workspaces that open app-owned UI origins through Core-issued launch codes.
+
+The route table and sidebar structure live in [Shell Navigation](../shell-navigation/feature.md).
 
 Shell uses Core session cookies and redirects unauthenticated users to Core-owned `/login`. Public status comes from `/api/core/status`; protected data comes from Core APIs such as `/api/auth/session`, `/api/apps`, `/api/auth/users`, and `/api/apps/{appId}/...` lifecycle endpoints. If a protected Core API returns `401`, Shell treats that as an authentication-required state and navigates to Core `/login` instead of rendering a reduced unauthenticated Shell surface. `403` responses remain visible authorization or CSRF failures.
 
@@ -31,65 +34,42 @@ Feature UI lives under `apps/shell/src/app/shell/`:
 - `shell-context.tsx` exposes separate persistent Shell state and action contexts to route pages;
 - `shell-route-pages.tsx` adapts individual App Router pages to Shell feature components;
 - `sidebar/` contains Shell navigation and account/theme controls;
-- `pages/` contains Dashboard, Apps, Installed Apps, and User Management view components;
+- `pages/` contains the Dashboard, Apps, and Settings view components, including the Settings
+  sections for Core and shared mounts;
 - `dialogs/` contains install review and installed-app detail dialogs;
 - `workspace/` contains embedded app workspace loading and iframe surfaces;
 - `ui.tsx`, `settings.tsx`, `app-helpers.ts`, and `clipboard.ts` contain shared presentational and formatting helpers.
 
-Each top-level Shell route file renders only its route surface:
+Each top-level route file renders only its route surface; the route table, the legacy paths that
+still resolve, and the sidebar's two groups are described in
+[Shell Navigation](../shell-navigation/feature.md). An administrator-only surface falls back to the
+Apps route while the persistent orchestrator redirects a non-admin session to `/apps`.
 
-- `/` and `/dashboard` render the Dashboard route surface for administrators;
-- `/apps` renders the Apps route surface;
-- `/installed-apps` renders the Installed Apps route surface for administrators;
-- `/users` renders the User Management route surface for administrators;
-- `/workspace` delegates the visible content to the persistent Shell workspace state when a workspace query is present.
+The sidebar is a persistent desktop-style rail with an expanded and a compact mode; the selected mode
+is stored in browser local storage. Because the sidebar and Core/session state are owned by the root
+layout, moving between routes does not remount it or briefly render the unauthenticated navigation
+state.
 
-Administrator-only route surfaces fall back to the Apps route while the persistent Shell orchestrator redirects non-admin sessions to `/apps`.
-
-## Navigation
-
-The Shell sidebar is a persistent desktop-style rail with an expanded and compact mode. The selected mode is stored in browser local storage.
-
-- Core:
-  - Dashboard (`/dashboard`, with `/` retained as a compatible entry route)
-  - Installed Apps (`/installed-apps`)
-  - User Management (`/users`)
-- Apps:
-  - app overview (`/apps`)
-  - one sidebar entry for each non-system runtime app that exposes shell UI metadata
-  - nested app links from manifest `ui.navigation`
-  - embedded app workspace links (`/workspace?app=<app-id>&path=<app-path>`)
-  - loading, error, and empty states when app registry data is unavailable
-
-The Core navigation group is visible only to `host.admin`. Non-admin `host.user` principals can load Shell but see only non-system runtime app navigation and the `/apps` app overview. Dashboard, Installed Apps, User Management, system apps, and app mutation controls are restricted to `host.admin`.
-
-Shell top-level navigation is route-backed. Sidebar clicks update the browser URL, and refresh restores the active route. Workspace URLs store only the app id and app path; Shell requests a fresh Core launch code after loading the current Core session and app registry.
-
-Because the sidebar and Core/session state are owned by the root Shell layout, switching between `/dashboard`, `/apps`, `/installed-apps`, `/users`, and `/workspace` does not remount the sidebar or briefly render the unauthenticated navigation state.
-
-Hosty Shell is installed as a system runtime app and does not appear as a normal entry in the Apps sidebar.
+Hosty Shell is installed as a system runtime app and does not appear as an entry in the Apps
+sidebar.
 
 ```mermaid
 flowchart TD
   A["Hosty Shell"] --> B["Core session check"]
   B --> C["Dashboard"]
-  B --> D["Installed Apps"]
-  B --> E["User Management"]
+  B --> E["Settings"]
   B --> F["Apps navigation"]
   F --> G["Core launch code"]
   G --> H["Embedded app origin"]
-  D --> I["Core lifecycle APIs"]
-  E --> J["Core auth/user APIs"]
+  C --> I["Core lifecycle APIs"]
+  E --> J["Core auth/user + settings APIs"]
 ```
 
-## Installed Apps
+## Installed apps
 
-The Installed Apps view is the current administrator management surface for installed apps. It separates app inventory into:
+Dashboard is the administrator management surface for installed apps: one table holding non-system runtime apps and Core-managed system apps together, the latter marked by a `System` badge.
 
-- Runtime Apps: non-system runtime apps installed by users or administrators;
-- System Apps: Core-managed apps such as Hosty Shell.
-
-Runtime Apps expose actions according to Core state, plus — for the two entries that are optional app features rather than lifecycle verbs — the `logs` and `backup` capabilities the app declares (see below):
+Apps expose actions according to Core state, plus — for the two entries that are optional app features rather than lifecycle verbs — the `logs` and `backup` capabilities the app declares (see below):
 
 - start, stop, and restart;
 - install from an `app.0.1` manifest URL, local manifest file path, or local app directory containing `manifest.json`;
@@ -113,9 +93,9 @@ System Apps are inspectable and configurable in Shell. Administrators can open t
 
 ## Embedded Apps
 
-Apps appear in the Shell Apps navigation only when their installed manifest includes a `ui` contract and the app is not a system app. Public runtime endpoints alone do not create Shell navigation.
+An app appears in the Apps navigation only when its installed manifest includes a `ui` contract. Public runtime endpoints alone do not create Shell navigation, and the Shell itself is excluded from the group.
 
-UI-capable system apps get their own administrator-only System sidebar group instead (Shell 0.26.0). It reuses the same page-link, launch, and iframe machinery as the Apps group, with the canonical deep link `/system-apps/<app-id>?path=<app-path>` in place of `/workspace?app=...`. The group is hidden when no installed system app declares UI; a stopped UI-capable system app stays listed but disabled with its runtime state, and direct navigation reports the state with a pointer to Installed Apps. Non-admins are redirected from `/system-apps/*` to `/apps` client-side, while Core independently refuses system-app launch codes for non-admins (`system_app_admin_required`).
+Ordinary and system apps share one group and one deep link, `/workspace?app=<app-id>&path=<app-path>` (Shell 0.49.0). System apps had their own administrator-only group and `/system-apps/<app-id>` route until then; both expressed a gate Core already enforces, since `GET /api/apps` omits a system app for a non-administrator and `AppIdentityService` refuses its launch code with `system_app_admin_required`. A stopped UI-capable app stays listed but disabled with its runtime state, and direct navigation reports that state.
 
 Shell opens app UIs through the app-owned origin returned by Core. Local runtime app origins use `http://localhost:<assigned-port>`. If an app endpoint has a configured `HOSTY_PUBLIC_ORIGIN_{ENDPOINT_KEY}` value, Core uses that public origin for Shell and standalone links, while endpoint summaries still keep the local `url` and expose the external value separately as `publicOrigin`. For embedded workspaces, Shell navigates to `/workspace?app=<app-id>&path=<app-path>`, requests `/api/apps/{appId}/launch-code`, and loads the resulting redirect URI in an iframe. For standalone tabs, Shell uses `/api/apps/{appId}/open?redirectUri=...`.
 

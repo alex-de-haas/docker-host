@@ -581,24 +581,30 @@ export type DetailView = "backups" | "settings" | "update" | "remove" | "logs";
 
 // Tabs inside the consolidated Settings dialog. Hidden when the app has no matching data.
 export type SettingsTab = "app" | "publicOrigins" | "mounts" | "source";
+// Three top-level destinations: the host you manage, the host you configure, and the apps you use.
+// `installed-apps` and `users` were folded into `dashboard` and `settings`; their URLs still resolve
+// and are canonicalized by the client.
 export type ShellView =
   | "available-apps"
   | "dashboard"
-  | "installed-apps"
-  | "users";
+  | "settings";
+
+// Host-level configuration surfaces, addressable as /settings?tab=<value>. Distinct from the per-app
+// `SettingsTab` above, which describes one app rather than the host.
+export type HostSettingsTab = "users" | "core" | "mounts";
 export type AppOpenTarget = "workspace" | "tab";
 export type HostyResolvedTheme = "light" | "dark";
 export type HostyThemePreference = "light" | "dark" | "system";
 export type WorkspaceRoute = {
   appId: string;
   path: string;
-  // True when the route came from the canonical /system-apps/<id> deep link: the launch flow then
-  // requires host.admin and a system-flagged app before creating a launch link.
-  system?: boolean;
 };
 export type ShellRouteState = {
   view: ShellView;
   workspace: WorkspaceRoute | null;
+  // Always resolved, so no consumer has to repeat the default. Only read while `view` is
+  // "settings"; carried on every route so a link into Settings can name its tab from anywhere.
+  settingsTab: HostSettingsTab;
 };
 export type ShellSearchParams = {
   get(name: string): string | null;

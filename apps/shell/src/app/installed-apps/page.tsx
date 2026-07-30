@@ -1,7 +1,9 @@
-import { ShellInstalledAppsRoute } from "../shell/shell-route-pages";
+import { ShellDashboardRoute } from "../shell/shell-route-pages";
 
 export const dynamic = "force-dynamic";
 
-export default function InstalledAppsRoutePage() {
-  return <ShellInstalledAppsRoute />;
+// Installed Apps merged into Dashboard. The route file stays so the old URL resolves instead of
+// 404ing before the client can canonicalize it to /dashboard.
+export default function InstalledAppsPage() {
+  return <ShellDashboardRoute />;
 }

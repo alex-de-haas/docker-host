@@ -222,7 +222,7 @@ The rolling development source can retain the current compatibility assumption a
 
 This idea intentionally revises current, narrower policies:
 
-- [Shell access and system apps](../features/shell-access-and-system-apps.md), [Core app shell](../features/core-app-shell.md), and [Hosty Shell Docker Image](../features/hosty-shell-image.md) currently describe system apps as inspect-only and hide update controls.
+- [Shell access and system apps](../features/shell-access-and-system-apps/feature.md), [Core app shell](../features/core-app-shell/feature.md), and [Hosty Shell Docker Image](../features/hosty-shell-image.md) currently describe system apps as inspect-only and hide update controls.
 - `RuntimeAppSupervisorService` currently auto-reconciles Shell and telemetry manifests at startup; existing tests assert that behavior.
 - Current update status is artifact-only even though [Catalog-hosted app feeds](../features/catalog-hosted-app-feeds.md) already defines update availability as manifest movement or artifact movement.
 - The telemetry system app does not currently expose the `update` capability and has Core-owned provisioning that is startup-only.
