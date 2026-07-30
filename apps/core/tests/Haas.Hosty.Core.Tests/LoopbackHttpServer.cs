@@ -54,13 +54,22 @@ internal sealed class LoopbackHttpServer : IAsyncDisposable
             try
             {
                 listener.Start();
-                return new LoopbackHttpServer(listener, port, handler);
             }
-            catch (HttpListenerException) when (attempt < StartAttempts)
+            catch (Exception ex)
             {
-                // Someone took the probed port first — release whatever this attempt holds and probe again.
+                // Released the same one-pass way a live listener is, on every exit: a listener whose Start
+                // failed must not outlive the attempt, whether the loop retries or the exception escapes.
                 Teardown(listener);
+                if (ex is not HttpListenerException || attempt >= StartAttempts)
+                {
+                    throw;
+                }
+
+                // Someone took the probed port first — probe again.
+                continue;
             }
+
+            return new LoopbackHttpServer(listener, port, handler);
         }
     }
 
