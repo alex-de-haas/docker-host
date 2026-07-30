@@ -72,12 +72,33 @@ internal static class CloudflareConnectionEndpoints
             UserDirectoryStore users,
             IClock clock,
             CloudflareConnectionService service,
+            CloudflarePublicationService publications,
+            CloudflareDisconnectRequest? input,
             CancellationToken cancellationToken) =>
             CoreSessionAuthorization.RequireAdminSessionAsync(
                 request,
                 users,
                 clock,
-                async () => await HandleCloudflareError(() => service.DisconnectAsync(cancellationToken)),
+                async () => await HandleCloudflareError(async () =>
+                {
+                    // Keep is the default and the safe answer: the routes and records stay as they are, and
+                    // reconnecting the same account picks up where this left off. Remove runs first,
+                    // because deleting them needs the token — and it stops the disconnect when any of it
+                    // fails, since a half-removed disconnect that also threw the token away would leave
+                    // orphans nothing can reach.
+                    if (input?.RemovePublished == true)
+                    {
+                        var leftBehind = await publications.RemoveAllAsync(cancellationToken);
+                        if (leftBehind > 0)
+                        {
+                            throw new CloudflareConnectionException(
+                                "cloudflare_disconnect_incomplete",
+                                $"{leftBehind} published endpoint(s) could not be removed from Cloudflare, so the connection was kept. Retry, or disconnect with Keep and clean them up in the dashboard.");
+                        }
+                    }
+
+                    return await service.DisconnectAsync(cancellationToken);
+                }),
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
     }
@@ -104,6 +125,8 @@ internal static class CloudflareConnectionEndpoints
             {
                 "cloudflare_token_invalid" => StatusCodes.Status401Unauthorized,
                 "cloudflare_token_forbidden" => StatusCodes.Status403Forbidden,
+                // The request was fine; the account's current state stopped it, and retrying can work.
+                "cloudflare_disconnect_incomplete" => StatusCodes.Status409Conflict,
                 _ => StatusCodes.Status400BadRequest,
             };
             return CoreJson.Json(new ErrorResponse(exception.Code, exception.Message), statusCode: statusCode);

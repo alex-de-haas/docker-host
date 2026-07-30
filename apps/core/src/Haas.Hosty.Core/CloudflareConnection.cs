@@ -135,12 +135,15 @@ internal sealed class CloudflareConnectionService(
             cancellationToken);
     }
 
+    // Drops the stored token and the discovery state, and nothing else. Whether the published routes and
+    // records go with it is the operator's Keep-or-Remove answer, and it is applied by the endpoint before
+    // this runs — the removal needs the token, so it cannot happen after, and it must be able to stop the
+    // disconnect when it fails (see CloudflareConnectionEndpoints).
+    //
+    // The scoped token cannot revoke itself, so the local copy is deleted and the operator is pointed at
+    // the dashboard. Objects Hosty never created are never touched.
     public async Task<CloudflareConnectionStatus> DisconnectAsync(CancellationToken cancellationToken = default)
     {
-        // The scoped token cannot revoke itself, so we delete the local copy and point the operator at the
-        // dashboard. Hosty-owned DNS records and tunnel routes are deliberately NOT removed here: there
-        // are no Keep/Remove choices yet, so disconnect leaves every published resource in place and the
-        // operator unpublishes first if they want it gone. See the feature's plan.md.
         await credentials.DeleteAsync(cancellationToken);
         await integration.DeleteAsync(cancellationToken);
         return await StatusAsync(cancellationToken);
@@ -247,6 +250,9 @@ internal sealed record CloudflareSelectionRequired(string Kind, IReadOnlyList<Cl
 
 // The error body for an ambiguity: the ordinary code/message plus the candidates.
 internal sealed record CloudflareSelectionErrorResponse(string Code, string Message, CloudflareSelectionRequired Selection);
+
+// POST /api/core/cloudflare/disconnect body. Absent or false means Keep: nothing published is touched.
+internal sealed record CloudflareDisconnectRequest(bool RemovePublished = false);
 
 // The operator's answers to a previous ambiguity, echoed back with the token on the next connect attempt.
 internal sealed record CloudflareConnectSelection(string? AccountId, string? ZoneId, string? TunnelId);

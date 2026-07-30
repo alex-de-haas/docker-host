@@ -45,7 +45,11 @@ internal sealed class CoreLifecycleService(
     // Who owns each HOSTY_PUBLIC_ORIGIN_* value under the active ingress provider, which decides whether
     // `configure` may write one. Optional only for unit fixtures that do not exercise ingress ownership;
     // production DI always supplies it, and CoreHttpHarness covers the wired path.
-    PublicOriginOwnership? publicOrigins = null)
+    PublicOriginOwnership? publicOrigins = null,
+    // Cloudflare publications, so an app's lifecycle can clean up the hostnames it published and clear the
+    // pending-restart flag when it starts. Optional only for unit fixtures; production DI supplies it.
+    // Every use is best-effort: an unreachable Cloudflare must never fail a start, an update, or a removal.
+    CloudflarePublicationService? cloudflarePublications = null)
 {
     private static readonly Regex BackupReasonPattern = new("^[a-z0-9][a-z0-9-]{0,30}$", RegexOptions.Compiled);
     private static readonly Regex MountLabelPattern = new("^[a-z0-9][a-z0-9._-]{0,62}$", RegexOptions.Compiled);
@@ -936,6 +940,20 @@ internal sealed class CoreLifecycleService(
             }
             app = await EnsureLocalCommandSourceReadyAsync(app, selection, cancellationToken);
             app = await EnsureIngressPublicOriginsAsync(app, selection, cancellationToken);
+            // The process about to start reads the current HOSTY_PUBLIC_ORIGIN_* values, which is exactly
+            // what a pending-restart flag was waiting for. Best-effort: this is bookkeeping, not a start
+            // precondition.
+            if (cloudflarePublications is not null)
+            {
+                try
+                {
+                    await cloudflarePublications.ClearPendingRestartAsync(app.Id, cancellationToken);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    logger.LogWarning(ex, "Could not clear the Cloudflare pending-restart flag for {AppId}.", app.Id);
+                }
+            }
             adapter = ResolveAdapter(selection.RuntimeProfile.Type);
             context = await CreateRuntimeContextAsync(app, selection, cancellationToken);
             context = EnsureMountsReadyForStart(context);
@@ -2060,6 +2078,9 @@ internal sealed class CoreLifecycleService(
         }
 
         var document = await apps.UpsertAppAsync(next, cancellationToken);
+        // An endpoint the new manifest dropped (or made private) can never serve its hostname again, so the
+        // route and DNS record go with it. Best-effort, and only for endpoints that are actually gone.
+        await CleanUpOrphanedPublicationsAsync(appId, next, cancellationToken);
         // Consumed: the app is now at the target, so the pending plan (built against the old base) would
         // only fail the base-state guard from here on. Drop it so a fresh review starts clean.
         EvictReviewedPlan(appId, confirmed);
@@ -2234,7 +2255,19 @@ internal sealed class CoreLifecycleService(
             }
         }
 
-        return new AppRemovalImpact(app.Id, app.DisplayName, app.System, dependents, capabilities);
+        // What removing the app takes down publicly. Listed rather than counted: a hostname the operator
+        // shared is not something to discover afterwards from a 404.
+        var published = cloudflarePublications is null
+            ? []
+            : (await cloudflarePublications.ListForAppAsync(app.Id, cancellationToken)).Publications
+                .Select(publication => new AppRemovalPublicOrigin(
+                    publication.EndpointKey,
+                    publication.Hostname,
+                    publication.OwnershipState))
+                .OrderBy(entry => entry.Hostname, StringComparer.Ordinal)
+                .ToArray();
+
+        return new AppRemovalImpact(app.Id, app.DisplayName, app.System, dependents, capabilities, published);
     }
 
     // Consumers are resolved per capability slot, never per app id. Only slots whose consumption is
@@ -2361,6 +2394,21 @@ internal sealed class CoreLifecycleService(
             // sources tree that pre-move installs still use (their records were never migrated).
             TryDeleteDirectory(paths.ResolveManagedCheckoutPath(appId));
             TryDeleteDirectory(CoreDataPaths.ResolveContainedPath(paths.SourcesRoot, appId));
+        }
+
+        // The hostnames this app published can never serve it again. Best-effort: a publication that cannot
+        // be removed keeps its stored entry, which is the only remaining pointer to what is left in
+        // Cloudflare, and never blocks the uninstall.
+        if (cloudflarePublications is not null)
+        {
+            try
+            {
+                await cloudflarePublications.RemoveAllForAppAsync(appId, cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning(ex, "Cloudflare publication cleanup for removed app {AppId} did not complete.", appId);
+            }
         }
 
         TryDeleteDirectoryIfEmpty(GetAppRoot(appId));
@@ -5075,6 +5123,30 @@ internal sealed class CoreLifecycleService(
         return updated.App;
     }
 
+    // Drops publications whose endpoint the app no longer declares as public. Best-effort by design: this
+    // runs inside an update apply that has already committed, so a Cloudflare failure must not turn a
+    // successful update into a failed one.
+    private async Task CleanUpOrphanedPublicationsAsync(string appId, AppRecord app, CancellationToken cancellationToken)
+    {
+        if (cloudflarePublications is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var publicKeys = (app.Endpoints ?? [])
+                .Where(endpoint => endpoint.Public && !string.IsNullOrWhiteSpace(endpoint.Key))
+                .Select(endpoint => endpoint.Key)
+                .ToArray();
+            await cloudflarePublications.RemoveOrphanedAsync(appId, publicKeys, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Cloudflare publication cleanup for updated app {AppId} did not complete.", appId);
+        }
+    }
+
     // Re-render the ingress provider's config from the current set of apps. Best-effort: an ingress
     // failure must never fail the lifecycle operation that triggered it.
     public async Task ReconcileIngressAsync(CancellationToken cancellationToken = default)
@@ -5587,7 +5659,13 @@ internal sealed record AppRemovalImpact(
     // not a lifecycle restriction.
     bool System,
     IReadOnlyList<AppRemovalDependent> Dependents,
-    IReadOnlyList<AppRemovalCapabilityImpact> Capabilities);
+    IReadOnlyList<AppRemovalCapabilityImpact> Capabilities,
+    // Hosty-published hostnames that removal takes offline. An "adopted" one keeps its DNS record — Hosty
+    // manages it but did not create it — so the two states read differently in the confirmation.
+    IReadOnlyList<AppRemovalPublicOrigin> PublicOrigins);
+
+// One published hostname that goes away with the app.
+internal sealed record AppRemovalPublicOrigin(string EndpointKey, string Hostname, string OwnershipState);
 
 // An installed app that declares a cross-app dependency on the app being removed. Aliases name the
 // HOSTY_DEPENDENCY_{ALIAS}_URL variables that stop resolving; a running dependent keeps its current

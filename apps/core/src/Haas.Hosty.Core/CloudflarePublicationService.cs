@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+
 namespace Haas.Hosty.Core;
 
 // Cloudflare ingress: the publication API that ties the connection, the reconciler,
@@ -13,7 +15,8 @@ internal sealed class CloudflarePublicationService(
     CloudflareConnectionService connection,
     CloudflarePublicationReconciler reconciler,
     CloudflarePublicationStore publications,
-    AppRegistryStore apps)
+    AppRegistryStore apps,
+    ILogger<CloudflarePublicationService> logger)
 {
     public async Task<CloudflarePublicationResult> PublishAsync(string appId, string endpointKey, string label, bool adopt = false, CancellationToken cancellationToken = default)
     {
@@ -35,7 +38,11 @@ internal sealed class CloudflarePublicationService(
             cancellationToken);
         var publicOrigin = $"https://{publication.Hostname}";
         var updated = await apps.UpdateAppAsync(appId, record => WithPublicOrigin(record, endpointKey, publicOrigin), cancellationToken);
-        return new CloudflarePublicationResult(appId, endpointKey, publication.Hostname, publicOrigin, IsRunning(updated.App));
+        // A running app is still serving the previous origin until it restarts. Recorded on the publication
+        // rather than only returned, so the state survives the toast that reported it.
+        var restartRequired = IsRunning(updated.App);
+        await publications.UpdateAsync(appId, endpointKey, entry => entry with { PendingRestart = restartRequired }, cancellationToken);
+        return new CloudflarePublicationResult(appId, endpointKey, publication.Hostname, publicOrigin, restartRequired);
     }
 
     public async Task<CloudflarePublicationResult> UnpublishAsync(string appId, string endpointKey, CancellationToken cancellationToken = default)
@@ -68,15 +75,106 @@ internal sealed class CloudflarePublicationService(
 
     public async Task<CloudflareAppPublications> ListForAppAsync(string appId, CancellationToken cancellationToken = default)
     {
+        var app = await apps.GetAppAsync(appId, cancellationToken);
+        var running = app is not null && IsRunning(app);
+        var state = await integration.LoadAsync(cancellationToken);
+        var reconnectRequired = state is not null &&
+            string.Equals(state.Status, CloudflareConnectionStatuses.ReconnectRequired, StringComparison.Ordinal);
+
         var summaries = (await publications.ListForAppAsync(appId, cancellationToken))
             .Select(publication => new CloudflarePublicationSummary(
                 publication.EndpointKey,
                 publication.Label,
                 publication.Hostname,
                 $"https://{publication.Hostname}",
-                publication.OwnershipState))
+                publication.OwnershipState,
+                ResolveState(publication, running, reconnectRequired)))
             .ToArray();
         return new CloudflareAppPublications(summaries);
+    }
+
+    // What an operator needs to know about one published endpoint, in the order the answers matter.
+    // "Not configured" is the absence of a publication, so it is never produced here — a caller with no
+    // summary for an endpoint has it. There is no "syncing": publishing is synchronous, and inventing a
+    // state nothing can produce would be a promise the UI cannot keep.
+    private static string ResolveState(CloudflarePublication publication, bool appRunning, bool reconnectRequired)
+    {
+        if (reconnectRequired)
+        {
+            // The routes and the record are still there; what is gone is Hosty's ability to manage them.
+            return CloudflarePublicationStates.Error;
+        }
+
+        if (!appRunning)
+        {
+            // A stopped app picks the origin up on its next start, so this is not "restart required".
+            return CloudflarePublicationStates.AppStopped;
+        }
+
+        return publication.PendingRestart ? CloudflarePublicationStates.RestartRequired : CloudflarePublicationStates.Active;
+    }
+
+    // Clears the pending-restart flag for every publication of an app that is starting: the process about
+    // to come up reads the current HOSTY_PUBLIC_ORIGIN_* values, which is exactly what the flag was
+    // waiting for. Best-effort — this runs inside the start path and must never fail a start.
+    public Task ClearPendingRestartAsync(string appId, CancellationToken cancellationToken = default)
+        => publications.UpdateForAppAsync(appId, publication => publication with { PendingRestart = false }, cancellationToken);
+
+    // Removes everything Hosty has published, for a disconnect answered with Remove. Returns how many
+    // publications could NOT be removed: the caller keeps the connection when that is non-zero, because
+    // the token is the only way to finish the job and throwing it away would strand the leftovers.
+    public async Task<int> RemoveAllAsync(CancellationToken cancellationToken = default)
+    {
+        var all = await publications.ListAsync(cancellationToken);
+        return all.Count - await RemoveAsync(all, "the Cloudflare connection was removed", cancellationToken);
+    }
+
+    // Removes every Hosty-owned route and DNS record for an app, for uninstall. Best-effort per
+    // publication: a failure keeps the stored entry, because that entry is the only remaining pointer to
+    // what Hosty created in Cloudflare — dropping it would turn a retryable leftover into a permanent one.
+    public async Task<int> RemoveAllForAppAsync(string appId, CancellationToken cancellationToken = default)
+        => await RemoveAsync(
+            await publications.ListForAppAsync(appId, cancellationToken),
+            "the app was uninstalled",
+            cancellationToken);
+
+    // Removes publications for endpoints the app no longer declares. Called after an update applies a new
+    // manifest: an endpoint that is gone (or no longer public) can never serve the hostname again, so
+    // leaving the route and record behind would publish a name that resolves to nothing.
+    public async Task<int> RemoveOrphanedAsync(string appId, IReadOnlyCollection<string> publicEndpointKeys, CancellationToken cancellationToken = default)
+    {
+        var orphaned = (await publications.ListForAppAsync(appId, cancellationToken))
+            .Where(publication => !publicEndpointKeys.Contains(publication.EndpointKey, StringComparer.Ordinal))
+            .ToArray();
+        return await RemoveAsync(orphaned, "the endpoint is no longer published by the app", cancellationToken);
+    }
+
+    private async Task<int> RemoveAsync(IReadOnlyList<CloudflarePublication> targets, string reason, CancellationToken cancellationToken)
+    {
+        if (targets.Count == 0)
+        {
+            return 0;
+        }
+
+        var removed = 0;
+        foreach (var publication in targets)
+        {
+            try
+            {
+                await UnpublishAsync(publication.AppId, publication.EndpointKey, cancellationToken);
+                removed++;
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                logger.LogWarning(
+                    exception,
+                    "Could not remove the Cloudflare publication for '{Hostname}' ({Reason}); the route, the DNS record, and the stored publication are left in place for a retry.",
+                    publication.Hostname,
+                    reason);
+            }
+        }
+
+        return removed;
     }
 
     // Cloudflare tells nobody that a token was revoked, expired, or had a permission removed — it is found
@@ -176,6 +274,24 @@ internal sealed record CloudflareUnpublishRequest(string EndpointKey);
 // takes effect on the app's next start, so a running app must be restarted to pick it up.
 internal sealed record CloudflarePublicationResult(string AppId, string EndpointKey, string? Hostname, string? PublicOrigin, bool RestartRequired);
 
-internal sealed record CloudflarePublicationSummary(string EndpointKey, string Label, string Hostname, string? PublicOrigin, string OwnershipState);
+// `State` is what an operator asks about a published endpoint; see ResolveState for what each value means
+// and which ones Core can honestly produce.
+internal sealed record CloudflarePublicationSummary(
+    string EndpointKey,
+    string Label,
+    string Hostname,
+    string? PublicOrigin,
+    string OwnershipState,
+    string State);
+
+internal static class CloudflarePublicationStates
+{
+    // No publication exists for the endpoint. Produced by a caller finding no summary, never by Core.
+    public const string NotConfigured = "not_configured";
+    public const string Active = "active";
+    public const string AppStopped = "app_stopped";
+    public const string RestartRequired = "restart_required";
+    public const string Error = "error";
+}
 
 internal sealed record CloudflareAppPublications(IReadOnlyList<CloudflarePublicationSummary> Publications);

@@ -109,6 +109,110 @@ public sealed class CloudflarePublicationServiceTests : IDisposable
         Assert.Equal("cloudflare_reconnect_required", error.Code);
     }
 
+    [Fact]
+    public async Task ListForAppAsync_ReportsTheStateAnOperatorAsksAbout()
+    {
+        var api = new StatefulApi();
+        var (service, apps) = await CreateConnectedAsync(api, appRunning: true);
+        await service.PublishAsync("com.example.media", "web.http", "media");
+
+        // Published onto a running app: the process is still serving the old origin.
+        var published = Assert.Single((await service.ListForAppAsync("com.example.media")).Publications);
+        Assert.Equal(CloudflarePublicationStates.RestartRequired, published.State);
+
+        // Starting the app is what clears it — that start reads the current value.
+        await service.ClearPendingRestartAsync("com.example.media");
+        Assert.Equal(
+            CloudflarePublicationStates.Active,
+            Assert.Single((await service.ListForAppAsync("com.example.media")).Publications).State);
+
+        // A stopped app is not "restart required": its next start picks the origin up.
+        await apps.UpsertAppAsync((await apps.GetAppAsync("com.example.media"))! with { RuntimeState = "stopped" });
+        Assert.Equal(
+            CloudflarePublicationStates.AppStopped,
+            Assert.Single((await service.ListForAppAsync("com.example.media")).Publications).State);
+    }
+
+    [Fact]
+    public async Task ListForAppAsync_WhenTheConnectionNeedsReconnecting_ReportsError()
+    {
+        var api = new StatefulApi();
+        var (service, _) = await CreateConnectedAsync(api, appRunning: false);
+        await service.PublishAsync("com.example.media", "web.http", "media");
+
+        api.Failure = new CloudflareApiException(401, ["Invalid API Token"]);
+        await Assert.ThrowsAsync<CloudflareConnectionException>(() => service.UnpublishAsync("com.example.media", "web.http"));
+
+        // The route and the record are still there; what is gone is Hosty's ability to manage them.
+        Assert.Equal(
+            CloudflarePublicationStates.Error,
+            Assert.Single((await service.ListForAppAsync("com.example.media")).Publications).State);
+    }
+
+    [Fact]
+    public async Task RemoveAllForAppAsync_RemovesRouteAndRecord()
+    {
+        var api = new StatefulApi();
+        var (service, _) = await CreateConnectedAsync(api, appRunning: false);
+        await service.PublishAsync("com.example.media", "web.http", "media");
+
+        var removed = await service.RemoveAllForAppAsync("com.example.media");
+
+        Assert.Equal(1, removed);
+        Assert.Empty(api.Dns);
+        Assert.DoesNotContain("media.example.test", CloudflareTunnelConfigPatcher.IngressHostnames(api.Config));
+        Assert.Empty((await service.ListForAppAsync("com.example.media")).Publications);
+    }
+
+    [Fact]
+    public async Task RemoveAllForAppAsync_WhenCloudflareFails_KeepsThePublicationForARetry()
+    {
+        // The stored entry is the only remaining pointer to what Hosty created; dropping it would turn a
+        // retryable leftover into a permanent orphan.
+        var api = new StatefulApi();
+        var (service, _) = await CreateConnectedAsync(api, appRunning: false);
+        await service.PublishAsync("com.example.media", "web.http", "media");
+        api.Failure = new CloudflareApiException(500, ["Internal error"]);
+
+        var removed = await service.RemoveAllForAppAsync("com.example.media");
+
+        Assert.Equal(0, removed);
+        Assert.Single((await service.ListForAppAsync("com.example.media")).Publications);
+    }
+
+    [Fact]
+    public async Task RemoveOrphanedAsync_RemovesOnlyEndpointsTheAppNoLongerPublishes()
+    {
+        var api = new StatefulApi();
+        var (service, _) = await CreateConnectedAsync(api, appRunning: false);
+        await service.PublishAsync("com.example.media", "web.http", "media");
+
+        // Still declared: nothing happens.
+        Assert.Equal(0, await service.RemoveOrphanedAsync("com.example.media", ["web.http"]));
+        Assert.Single((await service.ListForAppAsync("com.example.media")).Publications);
+
+        // Gone from the manifest: the hostname can never serve it again.
+        Assert.Equal(1, await service.RemoveOrphanedAsync("com.example.media", ["other.http"]));
+        Assert.Empty((await service.ListForAppAsync("com.example.media")).Publications);
+        Assert.Empty(api.Dns);
+    }
+
+    [Fact]
+    public async Task RemoveAllAsync_ReportsWhatItCouldNotRemove()
+    {
+        // Disconnect-with-Remove uses the count to decide whether to keep the connection: the token is the
+        // only way to finish the job.
+        var api = new StatefulApi();
+        var (service, _) = await CreateConnectedAsync(api, appRunning: false);
+        await service.PublishAsync("com.example.media", "web.http", "media");
+        api.Failure = new CloudflareApiException(500, ["Internal error"]);
+
+        Assert.Equal(1, await service.RemoveAllAsync());
+
+        api.Failure = null;
+        Assert.Equal(0, await service.RemoveAllAsync());
+    }
+
     private async Task<(CloudflarePublicationService, AppRegistryStore)> CreateConnectedAsync(StatefulApi api, bool appRunning)
         => await CreateAsync(api, connected: true, appRunning);
 
@@ -141,7 +245,7 @@ public sealed class CloudflarePublicationServiceTests : IDisposable
             api, credentials, integration, NullLogger<CloudflareConnectionService>.Instance);
 
         await apps.UpsertAppAsync(SeedApp("com.example.media", appRunning));
-        return (new CloudflarePublicationService(settings, integration, credentials, connection, reconciler, publications, apps), apps);
+        return (new CloudflarePublicationService(settings, integration, credentials, connection, reconciler, publications, apps, NullLogger<CloudflarePublicationService>.Instance), apps);
     }
 
     private static AppRecord SeedApp(string id, bool running)

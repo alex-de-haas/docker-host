@@ -7,9 +7,9 @@ export type CoreStatus = {
   corePublicOrigin?: string | null;
   shellPublicOrigin?: string | null;
   runtimePublicHost?: string | null;
-  // Live ingress provider: "cloudflared" when Core manages public origins, "none" when exposure is left
-  // to the operator. The anonymous status payload blanks it to "", so treat anything but "cloudflared"
-  // as "ingress off".
+  // Live ingress provider: "none", "cloudflare-remote" (published over Cloudflare's API), or "cloudflared"
+  // (a locally managed tunnel whose config Core renders). The anonymous status payload blanks it to "",
+  // which reads as ingress off. See ./ingress.ts for the predicates that branch on it.
   ingressProvider?: string | null;
   warnings?: string[];
   serverTime: string;
@@ -103,7 +103,15 @@ export type CloudflareSelectionRequired = { kind: "account" | "zone" | "tunnel";
 export type CloudflareSelectionError = { code: string; message: string; selection: CloudflareSelectionRequired };
 
 // GET /api/apps/{id}/public-origins
-export type CloudflarePublicationSummary = { endpointKey: string; label: string; hostname: string; publicOrigin?: string | null; ownershipState: string };
+export type CloudflarePublicationState = "not_configured" | "active" | "app_stopped" | "restart_required" | "error";
+export type CloudflarePublicationSummary = {
+  endpointKey: string;
+  label: string;
+  hostname: string;
+  publicOrigin?: string | null;
+  ownershipState: string;
+  state: CloudflarePublicationState;
+};
 export type CloudflareAppPublications = { publications: CloudflarePublicationSummary[] };
 // POST /api/apps/{id}/public-origins/publish | unpublish
 export type CloudflarePublicationResult = { appId: string; endpointKey: string; hostname?: string | null; publicOrigin?: string | null; restartRequired: boolean };
@@ -299,7 +307,13 @@ export type CoreRemovalImpact = {
   system: boolean;
   dependents: CoreRemovalDependent[];
   capabilities: CoreRemovalCapabilityImpact[];
+  // Hosty-published hostnames that removal takes offline.
+  publicOrigins: CoreRemovalPublicOrigin[];
 };
+
+// One published hostname the removal takes down. An "adopted" record keeps its DNS entry — Hosty manages
+// it but did not create it.
+export type CoreRemovalPublicOrigin = { endpointKey: string; hostname: string; ownershipState: string };
 
 // An installed app that declares a cross-app dependency on the one being removed. A running dependent
 // keeps its wired HOSTY_DEPENDENCY_* values until it restarts, so the loss lands at its next start.

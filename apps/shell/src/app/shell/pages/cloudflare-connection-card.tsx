@@ -42,6 +42,7 @@ export function CloudflareConnectionCard() {
   const [error, setError] = useState<string | null>(null);
   const [selection, setSelection] = useState<CloudflareSelectionRequired | null>(null);
   const [selected, setSelected] = useState<Record<string, string>>({});
+  const [confirmingDisconnect, setConfirmingDisconnect] = useState(false);
 
   const load = useCallback(async (silent = false) => {
     if (!silent) {
@@ -105,13 +106,19 @@ export function CloudflareConnectionCard() {
     void connect(next);
   };
 
-  const disconnect = async () => {
+  // Keep leaves every published route and DNS record exactly as it is; Remove deletes what Hosty
+  // published first, and Core keeps the connection if any of that fails — the token is the only way to
+  // finish the job.
+  const disconnect = async (removePublished: boolean) => {
     setBusy(true);
     setError(null);
     try {
-      await sendCsrfJson(`${coreOrigin}/api/core/cloudflare/disconnect`, {});
+      await sendCsrfJson(`${coreOrigin}/api/core/cloudflare/disconnect`, { removePublished });
+      setConfirmingDisconnect(false);
       await load(true);
-      toast.success("Cloudflare disconnected");
+      toast.success(removePublished ? "Cloudflare disconnected and published addresses removed" : "Cloudflare disconnected", {
+        description: removePublished ? undefined : "Published addresses were left in place.",
+      });
     } catch (disconnectError) {
       if (!isAuthRequiredRedirectError(disconnectError)) {
         setError(disconnectError instanceof Error ? disconnectError.message : "Disconnecting from Cloudflare failed.");
@@ -141,11 +148,31 @@ export function CloudflareConnectionCard() {
         <div className="space-y-1.5 rounded-md border p-3 text-xs">
           <div className="flex items-center justify-between">
             <span className="font-medium text-emerald-600 dark:text-emerald-400">Connected</span>
-            <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void disconnect()}>
-              {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
+            <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => setConfirmingDisconnect(true)}>
               Disconnect
             </Button>
           </div>
+          {confirmingDisconnect && (
+            <div className="space-y-1.5 rounded-md border p-2">
+              <p>
+                Hosty cannot revoke this token — delete it in the Cloudflare dashboard afterwards. What should happen
+                to the addresses Hosty published?
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void disconnect(false)}>
+                  {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
+                  Keep them
+                </Button>
+                <Button type="button" size="sm" variant="destructive" disabled={busy} onClick={() => void disconnect(true)}>
+                  {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
+                  Remove them
+                </Button>
+                <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => setConfirmingDisconnect(false)}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          )}
           <dl className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-muted-foreground">
             <div>Account: <span className="text-foreground">{status?.accountName}</span></div>
             <div>Domain: <span className="text-foreground">{status?.baseDomain}</span></div>

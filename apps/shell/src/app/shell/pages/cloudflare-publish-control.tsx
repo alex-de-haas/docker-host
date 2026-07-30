@@ -9,8 +9,18 @@ import { Input } from "@/components/ui/input";
 import { coreErrorCode, isAuthRequiredRedirectError } from "../core-api";
 import { publishesThroughCloudflareApi } from "../ingress";
 import { useShellActions, useShellState } from "../shell-context";
-import type { CloudflareAppPublications, CloudflareConnectionStatus, CloudflarePublicationResult, CloudflarePublicationSummary, CoreApp, CoreEndpoint } from "../types";
+import type { CloudflareAppPublications, CloudflareConnectionStatus, CloudflarePublicationResult, CloudflarePublicationState, CloudflarePublicationSummary, CoreApp, CoreEndpoint } from "../types";
 import { IconButton, InlineError } from "../ui";
+
+// What each publication state means for the operator. Core produces every one of these except
+// "not_configured", which is the absence of a publication and never reaches this branch.
+const PUBLICATION_STATE_TEXT: Record<CloudflarePublicationState, string> = {
+  not_configured: "",
+  active: "Live: the app is running and serving this address.",
+  app_stopped: "The app is stopped. It serves this address again when it next starts.",
+  restart_required: "The app is still serving its previous address. Restart it to apply this one.",
+  error: "Cloudflare cannot be reached with the stored token, so this cannot be verified or changed right now.",
+};
 
 // Per-endpoint Cloudflare publish control on the installed-apps page. Opening the dialog loads the
 // connection (to know the base domain) and this app's publications; the operator enters a subdomain label
@@ -158,6 +168,12 @@ export function CloudflarePublishControl({ app, endpoint }: { app: CoreApp; endp
               <div className="space-y-1 text-sm">
                 <div className="text-muted-foreground">Published at</div>
                 <div className="font-mono">{publication.publicOrigin ?? `https://${publication.hostname}`}</div>
+                <p className="text-xs text-muted-foreground">{PUBLICATION_STATE_TEXT[publication.state] ?? ""}</p>
+                {publication.ownershipState === "adopted" && (
+                  <p className="text-[11px] text-muted-foreground">
+                    Adopted: Hosty manages this DNS record but did not create it, so unpublishing leaves it in place.
+                  </p>
+                )}
               </div>
             ) : (
               <div className="space-y-1">

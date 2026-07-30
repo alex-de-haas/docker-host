@@ -1239,6 +1239,7 @@ function RemovePanel({
   const consumers = (impactState.impact?.capabilities ?? []).flatMap((capability) =>
     capability.consumers.map((consumer) => ({ slot: capability.slot, ...consumer })),
   );
+  const publicOrigins = impactState.impact?.publicOrigins ?? [];
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
@@ -1291,6 +1292,22 @@ function RemovePanel({
             </ul>
           </div>
         )}
+        {publicOrigins.length > 0 && (
+          <div className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+            <p className="font-medium">Published addresses that go offline</p>
+            <ul className="space-y-1">
+              {publicOrigins.map((origin) => (
+                <li key={`public-origin-${origin.endpointKey}`}>
+                  <span className="font-mono">https://{origin.hostname}</span>
+                  {origin.ownershipState === "adopted"
+                    ? " — the tunnel route is removed; the DNS record stays, because Hosty did not create it."
+                    : " — the tunnel route and its DNS record are removed."}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         <div className="space-y-2">
           <CheckboxRow label="Delete app data" checked={options.deleteData} disabled={!canRemove} onChange={(checked) => setOptions((current) => ({ ...current, deleteData: checked }))} />
           <CheckboxRow label="Delete backups" checked={options.deleteBackups} disabled={!canRemove} onChange={(checked) => setOptions((current) => ({ ...current, deleteBackups: checked }))} />

@@ -51,6 +51,50 @@ internal sealed class CloudflarePublicationStore(CoreDataPaths paths)
         }
     }
 
+    // Applies a mutation to one stored publication, if it is still there. Used for the bookkeeping the
+    // reconciler has no business knowing about (whether the owning app happens to be running).
+    public async Task UpdateAsync(string appId, string endpointKey, Func<CloudflarePublication, CloudflarePublication> mutate, CancellationToken cancellationToken = default)
+    {
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            var publications = await ReadAsync(cancellationToken);
+            var existing = publications.FirstOrDefault(entry => Matches(entry, appId, endpointKey));
+            if (existing is null)
+            {
+                return;
+            }
+
+            await WriteAsync(publications.Select(entry => Matches(entry, appId, endpointKey) ? mutate(entry) : entry).ToArray(), cancellationToken);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    // Same, for every publication of one app: the "this app just started" sweep.
+    public async Task UpdateForAppAsync(string appId, Func<CloudflarePublication, CloudflarePublication> mutate, CancellationToken cancellationToken = default)
+    {
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            var publications = await ReadAsync(cancellationToken);
+            if (!publications.Any(entry => string.Equals(entry.AppId, appId, StringComparison.Ordinal)))
+            {
+                return;
+            }
+
+            await WriteAsync(
+                publications.Select(entry => string.Equals(entry.AppId, appId, StringComparison.Ordinal) ? mutate(entry) : entry).ToArray(),
+                cancellationToken);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
     public async Task RemoveAsync(string appId, string endpointKey, CancellationToken cancellationToken = default)
     {
         await gate.WaitAsync(cancellationToken);
@@ -81,6 +125,11 @@ internal sealed class CloudflarePublicationStore(CoreDataPaths paths)
 // One Hosty-owned (or adopted) hostname publication. `DnsRecordId` is the exact Cloudflare record Hosty
 // manages; `ServiceUrl` is the last local target written into the tunnel route; `OwnershipState` is "owned"
 // (Hosty created it) or "adopted" (an operator-owned object Hosty was explicitly told to manage).
+//
+// `PendingRestart` records that the origin changed while the app was running, so the process is still
+// serving the old value. Core cannot observe a running app's environment, and an app record carries no
+// start time, so this is the only honest way to answer "is this live yet?": it is set when a publish or
+// unpublish lands on a running app and cleared the next time that app starts.
 internal sealed record CloudflarePublication(
     string AppId,
     string EndpointKey,
@@ -89,7 +138,8 @@ internal sealed record CloudflarePublication(
     string? DnsRecordId,
     string? ServiceUrl,
     string OwnershipState,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    bool PendingRestart = false);
 
 internal static class CloudflareOwnershipStates
 {

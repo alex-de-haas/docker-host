@@ -149,9 +149,10 @@ Unchanged in substance from the 2026-07-28 audit, re-stated as behavior:
 - Disconnect offers Keep or Remove, defaults to Keep, and never deletes dashboard-owned objects. Today
   it deletes the token and integration state and abandons every published resource, behind a code
   comment still claiming no Hosty-owned resources exist.
-- A per-endpoint publication reports `Not configured`, `Syncing`, `Active`, `App stopped`,
-  `Restart required`, or `Error`. Today Core exposes an ownership state plus a `restartRequired` bool,
-  and Shell renders only "not configured" and "Published at".
+- A per-endpoint publication reports `Not configured`, `Active`, `App stopped`, `Restart required`, or
+  `Error`. Today Core exposes an ownership state plus a `restartRequired` bool, and Shell renders only
+  "not configured" and "Published at". `Syncing` is deliberately not among them: publishing is
+  synchronous, so nothing could ever produce it.
 - The connector-locality verdict is consulted before a mutation, not only at connect.
 - Core's own hostname can be published through the same workflow, persisting the launch setting and
   applying it with the existing keep-apps restart.
@@ -177,10 +178,10 @@ Unchanged in substance from the 2026-07-28 audit, re-stated as behavior:
       searching the token editor for "Cloudflare Tunnel" finds nothing.
 - [x] Explicit adoption of an existing DNS record or tunnel route, assigning the `adopted` state.
 - [x] Assign `reconnect_required` on token revocation, expiry, or permission loss.
-- [ ] Lifecycle cleanup on endpoint removal, app update apply, and uninstall, with uninstall review
+- [x] Lifecycle cleanup on endpoint removal, app update apply, and uninstall, with uninstall review
       listing Hosty-owned publications.
-- [ ] Disconnect Keep/Remove choices, halting and staying retryable on a failed deletion.
-- [ ] Per-endpoint publication state machine in Core DTOs, rendered by Shell.
+- [x] Disconnect Keep/Remove choices, halting and staying retryable on a failed deletion.
+- [x] Per-endpoint publication state machine in Core DTOs, rendered by Shell.
 - [ ] Consult connector locality before mutation; classify external-probe failures against it.
 - [ ] Publication health/diagnostics endpoint and deduplicated host-admin warnings for public endpoints
       with no configured origin.
@@ -221,9 +222,9 @@ Unchanged in substance from the 2026-07-28 audit, re-stated as behavior:
 
 ### Phase 4 — Lifecycle and cleanup
 
-- [ ] Endpoint removal, update, and uninstall cleanup.
-- [ ] Disconnect Keep/Remove.
-- [ ] Publication state machine and Shell rendering.
+- [x] Endpoint removal, update, and uninstall cleanup.
+- [x] Disconnect Keep/Remove.
+- [x] Publication state machine and Shell rendering.
 
 ### Phase 5 — Diagnostics and platform origins
 
