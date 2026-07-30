@@ -53,7 +53,7 @@ export function ShellSidebar({
   onUpdateCore,
   activeUser,
   canManageApps,
-  runtimeApps,
+  uiApps,
   busyAction,
   onCompactChange,
   onNavigate,
@@ -73,10 +73,11 @@ export function ShellSidebar({
   onUpdateCore?: () => void;
   activeUser: SessionResponse["user"] | null;
   canManageApps: boolean;
-  // Every UI-capable app this session may see, ordinary and system alike. There is no System group:
-  // Core already filters the list per user and refuses a launch code for a system app to anyone but
-  // an administrator, so a second split here would be a copy of an authorization decision.
-  runtimeApps: CoreApp[];
+  // Every UI-capable app this session may see, ordinary and system alike, minus the Shell itself.
+  // Named for what it holds rather than for "runtime apps", which it stopped meaning when the System
+  // group went away: Core already filters the list per user and refuses a launch code for a system
+  // app to anyone but an administrator, so a second split here would copy an authorization decision.
+  uiApps: CoreApp[];
   busyAction: string | null;
   onCompactChange: (compact: boolean) => void;
   onNavigate: (view: ShellView) => void;
@@ -144,10 +145,10 @@ export function ShellSidebar({
                 onClick={onOpenApps}
               />
             )}
-            {runtimeApps.length === 0 ? (
+            {uiApps.length === 0 ? (
               <NavigationPlaceholder compact={compact} icon={LayoutGrid} label="No apps registered" />
             ) : (
-              runtimeApps.map((app) => (
+              uiApps.map((app) => (
                 <AppNavigationItem
                   key={app.id}
                   app={app}

@@ -16,9 +16,20 @@ test("the three destinations resolve from their own paths", () => {
   assert.equal(readShellRoute("/dashboard", params()).view, "dashboard");
   assert.equal(readShellRoute("/settings", params()).view, "settings");
   assert.equal(readShellRoute("/apps", params()).view, "available-apps");
-  // An unrecognized path falls through to Dashboard rather than blanking the screen.
-  assert.equal(readShellRoute("/nothing-here", params()).view, "dashboard");
   assert.equal(readShellRoute("/", params()).view, "dashboard");
+});
+
+test("the parser is total — every path yields a route state", () => {
+  // Not a user-visible fallback: the app has no catch-all segment and no not-found.tsx, so Next.js
+  // answers its own 404 for an unrouted path and ShellClient never renders. What this pins is that
+  // the parser cannot throw or return undefined for input it does not recognize — it is called on
+  // every render with whatever `usePathname()` reports.
+  for (const path of ["/nothing-here", "/settings/extra", "//", "/%"]) {
+    const route = readShellRoute(path, params());
+    assert.equal(route.view, "dashboard", `readShellRoute(${path})`);
+    assert.equal(route.workspace, null);
+    assert.equal(route.settingsTab, "users");
+  }
 });
 
 test("only Dashboard and Settings are administrator-only", () => {

@@ -40,7 +40,12 @@ itself canonical, which is what makes the replacement terminate.
 A settings tab travels in the query string for the same reason workspace state does: a top-level
 surface has to survive a refresh and a copied link. A missing or unrecognized `tab` resolves to
 `users` rather than erroring — every link Shell builds names its tab explicitly, so nothing depends on
-that default. An unrecognized path falls through to Dashboard.
+that default.
+
+A path the app does not route — no catch-all segment and no `not-found.tsx` — is answered by Next.js
+with its own 404; the Shell client never renders it. The route parser still resolves such a path to
+Dashboard, because it runs on every render against whatever `usePathname()` reports and must be
+total, but that resolution is never a screen anyone sees.
 
 `/workspace` URLs carry only the app id and app path. On load Shell asks Core for a fresh launch code
 before loading the iframe; codes are single-use, so a refresh re-mints rather than replaying.

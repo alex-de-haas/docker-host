@@ -498,7 +498,11 @@ function CoreSection({
           <div className="grid gap-x-8 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
             {status?.dataRoot && <Fact label="Data root" value={status.dataRoot} />}
             {status?.runtimePublicHost && <Fact label="Runtime host" value={status.runtimePublicHost} />}
-            <Fact label="Ingress" value={status?.ingressProvider === "cloudflared" ? "Cloudflare tunnel" : "None"} />
+            {/* Only with a status in hand: without one "None" would report a configuration that was
+                never read, and an unreachable Core is exactly when that reads as fact. */}
+            {status && (
+              <Fact label="Ingress" value={status.ingressProvider === "cloudflared" ? "Cloudflare tunnel" : "None"} />
+            )}
           </div>
         </div>
       )}

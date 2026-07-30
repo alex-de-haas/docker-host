@@ -1852,7 +1852,7 @@ export function ShellClient({
             onUpdateCore={canManageApps ? updateCore : undefined}
             activeUser={activeUser}
             canManageApps={Boolean(canManageApps)}
-            runtimeApps={uiApps}
+            uiApps={uiApps}
             busyAction={busyAction}
             onCompactChange={setCompact}
             onNavigate={(view) => {
