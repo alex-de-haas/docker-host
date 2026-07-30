@@ -74,7 +74,7 @@ internal static class ControlIdentityEndpoints
                             AppId: appId,
                             UserId: user.Id,
                             Mode: "shell",
-                            Url: $"{shellOrigin.TrimEnd('/')}/apps/{Uri.EscapeDataString(appId)}",
+                            Url: BuildShellWorkspaceUrl(shellOrigin, appId),
                             ExpiresAt: null));
                     }
 
@@ -94,6 +94,13 @@ internal static class ControlIdentityEndpoints
                         ExpiresAt: authorization.ExpiresAt));
                 })));
     }
+
+    // The Shell route that opens an app's workspace. This used to build `{shellOrigin}/apps/{appId}`,
+    // which the Shell has never served: `/apps` is its app overview, with no per-app segment beneath
+    // it, so `hosty apps open --mode shell` handed the operator a link that 404s. `/workspace` is the
+    // one route that takes an app id, and it carries the app path the workspace opens on.
+    internal static string BuildShellWorkspaceUrl(string shellOrigin, string appId)
+        => $"{shellOrigin.TrimEnd('/')}/workspace?app={Uri.EscapeDataString(appId)}&path=%2F";
 
     private static bool IsUserAssignedToApp(UserDirectoryState state, HostUserRecord user, string appId)
         => string.Equals(user.Role, "host.admin", StringComparison.Ordinal) ||

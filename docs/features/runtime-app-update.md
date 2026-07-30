@@ -106,7 +106,7 @@ Applying closes the dialog immediately. A rejected enqueue (stale, expired, cons
 
 ## System Apps
 
-System apps (Shell, Telemetry, Marketplace) update through this same reviewed flow, gated on `host.admin` alone. Lifecycle operations are inherent to Core managing an app and are authorized on the endpoint, never by the manifest `capabilities` list — an app cannot opt out of being updated by omitting a token (see [Core App Shell](core-app-shell.md)).
+System apps (Shell, Telemetry, Marketplace) update through this same reviewed flow, gated on `host.admin` alone. Lifecycle operations are inherent to Core managing an app and are authorized on the endpoint, never by the manifest `capabilities` list — an app cannot opt out of being updated by omitting a token (see [Core App Shell](core-app-shell/feature.md)).
 
 Core startup never applies updates: the boot reconcile installs missing distribution apps, re-applies Hosty-owned provisioning, and migrates a moved http(s) distribution manifest reference (pointer only — no content change, no restart). A Shell self-update briefly restarts the Shell serving the page; the apply now survives the tab, so the UI warns, keeps the tab alive through the swap, and reloads once the new Shell answers. See [On-Demand System App Updates](../ideas/system-app-updates.md) for the design and its deferred hardening (readiness gate, automatic rollback).
 

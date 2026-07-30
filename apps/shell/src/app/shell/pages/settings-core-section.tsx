@@ -3,52 +3,35 @@
 import { useEffect, useMemo, useState } from "react";
 import { LoaderCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { CloudflareConnectionCard } from "../dialogs/cloudflare-connection-card";
 import { SettingInput } from "../settings";
 import type { CoreSettingItem, CoreSettingsState } from "../types";
 import { InlineError } from "../ui";
-import { CloudflareConnectionCard } from "./cloudflare-connection-card";
 
-// The platform panel opened from the sidebar version block: Core's own settings and the ingress
-// connection. It used to carry an Extensions section toggling which first-party apps Core preinstalls;
-// that concept is gone — first-party apps are installed and uninstalled like any other app, from
-// Installed Apps or `hosty setup`. See docs/features/removable-system-apps/.
-// Admin-only: the sidebar only makes the version block clickable for host admins.
-export function PlatformDialog({
-  open,
-  coreVersion,
-  shellVersion,
+// Core's own configuration, and the only surface that edits it. It used to be a dialog opened from
+// the sidebar version block — a place nothing looked like navigation. It used to carry an Extensions
+// section toggling which first-party apps Core preinstalls; that concept is gone — first-party apps
+// are installed and uninstalled like any other app. See docs/features/removable-system-apps/.
+//
+// Read-only facts about Core — version, origins, data root, and a waiting update — live on Dashboard
+// instead: this page is for what an operator changes, not for what the host reports.
+export function SettingsCoreSection({
   settings,
   settingsError,
   onSaveSettings,
-  onClose,
 }: {
-  open: boolean;
-  coreVersion: string | null;
-  shellVersion: string;
   settings: CoreSettingsState | null;
   settingsError: string | null;
   onSaveSettings: (values: Record<string, string>) => Promise<void>;
-  onClose: () => void;
 }) {
-  const versionLine = [coreVersion ? `Core/CLI v${coreVersion}` : "Core/CLI version unknown", `Shell v${shellVersion}`].join(" · ");
-
   return (
-    <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
-      <DialogContent className="sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>Platform</DialogTitle>
-          <DialogDescription>{versionLine}</DialogDescription>
-        </DialogHeader>
-        <DialogBody className="space-y-4">
-          <CoreSettingsSection settings={settings} error={settingsError} onSave={onSaveSettings} />
+    <div className="space-y-4">
+      <CoreSettingsForm settings={settings} error={settingsError} onSave={onSaveSettings} />
 
-          <div className="border-t" />
+      <div className="border-t" />
 
-          <CloudflareConnectionCard />
-        </DialogBody>
-      </DialogContent>
-    </Dialog>
+      <CloudflareConnectionCard />
+    </div>
   );
 }
 
@@ -56,7 +39,7 @@ export function PlatformDialog({
 // per-app settings inputs and grouped by the `group` Core returns. Live-apply: saving PUTs the changed
 // keys and Core returns the fresh snapshot (no restart affordance) — an ingress change also re-renders
 // the tunnel config server-side. Per-field copy explains what applies immediately.
-function CoreSettingsSection({
+function CoreSettingsForm({
   settings,
   error,
   onSave,

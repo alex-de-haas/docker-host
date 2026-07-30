@@ -4,7 +4,7 @@ import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
 import { ShellClient } from "./shell-client";
-import { getCoreOrigin, getShellAppId, getShellVersion } from "./shell/server-env";
+import { getCoreOrigin, getShellAppId } from "./shell/server-env";
 
 export const metadata: Metadata = {
   title: "Hosty Shell",
@@ -30,7 +30,7 @@ export default function RootLayout({
       <body>
         <ThemeProvider>
           <Suspense fallback={<div className="min-h-dvh bg-muted/30" />}>
-            <ShellClient coreOrigin={getCoreOrigin()} shellAppId={getShellAppId()} shellVersion={getShellVersion()}>
+            <ShellClient coreOrigin={getCoreOrigin()} shellAppId={getShellAppId()}>
               {children}
             </ShellClient>
           </Suspense>

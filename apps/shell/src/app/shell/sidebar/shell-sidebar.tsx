@@ -18,8 +18,8 @@ import {
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
+  SlidersHorizontal,
   Sun,
-  Users,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useTheme } from "next-themes";
@@ -53,14 +53,14 @@ export function ShellSidebar({
   onUpdateCore,
   activeUser,
   canManageApps,
-  runtimeApps,
-  systemApps,
+  uiApps,
   busyAction,
   onCompactChange,
   onNavigate,
+  onOpenApps,
   onLaunchApp,
   getStandaloneHref,
-  onOpenPlatform,
+  onOpenCoreSettings,
 }: {
   compact: boolean;
   activeView: ShellView;
@@ -73,18 +73,20 @@ export function ShellSidebar({
   onUpdateCore?: () => void;
   activeUser: SessionResponse["user"] | null;
   canManageApps: boolean;
-  runtimeApps: CoreApp[];
-  // UI-capable system apps for the admin-only System group; empty for non-admins and when no
-  // installed system app declares UI, in which case the group is hidden entirely.
-  systemApps: CoreApp[];
+  // Every UI-capable app this session may see, ordinary and system alike, minus the Shell itself.
+  // Named for what it holds rather than for "runtime apps", which it stopped meaning when the System
+  // group went away: Core already filters the list per user and refuses a launch code for a system
+  // app to anyone but an administrator, so a second split here would copy an authorization decision.
+  uiApps: CoreApp[];
   busyAction: string | null;
   onCompactChange: (compact: boolean) => void;
   onNavigate: (view: ShellView) => void;
+  onOpenApps: () => void;
   onLaunchApp: (app: CoreApp, page: AppPageLink, target?: AppOpenTarget) => Promise<void>;
   getStandaloneHref: (app: CoreApp, page: AppPageLink) => string;
-  // Opens the platform panel (Extensions, docs/ideas/generic-bootstrap.md Phase 3). Undefined for
-  // non-admins, which leaves the version block as plain text.
-  onOpenPlatform?: () => void;
+  // Navigates to the Core settings tab. Undefined for non-admins, which leaves the version block as
+  // plain text.
+  onOpenCoreSettings?: () => void;
 }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -118,33 +120,35 @@ export function ShellSidebar({
           {canManageApps && (
             <NavigationSection title="Host" compact={compact}>
               <SidebarButton compact={compact} active={activeView === "dashboard" && !workspace} icon={Gauge} label="Dashboard" onClick={() => onNavigate("dashboard")} />
-              <SidebarButton compact={compact} active={activeView === "installed-apps" && !workspace} icon={Boxes} label="Installed Apps" onClick={() => onNavigate("installed-apps")} />
-              <SidebarButton compact={compact} active={activeView === "users"} icon={Users} label="User Management" onClick={() => onNavigate("users")} />
+              <SidebarButton compact={compact} active={activeView === "settings"} icon={SlidersHorizontal} label="Settings" onClick={() => onNavigate("settings")} />
             </NavigationSection>
           )}
 
-          {canManageApps && systemApps.length > 0 && (
-            <NavigationSection title="System" compact={compact}>
-              {systemApps.map((app) => (
-                <AppNavigationItem
-                  key={app.id}
-                  app={app}
-                  coreOrigin={coreOrigin}
-                  compact={compact}
-                  busyAction={busyAction}
-                  workspace={workspace}
-                  onLaunch={onLaunchApp}
-                  getStandaloneHref={getStandaloneHref}
-                />
-              ))}
-            </NavigationSection>
-          )}
-
-          <NavigationSection title="Apps" compact={compact}>
-            {runtimeApps.length === 0 ? (
+          {/* The heading is the overview and the rows are the shortcuts — the same pair the native
+              client's Apps tab makes. Collapsed, headings are not rendered at all, so the rail gets
+              its own control rather than losing the route. */}
+          <NavigationSection
+            title="Apps"
+            compact={compact}
+            onTitleClick={onOpenApps}
+            titleActive={activeView === "available-apps" && !workspace}
+          >
+            {/* Boxes, not the LayoutGrid the app rows fall back to: collapsed, the overview control
+                sits directly above those rows, and an icon-less app would be indistinguishable from
+                the heading that leads to the page listing it. */}
+            {compact && (
+              <SidebarButton
+                compact
+                active={activeView === "available-apps" && !workspace}
+                icon={Boxes}
+                label="All apps"
+                onClick={onOpenApps}
+              />
+            )}
+            {uiApps.length === 0 ? (
               <NavigationPlaceholder compact={compact} icon={LayoutGrid} label="No apps registered" />
             ) : (
-              runtimeApps.map((app) => (
+              uiApps.map((app) => (
                 <AppNavigationItem
                   key={app.id}
                   app={app}
@@ -170,7 +174,7 @@ export function ShellSidebar({
           coreUpdateAvailable={coreUpdateAvailable}
           coreUpdating={coreUpdating}
           onUpdateCore={onUpdateCore}
-          onOpenPlatform={onOpenPlatform}
+          onOpenCoreSettings={onOpenCoreSettings}
         />
       </div>
     </div>
@@ -184,7 +188,7 @@ function SidebarVersionInfo({
   coreUpdateAvailable,
   coreUpdating,
   onUpdateCore,
-  onOpenPlatform,
+  onOpenCoreSettings,
 }: {
   compact: boolean;
   coreOnline: boolean;
@@ -192,7 +196,7 @@ function SidebarVersionInfo({
   coreUpdateAvailable: boolean;
   coreUpdating: boolean;
   onUpdateCore?: () => void;
-  onOpenPlatform?: () => void;
+  onOpenCoreSettings?: () => void;
 }) {
   // A reachable Core that predates the version field reports no version, so only call it
   // "offline" when Core is genuinely unreachable; otherwise the version is just unknown.
@@ -212,9 +216,10 @@ function SidebarVersionInfo({
     </div>
   );
 
-  // Admins get the platform panel behind the version block (generic-bootstrap Phase 3); everyone
-  // else keeps the plain read-only text.
-  const versionBlock = !onOpenPlatform ? (
+  // For an admin the version block is a link into the Core settings tab; everyone else keeps the
+  // plain read-only text. It used to open a dialog, which made configuration reachable only from
+  // something that did not look like navigation.
+  const versionBlock = !onOpenCoreSettings ? (
     <div className={cn("text-muted-foreground", compact ? "" : "px-2")} title={platformLabel}>
       {body}
     </div>
@@ -225,9 +230,9 @@ function SidebarVersionInfo({
         "block w-full rounded-md text-left text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-ring/50 focus-visible:ring-[3px]",
         compact ? "px-0 py-1 text-center" : "px-2 py-1",
       )}
-      onClick={onOpenPlatform}
-      title={`${platformLabel} — open platform settings`}
-      aria-label="Open platform settings"
+      onClick={onOpenCoreSettings}
+      title={`${platformLabel} — open Core settings`}
+      aria-label="Open Core settings"
     >
       {body}
     </button>
@@ -298,10 +303,40 @@ function BrandMark() {
   );
 }
 
-function NavigationSection({ title, compact, children }: { title: string; compact: boolean; children: ReactNode }) {
+function NavigationSection({
+  title,
+  compact,
+  onTitleClick,
+  titleActive,
+  children,
+}: {
+  title: string;
+  compact: boolean;
+  onTitleClick?: () => void;
+  titleActive?: boolean;
+  children: ReactNode;
+}) {
+  const headingClass = cn("px-2 text-xs font-medium uppercase text-muted-foreground", compact && "sr-only");
+
   return (
     <div className="space-y-2">
-      <h2 className={cn("px-2 text-xs font-medium uppercase text-muted-foreground", compact && "sr-only")}>{title}</h2>
+      {onTitleClick ? (
+        <h2 className={compact ? "sr-only" : undefined}>
+          <button
+            type="button"
+            onClick={onTitleClick}
+            className={cn(
+              headingClass,
+              "w-full rounded-md py-0.5 text-left transition-colors hover:text-foreground focus-visible:ring-ring/50 focus-visible:ring-[3px]",
+              titleActive && "text-foreground",
+            )}
+          >
+            {title}
+          </button>
+        </h2>
+      ) : (
+        <h2 className={headingClass}>{title}</h2>
+      )}
       <div className="space-y-1">{children}</div>
     </div>
   );

@@ -6,6 +6,10 @@ import type {
   AppOpenTarget,
   AppPageLink,
   CoreApp,
+  CoreGlobalMount,
+  CoreSettingsState,
+  CoreUpdateStatus,
+  HostSettingsTab,
   LoadState,
   OpenAppPanel,
   SessionResponse,
@@ -13,17 +17,24 @@ import type {
 
 export type ShellContextValue = {
   state: LoadState;
-  // Non-system apps only (the dashboard's counters); the Installed Apps page renders state.apps —
-  // runtime and system apps as one list.
-  runtimeApps: CoreApp[];
-  uiRuntimeApps: CoreApp[];
+  // Every app with a UI, ordinary and system alike, minus the Shell itself. Dashboard renders
+  // state.apps instead — the full roster it manages.
+  uiApps: CoreApp[];
   activeUser: SessionResponse["user"] | null;
   canManageApps: boolean;
   busyAction: string | null;
   // Per-app counter bumped whenever a mutation resets an app's artifact locks (apply update, switch
-  // runtime), which makes any cached "update available" verdict stale. The Installed Apps page watches
-  // it to re-probe the affected app so the row Update icon does not linger after the update lands.
+  // runtime), which makes any cached "update available" verdict stale. Dashboard watches it to
+  // re-probe the affected app so the row Update icon does not linger after the update lands.
   updateStatusInvalidations: Record<string, number>;
+  // Host settings: which tab the URL selected, plus the data the Core and Shared mounts tabs render.
+  settingsTab: HostSettingsTab;
+  coreSettings: CoreSettingsState | null;
+  coreSettingsError: string | null;
+  globalMounts: CoreGlobalMount[];
+  // Core's own version verdict, rendered by Dashboard's Core section beside the update action.
+  coreUpdate: CoreUpdateStatus | null;
+  coreUpdating: boolean;
 };
 
 export type ShellActionsContextValue = {
@@ -46,8 +57,16 @@ export type ShellActionsContextValue = {
   configureAppDevelopmentMode: (app: CoreApp, runtime: string, enabled: boolean) => Promise<void>;
   createManualBackup: (app: CoreApp) => Promise<void>;
   openAppPanel: OpenAppPanel;
-  openInstalledApps: () => void;
-  openSharedMounts: () => void;
+  // Host settings mutations, and the Core self-update Dashboard offers beside the version.
+  saveCoreSettings: (values: Record<string, string>) => Promise<void>;
+  saveGlobalMount: (input: {
+    name: string;
+    hostPath: string;
+    mode?: string;
+    description?: string | null;
+  }) => Promise<void>;
+  deleteGlobalMount: (name: string, force?: boolean) => Promise<void>;
+  updateCore: () => Promise<void>;
 };
 
 export const ShellStateContext = createContext<ShellContextValue | null>(null);

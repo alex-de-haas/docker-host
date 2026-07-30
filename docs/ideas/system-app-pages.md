@@ -174,8 +174,8 @@ System pages and system lifecycle actions are independent:
 
 ## Conflicts With Existing Features
 
-- [Core App Shell](../features/core-app-shell.md) says only non-system apps appear in app navigation. The new model preserves that Apps rule but adds a separate System group.
-- [Shell Access And System Apps](../features/shell-access-and-system-apps.md) treats system apps as inventory-only. Pages revise visibility, not lifecycle restrictions.
+- [Core App Shell](../features/core-app-shell/feature.md) says only non-system apps appear in app navigation. The new model preserves that Apps rule but adds a separate System group.
+- [Shell Access And System Apps](../features/shell-access-and-system-apps/feature.md) treats system apps as inventory-only. Pages revise visibility, not lifecycle restrictions.
 - [Core Extension Model](core-extension-model.md) describes generic UI contribution points. Ordinary system-app pages should reuse `ui`, while native Shell contribution slots remain a separate future problem.
 - [Marketplace As A System App](marketplace-system-app.md) depends on this model to remove the hardcoded Shell marketplace route.
 
@@ -212,8 +212,8 @@ Close the Core authorization gap before exposing the first system app page. Mark
 
 - [Core Extension Model](core-extension-model.md) - system apps as the extension delivery mechanism.
 - [Marketplace As A System App](marketplace-system-app.md) - first concrete UI-capable system app.
-- [Core App Shell](../features/core-app-shell.md) - current runtime app navigation and iframe behavior.
-- [Shell Access And System Apps](../features/shell-access-and-system-apps.md) - current administrator/system visibility policy.
+- [Core App Shell](../features/core-app-shell/feature.md) - current runtime app navigation and iframe behavior.
+- [Shell Access And System Apps](../features/shell-access-and-system-apps/feature.md) - current administrator/system visibility policy.
 - [Direct Origin Runtime App UI](../features/direct-origin-runtime-app-ui.md) - app-origin SSO and session flow.
 
 ## Notes
