@@ -80,6 +80,7 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<CloudflarePublicationReconciler>();
         builder.Services.AddSingleton<CloudflarePublicationService>();
         builder.Services.AddSingleton<CloudflareConnectionService>();
+        builder.Services.AddSingleton<CloudflareDiagnosticsService>();
         // Decides which HOSTY_PUBLIC_ORIGIN_* values the active ingress provider owns; the `configure`
         // guard reads it, so it must be registered for that guard to exist at all.
         builder.Services.AddSingleton<PublicOriginOwnership>();

@@ -16,7 +16,11 @@ internal sealed class CloudflarePublicationService(
     CloudflarePublicationReconciler reconciler,
     CloudflarePublicationStore publications,
     AppRegistryStore apps,
-    ILogger<CloudflarePublicationService> logger)
+    ICloudflareApiClient client,
+    ILogger<CloudflarePublicationService> logger,
+    // Publication outcomes reach the host administrator's notification feed. Optional only for unit
+    // fixtures; production DI always supplies it, and a notification failure never fails a publish.
+    NotificationService? notifications = null)
 {
     public async Task<CloudflarePublicationResult> PublishAsync(string appId, string endpointKey, string label, bool adopt = false, CancellationToken cancellationToken = default)
     {
@@ -33,16 +37,45 @@ internal sealed class CloudflarePublicationService(
                 $"Endpoint '{endpointKey}' has no local URL yet; it must have a reserved port before it can be published.");
         }
 
-        var publication = await WithReconnectDetectionAsync(
-            () => reconciler.PublishAsync(token, target, appId, endpointKey, label, endpoint.Url, adopt, cancellationToken),
-            cancellationToken);
+        // Locality is re-checked here rather than only at connect: a connector can be moved to another
+        // machine long after the token was pasted, and a hostname routed to a connector that is not on this
+        // host reaches the wrong machine. Advisory — it is reported, never a refusal, because the check
+        // compares observed egress addresses and can legitimately be inconclusive.
+        var locality = await RefreshLocalityAsync(token, target, cancellationToken);
+
+        CloudflarePublication publication;
+        try
+        {
+            publication = await WithReconnectDetectionAsync(
+                () => reconciler.PublishAsync(token, target, appId, endpointKey, label, endpoint.Url, adopt, cancellationToken),
+                cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            await NotifyAsync(
+                "error",
+                $"Publishing '{app.DisplayName}' failed",
+                exception.Message,
+                $"cloudflare-publish-failed:{appId}:{endpointKey}",
+                cancellationToken);
+            throw;
+        }
+
         var publicOrigin = $"https://{publication.Hostname}";
         var updated = await apps.UpdateAppAsync(appId, record => WithPublicOrigin(record, endpointKey, publicOrigin), cancellationToken);
         // A running app is still serving the previous origin until it restarts. Recorded on the publication
         // rather than only returned, so the state survives the toast that reported it.
         var restartRequired = IsRunning(updated.App);
         await publications.UpdateAsync(appId, endpointKey, entry => entry with { PendingRestart = restartRequired }, cancellationToken);
-        return new CloudflarePublicationResult(appId, endpointKey, publication.Hostname, publicOrigin, restartRequired);
+        await NotifyAsync(
+            "success",
+            $"'{app.DisplayName}' published at {publication.Hostname}",
+            restartRequired
+                ? $"Restart '{app.DisplayName}' to serve the new address."
+                : $"The address is live the next time '{app.DisplayName}' starts.",
+            $"cloudflare-published:{appId}:{endpointKey}",
+            cancellationToken);
+        return new CloudflarePublicationResult(appId, endpointKey, publication.Hostname, publicOrigin, restartRequired, locality);
     }
 
     public async Task<CloudflarePublicationResult> UnpublishAsync(string appId, string endpointKey, CancellationToken cancellationToken = default)
@@ -66,11 +99,11 @@ internal sealed class CloudflarePublicationService(
         var app = await apps.GetAppAsync(appId, cancellationToken);
         if (app is null)
         {
-            return new CloudflarePublicationResult(appId, endpointKey, null, null, false);
+            return new CloudflarePublicationResult(appId, endpointKey, null, null, false, null);
         }
 
         var updated = await apps.UpdateAppAsync(appId, record => WithoutPublicOrigin(record, endpointKey), cancellationToken);
-        return new CloudflarePublicationResult(appId, endpointKey, null, null, IsRunning(updated.App));
+        return new CloudflarePublicationResult(appId, endpointKey, null, null, IsRunning(updated.App), null);
     }
 
     public async Task<CloudflareAppPublications> ListForAppAsync(string appId, CancellationToken cancellationToken = default)
@@ -177,6 +210,58 @@ internal sealed class CloudflarePublicationService(
         return removed;
     }
 
+    // Re-observes where the connector runs and persists the verdict, so the connection card and the next
+    // publish agree. Best-effort in both directions: a failed probe degrades to "unknown" rather than
+    // blocking, exactly as it does at connect.
+    private async Task<string> RefreshLocalityAsync(string token, CloudflareIngressTarget target, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var connections = await client.GetTunnelConnectionsAsync(token, target.AccountId, target.TunnelId, cancellationToken);
+            var connectorIps = connections.Select(connection => connection.OriginIp).OfType<string>().ToArray();
+            var egress = await client.GetEgressIpAsync(cancellationToken);
+            var locality = ConnectorLocality.Evaluate(connectorIps, egress is null ? [] : [egress]);
+
+            var state = await integration.LoadAsync(cancellationToken);
+            if (state is not null && !string.Equals(state.Locality, locality, StringComparison.Ordinal))
+            {
+                await integration.SaveAsync(state with { Locality = locality }, cancellationToken);
+            }
+
+            if (locality == ConnectorLocality.NotLocal)
+            {
+                logger.LogWarning(
+                    "The Cloudflare connector does not appear to run on this host; a hostname published now would reach a different machine.");
+            }
+
+            return locality;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            logger.LogDebug(exception, "Connector locality could not be re-checked before the mutation; treating it as unknown.");
+            return ConnectorLocality.Unknown;
+        }
+    }
+
+    private async Task NotifyAsync(string level, string title, string body, string dedupeKey, CancellationToken cancellationToken)
+    {
+        if (notifications is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await notifications.PublishAsync(
+                new CoreScope(), NotificationService.BroadcastTarget, NotificationService.AudienceHostAdmin,
+                level, title, body, link: null, dedupeKey, cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            logger.LogWarning(exception, "Failed to publish the Cloudflare publication notification '{Title}'.", title);
+        }
+    }
+
     // Cloudflare tells nobody that a token was revoked, expired, or had a permission removed — it is found
     // out here, on the next call that uses it. Recording it turns a repeated opaque failure into a state
     // Shell can prompt on, and it deliberately deletes nothing: routes, DNS, and the stored publications
@@ -272,7 +357,16 @@ internal sealed record CloudflareUnpublishRequest(string EndpointKey);
 
 // `RestartRequired` is true when the owning app is running: the public origin is an environment value that
 // takes effect on the app's next start, so a running app must be restarted to pick it up.
-internal sealed record CloudflarePublicationResult(string AppId, string EndpointKey, string? Hostname, string? PublicOrigin, bool RestartRequired);
+// `Locality` is the connector-locality verdict observed just before the mutation ("local", "not_local",
+// "unknown"), or null when the operation performs no mutation. A "not_local" publish succeeded but points
+// at a connector that is not on this host, which the client warns about.
+internal sealed record CloudflarePublicationResult(
+    string AppId,
+    string EndpointKey,
+    string? Hostname,
+    string? PublicOrigin,
+    bool RestartRequired,
+    string? Locality);
 
 // `State` is what an operator asks about a published endpoint; see ResolveState for what each value means
 // and which ones Core can honestly produce.

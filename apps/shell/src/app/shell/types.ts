@@ -114,7 +114,27 @@ export type CloudflarePublicationSummary = {
 };
 export type CloudflareAppPublications = { publications: CloudflarePublicationSummary[] };
 // POST /api/apps/{id}/public-origins/publish | unpublish
-export type CloudflarePublicationResult = { appId: string; endpointKey: string; hostname?: string | null; publicOrigin?: string | null; restartRequired: boolean };
+export type CloudflarePublicationResult = {
+  appId: string;
+  endpointKey: string;
+  hostname?: string | null;
+  publicOrigin?: string | null;
+  restartRequired: boolean;
+  // Where the connector was observed to run, checked just before the mutation. "not_local" means the
+  // publish succeeded but the address reaches a different machine. Null when nothing was mutated.
+  locality?: string | null;
+};
+
+// GET /api/core/cloudflare/diagnostics — a read-only comparison of what Hosty believes it published
+// against what Cloudflare serves, plus the public endpoints that have no address at all.
+export type CloudflareDiagnosticState = "ok" | "app_missing" | "route_missing" | "dns_missing" | "dns_foreign" | "unknown";
+export type CloudflarePublicationDiagnostic = { appId: string; endpointKey: string; hostname: string; state: CloudflareDiagnosticState };
+export type CloudflareUnpublishedEndpoint = { appId: string; displayName: string; endpointKey: string };
+export type CloudflareDiagnostics = {
+  checked: boolean;
+  publications: CloudflarePublicationDiagnostic[];
+  unpublishedEndpoints: CloudflareUnpublishedEndpoint[];
+};
 
 // POST /api/apps/{id}/ports/reassign/plan — preview of reassigning one automatic host port.
 export type CoreReassignDependent = { appId: string; running: boolean };

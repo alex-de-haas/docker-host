@@ -28,7 +28,7 @@ const PUBLICATION_STATE_TEXT: Record<CloudflarePublicationState, string> = {
 // existing one. Self-contained via context; host-admin only, and only for `public: true` endpoints.
 export function CloudflarePublishControl({ app, endpoint }: { app: CoreApp; endpoint: CoreEndpoint }) {
   const { canManageApps, state } = useShellState();
-  const { coreOrigin, sendCsrfJson, refresh } = useShellActions();
+  const { coreOrigin, sendCsrfJson, refresh, runAppAction } = useShellActions();
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -94,8 +94,20 @@ export function CloudflarePublishControl({ app, endpoint }: { app: CoreApp; endp
       setConflict(false);
       await refresh();
       toast.success(`Published ${result.publicOrigin}`, {
-        description: result.restartRequired ? `Restart ${app.displayName} to apply the new origin.` : undefined,
+        // A running app keeps serving the old address until it restarts, so the restart is offered right
+        // here rather than described and left for the operator to go and find.
+        description: result.restartRequired
+          ? `${app.displayName} is still serving its previous address.`
+          : `The address is live the next time ${app.displayName} starts.`,
+        action: result.restartRequired
+          ? { label: "Restart now", onClick: () => void runAppAction(app, "restart") }
+          : undefined,
       });
+      if (result.locality === "not_local") {
+        toast.warning("The Cloudflare connector is not on this host", {
+          description: "Traffic for this address reaches whichever machine runs the connector, not this one.",
+        });
+      }
     } catch (publishError) {
       if (!isAuthRequiredRedirectError(publishError)) {
         setConflict(coreErrorCode(publishError) === "cloudflare_hostname_conflict");
@@ -115,7 +127,10 @@ export function CloudflarePublishControl({ app, endpoint }: { app: CoreApp; endp
       setOpen(false);
       await refresh();
       toast.success("Public origin removed", {
-        description: result.restartRequired ? `Restart ${app.displayName} to drop the old origin.` : undefined,
+        description: result.restartRequired ? `${app.displayName} is still serving the old address.` : undefined,
+        action: result.restartRequired
+          ? { label: "Restart now", onClick: () => void runAppAction(app, "restart") }
+          : undefined,
       });
     } catch (unpublishError) {
       if (!isAuthRequiredRedirectError(unpublishError)) {

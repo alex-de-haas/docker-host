@@ -12,6 +12,7 @@ import {
 import type { CoreSettingsState } from "../types";
 import { CloudflareConnectionCard } from "./cloudflare-connection-card";
 import { CoreSettingsForm } from "./core-settings-form";
+import { IngressDiagnostics } from "./ingress-diagnostics";
 
 // How app endpoints reach the internet, as one exclusive choice.
 //
@@ -69,6 +70,9 @@ export function SettingsIngressSection({
           <CloudflareConnectionCard />
         </>
       )}
+
+      <div className="border-t" />
+      <IngressDiagnostics />
     </div>
   );
 }

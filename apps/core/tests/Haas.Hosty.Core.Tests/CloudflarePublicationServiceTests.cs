@@ -245,7 +245,7 @@ public sealed class CloudflarePublicationServiceTests : IDisposable
             api, credentials, integration, NullLogger<CloudflareConnectionService>.Instance);
 
         await apps.UpsertAppAsync(SeedApp("com.example.media", appRunning));
-        return (new CloudflarePublicationService(settings, integration, credentials, connection, reconciler, publications, apps, NullLogger<CloudflarePublicationService>.Instance), apps);
+        return (new CloudflarePublicationService(settings, integration, credentials, connection, reconciler, publications, apps, api, NullLogger<CloudflarePublicationService>.Instance), apps);
     }
 
     private static AppRecord SeedApp(string id, bool running)

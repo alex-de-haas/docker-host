@@ -52,6 +52,20 @@ internal static class CloudflareConnectionEndpoints
                 requireCsrf: false,
                 cancellationToken: cancellationToken));
 
+        app.MapGet("/api/core/cloudflare/diagnostics", (
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            CloudflareDiagnosticsService diagnostics,
+            CancellationToken cancellationToken) =>
+            CoreSessionAuthorization.RequireAdminSessionAsync(
+                request,
+                users,
+                clock,
+                async () => CoreJson.Json(await diagnostics.InspectAsync(cancellationToken)),
+                requireCsrf: false,
+                cancellationToken: cancellationToken));
+
         app.MapPost("/api/core/cloudflare/connect", (
             HttpRequest request,
             UserDirectoryStore users,

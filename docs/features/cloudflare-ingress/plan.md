@@ -182,13 +182,24 @@ Unchanged in substance from the 2026-07-28 audit, re-stated as behavior:
       listing Hosty-owned publications.
 - [x] Disconnect Keep/Remove choices, halting and staying retryable on a failed deletion.
 - [x] Per-endpoint publication state machine in Core DTOs, rendered by Shell.
-- [ ] Consult connector locality before mutation; classify external-probe failures against it.
-- [ ] Publication health/diagnostics endpoint and deduplicated host-admin warnings for public endpoints
+- [x] Consult connector locality before mutation; classify external-probe failures against it.
+- [x] Publication health/diagnostics endpoint and deduplicated host-admin warnings for public endpoints
       with no configured origin.
-- [ ] Notifications for publication outcomes.
-- [ ] Core public-origin publication through the product workflow (launch setting plus keep-apps
-      restart), preserving loopback recovery.
-- [ ] Explicit restart affordance in Shell after a successful publish.
+- [x] Notifications for publication outcomes.
+- [ ] **Core public-origin publication — blocked on a decision this plan does not make.** Everything
+      else here is done. The publishing half is straightforward (Core is not an app, but the reconciler
+      keys on `(app id, endpoint key)` and a reserved id would do); the blocker is where the resulting
+      origin lives. `HOSTY_CORE_PUBLIC_ORIGIN` is a CLI launch setting in `launch.env`, a file Core has
+      no reference to and does not own — writing it would invert the ownership split the repository
+      established deliberately. **The recommended answer is not the one this plan assumed**: make it a
+      live Core setting with the env var as its baseline, exactly as the ingress provider itself was
+      moved out of env-only. Every reader (`AuthBootstrapService`, `UserManagementService`, the login
+      pages, the app env injection) reads it per request or per app start, so no Core restart is needed
+      at all and the "keep-apps restart" in the original wording falls away. What makes it a decision
+      rather than an implementation detail: those readers include the login page and the invitation
+      links, so a wrong or unreachable value locks the operator out of their own host. It needs the
+      loopback-recovery design settled and a live run before it ships.
+- [x] Explicit restart affordance in Shell after a successful publish.
 - [ ] Shell tests for the provider-conditional Ingress tab, connected/disconnected/stopped/error states,
       and the label sanitizer.
 - [ ] `feature.md` rewritten around the three providers, with the "Where the two paths collide" section
@@ -228,8 +239,9 @@ Unchanged in substance from the 2026-07-28 audit, re-stated as behavior:
 
 ### Phase 5 — Diagnostics and platform origins
 
-- [ ] Locality consulted before mutation; health endpoint; warnings; notifications.
-- [ ] Core public-origin workflow and restart affordance.
+- [x] Locality consulted before mutation; health endpoint; warnings; notifications.
+- [x] Restart affordance after a publish.
+- [ ] **Core public-origin workflow — blocked, see the deliverable above.**
 
 ### Phase 6 — Documentation and verification
 
