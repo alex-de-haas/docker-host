@@ -3521,6 +3521,26 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task ConfigureAsync_ManagedOriginWithNoValueYet_AcceptsTheFormsBlank()
+    {
+        // The settings form posts "" for a public origin that has none yet, which is every derived origin
+        // before the app's first start. Counting blank-for-unset as a change would make the whole form
+        // unsavable on a host with ingress on.
+        var fixture = await LifecycleFixture.CreateAsync(ingressBaseDomain: "apps.example.test");
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+
+        await fixture.Service.ConfigureAsync("com.example.notes", new AppConfigureRequest(
+            Settings: new Dictionary<string, string?>
+            {
+                ["HOSTY_PUBLIC_ORIGIN_APP_HTTP"] = "",
+                ["APP_MODE"] = "staging",
+            }));
+
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal("staging", app!.Settings["APP_MODE"].Value);
+    }
+
+    [Fact]
     public async Task ConfigureAsync_ApiProvider_RefusesOnlyPublishedOrigins()
     {
         var fixture = await LifecycleFixture.CreateAsync();

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { isAuthRequiredRedirectError } from "../core-api";
+import { publishesThroughCloudflareApi } from "../ingress";
 import { useShellActions, useShellState } from "../shell-context";
 import type { CloudflareAppPublications, CloudflareConnectionStatus, CloudflarePublicationResult, CloudflarePublicationSummary, CoreApp, CoreEndpoint } from "../types";
 import { IconButton, InlineError } from "../ui";
@@ -26,12 +27,12 @@ export function CloudflarePublishControl({ app, endpoint }: { app: CoreApp; endp
   const [publication, setPublication] = useState<CloudflarePublicationSummary | null>(null);
   const [label, setLabel] = useState("");
 
-  // Publishing only means something when Core actually manages public origins (ingress provider
-  // "cloudflared"). With ingress off there is nowhere to publish to, so hide the control instead of
-  // offering a dialog whose only outcome is "connect Cloudflare first". Mirrors Core's own
-  // IngressSettings.ManagesPublicOrigins predicate.
-  const ingressManagesPublicOrigins = state.status?.ingressProvider === "cloudflared";
-  if (!canManageApps || !endpoint.public || !ingressManagesPublicOrigins) {
+  // Publishing is what the API provider means, so the control belongs to it and to nothing else. Under
+  // any other provider Core refuses the publish outright (cloudflare_provider_inactive), and under the
+  // local-config provider a published label would be overwritten by the derived hostname on the next
+  // start — the defect this split removed. Not connected yet is a different case: the control stays and
+  // says so, because that is a step away rather than the wrong provider.
+  if (!canManageApps || !endpoint.public || !publishesThroughCloudflareApi(state.status?.ingressProvider)) {
     return null;
   }
 
@@ -137,7 +138,10 @@ export function CloudflarePublishControl({ app, endpoint }: { app: CoreApp; endp
                   <Button type="button" size="sm" variant="outline" onClick={() => void openDialog()}>Retry</Button>
                 </div>
               ) : (
-                <p className="text-sm text-muted-foreground">Connect Cloudflare in Platform settings before publishing a public origin.</p>
+                <p className="text-sm text-muted-foreground">
+                  Cloudflare is the selected ingress provider, but no API token is connected yet. Connect one under
+                  Settings → Ingress, then publish this endpoint.
+                </p>
               )
             ) : publication ? (
               <div className="space-y-1 text-sm">

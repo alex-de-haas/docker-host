@@ -591,7 +591,7 @@ export type ShellView =
 
 // Host-level configuration surfaces, addressable as /settings?tab=<value>. Distinct from the per-app
 // `SettingsTab` above, which describes one app rather than the host.
-export type HostSettingsTab = "users" | "core" | "mounts";
+export type HostSettingsTab = "users" | "core" | "mounts" | "ingress";
 export type AppOpenTarget = "workspace" | "tab";
 export type HostyResolvedTheme = "light" | "dark";
 export type HostyThemePreference = "light" | "dark" | "system";

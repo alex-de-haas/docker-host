@@ -5157,7 +5157,10 @@ internal sealed class CoreLifecycleService(
             }
 
             var current = app.Settings.TryGetValue(key, out var existing) ? existing.Value : null;
-            if (string.Equals(submitted?.Trim(), current?.Trim(), StringComparison.Ordinal))
+            // Blank and unset are the same value here. The settings form posts "" for a public origin
+            // that has none yet — which is every derived origin before the app's first start — and
+            // treating that as a change would make the whole form unsavable on a host that has ingress on.
+            if (string.Equals(Blank(submitted), Blank(current), StringComparison.Ordinal))
             {
                 continue;
             }
@@ -5166,6 +5169,8 @@ internal sealed class CoreLifecycleService(
                 "public_origin_managed",
                 $"'{key}' is managed by the active ingress provider and cannot be set here. Change it through the provider, or switch the ingress provider to 'none' to own it yourself.");
         }
+
+        static string? Blank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     }
 
     private static void ValidatePublicOriginSettings(IReadOnlyDictionary<string, string?>? settings)

@@ -40,6 +40,7 @@ test("only Dashboard and Settings are administrator-only", () => {
 
 test("an unknown or missing settings tab resolves to Users", () => {
   assert.equal(readHostSettingsTab("core"), "core");
+  assert.equal(readHostSettingsTab("ingress"), "ingress");
   assert.equal(readHostSettingsTab("mounts"), "mounts");
   assert.equal(readHostSettingsTab(" users "), "users");
   for (const value of ["nonsense", "", "   ", null, undefined]) {
@@ -106,9 +107,10 @@ test("percent-encoded app ids survive the deep link", () => {
 test("builders and the parser agree", () => {
   assert.equal(readShellRoute(new URL(getShellViewHref("settings"), "http://x").pathname, params()).view, "settings");
 
-  const settingsHref = getSettingsHref("mounts");
-  const settingsUrl = new URL(settingsHref, "http://x");
-  assert.equal(readShellRoute(settingsUrl.pathname, settingsUrl.searchParams).settingsTab, "mounts");
+  for (const tab of ["users", "core", "ingress", "mounts"]) {
+    const settingsUrl = new URL(getSettingsHref(tab), "http://x");
+    assert.equal(readShellRoute(settingsUrl.pathname, settingsUrl.searchParams).settingsTab, tab);
+  }
 
   const workspaceUrl = new URL(getWorkspaceHref("com.haas.demo-app", "/reports"), "http://x");
   assert.deepEqual(readShellRoute(workspaceUrl.pathname, workspaceUrl.searchParams).workspace, {

@@ -160,12 +160,12 @@ Unchanged in substance from the 2026-07-28 audit, re-stated as behavior:
 
 - [x] `cloudflare-remote` provider value: enum, validation, `/api/core/status` projection, and the
       `IIngressController` contract split so derivation and `config.yml` rendering stay `cloudflared`-only.
-- [ ] Publication gated on the provider in Core, not only hidden in Shell; a "connect first" state and a
+- [x] Publication gated on the provider in Core, not only hidden in Shell; a "connect first" state and a
       status warning for `cloudflare-remote` without a connection.
-- [ ] One owner per origin: per-provider editability of the Public origins field, plus a `configure`
+- [x] One owner per origin: per-provider editability of the Public origins field, plus a `configure`
       guard refusing writes to a managed `HOSTY_PUBLIC_ORIGIN_*`.
 - [x] One-time provider migration for a host with a stored connection and provider `none`.
-- [ ] Shell `Ingress` settings tab: `HostSettingsTab`, route parsing and href, the section itself, the
+- [x] Shell `Ingress` settings tab: `HostSettingsTab`, route parsing and href, the section itself, the
       connection card moved out of the Core tab and out of `dialogs/`, per-provider field visibility.
 - [ ] Account/zone/tunnel selection in Shell, replacing the ambiguity hard-fail.
 - [ ] Prefilled token template URL carrying the confirmed permission groups.
@@ -202,9 +202,9 @@ Unchanged in substance from the 2026-07-28 audit, re-stated as behavior:
 
 ### Phase 2 — The Ingress tab
 
-- [ ] Tab, route, section, moved connection card, per-provider field visibility.
-- [ ] Publish control's "connect first" state.
-- [ ] Shell tests.
+- [x] Tab, route, section, moved connection card, per-provider field visibility.
+- [x] Publish control's "connect first" state.
+- [x] Shell tests.
 
 ### Phase 3 — Finish the connection
 
