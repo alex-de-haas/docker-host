@@ -1,5 +1,3 @@
-using System.Net;
-using System.Net.Sockets;
 using Haas.Hosty.Core;
 
 namespace Haas.Hosty.Core.Tests;
@@ -280,38 +278,21 @@ public sealed class AppAssetTests
         // HttpMessageHandler never auto-redirects, so stubbing one would prove nothing.
         // The asset URI must sit under the manifest folder, but a 302 would carry the fetch
         // anywhere; with redirects refused it is just a non-success status and the asset is skipped.
-        var (origin, port) = StartLoopbackListener();
-        using var listener = origin;
-
         var followed = 0;
-        var serving = Task.Run(async () =>
+        await using var origin = LoopbackHttpServer.Start(async context =>
         {
-            while (listener.IsListening)
+            if (context.Request.Url!.AbsolutePath.EndsWith("/icon.svg", StringComparison.Ordinal))
             {
-                HttpListenerContext context;
-                try
-                {
-                    context = await listener.GetContextAsync();
-                }
-                catch (Exception ex) when (ex is HttpListenerException or ObjectDisposedException)
-                {
-                    return;
-                }
-
-                if (context.Request.Url!.AbsolutePath.EndsWith("/icon.svg", StringComparison.Ordinal))
-                {
-                    context.Response.StatusCode = 302;
-                    context.Response.RedirectLocation = $"http://127.0.0.1:{port}/internal/secret.svg";
-                }
-                else
-                {
-                    Interlocked.Increment(ref followed);
-                    var payload = "<svg id='internal'/>"u8.ToArray();
-                    await context.Response.OutputStream.WriteAsync(payload);
-                }
-
-                context.Response.Close();
+                // Same host, outside the manifest folder. Refusing the redirect is what stops the
+                // fetch, so where it points does not matter — build it from the request itself.
+                context.Response.StatusCode = 302;
+                context.Response.RedirectLocation = new Uri(context.Request.Url, "/internal/secret.svg").ToString();
+                return;
             }
+
+            Interlocked.Increment(ref followed);
+            var payload = "<svg id='internal'/>"u8.ToArray();
+            await context.Response.OutputStream.WriteAsync(payload);
         });
 
         var source = NewTempDir();
@@ -322,43 +303,15 @@ public sealed class AppAssetTests
         var service = new AppManifestService(AppManifestService.CreateDefaultHttpClient());
         var selection = await service.LoadAsync(manifestPath) with
         {
-            ManifestUrl = $"http://127.0.0.1:{port}/notes/manifest.json",
+            ManifestUrl = $"http://127.0.0.1:{origin.Port}/notes/manifest.json",
         };
 
         await service.VendorDisplayAssetsAsync(selection, appRoot);
 
-        listener.Stop();
-        await serving;
+        await origin.StopAsync();
 
         Assert.False(File.Exists(Path.Combine(appRoot, "assets", "icon.svg")));
         Assert.Equal(0, followed);
-    }
-
-    // Probing a free port and then binding it is a race: another process can take the port in between.
-    // Retry the probe-and-start pair so the test only fails when the behaviour under test is wrong.
-    private static (HttpListener Listener, int Port) StartLoopbackListener()
-    {
-        for (var attempt = 1; ; attempt++)
-        {
-            int port;
-            using (var probe = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp))
-            {
-                probe.Bind(new IPEndPoint(IPAddress.Loopback, 0));
-                port = ((IPEndPoint)probe.LocalEndPoint!).Port;
-            }
-
-            var listener = new HttpListener();
-            listener.Prefixes.Add($"http://127.0.0.1:{port}/");
-            try
-            {
-                listener.Start();
-                return (listener, port);
-            }
-            catch (HttpListenerException) when (attempt < 10)
-            {
-                ((IDisposable)listener).Dispose();
-            }
-        }
     }
 
     // --- helpers --------------------------------------------------------------------------------
