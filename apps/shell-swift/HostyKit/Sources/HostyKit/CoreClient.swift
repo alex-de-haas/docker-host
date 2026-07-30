@@ -90,6 +90,42 @@ public actor CoreClient {
         _ = try await send(makeRequest(.post, "/api/apps/\(escape(appID))/\(verb)"))
     }
 
+    // MARK: - Display assets
+
+    /// Fetches one of an app's manifest-declared display assets — in practice, its icon.
+    ///
+    /// Core reports the address in one of two shapes, and which one it is decides the credential. A
+    /// manifest-relative icon is vendored into the app's folder and served from *this* host
+    /// (`/api/apps/{id}/assets/{path}?v=<version>`), authorized by the session like any other app read; an
+    /// absolute `https://` icon points somewhere else entirely, and that somewhere is not given this host's
+    /// session id because an app author chose to host their icon on a CDN.
+    ///
+    /// This is also why an icon cannot simply be handed to `AsyncImage`: the relative form needs a bearer
+    /// header, and an image view has nowhere to put one.
+    public func asset(at url: String) async throws -> Data {
+        // Resolved against the origin rather than assembled from a path, so the relative form keeps its
+        // cache-busting query — `origin.url(path:)` would percent-encode the `?` into the path itself.
+        guard let resolved = URL(string: url, relativeTo: origin.url)?.absoluteURL,
+              let scheme = resolved.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else {
+            throw CoreError.invalidResponse("The host reported an asset address this app cannot read: \(url)")
+        }
+
+        var request = URLRequest(url: resolved)
+        if isSameOrigin(resolved), let sessionID {
+            request.setValue("Bearer \(sessionID)", forHTTPHeaderField: "Authorization")
+        }
+
+        return try await send(request)
+    }
+
+    /// Whether this host serves the URL, which is what decides whether the session travels with it.
+    /// Compared through `HostOrigin` rather than field by field so both sides get the same normalization:
+    /// default ports, letter case, and IPv6 brackets.
+    private func isSameOrigin(_ url: URL) -> Bool {
+        (try? HostOrigin(parsing: url.absoluteString)) == origin
+    }
+
     // MARK: - Updates
 
     public func updateStatus(appID: String, refresh: Bool = false) async throws -> AppUpdateStatus {

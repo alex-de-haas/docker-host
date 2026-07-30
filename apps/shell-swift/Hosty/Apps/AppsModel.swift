@@ -1,6 +1,7 @@
 import Foundation
 import HostyKit
 import Observation
+import SwiftUI
 
 /// The installed-app list for one host, kept current from Core's event stream.
 @Observable
@@ -15,6 +16,11 @@ final class AppsModel {
     /// gap between tapping and Core committing the change, so the button cannot be tapped twice.
     private(set) var inFlight: Set<String> = []
 
+    /// The app icons for this host. It lives here because its lifetime is the session's: a store built per
+    /// view would re-fetch every icon each time a column was rebuilt, and one shared across hosts would
+    /// hand a host's icons to another host's session.
+    private(set) var icons: AppIconStore
+
     private let session: HostSession
 
     // Held outside the main actor's isolation so `deinit`, which is nonisolated, can still cancel them.
@@ -25,12 +31,13 @@ final class AppsModel {
 
     init(session: HostSession) {
         self.session = session
+        self.icons = AppIconStore(client: session.client)
     }
 
     #if DEBUG
     /// A local-only model for SwiftUI previews. It never follows an event stream unless a preview calls
     /// `follow()` explicitly, and its data is independent of saved hosts and live Core instances.
-    convenience init(previewApps: [AppSummary]) {
+    convenience init(previewApps: [AppSummary], previewIcons: [String: Image] = [:]) {
         guard let origin = try? HostOrigin(parsing: "https://preview.hosty.invalid") else {
             preconditionFailure("The static preview origin must be valid.")
         }
@@ -38,11 +45,9 @@ final class AppsModel {
         self.init(session: HostSession(connection: HostConnection(origin: origin)))
         apps = previewApps
         hasLoaded = true
+        icons = AppIconStore(previewImages: previewIcons)
     }
     #endif
-
-    var userApps: [AppSummary] { apps.filter { !$0.system } }
-    var systemApps: [AppSummary] { apps.filter(\.system) }
 
     /// For screens that talk to Core directly, such as building an update plan for review.
     var client: CoreClient { session.client }
