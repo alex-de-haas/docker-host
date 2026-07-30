@@ -91,6 +91,48 @@ public struct HostOrigin: Hashable, Sendable {
         scheme == "https"
     }
 
+    /// Does this origin's host name only ever mean "this machine"?
+    ///
+    /// The whole loopback space, not the one literal Core happens to default to: `localhost`, every
+    /// address in `127.0.0.0/8`, and `[::1]`. A URL on any of them is correct exactly when the client
+    /// runs on the Hosty host itself and points at the wrong computer everywhere else.
+    public var isLoopback: Bool {
+        Self.isLoopbackHost(host)
+    }
+
+    /// Can this client reach an app advertised at `urlString`?
+    ///
+    /// The one case that cannot work is a loopback app URL on a host this client did not itself reach
+    /// over loopback: Core advertises `127.0.0.1:<port>` by default, which resolves to the reader's own
+    /// machine rather than the host's. Every other combination is left alone — an unreachable LAN
+    /// address or a misconfigured public origin is a runtime failure to observe, not something a
+    /// predicate can rule out in advance.
+    ///
+    /// A URL that cannot be parsed is not reported as unreachable: opening it will fail on its own and
+    /// say something truer than a guess made here.
+    public func advertisesUnreachableLoopback(_ urlString: String?) -> Bool {
+        guard !isLoopback else { return false }
+        guard let urlString, let host = URLComponents(string: urlString)?.host else { return false }
+
+        return Self.isLoopbackHost(Self.urlReadyHost(host))
+    }
+
+    private static func isLoopbackHost(_ host: String) -> Bool {
+        if host == "localhost" || host == "[::1]" || host == "::1" {
+            return true
+        }
+
+        // 127.0.0.0/8 in full: Core defaults to 127.0.0.1, but an operator may have set any of them,
+        // and every one of them means the same thing.
+        let octets = host.split(separator: ".", omittingEmptySubsequences: false)
+        guard octets.count == 4, octets.first == "127" else { return false }
+
+        return octets.allSatisfy { part in
+            guard let value = Int(part), (0...255).contains(value) else { return false }
+            return String(value) == part
+        }
+    }
+
     /// Builds a request URL under this origin.
     ///
     /// Paths come from call sites as literals, so a path that cannot form a URL is a programming

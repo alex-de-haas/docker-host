@@ -270,6 +270,90 @@ struct CoreClientTests {
             _ = try await client().updateStatus(appID: "demo")
             #expect(StubURLProtocol.requests.first?.request.url?.query == nil)
         }
+
+        @Test("A launch code posts the redirect URI as JSON and carries only the bearer")
+        func launchCode() async throws {
+            StubURLProtocol.install(json: #"""
+            {"code":"abc","redirectUri":"http://127.0.0.1:3100/?code=abc","expiresAt":"2026-07-30T14:05:00Z"}
+            """#)
+
+            let launch = try await client().createLaunchCode(
+                appID: "com.haas.demo-app",
+                redirectURI: "http://127.0.0.1:3100/")
+
+            #expect(launch.redirectUri == "http://127.0.0.1:3100/?code=abc")
+
+            let sent = try #require(StubURLProtocol.requests.first)
+            #expect(sent.request.httpMethod == "POST")
+            #expect(sent.request.url?.path == "/api/apps/com.haas.demo-app/launch-code")
+            #expect(sent.request.value(forHTTPHeaderField: "Content-Type") == "application/json")
+            #expect(sent.request.value(forHTTPHeaderField: "Authorization") == "Bearer session_1")
+
+            // Core requires CSRF for a cookie session and exempts a bearer one. This client only ever
+            // presents a bearer, so a CSRF header appearing here would mean the credential path changed.
+            #expect(sent.request.value(forHTTPHeaderField: "X-Hosty-CSRF") == nil)
+
+            let body = try #require(sent.body)
+            let decoded = try JSONDecoder().decode([String: String].self, from: body)
+            #expect(decoded == ["redirectUri": "http://127.0.0.1:3100/"])
+        }
+
+        @Test("The Core update check reads the same refresh contract as the app one")
+        func coreUpdateStatusRefresh() async throws {
+            let status = #"""
+            {"currentVersion":"0.70.1","updateAvailable":true,"releaseTag":"v0.71.0","checkedAt":"2026-07-30T14:00:00Z","error":null}
+            """#
+
+            StubURLProtocol.install(json: status)
+            let verdict = try await client().coreUpdateStatus(refresh: true)
+            #expect(verdict.canApply)
+            #expect(verdict.releaseTag == "v0.71.0")
+            #expect(StubURLProtocol.requests.first?.request.url?.path == "/api/core/update-status")
+            #expect(StubURLProtocol.requests.first?.request.url?.query == "refresh=true")
+
+            StubURLProtocol.install(json: status)
+            _ = try await client().coreUpdateStatus()
+            #expect(StubURLProtocol.requests.first?.request.url?.query == nil)
+        }
+
+        // A check that could not run is not "up to date", and the update action must not be offered
+        // on the strength of a stale verdict beside an error.
+        @Test("A failed Core update check is not an invitation to apply one")
+        func coreUpdateStatusError() async throws {
+            StubURLProtocol.install(json: #"""
+            {"currentVersion":"0.70.1","updateAvailable":true,"releaseTag":"v0.71.0","checkedAt":"2026-07-30T14:00:00Z","error":"The release index was unreachable."}
+            """#)
+
+            let verdict = try await client().coreUpdateStatus()
+
+            #expect(verdict.updateAvailable)
+            #expect(!verdict.canApply)
+        }
+
+        // Core answers 202 and then restarts itself, so the reply means "started", not "finished".
+        @Test("Applying a Core update is accepted, not completed")
+        func applyCoreUpdateAccepted() async throws {
+            StubURLProtocol.install(status: 202, json: #"{"status":"updating","logFile":"core-update.log"}"#)
+
+            let acknowledgement = try await client().applyCoreUpdate()
+
+            #expect(acknowledgement.status == "updating")
+            #expect(acknowledgement.logFile == "core-update.log")
+            #expect(StubURLProtocol.requests.first?.request.httpMethod == "POST")
+            #expect(StubURLProtocol.requests.first?.request.url?.path == "/api/core/update")
+        }
+
+        // The two ways Core refuses before any work starts. They must not read like the connection
+        // loss that a successful update causes — nothing has happened and retrying is pointless until
+        // the host is fixed.
+        @Test("A Core update that never starts reports a refusal, not a restart")
+        func applyCoreUpdateRefused() async throws {
+            StubURLProtocol.install(status: 503, json: #"{"code":"cli_not_found","message":"The Hosty CLI could not be located."}"#)
+            await #expect(throws: CoreError.self) { try await client().applyCoreUpdate() }
+
+            StubURLProtocol.install(status: 500, json: #"{"code":"spawn_failed","message":"The updater could not be started."}"#)
+            await #expect(throws: CoreError.self) { try await client().applyCoreUpdate() }
+        }
     }
 
     @Suite("Core client error mapping")

@@ -28,6 +28,34 @@ public struct CoreStatus: Sendable, Codable {
     public var isHostyCore: Bool { component == Self.componentName }
 }
 
+/// `GET /api/core/update-status` — is a newer Core binary available on the selected release channel?
+///
+/// Administrator-only, like every Core update surface. `error` is set when the check itself could not
+/// run (the release index was unreachable); that is not "up to date", and a client must not render it
+/// as one.
+public struct CoreUpdateStatus: Hashable, Sendable, Codable {
+    public let currentVersion: String
+    public let updateAvailable: Bool
+    public let releaseTag: String
+    public let checkedAt: Date
+    public let error: String?
+
+    /// Whether to offer the update action. A failed check is not an invitation to apply one.
+    public var canApply: Bool { updateAvailable && (error ?? "").isEmpty }
+}
+
+/// `POST /api/core/update` — accepted, not finished.
+///
+/// Core answers `202` and then spawns the CLI, which replaces the binary and restarts Core. Everything
+/// after that reads as a connection failure to a client that is still waiting, so the reply has to be
+/// treated as "the work has started": the disconnect that follows is the update working, not an error.
+/// The two ways it refuses before any work starts — `503` when the CLI cannot be located and `500`
+/// when the spawn itself fails — are ordinary errors and must read differently.
+public struct CoreUpdateAcknowledgement: Hashable, Sendable, Codable {
+    public let status: String
+    public let logFile: String?
+}
+
 /// `GET /api/auth/session`.
 public struct AuthSession: Sendable, Codable {
     public let authenticated: Bool

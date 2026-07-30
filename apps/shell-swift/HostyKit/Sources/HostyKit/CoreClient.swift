@@ -165,6 +165,40 @@ public actor CoreClient {
         _ = try await send(request)
     }
 
+    // MARK: - Core updates
+
+    /// `refresh` bypasses Core's TTL cache — the operator's explicit "check now", not something to do
+    /// on every appearance.
+    public func coreUpdateStatus(refresh: Bool = false) async throws -> CoreUpdateStatus {
+        try await get(
+            "/api/core/update-status",
+            queryItems: refresh ? [URLQueryItem(name: "refresh", value: "true")] : [])
+    }
+
+    /// Starts the Core self-update. Returns as soon as Core has spawned the CLI; Core then restarts
+    /// itself, so the caller must expect its next requests to fail while that happens. See
+    /// `CoreUpdateAcknowledgement`.
+    public func applyCoreUpdate() async throws -> CoreUpdateAcknowledgement {
+        try decode(await send(makeRequest(.post, "/api/core/update")))
+    }
+
+    // MARK: - Opening an app
+
+    /// Mints a one-time code for `redirectUri` and returns the URL carrying it.
+    ///
+    /// Core requires CSRF on this endpoint for a cookie session; a bearer-presented session is exempt,
+    /// and this client only ever presents a bearer, so no CSRF pair is involved.
+    ///
+    /// The redirect URI must be same-origin with one of the app's declared endpoints or Core answers
+    /// `redirect_uri_denied` — which is why callers pass a URL that came from Core (`embeddedUrl` or a
+    /// navigation page) rather than one they assembled.
+    public func createLaunchCode(appID: String, redirectURI: String) async throws -> AppLaunchCode {
+        var request = makeRequest(.post, "/api/apps/\(escape(appID))/launch-code")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(["redirectUri": redirectURI])
+        return try decode(await send(request))
+    }
+
     // MARK: - Events
 
     /// The URL and headers for the event stream, so `CoreEventStream` can own the connection lifecycle
