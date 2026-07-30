@@ -41,3 +41,22 @@ export function publishesThroughCloudflareApi(provider: string | null | undefine
 export function derivesPublicOrigins(provider: string | null | undefined) {
   return provider === INGRESS_PROVIDER_CLOUDFLARED;
 }
+
+// How a provider reads outside the Ingress tab. An unrecognized value is reported verbatim rather than as
+// "None": a provider Core knows and Shell does not is a version skew, and calling it "off" would describe
+// a host that is in fact exposing apps.
+export function ingressProviderLabel(provider: string | null | undefined) {
+  switch (provider) {
+    case INGRESS_PROVIDER_CLOUDFLARE_REMOTE:
+      return "Cloudflare";
+    case INGRESS_PROVIDER_CLOUDFLARED:
+      return "Cloudflare Tunnel (local config)";
+    case INGRESS_PROVIDER_NONE:
+    case null:
+    case undefined:
+    case "":
+      return "None";
+    default:
+      return provider;
+  }
+}

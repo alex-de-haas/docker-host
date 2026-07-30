@@ -166,10 +166,80 @@ public sealed class CloudflareDiagnosticsServiceTests : IDisposable
         Assert.Empty((await service.InspectAsync()).UnpublishedEndpoints);
     }
 
+    // Core's own hostname. Nothing in Hosty publishes it — it is not an app — so every verdict here ends in
+    // something the operator does by hand, and the recipe is what these pin.
+    [Fact]
+    public async Task InspectAsync_CoreRoutedAndResolving_ReportsOk()
+    {
+        var (service, api, _) = await CreateAsync(publish: false);
+        api.Config = Config("core.example.test");
+        api.Dns.Add(new CloudflareDnsRecord("rec", "CNAME", "core.example.test", "tunnel-123.cfargotunnel.com", true, 1));
+
+        var core = (await service.InspectAsync()).Core;
+
+        Assert.Equal(CloudflareDiagnosticStates.Ok, core.State);
+        Assert.Equal("core.example.test", core.Hostname);
+    }
+
+    [Fact]
+    public async Task InspectAsync_CoreWithoutAPublicOrigin_ReportsNotConfiguredWithTheFullRecipe()
+    {
+        // The case the hint exists for: Core answers on loopback, so the operator cannot guess either half
+        // of what to create — and publishing an app never creates it for them.
+        var (service, api, _) = await CreateAsync(publish: false, corePublicOrigin: null);
+        api.Config = Config();
+
+        var core = (await service.InspectAsync()).Core;
+
+        Assert.Equal(CloudflareDiagnosticStates.NotConfigured, core.State);
+        Assert.Null(core.Hostname);
+        Assert.Equal("tunnel-123.cfargotunnel.com", core.ExpectedDnsContent);
+        Assert.Equal("http://localhost:7070", core.ExpectedService);
+    }
+
+    [Fact]
+    public async Task InspectAsync_CoreConfiguredButUnrouted_ReportsRouteMissing()
+    {
+        var (service, api, _) = await CreateAsync(publish: false);
+        api.Config = Config();
+        api.Dns.Add(new CloudflareDnsRecord("rec", "CNAME", "core.example.test", "tunnel-123.cfargotunnel.com", true, 1));
+
+        Assert.Equal(CloudflareDiagnosticStates.RouteMissing, (await service.InspectAsync()).Core.State);
+    }
+
+    [Fact]
+    public async Task InspectAsync_CoreServedOutsideTheZone_ReportsExternal()
+    {
+        // An operator's own reverse proxy in front of Core is a legitimate setup, and this tunnel has
+        // nothing to say about it. Reporting it as broken would send them chasing a problem they do not have.
+        var (service, api, _) = await CreateAsync(publish: false, corePublicOrigin: "https://hosty.elsewhere.test");
+        api.Config = Config();
+
+        var core = (await service.InspectAsync()).Core;
+
+        Assert.Equal(CloudflareDiagnosticStates.External, core.State);
+        Assert.Equal("hosty.elsewhere.test", core.Hostname);
+    }
+
+    [Fact]
+    public async Task InspectAsync_WithoutAConnection_StillReportsCoreHasNoPublicOrigin()
+    {
+        // The half that needs no Cloudflare at all: whether Core has an address is local knowledge, and it
+        // is the first thing an operator setting this up gets wrong.
+        var (service, _, _) = await CreateAsync(connected: false, publish: false, corePublicOrigin: null);
+
+        var diagnostics = await service.InspectAsync();
+
+        Assert.False(diagnostics.Checked);
+        Assert.Equal(CloudflareDiagnosticStates.NotConfigured, diagnostics.Core.State);
+        Assert.Null(diagnostics.Core.ExpectedDnsContent);
+    }
+
     private async Task<(CloudflareDiagnosticsService, StatefulApi, AppRegistryStore)> CreateAsync(
         bool connected = true,
         bool publish = true,
-        string provider = IngressSettings.ProviderCloudflareRemote)
+        string provider = IngressSettings.ProviderCloudflareRemote,
+        string? corePublicOrigin = "https://core.example.test")
     {
         Directory.CreateDirectory(root);
         var paths = Paths;
@@ -200,8 +270,19 @@ public sealed class CloudflareDiagnosticsServiceTests : IDisposable
                 CloudflareOwnershipStates.Owned, DateTimeOffset.UnixEpoch));
         }
 
+        var config = new HostyCoreRuntimeConfig(
+            DataRoot: root,
+            RunDirectory: Path.Combine(root, "run"),
+            ControlDiscoveryPath: Path.Combine(root, "run", "control.json"),
+            CorePort: 7070,
+            ListenUrl: "http://localhost:7070",
+            CorePublicOrigin: corePublicOrigin,
+            RuntimePublicHost: "127.0.0.1",
+            ShellSourceOverridePath: null,
+            ShellAutostart: false);
+
         var service = new CloudflareDiagnosticsService(
-            settings, integration, credentials, publications, apps, api, NullLogger<CloudflareDiagnosticsService>.Instance);
+            settings, integration, credentials, publications, apps, config, api, NullLogger<CloudflareDiagnosticsService>.Instance);
         return (service, api, apps);
     }
 

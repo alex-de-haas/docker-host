@@ -20,7 +20,21 @@ const DIAGNOSTIC_TEXT: Record<CloudflareDiagnosticState, string> = {
   route_stale: "its tunnel route points at a local port the app no longer uses — publish it again",
   dns_missing: "its DNS record is gone — publish it again to recreate it",
   dns_foreign: "its DNS record points somewhere other than this tunnel — something else answers for it",
+  not_configured: "it has no address configured",
+  external: "it is served from outside this zone",
   unknown: "it could not be checked just now",
+};
+
+// Core's own address gets its own vocabulary because the remedy is never "publish it again": nothing in
+// Hosty publishes Core, so every verdict here ends in something the operator does by hand.
+const CORE_TEXT: Partial<Record<CloudflareDiagnosticState, string>> = {
+  not_configured:
+    "Core answers on loopback only, so invitation links and the native client cannot reach this host from anywhere else.",
+  route_missing: "This tunnel has no route for it, so the address resolves to nothing.",
+  dns_missing: "It has no DNS record on this zone, so the address does not resolve.",
+  dns_foreign: "Its DNS record points somewhere other than this tunnel — something else answers for it.",
+  external: "It is served from outside the connected zone, so this tunnel has nothing to say about it.",
+  unknown: "It could not be checked just now.",
 };
 
 // Whether what Hosty published still matches what Cloudflare serves, and which public endpoints have no
@@ -54,6 +68,7 @@ export function IngressDiagnostics() {
 
   const drifted = (diagnostics?.publications ?? []).filter((publication) => publication.state !== "ok");
   const unpublished = diagnostics?.unpublishedEndpoints ?? [];
+  const core = diagnostics?.core ?? null;
   const publicationCount = diagnostics?.publications.length ?? 0;
   // Switching the provider away changes nothing in Cloudflare: the routes and records stay, and the
   // connector keeps serving them. An operator who reads "ingress is off" and believes the apps are no
@@ -121,6 +136,37 @@ export function IngressDiagnostics() {
             <p className="text-muted-foreground">
               Published addresses cannot be checked until Cloudflare is the selected provider and connected.
             </p>
+          )}
+
+          {core && core.state !== "ok" && CORE_TEXT[core.state] && (
+            <div className="space-y-1 rounded-md border p-3">
+              <p className="font-medium">Core&apos;s own address</p>
+              <p className="text-muted-foreground">{CORE_TEXT[core.state]}</p>
+              {core.state === "not_configured" ? (
+                <p className="text-muted-foreground">
+                  Publishing an app cannot do this for you — Core is not an app. Choose a hostname, set it with{" "}
+                  <code className="font-mono text-foreground">hosty config set HOSTY_CORE_PUBLIC_ORIGIN https://…</code>, and
+                  create the two objects below in Cloudflare.
+                </p>
+              ) : (
+                <p className="text-muted-foreground">
+                  Current origin: <span className="font-mono text-foreground">{core.origin}</span>
+                </p>
+              )}
+              {core.state !== "external" && core.expectedDnsContent && (
+                <ul className="space-y-0.5 text-muted-foreground">
+                  <li>
+                    Proxied <span className="text-foreground">CNAME</span>{" "}
+                    <span className="font-mono text-foreground">{core.hostname ?? "core.<your-domain>"}</span> →{" "}
+                    <span className="font-mono text-foreground">{core.expectedDnsContent}</span>
+                  </li>
+                  <li>
+                    Tunnel route <span className="font-mono text-foreground">{core.hostname ?? "core.<your-domain>"}</span> →{" "}
+                    <span className="font-mono text-foreground">{core.expectedService}</span>
+                  </li>
+                </ul>
+              )}
+            </div>
           )}
 
           {unpublished.length > 0 && (

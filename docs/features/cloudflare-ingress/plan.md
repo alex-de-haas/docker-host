@@ -154,8 +154,10 @@ Unchanged in substance from the 2026-07-28 audit, re-stated as behavior:
   "not configured" and "Published at". `Syncing` is deliberately not among them: publishing is
   synchronous, so nothing could ever produce it.
 - The connector-locality verdict is consulted before a mutation, not only at connect.
-- Core's own hostname can be published through the same workflow, persisting the launch setting and
-  applying it with the existing keep-apps restart.
+- Core's own hostname is *reported* by diagnostics, with the CNAME target and tunnel service the
+  operator must create by hand. Publishing it through the product workflow is a separate feature
+  ([core-public-origin/plan.md](../core-public-origin/plan.md)) — it turns on where
+  `HOSTY_CORE_PUBLIC_ORIGIN` lives, not on anything in this one.
 
 ## Deliverables
 
@@ -186,19 +188,16 @@ Unchanged in substance from the 2026-07-28 audit, re-stated as behavior:
 - [x] Publication health/diagnostics endpoint and deduplicated host-admin warnings for public endpoints
       with no configured origin.
 - [x] Notifications for publication outcomes.
-- [ ] **Core public-origin publication — blocked on a decision this plan does not make.** Everything
-      else here is done. The publishing half is straightforward (Core is not an app, but the reconciler
-      keys on `(app id, endpoint key)` and a reserved id would do); the blocker is where the resulting
-      origin lives. `HOSTY_CORE_PUBLIC_ORIGIN` is a CLI launch setting in `launch.env`, a file Core has
-      no reference to and does not own — writing it would invert the ownership split the repository
-      established deliberately. **The recommended answer is not the one this plan assumed**: make it a
-      live Core setting with the env var as its baseline, exactly as the ingress provider itself was
-      moved out of env-only. Every reader (`AuthBootstrapService`, `UserManagementService`, the login
-      pages, the app env injection) reads it per request or per app start, so no Core restart is needed
-      at all and the "keep-apps restart" in the original wording falls away. What makes it a decision
-      rather than an implementation detail: those readers include the login page and the invitation
-      links, so a wrong or unreachable value locks the operator out of their own host. It needs the
-      loopback-recovery design settled and a live run before it ships.
+- [x] ~~Core public-origin publication through the product workflow.~~ **Moved out of this plan** to
+      [core-public-origin/plan.md](../core-public-origin/plan.md). It is a different feature wearing this
+      one's clothes: the hard part is not publishing a hostname but moving `HOSTY_CORE_PUBLIC_ORIGIN` out
+      of the CLI's `launch.env`, and its readers include the login page and invitation links, so it can
+      lock an operator out of their own host. Owning that risk inside an ingress plan would have hidden
+      it. What ships here instead is the diagnostic below, which costs nothing and closes the part that
+      was actually invisible.
+- [x] Core's own hostname reported by diagnostics: `not_configured` / `external` alongside the drift
+      states, carrying the CNAME target and tunnel service the operator must create by hand. A hint, not
+      a publication — nothing in Hosty creates or owns Core's route or record.
 - [x] Explicit restart affordance in Shell after a successful publish.
 - [x] Shell tests for the provider-conditional Ingress tab, connected/disconnected/stopped/error states,
       and the label sanitizer.
@@ -241,7 +240,8 @@ Unchanged in substance from the 2026-07-28 audit, re-stated as behavior:
 
 - [x] Locality consulted before mutation; health endpoint; warnings; notifications.
 - [x] Restart affordance after a publish.
-- [ ] **Core public-origin workflow — blocked, see the deliverable above.**
+- [x] Core's own hostname reported by diagnostics; the publication workflow itself moved to
+      [core-public-origin/plan.md](../core-public-origin/plan.md).
 
 ### Phase 6 — Documentation and verification
 

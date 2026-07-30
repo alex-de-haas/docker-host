@@ -56,6 +56,7 @@ import { isAppBusy, isAppUp } from "../runtime-states";
 import { AppIcon } from "../app-icon";
 import { copyTextToClipboard } from "../clipboard";
 import { isAuthRequiredRedirectError, readCoreError, redirectToCoreLoginIfAuthRequired } from "../core-api";
+import { ingressProviderLabel } from "../ingress";
 import type {
   AlertSeverity,
   AppAction,
@@ -500,9 +501,7 @@ function CoreSection({
             {status?.runtimePublicHost && <Fact label="Runtime host" value={status.runtimePublicHost} />}
             {/* Only with a status in hand: without one "None" would report a configuration that was
                 never read, and an unreachable Core is exactly when that reads as fact. */}
-            {status && (
-              <Fact label="Ingress" value={status.ingressProvider === "cloudflared" ? "Cloudflare tunnel" : "None"} />
-            )}
+            {status && <Fact label="Ingress" value={ingressProviderLabel(status.ingressProvider)} />}
           </div>
         </div>
       )}

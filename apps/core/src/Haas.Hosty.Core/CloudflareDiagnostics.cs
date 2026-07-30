@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
 
@@ -19,6 +20,7 @@ internal sealed class CloudflareDiagnosticsService(
     CloudflareCredentialStore credentials,
     CloudflarePublicationStore publications,
     AppRegistryStore apps,
+    HostyCoreRuntimeConfig config,
     ICloudflareApiClient client,
     ILogger<CloudflareDiagnosticsService> logger)
 {
@@ -47,25 +49,33 @@ internal sealed class CloudflareDiagnosticsService(
                 Checked: false,
                 stored.Select(publication => new CloudflarePublicationDiagnostic(
                     publication.AppId, publication.EndpointKey, publication.Hostname, CloudflareDiagnosticStates.Unknown)).ToArray(),
-                unpublished);
+                unpublished,
+                InspectCore(null));
         }
 
         var target = new CloudflareIngressTarget(state!.AccountId!, state.ZoneId!, state.TunnelId!, state.BaseDomain ?? "");
-        if (stored.Count == 0)
-        {
-            return new CloudflareDiagnostics(Checked: true, [], unpublished);
-        }
 
+        // One read of the tunnel configuration serves both checks below: every stored publication, and
+        // Core's own hostname, which is routed through the same tunnel but is not a publication.
         IReadOnlyDictionary<string, string?> routed;
         try
         {
-            var config = (await client.GetTunnelConfigurationAsync(credential!.Token, target.AccountId, target.TunnelId, cancellationToken))?.Config;
-            routed = ReadRoutes(config);
+            var tunnelConfig = (await client.GetTunnelConfigurationAsync(credential!.Token, target.AccountId, target.TunnelId, cancellationToken))?.Config;
+            routed = ReadRoutes(tunnelConfig);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             logger.LogWarning(exception, "Cloudflare diagnostics could not read the tunnel configuration.");
-            return new CloudflareDiagnostics(Checked: false, [], unpublished);
+            return new CloudflareDiagnostics(Checked: false, [], unpublished, InspectCore(null));
+        }
+
+        if (stored.Count == 0)
+        {
+            return new CloudflareDiagnostics(
+                Checked: true,
+                [],
+                unpublished,
+                await InspectCoreAsync(credential!.Token, target, routed, cancellationToken));
         }
 
         var installed = records.Select(record => record.Id).ToHashSet(StringComparer.Ordinal);
@@ -89,7 +99,88 @@ internal sealed class CloudflareDiagnosticsService(
                 await ClassifyAsync(publication, credential!.Token, target, routed, installed, publicEndpoints, expectedDnsContent, cancellationToken)));
         }
 
-        return new CloudflareDiagnostics(Checked: true, results, unpublished);
+        return new CloudflareDiagnostics(
+            Checked: true,
+            results,
+            unpublished,
+            await InspectCoreAsync(credential!.Token, target, routed, cancellationToken));
+    }
+
+    // Core's own hostname. It rides the same tunnel as every publication but is not one: Core is not an
+    // app, so nothing here owns a route or a DNS record for it and nothing creates one. What the operator
+    // must create by hand is exactly what this reports, which is the one thing publishing an app cannot do
+    // for them — and the native client and every invitation link are built from this origin.
+    //
+    // Unreachable without a connection, so the no-token path answers the part that needs no Cloudflare at
+    // all: whether Core has been given a public origin in the first place.
+    private CloudflareCoreDiagnostic InspectCore(CloudflareIngressTarget? target)
+    {
+        var origin = config.EffectiveCorePublicOrigin;
+        var expectedService = $"http://localhost:{config.CorePort.ToString(CultureInfo.InvariantCulture)}";
+        // Carried even when no origin is configured: that is exactly the case where the operator needs the
+        // full recipe, and half of it ("point a CNAME at *what*?") is the half they cannot guess.
+        var expectedDns = target is null ? null : $"{target.TunnelId}.cfargotunnel.com";
+
+        if (string.IsNullOrWhiteSpace(config.CorePublicOrigin))
+        {
+            return new CloudflareCoreDiagnostic(origin, null, CloudflareDiagnosticStates.NotConfigured, expectedDns, expectedService);
+        }
+
+        if (!Uri.TryCreate(config.CorePublicOrigin, UriKind.Absolute, out var uri) || string.IsNullOrWhiteSpace(uri.Host))
+        {
+            return new CloudflareCoreDiagnostic(origin, null, CloudflareDiagnosticStates.Unknown, expectedDns, expectedService);
+        }
+
+        return new CloudflareCoreDiagnostic(origin, uri.Host, CloudflareDiagnosticStates.Unknown, expectedDns, expectedService);
+    }
+
+    private async Task<CloudflareCoreDiagnostic> InspectCoreAsync(
+        string token,
+        CloudflareIngressTarget target,
+        IReadOnlyDictionary<string, string?> routed,
+        CancellationToken cancellationToken)
+    {
+        var seed = InspectCore(target);
+        if (seed.Hostname is null)
+        {
+            return seed;
+        }
+
+        // Core published somewhere this connection knows nothing about — the operator's own reverse proxy,
+        // or a second zone. Legitimate, and not something to compare against this tunnel.
+        if (!string.IsNullOrWhiteSpace(target.BaseDomain) &&
+            !seed.Hostname.Equals(target.BaseDomain, StringComparison.OrdinalIgnoreCase) &&
+            !seed.Hostname.EndsWith($".{target.BaseDomain}", StringComparison.OrdinalIgnoreCase))
+        {
+            return seed with { State = CloudflareDiagnosticStates.External };
+        }
+
+        if (!routed.ContainsKey(seed.Hostname))
+        {
+            return seed with { State = CloudflareDiagnosticStates.RouteMissing };
+        }
+
+        // Deliberately no `route_stale` check for Core the way publications get one. Core's port is a launch
+        // setting rather than something the allocator moves, and the operator writes this rule by hand, so
+        // "http://127.0.0.1:7070" against an expected "http://localhost:7070" would report drift that is not
+        // drift. Presence is what can be verified without guessing at equivalent spellings.
+        try
+        {
+            var records = await client.ListDnsRecordsAsync(token, target.ZoneId, seed.Hostname, cancellationToken);
+            if (records.Count == 0)
+            {
+                return seed with { State = CloudflareDiagnosticStates.DnsMissing };
+            }
+
+            return records.Any(record => string.Equals(record.Content, seed.ExpectedDnsContent, StringComparison.OrdinalIgnoreCase))
+                ? seed with { State = CloudflareDiagnosticStates.Ok }
+                : seed with { State = CloudflareDiagnosticStates.DnsForeign };
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            logger.LogDebug(exception, "Cloudflare diagnostics could not read the DNS record for Core's own hostname.");
+            return seed;
+        }
     }
 
     // One publication's verdict, most-broken first: an app that is gone explains everything else, a
@@ -213,6 +304,11 @@ internal static class CloudflareDiagnosticStates
     public const string DnsMissing = "dns_missing";
     // A DNS record exists but points somewhere other than this tunnel.
     public const string DnsForeign = "dns_foreign";
+    // Core only: no HOSTY_CORE_PUBLIC_ORIGIN, so Core answers on loopback and has no public address at all.
+    public const string NotConfigured = "not_configured";
+    // Core only: published under a hostname outside the connected zone — someone else's proxy fronts it,
+    // which is a legitimate setup this tunnel has nothing to say about.
+    public const string External = "external";
     // The check itself could not complete; the publication may well be fine.
     public const string Unknown = "unknown";
 }
@@ -224,8 +320,19 @@ internal static class CloudflareDiagnosticStates
 internal sealed record CloudflareDiagnostics(
     bool Checked,
     IReadOnlyList<CloudflarePublicationDiagnostic> Publications,
-    IReadOnlyList<CloudflareUnpublishedEndpoint> UnpublishedEndpoints);
+    IReadOnlyList<CloudflareUnpublishedEndpoint> UnpublishedEndpoints,
+    CloudflareCoreDiagnostic Core);
 
 internal sealed record CloudflarePublicationDiagnostic(string AppId, string EndpointKey, string Hostname, string State);
+
+// Core's own address, and the two objects an operator has to create by hand for it to work: a proxied
+// CNAME to `ExpectedDnsContent`, and a tunnel rule sending `Hostname` to `ExpectedService`. Both are null
+// when there is nothing to advise — no origin configured, or no connection to name a tunnel.
+internal sealed record CloudflareCoreDiagnostic(
+    string Origin,
+    string? Hostname,
+    string State,
+    string? ExpectedDnsContent,
+    string ExpectedService);
 
 internal sealed record CloudflareUnpublishedEndpoint(string AppId, string DisplayName, string EndpointKey);

@@ -135,13 +135,27 @@ export type CloudflareDiagnosticState =
   | "route_stale"
   | "dns_missing"
   | "dns_foreign"
+  // Core's own address only.
+  | "not_configured"
+  | "external"
   | "unknown";
 export type CloudflarePublicationDiagnostic = { appId: string; endpointKey: string; hostname: string; state: CloudflareDiagnosticState };
 export type CloudflareUnpublishedEndpoint = { appId: string; displayName: string; endpointKey: string };
+// Core's own hostname rides the same tunnel but is not a publication: Core is not an app, so nothing
+// creates its route or DNS record. `expectedDnsContent` and `expectedService` are the two objects the
+// operator has to create by hand.
+export type CloudflareCoreDiagnostic = {
+  origin: string;
+  hostname: string | null;
+  state: CloudflareDiagnosticState;
+  expectedDnsContent: string | null;
+  expectedService: string;
+};
 export type CloudflareDiagnostics = {
   checked: boolean;
   publications: CloudflarePublicationDiagnostic[];
   unpublishedEndpoints: CloudflareUnpublishedEndpoint[];
+  core: CloudflareCoreDiagnostic;
 };
 
 // POST /api/apps/{id}/ports/reassign/plan — preview of reassigning one automatic host port.
