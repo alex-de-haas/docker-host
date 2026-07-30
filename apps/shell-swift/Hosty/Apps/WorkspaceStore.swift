@@ -41,6 +41,10 @@ final class WorkspaceStore {
         configuration.websiteDataStore = dataStore
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
+        // Attached here, not only in `installRecovery`: on a first open the view does not exist yet
+        // when recovery is installed, so an assignment made only there would land on nothing and the
+        // app would follow its own redirect to Core's login page instead of being re-launched.
+        webView.navigationDelegate = recoveries[appID]
         webViews[appID] = webView
         evictIfNeeded()
         return webView
@@ -52,11 +56,19 @@ final class WorkspaceStore {
     /// standalone path: a redirect to Core's `/api/apps/{id}/open`, which without a Core cookie lands
     /// on `/login`. That navigation is this client's cue — the native equivalent of the browser
     /// Shell's `hosty:auth-required` — and nothing in the SDK changes for it.
+    /// Safe in either order: it registers the coordinator for this app, and attaches it to the web
+    /// view if one already exists — `webView(for:)` attaches it to any view created later.
     func installRecovery(for appID: String, origin: HostOrigin, reopen: @escaping () -> Void) {
         let coordinator = recoveries[appID] ?? RecoveryCoordinator(appID: appID, origin: origin)
         coordinator.reopen = reopen
         recoveries[appID] = coordinator
         webViews[appID]?.navigationDelegate = coordinator
+    }
+
+    /// True when this app has a recovery coordinator registered. Exists so a test — and a reader —
+    /// can tell installation from the no-op it used to be.
+    func hasRecovery(for appID: String) -> Bool {
+        recoveries[appID] != nil
     }
 
     /// True when this app already has a loaded page, so opening it again is a switch rather than a

@@ -82,10 +82,19 @@ final class AppsModel {
                 return
             }
 
-            coreUpdateError = error.localizedDescription
+            failCoreUpdateCheck(error.localizedDescription)
         } catch {
-            coreUpdateError = error.localizedDescription
+            failCoreUpdateCheck(error.localizedDescription)
         }
+    }
+
+    /// A check that could not run leaves no verdict behind.
+    ///
+    /// Keeping the previous one would offer an update action — and count toward the Dashboard badge —
+    /// on the strength of an answer that has just been contradicted by a failure.
+    private func failCoreUpdateCheck(_ message: String) {
+        coreUpdate = nil
+        coreUpdateError = message
     }
 
     /// Starts Core's self-update.
@@ -101,6 +110,7 @@ final class AppsModel {
 
         do {
             _ = try await session.client.applyCoreUpdate()
+            await waitForCoreToReturn()
         } catch let error as CoreError {
             // Core refused before starting any work — the CLI could not be found, or the spawn failed.
             // Nothing is running, so the operator has to hear it rather than watch a spinner.
@@ -110,6 +120,35 @@ final class AppsModel {
             isApplyingCoreUpdate = false
             coreUpdateError = error.localizedDescription
         }
+    }
+
+    /// Waits out the restart the update causes, then re-reads the host.
+    ///
+    /// Core answered 202 and is replacing its own binary, so every request until it is back fails —
+    /// that is the update working. Polling ends the "Updating Core" state on the first answer, and
+    /// gives up after a bounded wait rather than leaving it on forever, which is what the operator
+    /// would otherwise be left looking at.
+    private func waitForCoreToReturn() async {
+        // Long enough for a binary swap and a cold start, short enough to stop claiming progress that
+        // is not happening.
+        let deadline = Date().addingTimeInterval(120)
+
+        while Date() < deadline {
+            try? await Task.sleep(for: .seconds(3))
+
+            // Clears the once-per-session version answer: a Core update is the one thing that changes
+            // it while the app is running.
+            await session.refreshAfterCoreRestart()
+            guard case .signedIn = session.state else { continue }
+
+            isApplyingCoreUpdate = false
+            await loadCoreUpdateStatus(refresh: true)
+            await reload()
+            return
+        }
+
+        isApplyingCoreUpdate = false
+        coreUpdateError = "Core did not come back after the update. Check the host, then try again."
     }
 
     /// Refreshes one app's update verdict while preserving the session-level 401 behavior used by the

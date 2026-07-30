@@ -156,8 +156,16 @@ plus Core itself as one more.
 `GET /api/core/update-status` reports whether a newer Core binary is available; a check that could not
 run is not "up to date" and does not offer the action. `POST /api/core/update` answers **202** and
 Core then spawns the CLI and restarts itself, so the reply means *started*, not finished — the
-connection loss that follows is the update working. The two ways it refuses before any work begins,
-`503` when the CLI cannot be located and `500` when the spawn fails, read as ordinary errors.
+connection loss that follows is the update working. The client polls until the host answers again,
+then re-reads the version, the verdict and the app list; the once-per-session version check is cleared
+first, because a Core update is the one thing that changes a version while the app is running. It
+gives up after a bounded wait rather than claiming progress indefinitely. The two ways Core refuses
+before any work begins, `503` when the CLI cannot be located and `500` when the spawn fails, read as
+ordinary errors.
+
+A check that could not run leaves no verdict behind: keeping the previous one would offer the update
+action, and count toward the Dashboard badge, on the strength of an answer a failure has just
+contradicted.
 
 ## Apps and workspaces
 
@@ -176,7 +184,10 @@ already open is a plain navigation: its cookie is already set on that origin.
 **Web views are cached per app for the host session**, so switching apps or looking at Dashboard does
 not reload the page and re-run the code exchange. The cache is bounded — a web view is an expensive
 object — and an evicted app re-opens the way a first open does. One non-persistent data store per host
-holds their identity cookies, and sign-out discards both.
+holds their identity cookies, and both are discarded whenever the session ends, not only when the
+operator taps Sign out: an expired or revoked bearer ends it just as finally, and an app's own grant
+outlives the Core session that authorized it, so a workspace left loaded would hand the next person to
+sign in the previous user's app identity.
 
 **Identity expiry arrives as a navigation, not a callback.** In a web view the app is the top frame,
 so the app SDK takes its standalone path: a redirect to Core's `/api/apps/{id}/open`, which without a
