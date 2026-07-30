@@ -7,6 +7,7 @@ namespace Haas.Hosty.Core;
 // receives it on next start. Install-time port reservations guarantee the endpoint already has a local URL,
 // so a stopped app can be published. See docs/features/cloudflare-ingress/feature.md.
 internal sealed class CloudflarePublicationService(
+    CoreSettingsService settings,
     CloudflareIntegrationStore integration,
     CloudflareCredentialStore credentials,
     CloudflarePublicationReconciler reconciler,
@@ -71,6 +72,16 @@ internal sealed class CloudflarePublicationService(
 
     private async Task<(string Token, CloudflareIngressTarget Target)> RequireConnectionAsync(CancellationToken cancellationToken)
     {
+        // The provider is checked here rather than only in the client: publication and the local-config
+        // provider are two ways to own the same HOSTY_PUBLIC_ORIGIN_* value, so allowing a publish while
+        // another provider is selected is what let a published label be overwritten on the next start.
+        if (!settings.Ingress.PublishesThroughApi)
+        {
+            throw new CloudflareConnectionException(
+                "cloudflare_provider_inactive",
+                $"Set the ingress provider to '{IngressSettings.ProviderCloudflareRemote}' before publishing a public origin.");
+        }
+
         var state = await integration.LoadAsync(cancellationToken);
         if (state is null ||
             !string.Equals(state.Status, CloudflareConnectionStatuses.Connected, StringComparison.Ordinal) ||

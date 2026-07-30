@@ -80,6 +80,9 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<CloudflarePublicationReconciler>();
         builder.Services.AddSingleton<CloudflarePublicationService>();
         builder.Services.AddSingleton<CloudflareConnectionService>();
+        // Decides which HOSTY_PUBLIC_ORIGIN_* values the active ingress provider owns; the `configure`
+        // guard reads it, so it must be registered for that guard to exist at all.
+        builder.Services.AddSingleton<PublicOriginOwnership>();
         builder.Services.AddSingleton<RuntimePortAllocator>();
         builder.Services.AddSingleton<CoreLifecycleService>();
         builder.Services.AddSingleton<LocalCommandProcessRegistry>();
@@ -100,8 +103,8 @@ internal static class HostyCoreApplication
         // singleton the exposition endpoint reads and run as a hosted service.
         builder.Services.AddSingleton<DockerStatsExposition>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<DockerStatsExposition>());
-        // One controller: it reads the live ingress provider from CoreSettingsService and no-ops when the
-        // provider is "none", so switching cloudflared on/off is a settings edit, not a restart.
+        // One controller: it reads the live ingress provider from CoreSettingsService and no-ops for every
+        // provider that is not "cloudflared", so switching providers is a settings edit, not a restart.
         builder.Services.AddSingleton<IIngressController, CloudflaredIngressController>();
         // Generic bootstrap: the release-owned distribution list and the operator's bootstrap
         // choices drive which first-party apps the supervisor preinstalls at boot; the service is
@@ -112,6 +115,9 @@ internal static class HostyCoreApplication
         // Runs before the schedulers below so an upgraded installation's existing state/backups/logs
         // are tightened before anything starts appending to them.
         builder.Services.AddHostedService<CoreFilePermissionMigration>();
+        // Selects the API ingress provider on a host that connected Cloudflare before it was one. Runs
+        // before the supervisor so the first app start of this boot already sees the right provider.
+        builder.Services.AddHostedService<CloudflareProviderMigration>();
         builder.Services.AddHostedService<RuntimeAppSupervisorService>();
         builder.Services.AddHostedService<AppBackupRetentionScheduler>();
         builder.Services.AddHostedService<NotificationRetentionScheduler>();
@@ -146,6 +152,7 @@ internal static class HostyCoreApplication
             HostyCoreRuntimeConfig config,
             CoreSettingsService settings,
             ShellPublicOriginResolver shellOrigins,
+            CloudflareIntegrationStore cloudflare,
             UserDirectoryStore users,
             IClock clock,
             CancellationToken cancellationToken) =>
@@ -154,11 +161,19 @@ internal static class HostyCoreApplication
             // including anyone who reaches core.<domain> through ingress — get only liveness/version.
             var user = await CoreSessionAuthorization.TryResolveSessionAsync(request, users, clock, cancellationToken);
             return CoreJson.Json(user is not null && string.Equals(user.Role, "host.admin", StringComparison.Ordinal)
-                ? CoreStatusResponse.From(config, settings.Ingress, await shellOrigins.ResolveAsync(cancellationToken))
+                ? CoreStatusResponse.From(
+                    config,
+                    settings.Ingress,
+                    await shellOrigins.ResolveAsync(cancellationToken),
+                    await cloudflare.IsConnectedAsync(cancellationToken))
                 : CoreStatusResponse.Public());
         });
-        app.MapGet("/control/v1/core/status", async (HttpRequest request, HostyCoreRuntimeConfig config, CoreSettingsService settings, ShellPublicOriginResolver shellOrigins, ControlSecret secret, CancellationToken cancellationToken) =>
-            await RequireControlSecret(request, secret, async () => CoreJson.Json(CoreStatusResponse.From(config, settings.Ingress, await shellOrigins.ResolveAsync(cancellationToken)))));
+        app.MapGet("/control/v1/core/status", async (HttpRequest request, HostyCoreRuntimeConfig config, CoreSettingsService settings, ShellPublicOriginResolver shellOrigins, CloudflareIntegrationStore cloudflare, ControlSecret secret, CancellationToken cancellationToken) =>
+            await RequireControlSecret(request, secret, async () => CoreJson.Json(CoreStatusResponse.From(
+                config,
+                settings.Ingress,
+                await shellOrigins.ResolveAsync(cancellationToken),
+                await cloudflare.IsConnectedAsync(cancellationToken)))));
         app.MapPost("/control/v1/core/stop", (HttpRequest request, ControlSecret secret, IHostApplicationLifetime lifetime, CoreShutdownOptions shutdownOptions) =>
             RequireControlSecret(request, secret, () =>
             {
@@ -1862,8 +1877,14 @@ internal sealed record CoreStatusResponse(
 
     // Ingress provider/domain/tunnel are live operator settings, so pass the current IngressSettings
     // (from CoreSettingsService) rather than reading a startup snapshot — the reported provider and
-    // warnings track platform-panel edits without a restart. The config.yml path stays launch-only.
-    public static CoreStatusResponse From(HostyCoreRuntimeConfig config, IngressSettings ingress, string? shellPublicOrigin)
+    // warnings track settings edits without a restart. The config.yml path stays launch-only.
+    // `cloudflareConnected` comes from the integration store: the API provider selected without a stored
+    // connection is a legitimate intermediate state that warns rather than failing.
+    public static CoreStatusResponse From(
+        HostyCoreRuntimeConfig config,
+        IngressSettings ingress,
+        string? shellPublicOrigin,
+        bool cloudflareConnected)
         => new(
             "running",
             "hosty-core",
@@ -1880,8 +1901,8 @@ internal sealed record CoreStatusResponse(
             config.Legacy?.ShellManifestPath,
             config.ShellAutostart,
             ingress.Provider,
-            ingress.ManagesPublicOrigins ? config.EffectiveIngressConfigPath : null,
-            [.. config.BuildPublicOriginWarnings(), .. ingress.BuildWarnings()],
+            ingress.DerivesPublicOrigins ? config.EffectiveIngressConfigPath : null,
+            [.. config.BuildPublicOriginWarnings(), .. ingress.BuildWarnings(cloudflareConnected)],
             DateTimeOffset.UtcNow);
 
     // Public liveness payload. `/api/core/status` is unauthenticated and, under cloudflared, published at

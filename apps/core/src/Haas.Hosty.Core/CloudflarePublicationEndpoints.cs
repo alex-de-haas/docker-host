@@ -64,7 +64,7 @@ internal static class CloudflarePublicationEndpoints
         {
             var statusCode = exception.Code switch
             {
-                "cloudflare_not_connected" => StatusCodes.Status409Conflict,
+                "cloudflare_not_connected" or "cloudflare_provider_inactive" => StatusCodes.Status409Conflict,
                 "cloudflare_app_not_found" => StatusCodes.Status404NotFound,
                 "cloudflare_hostname_owned" or "cloudflare_hostname_conflict" => StatusCodes.Status409Conflict,
                 _ => StatusCodes.Status400BadRequest,

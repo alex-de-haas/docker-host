@@ -271,6 +271,15 @@ internal sealed class CloudflareIntegrationStore(CoreDataPaths paths)
         }
     }
 
+    // True when a usable connection is stored. Read by the status warning and by the one-time provider
+    // migration, both of which only need "is there a connection", not the discovery details.
+    public async Task<bool> IsConnectedAsync(CancellationToken cancellationToken = default)
+    {
+        var state = await LoadAsync(cancellationToken);
+        return state is not null &&
+            string.Equals(state.Status, CloudflareConnectionStatuses.Connected, StringComparison.Ordinal);
+    }
+
     public async Task SaveAsync(CloudflareIntegrationState state, CancellationToken cancellationToken = default)
     {
         await gate.WaitAsync(cancellationToken);

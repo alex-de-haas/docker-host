@@ -41,7 +41,11 @@ internal sealed class CoreLifecycleService(
     TimeSpan? selfRestartPortReleaseTimeout = null,
     // Live-event hub for the update-availability projection (record commits publish from
     // AppRegistryStore itself). Optional only for unit fixtures; production DI always supplies it.
-    CoreEventHub? events = null)
+    CoreEventHub? events = null,
+    // Who owns each HOSTY_PUBLIC_ORIGIN_* value under the active ingress provider, which decides whether
+    // `configure` may write one. Optional only for unit fixtures that do not exercise ingress ownership;
+    // production DI always supplies it, and CoreHttpHarness covers the wired path.
+    PublicOriginOwnership? publicOrigins = null)
 {
     private static readonly Regex BackupReasonPattern = new("^[a-z0-9][a-z0-9-]{0,30}$", RegexOptions.Compiled);
     private static readonly Regex MountLabelPattern = new("^[a-z0-9][a-z0-9._-]{0,62}$", RegexOptions.Compiled);
@@ -474,9 +478,15 @@ internal sealed class CoreLifecycleService(
     private async Task<AppLifecycleResponse> ConfigureCoreAsync(string appId, AppConfigureRequest request, CancellationToken cancellationToken)
     {
         var policy = NormalizeConfiguredUpdatePolicy(request.UpdatePolicy);
+        // Resolved before the record mutation because it reads the publication store; the comparison
+        // itself happens inside the mutator, against the record being committed.
+        var managedOrigins = publicOrigins is null
+            ? []
+            : await publicOrigins.FindManagedKeysAsync(appId, request.Settings?.Keys, cancellationToken);
         var document = await apps.UpdateAppAsync(appId, app =>
         {
             ValidatePublicOriginSettings(request.Settings);
+            RequireUnmanagedPublicOrigins(app, request.Settings, managedOrigins);
             return app with
             {
                 Settings = request.Settings is { Count: > 0 } ? MergeSettings(app.Settings, request.Settings) : app.Settings,
@@ -5015,15 +5025,17 @@ internal sealed class CoreLifecycleService(
             Port: port.Key ?? port.ContainerPort?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "port"))).ToArray();
     }
 
-    // When an ingress provider manages public origins (e.g. cloudflared), persist the derived
-    // HOSTY_PUBLIC_ORIGIN_<endpoint> values before start so the existing settings->env pipeline
-    // injects them. The host is deterministic, so this runs before the runtime port is known.
+    // Under the local-config provider, persist the derived HOSTY_PUBLIC_ORIGIN_<endpoint> values before
+    // start so the existing settings->env pipeline injects them. The host is deterministic, so this runs
+    // before the runtime port is known. No other provider derives: under "cloudflare-remote" an operator
+    // label owns the hostname, and re-deriving here is what used to overwrite a published origin on
+    // every start.
     private async Task<AppRecord> EnsureIngressPublicOriginsAsync(
         AppRecord app,
         RuntimeAppManifestSelection selection,
         CancellationToken cancellationToken)
     {
-        if (!ingress.ManagesPublicOrigins)
+        if (!ingress.DerivesPublicOrigins)
         {
             return app;
         }
@@ -5120,6 +5132,40 @@ internal sealed class CoreLifecycleService(
         }
 
         return settings;
+    }
+
+    // Refuses a `configure` write to a public origin the active ingress provider owns, so the stored
+    // value cannot diverge from what the provider will apply. Only a *changed* value is refused: a client
+    // that resends the whole settings form unchanged is not trying to take ownership, and failing that
+    // would make every unrelated setting on the page unsavable. Clearing counts as a change — a managed
+    // origin goes away by unpublishing or by switching provider, not by blanking the field.
+    private static void RequireUnmanagedPublicOrigins(
+        AppRecord app,
+        IReadOnlyDictionary<string, string?>? settings,
+        IReadOnlyCollection<string> managedKeys)
+    {
+        if (settings is null || managedKeys.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var key in managedKeys)
+        {
+            if (!settings.TryGetValue(key, out var submitted))
+            {
+                continue;
+            }
+
+            var current = app.Settings.TryGetValue(key, out var existing) ? existing.Value : null;
+            if (string.Equals(submitted?.Trim(), current?.Trim(), StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            throw new AppLifecycleException(
+                "public_origin_managed",
+                $"'{key}' is managed by the active ingress provider and cannot be set here. Change it through the provider, or switch the ingress provider to 'none' to own it yourself.");
+        }
     }
 
     private static void ValidatePublicOriginSettings(IReadOnlyDictionary<string, string?>? settings)

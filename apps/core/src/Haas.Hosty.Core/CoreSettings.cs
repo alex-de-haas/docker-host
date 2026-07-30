@@ -100,15 +100,26 @@ internal sealed record IngressSettings(
     string? CredentialsFile)
 {
     public const string ProviderNone = "none";
+    public const string ProviderCloudflareRemote = "cloudflare-remote";
     public const string ProviderCloudflared = "cloudflared";
 
     // The built-in baseline (no env, no override): ingress off.
     public static IngressSettings Defaults { get; } = new(ProviderNone, null, null, null);
 
-    // True when a provider derives HOSTY_PUBLIC_ORIGIN_* and writes tunnel config; false ("none") leaves
-    // exposure and origins to the operator.
-    public bool ManagesPublicOrigins =>
-        string.Equals(Provider, ProviderCloudflared, StringComparison.OrdinalIgnoreCase);
+    public static bool IsKnownProvider(string? value)
+        => value is ProviderNone or ProviderCloudflareRemote or ProviderCloudflared;
+
+    // True under the local provider only. It is the one that renders config.yml and derives
+    // {subdomain}.{baseDomain} origins itself; the API provider never derives, because there an operator
+    // label owns the hostname and re-deriving on top of it is exactly what used to overwrite a published
+    // origin on every start.
+    public bool DerivesPublicOrigins => Is(ProviderCloudflared);
+
+    // True under the API provider: publication owns public origins, and Core writes no tunnel config
+    // because the tunnel is remotely managed.
+    public bool PublishesThroughApi => Is(ProviderCloudflareRemote);
+
+    private bool Is(string provider) => string.Equals(Provider, provider, StringComparison.OrdinalIgnoreCase);
 
     public static IngressSettings FromEnvironment()
         => new(
@@ -121,9 +132,19 @@ internal sealed record IngressSettings(
 
     // Same shape as HostyCoreRuntimeConfig's former BuildIngressWarnings(), moved here so /api/core/status
     // reflects the live provider/domain after a save rather than the startup snapshot.
-    public IReadOnlyList<string> BuildWarnings()
+    // `cloudflareConnected` reports whether a Cloudflare API connection is stored, which only the caller
+    // (the status endpoint) can see. Selecting the API provider without connecting is a legitimate
+    // intermediate state, so it warns rather than failing the save.
+    public IReadOnlyList<string> BuildWarnings(bool cloudflareConnected)
     {
-        if (!ManagesPublicOrigins)
+        if (PublishesThroughApi)
+        {
+            return cloudflareConnected
+                ? []
+                : ["Ingress provider 'cloudflare-remote' has no Cloudflare connection; connect a scoped API token before publishing an app endpoint."];
+        }
+
+        if (!DerivesPublicOrigins)
         {
             return [];
         }
@@ -310,25 +331,34 @@ internal static class CoreIngressSettings
     public static readonly IReadOnlyList<CoreIngressSettingDefinition> All =
     [
         new("HOSTY_INGRESS_PROVIDER", Group, "Provider",
-            "How app ports are exposed to the internet. 'Cloudflare Tunnel' writes a tunnel config that an "
-            + "operator-run cloudflared reads and derives https public origins; 'Disabled' leaves exposure to "
-            + "you. You must create the tunnel, its credentials file, and a wildcard DNS record and run "
-            + "cloudflared yourself — Hosty only writes its config. See docs/features/cloudflare-ingress/feature.md.",
+            "How app endpoints reach the internet. Both Cloudflare options drive the same kind of tunnel and "
+            + "are mutually exclusive: 'Cloudflare' manages a remotely managed tunnel over the API, so you "
+            + "publish one endpoint at a time under a label you choose; 'Cloudflare Tunnel (local config)' "
+            + "writes a config file for a locally managed tunnel you run yourself and derives a hostname for "
+            + "every running app; 'Disabled' leaves exposure to you and you set each app's public origin by "
+            + "hand. Hosty never creates a tunnel or runs a connector. "
+            + "See docs/features/cloudflare-ingress/feature.md.",
             "select",
-            [new(IngressSettings.ProviderNone, "Disabled"), new(IngressSettings.ProviderCloudflared, "Cloudflare Tunnel")],
+            [
+                new(IngressSettings.ProviderNone, "Disabled"),
+                new(IngressSettings.ProviderCloudflareRemote, "Cloudflare"),
+                new(IngressSettings.ProviderCloudflared, "Cloudflare Tunnel (local config)"),
+            ],
             x => x.Provider, (x, v) => x with { Provider = v }),
         new("HOSTY_INGRESS_BASE_DOMAIN", Group, "Base domain",
-            "The domain apps are published under, e.g. example.com. Each app gets a single-level subdomain "
-            + "(app.example.com) covered by one wildcard CNAME.",
+            "Local-config provider only. The domain apps are published under, e.g. example.com. Each app gets "
+            + "a single-level subdomain (app.example.com) covered by one wildcard CNAME. Under 'Cloudflare' the "
+            + "connected zone supplies this instead.",
             "text", Options: null,
             x => x.BaseDomain, (x, v) => x with { BaseDomain = v }),
         new("HOSTY_INGRESS_TUNNEL_ID", Group, "Tunnel ID",
-            "The cloudflared tunnel UUID (from `cloudflared tunnel create`) written into the tunnel config.",
+            "Local-config provider only. The cloudflared tunnel UUID (from `cloudflared tunnel create`) "
+            + "written into the tunnel config.",
             "text", Options: null,
             x => x.TunnelId, (x, v) => x with { TunnelId = v }),
         new("HOSTY_INGRESS_CREDENTIALS_FILE", Group, "Credentials file",
-            "Absolute path to the tunnel's credentials JSON on this host, written verbatim into the tunnel "
-            + "config for cloudflared to read.",
+            "Local-config provider only. Absolute path to the tunnel's credentials JSON on this host, written "
+            + "verbatim into the tunnel config for cloudflared to read.",
             "text", Options: null,
             x => x.CredentialsFile, (x, v) => x with { CredentialsFile = v }),
     ];
@@ -663,10 +693,11 @@ internal sealed class CoreSettingsService
         if (key == "HOSTY_INGRESS_PROVIDER")
         {
             var provider = value.ToLowerInvariant();
-            if (provider is not (IngressSettings.ProviderNone or IngressSettings.ProviderCloudflared))
+            if (!IngressSettings.IsKnownProvider(provider))
             {
                 throw new AppLifecycleException("core_setting_invalid",
-                    $"Ingress provider must be '{IngressSettings.ProviderNone}' or '{IngressSettings.ProviderCloudflared}'.");
+                    $"Ingress provider must be '{IngressSettings.ProviderNone}', '{IngressSettings.ProviderCloudflareRemote}', "
+                    + $"or '{IngressSettings.ProviderCloudflared}'.");
             }
 
             return provider;
@@ -717,14 +748,13 @@ internal sealed class CoreSettingsService
         foreach (var (key, value) in document.Ingress)
         {
             // Same per-entry tolerance as the auth overrides: skip unknown keys, blanks, and a
-            // hand-edited provider that is neither 'none' nor 'cloudflared' rather than crashing startup.
+            // hand-edited provider outside the known set rather than crashing startup.
             if (!CoreIngressSettings.IsKnown(key) || string.IsNullOrWhiteSpace(value))
             {
                 continue;
             }
 
-            if (key == "HOSTY_INGRESS_PROVIDER" &&
-                value is not (IngressSettings.ProviderNone or IngressSettings.ProviderCloudflared))
+            if (key == "HOSTY_INGRESS_PROVIDER" && !IngressSettings.IsKnownProvider(value))
             {
                 continue;
             }

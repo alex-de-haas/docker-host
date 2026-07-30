@@ -67,10 +67,25 @@ public sealed class CloudflarePublicationServiceTests : IDisposable
         Assert.Equal("cloudflare_endpoint_no_local_url", error.Code);
     }
 
+    [Fact]
+    public async Task PublishAsync_WhenProviderIsNotCloudflareRemote_Throws()
+    {
+        // Connected, but the operator left ingress on another provider: publishing would hand ownership of
+        // HOSTY_PUBLIC_ORIGIN_* to a surface that is not in charge of it.
+        var (service, _) = await CreateAsync(new StatefulApi(), connected: true, appRunning: false, provider: IngressSettings.ProviderCloudflared);
+
+        var error = await Assert.ThrowsAsync<CloudflareConnectionException>(() => service.PublishAsync("com.example.media", "web.http", "media"));
+        Assert.Equal("cloudflare_provider_inactive", error.Code);
+    }
+
     private async Task<(CloudflarePublicationService, AppRegistryStore)> CreateConnectedAsync(StatefulApi api, bool appRunning)
         => await CreateAsync(api, connected: true, appRunning);
 
-    private async Task<(CloudflarePublicationService, AppRegistryStore)> CreateAsync(StatefulApi api, bool connected, bool appRunning)
+    private async Task<(CloudflarePublicationService, AppRegistryStore)> CreateAsync(
+        StatefulApi api,
+        bool connected,
+        bool appRunning,
+        string provider = IngressSettings.ProviderCloudflareRemote)
     {
         Directory.CreateDirectory(root);
         var paths = new CoreDataPaths(root, Path.Combine(root, "core"), Path.Combine(root, "apps"), Path.Combine(root, "backups"), Path.Combine(root, "sources"), Path.Combine(root, "core", "auth"), Path.Combine(root, "core", "audit", "a.ndjson"));
@@ -88,8 +103,11 @@ public sealed class CloudflarePublicationServiceTests : IDisposable
                 "tunnel-123", "NL", "healthy", ConnectorLocality.Local, DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch));
         }
 
+        var settings = new CoreSettingsService(new CoreSettingsStore(paths, NullLogger<CoreSettingsStore>.Instance));
+        await settings.UpdateAsync(new Dictionary<string, string?> { ["HOSTY_INGRESS_PROVIDER"] = provider });
+
         await apps.UpsertAppAsync(SeedApp("com.example.media", appRunning));
-        return (new CloudflarePublicationService(integration, credentials, reconciler, publications, apps), apps);
+        return (new CloudflarePublicationService(settings, integration, credentials, reconciler, publications, apps), apps);
     }
 
     private static AppRecord SeedApp(string id, bool running)

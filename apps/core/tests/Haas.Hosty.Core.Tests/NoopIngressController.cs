@@ -10,7 +10,7 @@ internal sealed class NoopIngressController : IIngressController
     private static readonly IReadOnlyDictionary<string, string> Empty =
         new Dictionary<string, string>(StringComparer.Ordinal);
 
-    public bool ManagesPublicOrigins => false;
+    public bool DerivesPublicOrigins => false;
 
     public IReadOnlyDictionary<string, string> ResolvePublicOrigins(
         string appId,
