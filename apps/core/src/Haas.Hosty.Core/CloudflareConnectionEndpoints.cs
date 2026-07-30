@@ -6,13 +6,19 @@ namespace Haas.Hosty.Core;
 // require an admin session; mutations also require CSRF.
 internal static class CloudflareConnectionEndpoints
 {
-    // The account-owned token creation page. The required permission groups are returned as guidance
-    // alongside it; prefilling the permission-group keys is a later UX refinement.
+    // The account-owned token creation page. Cloudflare's template links can prefill permission groups
+    // through `permissionGroupKeys`, but the key for the tunnel permission is not documented, and a link
+    // that silently prefills two of the three — dropping the one that is genuinely hard to find — would
+    // send an operator away confident and back with a 403. So this stays a plain link and the guidance
+    // below carries the exact names instead.
     private const string TokenCreationUrl = "https://dash.cloudflare.com/?to=/:account/api-tokens";
 
+    // The groups a phase-0 spike proved sufficient against a live account. The tunnel one is listed first
+    // and by its dashboard name: searching the token editor for "Cloudflare Tunnel" finds nothing, which
+    // is the single most common way this setup stalls.
     private static readonly IReadOnlyList<string> RequiredPermissions =
     [
-        "Account · Cloudflare Tunnel · Edit",
+        "Account · Argo Tunnel (Legacy) · Edit — the dashboard's name for the Cloudflare Tunnel permission",
         "Zone · DNS · Edit",
         "Zone · Zone · Read",
     ];
@@ -57,7 +63,7 @@ internal static class CloudflareConnectionEndpoints
                 request,
                 users,
                 clock,
-                async () => await HandleCloudflareError(() => service.ConnectAsync(input.Token, cancellationToken)),
+                async () => await HandleCloudflareError(() => service.ConnectAsync(input.Token, input.Selection, cancellationToken)),
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
@@ -84,6 +90,16 @@ internal static class CloudflareConnectionEndpoints
         }
         catch (CloudflareConnectionException exception)
         {
+            // An ambiguity is not a failed request: the token is fine and the account simply has more than
+            // one candidate. It answers 409 with the candidates so the client can ask and retry, rather
+            // than the 400 that used to end the flow.
+            if (exception.Selection is { } selection)
+            {
+                return CoreJson.Json(
+                    new CloudflareSelectionErrorResponse(exception.Code, exception.Message, selection),
+                    statusCode: StatusCodes.Status409Conflict);
+            }
+
             var statusCode = exception.Code switch
             {
                 "cloudflare_token_invalid" => StatusCodes.Status401Unauthorized,

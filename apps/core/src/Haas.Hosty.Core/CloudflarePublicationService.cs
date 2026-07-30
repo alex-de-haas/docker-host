@@ -10,11 +10,12 @@ internal sealed class CloudflarePublicationService(
     CoreSettingsService settings,
     CloudflareIntegrationStore integration,
     CloudflareCredentialStore credentials,
+    CloudflareConnectionService connection,
     CloudflarePublicationReconciler reconciler,
     CloudflarePublicationStore publications,
     AppRegistryStore apps)
 {
-    public async Task<CloudflarePublicationResult> PublishAsync(string appId, string endpointKey, string label, CancellationToken cancellationToken = default)
+    public async Task<CloudflarePublicationResult> PublishAsync(string appId, string endpointKey, string label, bool adopt = false, CancellationToken cancellationToken = default)
     {
         var (token, target) = await RequireConnectionAsync(cancellationToken);
         var app = await apps.GetAppAsync(appId, cancellationToken)
@@ -29,7 +30,9 @@ internal sealed class CloudflarePublicationService(
                 $"Endpoint '{endpointKey}' has no local URL yet; it must have a reserved port before it can be published.");
         }
 
-        var publication = await reconciler.PublishAsync(token, target, appId, endpointKey, label, endpoint.Url, cancellationToken);
+        var publication = await WithReconnectDetectionAsync(
+            () => reconciler.PublishAsync(token, target, appId, endpointKey, label, endpoint.Url, adopt, cancellationToken),
+            cancellationToken);
         var publicOrigin = $"https://{publication.Hostname}";
         var updated = await apps.UpdateAppAsync(appId, record => WithPublicOrigin(record, endpointKey, publicOrigin), cancellationToken);
         return new CloudflarePublicationResult(appId, endpointKey, publication.Hostname, publicOrigin, IsRunning(updated.App));
@@ -46,7 +49,13 @@ internal sealed class CloudflarePublicationService(
         // Clean the Cloudflare resources regardless (the reconciler tolerates an already-deleted record). Only
         // clear the managed setting when the app still exists: an already-uninstalled app has nothing to
         // update and must not surface as a 500 from UpdateAppAsync.
-        await reconciler.UnpublishAsync(token, target, appId, endpointKey, cancellationToken);
+        await WithReconnectDetectionAsync(
+            async () =>
+            {
+                await reconciler.UnpublishAsync(token, target, appId, endpointKey, cancellationToken);
+                return true;
+            },
+            cancellationToken);
         var app = await apps.GetAppAsync(appId, cancellationToken);
         if (app is null)
         {
@@ -70,6 +79,26 @@ internal sealed class CloudflarePublicationService(
         return new CloudflareAppPublications(summaries);
     }
 
+    // Cloudflare tells nobody that a token was revoked, expired, or had a permission removed — it is found
+    // out here, on the next call that uses it. Recording it turns a repeated opaque failure into a state
+    // Shell can prompt on, and it deliberately deletes nothing: routes, DNS, and the stored publications
+    // stay, so reconnecting a fresh token makes them all work again.
+    private async Task<T> WithReconnectDetectionAsync<T>(Func<Task<T>> action, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await action();
+        }
+        catch (CloudflareApiException exception) when (exception.StatusCode is 401 or 403)
+        {
+            var reason = exception.StatusCode == 401
+                ? "The Cloudflare token is invalid or revoked."
+                : "The Cloudflare token is missing a required permission.";
+            await connection.MarkReconnectRequiredAsync(reason, cancellationToken);
+            throw new CloudflareConnectionException("cloudflare_reconnect_required", $"{reason} Reconnect Cloudflare under Settings → Ingress.");
+        }
+    }
+
     private async Task<(string Token, CloudflareIngressTarget Target)> RequireConnectionAsync(CancellationToken cancellationToken)
     {
         // The provider is checked here rather than only in the client: publication and the local-config
@@ -83,6 +112,15 @@ internal sealed class CloudflarePublicationService(
         }
 
         var state = await integration.LoadAsync(cancellationToken);
+        // Distinct from "never connected": the discovery state and every publication are still here, and
+        // the fix is a fresh token rather than a first-time setup.
+        if (state is not null && string.Equals(state.Status, CloudflareConnectionStatuses.ReconnectRequired, StringComparison.Ordinal))
+        {
+            throw new CloudflareConnectionException(
+                "cloudflare_reconnect_required",
+                $"The stored Cloudflare token stopped working ({state.ReconnectReason ?? "reason unknown"}). Reconnect Cloudflare under Settings → Ingress.");
+        }
+
         if (state is null ||
             !string.Equals(state.Status, CloudflareConnectionStatuses.Connected, StringComparison.Ordinal) ||
             string.IsNullOrWhiteSpace(state.AccountId) ||
@@ -128,7 +166,9 @@ internal sealed class CloudflarePublicationService(
     private static bool IsRunning(AppRecord app) => AppRuntimeStates.IsUp(app.RuntimeState);
 }
 
-internal sealed record CloudflarePublishRequest(string EndpointKey, string Label);
+// `Adopt` answers a cloudflare_hostname_conflict: take over the DNS record that already exists for this
+// hostname instead of refusing. False on a first attempt.
+internal sealed record CloudflarePublishRequest(string EndpointKey, string Label, bool Adopt = false);
 
 internal sealed record CloudflareUnpublishRequest(string EndpointKey);
 

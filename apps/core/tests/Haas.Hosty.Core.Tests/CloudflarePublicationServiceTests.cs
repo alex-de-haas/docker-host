@@ -78,6 +78,37 @@ public sealed class CloudflarePublicationServiceTests : IDisposable
         Assert.Equal("cloudflare_provider_inactive", error.Code);
     }
 
+    [Fact]
+    public async Task PublishAsync_WhenTheTokenStoppedWorking_RecordsReconnectRequired()
+    {
+        // Cloudflare tells nobody a token was revoked; it is found out on the next call that uses it.
+        var api = new StatefulApi { Failure = new CloudflareApiException(401, ["Invalid API Token"]) };
+        var (service, _) = await CreateConnectedAsync(api, appRunning: false);
+
+        var error = await Assert.ThrowsAsync<CloudflareConnectionException>(
+            () => service.PublishAsync("com.example.media", "web.http", "media"));
+        Assert.Equal("cloudflare_reconnect_required", error.Code);
+
+        // Recorded, so the next attempt says the same thing without another round trip — and nothing was
+        // deleted, so reconnecting a fresh token restores the whole setup.
+        api.Failure = null;
+        var again = await Assert.ThrowsAsync<CloudflareConnectionException>(
+            () => service.PublishAsync("com.example.media", "web.http", "media"));
+        Assert.Equal("cloudflare_reconnect_required", again.Code);
+    }
+
+    [Fact]
+    public async Task PublishAsync_WhenAPermissionWasRemoved_AlsoRecordsReconnectRequired()
+    {
+        var api = new StatefulApi { Failure = new CloudflareApiException(403, ["Unauthorized"]) };
+        var (service, _) = await CreateConnectedAsync(api, appRunning: false);
+
+        var error = await Assert.ThrowsAsync<CloudflareConnectionException>(
+            () => service.PublishAsync("com.example.media", "web.http", "media"));
+
+        Assert.Equal("cloudflare_reconnect_required", error.Code);
+    }
+
     private async Task<(CloudflarePublicationService, AppRegistryStore)> CreateConnectedAsync(StatefulApi api, bool appRunning)
         => await CreateAsync(api, connected: true, appRunning);
 
@@ -106,8 +137,11 @@ public sealed class CloudflarePublicationServiceTests : IDisposable
         var settings = new CoreSettingsService(new CoreSettingsStore(paths, NullLogger<CoreSettingsStore>.Instance));
         await settings.UpdateAsync(new Dictionary<string, string?> { ["HOSTY_INGRESS_PROVIDER"] = provider });
 
+        var connection = new CloudflareConnectionService(
+            api, credentials, integration, NullLogger<CloudflareConnectionService>.Instance);
+
         await apps.UpsertAppAsync(SeedApp("com.example.media", appRunning));
-        return (new CloudflarePublicationService(settings, integration, credentials, reconciler, publications, apps), apps);
+        return (new CloudflarePublicationService(settings, integration, credentials, connection, reconciler, publications, apps), apps);
     }
 
     private static AppRecord SeedApp(string id, bool running)
@@ -139,8 +173,13 @@ public sealed class CloudflarePublicationServiceTests : IDisposable
         public List<CloudflareDnsRecord> Dns { get; } = [];
         private int nextId = 1;
 
+        // Set to make every tunnel/DNS call fail the way a revoked or permission-reduced token does.
+        public CloudflareApiException? Failure { get; set; }
+
         public Task<CloudflareTunnelConfigResult?> GetTunnelConfigurationAsync(string token, string accountId, string tunnelId, CancellationToken cancellationToken = default)
-            => Task.FromResult<CloudflareTunnelConfigResult?>(new CloudflareTunnelConfigResult(1, "cloudflare", (JsonObject)Config.DeepClone()));
+            => Failure is not null
+                ? throw Failure
+                : Task.FromResult<CloudflareTunnelConfigResult?>(new CloudflareTunnelConfigResult(1, "cloudflare", (JsonObject)Config.DeepClone()));
 
         public Task<CloudflareTunnelConfigResult?> PutTunnelConfigurationAsync(string token, string accountId, string tunnelId, JsonObject config, CancellationToken cancellationToken = default)
         {

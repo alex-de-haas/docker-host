@@ -167,10 +167,16 @@ Unchanged in substance from the 2026-07-28 audit, re-stated as behavior:
 - [x] One-time provider migration for a host with a stored connection and provider `none`.
 - [x] Shell `Ingress` settings tab: `HostSettingsTab`, route parsing and href, the section itself, the
       connection card moved out of the Core tab and out of `dialogs/`, per-provider field visibility.
-- [ ] Account/zone/tunnel selection in Shell, replacing the ambiguity hard-fail.
-- [ ] Prefilled token template URL carrying the confirmed permission groups.
-- [ ] Explicit adoption of an existing DNS record or tunnel route, assigning the `adopted` state.
-- [ ] Assign `reconnect_required` on token revocation, expiry, or permission loss.
+- [x] Account/zone/tunnel selection in Shell, replacing the ambiguity hard-fail.
+- [x] ~~Prefilled token template URL carrying the confirmed permission groups.~~ **Not done, deliberately.**
+      Cloudflare's template links prefill through `permissionGroupKeys`, but the key for the tunnel
+      permission is undocumented — the published tables cover DNS and zone and stop there. A link that
+      prefills two of the three while silently dropping the one that is actually hard to find sends an
+      operator away confident and back with a `403`. The connection card now names the permission the way
+      the dashboard does instead ("Argo Tunnel (Legacy)"), which is the part that was really missing:
+      searching the token editor for "Cloudflare Tunnel" finds nothing.
+- [x] Explicit adoption of an existing DNS record or tunnel route, assigning the `adopted` state.
+- [x] Assign `reconnect_required` on token revocation, expiry, or permission loss.
 - [ ] Lifecycle cleanup on endpoint removal, app update apply, and uninstall, with uninstall review
       listing Hosty-owned publications.
 - [ ] Disconnect Keep/Remove choices, halting and staying retryable on a failed deletion.
@@ -208,10 +214,10 @@ Unchanged in substance from the 2026-07-28 audit, re-stated as behavior:
 
 ### Phase 3 — Finish the connection
 
-- [ ] Shell selection for an ambiguous account/zone/tunnel.
-- [ ] Prefilled template URL.
-- [ ] `reconnect_required` assignment and recovery.
-- [ ] Adoption path.
+- [x] Shell selection for an ambiguous account/zone/tunnel.
+- [x] Prefilled template URL (dropped with reasons; the permission names were fixed instead).
+- [x] `reconnect_required` assignment and recovery.
+- [x] Adoption path.
 
 ### Phase 4 — Lifecycle and cleanup
 

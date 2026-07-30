@@ -96,6 +96,12 @@ export type CloudflareConnectionStatus = {
 // GET /api/core/cloudflare/token-template — dashboard URL + the permissions to grant.
 export type CloudflareTokenTemplate = { url: string; requiredPermissions: string[] };
 
+// The 409 body from POST /api/core/cloudflare/connect when the token can reach more than one account,
+// zone, or tunnel: the candidates, so the operator can answer instead of dead-ending.
+export type CloudflareSelectionOption = { id: string; name: string; detail?: string | null };
+export type CloudflareSelectionRequired = { kind: "account" | "zone" | "tunnel"; options: CloudflareSelectionOption[] };
+export type CloudflareSelectionError = { code: string; message: string; selection: CloudflareSelectionRequired };
+
 // GET /api/apps/{id}/public-origins
 export type CloudflarePublicationSummary = { endpointKey: string; label: string; hostname: string; publicOrigin?: string | null; ownershipState: string };
 export type CloudflareAppPublications = { publications: CloudflarePublicationSummary[] };

@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { isAuthRequiredRedirectError } from "../core-api";
+import { coreErrorCode, isAuthRequiredRedirectError } from "../core-api";
 import { publishesThroughCloudflareApi } from "../ingress";
 import { useShellActions, useShellState } from "../shell-context";
 import type { CloudflareAppPublications, CloudflareConnectionStatus, CloudflarePublicationResult, CloudflarePublicationSummary, CoreApp, CoreEndpoint } from "../types";
@@ -26,6 +26,9 @@ export function CloudflarePublishControl({ app, endpoint }: { app: CoreApp; endp
   const [connection, setConnection] = useState<CloudflareConnectionStatus | null>(null);
   const [publication, setPublication] = useState<CloudflarePublicationSummary | null>(null);
   const [label, setLabel] = useState("");
+  // Set when Core refuses because a DNS record for this hostname already exists. Adoption is offered, never
+  // implied: an unasked-for takeover would let a typo point someone else's hostname at a local app.
+  const [conflict, setConflict] = useState(false);
 
   // Publishing is what the API provider means, so the control belongs to it and to nothing else. Under
   // any other provider Core refuses the publish outright (cloudflare_provider_inactive), and under the
@@ -44,6 +47,7 @@ export function CloudflarePublishControl({ app, endpoint }: { app: CoreApp; endp
     setConnection(null);
     setPublication(null);
     setLabel("");
+    setConflict(false);
     setLoading(true);
     try {
       const [statusResponse, publicationsResponse] = await Promise.all([
@@ -66,7 +70,7 @@ export function CloudflarePublishControl({ app, endpoint }: { app: CoreApp; endp
     }
   };
 
-  const publish = async () => {
+  const publish = async (adopt = false) => {
     if (!label.trim()) {
       return;
     }
@@ -74,15 +78,17 @@ export function CloudflarePublishControl({ app, endpoint }: { app: CoreApp; endp
     setBusy(true);
     setError(null);
     try {
-      const response = await sendCsrfJson(`${appBase}/publish`, { endpointKey: endpoint.key, label: label.trim() });
+      const response = await sendCsrfJson(`${appBase}/publish`, { endpointKey: endpoint.key, label: label.trim(), adopt });
       const result = (await response.json()) as CloudflarePublicationResult;
       setOpen(false);
+      setConflict(false);
       await refresh();
       toast.success(`Published ${result.publicOrigin}`, {
         description: result.restartRequired ? `Restart ${app.displayName} to apply the new origin.` : undefined,
       });
     } catch (publishError) {
       if (!isAuthRequiredRedirectError(publishError)) {
+        setConflict(coreErrorCode(publishError) === "cloudflare_hostname_conflict");
         setError(publishError instanceof Error ? publishError.message : "Publishing the public origin failed.");
       }
     } finally {
@@ -137,6 +143,11 @@ export function CloudflarePublishControl({ app, endpoint }: { app: CoreApp; endp
                   <InlineError message={error} />
                   <Button type="button" size="sm" variant="outline" onClick={() => void openDialog()}>Retry</Button>
                 </div>
+              ) : connection?.status === "reconnect_required" ? (
+                <p className="text-sm text-muted-foreground">
+                  The stored Cloudflare token stopped working{connection.reconnectReason ? ` — ${connection.reconnectReason}` : "."} Reconnect
+                  under Settings → Ingress; nothing published was removed, so it all works again afterwards.
+                </p>
               ) : (
                 <p className="text-sm text-muted-foreground">
                   Cloudflare is the selected ingress provider, but no API token is connected yet. Connect one under
@@ -155,7 +166,10 @@ export function CloudflarePublishControl({ app, endpoint }: { app: CoreApp; endp
                   <Input
                     id="cf-label"
                     value={label}
-                    onChange={(event) => setLabel(event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
+                    onChange={(event) => {
+                      setConflict(false);
+                      setLabel(event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""));
+                    }}
                     placeholder="media"
                     className="h-8 text-xs"
                   />
@@ -166,6 +180,12 @@ export function CloudflarePublishControl({ app, endpoint }: { app: CoreApp; endp
             )}
             {/* Action (publish/unpublish) errors while connected are shown inline; a load error is handled above. */}
             {connected && error && <InlineError message={error} />}
+            {conflict && (
+              <p className="text-[11px] text-muted-foreground">
+                Adopting means Hosty manages this record from now on. It stays yours: unpublishing removes the
+                tunnel route and leaves the DNS record in place.
+              </p>
+            )}
           </DialogBody>
           <DialogFooter>
             <Button type="button" variant="ghost" disabled={busy} onClick={() => setOpen(false)}>Close</Button>
@@ -175,10 +195,18 @@ export function CloudflarePublishControl({ app, endpoint }: { app: CoreApp; endp
                 Unpublish
               </Button>
             ) : connected ? (
-              <Button type="button" disabled={busy || !label.trim()} onClick={() => void publish()}>
-                {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
-                Publish
-              </Button>
+              <>
+                {conflict && (
+                  <Button type="button" variant="outline" disabled={busy} onClick={() => void publish(true)}>
+                    {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
+                    Adopt and publish
+                  </Button>
+                )}
+                <Button type="button" disabled={busy || !label.trim()} onClick={() => void publish()}>
+                  {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
+                  Publish
+                </Button>
+              </>
             ) : null}
           </DialogFooter>
         </DialogContent>

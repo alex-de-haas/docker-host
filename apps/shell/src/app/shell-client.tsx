@@ -8,7 +8,7 @@ import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { findAppPageLink, getAppPageLinks } from "./shell/app-helpers";
-import { isAuthRequiredRedirectError, readCoreError, redirectToCoreLogin, redirectToCoreLoginIfAuthRequired } from "./shell/core-api";
+import { CoreRequestError, isAuthRequiredRedirectError, readCoreError, readCoreErrorDetail, redirectToCoreLogin, redirectToCoreLoginIfAuthRequired } from "./shell/core-api";
 import { createReissueRateLimiter } from "@hosty-sdk/app/embedder";
 import { CoreEventNames, subscribeToCoreEvents } from "./shell/events/core-event-stream";
 import { AppDetailsDialog } from "./shell/dialogs/app-details-dialog";
@@ -325,7 +325,10 @@ export function ShellClient({
 
         redirectToCoreLoginIfAuthRequired(response, coreOrigin);
         if (!response.ok) {
-          throw new Error(await readCoreError(response));
+          // A CoreRequestError is still an ordinary Error carrying the same message, so every caller that
+          // only shows `err.message` is unaffected; the ones that need to branch read `code`/`body`.
+          const detail = await readCoreErrorDetail(response);
+          throw new CoreRequestError(detail.message, detail.code, response.status, detail.body);
         }
 
         return response;

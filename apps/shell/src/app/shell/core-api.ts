@@ -26,12 +26,38 @@ export function redirectToCoreLoginIfAuthRequired(response: Response, coreOrigin
   }
 }
 
+// A Core error with its machine-readable parts kept. Most callers only ever read `message` — that is why
+// this stays an ordinary Error — but a few need to branch on the code and act on the rest of the body:
+// an ambiguity that carries its candidates, a hostname conflict that can be adopted.
+export class CoreRequestError<TBody = unknown> extends Error {
+  constructor(message: string, readonly code: string | null, readonly status: number, readonly body: TBody | null) {
+    super(message);
+    this.name = "CoreRequestError";
+  }
+}
+
+export function coreErrorCode(error: unknown) {
+  return error instanceof CoreRequestError ? error.code : null;
+}
+
+export function coreErrorBody<TBody>(error: unknown) {
+  return error instanceof CoreRequestError ? (error.body as TBody | null) : null;
+}
+
 export async function readCoreError(response: Response) {
+  return (await readCoreErrorDetail(response)).message;
+}
+
+export async function readCoreErrorDetail(response: Response) {
   try {
-    const error = (await response.json()) as CoreError;
-    return error.message || error.code || `Core returned ${response.status}.`;
+    const body = (await response.json()) as CoreError;
+    return {
+      message: body.message || body.code || `Core returned ${response.status}.`,
+      code: body.code ?? null,
+      body: body as unknown,
+    };
   } catch {
-    return `Core returned ${response.status}.`;
+    return { message: `Core returned ${response.status}.`, code: null, body: null };
   }
 }
 

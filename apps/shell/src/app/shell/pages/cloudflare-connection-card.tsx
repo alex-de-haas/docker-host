@@ -5,15 +5,33 @@ import { ExternalLink, LoaderCircle } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { isAuthRequiredRedirectError } from "../core-api";
+import { coreErrorBody, isAuthRequiredRedirectError } from "../core-api";
 import { useShellActions } from "../shell-context";
-import type { CloudflareConnectionStatus, CloudflareTokenTemplate } from "../types";
+import type {
+  CloudflareConnectionStatus,
+  CloudflareSelectionError,
+  CloudflareSelectionRequired,
+  CloudflareTokenTemplate,
+} from "../types";
 import { InlineError } from "../ui";
 
-// The Cloudflare ingress connection card in the Platform dialog: paste a scoped token to connect, see the
-// discovered account/zone/tunnel + connector health once connected, and disconnect. Self-contained — it
-// reads sendCsrfJson/coreOrigin from context and fetches its own status. The raw token is only ever sent to
-// Core (masked in the status), never shown back.
+// Which connect-request field carries each kind of answer.
+const SELECTION_FIELDS: Record<CloudflareSelectionRequired["kind"], string> = {
+  account: "accountId",
+  zone: "zoneId",
+  tunnel: "tunnelId",
+};
+
+const SELECTION_PROMPTS: Record<CloudflareSelectionRequired["kind"], string> = {
+  account: "This token can reach more than one account. Which one should Hosty use?",
+  zone: "This token can reach more than one zone. Which domain should apps be published under?",
+  tunnel: "More than one healthy tunnel is available. Which one should Hosty add routes to?",
+};
+
+// The Cloudflare connection, on the Ingress tab under the provider that uses it: paste a scoped token to
+// connect, answer any account/zone/tunnel ambiguity, see the discovered selection plus connector health,
+// and disconnect. Self-contained — it reads sendCsrfJson/coreOrigin from context and fetches its own
+// status. The raw token is only ever sent to Core (masked in the status), never shown back.
 export function CloudflareConnectionCard() {
   const { coreOrigin, sendCsrfJson } = useShellActions();
   const [status, setStatus] = useState<CloudflareConnectionStatus | null>(null);
@@ -22,6 +40,8 @@ export function CloudflareConnectionCard() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selection, setSelection] = useState<CloudflareSelectionRequired | null>(null);
+  const [selected, setSelected] = useState<Record<string, string>>({});
 
   const load = useCallback(async (silent = false) => {
     if (!silent) {
@@ -50,7 +70,9 @@ export function CloudflareConnectionCard() {
     void load();
   }, [load]);
 
-  const connect = async () => {
+  // The operator's answers to ambiguities so far. An account with two zones is ordinary, so connect can
+  // ask more than once — each answer is kept and sent with the next attempt.
+  const connect = async (answers: Record<string, string> = selected) => {
     if (!token.trim()) {
       return;
     }
@@ -58,17 +80,29 @@ export function CloudflareConnectionCard() {
     setBusy(true);
     setError(null);
     try {
-      await sendCsrfJson(`${coreOrigin}/api/core/cloudflare/connect`, { token: token.trim() });
+      await sendCsrfJson(`${coreOrigin}/api/core/cloudflare/connect`, { token: token.trim(), ...answers });
       setToken("");
+      setSelection(null);
+      setSelected({});
       await load(true);
       toast.success("Cloudflare connected");
     } catch (connectError) {
-      if (!isAuthRequiredRedirectError(connectError)) {
-        setError(connectError instanceof Error ? connectError.message : "Connecting to Cloudflare failed.");
+      if (isAuthRequiredRedirectError(connectError)) {
+        return;
       }
+
+      const required = coreErrorBody<CloudflareSelectionError>(connectError)?.selection ?? null;
+      setSelection(required);
+      setError(connectError instanceof Error ? connectError.message : "Connecting to Cloudflare failed.");
     } finally {
       setBusy(false);
     }
+  };
+
+  const answer = (kind: CloudflareSelectionRequired["kind"], id: string) => {
+    const next = { ...selected, [SELECTION_FIELDS[kind]]: id };
+    setSelected(next);
+    void connect(next);
   };
 
   const disconnect = async () => {
@@ -92,9 +126,10 @@ export function CloudflareConnectionCard() {
   return (
     <div className="space-y-2">
       <div>
-        <h3 className="text-sm font-medium">Cloudflare ingress</h3>
+        <h3 className="text-sm font-medium">Cloudflare connection</h3>
         <p className="text-xs text-muted-foreground">
-          Connect a scoped Cloudflare API token to publish app endpoints at public HTTPS origins on your tunnel.
+          A scoped API token lets Hosty add routes to your tunnel and create one DNS record per published
+          hostname. Hosty never creates the tunnel and never runs the connector.
         </p>
       </div>
 
@@ -133,7 +168,11 @@ export function CloudflareConnectionCard() {
               <a className="inline-flex items-center gap-1 text-primary hover:underline" href={template.url} target="_blank" rel="noreferrer">
                 Create a Cloudflare API token <ExternalLink className="h-3 w-3" />
               </a>
-              <p className="mt-0.5 text-[11px] text-muted-foreground">Grant: {template.requiredPermissions.join(" · ")}</p>
+              <ul className="mt-1 space-y-0.5 text-[11px] text-muted-foreground">
+                {template.requiredPermissions.map((permission) => (
+                  <li key={permission}>{permission}</li>
+                ))}
+              </ul>
             </div>
           )}
           <div className="flex gap-2">
@@ -150,6 +189,27 @@ export function CloudflareConnectionCard() {
               Connect
             </Button>
           </div>
+          {selection && (
+            <div className="space-y-1.5 rounded-md border p-3 text-xs">
+              <p className="font-medium">{SELECTION_PROMPTS[selection.kind]}</p>
+              <div className="flex flex-col gap-1">
+                {selection.options.map((option) => (
+                  <Button
+                    key={option.id}
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="justify-start"
+                    disabled={busy}
+                    onClick={() => answer(selection.kind, option.id)}
+                  >
+                    <span className="truncate">{option.name}</span>
+                    {option.detail && <span className="ml-2 text-muted-foreground">{option.detail}</span>}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
