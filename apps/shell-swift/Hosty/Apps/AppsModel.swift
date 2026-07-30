@@ -52,6 +52,105 @@ final class AppsModel {
     /// For screens that talk to Core directly, such as building an update plan for review.
     var client: CoreClient { session.client }
 
+    /// The host this model belongs to. The workspace needs it to tell a loopback app URL apart from a
+    /// reachable one, which is a question about how *this device* got to Core.
+    var origin: HostOrigin { session.connection.origin }
+
+    /// The apps to offer as destinations: the ones Core resolved a UI for.
+    ///
+    /// Core has already filtered the list per user and refuses a launch code for a system app to a
+    /// non-administrator, so there is no system/ordinary split here — a second visibility rule in the
+    /// client would be a copy of an authorization decision.
+    var uiApps: [AppSummary] { apps.filter(\.hasUI) }
+
+    /// Core's own version verdict, read once per appearance of the screen that shows it. Held here so
+    /// the Dashboard and the tab badge read one snapshot rather than each probing on their own.
+    private(set) var coreUpdate: CoreUpdateStatus?
+    private(set) var coreUpdateError: String?
+    private(set) var isApplyingCoreUpdate = false
+
+    /// `refresh` is the operator's explicit "check now" — it bypasses Core's TTL cache.
+    func loadCoreUpdateStatus(refresh: Bool = false) async {
+        guard session.canManageApps else { return }
+
+        do {
+            coreUpdate = try await session.client.coreUpdateStatus(refresh: refresh)
+            coreUpdateError = nil
+        } catch let error as CoreError {
+            if error.requiresSignIn {
+                await session.refresh()
+                return
+            }
+
+            failCoreUpdateCheck(error.localizedDescription)
+        } catch {
+            failCoreUpdateCheck(error.localizedDescription)
+        }
+    }
+
+    /// A check that could not run leaves no verdict behind.
+    ///
+    /// Keeping the previous one would offer an update action — and count toward the Dashboard badge —
+    /// on the strength of an answer that has just been contradicted by a failure.
+    private func failCoreUpdateCheck(_ message: String) {
+        coreUpdate = nil
+        coreUpdateError = message
+    }
+
+    /// Starts Core's self-update.
+    ///
+    /// Core answers 202 and then restarts itself, so what follows is a connection loss that means the
+    /// update is running — not a failure. The flag stays set through it; the session's own refresh is
+    /// what eventually reports the host being back, with a new version.
+    func applyCoreUpdate() async {
+        guard !isApplyingCoreUpdate else { return }
+
+        isApplyingCoreUpdate = true
+        coreUpdateError = nil
+
+        do {
+            _ = try await session.client.applyCoreUpdate()
+            await waitForCoreToReturn()
+        } catch let error as CoreError {
+            // Core refused before starting any work — the CLI could not be found, or the spawn failed.
+            // Nothing is running, so the operator has to hear it rather than watch a spinner.
+            isApplyingCoreUpdate = false
+            coreUpdateError = error.localizedDescription
+        } catch {
+            isApplyingCoreUpdate = false
+            coreUpdateError = error.localizedDescription
+        }
+    }
+
+    /// Waits out the restart the update causes, then re-reads the host.
+    ///
+    /// Core answered 202 and is replacing its own binary, so every request until it is back fails —
+    /// that is the update working. Polling ends the "Updating Core" state on the first answer, and
+    /// gives up after a bounded wait rather than leaving it on forever, which is what the operator
+    /// would otherwise be left looking at.
+    private func waitForCoreToReturn() async {
+        // Long enough for a binary swap and a cold start, short enough to stop claiming progress that
+        // is not happening.
+        let deadline = Date().addingTimeInterval(120)
+
+        while Date() < deadline {
+            try? await Task.sleep(for: .seconds(3))
+
+            // Clears the once-per-session version answer: a Core update is the one thing that changes
+            // it while the app is running.
+            await session.refreshAfterCoreRestart()
+            guard case .signedIn = session.state else { continue }
+
+            isApplyingCoreUpdate = false
+            await loadCoreUpdateStatus(refresh: true)
+            await reload()
+            return
+        }
+
+        isApplyingCoreUpdate = false
+        coreUpdateError = "Core did not come back after the update. Check the host, then try again."
+    }
+
     /// Refreshes one app's update verdict while preserving the session-level 401 behavior used by the
     /// list and lifecycle calls. The caller owns the local presentation of other errors.
     func refreshUpdateStatus(for app: AppSummary) async throws -> AppUpdateStatus {

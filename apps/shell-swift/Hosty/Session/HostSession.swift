@@ -24,11 +24,20 @@ final class HostSession {
     /// Exposed so later phases can call Core through the same authenticated client.
     let client: CoreClient
 
+    /// The web views this host's apps run in. Owned by the session because that is their lifetime: the
+    /// credential that authorized their identity grants is this session's, and when it ends they must
+    /// go with it.
+    @MainActor let workspaces = WorkspaceStore()
+
     private let keychain: KeychainStore
 
     /// The host's platform version is checked once per session rather than on every refresh: it cannot
     /// change while Core is running, and Phase 4 refreshes this often from the event stream.
     private var versionChecked = false
+
+    /// What the host reported for itself, kept from that one check so the Dashboard can show it without
+    /// a probe of its own. Nil until the check has run, or when it could not.
+    private(set) var hostVersion: String?
 
     init(connection: HostConnection, keychain: KeychainStore = .shared) {
         self.connection = connection
@@ -61,6 +70,7 @@ final class HostSession {
             if !versionChecked {
                 let status = try await client.status()
                 versionChecked = true
+                hostVersion = status.version
 
                 guard status.isSupportedVersion else {
                     state = .unsupported(hostVersion: status.version)
@@ -74,7 +84,7 @@ final class HostSession {
             } else {
                 // Reachable and anonymous. Any stored credential is dead, so drop it rather than letting a
                 // stale value linger in the Keychain across launches.
-                forgetCredential()
+                await endSession()
                 state = .signedOut
             }
         } catch let error as CoreError {
@@ -82,7 +92,7 @@ final class HostSession {
             // sign in again. The client has already dropped the credential; the Keychain has to follow, or
             // the next launch would restore the dead one.
             if error.requiresSignIn {
-                forgetCredential()
+                await endSession()
                 state = .signedOut
             } else {
                 state = .unreachable(error.localizedDescription)
@@ -90,6 +100,16 @@ final class HostSession {
         } catch {
             state = .unreachable(error.localizedDescription)
         }
+    }
+
+    /// Re-reads the host after it has restarted under a new binary.
+    ///
+    /// The version check is a once-per-session probe because the version cannot change while Core
+    /// runs. A Core update is the one thing that breaks that assumption, so applying one has to clear
+    /// the answer or the Dashboard would keep showing the version that was replaced.
+    func refreshAfterCoreRestart() async {
+        versionChecked = false
+        await refresh()
     }
 
     /// Takes the session the login web view harvested and makes it this app's credential.
@@ -105,12 +125,19 @@ final class HostSession {
         // dead host would trap the operator in a session they cannot leave.
         try? await client.logout()
 
-        forgetCredential()
+        await endSession()
         await client.setSessionID(nil)
         state = .signedOut
     }
 
-    private func forgetCredential() {
+    /// Everything that must go when this session stops being usable, however it stopped.
+    ///
+    /// The web views go with the credential rather than only when the operator taps Sign out. An
+    /// expired or revoked bearer ends the session just as finally, and an app's own grant outlives the
+    /// Core session that authorized it — so a loaded workspace left behind would let whoever signs in
+    /// next reach the previous user's app identity.
+    private func endSession() async {
         keychain.removeSessionID(for: connection.origin)
+        await MainActor.run { workspaces.reset() }
     }
 }

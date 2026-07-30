@@ -103,25 +103,127 @@ App detail opens with an identity header — icon, name, and the `System`/`Live`
 services (derived by grouping endpoints, since Core reports no services list), endpoint availability,
 ports, capabilities, artifact locks, dependencies, and the last error.
 
-## Adaptive interface and interaction
+## Navigation
 
-The root interface is a three-column `NavigationSplitView`: saved hosts, installed apps, and app detail.
-It exposes all available columns on iPad and macOS, while compact iPhone layouts open on the active host
-and retain a native back path to the host list. Selecting another host rebuilds the authenticated session,
-its app model, and its event stream as one unit so data from two hosts cannot appear in the same hierarchy.
+Three destinations: **Dashboard**, the host you manage; **Apps**, the apps you use; **Settings**, what
+belongs to this device. One `TabView` under `.sidebarAdaptable` renders them as a tab bar on a phone
+and a sidebar on iPad and macOS. The same information architecture as the browser Shell — see
+[Shell Navigation](../shell-navigation/feature.md). The two clients share the shape and no code.
 
-The host sidebar supports context-menu and swipe removal, with confirmation that the saved credential is
-also removed. The app list is searchable by display name, identifier, and selected runtime. Selecting an
-app drives the detail column rather than creating a second navigation hierarchy.
+Managing an app and using one are different jobs for different people, which is why they are different
+destinations: a headless app has no UI to open at all, and an ordinary user has no business reading
+artifact locks and dependency state.
 
-App rows switch to a vertical information hierarchy at accessibility Dynamic Type sizes. Lifecycle
-controls use the available horizontal width when they fit and stack when they do not. Stop and Forget are
-confirmed before dispatch; a failed per-app update refresh remains visible beside the action instead of
-being discarded.
+**The session gate lives above the tabs.** Connecting, signed out, unsupported and unreachable are
+states of the host, not of a section of it, and three tabs over a sign-in prompt would describe
+nothing.
+
+**A host is the session's account, not a section.** A switcher in every destination's toolbar names
+the active host and offers the saved ones; it is present in the pre-session states too, because a host
+that cannot be reached is exactly when the operator needs to leave it. Selecting another host rebuilds
+the session, its app model, and its event stream as one unit, and clears every per-host selection —
+an app id left over from the previous host either selects nothing or, if both hosts run the same app,
+silently opens a different machine's copy.
+
+**Apps appear as sidebar entries in regular width and as a pushed screen in compact.** In compact they
+are not declared as tabs at all: `defaultVisibility(.hidden, for: .tabBar)` does not keep a
+`TabSection`'s tabs out of the compact tab bar, so declaring them there pushes the destinations
+themselves behind a "More" item. One router state drives both presentations.
+
+The router is hoisted out of the views because the destinations cross-reference each other: Open from
+an app's management detail moves to its workspace, and Manage from a workspace moves back and selects
+it. A selection naming an app that has been removed resolves to the Apps list rather than rendering an
+empty tab.
+
+## Dashboard
+
+Administrator-only, and absent rather than disabled for anyone else — Core answers none of it to a
+non-administrator.
+
+Core's own row sits above the app list: its version, and the update action when a newer release is
+waiting. The list header carries one line of counts — running, in progress, needs attention, total —
+describing every row, system apps included. Apps mid-verb are counted in neither the running nor the
+attention bucket: calling them "not running" reads as a shortfall during a boot that is going fine.
+
+Selecting an app drives the detail column rather than creating a second navigation hierarchy, so on
+iPad the client is three columns: destinations, apps, detail.
+
+The tab carries a badge counting what is actionable on that screen: apps with an update available,
+plus Core itself as one more.
+
+## Core updates
+
+`GET /api/core/update-status` reports whether a newer Core binary is available; a check that could not
+run is not "up to date" and does not offer the action. `POST /api/core/update` answers **202** and
+Core then spawns the CLI and restarts itself, so the reply means *started*, not finished — the
+connection loss that follows is the update working. The client polls until the host answers again,
+then re-reads the version, the verdict and the app list; the once-per-session version check is cleared
+first, because a Core update is the one thing that changes a version while the app is running. It
+gives up after a bounded wait rather than claiming progress indefinitely. The two ways Core refuses
+before any work begins, `503` when the CLI cannot be located and `500` when the spawn fails, read as
+ordinary errors.
+
+A check that could not run leaves no verdict behind: keeping the previous one would offer the update
+action, and count toward the Dashboard badge, on the strength of an answer a failure has just
+contradicted.
+
+## Apps and workspaces
+
+The Apps destination lists exactly the apps Core resolved a UI for — a headless app never appears, and
+public endpoints alone do not make one. There is no system/ordinary split: Core already filters
+`GET /api/apps` per user and refuses a launch code for a system app to a non-administrator, so a
+second visibility rule here would be a copy of an authorization decision.
+
+Opening an app is the browser Shell's mechanism exactly, with no Core change: `POST
+/api/apps/{id}/launch-code` against the URL Core advertises, then load the URL it returns and let the
+app exchange the code for its own identity. The bearer session is CSRF-exempt, so no CSRF pair is
+involved. A code is single-use and expires in five minutes, so re-opening always mints again rather
+than replaying a spent URL — which would land on a signed-out app. A page switch inside an app that is
+already open is a plain navigation: its cookie is already set on that origin.
+
+**Web views are cached per app for the host session**, so switching apps or looking at Dashboard does
+not reload the page and re-run the code exchange. The cache is bounded — a web view is an expensive
+object — and an evicted app re-opens the way a first open does. One non-persistent data store per host
+holds their identity cookies, and both are discarded whenever the session ends, not only when the
+operator taps Sign out: an expired or revoked bearer ends it just as finally, and an app's own grant
+outlives the Core session that authorized it, so a workspace left loaded would hand the next person to
+sign in the previous user's app identity.
+
+**Identity expiry arrives as a navigation, not a callback.** In a web view the app is the top frame,
+so the app SDK takes its standalone path: a redirect to Core's `/api/apps/{id}/open`, which without a
+Core cookie lands on `/login`. That navigation is intercepted and turned into a fresh launch — main
+frame only, this host's Core origin only, this app only, and at most one re-mint every few seconds, so
+an app that fails immediately after recovering cannot drive an unbounded loop. Nothing in the SDK
+changes.
+
+**Open in Browser mints its own code** immediately before handing the URL over: the one already loaded
+in the web view has been spent.
+
+**A loopback app URL is diagnosed rather than loaded.** Core advertises `127.0.0.1:<port>` by default,
+which means "this machine" and so resolves to the reader's device rather than the host. The client
+cannot rewrite it — Core's redirect allowlist only accepts an origin the app itself declares — so it
+explains what to configure instead of presenting a dead web view. The predicate covers the whole
+loopback space: `localhost`, all of `127.0.0.0/8`, and `[::1]`. An app carrying an operator-configured
+public origin is unaffected. The Core-side fix is
+[Advertised App Origins](../advertised-app-origins/plan.md).
+
+## Settings
+
+Saved hosts, adding and forgetting them, and signing out. The host-level configuration the browser
+Shell keeps in Settings — users, Core settings, shared mounts — has no counterpart in this client yet,
+so the tab is deliberately small rather than merged away.
+
+## Interaction details
+
+App rows switch to a vertical information hierarchy at accessibility Dynamic Type sizes, and the
+Dashboard counts stack rather than truncate when their icon-and-number pairs cannot share a line.
+Lifecycle controls use the available horizontal width when they fit and stack when they do not. Stop
+and Forget are confirmed before dispatch; a failed per-app update refresh remains visible beside the
+action instead of being discarded.
 
 The add-host form has explicit field labels and examples, deterministic address-to-name focus order,
-keyboard submission, and an inline progress state. Its first field receives default focus when the sheet
-opens.
+keyboard submission, and an inline progress state. Its first field receives default focus when the
+sheet opens.
 
 SwiftUI previews use isolated defaults and decoded local fixtures rather than saved hosts or a running
 Core. The native App Icon catalog is generated from `assets/hosty-brand/build-assets.mjs`: iOS receives
@@ -143,9 +245,9 @@ Two details the framing depends on:
 - Comments (`: connected`, `: ping` every 20 seconds) never dispatch. The event stream's idle timeout
   clears that heartbeat, so a quiet host is not mistaken for a dropped connection.
 
-The stream's lifetime is the **app's foreground**, not a view's appearance: stopping it when a view
-disappears would kill it behind a pushed detail screen, which is exactly where an operator watches a
-restart or an update. Returning to the foreground also forces a re-read, because a suspended connection
+The stream's lifetime is the **app's foreground**, and it follows the host scene rather than any one
+destination: a non-administrator has no Dashboard at all, and the operator watching a restart is as
+likely to be looking at an app's workspace. Returning to the foreground also forces a re-read, because a suspended connection
 dies quietly and its reconnect can be several backoff steps in.
 
 A `401` on the stream ends it and is handed to the session, which owns the signed-out screen; every other
@@ -195,6 +297,16 @@ Distribution is by local Xcode build; nothing packages or publishes this app.
   chunks — testing a parser against hand-split lines hides the one bug that matters.
 - Model decoding runs against payloads shaped like Core's real responses, including a recorded
   unauthenticated `GET /api/core/status`, and pins `operationStatus` against Core's real vocabulary.
+- An app is openable only when Core resolved a UI for it; a one-page app yields its entry so no caller
+  special-cases an empty navigation list, and a declared page without a URL is dropped rather than
+  offered. Both UI fields are optional, so a Core that omits them describes a headless app rather than
+  failing the whole list decode.
+- The launch-code request carries the bearer and a JSON body and no CSRF header, and the Core update
+  apply maps 202 (started), 503 and 500 (nothing started) apart.
+- The loopback predicate covers `localhost`, `127.0.0.1`, another `127.0.0.0/8` address and `[::1]`;
+  an operator-configured public origin is never flagged, a loopback URL read *on* the host is never
+  flagged, and an unparseable URL is not reported as unreachable — guessing there would replace a
+  truthful load failure with a wrong explanation.
 - Client error mapping distinguishes 401 (re-sign-in, credential dropped), 403 (terminal, credential
   kept), 503 (transient), and a non-JSON error body.
 - Requests carry the credential as a bearer header and never a cookie; `update/plan` sends a JSON body,
@@ -202,12 +314,18 @@ Distribution is by local Xcode build; nothing packages or publishes this app.
 - Asset fetches attach the session only for the host's own origin — a relative icon URL keeps its
   cache-busting query and the bearer header, an absolute third-party URL gets neither, and an absolute
   URL that normalizes back to the host's origin (default port, letter case) is recognized as the host.
-- A `401` clears the credential only when the failing request presented it: the host's own asset endpoint
-  does, an off-host icon URL does not, and both directions are pinned so the exemption cannot widen.
+- A `401` clears the credential only when the failing request presented it: the host's own asset
+  endpoint does, an off-host icon URL does not, and both directions are pinned so the exemption cannot
+  widen.
 - SwiftUI previews cover an empty host list, a representative app row, its accessibility-size layout,
   and app detail at standard and accessibility text sizes without contacting Core.
-- Visual verification covers compact iPhone navigation and the expanded three-column iPad hierarchy; app
-  rows and lifecycle controls are also inspected at an accessibility Dynamic Type size.
+- Visual verification covers the compact tab bar holding exactly the three destinations — the per-app
+  tab leak is invisible to every other check — and the expanded iPad hierarchy of destinations, apps
+  and detail. App rows and the Dashboard counts are also inspected at an accessibility Dynamic Type
+  size.
 - Live verification against a running host covers sign-in, the app list, lifecycle verbs, an
   externally-driven change arriving over the event stream while both the list and a detail screen are
-  open, a fleet update check, and a reviewed update applied end to end.
+  open, a fleet update check, a reviewed update applied end to end, opening an app and confirming it
+  reports the signed-in user, switching apps and back without a reload, two apps open at once keeping
+  their own identity in the shared data store, a workspace recovering after its app session expires,
+  and a Core update surviving the restart it causes.

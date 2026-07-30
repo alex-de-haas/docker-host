@@ -41,6 +41,34 @@ public struct AppSummary: Identifiable, Hashable, Sendable, Codable {
     public let updateCheck: AppUpdateAvailability?
     public let dependencies: [AppDependency]?
 
+    /// Where this app's own UI lives, resolved by Core from the manifest `ui` block against the named
+    /// endpoint — the operator's configured public origin when there is one, the local URL otherwise.
+    ///
+    /// Absent for a headless app, and that absence is the whole test for "can this be opened": public
+    /// endpoints alone do not make a UI. Core computes it, so a client must never assemble its own —
+    /// the redirect allowlist only accepts an origin the app itself declares.
+    public let embeddedUrl: String?
+
+    /// The manifest's declared pages. Empty or absent means the app has exactly one page, its entry.
+    public let navigation: [AppNavigationItem]?
+
+    /// True when Core reports a UI to open. A stopped app still qualifies — being openable and being
+    /// ready are different questions, and the second is `runtimeState`.
+    public var hasUI: Bool {
+        !(embeddedUrl ?? "").isEmpty
+    }
+
+    /// The pages to offer, entry first. A one-page app yields just its entry, so a caller never has to
+    /// special-case the empty navigation list.
+    public var pages: [AppNavigationItem] {
+        guard let navigation, !navigation.isEmpty else {
+            guard let embeddedUrl, !embeddedUrl.isEmpty else { return [] }
+            return [AppNavigationItem(label: displayName, path: "/", embeddedUrl: embeddedUrl, iconUrl: iconUrl)]
+        }
+
+        return navigation.filter { !($0.embeddedUrl ?? "").isEmpty }
+    }
+
     /// True while a long-running operation owns the record.
     ///
     /// `operationStatus` records the **outcome of the last operation** — `started`, `restarted`,
@@ -105,6 +133,37 @@ public enum AppRuntimeState: String, Hashable, Sendable, Codable {
         let raw = try decoder.singleValueContainer().decode(String.self)
         self = AppRuntimeState(rawValue: raw) ?? .unknown
     }
+}
+
+/// One page of an app's UI, as the manifest declared it and Core resolved it.
+///
+/// `embeddedUrl` is optional in the contract and a page without one cannot be opened, which is why
+/// `AppSummary.pages` filters those out rather than handing a caller a page it cannot load.
+public struct AppNavigationItem: Hashable, Sendable, Codable, Identifiable {
+    public let label: String
+    public let path: String
+    public let embeddedUrl: String?
+    public let iconUrl: String?
+
+    /// Stable within one app: the manifest cannot declare the same path twice.
+    public var id: String { path }
+
+    public init(label: String, path: String, embeddedUrl: String?, iconUrl: String?) {
+        self.label = label
+        self.path = path
+        self.embeddedUrl = embeddedUrl
+        self.iconUrl = iconUrl
+    }
+}
+
+/// A one-time authorization code and the URL that carries it, from `POST /api/apps/{id}/launch-code`.
+///
+/// Single-use and short-lived: opening the same app again mints a new one rather than reloading a URL
+/// whose code has already been spent, which would land on a signed-out app.
+public struct AppLaunchCode: Hashable, Sendable, Codable {
+    public let code: String
+    public let redirectUri: String
+    public let expiresAt: Date
 }
 
 public struct AppEndpoint: Hashable, Sendable, Codable {
