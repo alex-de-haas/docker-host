@@ -56,12 +56,13 @@ export function CoreSettingsForm({
   // current draft (another provider's tunnel id, say) keeps its stored value untouched.
   const changed = shown.filter((item) => (draft[item.key] ?? item.value) !== item.value).map((item) => item.key);
 
-  const update = (key: string, value: string) =>
-    setDraft((current) => {
-      const next = { ...current, [key]: value };
-      onDraftChange?.(next);
-      return next;
-    });
+  // The next draft is computed here rather than inside a setDraft updater: React calls an updater during
+  // the render phase, so notifying the parent from in there sets state on another component mid-render.
+  const update = (key: string, value: string) => {
+    const next = { ...draft, [key]: value };
+    setDraft(next);
+    onDraftChange?.(next);
+  };
 
   const save = async () => {
     if (changed.length === 0) {

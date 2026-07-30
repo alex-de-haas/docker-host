@@ -1526,9 +1526,11 @@ export function ShellClient({
     }
   }, [normalizedRoutePath, router, searchParams]);
 
-  // Core settings belong to one tab, so they load when that tab is shown rather than with the page.
+  // Core settings load when a tab that renders them is shown, rather than with the page. Two tabs do:
+  // Core and Ingress split one settings payload by the group Core tags each item with.
   useEffect(() => {
-    if (!canManageApps || shellRoute.view !== "settings" || shellRoute.settingsTab !== "core") {
+    const rendersCoreSettings = shellRoute.settingsTab === "core" || shellRoute.settingsTab === "ingress";
+    if (!canManageApps || shellRoute.view !== "settings" || !rendersCoreSettings) {
       return;
     }
 
