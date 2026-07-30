@@ -186,10 +186,11 @@ public actor CoreClient {
             guard (200..<300).contains(http.statusCode) else {
                 let error = CoreError.from(status: http.statusCode, payload: nil)
 
-                // Same rule as `send`: a 401 means this credential is finished, wherever it was noticed.
-                // The event stream reconnects on its own, so without this it would keep presenting a dead
-                // session forever and nothing else would ever be told.
-                if error.requiresSignIn {
+                // Same rule as `send`: a 401 on a request that presented the credential means that
+                // credential is finished, wherever it was noticed. The event stream reconnects on its own,
+                // so without this it would keep presenting a dead session forever and nothing else would
+                // ever be told.
+                if error.requiresSignIn, presentsCredential(request) {
                     sessionID = nil
                 }
 
@@ -256,12 +257,12 @@ public actor CoreClient {
                 status: http.statusCode,
                 payload: try? decoder.decode(CoreErrorPayload.self, from: data))
 
-            // A 401 means this credential is finished — expired, revoked, or from a Core that has since
-            // forgotten it. Dropping it here, rather than at each call site, keeps "signed out" from
-            // depending on which concurrent request happened to notice first. A 403 is deliberately left
-            // alone: the session is valid and the answer is still no, so discarding it would send the
-            // operator back through a sign-in that changes nothing.
-            if error.requiresSignIn {
+            // A 401 on a request that presented the credential means that credential is finished —
+            // expired, revoked, or from a Core that has since forgotten it. Dropping it here, rather than
+            // at each call site, keeps "signed out" from depending on which concurrent request happened to
+            // notice first. A 403 is deliberately left alone: the session is valid and the answer is still
+            // no, so discarding it would send the operator back through a sign-in that changes nothing.
+            if error.requiresSignIn, presentsCredential(request) {
                 sessionID = nil
             }
 
@@ -269,6 +270,16 @@ public actor CoreClient {
         }
 
         return data
+    }
+
+    /// Whether the request actually offered this client's credential.
+    ///
+    /// A 401 only condemns the session when the session was presented. Two requests here never present
+    /// it: the public status probe, and an off-host asset — a manifest icon on a CDN, which may sit behind
+    /// an auth wall or a signed URL that has expired. Their 401s say nothing about Core, and acting on one
+    /// would sign the operator out of a host that never complained.
+    private func presentsCredential(_ request: URLRequest) -> Bool {
+        request.value(forHTTPHeaderField: "Authorization") != nil
     }
 
     private func decode<T: Decodable>(_ data: Data) throws -> T {

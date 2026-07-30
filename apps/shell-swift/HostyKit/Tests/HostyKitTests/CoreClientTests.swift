@@ -224,6 +224,31 @@ struct CoreClientTests {
             #expect(sent.value(forHTTPHeaderField: "Authorization") == "Bearer session_1")
         }
 
+        // A third-party icon URL can answer 401 for reasons of its own — an auth wall, an expired signed
+        // URL. That request never presented the Hosty session, so it says nothing about it; treating it as
+        // a dead Core session would sign the operator out of a host that never complained.
+        @Test("A 401 from an off-host asset does not sign the operator out of Core")
+        func offHostUnauthorizedKeepsTheSession() async throws {
+            StubURLProtocol.install(status: 401, json: #"{"code":"unauthorized","message":"nope"}"#)
+
+            let client = try client()
+            _ = try? await client.asset(at: "https://cdn.example.com/icons/app.png")
+
+            #expect(await client.isAuthenticated)
+        }
+
+        // The inverse, so the exemption above cannot quietly widen: the asset endpoint on this host is
+        // session-authorized like any other app read, and its 401 is a dead session.
+        @Test("A 401 from the host's own asset endpoint clears the credential")
+        func sameOriginUnauthorizedClearsTheSession() async throws {
+            StubURLProtocol.install(status: 401, json: #"{"code":"session_invalid","message":"gone"}"#)
+
+            let client = try client()
+            _ = try? await client.asset(at: "/api/apps/demo/assets/icon.svg")
+
+            #expect(await client.isAuthenticated == false)
+        }
+
         @Test("An asset address that is not a URL is rejected rather than requested")
         func unusableAssetAddress() async throws {
             StubURLProtocol.install()

@@ -152,10 +152,15 @@ final class AppIconStore {
 
             images[url] = image
         } catch {
-            // A host that is briefly unreachable has not told us anything about the icon. Only a definite
-            // answer is remembered as a failure, so a reconnect brings the icons back rather than leaving
-            // a screen of placeholders until the app is relaunched.
-            guard !Task.isCancelled, (error as? CoreError)?.isTransient != true else { return }
+            // Only a definite answer *about the asset* is remembered — a 404 for an icon that was never
+            // vendored. A host that is briefly unreachable, a Core mid-restart, or an expired session has
+            // told us nothing about the icon, so those are retried on the next appearance. Remembering a
+            // 401 in particular would leave a screen of placeholders behind the operator for the rest of
+            // the store's life, including after they signed back in.
+            guard !Task.isCancelled,
+                  let error = error as? CoreError,
+                  !error.isTransient,
+                  !error.requiresSignIn else { return }
 
             failed.insert(url)
         }

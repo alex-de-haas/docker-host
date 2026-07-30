@@ -1,7 +1,7 @@
 # Swift Shell
 
 Created: 2026-07-29
-Updated: 2026-07-29
+Updated: 2026-07-30
 
 `apps/shell-swift` is a native SwiftUI client for iOS, iPadOS, and macOS that manages a Hosty host's
 installed apps: their state, lifecycle, and updates.
@@ -77,9 +77,14 @@ image view cannot attach; and the first-party icons are SVG, which no Apple imag
 An SVG is rasterized once through an offscreen `WKWebView` — loaded via an `<img>` data URI with
 JavaScript disabled, the same inert-image guarantee the browser gets — and cached per host session,
 fetched one at a time. The credential is attached only when the icon URL resolves to the host's own
-origin; an absolute URL to a third party is fetched bare. An app with no icon, an icon that 404s, or a
-format the client cannot render gets a placeholder, and a transient fetch failure is retried on the next
-appearance rather than remembered.
+origin; an absolute URL to a third party is fetched bare — and because it never presented the session, a
+`401` from it cannot clear the credential either. Only a request that offered the session is allowed to
+end it.
+
+An app with no icon, an icon that 404s, or a format the client cannot render gets a placeholder. That
+verdict is remembered for the session, but only for a definite answer *about the asset*: an unreachable
+host, a Core mid-restart, and an expired session are retried on the next appearance, or a screen of
+placeholders would outlive the condition that caused it — including a re-sign-in.
 
 Runtime state carries Core's full vocabulary — `running`, `starting`, `stopping`, `stopped`, `unknown` —
 and the client mirrors its three predicates rather than comparing against `"running"`: `starting` and
@@ -197,6 +202,8 @@ Distribution is by local Xcode build; nothing packages or publishes this app.
 - Asset fetches attach the session only for the host's own origin — a relative icon URL keeps its
   cache-busting query and the bearer header, an absolute third-party URL gets neither, and an absolute
   URL that normalizes back to the host's origin (default port, letter case) is recognized as the host.
+- A `401` clears the credential only when the failing request presented it: the host's own asset endpoint
+  does, an off-host icon URL does not, and both directions are pinned so the exemption cannot widen.
 - SwiftUI previews cover an empty host list, a representative app row, its accessibility-size layout,
   and app detail at standard and accessibility text sizes without contacting Core.
 - Visual verification covers compact iPhone navigation and the expanded three-column iPad hierarchy; app
