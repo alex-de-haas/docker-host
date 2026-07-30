@@ -6,10 +6,21 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { isAuthRequiredRedirectError } from "../core-api";
+import { coreErrorCode, isAuthRequiredRedirectError } from "../core-api";
+import { publishesThroughCloudflareApi } from "../ingress";
 import { useShellActions, useShellState } from "../shell-context";
-import type { CloudflareAppPublications, CloudflareConnectionStatus, CloudflarePublicationResult, CloudflarePublicationSummary, CoreApp, CoreEndpoint } from "../types";
+import type { CloudflareAppPublications, CloudflareConnectionStatus, CloudflarePublicationResult, CloudflarePublicationState, CloudflarePublicationSummary, CoreApp, CoreEndpoint } from "../types";
 import { IconButton, InlineError } from "../ui";
+
+// What each publication state means for the operator. Core produces every one of these except
+// "not_configured", which is the absence of a publication and never reaches this branch.
+const PUBLICATION_STATE_TEXT: Record<CloudflarePublicationState, string> = {
+  not_configured: "",
+  active: "Live: the app is running and serving this address.",
+  app_stopped: "The app is stopped. It serves this address again when it next starts.",
+  restart_required: "The app is still serving its previous address. Restart it to apply this one.",
+  error: "Cloudflare cannot be reached with the stored token, so this cannot be verified or changed right now.",
+};
 
 // Per-endpoint Cloudflare publish control on the installed-apps page. Opening the dialog loads the
 // connection (to know the base domain) and this app's publications; the operator enters a subdomain label
@@ -17,7 +28,7 @@ import { IconButton, InlineError } from "../ui";
 // existing one. Self-contained via context; host-admin only, and only for `public: true` endpoints.
 export function CloudflarePublishControl({ app, endpoint }: { app: CoreApp; endpoint: CoreEndpoint }) {
   const { canManageApps, state } = useShellState();
-  const { coreOrigin, sendCsrfJson, refresh } = useShellActions();
+  const { coreOrigin, sendCsrfJson, refresh, runAppAction } = useShellActions();
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -25,13 +36,16 @@ export function CloudflarePublishControl({ app, endpoint }: { app: CoreApp; endp
   const [connection, setConnection] = useState<CloudflareConnectionStatus | null>(null);
   const [publication, setPublication] = useState<CloudflarePublicationSummary | null>(null);
   const [label, setLabel] = useState("");
+  // Set when Core refuses because a DNS record for this hostname already exists. Adoption is offered, never
+  // implied: an unasked-for takeover would let a typo point someone else's hostname at a local app.
+  const [conflict, setConflict] = useState(false);
 
-  // Publishing only means something when Core actually manages public origins (ingress provider
-  // "cloudflared"). With ingress off there is nowhere to publish to, so hide the control instead of
-  // offering a dialog whose only outcome is "connect Cloudflare first". Mirrors Core's own
-  // IngressSettings.ManagesPublicOrigins predicate.
-  const ingressManagesPublicOrigins = state.status?.ingressProvider === "cloudflared";
-  if (!canManageApps || !endpoint.public || !ingressManagesPublicOrigins) {
+  // Publishing is what the API provider means, so the control belongs to it and to nothing else. Under
+  // any other provider Core refuses the publish outright (cloudflare_provider_inactive), and under the
+  // local-config provider a published label would be overwritten by the derived hostname on the next
+  // start — the defect this split removed. Not connected yet is a different case: the control stays and
+  // says so, because that is a step away rather than the wrong provider.
+  if (!canManageApps || !endpoint.public || !publishesThroughCloudflareApi(state.status?.ingressProvider)) {
     return null;
   }
 
@@ -43,6 +57,7 @@ export function CloudflarePublishControl({ app, endpoint }: { app: CoreApp; endp
     setConnection(null);
     setPublication(null);
     setLabel("");
+    setConflict(false);
     setLoading(true);
     try {
       const [statusResponse, publicationsResponse] = await Promise.all([
@@ -65,7 +80,7 @@ export function CloudflarePublishControl({ app, endpoint }: { app: CoreApp; endp
     }
   };
 
-  const publish = async () => {
+  const publish = async (adopt = false) => {
     if (!label.trim()) {
       return;
     }
@@ -73,15 +88,29 @@ export function CloudflarePublishControl({ app, endpoint }: { app: CoreApp; endp
     setBusy(true);
     setError(null);
     try {
-      const response = await sendCsrfJson(`${appBase}/publish`, { endpointKey: endpoint.key, label: label.trim() });
+      const response = await sendCsrfJson(`${appBase}/publish`, { endpointKey: endpoint.key, label: label.trim(), adopt });
       const result = (await response.json()) as CloudflarePublicationResult;
       setOpen(false);
+      setConflict(false);
       await refresh();
       toast.success(`Published ${result.publicOrigin}`, {
-        description: result.restartRequired ? `Restart ${app.displayName} to apply the new origin.` : undefined,
+        // A running app keeps serving the old address until it restarts, so the restart is offered right
+        // here rather than described and left for the operator to go and find.
+        description: result.restartRequired
+          ? `${app.displayName} is still serving its previous address.`
+          : `The address is live the next time ${app.displayName} starts.`,
+        action: result.restartRequired
+          ? { label: "Restart now", onClick: () => void runAppAction(app, "restart") }
+          : undefined,
       });
+      if (result.locality === "not_local") {
+        toast.warning("The Cloudflare connector is not on this host", {
+          description: "Traffic for this address reaches whichever machine runs the connector, not this one.",
+        });
+      }
     } catch (publishError) {
       if (!isAuthRequiredRedirectError(publishError)) {
+        setConflict(coreErrorCode(publishError) === "cloudflare_hostname_conflict");
         setError(publishError instanceof Error ? publishError.message : "Publishing the public origin failed.");
       }
     } finally {
@@ -98,7 +127,10 @@ export function CloudflarePublishControl({ app, endpoint }: { app: CoreApp; endp
       setOpen(false);
       await refresh();
       toast.success("Public origin removed", {
-        description: result.restartRequired ? `Restart ${app.displayName} to drop the old origin.` : undefined,
+        description: result.restartRequired ? `${app.displayName} is still serving the old address.` : undefined,
+        action: result.restartRequired
+          ? { label: "Restart now", onClick: () => void runAppAction(app, "restart") }
+          : undefined,
       });
     } catch (unpublishError) {
       if (!isAuthRequiredRedirectError(unpublishError)) {
@@ -136,13 +168,27 @@ export function CloudflarePublishControl({ app, endpoint }: { app: CoreApp; endp
                   <InlineError message={error} />
                   <Button type="button" size="sm" variant="outline" onClick={() => void openDialog()}>Retry</Button>
                 </div>
+              ) : connection?.status === "reconnect_required" ? (
+                <p className="text-sm text-muted-foreground">
+                  The stored Cloudflare token stopped working{connection.reconnectReason ? ` — ${connection.reconnectReason}` : "."} Reconnect
+                  under Settings → Ingress; nothing published was removed, so it all works again afterwards.
+                </p>
               ) : (
-                <p className="text-sm text-muted-foreground">Connect Cloudflare in Platform settings before publishing a public origin.</p>
+                <p className="text-sm text-muted-foreground">
+                  Cloudflare is the selected ingress provider, but no API token is connected yet. Connect one under
+                  Settings → Ingress, then publish this endpoint.
+                </p>
               )
             ) : publication ? (
               <div className="space-y-1 text-sm">
                 <div className="text-muted-foreground">Published at</div>
                 <div className="font-mono">{publication.publicOrigin ?? `https://${publication.hostname}`}</div>
+                <p className="text-xs text-muted-foreground">{PUBLICATION_STATE_TEXT[publication.state] ?? ""}</p>
+                {publication.ownershipState === "adopted" && (
+                  <p className="text-[11px] text-muted-foreground">
+                    Adopted: Hosty manages this DNS record but did not create it, so unpublishing leaves it in place.
+                  </p>
+                )}
               </div>
             ) : (
               <div className="space-y-1">
@@ -151,7 +197,10 @@ export function CloudflarePublishControl({ app, endpoint }: { app: CoreApp; endp
                   <Input
                     id="cf-label"
                     value={label}
-                    onChange={(event) => setLabel(event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
+                    onChange={(event) => {
+                      setConflict(false);
+                      setLabel(event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""));
+                    }}
                     placeholder="media"
                     className="h-8 text-xs"
                   />
@@ -162,6 +211,12 @@ export function CloudflarePublishControl({ app, endpoint }: { app: CoreApp; endp
             )}
             {/* Action (publish/unpublish) errors while connected are shown inline; a load error is handled above. */}
             {connected && error && <InlineError message={error} />}
+            {conflict && (
+              <p className="text-[11px] text-muted-foreground">
+                Adopting means Hosty manages this record from now on. It stays yours: unpublishing removes the
+                tunnel route and leaves the DNS record in place.
+              </p>
+            )}
           </DialogBody>
           <DialogFooter>
             <Button type="button" variant="ghost" disabled={busy} onClick={() => setOpen(false)}>Close</Button>
@@ -171,10 +226,18 @@ export function CloudflarePublishControl({ app, endpoint }: { app: CoreApp; endp
                 Unpublish
               </Button>
             ) : connected ? (
-              <Button type="button" disabled={busy || !label.trim()} onClick={() => void publish()}>
-                {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
-                Publish
-              </Button>
+              <>
+                {conflict && (
+                  <Button type="button" variant="outline" disabled={busy} onClick={() => void publish(true)}>
+                    {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
+                    Adopt and publish
+                  </Button>
+                )}
+                <Button type="button" disabled={busy || !label.trim()} onClick={() => void publish()}>
+                  {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
+                  Publish
+                </Button>
+              </>
             ) : null}
           </DialogFooter>
         </DialogContent>

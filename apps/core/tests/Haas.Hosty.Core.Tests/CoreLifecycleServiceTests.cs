@@ -3471,6 +3471,101 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task ConfigureAsync_ProviderNone_LetsTheOperatorOwnThePublicOrigin()
+    {
+        // With ingress off the operator owns exposure, so the free-form origin is theirs to set.
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+
+        await fixture.Service.ConfigureAsync("com.example.notes", new AppConfigureRequest(
+            Settings: new Dictionary<string, string?> { ["HOSTY_PUBLIC_ORIGIN_APP_HTTP"] = "https://notes.example.com" }));
+
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal("https://notes.example.com", app!.Settings["HOSTY_PUBLIC_ORIGIN_APP_HTTP"].Value);
+    }
+
+    [Fact]
+    public async Task ConfigureAsync_LocalConfigProvider_RefusesToWriteADerivedPublicOrigin()
+    {
+        // The local provider re-derives this value on every start, so accepting the write would store a
+        // URL that silently reverts — one of the two ways the origin used to diverge from reality.
+        var fixture = await LifecycleFixture.CreateAsync(ingressBaseDomain: "apps.example.test");
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.ConfigureAsync("com.example.notes", new AppConfigureRequest(
+                Settings: new Dictionary<string, string?> { ["HOSTY_PUBLIC_ORIGIN_APP_HTTP"] = "https://notes.example.com" })));
+
+        Assert.Equal("public_origin_managed", error.Code);
+    }
+
+    [Fact]
+    public async Task ConfigureAsync_ManagedOrigin_AcceptsAnUnchangedResend()
+    {
+        // A settings form resends every field. Refusing an unchanged managed value would make every
+        // other setting on that page unsavable.
+        var fixture = await LifecycleFixture.CreateAsync(ingressBaseDomain: "apps.example.test");
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        await fixture.Service.StartAsync("com.example.notes");
+        var derived = (await fixture.Apps.GetAppAsync("com.example.notes"))!.Settings["HOSTY_PUBLIC_ORIGIN_APP_HTTP"].Value;
+
+        await fixture.Service.ConfigureAsync("com.example.notes", new AppConfigureRequest(
+            Settings: new Dictionary<string, string?>
+            {
+                ["HOSTY_PUBLIC_ORIGIN_APP_HTTP"] = derived,
+                ["APP_MODE"] = "staging",
+            }));
+
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal("staging", app!.Settings["APP_MODE"].Value);
+    }
+
+    [Fact]
+    public async Task ConfigureAsync_ManagedOriginWithNoValueYet_AcceptsTheFormsBlank()
+    {
+        // The settings form posts "" for a public origin that has none yet, which is every derived origin
+        // before the app's first start. Counting blank-for-unset as a change would make the whole form
+        // unsavable on a host with ingress on.
+        var fixture = await LifecycleFixture.CreateAsync(ingressBaseDomain: "apps.example.test");
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+
+        await fixture.Service.ConfigureAsync("com.example.notes", new AppConfigureRequest(
+            Settings: new Dictionary<string, string?>
+            {
+                ["HOSTY_PUBLIC_ORIGIN_APP_HTTP"] = "",
+                ["APP_MODE"] = "staging",
+            }));
+
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal("staging", app!.Settings["APP_MODE"].Value);
+    }
+
+    [Fact]
+    public async Task ConfigureAsync_ApiProvider_RefusesOnlyPublishedOrigins()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.CoreSettings.UpdateAsync(new Dictionary<string, string?>
+        {
+            ["HOSTY_INGRESS_PROVIDER"] = IngressSettings.ProviderCloudflareRemote,
+        });
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+
+        // Not published yet: the operator may still front this endpoint with their own proxy.
+        await fixture.Service.ConfigureAsync("com.example.notes", new AppConfigureRequest(
+            Settings: new Dictionary<string, string?> { ["HOSTY_PUBLIC_ORIGIN_APP_HTTP"] = "https://notes.example.com" }));
+
+        await fixture.Publications.UpsertAsync(new CloudflarePublication(
+            "com.example.notes", "app.http", "notes", "notes.example.test", "dns-1", "http://127.0.0.1:3000",
+            CloudflareOwnershipStates.Owned, DateTimeOffset.UnixEpoch));
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.ConfigureAsync("com.example.notes", new AppConfigureRequest(
+                Settings: new Dictionary<string, string?> { ["HOSTY_PUBLIC_ORIGIN_APP_HTTP"] = "https://elsewhere.example.com" })));
+
+        Assert.Equal("public_origin_managed", error.Code);
+    }
+
+    [Fact]
     public async Task ConfigureAsync_AllowsNullSettings()
     {
         var fixture = await LifecycleFixture.CreateAsync();
@@ -5721,7 +5816,9 @@ public sealed class CoreLifecycleServiceTests
             CoreLifecycleService service,
             RecordingRuntimeAdapter adapter,
             LocalCommandProcessRegistry localProcesses,
-            FakeClock clock)
+            FakeClock clock,
+            CoreSettingsService coreSettings,
+            CloudflarePublicationStore publications)
         {
             Root = root;
             Paths = paths;
@@ -5733,6 +5830,8 @@ public sealed class CoreLifecycleServiceTests
             Adapter = adapter;
             LocalProcesses = localProcesses;
             Clock = clock;
+            CoreSettings = coreSettings;
+            Publications = publications;
         }
 
         public string Root { get; }
@@ -5748,6 +5847,13 @@ public sealed class CoreLifecycleServiceTests
         public AppSourceService Sources { get; }
 
         public CoreLifecycleService Service { get; }
+
+        // The live Core settings the fixture's ingress controller and public-origin ownership read, so a
+        // test can switch the ingress provider the same way an operator does.
+        public CoreSettingsService CoreSettings { get; }
+
+        // The publication store that decides, under the API provider, which origins are already owned.
+        public CloudflarePublicationStore Publications { get; }
 
         public RecordingRuntimeAdapter Adapter { get; }
 
@@ -5810,8 +5916,10 @@ public sealed class CoreLifecycleServiceTests
 
             IIngressController ingress = new CloudflaredIngressController(coreSettings, runtimeConfig, Microsoft.Extensions.Logging.Abstractions.NullLogger<CloudflaredIngressController>.Instance);
             var portAllocator = withPortAllocator ? new RuntimePortAllocator(runtimeConfig) : null;
-            var service = new CoreLifecycleService(paths, apps, manifests, backups, sources, [adapter, localAdapter], ingress, Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreLifecycleService>.Instance, notifications: null, clock: clock, portAllocator: portAllocator, selfRestartPortReleaseTimeout: selfRestartPortReleaseTimeout);
-            return new LifecycleFixture(root, paths, apps, backups, manifests, sources, service, adapter, localProcesses, clock);
+            var publications = new CloudflarePublicationStore(paths);
+            var publicOrigins = new PublicOriginOwnership(coreSettings, publications);
+            var service = new CoreLifecycleService(paths, apps, manifests, backups, sources, [adapter, localAdapter], ingress, Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreLifecycleService>.Instance, notifications: null, clock: clock, portAllocator: portAllocator, selfRestartPortReleaseTimeout: selfRestartPortReleaseTimeout, publicOrigins: publicOrigins);
+            return new LifecycleFixture(root, paths, apps, backups, manifests, sources, service, adapter, localProcesses, clock, coreSettings, publications);
         }
 
         // Shared-mounts library over the same data root the lifecycle service reads from.

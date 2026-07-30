@@ -124,7 +124,7 @@ public sealed class HostyCoreRuntimeConfigTests
         using var shellOriginEnv = TemporaryEnvironment.With("HOSTY_SHELL_PUBLIC_ORIGIN", null);
 
         var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Production));
-        var response = CoreStatusResponse.From(config, IngressSettings.FromEnvironment(), shellPublicOrigin: null);
+        var response = CoreStatusResponse.From(config, IngressSettings.FromEnvironment(), shellPublicOrigin: null, cloudflareConnected: false);
 
         Assert.Equal("http://localhost:7070", response.CorePublicOrigin);
         // Reported straight from the resolver: null here stands for "this host has no Shell installed".

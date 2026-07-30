@@ -6,12 +6,14 @@ import { getSettingsHref } from "../shell-routes";
 import type { CoreGlobalMount, CoreSettingsState, HostSettingsTab, SessionResponse } from "../types";
 import { PageHeader } from "../ui";
 import { SettingsCoreSection } from "./settings-core-section";
+import { SettingsIngressSection } from "./settings-ingress-section";
 import { SettingsMountsSection } from "./settings-mounts-section";
 import { UserManagementPanel } from "./user-management-page";
 
 const TABS: { id: HostSettingsTab; label: string }[] = [
   { id: "users", label: "Users" },
   { id: "core", label: "Core" },
+  { id: "ingress", label: "Ingress" },
   { id: "mounts", label: "Shared mounts" },
 ];
 
@@ -50,7 +52,7 @@ export function SettingsPage({
 }) {
   return (
     <div className="space-y-6">
-      <PageHeader title="Settings" description="Users, Core behavior, and host folders shared with apps." />
+      <PageHeader title="Settings" description="Users, Core behavior, public ingress, and host folders shared with apps." />
 
       <div className="flex gap-1 border-b">
         {TABS.map((tab) => (
@@ -76,6 +78,14 @@ export function SettingsPage({
 
       {activeTab === "core" && (
         <SettingsCoreSection
+          settings={coreSettings}
+          settingsError={coreSettingsError}
+          onSaveSettings={onSaveCoreSettings}
+        />
+      )}
+
+      {activeTab === "ingress" && (
+        <SettingsIngressSection
           settings={coreSettings}
           settingsError={coreSettingsError}
           onSaveSettings={onSaveCoreSettings}

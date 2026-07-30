@@ -54,6 +54,9 @@ internal static class CoreJson
 [JsonSerializable(typeof(CloudflareConnectRequest))]
 [JsonSerializable(typeof(CloudflareConnectionStatus))]
 [JsonSerializable(typeof(CloudflareTokenTemplate))]
+[JsonSerializable(typeof(CloudflareSelectionErrorResponse))]
+[JsonSerializable(typeof(CloudflareDisconnectRequest))]
+[JsonSerializable(typeof(CloudflareDiagnostics))]
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
 
 // Persisted state / internal serialization roots.

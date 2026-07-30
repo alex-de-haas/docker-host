@@ -15,6 +15,9 @@ internal sealed class CloudflarePublicationReconciler(
     CloudflarePublicationStore publications,
     ILogger<CloudflarePublicationReconciler> logger)
 {
+    // `adopt` answers a cloudflare_hostname_conflict: the operator has looked at the pre-existing DNS record
+    // and told Hosty to take it over. It is never implied — an unasked-for adoption would let a typo point
+    // someone else's hostname at a local app.
     public async Task<CloudflarePublication> PublishAsync(
         string token,
         CloudflareIngressTarget target,
@@ -22,6 +25,7 @@ internal sealed class CloudflarePublicationReconciler(
         string endpointKey,
         string label,
         string serviceUrl,
+        bool adopt = false,
         CancellationToken cancellationToken = default)
     {
         var hostname = BuildHostname(label, target.BaseDomain);
@@ -40,9 +44,21 @@ internal sealed class CloudflarePublicationReconciler(
         var ownedRecordId = existing?.DnsRecordId;
         var foreignRecord = (await client.ListDnsRecordsAsync(token, target.ZoneId, hostname, cancellationToken))
             .FirstOrDefault(record => !string.Equals(record.Id, ownedRecordId, StringComparison.Ordinal));
+        var adopted = false;
         if (foreignRecord is not null && existing is null)
         {
-            throw new CloudflareConnectionException("cloudflare_hostname_conflict", $"A DNS record for '{hostname}' already exists and is not managed by Hosty. Remove it or adopt it explicitly first.");
+            if (!adopt)
+            {
+                throw new CloudflareConnectionException(
+                    "cloudflare_hostname_conflict",
+                    $"A DNS record for '{hostname}' already exists and is not managed by Hosty. Adopt it to have Hosty manage it, or remove it in Cloudflare first.");
+            }
+
+            // Adoption records that Hosty manages this record from here on. It stays the operator's
+            // creation, which is why unpublish updates the route but never deletes the record.
+            ownedRecordId = foreignRecord.Id;
+            adopted = true;
+            logger.LogInformation("Adopting the pre-existing Cloudflare DNS record for '{Hostname}' at the operator's request.", hostname);
         }
 
         var cfTarget = $"{target.TunnelId}.cfargotunnel.com";
@@ -79,7 +95,12 @@ internal sealed class CloudflarePublicationReconciler(
                 createdDnsId = record?.Id;
             }
 
-            // 4. Persist ownership only after both remote changes verified.
+            // 4. Persist ownership only after both remote changes verified. An adopted record keeps that
+            // state for the life of the publication: a later re-publish under the same label must not
+            // silently promote it to owned and make unpublish delete something Hosty did not create.
+            var ownership = adopted || string.Equals(existing?.OwnershipState, CloudflareOwnershipStates.Adopted, StringComparison.Ordinal)
+                ? CloudflareOwnershipStates.Adopted
+                : CloudflareOwnershipStates.Owned;
             var publication = new CloudflarePublication(
                 appId,
                 endpointKey,
@@ -87,7 +108,7 @@ internal sealed class CloudflarePublicationReconciler(
                 hostname,
                 record?.Id ?? ownedRecordId,
                 serviceUrl,
-                CloudflareOwnershipStates.Owned,
+                ownership,
                 DateTimeOffset.UtcNow);
             await publications.UpsertAsync(publication, cancellationToken);
             return publication;

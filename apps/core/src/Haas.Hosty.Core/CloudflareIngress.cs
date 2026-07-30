@@ -6,15 +6,21 @@ using Microsoft.Extensions.Logging;
 namespace Haas.Hosty.Core;
 
 // Ingress turns a runtime app's loopback ports into externally reachable, TLS-terminated URLs.
-// Core does not run a reverse proxy itself; the cloudflared provider drives an operator-run
+// Core does not run a reverse proxy itself; the "cloudflared" provider drives an operator-run
 // Cloudflare Tunnel by writing its config file and auto-deriving HOSTY_PUBLIC_ORIGIN_* values.
+//
+// This controller is the *local-config* provider and nothing else. The "cloudflare-remote" provider
+// drives a remotely managed tunnel over Cloudflare's API and owns origins through publication
+// (CloudflarePublicationService), so every method here no-ops under it — the two providers are
+// mutually exclusive, which is what keeps a published label from being re-derived on the next start.
 // The provider and its identity are live settings (CoreSettingsService.Ingress): provider "none"
 // (the default) leaves exposure and origins to the operator; the single controller reads the current
-// value each call, so a platform-panel edit takes effect without a restart.
+// value each call, so a settings edit takes effect without a restart.
 internal interface IIngressController
 {
-    // True when Core derives HOSTY_PUBLIC_ORIGIN_* itself; false when the operator owns them.
-    bool ManagesPublicOrigins { get; }
+    // True when this provider derives HOSTY_PUBLIC_ORIGIN_* itself; false when the operator or a
+    // publication owns them.
+    bool DerivesPublicOrigins { get; }
 
     // Desired HOSTY_PUBLIC_ORIGIN_<endpoint> settings for an app's public endpoints. The host
     // is deterministic (subdomain + base domain), so this is known before the app starts.
@@ -28,9 +34,9 @@ internal interface IIngressController
     Task ReconcileAsync(IReadOnlyList<AppRecord> apps, CancellationToken cancellationToken = default);
 }
 
-// The one ingress controller. It reads the live ingress config from CoreSettingsService and no-ops when
-// the provider is "none", so there is no separate "none" implementation to swap in at startup — the
-// provider is an operator setting, not a DI-time choice.
+// The one ingress controller. It reads the live ingress config from CoreSettingsService and no-ops for
+// every provider that is not "cloudflared", so there is no separate implementation to swap in at
+// startup — the provider is an operator setting, not a DI-time choice.
 internal sealed class CloudflaredIngressController(
     CoreSettingsService settings,
     HostyCoreRuntimeConfig config,
@@ -39,7 +45,7 @@ internal sealed class CloudflaredIngressController(
     private static readonly IReadOnlyDictionary<string, string> Empty =
         new Dictionary<string, string>(StringComparer.Ordinal);
 
-    public bool ManagesPublicOrigins => settings.Ingress.ManagesPublicOrigins;
+    public bool DerivesPublicOrigins => settings.Ingress.DerivesPublicOrigins;
 
     public IReadOnlyDictionary<string, string> ResolvePublicOrigins(
         string appId,
@@ -47,7 +53,7 @@ internal sealed class CloudflaredIngressController(
         IReadOnlyList<string> publicEndpointKeys)
     {
         var ingress = settings.Ingress;
-        if (!ingress.ManagesPublicOrigins || string.IsNullOrWhiteSpace(ingress.BaseDomain) || publicEndpointKeys.Count == 0)
+        if (!ingress.DerivesPublicOrigins || string.IsNullOrWhiteSpace(ingress.BaseDomain) || publicEndpointKeys.Count == 0)
         {
             return Empty;
         }
@@ -59,11 +65,11 @@ internal sealed class CloudflaredIngressController(
     public async Task ReconcileAsync(IReadOnlyList<AppRecord> apps, CancellationToken cancellationToken = default)
     {
         var ingress = settings.Ingress;
-        // Provider "none" or missing identity/domain: do not write a half-formed config that cloudflared
-        // would reject. Incomplete cloudflared config is surfaced via /api/core/status warnings. Remove a
-        // config we previously wrote so an operator-run cloudflared stops serving the stale routes — the
-        // live toggle must actually disable ingress, not just stop updating it.
-        if (!ingress.ManagesPublicOrigins ||
+        // A provider that is not the local one, or missing identity/domain: do not write a half-formed
+        // config that cloudflared would reject. An incomplete config is surfaced via /api/core/status
+        // warnings. Remove a config we previously wrote so an operator-run cloudflared stops serving the
+        // stale routes — switching provider must actually disable this ingress, not just stop updating it.
+        if (!ingress.DerivesPublicOrigins ||
             string.IsNullOrWhiteSpace(ingress.BaseDomain) ||
             string.IsNullOrWhiteSpace(ingress.TunnelId) ||
             string.IsNullOrWhiteSpace(ingress.CredentialsFile))

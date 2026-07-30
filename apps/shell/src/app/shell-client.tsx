@@ -8,7 +8,7 @@ import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { findAppPageLink, getAppPageLinks } from "./shell/app-helpers";
-import { isAuthRequiredRedirectError, readCoreError, redirectToCoreLogin, redirectToCoreLoginIfAuthRequired } from "./shell/core-api";
+import { CoreRequestError, isAuthRequiredRedirectError, readCoreError, readCoreErrorDetail, redirectToCoreLogin, redirectToCoreLoginIfAuthRequired } from "./shell/core-api";
 import { createReissueRateLimiter } from "@hosty-sdk/app/embedder";
 import { CoreEventNames, subscribeToCoreEvents } from "./shell/events/core-event-stream";
 import { AppDetailsDialog } from "./shell/dialogs/app-details-dialog";
@@ -325,7 +325,10 @@ export function ShellClient({
 
         redirectToCoreLoginIfAuthRequired(response, coreOrigin);
         if (!response.ok) {
-          throw new Error(await readCoreError(response));
+          // A CoreRequestError is still an ordinary Error carrying the same message, so every caller that
+          // only shows `err.message` is unaffected; the ones that need to branch read `code`/`body`.
+          const detail = await readCoreErrorDetail(response);
+          throw new CoreRequestError(detail.message, detail.code, response.status, detail.body);
         }
 
         return response;
@@ -1523,9 +1526,11 @@ export function ShellClient({
     }
   }, [normalizedRoutePath, router, searchParams]);
 
-  // Core settings belong to one tab, so they load when that tab is shown rather than with the page.
+  // Core settings load when a tab that renders them is shown, rather than with the page. Two tabs do:
+  // Core and Ingress split one settings payload by the group Core tags each item with.
   useEffect(() => {
-    if (!canManageApps || shellRoute.view !== "settings" || shellRoute.settingsTab !== "core") {
+    const rendersCoreSettings = shellRoute.settingsTab === "core" || shellRoute.settingsTab === "ingress";
+    if (!canManageApps || shellRoute.view !== "settings" || !rendersCoreSettings) {
       return;
     }
 

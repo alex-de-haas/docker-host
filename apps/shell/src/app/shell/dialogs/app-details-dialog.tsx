@@ -35,6 +35,8 @@ import type {
 } from "../types";
 import { CheckboxRow, EmptyState, FactCard, IconButton, InlineError } from "../ui";
 import { isAppIdle, isAppUp } from "../runtime-states";
+import type { ManagedPublicOriginReason } from "../use-managed-public-origins";
+import { useManagedPublicOrigins } from "../use-managed-public-origins";
 
 export function AppDetailsDialog({
   app,
@@ -477,6 +479,11 @@ function SettingsDialog({
   );
 }
 
+const MANAGED_ORIGIN_HINTS: Record<ManagedPublicOriginReason, string> = {
+  derived: "Derived by the ingress provider from the base domain and this app's subdomain, on every start.",
+  published: "Published through Cloudflare. Change or remove it from the endpoint's publish control.",
+};
+
 function SettingsForm({
   app,
   section,
@@ -495,6 +502,9 @@ function SettingsForm({
   const settings = app.settings || [];
   const appSettings = settings.filter((setting) => !isPublicOriginSettingKey(setting.key));
   const publicOriginSettings = settings.filter((setting) => isPublicOriginSettingKey(setting.key));
+  // Which public origins the active ingress provider owns. Rendering only: Core refuses a managed write
+  // either way, and the field says why rather than failing on save.
+  const managedPublicOrigins = useManagedPublicOrigins(app, publicOriginSettings.length > 0);
   const publicOriginGroups = buildPublicOriginGroups(app, publicOriginSettings);
   const settingsSignature = settings
     .map((setting) => [setting.key, setting.type, setting.secret ? "1" : "0", setting.required ? "1" : "0", setting.value ?? ""].join("\u0000"))
@@ -555,16 +565,21 @@ function SettingsForm({
               <div key={group.service} className="space-y-2">
                 <h3 className="text-sm font-medium">{group.service}</h3>
                 <div className="space-y-2">
-                  {group.items.map(({ setting, endpoint }) => (
-                    <PublicOriginInput
-                      key={setting.key}
-                      setting={setting}
-                      endpoint={endpoint}
-                      value={draft[setting.key] ?? ""}
-                      disabled={!canManageApps}
-                      onChange={(value) => setDraft((current) => ({ ...current, [setting.key]: value }))}
-                    />
-                  ))}
+                  {group.items.map(({ setting, endpoint }) => {
+                    const managed = managedPublicOrigins.get(setting.key);
+                    return (
+                      <div key={setting.key} className="space-y-1">
+                        <PublicOriginInput
+                          setting={setting}
+                          endpoint={endpoint}
+                          value={draft[setting.key] ?? ""}
+                          disabled={!canManageApps || managed !== undefined}
+                          onChange={(value) => setDraft((current) => ({ ...current, [setting.key]: value }))}
+                        />
+                        {managed && <p className="text-[11px] text-muted-foreground">{MANAGED_ORIGIN_HINTS[managed]}</p>}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             ))}
@@ -1224,6 +1239,7 @@ function RemovePanel({
   const consumers = (impactState.impact?.capabilities ?? []).flatMap((capability) =>
     capability.consumers.map((consumer) => ({ slot: capability.slot, ...consumer })),
   );
+  const publicOrigins = impactState.impact?.publicOrigins ?? [];
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
@@ -1276,6 +1292,22 @@ function RemovePanel({
             </ul>
           </div>
         )}
+        {publicOrigins.length > 0 && (
+          <div className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+            <p className="font-medium">Published addresses that go offline</p>
+            <ul className="space-y-1">
+              {publicOrigins.map((origin) => (
+                <li key={`public-origin-${origin.endpointKey}`}>
+                  <span className="font-mono">https://{origin.hostname}</span>
+                  {origin.ownershipState === "adopted"
+                    ? " — the tunnel route is removed; the DNS record stays, because Hosty did not create it."
+                    : " — the tunnel route and its DNS record are removed."}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         <div className="space-y-2">
           <CheckboxRow label="Delete app data" checked={options.deleteData} disabled={!canRemove} onChange={(checked) => setOptions((current) => ({ ...current, deleteData: checked }))} />
           <CheckboxRow label="Delete backups" checked={options.deleteBackups} disabled={!canRemove} onChange={(checked) => setOptions((current) => ({ ...current, deleteBackups: checked }))} />

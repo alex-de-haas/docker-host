@@ -60,6 +60,102 @@ public sealed class CloudflareConnectionServiceTests : IDisposable
 
         var error = await Assert.ThrowsAsync<CloudflareConnectionException>(() => service.ConnectAsync("t"));
         Assert.Equal("cloudflare_tunnel_ambiguous", error.Code);
+        // An ambiguity carries its candidates: an account with two tunnels is ordinary, and the operator
+        // can only answer a question that names the options.
+        var selection = Assert.IsType<CloudflareSelectionRequired>(error.Selection);
+        Assert.Equal("tunnel", selection.Kind);
+        Assert.Equal(["a", "b"], selection.Options.Select(option => option.Id));
+        Assert.Equal("healthy", selection.Options[0].Detail);
+    }
+
+    [Fact]
+    public async Task ConnectAsync_AmbiguousTunnel_ResolvedByTheOperatorsSelection()
+    {
+        var api = new FakeApi
+        {
+            Tunnels =
+            [
+                new CloudflareTunnel("a", "A", "healthy", "cloudflare", true),
+                new CloudflareTunnel("b", "B", "healthy", "cloudflare", true),
+            ],
+        };
+        var (service, _, integration) = Create(api);
+
+        var status = await service.ConnectAsync("t", new CloudflareConnectSelection(null, null, "b"));
+
+        Assert.Equal(CloudflareConnectionStatuses.Connected, status.Status);
+        Assert.Equal("B", status.TunnelName);
+        Assert.Equal("b", (await integration.LoadAsync())!.TunnelId);
+    }
+
+    [Fact]
+    public async Task ConnectAsync_SelectionThatNoLongerMatches_AsksAgain()
+    {
+        // The candidate list can change between the two calls; a stale pick re-asks with the current
+        // options instead of failing opaquely.
+        var api = new FakeApi
+        {
+            Tunnels =
+            [
+                new CloudflareTunnel("a", "A", "healthy", "cloudflare", true),
+                new CloudflareTunnel("b", "B", "healthy", "cloudflare", true),
+            ],
+        };
+        var (service, _, _) = Create(api);
+
+        var error = await Assert.ThrowsAsync<CloudflareConnectionException>(
+            () => service.ConnectAsync("t", new CloudflareConnectSelection(null, null, "gone")));
+
+        Assert.Equal("cloudflare_tunnel_ambiguous", error.Code);
+        Assert.NotNull(error.Selection);
+    }
+
+    [Fact]
+    public async Task ConnectAsync_AmbiguousZone_ReportsItsOwnCandidates()
+    {
+        var api = new FakeApi
+        {
+            Zones = [new("z1", "one.test", "active"), new("z2", "two.test", "active")],
+        };
+        var (service, _, _) = Create(api);
+
+        var error = await Assert.ThrowsAsync<CloudflareConnectionException>(() => service.ConnectAsync("t"));
+
+        Assert.Equal("cloudflare_zone_ambiguous", error.Code);
+        Assert.Equal("zone", error.Selection!.Kind);
+        Assert.Equal(["one.test", "two.test"], error.Selection.Options.Select(option => option.Name));
+    }
+
+    [Fact]
+    public async Task MarkReconnectRequiredAsync_KeepsDiscoveryAndCredential()
+    {
+        // A revoked token is a state to prompt on, not a reason to forget the account, the tunnel, or the
+        // publications that depend on them.
+        var (service, credentials, integration) = Create(new FakeApi());
+        await service.ConnectAsync("t");
+
+        await service.MarkReconnectRequiredAsync("The Cloudflare token is invalid or revoked.");
+
+        var state = await integration.LoadAsync();
+        Assert.Equal(CloudflareConnectionStatuses.ReconnectRequired, state!.Status);
+        Assert.Equal("The Cloudflare token is invalid or revoked.", state.ReconnectReason);
+        Assert.Equal("t", state.TunnelId);
+        Assert.NotNull(await credentials.LoadAsync());
+
+        // Reconnecting is the recovery: it clears the status without any extra step.
+        var status = await service.ConnectAsync("fresh");
+        Assert.Equal(CloudflareConnectionStatuses.Connected, status.Status);
+        Assert.Null((await integration.LoadAsync())!.ReconnectReason);
+    }
+
+    [Fact]
+    public async Task MarkReconnectRequiredAsync_WhenNeverConnected_DoesNothing()
+    {
+        var (service, _, integration) = Create(new FakeApi());
+
+        await service.MarkReconnectRequiredAsync("whatever");
+
+        Assert.Null(await integration.LoadAsync());
     }
 
     [Fact]

@@ -33,7 +33,7 @@ internal static class CloudflarePublicationEndpoints
                 request,
                 users,
                 clock,
-                async () => await HandleCloudflareError(() => service.PublishAsync(appId, input.EndpointKey, input.Label, cancellationToken)),
+                async () => await HandleCloudflareError(() => service.PublishAsync(appId, input.EndpointKey, input.Label, input.Adopt, cancellationToken)),
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
@@ -64,7 +64,8 @@ internal static class CloudflarePublicationEndpoints
         {
             var statusCode = exception.Code switch
             {
-                "cloudflare_not_connected" => StatusCodes.Status409Conflict,
+                "cloudflare_not_connected" or "cloudflare_provider_inactive" or "cloudflare_reconnect_required"
+                    => StatusCodes.Status409Conflict,
                 "cloudflare_app_not_found" => StatusCodes.Status404NotFound,
                 "cloudflare_hostname_owned" or "cloudflare_hostname_conflict" => StatusCodes.Status409Conflict,
                 _ => StatusCodes.Status400BadRequest,

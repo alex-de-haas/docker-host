@@ -131,14 +131,14 @@ public sealed class CoreSettingsServiceTests : IDisposable
             ["HOSTY_INGRESS_TUNNEL_ID"] = "tunnel-123",
         });
 
-        Assert.True(service.Ingress.ManagesPublicOrigins);
+        Assert.True(service.Ingress.DerivesPublicOrigins);
         Assert.Equal("apps.example.test", service.Ingress.BaseDomain);
         Assert.Equal("tunnel-123", service.Ingress.TunnelId);
         Assert.True(service.GetIngressRows().Single(r => r.Definition.Key == "HOSTY_INGRESS_PROVIDER").Overridden);
 
         // Persisted: a fresh service reads the ingress overrides back.
         var reloaded = CreateService();
-        Assert.True(reloaded.Ingress.ManagesPublicOrigins);
+        Assert.True(reloaded.Ingress.DerivesPublicOrigins);
         Assert.Equal("apps.example.test", reloaded.Ingress.BaseDomain);
         Assert.Equal("tunnel-123", reloaded.Ingress.TunnelId);
     }
@@ -159,12 +159,39 @@ public sealed class CoreSettingsServiceTests : IDisposable
     {
         var service = CreateService();
         await service.UpdateAsync(new Dictionary<string, string?> { ["HOSTY_INGRESS_PROVIDER"] = "cloudflared" });
-        Assert.True(service.Ingress.ManagesPublicOrigins);
+        Assert.True(service.Ingress.DerivesPublicOrigins);
 
         await service.UpdateAsync(new Dictionary<string, string?> { ["HOSTY_INGRESS_PROVIDER"] = null });
         Assert.Equal(IngressSettings.ProviderNone, service.Ingress.Provider);
         Assert.False(service.GetIngressRows().Single(r => r.Definition.Key == "HOSTY_INGRESS_PROVIDER").Overridden);
-        Assert.False(CreateService().Ingress.ManagesPublicOrigins);
+        Assert.False(CreateService().Ingress.DerivesPublicOrigins);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_Ingress_AcceptsCloudflareRemote()
+    {
+        var service = CreateService();
+
+        await service.UpdateAsync(new Dictionary<string, string?>
+        {
+            ["HOSTY_INGRESS_PROVIDER"] = IngressSettings.ProviderCloudflareRemote,
+        });
+
+        // The two Cloudflare providers are mutually exclusive: the API one publishes, and must not also
+        // derive origins or render a local tunnel config.
+        Assert.True(service.Ingress.PublishesThroughApi);
+        Assert.False(service.Ingress.DerivesPublicOrigins);
+        Assert.True(CreateService().Ingress.PublishesThroughApi);
+    }
+
+    [Fact]
+    public void BuildWarnings_CloudflareRemoteWithoutConnection_Warns()
+    {
+        var ingress = IngressSettings.Defaults with { Provider = IngressSettings.ProviderCloudflareRemote };
+
+        // Selected but not connected is a legitimate intermediate state, so it warns rather than failing.
+        Assert.Single(ingress.BuildWarnings(cloudflareConnected: false));
+        Assert.Empty(ingress.BuildWarnings(cloudflareConnected: true));
     }
 
     [Fact]

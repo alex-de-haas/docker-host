@@ -43,7 +43,7 @@ public sealed class CloudflaredIngressControllerTests : IDisposable
         var settings = CreateSettings();
         var controller = CreateController(settings);
 
-        Assert.False(controller.ManagesPublicOrigins);
+        Assert.False(controller.DerivesPublicOrigins);
         Assert.Empty(controller.ResolvePublicOrigins("pm", subdomainOverride: null, ["http"]));
 
         await controller.ReconcileAsync([]);
@@ -63,7 +63,7 @@ public sealed class CloudflaredIngressControllerTests : IDisposable
         });
         var controller = CreateController(settings);
 
-        Assert.True(controller.ManagesPublicOrigins);
+        Assert.True(controller.DerivesPublicOrigins);
         var origins = controller.ResolvePublicOrigins("pm", subdomainOverride: null, ["http"]);
         Assert.Equal("https://pm.apps.example.test", origins["HOSTY_PUBLIC_ORIGIN_HTTP"]);
 
@@ -73,6 +73,56 @@ public sealed class CloudflaredIngressControllerTests : IDisposable
         var yaml = await File.ReadAllTextAsync(ConfigPath);
         Assert.Contains("core.apps.example.test", yaml);
         Assert.Contains("tunnel-abc", yaml);
+    }
+
+    [Fact]
+    public async Task ProviderCloudflareRemote_NeitherDerivesOriginsNorWritesConfig()
+    {
+        // The API provider owns origins through publication. If this controller also derived them, the
+        // next start of a published app would overwrite the operator's label with {app}.{baseDomain} —
+        // the defect the provider split exists to remove. A base domain left over from an earlier
+        // local-config setup must not resurrect that.
+        var settings = CreateSettings();
+        await settings.UpdateAsync(new Dictionary<string, string?>
+        {
+            ["HOSTY_INGRESS_PROVIDER"] = IngressSettings.ProviderCloudflareRemote,
+            ["HOSTY_INGRESS_BASE_DOMAIN"] = "apps.example.test",
+            ["HOSTY_INGRESS_TUNNEL_ID"] = "tunnel-abc",
+            ["HOSTY_INGRESS_CREDENTIALS_FILE"] = Path.Combine(root, "creds.json"),
+        });
+        var controller = CreateController(settings);
+
+        Assert.False(controller.DerivesPublicOrigins);
+        Assert.Empty(controller.ResolvePublicOrigins("pm", subdomainOverride: null, ["http"]));
+
+        await controller.ReconcileAsync([]);
+        Assert.False(File.Exists(ConfigPath));
+    }
+
+    [Fact]
+    public async Task SwitchingFromCloudflaredToCloudflareRemote_RemovesTheManagedConfig()
+    {
+        // Switching provider must actually stop the local tunnel serving its routes, not just stop
+        // updating the file an operator-run cloudflared is still reading.
+        var settings = CreateSettings();
+        await settings.UpdateAsync(new Dictionary<string, string?>
+        {
+            ["HOSTY_INGRESS_PROVIDER"] = "cloudflared",
+            ["HOSTY_INGRESS_BASE_DOMAIN"] = "apps.example.test",
+            ["HOSTY_INGRESS_TUNNEL_ID"] = "tunnel-abc",
+            ["HOSTY_INGRESS_CREDENTIALS_FILE"] = Path.Combine(root, "creds.json"),
+        });
+        var controller = CreateController(settings);
+        await controller.ReconcileAsync([]);
+        Assert.True(File.Exists(ConfigPath));
+
+        await settings.UpdateAsync(new Dictionary<string, string?>
+        {
+            ["HOSTY_INGRESS_PROVIDER"] = IngressSettings.ProviderCloudflareRemote,
+        });
+        await controller.ReconcileAsync([]);
+
+        Assert.False(File.Exists(ConfigPath));
     }
 
     [Fact]
@@ -87,7 +137,7 @@ public sealed class CloudflaredIngressControllerTests : IDisposable
         });
         var controller = CreateController(settings);
 
-        Assert.True(controller.ManagesPublicOrigins); // derives origins, but won't render a half config
+        Assert.True(controller.DerivesPublicOrigins); // derives origins, but won't render a half config
         await controller.ReconcileAsync([]);
         Assert.False(File.Exists(ConfigPath));
     }

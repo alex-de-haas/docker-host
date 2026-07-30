@@ -73,6 +73,59 @@ public sealed class CloudflarePublicationReconcilerTests : IDisposable
     }
 
     [Fact]
+    public async Task PublishAsync_AdoptTakesOverTheExistingRecordWithoutCreatingOne()
+    {
+        // The phase-0 spike found the live account already carrying matching proxied CNAMEs, so this is the
+        // first connect's normal case, not an edge one.
+        var api = new StatefulApi(SampleConfig());
+        api.Dns.Add(new CloudflareDnsRecord("foreign", "CNAME", "media.example.test", "something-else.example", true, 1));
+        var (reconciler, publications) = Create(api);
+
+        var publication = await reconciler.PublishAsync("t", Target, "app", "web.http", "media", "http://127.0.0.1:8096", adopt: true);
+
+        Assert.Equal(CloudflareOwnershipStates.Adopted, publication.OwnershipState);
+        Assert.Equal("foreign", publication.DnsRecordId);
+        // Updated in place, not duplicated, and now pointing at the tunnel.
+        var record = Assert.Single(api.Dns);
+        Assert.Equal("foreign", record.Id);
+        Assert.Equal($"{Target.TunnelId}.cfargotunnel.com", record.Content);
+        Assert.Contains("media.example.test", CloudflareTunnelConfigPatcher.IngressHostnames(api.Config));
+        Assert.Equal(CloudflareOwnershipStates.Adopted, (await publications.GetAsync("app", "web.http"))!.OwnershipState);
+    }
+
+    [Fact]
+    public async Task UnpublishAsync_AdoptedRecord_RemovesTheRouteButKeepsTheRecord()
+    {
+        // Adoption means Hosty manages the record, not that it created it. Deleting an operator's DNS
+        // record on unpublish would destroy something Hosty was only ever lent.
+        var api = new StatefulApi(SampleConfig());
+        api.Dns.Add(new CloudflareDnsRecord("foreign", "CNAME", "media.example.test", "something-else.example", true, 1));
+        var (reconciler, publications) = Create(api);
+        await reconciler.PublishAsync("t", Target, "app", "web.http", "media", "http://127.0.0.1:8096", adopt: true);
+
+        await reconciler.UnpublishAsync("t", Target, "app", "web.http");
+
+        Assert.Single(api.Dns);
+        Assert.DoesNotContain("media.example.test", CloudflareTunnelConfigPatcher.IngressHostnames(api.Config));
+        Assert.Null(await publications.GetAsync("app", "web.http"));
+    }
+
+    [Fact]
+    public async Task PublishAsync_RepublishingAnAdoptedHostname_StaysAdopted()
+    {
+        // Promoting it to "owned" on a re-publish would quietly turn the operator's record into something
+        // a later unpublish deletes.
+        var api = new StatefulApi(SampleConfig());
+        api.Dns.Add(new CloudflareDnsRecord("foreign", "CNAME", "media.example.test", "something-else.example", true, 1));
+        var (reconciler, _) = Create(api);
+        await reconciler.PublishAsync("t", Target, "app", "web.http", "media", "http://127.0.0.1:8096", adopt: true);
+
+        var republished = await reconciler.PublishAsync("t", Target, "app", "web.http", "media", "http://127.0.0.1:9000");
+
+        Assert.Equal(CloudflareOwnershipStates.Adopted, republished.OwnershipState);
+    }
+
+    [Fact]
     public async Task PublishAsync_InvalidLabel_Throws()
     {
         var (reconciler, _) = Create(new StatefulApi(SampleConfig()));

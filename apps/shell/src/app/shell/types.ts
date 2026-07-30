@@ -7,9 +7,9 @@ export type CoreStatus = {
   corePublicOrigin?: string | null;
   shellPublicOrigin?: string | null;
   runtimePublicHost?: string | null;
-  // Live ingress provider: "cloudflared" when Core manages public origins, "none" when exposure is left
-  // to the operator. The anonymous status payload blanks it to "", so treat anything but "cloudflared"
-  // as "ingress off".
+  // Live ingress provider: "none", "cloudflare-remote" (published over Cloudflare's API), or "cloudflared"
+  // (a locally managed tunnel whose config Core renders). The anonymous status payload blanks it to "",
+  // which reads as ingress off. See ./ingress.ts for the predicates that branch on it.
   ingressProvider?: string | null;
   warnings?: string[];
   serverTime: string;
@@ -96,11 +96,67 @@ export type CloudflareConnectionStatus = {
 // GET /api/core/cloudflare/token-template — dashboard URL + the permissions to grant.
 export type CloudflareTokenTemplate = { url: string; requiredPermissions: string[] };
 
+// The 409 body from POST /api/core/cloudflare/connect when the token can reach more than one account,
+// zone, or tunnel: the candidates, so the operator can answer instead of dead-ending.
+export type CloudflareSelectionOption = { id: string; name: string; detail?: string | null };
+export type CloudflareSelectionRequired = { kind: "account" | "zone" | "tunnel"; options: CloudflareSelectionOption[] };
+export type CloudflareSelectionError = { code: string; message: string; selection: CloudflareSelectionRequired };
+
 // GET /api/apps/{id}/public-origins
-export type CloudflarePublicationSummary = { endpointKey: string; label: string; hostname: string; publicOrigin?: string | null; ownershipState: string };
+export type CloudflarePublicationState = "not_configured" | "active" | "app_stopped" | "restart_required" | "error";
+export type CloudflarePublicationSummary = {
+  endpointKey: string;
+  label: string;
+  hostname: string;
+  publicOrigin?: string | null;
+  ownershipState: string;
+  state: CloudflarePublicationState;
+};
 export type CloudflareAppPublications = { publications: CloudflarePublicationSummary[] };
 // POST /api/apps/{id}/public-origins/publish | unpublish
-export type CloudflarePublicationResult = { appId: string; endpointKey: string; hostname?: string | null; publicOrigin?: string | null; restartRequired: boolean };
+export type CloudflarePublicationResult = {
+  appId: string;
+  endpointKey: string;
+  hostname?: string | null;
+  publicOrigin?: string | null;
+  restartRequired: boolean;
+  // Where the connector was observed to run, checked just before the mutation. "not_local" means the
+  // publish succeeded but the address reaches a different machine. Null when nothing was mutated.
+  locality?: string | null;
+};
+
+// GET /api/core/cloudflare/diagnostics — a read-only comparison of what Hosty believes it published
+// against what Cloudflare serves, plus the public endpoints that have no address at all.
+export type CloudflareDiagnosticState =
+  | "ok"
+  | "app_missing"
+  | "endpoint_missing"
+  | "route_missing"
+  | "route_stale"
+  | "dns_missing"
+  | "dns_foreign"
+  // Core's own address only.
+  | "not_configured"
+  | "external"
+  | "unknown";
+export type CloudflarePublicationDiagnostic = { appId: string; endpointKey: string; hostname: string; state: CloudflareDiagnosticState };
+export type CloudflareUnpublishedEndpoint = { appId: string; displayName: string; endpointKey: string };
+// Core's own hostname rides the same tunnel but is not a publication: Core is not an app, so nothing
+// creates its route or DNS record. `expectedDnsContent` and `expectedService` are the two objects the
+// operator has to create by hand.
+export type CloudflareCoreDiagnostic = {
+  origin: string;
+  hostname: string | null;
+  state: CloudflareDiagnosticState;
+  expectedDnsContent: string | null;
+  expectedService: string;
+};
+export type CloudflareDiagnostics = {
+  checked: boolean;
+  publications: CloudflarePublicationDiagnostic[];
+  unpublishedEndpoints: CloudflareUnpublishedEndpoint[];
+  core: CloudflareCoreDiagnostic;
+};
 
 // POST /api/apps/{id}/ports/reassign/plan — preview of reassigning one automatic host port.
 export type CoreReassignDependent = { appId: string; running: boolean };
@@ -293,7 +349,13 @@ export type CoreRemovalImpact = {
   system: boolean;
   dependents: CoreRemovalDependent[];
   capabilities: CoreRemovalCapabilityImpact[];
+  // Hosty-published hostnames that removal takes offline.
+  publicOrigins: CoreRemovalPublicOrigin[];
 };
+
+// One published hostname the removal takes down. An "adopted" record keeps its DNS entry — Hosty manages
+// it but did not create it.
+export type CoreRemovalPublicOrigin = { endpointKey: string; hostname: string; ownershipState: string };
 
 // An installed app that declares a cross-app dependency on the one being removed. A running dependent
 // keeps its wired HOSTY_DEPENDENCY_* values until it restarts, so the loss lands at its next start.
@@ -591,7 +653,7 @@ export type ShellView =
 
 // Host-level configuration surfaces, addressable as /settings?tab=<value>. Distinct from the per-app
 // `SettingsTab` above, which describes one app rather than the host.
-export type HostSettingsTab = "users" | "core" | "mounts";
+export type HostSettingsTab = "users" | "core" | "mounts" | "ingress";
 export type AppOpenTarget = "workspace" | "tab";
 export type HostyResolvedTheme = "light" | "dark";
 export type HostyThemePreference = "light" | "dark" | "system";

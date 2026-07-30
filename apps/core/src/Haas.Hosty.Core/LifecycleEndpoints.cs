@@ -916,6 +916,8 @@ internal static class LifecycleEndpoints
                 // Conflict with current state, not a malformed request: the same install succeeds
                 // once the app is removed, and an update is the way to change it in place.
                 "already_installed" => StatusCodes.Status409Conflict,
+                // Same shape: the write is well-formed, but another surface owns the value right now.
+                "public_origin_managed" => StatusCodes.Status409Conflict,
                 _ => StatusCodes.Status400BadRequest,
             };
             return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: statusCode);

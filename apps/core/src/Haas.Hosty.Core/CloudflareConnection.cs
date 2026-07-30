@@ -20,7 +20,13 @@ internal sealed class CloudflareConnectionService(
 {
     private readonly IClock clock = clock ?? new SystemClock();
 
-    public async Task<CloudflareConnectionStatus> ConnectAsync(string token, CancellationToken cancellationToken = default)
+    // `selection` carries the operator's answers to any ambiguity a previous attempt reported. Connecting
+    // is one call either way: the token is already in the browser at that moment, so a second round trip
+    // repeats it rather than parking an unverified token server-side.
+    public async Task<CloudflareConnectionStatus> ConnectAsync(
+        string token,
+        CloudflareConnectSelection? selection = null,
+        CancellationToken cancellationToken = default)
     {
         token = token?.Trim() ?? "";
         if (token.Length == 0)
@@ -30,13 +36,11 @@ internal sealed class CloudflareConnectionService(
 
         // 1. Verify by a resource probe (account-owned tokens can't use /user/tokens/verify).
         var accounts = await ProbeAsync(() => client.ListAccountsAsync(token, cancellationToken));
-        var account = Single(accounts, "account", "cloudflare_account_ambiguous",
-            "This token can access more than one Cloudflare account; account selection is not supported yet.");
+        var account = Choose(accounts, "account", selection?.AccountId, item => item.Id, item => item.Name, detail: _ => null);
 
         // 2. Discover the zone / base domain.
         var zones = await ProbeAsync(() => client.ListZonesAsync(token, cancellationToken));
-        var zone = Single(zones, "zone", "cloudflare_zone_ambiguous",
-            "This token can access more than one zone; zone selection is not supported yet.");
+        var zone = Choose(zones, "zone", selection?.ZoneId, item => item.Id, item => item.Name, detail: _ => null);
 
         // 3. Discover the healthy remotely managed tunnel to adopt.
         var tunnels = await ProbeAsync(() => client.ListTunnelsAsync(token, account.Id, cancellationToken));
@@ -48,8 +52,7 @@ internal sealed class CloudflareConnectionService(
                 "No healthy remotely managed Cloudflare tunnel was found. Start a remotely managed connector, then reconnect.");
         }
 
-        var tunnel = Single(eligible, "tunnel", "cloudflare_tunnel_ambiguous",
-            "More than one healthy remotely managed tunnel exists; tunnel selection is not supported yet.");
+        var tunnel = Choose(eligible, "tunnel", selection?.TunnelId, item => item.Id, item => item.Name, item => item.Status);
 
         // 4. Connector locality (advisory; degrades to unknown, never blocks).
         var connections = await ProbeAsync(() => client.GetTunnelConnectionsAsync(token, account.Id, tunnel.Id, cancellationToken));
@@ -108,12 +111,39 @@ internal sealed class CloudflareConnectionService(
         return await ProjectAsync(state, cancellationToken);
     }
 
+    // Records that the stored token no longer works, without touching the token, the discovery state, or
+    // anything Hosty published. Called from the publication path, which is where a revoked, expired, or
+    // permission-reduced token is actually discovered — Cloudflare pushes nothing, so a connection can only
+    // be found broken at the moment it is used. Local intent survives: reconnecting a fresh token with the
+    // same permissions makes every existing publication work again.
+    public async Task MarkReconnectRequiredAsync(string reason, CancellationToken cancellationToken = default)
+    {
+        var state = await integration.LoadAsync(cancellationToken);
+        if (state is null || string.Equals(state.Status, CloudflareConnectionStatuses.ReconnectRequired, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        logger.LogWarning("The stored Cloudflare token stopped working ({Reason}); the connection now needs reconnecting.", reason);
+        await integration.SaveAsync(
+            state with
+            {
+                Status = CloudflareConnectionStatuses.ReconnectRequired,
+                ReconnectReason = reason,
+                UpdatedAt = clock.UtcNow,
+            },
+            cancellationToken);
+    }
+
+    // Drops the stored token and the discovery state, and nothing else. Whether the published routes and
+    // records go with it is the operator's Keep-or-Remove answer, and it is applied by the endpoint before
+    // this runs — the removal needs the token, so it cannot happen after, and it must be able to stop the
+    // disconnect when it fails (see CloudflareConnectionEndpoints).
+    //
+    // The scoped token cannot revoke itself, so the local copy is deleted and the operator is pointed at
+    // the dashboard. Objects Hosty never created are never touched.
     public async Task<CloudflareConnectionStatus> DisconnectAsync(CancellationToken cancellationToken = default)
     {
-        // The scoped token cannot revoke itself, so we delete the local copy and point the operator at the
-        // dashboard. Hosty-owned DNS records and tunnel routes are deliberately NOT removed here: there
-        // are no Keep/Remove choices yet, so disconnect leaves every published resource in place and the
-        // operator unpublishes first if they want it gone. See the feature's plan.md.
         await credentials.DeleteAsync(cancellationToken);
         await integration.DeleteAsync(cancellationToken);
         return await StatusAsync(cancellationToken);
@@ -160,27 +190,72 @@ internal sealed class CloudflareConnectionService(
         }
     }
 
-    private static T Single<T>(IReadOnlyList<T> items, string what, string ambiguousCode, string ambiguousMessage)
+    // Resolves one candidate: the only one when there is only one, the operator's pick when they made one,
+    // and otherwise an ambiguity error that carries the candidates so the client can ask. Selection is not
+    // a hard failure — the account with two zones is an ordinary account, not a misconfiguration.
+    private static T Choose<T>(
+        IReadOnlyList<T> items,
+        string what,
+        string? selectedId,
+        Func<T, string> id,
+        Func<T, string> name,
+        Func<T, string?> detail)
     {
         if (items.Count == 0)
         {
             throw new CloudflareConnectionException($"cloudflare_no_{what}", $"The Cloudflare token can access no {what}.");
         }
 
-        if (items.Count > 1)
+        if (items.Count == 1)
         {
-            throw new CloudflareConnectionException(ambiguousCode, ambiguousMessage);
+            return items[0];
         }
 
-        return items[0];
+        if (!string.IsNullOrWhiteSpace(selectedId))
+        {
+            var picked = items.FirstOrDefault(item => string.Equals(id(item), selectedId, StringComparison.Ordinal));
+            if (picked is not null)
+            {
+                return picked;
+            }
+            // A selection that no longer matches anything falls through to a fresh ambiguity error rather
+            // than failing opaquely: the list may have changed between the two calls.
+        }
+
+        throw new CloudflareConnectionException(
+            $"cloudflare_{what}_ambiguous",
+            $"This token can access more than one {what}. Choose the one Hosty should use.",
+            new CloudflareSelectionRequired(
+                what,
+                items.Select(item => new CloudflareSelectionOption(id(item), name(item), detail(item))).ToArray()));
     }
 }
 
 // Connect/discover failures with a stable code the endpoint maps to a 4xx and the Shell branches on.
-internal sealed class CloudflareConnectionException(string code, string message) : Exception(message)
+// `Selection` is present only on an ambiguity: it carries the candidates so the client can ask rather than
+// dead-end.
+internal sealed class CloudflareConnectionException(string code, string message, CloudflareSelectionRequired? selection = null)
+    : Exception(message)
 {
     public string Code { get; } = code;
+
+    public CloudflareSelectionRequired? Selection { get; } = selection;
 }
+
+// One candidate the operator can pick. `Detail` is a secondary line (a tunnel's health, say) or null.
+internal sealed record CloudflareSelectionOption(string Id, string Name, string? Detail);
+
+// What has to be chosen ("account", "zone", "tunnel") and the candidates for it.
+internal sealed record CloudflareSelectionRequired(string Kind, IReadOnlyList<CloudflareSelectionOption> Options);
+
+// The error body for an ambiguity: the ordinary code/message plus the candidates.
+internal sealed record CloudflareSelectionErrorResponse(string Code, string Message, CloudflareSelectionRequired Selection);
+
+// POST /api/core/cloudflare/disconnect body. Absent or false means Keep: nothing published is touched.
+internal sealed record CloudflareDisconnectRequest(bool RemovePublished = false);
+
+// The operator's answers to a previous ambiguity, echoed back with the token on the next connect attempt.
+internal sealed record CloudflareConnectSelection(string? AccountId, string? ZoneId, string? TunnelId);
 
 internal static class CloudflareConnectionStatuses
 {
@@ -271,6 +346,15 @@ internal sealed class CloudflareIntegrationStore(CoreDataPaths paths)
         }
     }
 
+    // True when a usable connection is stored. Read by the status warning and by the one-time provider
+    // migration, both of which only need "is there a connection", not the discovery details.
+    public async Task<bool> IsConnectedAsync(CancellationToken cancellationToken = default)
+    {
+        var state = await LoadAsync(cancellationToken);
+        return state is not null &&
+            string.Equals(state.Status, CloudflareConnectionStatuses.Connected, StringComparison.Ordinal);
+    }
+
     public async Task SaveAsync(CloudflareIntegrationState state, CancellationToken cancellationToken = default)
     {
         await gate.WaitAsync(cancellationToken);
@@ -303,8 +387,12 @@ internal sealed class CloudflareIntegrationStore(CoreDataPaths paths)
     }
 }
 
-// POST /api/core/cloudflare/connect body.
-internal sealed record CloudflareConnectRequest(string Token);
+// POST /api/core/cloudflare/connect body. The three ids are the operator's answers to an ambiguity the
+// previous attempt reported; all null on a first attempt.
+internal sealed record CloudflareConnectRequest(string Token, string? AccountId = null, string? ZoneId = null, string? TunnelId = null)
+{
+    public CloudflareConnectSelection Selection => new(AccountId, ZoneId, TunnelId);
+}
 
 // The user-facing connection projection: masked token summary + non-secret discovery. Never carries the
 // raw token.
