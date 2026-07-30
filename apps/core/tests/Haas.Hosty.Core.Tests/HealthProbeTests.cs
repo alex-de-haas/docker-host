@@ -68,33 +68,19 @@ public sealed class HealthProbeTests
     [Fact]
     public async Task NetworkHealthProbe_HttpSuccessStatus_IsHealthy()
     {
-        var port = GetFreePort();
-        using var listener = new HttpListener();
-        listener.Prefixes.Add($"http://127.0.0.1:{port}/");
-        listener.Start();
-        var serve = RespondOnceAsync(listener, 200);
+        await using var server = RespondWith(200);
 
-        var healthy = await new NetworkHealthProbe().ProbeAsync(
-            new HealthProbeTarget("http", "127.0.0.1", port, "/", TimeSpan.FromSeconds(5)));
-
-        Assert.True(healthy);
-        await serve;
+        Assert.True(await new NetworkHealthProbe().ProbeAsync(
+            new HealthProbeTarget("http", "127.0.0.1", server.Port, "/", TimeSpan.FromSeconds(5))));
     }
 
     [Fact]
     public async Task NetworkHealthProbe_HttpServerError_IsUnhealthy()
     {
-        var port = GetFreePort();
-        using var listener = new HttpListener();
-        listener.Prefixes.Add($"http://127.0.0.1:{port}/");
-        listener.Start();
-        var serve = RespondOnceAsync(listener, 503);
+        await using var server = RespondWith(503);
 
-        var healthy = await new NetworkHealthProbe().ProbeAsync(
-            new HealthProbeTarget("http", "127.0.0.1", port, "/", TimeSpan.FromSeconds(5)));
-
-        Assert.False(healthy);
-        await serve;
+        Assert.False(await new NetworkHealthProbe().ProbeAsync(
+            new HealthProbeTarget("http", "127.0.0.1", server.Port, "/", TimeSpan.FromSeconds(5))));
     }
 
     [Fact]
@@ -102,12 +88,12 @@ public sealed class HealthProbeTests
         => Assert.False(await new NetworkHealthProbe().ProbeAsync(
             new HealthProbeTarget("http", "127.0.0.1", GetFreePort(), "/", TimeSpan.FromSeconds(2))));
 
-    private static async Task RespondOnceAsync(HttpListener listener, int statusCode)
-    {
-        var context = await listener.GetContextAsync();
-        context.Response.StatusCode = statusCode;
-        context.Response.Close();
-    }
+    private static LoopbackHttpServer RespondWith(int statusCode)
+        => LoopbackHttpServer.Start(context =>
+        {
+            context.Response.StatusCode = statusCode;
+            return Task.CompletedTask;
+        });
 
     private static int GetFreePort()
     {
