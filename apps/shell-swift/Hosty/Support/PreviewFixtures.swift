@@ -96,6 +96,33 @@ enum PreviewFixtures {
         }
         """)
 
+    /// The same app in a runtime state other than `running`.
+    ///
+    /// The launcher's readiness treatment — a dimmed icon and a corner dot — cannot be seen on a healthy
+    /// host, where every app is up. This is how it stays reviewable without stopping something real.
+    ///
+    /// Round-tripped through JSON rather than rebuilt field by field: `AppSummary`'s memberwise
+    /// initializer is internal to HostyKit, and a public one would widen that module's surface for the
+    /// sake of a preview. The model is the wire format, so re-reading it as one costs nothing here.
+    static func app(_ app: AppSummary, runtimeState: AppRuntimeState) -> AppSummary {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+
+        guard let encoded = try? encoder.encode(app),
+              var object = try? JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        else {
+            preconditionFailure("A preview fixture must survive being written back out.")
+        }
+
+        object["runtimeState"] = runtimeState.rawValue
+
+        guard let patched = try? JSONSerialization.data(withJSONObject: object) else {
+            preconditionFailure("A patched preview fixture must still be JSON.")
+        }
+
+        return decode(String(decoding: patched, as: UTF8.self))
+    }
+
     /// Stand-in artwork for the fixtures' icon URLs. A preview has no host to fetch from, and a column of
     /// placeholders would not show what an icon does to the rhythm of a row.
     static let icons: [String: Image] = [
