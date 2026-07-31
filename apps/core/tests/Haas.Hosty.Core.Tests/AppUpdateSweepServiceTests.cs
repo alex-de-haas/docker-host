@@ -97,6 +97,67 @@ public sealed class AppUpdateSweepServiceTests
     }
 
     [Fact]
+    public async Task RunAsync_TimesOutAWedgedAppWithoutStallingTheSweep()
+    {
+        // The operations behind a check carry deadlines sized for their heavy cousins (`docker pull`,
+        // `git clone`), so without a per-app ceiling one unresponsive remote holds a sweep slot for
+        // minutes while every client's "Check updates" spinner keeps turning.
+        using var fixture = CreateFixture(perAppCheckTimeout: TimeSpan.FromMilliseconds(200));
+        fixture.Set(FeedsUrl, FeedDocument(MainManifestUrl));
+        fixture.Set(MainManifestUrl, Manifest("1.0.0"));
+        await fixture.InstallFromFeedAsync();
+
+        var healthyPath = Path.Combine(fixture.Root, "healthy.json");
+        await File.WriteAllTextAsync(healthyPath, Manifest("1.0.0", id: "com.example.healthy"));
+        await fixture.Lifecycle.InstallAsync(new AppInstallRequest(healthyPath));
+
+        // The feed never answers. Released only after the sweep, so the handler does not outlive it.
+        var release = new TaskCompletionSource();
+        fixture.BlockOn(FeedsUrl, release.Task);
+
+        await fixture.Sweep.RunAsync(CancellationToken.None);
+        release.SetResult();
+
+        var summaries = await fixture.Lifecycle.ListAppsAsync();
+        var wedged = summaries.Single(app => app.Id == "com.example.notes");
+        Assert.NotNull(wedged.UpdateCheck);
+        Assert.Contains("timed out", wedged.UpdateCheck!.Error);
+        Assert.False(wedged.UpdateCheck.UpdateAvailable);
+
+        // The point of the ceiling: the rest of the fleet is still checked, and the sweep completes.
+        var healthy = summaries.Single(app => app.Id == "com.example.healthy");
+        Assert.NotNull(healthy.UpdateCheck);
+        Assert.Null(healthy.UpdateCheck!.Error);
+        Assert.False(fixture.Sweep.Status.Running);
+        Assert.NotNull(fixture.Sweep.Status.LastCompletedAt);
+    }
+
+    [Fact]
+    public async Task RunAsync_ShutdownIsNotRecordedAsPerAppTimeouts()
+    {
+        // A stopping host cancels the sweep's own token. That must stay distinguishable from an app
+        // exceeding its ceiling, or every app would be left carrying a bogus "timed out" verdict.
+        using var fixture = CreateFixture(perAppCheckTimeout: TimeSpan.FromMinutes(5));
+        fixture.Set(FeedsUrl, FeedDocument(MainManifestUrl));
+        fixture.Set(MainManifestUrl, Manifest("1.0.0"));
+        await fixture.InstallFromFeedAsync();
+
+        var release = new TaskCompletionSource();
+        fixture.BlockOn(FeedsUrl, release.Task);
+
+        using var shutdown = new CancellationTokenSource();
+        var sweep = fixture.Sweep.RunAsync(shutdown.Token);
+        await shutdown.CancelAsync();
+        // A cancelled sweep exits quietly rather than faulting — shutdown is not a sweep failure.
+        await sweep;
+        release.SetResult();
+
+        // No verdict at all — the check never reached a conclusion, and a cancelled sweep leaves the
+        // previous state untouched rather than inventing a failure.
+        Assert.Null(Assert.Single(await fixture.Lifecycle.ListAppsAsync()).UpdateCheck);
+    }
+
+    [Fact]
     public async Task Trigger_JoinsTheSweepAlreadyInFlight()
     {
         using var fixture = CreateFixture();
@@ -159,8 +220,8 @@ public sealed class AppUpdateSweepServiceTests
         Assert.False(fixture.Sweep.Status.Running);
     }
 
-    private static Fixture CreateFixture()
-        => new(Path.Combine(Path.GetTempPath(), $"hosty-update-sweep-tests-{Guid.NewGuid():N}"));
+    private static Fixture CreateFixture(TimeSpan? perAppCheckTimeout = null)
+        => new(Path.Combine(Path.GetTempPath(), $"hosty-update-sweep-tests-{Guid.NewGuid():N}"), perAppCheckTimeout);
 
     private static string FeedDocument(string mainManifestUrl, string appId = "com.example.notes") => $$"""
         {
@@ -218,7 +279,7 @@ public sealed class AppUpdateSweepServiceTests
         private readonly Dictionary<string, string> documents = new(StringComparer.Ordinal);
         private readonly Dictionary<string, Task> blocks = new(StringComparer.Ordinal);
 
-        public Fixture(string root)
+        public Fixture(string root, TimeSpan? perAppCheckTimeout = null)
         {
             Root = root;
             Directory.CreateDirectory(root);
@@ -249,7 +310,12 @@ public sealed class AppUpdateSweepServiceTests
                 clock: clock,
                 feedService: feeds);
             Events = new CoreEventHub();
-            Sweep = new AppUpdateSweepService(Lifecycle, clock, NullLogger<AppUpdateSweepService>.Instance, events: Events);
+            Sweep = new AppUpdateSweepService(
+                Lifecycle,
+                clock,
+                NullLogger<AppUpdateSweepService>.Instance,
+                events: Events,
+                perAppCheckTimeout: perAppCheckTimeout);
         }
 
         public string Root { get; }
@@ -280,12 +346,15 @@ public sealed class AppUpdateSweepServiceTests
                 StartOnInstall: false));
         }
 
-        private async Task<HttpResponseMessage> HandleAsync(HttpRequestMessage request)
+        private async Task<HttpResponseMessage> HandleAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var url = request.RequestUri!.AbsoluteUri;
             if (blocks.TryGetValue(url, out var gate))
             {
-                await gate;
+                // Honour the token the way a real HttpClient does: it aborts an in-flight request when
+                // the caller's token fires. Awaiting the gate bare made this fixture the one place a
+                // deadline could never take effect, so a check wedged on a fetch hung forever.
+                await gate.WaitAsync(cancellationToken);
             }
 
             return documents.TryGetValue(url, out var document)
@@ -305,10 +374,10 @@ public sealed class AppUpdateSweepServiceTests
         }
     }
 
-    private sealed class StubHttpMessageHandler(Func<HttpRequestMessage, Task<HttpResponseMessage>> handler) : HttpMessageHandler
+    private sealed class StubHttpMessageHandler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> handler) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-            => handler(request);
+            => handler(request, cancellationToken);
     }
 
     private sealed class TestClock : IClock

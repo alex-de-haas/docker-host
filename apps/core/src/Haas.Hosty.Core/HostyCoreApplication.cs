@@ -94,6 +94,14 @@ internal static class HostyCoreApplication
         // Shared docker CLI runner so the runtime adapter and the telemetry scrape loop go through one
         // instance; the adapter's optional ctor param picks this up via DI in production.
         builder.Services.AddSingleton<IDockerCommandRunner, ProcessDockerCommandRunner>();
+        // Fast path for the reviewed-update plan's registry digest lookups: a direct registry HTTP
+        // probe, roughly 7x quicker than the `docker buildx imagetools inspect` it fronts. Redirects
+        // are not followed — a manifest probe must not be bounced to an unvetted host — and anything
+        // it cannot answer falls back to the docker CLI inside the adapter. Singleton so its anonymous
+        // token cache survives across checks.
+        builder.Services.AddHttpClient(RegistryDigestResolver.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(20))
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+        builder.Services.AddSingleton<IRegistryDigestResolver, RegistryDigestResolver>();
         builder.Services.AddSingleton<IAppRuntimeAdapter, DockerRuntimeAdapter>();
         builder.Services.AddSingleton<IAppRuntimeAdapter, LocalCommandRuntimeAdapter>();
         builder.Services.AddSingleton<IClock, SystemClock>();

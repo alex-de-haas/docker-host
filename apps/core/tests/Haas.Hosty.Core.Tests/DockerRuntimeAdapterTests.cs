@@ -582,6 +582,56 @@ public sealed class DockerRuntimeAdapterTests
     }
 
     [Fact]
+    public async Task ResolveRemoteDigestAsync_PrefersTheRegistryProbeOverTheDockerCli()
+    {
+        // The whole point of the HTTP resolver: the same answer without paying for buildx, which is
+        // roughly 7x the cost of a plain registry round-trip and dominates a fleet update check.
+        var digest = "sha256:" + new string('b', 64);
+        var runner = new FakeDockerCommandRunner();
+
+        Assert.Equal(
+            digest,
+            await CreateAdapter(runner, registryDigestResolver: new StubRegistryDigestResolver(digest))
+                .ResolveRemoteDigestAsync(new RuntimeDockerImage("ghcr.io/example/app", "latest")));
+
+        Assert.Empty(runner.Commands);
+    }
+
+    [Fact]
+    public async Task ResolveRemoteDigestAsync_FallsBackToTheDockerCliWhenTheRegistryProbeDeclines()
+    {
+        // A private registry the operator has `docker login`-ed to is reachable only through the CLI:
+        // Core never reads those credentials, so the HTTP probe returns null and the CLI answers.
+        var digest = "sha256:" + new string('c', 64);
+        var runner = new FakeDockerCommandRunner(args =>
+            args[0] == "buildx" ? new DockerCommandResult(0, digest + "\n", "") : new DockerCommandResult(1, "", ""));
+
+        Assert.Equal(
+            digest,
+            await CreateAdapter(runner, registryDigestResolver: new StubRegistryDigestResolver(null))
+                .ResolveRemoteDigestAsync(new RuntimeDockerImage("registry.internal.test/team/app", "latest")));
+
+        Assert.Equal("buildx", Assert.Single(runner.Commands)[0]);
+    }
+
+    [Fact]
+    public async Task ResolveRemoteDigestAsync_TimesOutToUnknownRatherThanHoldingItsProbeSlot()
+    {
+        // The shared docker runner's deadline is sized for `docker pull`, which is the wrong budget
+        // for a metadata lookup: an unresponsive registry would otherwise pin this probe — and the
+        // host-wide probe slot it holds — long past the point of usefulness. A registry that never
+        // answers is an unresolvable digest, which is exactly what "unknown" means here.
+        var runner = new BlockingDockerCommandRunner();
+        var logger = new CapturingLogger<DockerRuntimeAdapter>();
+
+        var digest = await CreateAdapter(runner, logger, digestProbeTimeout: TimeSpan.FromMilliseconds(150))
+            .ResolveRemoteDigestAsync(new RuntimeDockerImage("ghcr.io/example/app", "latest"));
+
+        Assert.Null(digest);
+        Assert.Contains(logger.Warnings, warning => warning.Contains("timed out", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task ResolveRemoteDigestAsync_DoesNotLogWhenResolutionSucceeds()
     {
         var digest = "sha256:" + new string('a', 64);
@@ -692,12 +742,16 @@ public sealed class DockerRuntimeAdapterTests
     private static DockerRuntimeAdapter CreateAdapter(
         IDockerCommandRunner runner,
         ILogger<DockerRuntimeAdapter>? logger = null,
-        AppServiceTokenService? serviceTokens = null)
+        AppServiceTokenService? serviceTokens = null,
+        TimeSpan? digestProbeTimeout = null,
+        IRegistryDigestResolver? registryDigestResolver = null)
         => new(
             CreateConfig(corePort: 7070, listenUrl: "http://localhost:7070", corePublicOrigin: null),
             serviceTokens ?? CreateTokenService(),
             logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<DockerRuntimeAdapter>.Instance,
-            runner);
+            runner,
+            digestProbeTimeout,
+            registryDigestResolver);
 
     // Minimal warning capture: the adapter's diagnostics are the product here, so a test must be able to
     // assert what an operator would actually read in core.log.
@@ -1057,6 +1111,24 @@ public sealed class DockerRuntimeAdapterTests
             "/tmp/app/data",
             new Dictionary<string, string>(),
             []);
+    }
+
+    // Fixed verdict from the HTTP registry probe: a digest, or null meaning "fall back to the CLI".
+    private sealed class StubRegistryDigestResolver(string? digest) : IRegistryDigestResolver
+    {
+        public Task<string?> TryResolveDigestAsync(RuntimeDockerImage image, CancellationToken cancellationToken = default)
+            => Task.FromResult(digest);
+    }
+
+    // Stands in for a registry that accepts the connection and then never answers: the command hangs
+    // until its caller's token is cancelled, which is what the probe deadline exists to do.
+    private sealed class BlockingDockerCommandRunner : IDockerCommandRunner
+    {
+        public async Task<DockerCommandResult> RunAsync(IReadOnlyList<string> args, IReadOnlyDictionary<string, string>? environment = null, CancellationToken cancellationToken = default)
+        {
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+            throw new InvalidOperationException("Unreachable: the infinite delay only ever ends in cancellation.");
+        }
     }
 
     private sealed class FakeDockerCommandRunner(Func<IReadOnlyList<string>, DockerCommandResult>? responder = null)
