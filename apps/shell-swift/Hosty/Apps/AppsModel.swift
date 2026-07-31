@@ -179,7 +179,13 @@ final class AppsModel {
 
     /// The apps a batch apply would touch right now. `hasRoutineUpdate` owns the rule; see it for why
     /// each clause is there.
-    var routineUpdates: [AppSummary] { apps.filter(\.hasRoutineUpdate) }
+    ///
+    /// `inFlight` is the one clause the record cannot supply: an apply this client has just sent is not
+    /// visible in `AppSummary` until Core commits `updating` and a reload brings it back, and counting an
+    /// app in that window would let a row tap and a batch submit the same plan twice.
+    var routineUpdates: [AppSummary] {
+        apps.filter { $0.hasRoutineUpdate && !inFlight.contains($0.id) }
+    }
 
     /// How many available updates this action leaves alone because they must be reviewed.
     var reviewOnlyUpdateCount: Int { apps.filter(\.needsUpdateReview).count }
@@ -191,25 +197,17 @@ final class AppsModel {
     /// only for a routine verdict — a `requiresReview` plan changes more than the version and never gets
     /// a one-tap path, so this refuses rather than trusting the caller to have checked.
     func applyUpdate(_ app: AppSummary) async {
-        guard app.hasRoutineUpdate, let planDigest = app.updateCheck?.planDigest else { return }
-        guard !inFlight.contains(app.id) else { return }
-
-        inFlight.insert(app.id)
-        defer { inFlight.remove(app.id) }
+        guard let planDigest = readyDigest(for: app.id) else { return }
 
         var failure: String?
 
-        do {
-            try await session.client.applyUpdate(appID: app.id, planDigest: planDigest)
-        } catch let error as CoreError {
-            if error.requiresSignIn {
-                await session.refresh()
-                return
-            }
-
-            failure = error.localizedDescription
-        } catch {
-            failure = error.localizedDescription
+        switch await send(appID: app.id, planDigest: planDigest) {
+        case .accepted:
+            break
+        case .signedOut:
+            return
+        case .refused(let message):
+            failure = message
         }
 
         // Core commits `operationStatus: "updating"` before answering, so the row shows the work as soon
@@ -219,6 +217,51 @@ final class AppsModel {
 
         if let failure {
             loadError = failure
+        }
+    }
+
+    private enum ApplyOutcome {
+        case accepted
+        case signedOut
+        case refused(String)
+    }
+
+    /// The digest to apply for this app, or nil if it must not be applied right now.
+    ///
+    /// Read from the *current* list rather than from a caller's `AppSummary`: the batch awaits between
+    /// sends, so its snapshot can name an app that has since been updated, removed, or claimed by a row
+    /// tap. Both entry points ask this immediately before sending, which is what keeps one plan from
+    /// being submitted twice and having Core reject the second as a duplicate.
+    private func readyDigest(for appID: String) -> String? {
+        guard let app = apps.first(where: { $0.id == appID }),
+              app.hasRoutineUpdate,
+              !inFlight.contains(appID)
+        else { return nil }
+
+        return app.updateCheck?.planDigest
+    }
+
+    /// Sends one apply, holding the app in `inFlight` for the length of the request.
+    ///
+    /// The reservation is the point: until Core commits `updating` and a reload brings it back, an apply
+    /// this client has already sent is invisible in the record, so nothing else — another row tap, the
+    /// batch, the row's own disabled state — would otherwise know it is happening.
+    private func send(appID: String, planDigest: String) async -> ApplyOutcome {
+        inFlight.insert(appID)
+        defer { inFlight.remove(appID) }
+
+        do {
+            try await session.client.applyUpdate(appID: appID, planDigest: planDigest)
+            return .accepted
+        } catch let error as CoreError {
+            if error.requiresSignIn {
+                await session.refresh()
+                return .signedOut
+            }
+
+            return .refused(error.localizedDescription)
+        } catch {
+            return .refused(error.localizedDescription)
         }
     }
 
@@ -240,21 +283,21 @@ final class AppsModel {
         isUpdatingAll = true
         defer { isUpdatingAll = false }
 
+        var started = 0
         var failed = 0
 
         for app in routine {
-            guard let planDigest = app.updateCheck?.planDigest else { continue }
+            // Re-read per app rather than trusting the snapshot: this loop awaits, so by the time it
+            // reaches an app a row tap may have applied it, an event may have settled it, or it may no
+            // longer be installed. An app that is no longer applicable is skipped, not counted.
+            guard let planDigest = readyDigest(for: app.id) else { continue }
 
-            do {
-                try await session.client.applyUpdate(appID: app.id, planDigest: planDigest)
-            } catch let error as CoreError {
-                if error.requiresSignIn {
-                    await session.refresh()
-                    return
-                }
-
-                failed += 1
-            } catch {
+            switch await send(appID: app.id, planDigest: planDigest) {
+            case .accepted:
+                started += 1
+            case .signedOut:
+                return
+            case .refused:
                 failed += 1
             }
         }
@@ -263,10 +306,13 @@ final class AppsModel {
         // wiped by the very refresh that is meant to show what the applies did.
         await reload()
 
-        if failed == routine.count {
-            loadError = "No updates could be started."
-        } else if failed > 0 {
-            loadError = "\(failed) of \(routine.count) updates could not be started."
+        // Counted against what was actually sent, not against the snapshot: an app skipped because
+        // something else had already applied it is not a failure, and saying "1 of 3 failed" when two
+        // were never attempted describes a sweep that did not happen.
+        if failed > 0 {
+            loadError = started == 0
+                ? "No updates could be started."
+                : "\(failed) of \(started + failed) updates could not be started."
         }
     }
 

@@ -145,27 +145,26 @@ extension AppUpdateChange {
             return
         }
 
-        if let arrow = detail.range(of: "->") {
-            let moved = detail[detail.startIndex..<arrow.lowerBound]
+        // `{facet}:{a}->{b}` — a named facet of the resource moved, such as a setting's type.
+        //
+        // Recognized from a closed list rather than from "there is a separator before the arrow". Core's
+        // value signatures are colon-delimited themselves — an endpoint is `http:public=True:service=api`
+        // — so any structural guess reads the first field of a value as a facet name and mangles exactly
+        // the review-class changes this sheet exists to explain.
+        if let facet = AppUpdateChange.facets.first(where: { detail.hasPrefix("\($0):") }) {
+            self.init(
+                title: "\(subject) \(AppUpdateChange.facetNames[facet] ?? facet)",
+                detail: AppUpdateChange.arrow(String(detail.dropFirst(facet.count + 1))),
+                raw: raw)
+            return
+        }
 
-            // `{attribute}:{a}->{b}` — a named facet of the resource moved, such as a setting's type.
-            // Told apart from a plain `{a}->{b}` by a separator on the *left* of the arrow: the values
-            // themselves never carry one, while the facet name always precedes one.
-            if let separator = moved.firstIndex(of: ":") {
-                self.init(
-                    title: "\(subject) \(moved[moved.startIndex..<separator])",
-                    detail: AppUpdateChange.arrow(String(detail[detail.index(after: separator)...])),
-                    raw: raw)
-                return
-            }
-
+        if detail.contains("->") {
             self.init(title: subject, detail: AppUpdateChange.arrow(detail), raw: raw)
             return
         }
 
-        // No arrow at all: a facet named without a comparison.
-        let (attribute, value) = AppUpdateChange.split(detail, at: ":")
-        self.init(title: "\(subject) \(attribute)", detail: value.isEmpty ? nil : value, raw: raw)
+        self.init(title: "\(subject) \(detail)", raw: raw)
     }
 
     private init(parsingData payload: String, raw: String) {
@@ -212,15 +211,35 @@ extension AppUpdateChange {
         return (String(value[value.startIndex..<index]), String(value[value.index(after: index)...]))
     }
 
+    /// The facets Core names inside a resource token, and how to say them.
+    ///
+    /// A closed list on purpose: the alternative — treating whatever precedes a separator as a facet —
+    /// cannot tell `setting:apiKey:type:string->secret` from `endpoint:api:http:public=True->…`, whose
+    /// first field is a protocol, not a facet.
+    private static let facets = ["type", "secret", "runtimeType"]
+
+    private static let facetNames = ["runtimeType": "runtime type", "secret": "secret flag"]
+
     /// `a->b` as `a → b`, with each side put through `transform`. A token with no arrow is a lone value
     /// and is returned as it is; an empty side means Core had nothing to report there.
+    ///
+    /// Which arrow separates the two values is not simply the first one: a port signature is
+    /// `{protocol}:{host}->{container}:public=…`, so a port transition holds three arrows and the middle
+    /// one is the separator. Both sides of any transition are the same grammar and therefore carry the
+    /// same number of internal arrows, which makes the separator the middle occurrence whenever the
+    /// count is odd. An even count cannot be resolved that way and is not guessed at: the value is shown
+    /// whole rather than split in the wrong place, so a grammar that changes degrades to raw text
+    /// instead of quietly misreporting a change.
     private static func arrow(_ value: String, transform: (String) -> String = { $0 }) -> String? {
         guard !value.isEmpty else { return nil }
 
-        guard let range = value.range(of: "->") else { return transform(value) }
+        let arrows = value.ranges(of: "->")
+        guard !arrows.isEmpty else { return transform(value) }
+        guard !arrows.count.isMultiple(of: 2) else { return value }
 
-        let current = transform(String(value[value.startIndex..<range.lowerBound]))
-        let target = transform(String(value[range.upperBound...]))
+        let separator = arrows[arrows.count / 2]
+        let current = transform(String(value[value.startIndex..<separator.lowerBound]))
+        let target = transform(String(value[separator.upperBound...]))
         return "\(current.isEmpty ? "none" : current) → \(target.isEmpty ? "unknown" : target)"
     }
 

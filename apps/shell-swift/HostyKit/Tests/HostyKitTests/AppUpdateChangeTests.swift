@@ -78,14 +78,65 @@ struct AppUpdateChangeTests {
 
         #expect(change.title == "Setting apiKey type")
         #expect(change.detail == "string → secret")
+
+        #expect(parse("setting:apiKey:secret:False->True").title == "Setting apiKey secret flag")
+        #expect(parse("service:worker:runtimeType:docker->localCommand").title == "Service worker runtime type")
+        #expect(parse("service:worker:runtimeType:docker->localCommand").detail == "docker → localCommand")
     }
 
-    @Test("A resource whose own value moved needs no facet")
-    func resourceValueChange() {
-        let change = parse("port:backend.http:8080/tcp->9090/tcp")
+    // Core's value signatures are colon-delimited themselves (`EndpointSignature`,
+    // `CoreLifecycleService.cs`), so their first field is a protocol, not a facet. Reading it as one put
+    // the protocol in the title and split the value in the wrong place — mangling exactly the
+    // review-class change the sheet exists to explain.
+    @Test("A colon-delimited signature is a value, not a named facet")
+    func endpointSignatureIsNotAFacet() {
+        let change = parse("endpoint:api:http:public=False:service=web:port=8080->https:public=True:service=web:port=8443")
+
+        #expect(change.title == "Endpoint api")
+        #expect(change.detail == "http:public=False:service=web:port=8080 → https:public=True:service=web:port=8443")
+    }
+
+    @Test("A dependency signature is left whole too")
+    func dependencySignature() {
+        let change = parse("dependency:com.haas.db:com.haas.db:1.0:required=False:->com.haas.db:2.0:required=True:")
+
+        #expect(change.title == "Dependency com.haas.db")
+        #expect(change.detail == "com.haas.db:1.0:required=False: → com.haas.db:2.0:required=True:")
+    }
+
+    // A port signature is `{protocol}:{host}->{container}:public=…`, so a port transition carries three
+    // arrows and the separator is the middle one. Splitting on the first put the container port and
+    // every flag of the old signature on the "new" side of the arrow.
+    @Test("A port transition splits on the separator, not on the arrow inside the signature")
+    func portSignatureInnerArrow() {
+        let change = parse(
+            "port:backend.http:http:8080->3000:public=False:expose=loopback:transport=tcp"
+                + "->http:9090->3000:public=True:expose=lan:transport=tcp")
 
         #expect(change.title == "Port backend.http")
-        #expect(change.detail == "8080/tcp → 9090/tcp")
+        #expect(
+            change.detail == "http:8080->3000:public=False:expose=loopback:transport=tcp"
+                + " → http:9090->3000:public=True:expose=lan:transport=tcp")
+    }
+
+    // Both sides of a transition are the same grammar and so carry the same number of internal arrows,
+    // which is what makes the middle occurrence the separator. An even count means that assumption does
+    // not hold — a grammar this does not know — and the value is shown whole rather than split in the
+    // wrong place.
+    @Test("An unresolvable arrow count is shown whole rather than guessed at")
+    func evenArrowCountIsNotSplit() {
+        let change = parse("port:backend.http:a->b->c")
+
+        #expect(change.title == "Port backend.http")
+        #expect(change.detail == "a->b->c")
+    }
+
+    @Test("A simple resource value still splits on its only arrow")
+    func resourceValueChange() {
+        let change = parse("network:backend:bridge->host")
+
+        #expect(change.title == "backend network")
+        #expect(change.detail == "bridge → host")
     }
 
     @Test("An environment variable reports the change without ever reporting the value")

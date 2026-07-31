@@ -314,6 +314,17 @@ vocabulary mirrors `formatUpdateChange` in the browser Shell — two clients rea
 must not invent two names for them. An unrecognized token is shown verbatim rather than dropped:
 Core's vocabulary grows, and a dropped line is approval given for something never seen.
 
+Two parts of that parse are deliberately non-structural, because Core's value signatures are built from
+the same punctuation as its tokens. A named facet (`type`, `secret`, `runtimeType`) is recognized from a
+closed list rather than from "there is a separator before the arrow" — an endpoint signature is
+`http:public=True:service=web:port=8080`, whose first field is a protocol. And the arrow that separates
+old from new is the **middle** one, not the first: a port signature is `{protocol}:{host}->{container}:…`
+and carries an arrow of its own, so a port transition holds three. Both sides of a transition are the
+same grammar and therefore hold the same number of internal arrows, which makes the middle occurrence
+the separator whenever the count is odd; an even count means that assumption does not hold, and the
+value is shown whole rather than split in the wrong place. Both rules fail towards raw text, so a
+signature grammar that moves degrades to something unhelpful rather than to something untrue.
+
 A verdict is **routine** when it is applicable without a person reading the plan: `updateAvailable`,
 not `requiresReview`, a `planDigest` to echo back, and no update already running. That is the same
 filter the browser Shell uses, and it lives on `AppSummary` so the count shown and the set sent are
@@ -333,6 +344,14 @@ rows carry the progress, because each accepted apply shows as `updating`. There 
 ordering as in the browser Shell: this client is not served by any app on the host, so nothing it runs
 from can restart underneath it. The button is absent, not disabled, when there is nothing routine to
 apply.
+
+Both paths reserve an app for the length of its own request, and re-read the digest from the current
+list immediately before sending. Neither is optional: an apply this client has already sent is invisible
+in the record until Core commits `updating` and a reload brings it back, and the batch awaits between
+sends, so its snapshot can name an app a row tap has meanwhile applied. Without the reservation the two
+submit the same plan twice, Core's single-flight guard refuses one, and the client reports a failed
+update that in fact started. An app skipped for being no longer applicable is skipped, not counted as a
+failure — the summary counts what was actually sent.
 
 Three states are never rendered as "up to date": a null verdict means never checked, a service marked
 `unknown` means the registry could not be reached, and an empty change list with `sourceConfigured: false`
@@ -395,6 +414,10 @@ Distribution is by local Xcode build; nothing packages or publishes this app.
   digest endpoints that are not digests (`none`, `unknown`), `data:compatible` — which means the
   opposite of a change — and an invented token, which must survive verbatim. A plan is approved on the
   strength of this list, so a mis-read or dropped line is approval given for something else.
+- The signature shapes are pinned with Core's real output, not with simplified stand-ins: a colon-built
+  endpoint and dependency signature, whose first field must not be read as a facet, and a port
+  transition, whose signature carries an arrow of its own so that the separating arrow is not the first
+  one. An arrow count that cannot be resolved is asserted to leave the value whole.
 - Visual verification covers the compact tab bar holding exactly the three destinations — the per-app
   tab leak is invisible to every other check — and the expanded iPad hierarchy of destinations, apps
   and detail. It also covers every sheet **on macOS**, where a sheet without an explicitly sized
