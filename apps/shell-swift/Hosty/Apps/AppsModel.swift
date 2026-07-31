@@ -56,6 +56,10 @@ final class AppsModel {
     /// reachable one, which is a question about how *this device* got to Core.
     var origin: HostOrigin { session.connection.origin }
 
+    /// The host as a person names it — its own name if it has one, otherwise its address. Every
+    /// destination shows exactly one host's data, so each says which in its navigation bar.
+    var hostName: String { session.connection.displayName }
+
     /// The apps to offer as destinations: the ones Core resolved a UI for.
     ///
     /// Core has already filtered the list per user and refuses a launch code for a system app to a
@@ -168,6 +172,103 @@ final class AppsModel {
     /// Whether a fleet update sweep is running right now. Read from the server's own state rather than a
     /// local flag, so the spinner is right even when another client started the sweep.
     var isCheckingUpdates: Bool { updateCheck?.running == true }
+
+    /// Whether a batch apply is in flight. Unlike the fleet check this is a local flag: the applies are
+    /// separate per-app requests, and Core reports no batch of its own to read the state back from.
+    private(set) var isUpdatingAll = false
+
+    /// The apps a batch apply would touch right now. `hasRoutineUpdate` owns the rule; see it for why
+    /// each clause is there.
+    var routineUpdates: [AppSummary] { apps.filter(\.hasRoutineUpdate) }
+
+    /// How many available updates this action leaves alone because they must be reviewed.
+    var reviewOnlyUpdateCount: Int { apps.filter(\.needsUpdateReview).count }
+
+    /// Applies one app's waiting update straight from its row.
+    ///
+    /// This is the same reviewed apply the plan sheet performs, minus the reading: the fleet check has
+    /// already built the plan behind the verdict, and its digest is exactly what Core requires. Offered
+    /// only for a routine verdict — a `requiresReview` plan changes more than the version and never gets
+    /// a one-tap path, so this refuses rather than trusting the caller to have checked.
+    func applyUpdate(_ app: AppSummary) async {
+        guard app.hasRoutineUpdate, let planDigest = app.updateCheck?.planDigest else { return }
+        guard !inFlight.contains(app.id) else { return }
+
+        inFlight.insert(app.id)
+        defer { inFlight.remove(app.id) }
+
+        var failure: String?
+
+        do {
+            try await session.client.applyUpdate(appID: app.id, planDigest: planDigest)
+        } catch let error as CoreError {
+            if error.requiresSignIn {
+                await session.refresh()
+                return
+            }
+
+            failure = error.localizedDescription
+        } catch {
+            failure = error.localizedDescription
+        }
+
+        // Core commits `operationStatus: "updating"` before answering, so the row shows the work as soon
+        // as this returns. The reload has to come first either way: it clears `loadError` on success and
+        // would wipe the message below.
+        await reload()
+
+        if let failure {
+            loadError = failure
+        }
+    }
+
+    /// Applies every routine update in one action.
+    ///
+    /// Each apply is enqueued and runs detached on the host, so this ends once Core has accepted them
+    /// all; the rows themselves then carry the progress, since an accepted apply shows as `updating`.
+    /// One refusal is counted rather than ending the sweep — an app Core will not take should not hold
+    /// back the rest of the fleet.
+    ///
+    /// Unlike the browser Shell there is no "Shell last" ordering here: this client is not served by any
+    /// app on the host, so nothing it is running from can be restarted out from under it.
+    func updateAllApps() async {
+        guard !isUpdatingAll else { return }
+
+        let routine = routineUpdates
+        guard !routine.isEmpty else { return }
+
+        isUpdatingAll = true
+        defer { isUpdatingAll = false }
+
+        var failed = 0
+
+        for app in routine {
+            guard let planDigest = app.updateCheck?.planDigest else { continue }
+
+            do {
+                try await session.client.applyUpdate(appID: app.id, planDigest: planDigest)
+            } catch let error as CoreError {
+                if error.requiresSignIn {
+                    await session.refresh()
+                    return
+                }
+
+                failed += 1
+            } catch {
+                failed += 1
+            }
+        }
+
+        // Re-read first: a reload clears `loadError` on success, so a message set before it would be
+        // wiped by the very refresh that is meant to show what the applies did.
+        await reload()
+
+        if failed == routine.count {
+            loadError = "No updates could be started."
+        } else if failed > 0 {
+            loadError = "\(failed) of \(routine.count) updates could not be started."
+        }
+    }
 
     /// Starts a fleet update check, or joins one already in flight.
     ///

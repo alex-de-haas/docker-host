@@ -31,6 +31,12 @@ struct AppWorkspaceView: View {
     var body: some View {
         content
             .navigationTitle(app.displayName)
+            // The app's own interface starts immediately below this bar and has its own header. A large
+            // title would put the app's name twice at the top of the screen, in two different type
+            // sizes, and take a band of the app away to do it.
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar { toolbar }
             .task(id: app.id) {
                 session.workspaces.installRecovery(for: app.id, origin: session.connection.origin) {

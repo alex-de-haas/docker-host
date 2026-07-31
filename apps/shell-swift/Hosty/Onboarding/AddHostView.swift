@@ -125,6 +125,11 @@ struct AddHostView: View {
         }
         .formStyle(.grouped)
         .navigationTitle("Add a Hosty host")
+        // Inline, like every other sheet and destination here. On a phone this one also opens with the
+        // keyboard up, and a large title spends a band the form itself needs.
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
         .defaultFocus($focusedField, .address)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
