@@ -173,6 +173,56 @@ public sealed class RegistryDigestResolverTests
         Assert.Equal([HttpMethod.Head, HttpMethod.Get], handler.Requests.Select(request => request.Method));
     }
 
+    [Fact]
+    public async Task TryResolveDigestAsync_StopsReadingAManifestThatOutgrowsTheCap()
+    {
+        // The cap has to bite while streaming. Buffering the body first and checking its length after
+        // makes the limit decorative: a misconfigured or hostile registry could have Core allocate
+        // hundreds of megabytes during a routine check, once per app.
+        var oversized = new TrackingStream(16 * 1024 * 1024);
+        var handler = new StubHandler(request => request.Method == HttpMethod.Head
+            ? new HttpResponseMessage(HttpStatusCode.OK)
+            : new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(oversized) });
+
+        Assert.Null(await Resolve(handler, "localhost:5000/team/app", "latest"));
+
+        // Bailed out just past the 4 MiB cap rather than draining all 16 MiB.
+        Assert.InRange(oversized.BytesRead, 1, 5 * 1024 * 1024);
+    }
+
+    [Fact]
+    public async Task TryResolveDigestAsync_RefusesAManifestWhoseDeclaredLengthExceedsTheCap()
+    {
+        var handler = new StubHandler(request =>
+        {
+            if (request.Method == HttpMethod.Head)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK);
+            }
+
+            var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{}") };
+            response.Content.Headers.ContentLength = 64L * 1024 * 1024;
+            return response;
+        });
+
+        // Refused before a byte is read.
+        Assert.Null(await Resolve(handler, "localhost:5000/team/app", "latest"));
+    }
+
+    [Fact]
+    public async Task TryResolveDigestAsync_RefusesAnOversizedTokenDocument()
+    {
+        // Same exposure on the auth endpoint: deserializing off an unbounded stream would let it
+        // decide how much Core allocates.
+        var oversized = new TrackingStream(8 * 1024 * 1024);
+        var handler = new StubHandler(request => request.Url.StartsWith("https://auth.example.test/token", StringComparison.Ordinal)
+            ? new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(oversized) }
+            : Challenge());
+
+        Assert.Null(await Resolve(handler, "ghcr.io/owner/app", "latest"));
+        Assert.InRange(oversized.BytesRead, 1, 1024 * 1024);
+    }
+
     [Theory]
     // A private registry wanting real credentials — the docker CLI can reach it via `docker login`,
     // this resolver cannot, so it must decline rather than report the image unresolvable.
@@ -215,6 +265,22 @@ public sealed class RegistryDigestResolverTests
     }
 
     [Fact]
+    public async Task TryResolveDigestAsync_FallsBackWhenTheHttpClientTimeoutFires()
+    {
+        // HttpClient signals its own Timeout as TaskCanceledException — an OperationCanceledException
+        // indistinguishable by type from a caller abort. Letting it escape was not merely a missed
+        // fallback: the named client's 20s timeout is shorter than the adapter's 30s probe deadline,
+        // so neither deadline had fired, every layer above rethrew it, and SweepAsync's shutdown
+        // handler swallowed it — one slow registry silently ended the whole fleet check with the
+        // remaining apps unverdicted.
+        var handler = new StubHandler(_ => throw new TaskCanceledException(
+            "The request was canceled due to the configured HttpClient.Timeout of 20 seconds elapsing.",
+            new TimeoutException()));
+
+        Assert.Null(await Resolve(handler, "ghcr.io/owner/app", "latest"));
+    }
+
+    [Fact]
     public async Task TryResolveDigestAsync_CancellationPropagates()
     {
         using var cancelled = new CancellationTokenSource();
@@ -251,6 +317,38 @@ public sealed class RegistryDigestResolverTests
 
     private static HttpResponseMessage Json(string body)
         => new(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
+
+    // An endless body that counts what was actually pulled off it, so a test can assert the reader
+    // stopped early instead of merely rejecting the result after draining everything.
+    private sealed class TrackingStream(long length) : Stream
+    {
+        public long BytesRead { get; private set; }
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => length;
+        public override long Position { get => BytesRead; set => throw new NotSupportedException(); }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            var remaining = length - BytesRead;
+            if (remaining <= 0)
+            {
+                return 0;
+            }
+
+            var produced = (int)Math.Min(count, remaining);
+            Array.Fill(buffer, (byte)'x', offset, produced);
+            BytesRead += produced;
+            return produced;
+        }
+
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
 
     private sealed record CapturedRequest(HttpMethod Method, string Url, string? Authorization, string Accept);
 

@@ -161,7 +161,14 @@ internal sealed class AppUpdateSweepService(
                     lifecycle.RecordUpdateCheckFailure(target.Id, message);
                     logger.LogWarning("Update check for app {AppId} timed out after {Timeout}s.", target.Id, perAppCheckTimeout.TotalSeconds);
                 }
-                catch (OperationCanceledException)
+                // Real shutdown is the only cancellation that ends the sweep. Rethrowing every
+                // OperationCanceledException was too broad: SweepAsync treats one as a stopping host
+                // and exits quietly, so a stray cancellation from anywhere inside a single app's check
+                // silently ended the whole fleet run with the remaining apps unverdicted — which is
+                // exactly what an HttpClient timeout (a TaskCanceledException, no deadline of ours
+                // fired) did until it was fixed at the source. One app's misbehaviour belongs in one
+                // app's verdict, so anything else falls through to the handler below.
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
                     throw;
                 }

@@ -93,6 +93,22 @@ internal sealed class RegistryDigestResolver(
                 return await ResolveByHashingManifestAsync(client, manifestUrl, registry, scope, image, cancellationToken);
             }
         }
+        // Only a genuine caller abort propagates. HttpClient reports its own Timeout as a
+        // TaskCanceledException, which is an OperationCanceledException and so is indistinguishable
+        // by type from cancellation — and the named client's timeout is deliberately shorter than the
+        // adapter's probe deadline, so when it fires no deadline above has. Letting it escape did not
+        // merely skip the CLI fallback: every layer up to SweepAsync rethrows an unexplained
+        // cancellation, whose shutdown handler exits the sweep quietly, so one slow registry ended the
+        // whole fleet check with the remaining apps left unverdicted. Keying on the caller's token
+        // rather than sniffing for an inner TimeoutException also covers any other stray cancellation
+        // from inside the stack.
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            logger.LogDebug(
+                "Registry digest probe for '{Image}' timed out; falling back to the docker CLI.",
+                image.TagReference);
+            return null;
+        }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             // Same contract as the docker probe it fronts: unresolvable is null, never an exception,
@@ -190,8 +206,36 @@ internal sealed class RegistryDigestResolver(
             return null;
         }
 
+        // Same exposure as the manifest body: deserializing straight off an unbounded remote stream
+        // lets the auth endpoint decide how much Core allocates. A token document is a few hundred
+        // bytes, so cap the read well above that and refuse anything larger.
+        if (response.Content.Headers.ContentLength > MaxTokenBytes)
+        {
+            return null;
+        }
+
+        // Reads at most one byte past the cap, so an oversized document is detected without ever being
+        // held in full (a CopyToAsync into a MemoryStream would have re-introduced the very problem).
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        var payload = await JsonSerializer.DeserializeAsync(stream, CoreJsonSerializerContext.Default.RegistryTokenResponse, cancellationToken);
+        var buffer = new byte[MaxTokenBytes + 1];
+        var total = 0;
+        while (total < buffer.Length)
+        {
+            var read = await stream.ReadAsync(buffer.AsMemory(total), cancellationToken);
+            if (read == 0)
+            {
+                break;
+            }
+
+            total += read;
+        }
+
+        if (total is 0 or > MaxTokenBytes)
+        {
+            return null;
+        }
+
+        var payload = JsonSerializer.Deserialize(buffer.AsSpan(0, total), CoreJsonSerializerContext.Default.RegistryTokenResponse);
 
         // Registries disagree on the field name: the OAuth2 shape says `access_token`, the older
         // Docker token spec says `token`, and Docker Hub sends both.
@@ -224,7 +268,9 @@ internal sealed class RegistryDigestResolver(
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", cached.Token);
         }
 
-        using var response = await client.SendAsync(request, cancellationToken);
+        // ResponseHeadersRead, so the body is streamed under the cap below rather than buffered whole
+        // before anyone gets to check its size.
+        using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
             return null;
@@ -236,19 +282,63 @@ internal sealed class RegistryDigestResolver(
             return headerDigest;
         }
 
-        var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
-        // A manifest is small (kilobytes); a body far past that is not one, and hashing it would only
-        // produce a digest no registry would agree with.
-        if (bytes.Length is 0 or > 4 * 1024 * 1024)
+        // A declared length past the cap is refused before a single byte is read.
+        if (response.Content.Headers.ContentLength > MaxManifestBytes)
+        {
+            return RejectOversizedManifest(image, response.Content.Headers.ContentLength.Value);
+        }
+
+        // Hash incrementally, stopping the moment the body outgrows the cap. Reading it whole first
+        // and checking the length afterwards is what makes such a limit decorative: a misconfigured —
+        // or hostile — registry could have Core buffer hundreds of megabytes during a routine update
+        // check, and every app's check hits this path against its own registry.
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        var buffer = new byte[8192];
+        var total = 0L;
+        while (true)
+        {
+            var read = await stream.ReadAsync(buffer, cancellationToken);
+            if (read == 0)
+            {
+                break;
+            }
+
+            total += read;
+            if (total > MaxManifestBytes)
+            {
+                return RejectOversizedManifest(image, total);
+            }
+
+            hash.AppendData(buffer, 0, read);
+        }
+
+        if (total == 0)
         {
             logger.LogDebug(
-                "Registry manifest for '{Image}' was {Length} bytes, which is not a manifest; falling back to the docker CLI.",
-                image.TagReference,
-                bytes.Length);
+                "Registry manifest for '{Image}' was empty; falling back to the docker CLI.",
+                image.TagReference);
             return null;
         }
 
-        return $"sha256:{Convert.ToHexStringLower(SHA256.HashData(bytes))}";
+        return $"sha256:{Convert.ToHexStringLower(hash.GetHashAndReset())}";
+    }
+
+    // A manifest is kilobytes; a body past this is not one, and hashing it would only produce a digest
+    // no registry would agree with. Generous enough that no legitimate index is refused.
+    private const long MaxManifestBytes = 4 * 1024 * 1024;
+
+    // A token document is a few hundred bytes; this leaves ample room for long-lived JWTs.
+    private const int MaxTokenBytes = 64 * 1024;
+
+    private string? RejectOversizedManifest(RuntimeDockerImage image, long length)
+    {
+        logger.LogDebug(
+            "Registry manifest for '{Image}' exceeded {Limit} bytes (saw at least {Length}), which is not a manifest; falling back to the docker CLI.",
+            image.TagReference,
+            MaxManifestBytes,
+            length);
+        return null;
     }
 
     // Splits a docker repository reference into registry host and repository path, applying Docker

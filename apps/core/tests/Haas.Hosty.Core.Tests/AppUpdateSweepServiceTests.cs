@@ -133,6 +133,41 @@ public sealed class AppUpdateSweepServiceTests
     }
 
     [Fact]
+    public async Task RunAsync_AStrayCancellationFailsOneAppRatherThanTheWholeFleet()
+    {
+        // SweepAsync reads an OperationCanceledException as a stopping host and exits quietly, so
+        // rethrowing every one of them let a single app's stray cancellation end the fleet run with
+        // the remaining apps unverdicted — the blast radius of an HttpClient timeout surfacing as a
+        // TaskCanceledException with no deadline of ours fired.
+        using var fixture = CreateFixture();
+        fixture.Set(FeedsUrl, FeedDocument(MainManifestUrl));
+        fixture.Set(MainManifestUrl, Manifest("1.0.0"));
+        await fixture.InstallFromFeedAsync();
+
+        var healthyPath = Path.Combine(fixture.Root, "healthy.json");
+        await File.WriteAllTextAsync(healthyPath, Manifest("1.0.0", id: "com.example.healthy"));
+        await fixture.Lifecycle.InstallAsync(new AppInstallRequest(healthyPath));
+
+        // The feed's fetch reports a timeout the way HttpClient does, with nobody's token cancelled.
+        fixture.FailWith(FeedsUrl, () => new TaskCanceledException(
+            "The request was canceled due to the configured HttpClient.Timeout of 20 seconds elapsing.",
+            new TimeoutException()));
+
+        await fixture.Sweep.RunAsync(CancellationToken.None);
+
+        var summaries = await fixture.Lifecycle.ListAppsAsync();
+        var broken = summaries.Single(app => app.Id == "com.example.notes");
+        Assert.NotNull(broken.UpdateCheck);
+        Assert.NotNull(broken.UpdateCheck!.Error);
+
+        // The rest of the fleet is still checked, and the sweep completes.
+        var healthy = summaries.Single(app => app.Id == "com.example.healthy");
+        Assert.NotNull(healthy.UpdateCheck);
+        Assert.Null(healthy.UpdateCheck!.Error);
+        Assert.NotNull(fixture.Sweep.Status.LastCompletedAt);
+    }
+
+    [Fact]
     public async Task RunAsync_ShutdownIsNotRecordedAsPerAppTimeouts()
     {
         // A stopping host cancels the sweep's own token. That must stay distinguishable from an app
@@ -278,6 +313,7 @@ public sealed class AppUpdateSweepServiceTests
     {
         private readonly Dictionary<string, string> documents = new(StringComparer.Ordinal);
         private readonly Dictionary<string, Task> blocks = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, Func<Exception>> failures = new(StringComparer.Ordinal);
 
         public Fixture(string root, TimeSpan? perAppCheckTimeout = null)
         {
@@ -333,6 +369,10 @@ public sealed class AppUpdateSweepServiceTests
         // deterministically "in flight".
         public void BlockOn(string url, Task gate) => blocks[url] = gate;
 
+        // Fetches of this URL throw, standing in for a transport-level failure the handler cannot
+        // express as a status code.
+        public void FailWith(string url, Func<Exception> failure) => failures[url] = failure;
+
         public async Task InstallFromFeedAsync()
         {
             var plan = await Lifecycle.CreateFeedInstallPlanAsync(new AppFeedInstallPlanRequest(FeedsUrl, Autostart: false));
@@ -355,6 +395,11 @@ public sealed class AppUpdateSweepServiceTests
                 // the caller's token fires. Awaiting the gate bare made this fixture the one place a
                 // deadline could never take effect, so a check wedged on a fetch hung forever.
                 await gate.WaitAsync(cancellationToken);
+            }
+
+            if (failures.TryGetValue(url, out var failure))
+            {
+                throw failure();
             }
 
             return documents.TryGetValue(url, out var document)
