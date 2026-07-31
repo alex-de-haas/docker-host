@@ -209,7 +209,7 @@ Sequence the work so each step is independently useful:
 - [Marketplace As A System App](marketplace-system-app.md) — the read-only catalog ownership boundary and migration design.
 - [System App Pages](system-app-pages.md) — the shared admin-only page model for UI-capable system apps.
 - [Runtime App Repository Feeds](runtime-app-repository-feeds.md) — current feed behavior with repository ownership and Core resolution.
-- [AI Agent Bridge](../features/ai-agent-bridge.md) — shares the Core-issued scoped-token direction for data planes.
+- [AI Agent Bridge](../features/ai-agent-bridge/plan.md) — shares the Core-issued scoped-token direction for data planes.
 - [Auth provider extensions](auth-provider-extensions.md) — auth directions the login-methods contract gives a delivery mechanism for.
 - [On-Demand System App Updates](system-app-updates.md) — the reviewed update path provider apps rely on, since they update like any other app.
 
