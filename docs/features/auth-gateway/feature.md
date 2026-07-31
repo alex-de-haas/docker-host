@@ -1,7 +1,7 @@
 # Auth And Gateway Model
 
 Created: 2026-05-13
-Updated: 2026-07-29
+Updated: 2026-07-31
 
 ## Description
 
@@ -31,7 +31,7 @@ A Host user session is a server-side record; the credential that points at it ca
 - **Cookie** (`hosty_session`, `HttpOnly`) — how a browser holds a session. Because a browser attaches it to any request to the origin, including one a hostile page provoked, mutating endpoints additionally require the double-submit CSRF pair (`hosty_csrf` cookie plus `X-Hosty-CSRF` header).
 - **Bearer** (`Authorization: Bearer <session id>`) — how a non-browser client holds the same session. It is attached deliberately by a client that possesses the session id, and page script cannot read that id because the cookie is `HttpOnly`, so a cross-origin page cannot forge one. Bearer-presented requests are therefore CSRF-exempt.
 
-The bearer form creates no new credential type: same record, same 7-day idle and 30-day absolute windows, same instant revocation, same explicit-logout cascade over app grants.
+The bearer form creates no new credential type: same record, same instant revocation, same explicit-logout cascade over app grants. A browser session carries a 7-day idle and a 30-day absolute window; a record marked as an access token is judged by its own longer idle window and no absolute cap at all — see [Access Tokens](../access-tokens/feature.md), which is how a client with no browser obtains one of these records in the first place.
 
 Two rules keep the exemption from becoming a hole:
 

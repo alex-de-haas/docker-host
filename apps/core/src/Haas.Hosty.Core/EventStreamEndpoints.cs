@@ -50,8 +50,12 @@ internal static class EventStreamEndpoints
                 response.Headers["X-Accel-Buffering"] = "no";
 
                 // Every session gets its own notifications; only admins get domain events (see
-                // CoreEventHub.PublishAppEvent).
-                using var subscription = events.Subscribe(user.Id, AppAccessPolicy.IsAdmin(user));
+                // CoreEventHub.PublishAppEvent). The session id rides along so revoking the credential
+                // ends this stream immediately instead of at the client's next request.
+                using var subscription = events.Subscribe(
+                    user.Id,
+                    AppAccessPolicy.IsAdmin(user),
+                    CoreSessionAuthorization.ReadSessionId(request));
 
                 // End the stream on Core shutdown, not only on client disconnect. Kestrel's graceful
                 // stop waits for in-flight requests and an SSE response never completes on its own —

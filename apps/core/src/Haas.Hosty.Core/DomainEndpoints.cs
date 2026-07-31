@@ -199,14 +199,11 @@ internal static class DomainEndpoints
 
     private static AuthSessionSummary ToSummary(AuthSessionRecord session)
         => new(
-            FingerprintSessionId(session.Id),
+            CoreSessionAuthorization.FingerprintSessionId(session.Id),
             session.UserId,
             session.CreatedAt,
             session.ExpiresAt,
             session.RevokedAt);
-
-    private static string FingerprintSessionId(string id)
-        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(id)))[..12].ToLowerInvariant();
 }
 
 internal sealed record AppsResponse(

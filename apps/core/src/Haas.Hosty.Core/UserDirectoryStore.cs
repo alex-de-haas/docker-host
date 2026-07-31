@@ -102,7 +102,14 @@ internal sealed record AuthSessionRecord(
     // Last authenticated use, advanced (throttled) on session resolution to slide the idle window.
     // ExpiresAt is the absolute cap; a session is valid only while both windows hold. Null on records
     // written before sliding shipped — treated as CreatedAt.
-    DateTimeOffset? LastSeenAt = null);
+    DateTimeOffset? LastSeenAt = null,
+    // What kind of credential points at this record. Null is a browser session — which is every record
+    // written before access tokens shipped, so old state loads unchanged and keeps behaving as before.
+    // Non-null values come from AccessTokenKinds and select an idle-only lifetime (see AuthLifetimes).
+    string? Kind = null,
+    // Operator-supplied name, shown in the credential list so a lost device can be recognized and
+    // revoked. Browser sessions have none.
+    string? Label = null);
 
 internal sealed record LocalPasswordCredentialRecord(
     string UserId,

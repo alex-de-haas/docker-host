@@ -33,12 +33,14 @@ internal static class AuthEndpoints
             var now = DateTimeOffset.UtcNow;
             var session = state.Sessions.FirstOrDefault(candidate =>
                 string.Equals(candidate.Id, sessionId, StringComparison.Ordinal) &&
-                CoreSessionAuthorization.IsSessionLive(candidate, now, lifetimes.CoreSessionIdle));
+                CoreSessionAuthorization.IsSessionLive(candidate, now, lifetimes.IdleFor(candidate.Kind)));
             var user = session is null
                 ? null
                 : state.Users.FirstOrDefault(candidate => string.Equals(candidate.Id, session.UserId, StringComparison.Ordinal));
 
-            return CoreJson.Json(new AuthSessionResponse(user is not null && !user.Disabled, user));
+            // Kind lets a non-browser client see what it is holding — the Cardputer console reads the
+            // role here to warn when it was authorized by a host.user rather than an administrator.
+            return CoreJson.Json(new AuthSessionResponse(user is not null && !user.Disabled, user, session?.Kind));
         });
 
         app.MapPost("/api/auth/session", async (
@@ -297,7 +299,7 @@ internal static class AuthEndpoints
                 now.Add(lifetimes.CoreSessionAbsolute),
                 null,
                 LastSeenAt: now);
-            var sessions = PruneSessions(state.Sessions, now, lifetimes.CoreSessionIdle).Append(newSession).ToArray();
+            var sessions = PruneSessions(state.Sessions, now, lifetimes).Append(newSession).ToArray();
             return (state with { Sessions = sessions }, new AuthSessionCreateResult(true, user, newSession));
         }, cancellationToken);
 
@@ -352,18 +354,24 @@ internal static class AuthEndpoints
     // Keep a session only while it is still usable — live within both the absolute and sliding idle
     // windows — or was revoked recently enough to remain visible for diagnostics. This drops idle-expired
     // sessions too, so a large absolute cap does not let the list grow with long-idle records.
-    private static IEnumerable<AuthSessionRecord> PruneSessions(IEnumerable<AuthSessionRecord> sessions, DateTimeOffset now, TimeSpan idle)
+    // Every record is judged by its own kind's idle window. Applying one window to the whole list would
+    // let a browser login prune a live access token, whose window is much longer — the pruning caller is
+    // a session write, but the list it rewrites holds both.
+    internal static IEnumerable<AuthSessionRecord> PruneSessions(
+        IEnumerable<AuthSessionRecord> sessions,
+        DateTimeOffset now,
+        AuthLifetimes lifetimes)
         => sessions.Where(session =>
             session.RevokedAt is not null
                 ? now - session.RevokedAt.Value < SessionRevokedRetention
-                : CoreSessionAuthorization.IsSessionLive(session, now, idle));
+                : CoreSessionAuthorization.IsSessionLive(session, now, lifetimes.IdleFor(session.Kind)));
 }
 
 internal sealed record CsrfResponse(string Token);
 
 internal sealed record AuthSessionCreateRequest(string UserId, bool SecureCookie = false);
 
-internal sealed record AuthSessionResponse(bool Authenticated, HostUserRecord? User);
+internal sealed record AuthSessionResponse(bool Authenticated, HostUserRecord? User, string? Kind = null);
 
 internal sealed record AuthSessionCreateResult(bool Succeeded, HostUserRecord? User, AuthSessionRecord? Session = null);
 

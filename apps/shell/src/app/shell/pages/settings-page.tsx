@@ -8,10 +8,12 @@ import { PageHeader } from "../ui";
 import { SettingsCoreSection } from "./settings-core-section";
 import { SettingsIngressSection } from "./settings-ingress-section";
 import { SettingsMountsSection } from "./settings-mounts-section";
+import { SettingsTokensSection } from "./settings-tokens-section";
 import { UserManagementPanel } from "./user-management-page";
 
 const TABS: { id: HostSettingsTab; label: string }[] = [
   { id: "users", label: "Users" },
+  { id: "tokens", label: "Access tokens" },
   { id: "core", label: "Core" },
   { id: "ingress", label: "Ingress" },
   { id: "mounts", label: "Shared mounts" },
@@ -74,6 +76,10 @@ export function SettingsPage({
 
       {activeTab === "users" && (
         <UserManagementPanel coreOrigin={coreOrigin} activeUser={activeUser} sendCsrfJson={sendCsrfJson} />
+      )}
+
+      {activeTab === "tokens" && (
+        <SettingsTokensSection coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} />
       )}
 
       {activeTab === "core" && (

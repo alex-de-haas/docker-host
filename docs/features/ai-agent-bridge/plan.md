@@ -369,7 +369,7 @@ Remote calls go to Core's normal web API (the existing web twins of control rout
 
 Remote CLI auth is the first consumer of the agent-bridge token infrastructure (token store, management UI, login flow) and is a good first implementation step: the infrastructure gets exercised before the first MCP endpoint exists.
 
-That infrastructure was extracted on 2026-07-31 and is owned by [access-tokens](../access-tokens/plan.md), which holds the device authorization flow, the credential it issues, the management surface, and `hosty login`. This document does not restate its deliverables. One decision recorded there constrains everything below: a device credential carries its approver's full role, because Core has no scopes yet — so the scoped agent tokens this document describes (`read_tasks`, discovery-only, read-only monitoring) need that work before they mean anything.
+That infrastructure was extracted on 2026-07-31 and is owned by [access-tokens](../access-tokens/feature.md), which holds the device authorization flow, the credential it issues, the management surface, and `hosty login`. This document does not restate its deliverables. One decision recorded there constrains everything below: a device credential carries its approver's full role, because Core has no scopes yet — so the scoped agent tokens this document describes (`read_tasks`, discovery-only, read-only monitoring) need that work before they mean anything.
 
 ### Permission Model
 
@@ -502,7 +502,7 @@ Future implementation should test the old features and the new agent surface tog
 This is a large multi-stage feature and should be rolled out incrementally:
 
 1. Document the shared concept and boundaries.
-2. Build the token infrastructure — owned by [access-tokens](../access-tokens/plan.md), with remote CLI contexts as its first consumer.
+2. Build the token infrastructure — owned by [access-tokens](../access-tokens/feature.md), with remote CLI contexts as its first consumer.
 3. Add manifest interface discovery metadata design without model execution.
 4. Add one demo app MCP interface, preferably a project/task/time-tracking domain.
 5. Add embedded Core MCP: discovery, delegated token issuance, read-only observability tools.

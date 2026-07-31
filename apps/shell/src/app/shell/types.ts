@@ -653,7 +653,28 @@ export type ShellView =
 
 // Host-level configuration surfaces, addressable as /settings?tab=<value>. Distinct from the per-app
 // `SettingsTab` above, which describes one app rather than the host.
-export type HostSettingsTab = "users" | "core" | "mounts" | "ingress";
+export type HostSettingsTab = "users" | "tokens" | "core" | "mounts" | "ingress";
+
+// A device waiting for someone to approve the code it is showing. Held in memory by Core and gone ten
+// minutes later, so this is never a durable record of anything.
+export type DeviceAuthorizationRequestView = {
+  userCode: string;
+  label: string | null;
+  createdAt: string;
+  expiresInSeconds: number;
+};
+
+// A credential belonging to a client with no browser. `id` is a fingerprint, never the credential
+// itself — the value exists in the response to its own creation and nowhere else.
+export type AccessTokenView = {
+  id: string;
+  kind: "device" | "manual";
+  label: string | null;
+  userId: string;
+  userDisplayName: string | null;
+  createdAt: string;
+  lastSeenAt: string;
+};
 export type AppOpenTarget = "workspace" | "tab";
 export type HostyResolvedTheme = "light" | "dark";
 export type HostyThemePreference = "light" | "dark" | "system";

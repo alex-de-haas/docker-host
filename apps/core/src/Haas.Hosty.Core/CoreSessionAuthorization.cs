@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Haas.Hosty.Core;
@@ -113,6 +115,13 @@ internal static class CoreSessionAuthorization
     public static string? ReadSessionId(HttpRequest request)
         => ReadSessionCredential(request).Value;
 
+    // A session id IS the bearer credential, so it must never leave Core in a listing. This is the
+    // leak-safe stand-in every projection uses: stable, derived, and useless to replay. Callers that
+    // need to act on a specific record (revoking a credential, say) match on this and look the real id
+    // up server-side.
+    public static string FingerprintSessionId(string id)
+        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(id)))[..12].ToLowerInvariant();
+
     // How the caller presented its session, which decides whether CSRF applies.
     //
     // A cookie is ambient: the browser attaches it to any request to this origin, including one a hostile
@@ -184,11 +193,13 @@ internal static class CoreSessionAuthorization
         }
 
         var now = clock.UtcNow;
-        var idle = ResolveLifetimes(request).CoreSessionIdle;
+        var lifetimes = ResolveLifetimes(request);
         var state = await users.ReadAsync(cancellationToken);
+        // The idle window depends on the record, so it is resolved per candidate rather than once: a
+        // browser session and an access token live by different clocks and both resolve through here.
         var session = state.Sessions.FirstOrDefault(candidate =>
             string.Equals(candidate.Id, sessionId, StringComparison.Ordinal) &&
-            IsSessionLive(candidate, now, idle));
+            IsSessionLive(candidate, now, lifetimes.IdleFor(candidate.Kind)));
         if (session is null)
         {
             return Unauthorized("session_invalid", "Core session is missing, expired, or revoked.");

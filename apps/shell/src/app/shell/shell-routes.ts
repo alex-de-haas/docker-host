@@ -16,7 +16,7 @@ const SHELL_VIEW_HREFS: Record<ShellView, string> = {
 
 const ADMIN_SHELL_VIEWS = new Set<ShellView>(["dashboard", "settings"]);
 
-const HOST_SETTINGS_TABS = new Set<string>(["users", "core", "ingress", "mounts"]);
+const HOST_SETTINGS_TABS = new Set<string>(["users", "tokens", "core", "ingress", "mounts"]);
 
 // A settings surface the URL does not name resolves to Users rather than erroring — the same
 // principle that makes an unrecognized route fall through instead of blanking the screen. Every
