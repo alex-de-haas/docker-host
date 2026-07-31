@@ -1,8 +1,10 @@
-# Feature: AI Agent Bridge
+# AI Agent Bridge
 
-Status: Draft; key decisions recorded 2026-07-11 (marked "Decided" below).
+Status: Draft
 Created: 2026-06-09
-Updated: 2026-07-11
+Updated: 2026-07-31
+
+Key decisions were recorded on 2026-07-11 and are marked "Decided" below.
 
 ## Goal
 
@@ -103,7 +105,7 @@ flowchart LR
 
 ### Development Agent Bridge
 
-Development Agent Bridge is the source-changing layer. It should build on the existing deferred plan in [Agent Bridge Workflow](../ideas/agent-bridge-workflow.md).
+Development Agent Bridge is the source-changing layer. It should build on the existing deferred plan in [Agent Bridge Workflow](../../ideas/agent-bridge-workflow.md).
 
 Primary flow:
 
@@ -222,7 +224,7 @@ Initial Core MCP tools could include:
 
 Discovery responses must resolve app MCP origins from the caller's vantage point: external ingress/host-published origins for remote clients, internal origins for on-host clients — the same resolution browser login already performs. If an app is browser-reachable from a client machine, its `/mcp` must be reachable too.
 
-Read-only observability tools (`query_logs`, `get_trace`, health surfaced in `list_apps`) are a good early addition behind admin-scoped tokens: they enable the diagnostic-agent scenario (investigate an unhealthy host from chat, zero approvals) before any write surface exists. The telemetry backend system app ([observability](observability/feature.md)) can declare its own `mcp` interface and own those query tools like any other app — the connector aggregates it automatically.
+Read-only observability tools (`query_logs`, `get_trace`, health surfaced in `list_apps`) are a good early addition behind admin-scoped tokens: they enable the diagnostic-agent scenario (investigate an unhealthy host from chat, zero approvals) before any write surface exists. The telemetry backend system app ([observability](../observability/feature.md)) can declare its own `mcp` interface and own those query tools like any other app — the connector aggregates it automatically.
 
 Administrative or development tools can be added later behind stronger authorization, such as source checkout discovery, branch/PR workflow creation, isolated-validation coordination, lifecycle planning, or update review. Those tools should remain explicit and approval-gated.
 
@@ -313,7 +315,7 @@ The request should be provider-neutral and capability-oriented rather than a dir
 
 Shell session authorization establishes who the actor is when Shell calls an AI Gateway system app. It should not become the credential used by the agent or the app.
 
-Decided (2026-07-11) — when Core proxies and when tokens are used. The platform-wide rule, shared with [observability](observability/feature.md):
+Decided (2026-07-11) — when Core proxies and when tokens are used. The platform-wide rule, shared with [observability](../observability/feature.md):
 
 - Admin-only + low-volume + request/response + a surface that already lives in Core → a thin Core proxy twin is acceptable (telemetry reads).
 - Per-user, or streaming, or high-volume, or externally reachable → direct endpoint + short-lived Core-issued token validated by the receiver. All agent-bridge traffic (Shell → ai-gateway chat, app → gateway generate, agent clients → app MCP) is in this class. Core stays the sole identity and registry authority but is out of the request path; it injects the token verification key into system apps the same way it injects `OTEL_EXPORTER_OTLP_ENDPOINT`, so the control plane remains fully Core-owned while only data-plane bytes go direct.
@@ -323,7 +325,7 @@ Two token mechanics, one management UI (a Shell "Access tokens" page with label,
 | Token | Validator | Mechanics |
 | --- | --- | --- |
 | CLI login and external agent tokens presented to Core | Core itself | opaque value + server-side record; instant revocation; no signing needed |
-| Browser app identity tokens presented to Core for revalidation | Core itself | opaque app session grant + server-side record (2026-07-13); design: [auth-session-lifecycle.md](../ideas/auth-session-lifecycle.md) |
+| Browser app identity tokens presented to Core for revalidation | Core itself | opaque app session grant + server-side record (2026-07-13); design: [auth-session-lifecycle.md](../../ideas/auth-session-lifecycle.md) |
 | Delegated tokens presented to apps and system apps | the receiving app, locally | signed, short TTL, verification key injected by Core; optional Core introspection for high-risk calls |
 
 Shell's Core session cookie never leaves the browser↔Core pair. When Shell (or any UI client) needs a system app, it exchanges its session for a short-lived delegated token (audience = that app) and calls the app directly — the service-call analogue of the existing app authorization code flow. Core's existing signing infrastructure (AppIdentityService) can issue these.
@@ -366,6 +368,8 @@ hosty --context prod apps list
 Remote calls go to Core's normal web API (the existing web twins of control routes) with `Authorization: Bearer`, added alongside session-cookie auth. The token is bound to a Host user, role, and scopes — unlike the local channel's unconditional host-operator power — so a monitoring script can hold a read-only token and the MCP connector holds discovery-only scopes. Headless fallback: create a token on the Shell Access-tokens page and pass it to `hosty login --token`.
 
 Remote CLI auth is the first consumer of the agent-bridge token infrastructure (token store, management UI, login flow) and is a good first implementation step: the infrastructure gets exercised before the first MCP endpoint exists.
+
+That infrastructure was extracted on 2026-07-31 and is owned by [access-tokens](../access-tokens/plan.md), which holds the device authorization flow, the credential it issues, the management surface, and `hosty login`. This document does not restate its deliverables. One decision recorded there constrains everything below: a device credential carries its approver's full role, because Core has no scopes yet — so the scoped agent tokens this document describes (`read_tasks`, discovery-only, read-only monitoring) need that work before they mean anything.
 
 ### Permission Model
 
@@ -498,7 +502,7 @@ Future implementation should test the old features and the new agent surface tog
 This is a large multi-stage feature and should be rolled out incrementally:
 
 1. Document the shared concept and boundaries.
-2. Build the token infrastructure: Core token store, Shell Access-tokens page, `hosty login` device flow — with remote CLI contexts as its first consumer.
+2. Build the token infrastructure — owned by [access-tokens](../access-tokens/plan.md), with remote CLI contexts as its first consumer.
 3. Add manifest interface discovery metadata design without model execution.
 4. Add one demo app MCP interface, preferably a project/task/time-tracking domain.
 5. Add embedded Core MCP: discovery, delegated token issuance, read-only observability tools.

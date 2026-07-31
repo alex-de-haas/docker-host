@@ -62,7 +62,7 @@ A diff against [feature.md](feature.md):
    OTLP-producing app (simple, but a static secret every app holds), versus per-app tokens validated
    by the backend against a Core-injected verification key (stronger — it makes ingest attribution
    provable — at the cost of key distribution and rotation). The platform rule in
-   [ai-agent-bridge.md](../ai-agent-bridge.md#authorization-and-delegation) favours the latter for
+   [ai-agent-bridge/plan.md](../ai-agent-bridge/plan.md#authorization-and-delegation) favours the latter for
    anything streaming or high-volume, which ingest is.
 2. **Does this wait for the network hardening?** The shared internal-only docker network tracked in
    [cross-app-dependencies.md](../cross-app-dependencies/feature.md) would take ingest and the query port off
