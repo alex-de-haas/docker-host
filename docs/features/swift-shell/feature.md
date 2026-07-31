@@ -224,8 +224,12 @@ because "Hosty Marketplace" and "Project Manager" do not fit in one and a reserv
 every tile the same height.
 
 Being openable and being ready stay different questions. An app that is not running is dimmed and
-carries a corner dot — orange while starting or stopping, grey while stopped — and its accessibility
-label says which in words, since neither dimming nor a colour survives being read aloud.
+carries a corner dot in that state's own colour, and its accessibility label names the state in words,
+since neither dimming nor a colour survives being read aloud. All five states keep their own
+appearance here as they do on a management row: an app Core cannot classify is not an app at rest, and
+one grey dot for both `stopped` and `unknown` would say it is. The words and colours live on
+`AppRuntimeState` rather than being restated per view — two lists for the same five states drift, and
+the one that drifts is the one shown least often.
 
 Opening an app is the browser Shell's mechanism exactly, with no Core change: `POST
 /api/apps/{id}/launch-code` against the URL Core advertises, then load the URL it returns and let the

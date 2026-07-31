@@ -100,6 +100,7 @@ private struct AppLauncherTile: View {
                 // neither dimming nor a colour survives being read aloud.
                 .opacity(app.runtimeState.isUp ? 1 : 0.4)
                 .overlay(alignment: .bottomTrailing) { stateDot }
+                .accessibilityHidden(true)
 
             Text(app.displayName)
                 .font(.caption)
@@ -114,27 +115,25 @@ private struct AppLauncherTile: View {
         .frame(maxWidth: .infinity)
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(app.displayName), \(readiness)")
+        // The same five words the management badge uses, including for `running`: a tile that said
+        // nothing about a running app would leave a VoiceOver user unable to tell it from one whose dot
+        // and dimming they cannot see.
+        .accessibilityLabel("\(app.displayName), \(app.runtimeState.title)")
         .accessibilityAddTraits(.isButton)
     }
 
+    /// Carried by every state but `running`, in that state's own colour — so `stopped` and `unknown` do
+    /// not read as the same thing. An app Core cannot classify is not an app at rest, and grey for both
+    /// would say it is.
     @ViewBuilder
     private var stateDot: some View {
         if !app.runtimeState.isUp {
             Circle()
-                .fill(app.runtimeState.isBusy ? Color.orange : Color.secondary)
+                .fill(app.runtimeState.tint)
                 .frame(width: 10, height: 10)
                 .overlay(Circle().strokeBorder(.background, lineWidth: 2))
                 .offset(x: 3, y: 3)
         }
-    }
-
-    private var readiness: String {
-        if app.runtimeState.isUp {
-            return "ready"
-        }
-
-        return app.runtimeState.isBusy ? "starting" : "not running"
     }
 }
 
@@ -143,10 +142,14 @@ private struct AppLauncherTile: View {
 #Preview("Launcher tiles") {
     let icons = AppIconStore(previewImages: PreviewFixtures.icons)
 
+    // All five states, because the dot's whole job is telling them apart — `stopped` and `unknown` most
+    // of all, since those are the two a single "not running" treatment would merge.
     LazyVGrid(columns: [GridItem(.adaptive(minimum: 84), spacing: 8)], spacing: 22) {
         AppLauncherTile(app: PreviewFixtures.runningApp, icons: icons)
         AppLauncherTile(app: PreviewFixtures.app(PreviewFixtures.runningApp, runtimeState: .starting), icons: icons)
+        AppLauncherTile(app: PreviewFixtures.app(PreviewFixtures.runningApp, runtimeState: .stopping), icons: icons)
         AppLauncherTile(app: PreviewFixtures.app(PreviewFixtures.runningApp, runtimeState: .stopped), icons: icons)
+        AppLauncherTile(app: PreviewFixtures.app(PreviewFixtures.runningApp, runtimeState: .unknown), icons: icons)
         AppLauncherTile(app: PreviewFixtures.systemApp, icons: icons)
     }
     .padding()
