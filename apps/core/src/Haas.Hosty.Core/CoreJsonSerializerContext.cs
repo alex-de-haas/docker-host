@@ -217,4 +217,5 @@ internal static class CoreJson
 [JsonSerializable(typeof(HostUserDisableResponse))]
 [JsonSerializable(typeof(HostUserPurgeResponse))]
 [JsonSerializable(typeof(HostUserAssignmentsResponse))]
+[JsonSerializable(typeof(RegistryTokenResponse))]
 internal sealed partial class CoreJsonSerializerContext : JsonSerializerContext;

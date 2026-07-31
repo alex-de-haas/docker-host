@@ -1,13 +1,13 @@
 # Runtime App Update
 
 Created: 2026-06-04
-Updated: 2026-07-16
+Updated: 2026-07-31
 
 ## Description
 
 Runtime app updates are reviewed changes from the currently installed `app.0.1` manifest to a new manifest or source snapshot, including a manifest resolved from the app's followed feed. Core owns the update check, plan, digest, classification, backup, apply, and failure state.
 
-Update checking is **plan-first**: a check does not run a lighter probe than the update itself — it builds the real reviewed plan and caches it. That one resolution pass then answers everything: whether an update exists, whether it needs a human, and what an apply would do. See [Plan-First App Updates](../planning/plan-first-app-updates.md) for the design.
+Update checking is **plan-first**: a check does not run a lighter probe than the update itself — it builds the real reviewed plan and caches it. That one resolution pass then answers everything: whether an update exists, whether it needs a human, and what an apply would do. See [Plan-First App Updates](../../planning/plan-first-app-updates.md) for the design.
 
 ## Update Flow
 
@@ -71,7 +71,24 @@ The candidate is whatever the reviewed plan would use: the followed feed's curre
 
 `POST /api/apps/update-check` (admin, CSRF) starts a fleet sweep, or joins the one already running, and returns immediately. The sweep runs on the application lifetime token, so the triggering request or tab may go away without stopping it. Progress is server state: `GET /api/apps` carries an `updateCheck` block (`running`, `lastCompletedAt`), so a page opened mid-sweep — or reloaded — still shows the check in progress, for every admin rather than only the one who clicked.
 
-The sweep builds a plan for every app with a reviewed-update path (live source apps are skipped), at most 3 apps at a time, each resolving its services' registry digests at most 4 at a time. Failures are captured per app: one dark feed marks that app's verdict with an `error` instead of failing the sweep.
+The sweep builds a plan for every app with a reviewed-update path (live source apps are skipped). Apps are checked concurrently; what is bounded is the registry digest probe, host-wide rather than per app, because that is the only scarce resource a check contends for — so an app with no compiled services never waits behind one with five.
+
+Failures are captured per app: one dark feed marks that app's verdict with an `error` instead of failing the sweep. Two deadlines keep an unresponsive remote from holding the fleet's spinner, since the operations underneath carry budgets sized for their heavy cousins (`docker pull`, `git clone`):
+
+- a single remote digest lookup gets 30 seconds, after which that service degrades to `unknown` like any other unreachable registry;
+- a whole per-app check gets 90 seconds, recorded as that app's `error` verdict.
+
+Neither is reached on a healthy host, where a check is a handful of registry round-trips.
+
+### Resolving a Digest
+
+A compiled service's candidate digest comes from the registry's HTTP API directly: `HEAD /v2/{repository}/manifests/{tag}`, declaring the OCI and Docker manifest media types, reading the `Docker-Content-Digest` response header. A `401` carrying a `WWW-Authenticate: Bearer` challenge is answered with an anonymous pull token from the realm it names, scoped to that repository and cached for its stated lifetime. Registries that omit the header on a `HEAD` are handled by fetching the manifest and hashing it — the digest is by definition the SHA-256 of those bytes.
+
+`docker buildx imagetools inspect` (then `docker manifest inspect`) remains the fallback, used whenever the HTTP probe cannot answer cleanly: a registry needing real credentials, a redirect (not followed — a manifest probe must not be bounced to an unvetted host), a malformed digest, or any transport failure. This is what keeps a private registry working: the operator authenticated it with `docker login`, and Core never reads those credentials.
+
+The reference is parsed the way docker's own parser does: a first path component is a registry only when it contains a dot or a port or is literally `localhost`, so `alex/app` is Docker Hub rather than host `alex`, and a single-component name resolves under the implicit `library/` namespace. A reference that cannot be turned into a URL unambiguously is declined rather than escaped.
+
+The contract is the same either way: an unresolvable digest is reported as `unknown` and never fails the plan.
 
 Each app's summary then carries the last-known verdict as `updateCheck`: `{ updateAvailable, requiresReview, planDigest, checkedAt, error }` — null until a check has run for it, and suppressed for a live-source runtime so a verdict from before the app went live cannot keep offering an update the plan flow would refuse. Because caching a plan overwrites the app's pending slot, a fleet check also refreshes what a one-click apply would apply.
 
@@ -106,13 +123,13 @@ Applying closes the dialog immediately. A rejected enqueue (stale, expired, cons
 
 ## System Apps
 
-System apps (Shell, Telemetry, Marketplace) update through this same reviewed flow, gated on `host.admin` alone. Lifecycle operations are inherent to Core managing an app and are authorized on the endpoint, never by the manifest `capabilities` list — an app cannot opt out of being updated by omitting a token (see [Core App Shell](core-app-shell/feature.md)).
+System apps (Shell, Telemetry, Marketplace) update through this same reviewed flow, gated on `host.admin` alone. Lifecycle operations are inherent to Core managing an app and are authorized on the endpoint, never by the manifest `capabilities` list — an app cannot opt out of being updated by omitting a token (see [Core App Shell](../core-app-shell/feature.md)).
 
-Core startup never applies updates: the boot reconcile installs missing distribution apps, re-applies Hosty-owned provisioning, and migrates a moved http(s) distribution manifest reference (pointer only — no content change, no restart). A Shell self-update briefly restarts the Shell serving the page; the apply now survives the tab, so the UI warns, keeps the tab alive through the swap, and reloads once the new Shell answers. See [On-Demand System App Updates](../ideas/system-app-updates.md) for the design and its deferred hardening (readiness gate, automatic rollback).
+Core startup never applies updates: the boot reconcile installs missing distribution apps, re-applies Hosty-owned provisioning, and migrates a moved http(s) distribution manifest reference (pointer only — no content change, no restart). A Shell self-update briefly restarts the Shell serving the page; the apply now survives the tab, so the UI warns, keeps the tab alive through the swap, and reloads once the new Shell answers. See [On-Demand System App Updates](../../ideas/system-app-updates.md) for the design and its deferred hardening (readiness gate, automatic rollback).
 
 ## Live Source Runtimes
 
-A reviewed update does not apply to a **live source** runtime: an app whose selected runtime is a source artifact (`localCommand` in v1) running from the operator's own folder (a `source-override`, or the original folder install) with no recorded manifest URL. For these the manifest is the operator's own contract and is re-read, validated, and adopted on each start — there is no trust boundary to gate, so changes take effect on restart rather than through an update plan (see [Runtime App Marketplace](runtime-app-marketplace/feature.md), "Live source").
+A reviewed update does not apply to a **live source** runtime: an app whose selected runtime is a source artifact (`localCommand` in v1) running from the operator's own folder (a `source-override`, or the original folder install) with no recorded manifest URL. For these the manifest is the operator's own contract and is re-read, validated, and adopted on each start — there is no trust boundary to gate, so changes take effect on restart rather than through an update plan (see [Runtime App Marketplace](../runtime-app-marketplace/feature.md), "Live source").
 
 Core reports this on the app summary as `live: true`. Clients mark the runtime **Live** and hide the Update affordance; it returns when the operator switches to a compiled (Docker) runtime. When no explicit manifest reference is supplied, `update-plan` for a live source app is refused with `update_live_source_runtime` instead of re-reading and validating the (possibly mid-edit) folder manifest. Passing an explicit `--manifest` path or URL remains available as an escape hatch for an out-of-band comparison. A URL/publisher install is never live source: its code may run live, but its manifest **contract** is still reviewed on change.
 
@@ -126,3 +143,12 @@ hosty apps update <app-id> --plan-digest <digest> --manifest apps/demo-app
 ## Failure Behavior
 
 Failed updates leave enough state for diagnosis and retry. Runtime state and app data are not deleted automatically. Restore uses normal app backup restore behavior.
+
+## Testing Expectations
+
+- **Plan and classification** — change detection per contract category, `requiresReview` routine/review split (including `role: system` escalation and a cross-repository `image` move), `updateAvailable` treating `->unknown` as "cannot tell", and plan-digest stability across a rebuild.
+- **Apply** — digest mismatch, expiry, and stale-base rejection; verbatim consumption of the cached plan; `update_in_progress`; the interrupted-apply boot sweep.
+- **Fleet check** — availability projected into summaries, live-source apps skipped and an earlier verdict suppressed, per-app failures captured without failing the sweep, per-app timeout recorded as that app's error while the rest of the fleet still completes, shutdown not recorded as timeouts, single-flight joining, and the finish announced only once the run no longer reports running.
+- **Digest resolution** — reference parsing (Docker Hub defaults, `library/` normalization, host detection) and rejection of references that cannot be turned into a URL unambiguously; bearer-challenge handling with token reuse and one re-challenge when a cached token stops working; the hash-the-manifest path when the digest header is absent; fallback to the docker CLI on every unclean answer (auth, redirect, malformed digest, transport failure); cancellation propagating rather than being swallowed as a fallback.
+
+Digest resolution is covered offline against a stub transport — the suite must not depend on reaching a registry. Agreement with `docker buildx imagetools inspect` on real registries is verified out of band when the resolver changes.

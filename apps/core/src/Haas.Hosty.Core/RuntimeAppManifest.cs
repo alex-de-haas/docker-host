@@ -1432,7 +1432,11 @@ internal sealed class DockerRuntimeAdapter(
     HostyCoreRuntimeConfig config,
     AppServiceTokenService serviceTokens,
     ILogger<DockerRuntimeAdapter> logger,
-    IDockerCommandRunner? dockerRunner = null) : IAppRuntimeAdapter, IImageDigestResolver, IRunningContainerProbe
+    IDockerCommandRunner? dockerRunner = null,
+    TimeSpan? digestProbeTimeout = null,
+    // Fast registry HTTP path for remote digest lookups; null falls straight through to the docker
+    // CLI, which is also what happens whenever it cannot answer a given image.
+    IRegistryDigestResolver? registryDigestResolver = null) : IAppRuntimeAdapter, IImageDigestResolver, IRunningContainerProbe
 {
     // App ids already advised about WSL2 P2P throttling, so the warning is logged once per app
     // per Core process rather than on every (health-driven) restart. Instance field on the DI
@@ -1446,6 +1450,12 @@ internal sealed class DockerRuntimeAdapter(
     // Indirection over the `docker` CLI so the resolve/run/inspect logic is unit-testable without a
     // daemon. DI never registers one, so production uses the process runner; tests inject a fake.
     private readonly IDockerCommandRunner runner = dockerRunner ?? new ProcessDockerCommandRunner();
+
+    // Deadline for one remote digest lookup (ResolveRemoteDigestAsync). Generous next to a healthy
+    // registry round-trip, which is seconds at worst, because exceeding it costs an operator a real
+    // verdict — it degrades that service to "unknown" rather than reporting an update. Overridable
+    // only so tests can hit the deadline without waiting it out; DI never supplies one.
+    private readonly TimeSpan probeTimeout = digestProbeTimeout ?? TimeSpan.FromSeconds(30);
 
     public string Type => "docker";
 
@@ -2130,17 +2140,32 @@ internal sealed class DockerRuntimeAdapter(
     public async Task<string?> ResolveRemoteDigestAsync(RuntimeDockerImage image, CancellationToken cancellationToken = default)
     {
         var tagReference = image.TagReference;
+        // The shared docker runner's deadline is sized for `docker pull` (30 minutes), which is the
+        // wrong budget for a metadata lookup: an unresponsive registry would pin a probe — and the
+        // host-wide probe slot it holds — far past the point of usefulness. Bound it here instead of
+        // shortening the runner's, which would start killing legitimate long pulls.
+        using var probeDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        probeDeadline.CancelAfter(probeTimeout);
         try
         {
+            // Ask the registry over HTTP first: same answer, a fraction of the cost. It reports null
+            // for anything it cannot resolve cleanly — most importantly a registry needing real
+            // credentials, which the CLI below can reach through the operator's `docker login`.
+            if (registryDigestResolver is not null &&
+                await registryDigestResolver.TryResolveDigestAsync(image, probeDeadline.Token) is { } fastDigest)
+            {
+                return fastDigest;
+            }
+
             var imagetools = await RunRawAsync(
                 ["buildx", "imagetools", "inspect", "--format", "{{.Manifest.Digest}}", tagReference],
-                cancellationToken);
+                probeDeadline.Token);
             if (imagetools.ExitCode == 0 && ParseSha256(imagetools.StandardOutput) is { } digest)
             {
                 return digest;
             }
 
-            var manifest = await RunRawAsync(["manifest", "inspect", "--verbose", tagReference], cancellationToken);
+            var manifest = await RunRawAsync(["manifest", "inspect", "--verbose", tagReference], probeDeadline.Token);
             if (manifest.ExitCode == 0 && ParseManifestInspectDigest(manifest.StandardOutput) is { } manifestDigest)
             {
                 return manifestDigest;
@@ -2165,6 +2190,18 @@ internal sealed class DockerRuntimeAdapter(
                 DescribeDockerFailure(imagetools),
                 manifest.ExitCode,
                 DescribeDockerFailure(manifest));
+        }
+        // The probe deadline above, and nothing else: a registry that never answered is an
+        // unresolvable digest, which is exactly the "unknown" this method exists to report. Both
+        // halves of the guard matter — the caller's token must be clear (an aborted request still
+        // propagates), and our own must actually have fired, so an OperationCanceledException raised
+        // for any other reason is not silently relabelled a timeout.
+        catch (OperationCanceledException) when (probeDeadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            logger.LogWarning(
+                "Remote image digest lookup for '{Image}' timed out after {Timeout}s; callers will report it as unknown.",
+                tagReference,
+                probeTimeout.TotalSeconds);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

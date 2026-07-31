@@ -1491,12 +1491,22 @@ internal sealed class CoreLifecycleService(
         // re-pushed tag): resolve the target tag's digest with a light remote lookup and compare it
         // to the current lock. This closes the invisible-update gap and folds the artifact delta into
         // the plan digest the operator confirms. See runtime-app-marketplace.md (Reviewed update / A4).
-        var artifactProbes = await ProbeServiceArtifactsAsync(app, selection, cancellationToken);
-        changes.AddRange(BuildArtifactDigestChanges(artifactProbes));
+        var artifactProbeTask = ProbeServiceArtifactsAsync(app, selection, cancellationToken);
         // The source-artifact counterpart of the registry probe: a source app's "artifact" is the
         // commit its manifest ref points at, so a moved branch tip must show up in the reviewed plan
         // (and fold into its digest) the same way image digest movement does.
-        var (resolvedSourceCommit, sourceChange) = await ProbeSourceCommitAsync(app, selection, cancellationToken);
+        //
+        // Started before the registry probe is awaited: the two hit different remotes (a registry and
+        // a git host) and neither reads the other's result, so running them back to back only added
+        // one round-trip to every source app's check. Appending stays ordered — artifact entries, then
+        // the source entry — because the change list feeds the plan digest the operator confirms.
+        var sourceProbeTask = ProbeSourceCommitAsync(app, selection, cancellationToken);
+        // WhenAll rather than awaiting each in turn: on cancellation the first await would abandon the
+        // other probe's exception unobserved.
+        await Task.WhenAll(artifactProbeTask, sourceProbeTask);
+        var artifactProbes = await artifactProbeTask;
+        var (resolvedSourceCommit, sourceChange) = await sourceProbeTask;
+        changes.AddRange(BuildArtifactDigestChanges(artifactProbes));
         if (sourceChange is not null)
         {
             changes.Add(sourceChange);
@@ -4367,9 +4377,15 @@ internal sealed class CoreLifecycleService(
     // Lock-less services are still probed: the plan needs the candidate for its `none->{digest}`
     // entries (pre-existing behavior), and forking a skip-when-lockless variant just for the rare
     // status fallback would give the two paths different probe semantics for no real saving.
-    // Probes run concurrently under a small cap: each spawns a docker CLI process and waits out a
-    // registry round-trip, and an app's services are independent — but an unbounded fan-out would
-    // burst-spawn processes for image-heavy apps. Task.WhenAll keeps the service-key order.
+    // Probes run concurrently under a cap: each spawns a docker CLI process and waits out a registry
+    // round-trip, and an app's services are independent — but an unbounded fan-out would burst-spawn
+    // processes for image-heavy apps. Task.WhenAll keeps the service-key order.
+    //
+    // The cap is host-wide (a shared gate, not one per call), which is what lets the fleet sweep check
+    // every app at once: registry probes are the only scarce resource in a check, so bounding them
+    // directly bounds the whole host, and an app with no compiled services no longer waits behind one
+    // that has five. A per-call gate could only ever bound one app, so the sweep had to throttle apps
+    // instead — paying that cost even for apps that never touch a registry.
     private Task<IReadOnlyList<AppServiceArtifactProbe>> ProbeServiceArtifactsAsync(
         AppRecord app,
         RuntimeAppManifestSelection targetSelection,
@@ -4383,7 +4399,6 @@ internal sealed class CoreLifecycleService(
         CancellationToken cancellationToken)
     {
         var resolver = adapters.OfType<IImageDigestResolver>().FirstOrDefault();
-        using var gate = new SemaphoreSlim(MaxConcurrentArtifactProbes);
         return await Task.WhenAll(targetSelection.Services
             .Where(service => service.Image is not null)
             .OrderBy(service => service.Key, StringComparer.Ordinal)
@@ -4393,7 +4408,7 @@ internal sealed class CoreLifecycleService(
                 string? candidateDigest = null;
                 if (resolver is not null)
                 {
-                    await gate.WaitAsync(cancellationToken);
+                    await artifactProbeGate.WaitAsync(cancellationToken);
                     try
                     {
                         candidateDigest = await resolver.ResolveRemoteDigestAsync(service.Image!, cancellationToken);
@@ -4407,7 +4422,7 @@ internal sealed class CoreLifecycleService(
                     }
                     finally
                     {
-                        gate.Release();
+                        artifactProbeGate.Release();
                     }
                 }
 
@@ -4416,7 +4431,12 @@ internal sealed class CoreLifecycleService(
             .ToList());
     }
 
-    private const int MaxConcurrentArtifactProbes = 4;
+    // How many registry digest probes may be in flight across the whole host at once. Sized for the
+    // docker CLI probe that backs it today: the processes are network-bound rather than CPU-bound, so
+    // this is about not burst-spawning them, not about saturating cores.
+    private const int MaxConcurrentArtifactProbes = 8;
+
+    private readonly SemaphoreSlim artifactProbeGate = new(MaxConcurrentArtifactProbes, MaxConcurrentArtifactProbes);
 
     // A reviewed update moves the source pin when the target runs from the managed checkout: a
     // URL/feed install whose selected runtime is localCommand with a declared source repository —

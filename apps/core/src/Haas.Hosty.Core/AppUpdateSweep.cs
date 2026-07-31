@@ -35,12 +35,24 @@ internal sealed class AppUpdateSweepService(
     IHostApplicationLifetime? hostLifetime = null,
     // Live-event hub for the fleet run-state transitions that drive the "Check updates" spinner.
     // Optional only for unit fixtures; production DI always supplies it.
-    CoreEventHub? events = null)
+    CoreEventHub? events = null,
+    // Overridable only so tests can hit the per-app deadline without waiting it out.
+    TimeSpan? appCheckTimeout = null)
 {
-    // Bounded fan-out: each app check is feed/manifest fetches plus registry probes (which are
-    // themselves capped per app), so a handful in parallel saturates the useful concurrency without
-    // burst-spawning docker CLI processes on an image-heavy fleet.
-    private const int MaxConcurrentAppChecks = 3;
+    // Bounded fan-out over apps. This used to be 3, to keep an image-heavy fleet from burst-spawning
+    // docker CLI processes — but the per-app probe gate it was compensating for is now host-wide
+    // (CoreLifecycleService.artifactProbeGate), so the registry pressure is already bounded where it
+    // actually arises. Throttling apps on top of that only serialized the cheap half of a check: an
+    // app with no compiled services waited behind one with five, and an 8-app fleet took three waves
+    // to do work that is almost entirely network wait. What is left here is a guard against a very
+    // large fleet opening every feed/manifest connection at once.
+    private const int MaxConcurrentAppChecks = 16;
+
+    // Per-app ceiling for one check. The underlying operations carry deadlines tuned for their heavy
+    // cousins — the docker runner's for `pull`, git's for `clone` — so a dark registry or an
+    // unreachable git host could hold a sweep slot for many minutes while every client's "Check
+    // updates" spinner kept turning. A check that has not answered in this long is not going to.
+    private readonly TimeSpan perAppCheckTimeout = appCheckTimeout ?? TimeSpan.FromSeconds(90);
 
     private readonly object gate = new();
     private Task? running;
@@ -132,12 +144,31 @@ internal sealed class AppUpdateSweepService(
             await Task.WhenAll(targets.Select(async target =>
             {
                 await slots.WaitAsync(cancellationToken);
+                using var appTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                appTimeout.CancelAfter(perAppCheckTimeout);
                 try
                 {
                     // Success writes the availability projection inside the plan build itself.
-                    _ = await lifecycle.CreateUpdatePlanAsync(target.Id, new AppUpdatePlanRequest(), cancellationToken);
+                    _ = await lifecycle.CreateUpdatePlanAsync(target.Id, new AppUpdatePlanRequest(), appTimeout.Token);
                 }
-                catch (OperationCanceledException)
+                // Only this app's own deadline: a cancelled sweep (shutdown) falls through to the
+                // rethrow below, so a stopping host is never recorded as eight failed checks, and a
+                // cancellation from anywhere else is not relabelled a timeout it never hit.
+                catch (OperationCanceledException) when (appTimeout.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                {
+                    Interlocked.Increment(ref failures);
+                    var message = $"Update check timed out after {perAppCheckTimeout.TotalSeconds:0}s.";
+                    lifecycle.RecordUpdateCheckFailure(target.Id, message);
+                    logger.LogWarning("Update check for app {AppId} timed out after {Timeout}s.", target.Id, perAppCheckTimeout.TotalSeconds);
+                }
+                // Real shutdown is the only cancellation that ends the sweep. Rethrowing every
+                // OperationCanceledException was too broad: SweepAsync treats one as a stopping host
+                // and exits quietly, so a stray cancellation from anywhere inside a single app's check
+                // silently ended the whole fleet run with the remaining apps unverdicted — which is
+                // exactly what an HttpClient timeout (a TaskCanceledException, no deadline of ours
+                // fired) did until it was fixed at the source. One app's misbehaviour belongs in one
+                // app's verdict, so anything else falls through to the handler below.
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
                     throw;
                 }
