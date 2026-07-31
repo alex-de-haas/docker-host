@@ -235,8 +235,13 @@ Wi-Fi → SNTP → clock valid → HTTPS to Core
 - **SNTP is unauthenticated**, so whoever controls the network can set the
   device's clock — including winding it back until an expired or revoked
   certificate looks valid again. The device therefore refuses any time earlier
-  than its own firmware build timestamp, which costs a few lines and closes the
-  rollback entirely.
+  than its own firmware build timestamp. That costs a few lines and closes
+  rollback *below the build*, which is the cheap and worthwhile half. It does
+  **not** close rollback in general: an attacker who controls SNTP and holds the
+  private key of a certificate that expired *after* the build can still pick a
+  moment where that chain validates. The floor narrows the window to
+  "certificates that expired since this firmware was built"; it does not remove
+  it, and the residual case is recorded with the signing decision below.
 - **A plain-HTTP LAN origin needs no clock to connect**, because nothing is
   being validated. A device that cannot reach NTP still works against a LAN
   Core; only quiet hours and displayed timestamps degrade, and they say so
@@ -361,11 +366,12 @@ is unrecoverable. OTA exists for convenience, and its scope is set accordingly.
   storage schema are handled without losing the working image.
 - Firmware OTA is clearly separated from Hosty Core and runtime-app updates.
 
-**This is an attempt, not a commitment.** OTA is built first and judged on the
-result: if it turns out fragile, or if it costs flash the rest of the firmware
-needs, it is removed from `0.1.0` in favor of USB-C flashing alone and this
-plan is updated to say so. The decision point is the end of Phase 4, and it is
-recorded there either way rather than left implicit.
+**OTA is in scope for `0.1.0`**, as the product boundary above promises. If
+implementation shows it is not worth its cost — fragile, or eating flash the
+rest of the firmware needs — that is a scope change the user decides and this
+plan records before the deliverable is closed, exactly like any other. It is
+not a choice the implementation makes on its own, and the deliverable is not
+checkable by dropping it.
 
 **Why unsigned, and when to revisit.** Signing answers "who built this image",
 and against the three ways an image can be substituted it earns less here than
@@ -383,6 +389,16 @@ verification with a co-located key. Signing is revisited if the release process
 ever gains a key kept off CI, or if the device population grows past what a
 release note can reach; `SECURE_SIGNED_APP_NO_SECURE_BOOT` adds it in software,
 without touching an eFuse, so this decision is reversible by design.
+
+One residual case belongs here rather than in a footnote. Because HTTPS is the
+only authenticity boundary for firmware, and the device's clock comes from
+unauthenticated SNTP, an attacker who controls the device's network *and* holds
+the private key of a certificate for the release host that expired after this
+firmware was built can set the clock into that certificate's validity window
+and serve an arbitrary image. The build-timestamp floor narrows this to expired
+keys, not to none. It needs a compromised key to begin with, which is why it
+does not change the decision — but it is a third entry on the revisit list
+above, alongside a key kept off CI and a growing device population.
 
 ## Architecture
 
@@ -590,9 +606,7 @@ own PR under the platform version, never inside the firmware PR.
 - [ ] Implement battery guards for mutation and OTA operations and expose
   understandable degraded-power states.
 - [ ] Implement A/B firmware OTA from the compiled-in origin over validated
-  HTTPS, with health confirmation, downgrade policy, and rollback tests — then
-  decide whether it stays in `0.1.0` or gives way to USB-C flashing alone, and
-  record the decision here.
+  HTTPS, with health confirmation, downgrade policy, and rollback tests.
 - [ ] Meet and publish the runtime, heap, flash, and latency acceptance
   evidence against the Phase 0 targets.
 
@@ -653,9 +667,8 @@ runtime target.
 
 ### Phase 4 — Firmware OTA And Release Hardening
 
-Finish A/B OTA and rollback, decide whether OTA stays in `0.1.0`, then negative
-security tests, CI/release artifacts, physical-device acceptance, and final
-documentation.
+Finish A/B OTA and rollback, then negative security tests, CI/release
+artifacts, physical-device acceptance, and final documentation.
 
 Phases are not independently released, and the firmware ships as one PR
 covering `apps/shell-cardputer` and these documents. The Core and Shell
@@ -707,8 +720,9 @@ its own deliverable.
   drain, and the 48-hour figure is provisional until Phase 0 measures the floor.
 - **Review-required updates stay in Shell.** Routine updates are applied from
   the device; review-required ones are listed read-only with their reason.
-- **Firmware OTA is attempted, not committed.** It is built and judged on the
-  result at the end of Phase 4.
+- **Firmware OTA is in scope for `0.1.0`.** Dropping it later would be a scope
+  change the user decides and this plan records, not something implementation
+  settles by leaving a deliverable unchecked.
 
 Approved by the user on 2026-07-31, with the shared authorization dependency
 now covered by a Ready plan of its own.

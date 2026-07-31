@@ -74,8 +74,11 @@ POST /api/auth/device/token    → pending | approved(session id) | denied | exp
 `/device/code` is necessarily unauthenticated, which is worth two cheap
 precautions and not a subsystem:
 
-- a pending code expires in ten minutes, and the number of codes outstanding at
-  once is capped;
+- a pending code expires in ten minutes, and outstanding codes are capped **per
+  source address**, never globally. A single global cap would be the
+  availability hole rather than the fix: on an internet-reachable Core, one
+  caller could hold it full and block every legitimate enrollment while staying
+  well inside any memory budget;
 - `user_code` is short and free of ambiguous characters, and long enough that
   guessing one before it expires is not a strategy.
 
@@ -124,8 +127,15 @@ token. Revoking ends the credential immediately, including any event stream it
 currently holds open: an established SSE connection that outlives its
 credential would keep delivering to whoever holds the device.
 
-A `host.user` sees and manages their own credentials; a `host.admin` sees all
-of them.
+The same page **creates** a credential directly: a label, and the value shown
+once at creation and never again. This is the only source for
+`hosty login --token`, and it is also the path for a client that cannot run the
+device flow at all — a script in CI, a container without a console. A created
+credential is identical to an approved one in every other respect: same record,
+same kind discriminator, same lifetime, same revocation.
+
+A `host.user` sees, creates and manages their own credentials; a `host.admin`
+sees all of them.
 
 ### CLI
 
@@ -183,13 +193,13 @@ feature does not add one.
   unchanged.
 - [ ] Add the idle-only `device` lifetime to `AuthLifetimes` and Core settings.
 - [ ] Implement `/api/auth/device/code` and `/api/auth/device/token` with code
-  expiry, a cap on outstanding codes, a poll interval, and distinct
+  expiry, a per-source cap on outstanding codes, a poll interval, and distinct
   pending/approved/denied/expired answers.
 - [ ] Add the Shell approval surface, showing label and age, and requiring a
   deliberate approval action.
 - [ ] Add the Shell credential list with label, kind, approver, created,
-  last-seen, and revoke, scoped to own credentials for `host.user` and to all
-  for `host.admin`.
+  last-seen, and revoke, plus direct creation showing the value once, scoped to
+  own credentials for `host.user` and to all for `host.admin`.
 - [ ] Make revocation terminate an in-flight event stream, not only the next
   request.
 - [ ] Add `auth.device.approved`, `auth.device.denied`, and
@@ -239,8 +249,12 @@ separate features with their own PRs and do not ride along.
 ## Verification
 
 - unit tests for kind-based lifetime selection, idle sliding without an
-  absolute cap, code expiry, the outstanding-code cap, and the
-  pending/approved/denied/expired transitions;
+  absolute cap, code expiry, and the pending/approved/denied/expired
+  transitions;
+- a test that one source saturating its outstanding-code cap does not prevent
+  another source from starting an enrollment;
+- a test that a directly created credential authenticates identically to an
+  approved one, and that its value is not retrievable after creation;
 - a test that a mutation made with a device credential records its label in the
   audit `Details`, and one made from a browser does not;
 - a test that persisted state written before the new fields loads unchanged and
