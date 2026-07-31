@@ -101,7 +101,7 @@ one by typing an administrator password into the device.
 
 The mechanism Cardputer needs — Shell-approved device-code authorization
 producing an opaque, revocable access token held as a server-side record — is
-owned by [`access-tokens`](../access-tokens/plan.md), extracted on 2026-07-31
+owned by [`access-tokens`](../access-tokens/feature.md), extracted on 2026-07-31
 from the remote CLI direction in
 [`ai-agent-bridge`](../ai-agent-bridge/plan.md) because its consumers are not
 Cardputer-specific: remote CLI contexts, monitoring scripts, the MCP connector,
@@ -428,7 +428,7 @@ device-specific aggregate endpoint.
 ## Security Boundary
 
 **The device token is a full administrator credential.** Core has no scopes —
-there are two roles and nothing finer — and [`access-tokens`](../access-tokens/plan.md)
+there are two roles and nothing finer — and [`access-tokens`](../access-tokens/feature.md)
 deliberately defers adding them, so a device credential carries the entire role
 of the user who approved it. Cardputer is an administrator's device, so its
 token can do everything an administrator can do: install and remove apps, read
@@ -568,9 +568,10 @@ this plan is updated.
 This group's Core and Shell work ships in the owning authentication feature's
 own PR under the platform version, never inside the firmware PR.
 
-- [x] Write the device credential plan — [`access-tokens`](../access-tokens/plan.md),
-  Ready 2026-07-31: idle-only lifetime with no absolute expiry, revocation that
-  terminates an in-flight event stream, and a Shell credential list.
+- [x] The device credential exists — [`access-tokens`](../access-tokens/feature.md),
+  shipped 2026-07-31: idle-only lifetime with no absolute expiry, revocation that
+  terminates an in-flight event stream, and a Shell credential list. Note that it
+  carries the approver's full role; see [Security Boundary](#security-boundary).
 - [ ] Consume the shipped device-code flow and credential without adding
   Cardputer-only credentials, endpoints, or storage.
 - [ ] Implement the administrator-role check on `/api/auth/session`, warning at
@@ -694,7 +695,7 @@ its own deliverable.
   would have to derive a key and encrypt the token at rest to mean anything —
   gating the UI alone is bypassed by a flash dump.
 - **The credential carries its approver's full role, and no scopes exist.**
-  [`access-tokens`](../access-tokens/plan.md) defers scopes, so the narrow
+  [`access-tokens`](../access-tokens/feature.md) defers scopes, so the narrow
   operation list is a property of this firmware's interface and not of the
   token. The device warns when it was authorized by a `host.user`, because
   everything past reading needs an administrator.
@@ -738,7 +739,7 @@ Automated verification includes:
   threshold, power transitions, and storage migration;
 - Core contract tests for lifecycle/update idempotency and any compact read
   contract added by this work; device authorization, revocation and audit are
-  verified by [`access-tokens`](../access-tokens/plan.md), not restated here;
+  verified by [`access-tokens`](../access-tokens/feature.md), not restated here;
 - fixture tests at maximum supported app, notification, string, and log sizes;
 - deterministic firmware builds, dependency/license checks, partition and
   image-size gates, and documentation-index checks.

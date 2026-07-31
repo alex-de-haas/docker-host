@@ -27,15 +27,43 @@ internal sealed class CoreEventHub
     private readonly object gate = new();
     private readonly List<CoreEventSubscription> subscriptions = [];
 
-    public CoreEventSubscription Subscribe(string userId, bool isAdmin)
+    public CoreEventSubscription Subscribe(string userId, bool isAdmin, string? sessionId = null)
     {
-        var subscription = new CoreEventSubscription(userId, isAdmin, this);
+        var subscription = new CoreEventSubscription(userId, isAdmin, this, sessionId);
         lock (gate)
         {
             subscriptions.Add(subscription);
         }
 
         return subscription;
+    }
+
+    // End the streams a credential currently holds open, so revoking it stops delivery now rather than
+    // whenever the client next makes a request. Without this a revoked device keeps receiving
+    // notifications over an already-established connection for as long as it stays connected — which is
+    // the whole window a lost device is revoked to close.
+    //
+    // Completing the channel makes the reader's WaitToReadAsync return false, which is how the SSE loop
+    // already ends a stream; it does not need a second exit path.
+    public void CloseSession(string sessionId)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            return;
+        }
+
+        CoreEventSubscription[] targets;
+        lock (gate)
+        {
+            targets = subscriptions
+                .Where(s => string.Equals(s.SessionId, sessionId, StringComparison.Ordinal))
+                .ToArray();
+        }
+
+        foreach (var subscription in targets)
+        {
+            subscription.Complete();
+        }
     }
 
     // Domain events describe host-wide app state, which is admin-only surface (GET /api/apps filters
@@ -111,10 +139,11 @@ internal sealed class CoreEventSubscription : IDisposable
         new BoundedChannelOptions(64) { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true });
     private readonly CoreEventHub owner;
 
-    public CoreEventSubscription(string userId, bool isAdmin, CoreEventHub owner)
+    public CoreEventSubscription(string userId, bool isAdmin, CoreEventHub owner, string? sessionId = null)
     {
         UserId = userId;
         IsAdmin = isAdmin;
+        SessionId = sessionId;
         this.owner = owner;
     }
 
@@ -122,9 +151,17 @@ internal sealed class CoreEventSubscription : IDisposable
 
     public bool IsAdmin { get; }
 
+    // Which credential opened this stream, so revoking that credential can close it. Null when the
+    // caller did not supply one; such a subscription is simply never closed this way.
+    public string? SessionId { get; }
+
     public ChannelReader<CoreEventEnvelope> Reader => channel.Reader;
 
     public void TryWrite(CoreEventEnvelope envelope) => channel.Writer.TryWrite(envelope);
+
+    // End the stream without unregistering: the reader still owns the subscription and disposes it on
+    // its way out, which is what removes it from the hub.
+    public void Complete() => channel.Writer.TryComplete();
 
     public void Dispose()
     {

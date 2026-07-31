@@ -2,16 +2,18 @@
 
 import Link from "next/link";
 import { cn } from "@/lib/utils";
-import { getSettingsHref } from "../shell-routes";
+import { getSettingsHref, isNonAdminHostSettingsTab } from "../shell-routes";
 import type { CoreGlobalMount, CoreSettingsState, HostSettingsTab, SessionResponse } from "../types";
 import { PageHeader } from "../ui";
 import { SettingsCoreSection } from "./settings-core-section";
 import { SettingsIngressSection } from "./settings-ingress-section";
 import { SettingsMountsSection } from "./settings-mounts-section";
+import { SettingsTokensSection } from "./settings-tokens-section";
 import { UserManagementPanel } from "./user-management-page";
 
 const TABS: { id: HostSettingsTab; label: string }[] = [
   { id: "users", label: "Users" },
+  { id: "tokens", label: "Access tokens" },
   { id: "core", label: "Core" },
   { id: "ingress", label: "Ingress" },
   { id: "mounts", label: "Shared mounts" },
@@ -50,12 +52,23 @@ export function SettingsPage({
   onSaveMount: (input: { name: string; hostPath: string; mode?: string; description?: string | null }) => Promise<void>;
   onDeleteMount: (name: string, force?: boolean) => Promise<void>;
 }) {
+  // An ordinary user reaches this page for exactly one tab — their own access tokens — so the rest,
+  // which administer the host, are not offered to them.
+  const visibleTabs = canManageApps ? TABS : TABS.filter((tab) => isNonAdminHostSettingsTab(tab.id));
+
   return (
     <div className="space-y-6">
-      <PageHeader title="Settings" description="Users, Core behavior, public ingress, and host folders shared with apps." />
+      <PageHeader
+        title="Settings"
+        description={
+          canManageApps
+            ? "Users, Core behavior, public ingress, and host folders shared with apps."
+            : "Credentials for clients that cannot open a browser."
+        }
+      />
 
       <div className="flex gap-1 border-b">
-        {TABS.map((tab) => (
+        {visibleTabs.map((tab) => (
           <Link
             key={tab.id}
             href={getSettingsHref(tab.id)}
@@ -72,11 +85,17 @@ export function SettingsPage({
         ))}
       </div>
 
-      {activeTab === "users" && (
+      {activeTab === "tokens" && (
+        <SettingsTokensSection coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} />
+      )}
+
+      {/* Every remaining tab administers the host. Gating them here as well as in the tab strip keeps
+          a hand-typed ?tab= from rendering an admin surface for an ordinary user. */}
+      {canManageApps && activeTab === "users" && (
         <UserManagementPanel coreOrigin={coreOrigin} activeUser={activeUser} sendCsrfJson={sendCsrfJson} />
       )}
 
-      {activeTab === "core" && (
+      {canManageApps && activeTab === "core" && (
         <SettingsCoreSection
           settings={coreSettings}
           settingsError={coreSettingsError}
@@ -84,7 +103,7 @@ export function SettingsPage({
         />
       )}
 
-      {activeTab === "ingress" && (
+      {canManageApps && activeTab === "ingress" && (
         <SettingsIngressSection
           settings={coreSettings}
           settingsError={coreSettingsError}
@@ -92,7 +111,7 @@ export function SettingsPage({
         />
       )}
 
-      {activeTab === "mounts" && (
+      {canManageApps && activeTab === "mounts" && (
         <SettingsMountsSection
           globalMounts={globalMounts}
           canManageApps={canManageApps}

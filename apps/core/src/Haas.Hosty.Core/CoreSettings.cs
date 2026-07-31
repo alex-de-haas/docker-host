@@ -82,6 +82,9 @@ internal static class CoreAuthSettings
         new("HOSTY_AUTH_CLI_GRANT_HOURS", "CLI diagnostic grants", "Lifetime",
             "Fixed lifetime in hours of the short-lived grant minted by `hosty apps identity`. Applies to grants issued after the change.",
             x => x.CliGrantLifetime, (x, t) => x with { CliGrantLifetime = t }),
+        new("HOSTY_AUTH_ACCESS_TOKEN_IDLE_HOURS", "Access tokens", "Idle timeout",
+            "Access tokens (device consoles, CLI logins, scripts) expire after this many hours of inactivity and have no maximum lifetime — a credential that is being used keeps working. Applies immediately, including to existing tokens.",
+            x => x.AccessTokenIdle, (x, t) => x with { AccessTokenIdle = t }),
     ];
 
     private static readonly IReadOnlySet<string> Keys = All.Select(d => d.Key).ToHashSet(StringComparer.Ordinal);

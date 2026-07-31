@@ -17,7 +17,8 @@ internal sealed record AuthLifetimes(
     TimeSpan SystemGrantAbsolute,
     TimeSpan CliGrantLifetime,
     TimeSpan CoreSessionIdle,
-    TimeSpan CoreSessionAbsolute)
+    TimeSpan CoreSessionAbsolute,
+    TimeSpan AccessTokenIdle)
 {
     public static AuthLifetimes Defaults { get; } = new(
         AppGrantIdle: TimeSpan.FromDays(7),
@@ -26,7 +27,14 @@ internal sealed record AuthLifetimes(
         SystemGrantAbsolute: TimeSpan.FromDays(14),
         CliGrantLifetime: TimeSpan.FromHours(12),
         CoreSessionIdle: TimeSpan.FromDays(7),
-        CoreSessionAbsolute: TimeSpan.FromDays(30));
+        CoreSessionAbsolute: TimeSpan.FromDays(30),
+        AccessTokenIdle: TimeSpan.FromDays(90));
+
+    // The idle window for a credential, chosen by its kind. A browser session (null kind) keeps the
+    // window it always had; an access token gets its own, longer one, because a console in a pocket or a
+    // token in a keychain is not a browser tab and should not expire on a browser tab's schedule.
+    public TimeSpan IdleFor(string? kind)
+        => AccessTokenKinds.IsAccessToken(kind) ? AccessTokenIdle : CoreSessionIdle;
 
     public static AuthLifetimes FromEnvironment()
         => new(
@@ -36,7 +44,8 @@ internal sealed record AuthLifetimes(
             SystemGrantAbsolute: ReadHours("HOSTY_AUTH_SYSTEM_GRANT_ABSOLUTE_HOURS", Defaults.SystemGrantAbsolute),
             CliGrantLifetime: ReadHours("HOSTY_AUTH_CLI_GRANT_HOURS", Defaults.CliGrantLifetime),
             CoreSessionIdle: ReadHours("HOSTY_AUTH_CORE_SESSION_IDLE_HOURS", Defaults.CoreSessionIdle),
-            CoreSessionAbsolute: ReadHours("HOSTY_AUTH_CORE_SESSION_ABSOLUTE_HOURS", Defaults.CoreSessionAbsolute));
+            CoreSessionAbsolute: ReadHours("HOSTY_AUTH_CORE_SESSION_ABSOLUTE_HOURS", Defaults.CoreSessionAbsolute),
+            AccessTokenIdle: ReadHours("HOSTY_AUTH_ACCESS_TOKEN_IDLE_HOURS", Defaults.AccessTokenIdle));
 
     // Idle and absolute window for an app grant, chosen by whether the app is a system app and how the
     // grant was issued. CLI-diagnostic grants are probe credentials: a single short fixed lifetime.
@@ -83,4 +92,25 @@ internal static class AppGrantIssuedVia
 {
     public const string Code = "code";
     public const string CliDiagnostic = "cli-diagnostic";
+}
+
+// How a non-browser credential came to exist. Both kinds are the same record with the same powers and
+// the same revocation; the distinction exists so the credential list can say where one came from.
+//
+// A null kind is not in this set: that is a browser session, and every record written before access
+// tokens shipped has one.
+internal static class AccessTokenKinds
+{
+    // Approved through the device authorization flow by a user looking at Shell.
+    public const string Device = "device";
+
+    // Created directly in Shell, its value shown once. The only source for `hosty login --token`, and
+    // the path for a client that cannot run the device flow at all.
+    public const string Manual = "manual";
+
+    public static bool IsAccessToken(string? kind)
+        => string.Equals(kind, Device, StringComparison.Ordinal) ||
+            string.Equals(kind, Manual, StringComparison.Ordinal);
+
+    public static bool IsKnown(string? kind) => IsAccessToken(kind);
 }

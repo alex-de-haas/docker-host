@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  getAuthorizedShellView,
   getSettingsHref,
   getShellViewHref,
   getWorkspaceHref,
@@ -107,7 +108,7 @@ test("percent-encoded app ids survive the deep link", () => {
 test("builders and the parser agree", () => {
   assert.equal(readShellRoute(new URL(getShellViewHref("settings"), "http://x").pathname, params()).view, "settings");
 
-  for (const tab of ["users", "core", "ingress", "mounts"]) {
+  for (const tab of ["users", "tokens", "core", "ingress", "mounts"]) {
     const settingsUrl = new URL(getSettingsHref(tab), "http://x");
     assert.equal(readShellRoute(settingsUrl.pathname, settingsUrl.searchParams).settingsTab, tab);
   }
@@ -117,4 +118,18 @@ test("builders and the parser agree", () => {
     appId: "com.haas.demo-app",
     path: "/reports",
   });
+});
+
+// Settings is an administrator page except for one tab. Access tokens are per-user in Core — a
+// host.user creates, lists and revokes their own — so bouncing them to Available Apps would leave a
+// supported role with no way to manage its own credentials.
+test("an ordinary user reaches Settings only for the access-tokens tab", () => {
+  assert.equal(getAuthorizedShellView("settings", false, "tokens"), "settings");
+  assert.equal(getAuthorizedShellView("settings", false, "users"), "available-apps");
+  assert.equal(getAuthorizedShellView("settings", false, "core"), "available-apps");
+  assert.equal(getAuthorizedShellView("settings", false, undefined), "available-apps");
+
+  // An administrator is unaffected, and a non-admin view never depended on the tab at all.
+  assert.equal(getAuthorizedShellView("settings", true, "core"), "settings");
+  assert.equal(getAuthorizedShellView("available-apps", false, undefined), "available-apps");
 });

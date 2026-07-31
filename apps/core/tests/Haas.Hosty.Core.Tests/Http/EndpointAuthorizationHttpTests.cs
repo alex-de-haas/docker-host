@@ -36,6 +36,12 @@ public sealed class EndpointAuthorizationHttpTests
         // OAuth/OIDC callback: the IdP redirects an unauthenticated user here with a code+state, so
         // it is public by construction — it establishes the session rather than requiring one.
         "/api/auth/callback/",
+        // Device authorization: the caller has no credential yet, which is the entire point. Only the
+        // two flow endpoints are public — the approval and credential routes under
+        // /api/auth/device/requests and /api/auth/credentials are session-gated and must stay in the
+        // loop above, so this lists them exactly rather than opening the /api/auth/device/ prefix.
+        "/api/auth/device/code",
+        "/api/auth/device/token",
     ];
 
     // Browser-navigation endpoints: still protected, but they DENY an anonymous caller by redirecting
