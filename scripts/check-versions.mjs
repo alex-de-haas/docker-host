@@ -40,6 +40,14 @@ function capture(text, pattern) {
 
 const platformVersion = capture(read("Directory.Build.props"), /<Version>([^<]+)<\/Version>/);
 
+// Cardputer is a native firmware artifact, not an npm workspace or runtime app. Its single version
+// source is consumed directly by ESP-IDF's PROJECT_VER and validated here so malformed firmware
+// versions fail before a release image is built.
+const cardputerVersion = read("apps/shell-cardputer/version.txt").trim();
+if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(cardputerVersion)) {
+  problems.push(`Cardputer firmware version is not semantic: ${cardputerVersion || "(empty)"}`);
+}
+
 // demo-app: manifest ↔ package ↔ the two baked copies (Dockerfile ENV + the config default). The
 // feeds.json points its `main` feed at the manifest on the main branch. The version remains
 // informational and ships with the manifest, so there is no per-release feed advertisement to drift.

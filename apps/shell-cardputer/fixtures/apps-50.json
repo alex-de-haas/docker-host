@@ -1,0 +1,4359 @@
+{
+  "apps": [
+    {
+      "id": "com.example.app-01",
+      "displayName": "Пример приложения",
+      "description": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "version": "1.0.1",
+      "kind": "runtime",
+      "system": true,
+      "source": "/opt/hosty/apps/app-01",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3101",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa01",
+          "resolvedFromRef": "ghcr.io/example/app-01:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 1
+          },
+          {
+            "ignored": false,
+            "value": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-02",
+      "displayName": "Example App 02",
+      "description": "Representative application 02",
+      "version": "1.0.2",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-02",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "future-state",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3102",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa02",
+          "resolvedFromRef": "ghcr.io/example/app-02:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 2
+          },
+          {
+            "ignored": false,
+            "value": 3
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-03",
+      "displayName": "Example App 03",
+      "description": "Representative application 03",
+      "version": "1.0.3",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-03",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3103",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa03",
+          "resolvedFromRef": "ghcr.io/example/app-03:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": true,
+        "requiresReview": false,
+        "planDigest": "sha256:plan-03",
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 3
+          },
+          {
+            "ignored": false,
+            "value": 4
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-04",
+      "displayName": "Example App 04",
+      "description": "Representative application 04",
+      "version": "1.0.4",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-04",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3104",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa04",
+          "resolvedFromRef": "ghcr.io/example/app-04:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": true,
+        "requiresReview": true,
+        "planDigest": "sha256:plan-04",
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 4
+          },
+          {
+            "ignored": false,
+            "value": 5
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-05",
+      "displayName": "Example App 05",
+      "description": "Representative application 05",
+      "version": "1.0.5",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-05",
+      "selectedRuntime": "docker",
+      "autostart": false,
+      "operationStatus": "idle",
+      "runtimeState": "stopped",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3105",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa05",
+          "resolvedFromRef": "ghcr.io/example/app-05:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 5
+          },
+          {
+            "ignored": false,
+            "value": 6
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-06",
+      "displayName": "Example App 06",
+      "description": "Representative application 06",
+      "version": "1.0.6",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-06",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "updating",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3106",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa06",
+          "resolvedFromRef": "ghcr.io/example/app-06:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 6
+          },
+          {
+            "ignored": false,
+            "value": 7
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-07",
+      "displayName": "Example App 07",
+      "description": "Representative application 07",
+      "version": "1.0.7",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-07",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "future-operation",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3107",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa07",
+          "resolvedFromRef": "ghcr.io/example/app-07:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 7
+          },
+          {
+            "ignored": false,
+            "value": 8
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-08",
+      "displayName": "Example App 08",
+      "description": "Representative application 08",
+      "version": "1.0.8",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-08",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "failed",
+      "lastOperation": "start",
+      "lastError": "The representative app failed to start because its test dependency is unavailable.",
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3108",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa08",
+          "resolvedFromRef": "ghcr.io/example/app-08:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 8
+          },
+          {
+            "ignored": false,
+            "value": 9
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-09",
+      "displayName": "Example App 09",
+      "description": "Representative application 09",
+      "version": "1.0.9",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-09",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3109",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa09",
+          "resolvedFromRef": "ghcr.io/example/app-09:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 9
+          },
+          {
+            "ignored": false,
+            "value": 10
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-10",
+      "displayName": "Example App 10",
+      "description": "Representative application 10",
+      "version": "1.1.0",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-10",
+      "selectedRuntime": "docker",
+      "autostart": false,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3110",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa10",
+          "resolvedFromRef": "ghcr.io/example/app-10:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 10
+          },
+          {
+            "ignored": false,
+            "value": 11
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-11",
+      "displayName": "Example App 11",
+      "description": "Representative application 11",
+      "version": "1.1.1",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-11",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3111",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa11",
+          "resolvedFromRef": "ghcr.io/example/app-11:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 11
+          },
+          {
+            "ignored": false,
+            "value": 12
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-12",
+      "displayName": "Example App 12",
+      "description": "Representative application 12",
+      "version": "1.1.2",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-12",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3112",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa12",
+          "resolvedFromRef": "ghcr.io/example/app-12:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 12
+          },
+          {
+            "ignored": false,
+            "value": 13
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-13",
+      "displayName": "Example App 13",
+      "description": "Representative application 13",
+      "version": "1.1.3",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-13",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3113",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa13",
+          "resolvedFromRef": "ghcr.io/example/app-13:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 13
+          },
+          {
+            "ignored": false,
+            "value": 14
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-14",
+      "displayName": "Example App 14",
+      "description": "Representative application 14",
+      "version": "1.1.4",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-14",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3114",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa14",
+          "resolvedFromRef": "ghcr.io/example/app-14:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 14
+          },
+          {
+            "ignored": false,
+            "value": 15
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-15",
+      "displayName": "Example App 15",
+      "description": "Representative application 15",
+      "version": "1.1.5",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-15",
+      "selectedRuntime": "docker",
+      "autostart": false,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3115",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa15",
+          "resolvedFromRef": "ghcr.io/example/app-15:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 15
+          },
+          {
+            "ignored": false,
+            "value": 16
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-16",
+      "displayName": "Example App 16",
+      "description": "Representative application 16",
+      "version": "1.1.6",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-16",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3116",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa16",
+          "resolvedFromRef": "ghcr.io/example/app-16:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 16
+          },
+          {
+            "ignored": false,
+            "value": 17
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-17",
+      "displayName": "Example App 17",
+      "description": "Representative application 17",
+      "version": "1.1.7",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-17",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3117",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa17",
+          "resolvedFromRef": "ghcr.io/example/app-17:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 17
+          },
+          {
+            "ignored": false,
+            "value": 18
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-18",
+      "displayName": "Example App 18",
+      "description": "Representative application 18",
+      "version": "1.1.8",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-18",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3118",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa18",
+          "resolvedFromRef": "ghcr.io/example/app-18:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 18
+          },
+          {
+            "ignored": false,
+            "value": 19
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-19",
+      "displayName": "Example App 19",
+      "description": "Representative application 19",
+      "version": "1.1.9",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-19",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3119",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa19",
+          "resolvedFromRef": "ghcr.io/example/app-19:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 19
+          },
+          {
+            "ignored": false,
+            "value": 20
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-20",
+      "displayName": "Example App 20",
+      "description": "Representative application 20",
+      "version": "1.2.0",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-20",
+      "selectedRuntime": "docker",
+      "autostart": false,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3120",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa20",
+          "resolvedFromRef": "ghcr.io/example/app-20:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 20
+          },
+          {
+            "ignored": false,
+            "value": 21
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-21",
+      "displayName": "Example App 21",
+      "description": "Representative application 21",
+      "version": "1.2.1",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-21",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3121",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa21",
+          "resolvedFromRef": "ghcr.io/example/app-21:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 21
+          },
+          {
+            "ignored": false,
+            "value": 22
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-22",
+      "displayName": "Example App 22",
+      "description": "Representative application 22",
+      "version": "1.2.2",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-22",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3122",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa22",
+          "resolvedFromRef": "ghcr.io/example/app-22:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 22
+          },
+          {
+            "ignored": false,
+            "value": 23
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-23",
+      "displayName": "Example App 23",
+      "description": "Representative application 23",
+      "version": "1.2.3",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-23",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3123",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa23",
+          "resolvedFromRef": "ghcr.io/example/app-23:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 23
+          },
+          {
+            "ignored": false,
+            "value": 24
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-24",
+      "displayName": "Example App 24",
+      "description": "Representative application 24",
+      "version": "1.2.4",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-24",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3124",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa24",
+          "resolvedFromRef": "ghcr.io/example/app-24:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 24
+          },
+          {
+            "ignored": false,
+            "value": 25
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-25",
+      "displayName": "Example App 25",
+      "description": "Representative application 25",
+      "version": "1.2.5",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-25",
+      "selectedRuntime": "docker",
+      "autostart": false,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3125",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa25",
+          "resolvedFromRef": "ghcr.io/example/app-25:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 25
+          },
+          {
+            "ignored": false,
+            "value": 26
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-26",
+      "displayName": "Example App 26",
+      "description": "Representative application 26",
+      "version": "1.2.6",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-26",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3126",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa26",
+          "resolvedFromRef": "ghcr.io/example/app-26:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 26
+          },
+          {
+            "ignored": false,
+            "value": 27
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-27",
+      "displayName": "Example App 27",
+      "description": "Representative application 27",
+      "version": "1.2.7",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-27",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3127",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa27",
+          "resolvedFromRef": "ghcr.io/example/app-27:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 27
+          },
+          {
+            "ignored": false,
+            "value": 28
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-28",
+      "displayName": "Example App 28",
+      "description": "Representative application 28",
+      "version": "1.2.8",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-28",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3128",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa28",
+          "resolvedFromRef": "ghcr.io/example/app-28:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 28
+          },
+          {
+            "ignored": false,
+            "value": 29
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-29",
+      "displayName": "Example App 29",
+      "description": "Representative application 29",
+      "version": "1.2.9",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-29",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3129",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa29",
+          "resolvedFromRef": "ghcr.io/example/app-29:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 29
+          },
+          {
+            "ignored": false,
+            "value": 30
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-30",
+      "displayName": "Example App 30",
+      "description": "Representative application 30",
+      "version": "1.3.0",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-30",
+      "selectedRuntime": "docker",
+      "autostart": false,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3130",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa30",
+          "resolvedFromRef": "ghcr.io/example/app-30:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 30
+          },
+          {
+            "ignored": false,
+            "value": 31
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-31",
+      "displayName": "Example App 31",
+      "description": "Representative application 31",
+      "version": "1.3.1",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-31",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3131",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa31",
+          "resolvedFromRef": "ghcr.io/example/app-31:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 31
+          },
+          {
+            "ignored": false,
+            "value": 32
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-32",
+      "displayName": "Example App 32",
+      "description": "Representative application 32",
+      "version": "1.3.2",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-32",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3132",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa32",
+          "resolvedFromRef": "ghcr.io/example/app-32:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 32
+          },
+          {
+            "ignored": false,
+            "value": 33
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-33",
+      "displayName": "Example App 33",
+      "description": "Representative application 33",
+      "version": "1.3.3",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-33",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3133",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa33",
+          "resolvedFromRef": "ghcr.io/example/app-33:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 33
+          },
+          {
+            "ignored": false,
+            "value": 34
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-34",
+      "displayName": "Example App 34",
+      "description": "Representative application 34",
+      "version": "1.3.4",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-34",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3134",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa34",
+          "resolvedFromRef": "ghcr.io/example/app-34:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 34
+          },
+          {
+            "ignored": false,
+            "value": 35
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-35",
+      "displayName": "Example App 35",
+      "description": "Representative application 35",
+      "version": "1.3.5",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-35",
+      "selectedRuntime": "docker",
+      "autostart": false,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3135",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa35",
+          "resolvedFromRef": "ghcr.io/example/app-35:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 35
+          },
+          {
+            "ignored": false,
+            "value": 36
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-36",
+      "displayName": "Example App 36",
+      "description": "Representative application 36",
+      "version": "1.3.6",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-36",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3136",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa36",
+          "resolvedFromRef": "ghcr.io/example/app-36:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 36
+          },
+          {
+            "ignored": false,
+            "value": 37
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-37",
+      "displayName": "Example App 37",
+      "description": "Representative application 37",
+      "version": "1.3.7",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-37",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3137",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa37",
+          "resolvedFromRef": "ghcr.io/example/app-37:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 37
+          },
+          {
+            "ignored": false,
+            "value": 38
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-38",
+      "displayName": "Example App 38",
+      "description": "Representative application 38",
+      "version": "1.3.8",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-38",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3138",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa38",
+          "resolvedFromRef": "ghcr.io/example/app-38:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 38
+          },
+          {
+            "ignored": false,
+            "value": 39
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-39",
+      "displayName": "Example App 39",
+      "description": "Representative application 39",
+      "version": "1.3.9",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-39",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3139",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa39",
+          "resolvedFromRef": "ghcr.io/example/app-39:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 39
+          },
+          {
+            "ignored": false,
+            "value": 40
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-40",
+      "displayName": "Example App 40",
+      "description": "Representative application 40",
+      "version": "1.4.0",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-40",
+      "selectedRuntime": "docker",
+      "autostart": false,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3140",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa40",
+          "resolvedFromRef": "ghcr.io/example/app-40:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 40
+          },
+          {
+            "ignored": false,
+            "value": 41
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-41",
+      "displayName": "Example App 41",
+      "description": "Representative application 41",
+      "version": "1.4.1",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-41",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3141",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa41",
+          "resolvedFromRef": "ghcr.io/example/app-41:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 41
+          },
+          {
+            "ignored": false,
+            "value": 42
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-42",
+      "displayName": "Example App 42",
+      "description": "Representative application 42",
+      "version": "1.4.2",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-42",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3142",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa42",
+          "resolvedFromRef": "ghcr.io/example/app-42:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 42
+          },
+          {
+            "ignored": false,
+            "value": 43
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-43",
+      "displayName": "Example App 43",
+      "description": "Representative application 43",
+      "version": "1.4.3",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-43",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3143",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa43",
+          "resolvedFromRef": "ghcr.io/example/app-43:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 43
+          },
+          {
+            "ignored": false,
+            "value": 44
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-44",
+      "displayName": "Example App 44",
+      "description": "Representative application 44",
+      "version": "1.4.4",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-44",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3144",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa44",
+          "resolvedFromRef": "ghcr.io/example/app-44:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 44
+          },
+          {
+            "ignored": false,
+            "value": 45
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-45",
+      "displayName": "Example App 45",
+      "description": "Representative application 45",
+      "version": "1.4.5",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-45",
+      "selectedRuntime": "docker",
+      "autostart": false,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3145",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa45",
+          "resolvedFromRef": "ghcr.io/example/app-45:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 45
+          },
+          {
+            "ignored": false,
+            "value": 46
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-46",
+      "displayName": "Example App 46",
+      "description": "Representative application 46",
+      "version": "1.4.6",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-46",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3146",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa46",
+          "resolvedFromRef": "ghcr.io/example/app-46:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 46
+          },
+          {
+            "ignored": false,
+            "value": 47
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-47",
+      "displayName": "Example App 47",
+      "description": "Representative application 47",
+      "version": "1.4.7",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-47",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3147",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa47",
+          "resolvedFromRef": "ghcr.io/example/app-47:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 47
+          },
+          {
+            "ignored": false,
+            "value": 48
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-48",
+      "displayName": "Example App 48",
+      "description": "Representative application 48",
+      "version": "1.4.8",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-48",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3148",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa48",
+          "resolvedFromRef": "ghcr.io/example/app-48:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 48
+          },
+          {
+            "ignored": false,
+            "value": 49
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-49",
+      "displayName": "Example App 49",
+      "description": "Representative application 49",
+      "version": "1.4.9",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-49",
+      "selectedRuntime": "docker",
+      "autostart": true,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3149",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa49",
+          "resolvedFromRef": "ghcr.io/example/app-49:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 49
+          },
+          {
+            "ignored": false,
+            "value": 50
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.example.app-50",
+      "displayName": "Example App 50",
+      "description": "Representative application 50",
+      "version": "1.5.0",
+      "kind": "runtime",
+      "system": false,
+      "source": "/opt/hosty/apps/app-50",
+      "selectedRuntime": "docker",
+      "autostart": false,
+      "operationStatus": "idle",
+      "runtimeState": "running",
+      "lastOperation": null,
+      "lastError": null,
+      "capabilities": [
+        "logs",
+        "backup"
+      ],
+      "settings": [
+        {
+          "key": "EXAMPLE_URL",
+          "type": "url",
+          "value": null,
+          "secret": false,
+          "required": false,
+          "label": "Example URL"
+        },
+        {
+          "key": "EXAMPLE_SECRET",
+          "type": "string",
+          "value": null,
+          "secret": true,
+          "hasValue": true,
+          "required": true,
+          "label": "Example secret"
+        }
+      ],
+      "endpoints": [
+        {
+          "key": "web",
+          "protocol": "http",
+          "url": "http://127.0.0.1:3150",
+          "public": true,
+          "availability": "running"
+        }
+      ],
+      "runtimeProfiles": [
+        {
+          "key": "docker",
+          "type": "docker",
+          "label": "Docker",
+          "selected": true,
+          "development": false
+        }
+      ],
+      "navigation": [],
+      "mounts": [],
+      "updatePolicy": "pinned",
+      "artifactLocks": {
+        "main": {
+          "kind": "image",
+          "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa50",
+          "resolvedFromRef": "ghcr.io/example/app-50:latest",
+          "resolvedAt": "2026-07-31T12:00:00Z"
+        }
+      },
+      "live": false,
+      "updateCheck": {
+        "updateAvailable": false,
+        "requiresReview": false,
+        "planDigest": null,
+        "checkedAt": "2026-07-31T12:00:00Z",
+        "error": null
+      },
+      "futureObject": {
+        "nested": [
+          {
+            "ignored": true,
+            "value": 50
+          },
+          {
+            "ignored": false,
+            "value": 51
+          }
+        ]
+      }
+    }
+  ],
+  "updateCheck": {
+    "running": false,
+    "lastCompletedAt": "2026-07-31T12:00:00Z"
+  }
+}
+

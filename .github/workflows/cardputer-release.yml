@@ -1,0 +1,76 @@
+name: Cardputer Firmware Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/shell-cardputer/**"
+      - ".github/workflows/cardputer-release.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish cardputer-dev firmware
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    concurrency:
+      group: cardputer-dev-release
+      cancel-in-progress: false
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Run bounded host tests
+        run: apps/shell-cardputer/tools/host-test.sh
+
+      - name: Build ESP32-S3 firmware
+        run: apps/shell-cardputer/tools/docker-build.sh
+
+      - name: Prepare release assets
+        run: |
+          set -euo pipefail
+          image=apps/shell-cardputer/build/hosty_cardputer_shell.bin
+          maximum=$((0x3d0000))
+          actual=$(stat --format=%s "$image")
+          if (( actual > maximum )); then
+            echo "Firmware is ${actual} bytes; OTA slot is ${maximum} bytes" >&2
+            exit 1
+          fi
+          mkdir -p dist
+          cp "$image" dist/hosty-cardputer.bin
+          cp apps/shell-cardputer/build/bootloader/bootloader.bin dist/hosty-cardputer-bootloader.bin
+          cp apps/shell-cardputer/build/partition_table/partition-table.bin dist/hosty-cardputer-partition-table.bin
+          cp apps/shell-cardputer/build/ota_data_initial.bin dist/hosty-cardputer-ota-data.bin
+          (
+            cd dist
+            sha256sum hosty-cardputer*.bin > SHA256SUMS
+          )
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: "dist/hosty-cardputer*.bin"
+
+      - name: Publish rolling prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git tag --force cardputer-dev "$GITHUB_SHA"
+          git push --force origin refs/tags/cardputer-dev
+          if gh release view cardputer-dev >/dev/null 2>&1; then
+            gh release upload cardputer-dev dist/* --clobber
+            gh release edit cardputer-dev --prerelease --title "Hosty Cardputer development firmware"
+          else
+            gh release create cardputer-dev dist/* \
+              --prerelease \
+              --title "Hosty Cardputer development firmware" \
+              --notes "Rolling M5Stack Cardputer ADV development firmware from main."
+          fi

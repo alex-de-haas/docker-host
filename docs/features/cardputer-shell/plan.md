@@ -1,6 +1,6 @@
 # Cardputer Operator Shell
 
-Status: Ready
+Status: In Progress
 Created: 2026-07-31
 Updated: 2026-07-31
 
@@ -291,8 +291,8 @@ The keyboard-first interface has four top-level views:
 
 All mutating actions provide immediate in-flight feedback and an explicit
 success or failure result. System-app start, stop, restart, and autostart
-controls remain absent, matching the normal Shell; supported system-app updates
-and Core operations use stronger confirmation. Routine updates may use a single
+controls remain absent from this constrained device surface; supported
+system-app updates and Core operations use stronger confirmation. Routine updates may use a single
 confirmation for update-all. Displaying a full review-required update plan on a
 240 x 135 screen — every reported change, read and understood before a
 deliberate confirmation — is the highest-cost, highest-consequence surface in
@@ -419,11 +419,21 @@ Tasks communicate through fixed-capacity queues. Network parsing is streaming,
 and the normalized state retains only fields needed by the product boundary.
 Secrets never enter logs, crash reports, UI snapshots, or generic state events.
 
-The first feasibility spike measures streaming consumption of the existing
-`/api/apps` response with a large fixture. A compact Core projection is added
-only if measured peak heap, latency, or transfer size cannot meet the budgets
-defined by the spike. Pagination and field selection are preferred over a
-device-specific aggregate endpoint.
+**Measured 2026-07-31, and the answer is that no compact Core projection is
+needed.** `GET /control/v1/apps` on a real host returned 31,903 bytes for 8
+installed apps — about 4 KB each, the largest 7,480 bytes. An app record carries
+37 top-level fields; this console reads ten of them, which are **8.4% of the
+bytes**. The rest is dominated by exactly what a pocket console never shows:
+`settings` 25.1%, `catalogMetadata` 14.1%, `navigation` 10.1%, `artifactLocks`
+6.9%, `endpoints` 6.7%.
+
+Skipping those costs a streaming scanner nothing, so peak heap is decoupled from
+how busy the host is and the existing contract fits. Transfer size is the only
+argument left — 209 KB per full resync on a 50-app host, repeated on every
+reconnect — and it is a radio-time question to settle against the on-device
+measurement rather than a reason to add a contract now. Pagination and field
+selection remain preferred over a device-specific aggregate endpoint if it ever
+does become one.
 
 ## Security Boundary
 
@@ -516,9 +526,11 @@ decides.
 - the deep-sleep floor run above;
 - observed standby runtime in two configurations — event stream held open
   against Core's 20-second keep-alive, versus the stream closed and
-  `/api/notifications` polled on a slower cadence. A battery device may do
-  better with periodic polling than with a connection it must keep waking to
-  service, and if it does, Deep standby loses most of its reason to exist.
+  `/api/notifications` polled on a slower cadence. **On data this is already
+  decided and not in polling's favour**: the stream costs 5,400 bytes/h against
+  23,040 for the best polling variant, and arrives with no latency. What remains
+  is whether 180 short radio wake-ups beat 60 longer ones in current, which is
+  the only thing that could still overturn it.
 
 ### The runtime target is provisional
 
@@ -548,20 +560,32 @@ this plan is updated.
 - [ ] Record the exact Cardputer ADV board revision, schematic assumptions,
   GPIO ownership, flash layout, whether a battery-backed RTC is present, and
   measured baseline behavior.
-- [ ] Define and check in representative Core fixtures: at least 50 apps, large
-  optional fields, unknown enum values, and long notification/log data, with the
-  response sizes stated so the heap budget is checkable against a number.
+- [x] Define and check in representative Core fixtures — `apps/shell-cardputer/fixtures/`,
+  2026-07-31: 50 apps (213,748 bytes), the same 50 with every optional field
+  inflated (533,198), unknown enum values, long notification bodies and a
+  500-line log tail, all deterministic and generated from the field distribution
+  measured on a real host.
 - [ ] Prototype TLS with SNTP-set time, streaming app parsing, SSE reconnect,
   screen power control, keyboard wake, BMI270 polling, and speaker notification
   on real hardware.
-- [ ] Compare standby runtime with the event stream held open against periodic
-  `/api/notifications` polling, and choose the standby transport from the
-  result.
-- [ ] Establish heap, image-size, latency, and runtime budgets, replace the
-  provisional runtime target with a measured one, and record the go/no-go.
-- [ ] Decide from measurements whether a generic compact/paginated Core read
-  contract is required; if required, document and implement it in the owning
-  Core feature.
+- [x] Compare the event stream held open against periodic polling **on data** —
+  the event stream is cheapest in bytes (5,400/h against 23,040/h for the best
+  polling variant) *and* has no notification latency, which is the opposite of
+  what this plan assumed. The comparison **in current** is still open below.
+- [ ] Establish the runtime budget, replace the provisional runtime target with a
+  measured one, and record the go/no-go.
+- [x] Establish heap and image-size budgets: streaming parse peaks at a **flat
+  19,596 bytes** whether the response is 4 KB or 533 KB, while buffering the
+  bloated fixture needs 101.7% of all the SRAM the chip has. Streaming is not an
+  optimization here, it is the only option. The production 8 MB A/B layout leaves 3.8125 MiB
+  per slot; the current complete ESP-IDF 5.5.4 build is 1,306,288 bytes and leaves
+  67% of either slot free.
+- [x] Decide whether a generic compact/paginated Core read contract is required —
+  **it is not**, on heap grounds: the console reads 10 of 37 fields, 8.4% of the
+  payload, and a scanner skips the rest at no cost. Transfer size is the argument
+  that survives (209 KB per full resync on a 50-app host, repeated on every
+  reconnect); it is a radio-time question and is left to the on-device
+  measurement rather than answered by assumption.
 
 ### Shared Authorization Integration
 
@@ -572,9 +596,9 @@ own PR under the platform version, never inside the firmware PR.
   shipped 2026-07-31: idle-only lifetime with no absolute expiry, revocation that
   terminates an in-flight event stream, and a Shell credential list. Note that it
   carries the approver's full role; see [Security Boundary](#security-boundary).
-- [ ] Consume the shipped device-code flow and credential without adding
+- [x] Consume the shipped device-code flow and credential without adding
   Cardputer-only credentials, endpoints, or storage.
-- [ ] Implement the administrator-role check on `/api/auth/session`, warning at
+- [x] Implement the administrator-role check on `/api/auth/session`, warning at
   approval time and after enrollment when the device was authorized by a
   `host.user`.
 - [ ] Verify against the shipped implementation that revoking this device's
@@ -582,10 +606,10 @@ own PR under the platform version, never inside the firmware PR.
 
 ### Firmware Foundation
 
-- [ ] Add reproducible ESP-IDF build tooling and the `apps/shell-cardputer`
+- [x] Add reproducible ESP-IDF build tooling and the `apps/shell-cardputer`
   source tree, with pinned toolchain/dependencies and a documented USB-C flash
   path.
-- [ ] Add a host-side render harness so the four views can be developed and
+- [x] Add a host-side render harness so the four views can be developed and
   reviewed without hardware in the loop.
 - [ ] Implement bounded configuration storage, Wi-Fi provisioning, SNTP time
   with the build-timestamp floor and the clock-unset state, time zone, endpoint
@@ -599,12 +623,12 @@ own PR under the platform version, never inside the firmware PR.
 
 ### Power, Alerts, And Recovery
 
-- [ ] Implement Active, Online standby, and optional Deep standby transitions,
+- [x] Implement Active, Online standby, and optional Deep standby transitions,
   including display sleep, GPIO38 control, Wi-Fi power management, keyboard
   wake, and motion wake as a threshold plus cooldown that can be switched off.
-- [ ] Implement bounded notification delivery, priority/quiet-hours filtering,
+- [x] Implement bounded notification delivery, priority/quiet-hours filtering,
   sound rate limiting, and screen-wake policy.
-- [ ] Implement battery guards for mutation and OTA operations and expose
+- [x] Implement battery guards for mutation and OTA operations and expose
   understandable degraded-power states.
 - [ ] Implement A/B firmware OTA from the compiled-in origin over validated
   HTTPS, with health confirmation, downgrade policy, and rollback tests.
@@ -613,19 +637,19 @@ own PR under the platform version, never inside the firmware PR.
 
 ### Release And Documentation
 
-- [ ] Add Cardputer firmware to the repository release model and versioning
+- [x] Add Cardputer firmware to the repository release model and versioning
   instructions as an independently versioned native client, initially `0.1.0`,
   recording its version in one file under `apps/shell-cardputer` that
   `scripts/check-versions.mjs` reads.
-- [ ] Add build, artifact checksum, build provenance, USB-C flashing, recovery,
+- [x] Add build, artifact checksum, build provenance, USB-C flashing, recovery,
   onboarding, revocation-on-loss, operation, and troubleshooting documentation,
   written for an owner who is not this repository's author.
-- [ ] State the accepted exposures together in `apps/shell-cardputer/README.md`,
+- [x] State the accepted exposures together in `apps/shell-cardputer/README.md`,
   in plain words and not as a footnote: whoever holds the device has the
   owner's Hosty access until the token is revoked, and on a plain-HTTP LAN
   origin so does anyone on that network — which on WPA2-PSK means anyone who
   knows the Wi-Fi password.
-- [ ] Add CI for firmware build, tests, size budgets, and documentation checks.
+- [x] Add CI for firmware build, tests, size budgets, and documentation checks.
 - [ ] Exercise a release candidate on physical Cardputer ADV hardware against a
   Core-managed Hosty installation and retain the verification results.
 - [ ] Create `feature.md` from shipped behavior, remove this completed plan, and
@@ -645,6 +669,20 @@ project**, so it runs first and separately, as a throwaway spike rather than
 production code. It needs no device credential: a development build carries a
 session id supplied over the serial console, which is exactly why it can start
 before the shared authorization work exists.
+
+**Partly done, 2026-07-31.** Everything that is pure software is measured, and
+the numbers are recorded in the deliverables above: real payload sizes from a
+live host, the checked-in fixtures, streaming-versus-buffered parse cost, the
+8 MB layout against a real image, and the transport comparison's data half. Two
+results matter more than the rest — buffering a large response cannot fit in
+this chip at all, and the event stream beats polling on both bytes and latency,
+which is the opposite of what this plan assumed.
+
+**No go/no-go is declared**, because the number that decides it is the board's
+deep-sleep current floor, and that needs an M5Stack Cardputer ADV in hand.
+Everything still outstanding in this phase is hardware-bound: the floor, the
+battery-backed RTC question, the on-device prototypes, and the standby
+comparison measured in current rather than in bytes.
 
 ### Phase 1 — Secure Foundation
 
@@ -768,6 +806,22 @@ Physical-device verification includes:
 The implementation PR records exact commands and results. At minimum it runs
 the repository Core build/tests when Core contracts change, the pinned ESP-IDF
 build and firmware tests, and `node scripts/docs-index.mjs --check`.
+
+### Implementation evidence — 2026-07-31
+
+- `apps/shell-cardputer/tools/host-test.sh` passes the bounded parser, endpoint,
+  enrollment, state, power, collection-limit, and rendering tests.
+- `apps/shell-cardputer/tools/render-harness.sh` renders all four 240 x 135 views
+  deterministically for visual review.
+- `apps/shell-cardputer/tools/docker-build.sh` completes with ESP-IDF 5.5.4,
+  M5Unified 0.2.19, and M5GFX 0.2.26. The resulting ESP32-S3 image is 1,306,288
+  bytes against a 3,997,696-byte OTA slot (67% free).
+- `node scripts/check-versions.mjs`, `node scripts/docs-index.mjs --check`, and
+  actionlint 1.7.12 pass. Core build/tests are not rerun because this change
+  consumes the already-shipped APIs and changes no Core contract or source.
+- Physical Cardputer ADV and end-to-end Core acceptance remain unchecked in the
+  deliverables above; no battery-runtime, wake-electrical, or rollback claim is
+  inferred from a compiler-only build.
 
 ## References
 
