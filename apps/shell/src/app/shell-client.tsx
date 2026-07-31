@@ -1484,7 +1484,7 @@ export function ShellClient({
     () => state.apps.filter((app) => app.id !== shellAppId && getAppPageLinks(app).length > 0),
     [shellAppId, state.apps],
   );
-  const effectiveView = getAuthorizedShellView(shellRoute.view, Boolean(canManageApps));
+  const effectiveView = getAuthorizedShellView(shellRoute.view, Boolean(canManageApps), shellRoute.settingsTab);
   const workspaceSurfaceActive = Boolean(workspace || activeWorkspaceRoute);
   const selectedApp = activePanel ? state.apps.find((app) => app.id === activePanel.appId) ?? null : null;
   const resetWorkspaceLaunch = useCallback(

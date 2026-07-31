@@ -93,6 +93,11 @@ pending device requests with their label and remaining time, a create form, and 
 credentials with a revoke action. A `host.user` sees and manages their own; a `host.admin` sees all,
 because revoking the credential on a lost device is a host-wide concern.
 
+Settings is otherwise an administrator page, and this is the one tab on it that is not. An ordinary user
+reaches Settings only for this tab, sees only this tab, and every other tab is gated on the admin check
+in both the tab strip and the body — so a hand-typed `?tab=` cannot render an administration surface.
+Without that, a role Core deliberately supports would have had no way to manage its own credentials.
+
 **A listed credential never carries its own value.** A session id *is* the bearer credential, so the
 listing shows a SHA-256 fingerprint and revocation matches on that — the same leak-safe projection the
 user-management session list already used. The real value exists only in the response to its own
@@ -107,8 +112,8 @@ it stayed connected — which is exactly the window a lost device is revoked to 
 ## CLI
 
 ```text
-hosty login --host https://hosty.example          # device flow
-hosty login --host https://hosty.example --token  # a credential created in Shell
+hosty login --host https://hosty.example                    # device flow
+hosty login --host https://hosty.example --token <value>    # a credential created in Shell
 hosty login --list
 hosty login --use <context>
 hosty logout [--name <context>]
@@ -117,6 +122,13 @@ hosty logout [--name <context>]
 The credential is proved against `/api/auth/session` before anything is stored, so a typo fails at login
 rather than on the next command. Contexts — name, origin, user, and which is current — live in
 `~/.hosty/config/contexts.json`; the credential never does.
+
+**No CLI command runs against a saved context yet.** `hosty apps`, `hosty users` and the rest still open
+the local control channel, which only works on the host itself; there is no global `--context` flag.
+Signing in stores a working credential — usable by the Cardputer console, a script, or `curl` — but the
+CLI cannot yet spend it on the user's behalf. Wiring the existing commands onto a bearer-authenticated
+remote transport means mapping each one from its `/control/v1` path to its `/api` web twin at more than
+ten call sites, which is its own piece of work rather than a corner of this one.
 
 Where the credential goes depends on the platform
 ([CredentialStore.cs](../../../apps/cli/src/Haas.Hosty.Cli/Configuration/CredentialStore.cs)): the macOS

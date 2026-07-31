@@ -89,6 +89,41 @@ public sealed class AccessTokenHttpTests
         Assert.False((await ReadJsonAsync(afterRevoke)).GetProperty("authenticated").GetBoolean());
     }
 
+    // The audit log is durable and readable through the control channel, so a credential written into it
+    // outlives the single poll that was supposed to be its only appearance.
+    [Fact]
+    public async Task AuditNeverRecordsACredentialsOwnValue()
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        var approver = await SeedUserAsync(harness, "host.admin");
+        using var client = harness.CreateClient();
+
+        using var start = await client.PostAsJsonAsync("/api/auth/device/code", new { label = "console" });
+        var request = await ReadJsonAsync(start);
+        var deviceCode = request.GetProperty("deviceCode").GetString()!;
+        var userCode = request.GetProperty("userCode").GetString()!;
+
+        using var approve = await SendAsync(client, HttpMethod.Post, "/api/auth/device/requests/approve", approver, new { userCode });
+        Assert.Equal(HttpStatusCode.OK, approve.StatusCode);
+
+        using var collect = await client.PostAsJsonAsync("/api/auth/device/token", new { deviceCode });
+        var deviceCredential = (await ReadJsonAsync(collect)).GetProperty("token").GetString()!;
+
+        // And the same for a directly created one, whose value is likewise shown exactly once.
+        using var created = await SendAsync(client, HttpMethod.Post, "/api/auth/credentials", approver, new { label = "script" });
+        var manualCredential = (await ReadJsonAsync(created)).GetProperty("token").GetString()!;
+
+        var audit = harness.Services.GetRequiredService<AuditStore>();
+        var records = await audit.ReadRecentAsync(100);
+        var serialized = string.Join("\n", records.Select(record =>
+            $"{record.Action} {record.ResourceId} {string.Join(",", record.Details.Select(pair => $"{pair.Key}={pair.Value}"))}"));
+
+        Assert.Contains(records, record => record.Action == "auth.device.approved");
+        Assert.Contains(records, record => record.Action == "auth.credential.created");
+        Assert.DoesNotContain(deviceCredential, serialized, StringComparison.Ordinal);
+        Assert.DoesNotContain(manualCredential, serialized, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task ACredentialIsNotVisibleOrRevocableByAnotherOrdinaryUser()
     {

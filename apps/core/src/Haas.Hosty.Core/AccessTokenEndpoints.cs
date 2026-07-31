@@ -39,9 +39,10 @@ internal static class AccessTokenEndpoints
             return CoreJson.Json(new DeviceAuthorizationCodeResponse(
                 result.Request.DeviceCode,
                 result.Request.UserCode,
-                // Null when this host has no Shell: the device shows the code and the operator finds the
-                // approval screen themselves rather than being sent to an invented address.
-                string.IsNullOrWhiteSpace(origin) ? null : $"{origin.TrimEnd('/')}/shell/settings",
+                // Straight to the tab that approves it — Settings opens on Users otherwise. Null when
+                // this host has no Shell: the device shows the code and the operator finds the approval
+                // screen themselves rather than being sent to an invented address.
+                string.IsNullOrWhiteSpace(origin) ? null : $"{origin.TrimEnd('/')}/shell/settings?tab=tokens",
                 (int)DeviceAuthorizationStore.PollInterval.TotalSeconds,
                 (int)DeviceAuthorizationStore.RequestLifetime.TotalSeconds));
         });
@@ -127,7 +128,18 @@ internal static class AccessTokenEndpoints
                             statusCode: StatusCodes.Status409Conflict);
                     }
 
-                    await AppendAuditAsync(audit, "auth.device.approved", credential.Id, user.Id, clock, pending.Label, AccessTokenKinds.Device, cancellationToken);
+                    // The fingerprint, never the record id: the audit log is durable and readable
+                    // through the control channel, so writing the id there would leave the bearer
+                    // credential recoverable long after its one collecting poll.
+                    await AppendAuditAsync(
+                        audit,
+                        "auth.device.approved",
+                        CoreSessionAuthorization.FingerprintSessionId(credential.Id),
+                        user.Id,
+                        clock,
+                        pending.Label,
+                        AccessTokenKinds.Device,
+                        cancellationToken);
                     return CoreJson.Json(new DeviceAuthorizationDecisionResponse("approved"));
                 },
                 requireCsrf: true,
@@ -366,9 +378,17 @@ internal static class AccessTokenEndpoints
             cancellationToken);
     }
 
-    // Who is asking, for the per-source cap. The remote address is what Core can see without trusting a
-    // header a caller supplies; behind a proxy every request shares one key, which makes the cap
-    // coarser there but never lets a caller pick its own bucket.
+    // Who is asking, for the per-source cap.
+    //
+    // This is the connection's remote address, never a header a caller supplies — so nobody can pick
+    // their own bucket. Core runs UseForwardedHeaders, so behind a proxy it *is* the real client
+    // address whenever that proxy is trusted by ForwardedHeadersOptions, which covers the normal
+    // deployment (cloudflared on the host, i.e. loopback).
+    //
+    // Residual: a proxy that is neither loopback nor a configured known proxy leaves every request
+    // sharing the proxy's address, and the per-source cap degenerates into a global one — the very
+    // shape this cap exists to avoid. Widening the trusted set is a Core-wide ingress decision, not
+    // one this endpoint should make on its own.
     private static string ResolveSourceKey(HttpRequest request)
         => request.HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 

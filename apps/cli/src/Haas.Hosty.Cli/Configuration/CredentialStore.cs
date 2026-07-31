@@ -41,8 +41,7 @@ internal static class CredentialStore
 
         var path = FilePath(environment, contextName);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllText(path, token);
-        RestrictToOwner(path);
+        WriteOwnerOnly(path, token);
     }
 
     public static string? Load(HostyEnvironment environment, string contextName)
@@ -128,23 +127,80 @@ internal static class CredentialStore
         }
     }
 
-    private static void RestrictToOwner(string path)
+    /// <summary>
+    /// Writes the token with owner-only permissions from the moment the file exists.
+    /// </summary>
+    /// <remarks>
+    /// Creating it and then calling chmod would leave a window — usually at the process umask, commonly
+    /// 0644 — during which the credential is world-readable. <c>UnixCreateMode</c> applies the mode at
+    /// creation instead, so there is no window.
+    /// <para>
+    /// If the mode cannot be applied at all, the write fails and the file is removed rather than left
+    /// behind holding a readable bearer token. A login that fails loudly is recoverable; a secret
+    /// silently sitting at default permissions is not.
+    /// </para>
+    /// </remarks>
+    private static void WriteOwnerOnly(string path, string token)
     {
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
-            // NTFS inherits ACLs from the user-profile directory this lives under; there is no chmod to
+            // NTFS inherits ACLs from the user-profile directory this lives under; there is no mode to
             // apply and no portable managed API here that AOT keeps.
+            File.WriteAllText(path, token);
             return;
         }
 
+        var options = new FileStreamOptions
+        {
+            Mode = FileMode.Create,
+            Access = FileAccess.Write,
+            UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite,
+        };
+
         try
         {
-            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            using var stream = new FileStream(path, options);
+            using var writer = new StreamWriter(stream);
+            writer.Write(token);
+        }
+        catch
+        {
+            TryDelete(path);
+            throw;
+        }
+
+        // A filesystem that ignored the create mode (a mounted share, say) still leaves the token
+        // readable, so verify rather than assume.
+        try
+        {
+            var mode = File.GetUnixFileMode(path);
+            if ((mode & (UnixFileMode.GroupRead | UnixFileMode.OtherRead)) != 0)
+            {
+                File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            }
         }
         catch (Exception ex) when (ex is IOException or PlatformNotSupportedException or UnauthorizedAccessException)
         {
-            // A filesystem that cannot express the mode (a mounted share, say) must not fail the login;
-            // the token stays revocable regardless.
+            TryDelete(path);
+            throw new IOException(
+                $"Could not store the credential with owner-only permissions at {path}. " +
+                "Refusing to leave it readable by other users.",
+                ex);
+        }
+    }
+
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Nothing further to do; the caller is already failing.
         }
     }
 }

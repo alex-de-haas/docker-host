@@ -31,12 +31,33 @@ const LEGACY_VIEW_PATHS: Record<string, ShellView> = {
   "/users": "settings",
 };
 
+// Settings tabs an ordinary user may reach. Everything else on that page administers the host, but
+// access tokens are per-user by construction — Core lets a host.user create, list and revoke their own
+// — so sending them to Available Apps would leave a supported role with no way to manage its own
+// credentials.
+const NON_ADMIN_HOST_SETTINGS_TABS = new Set<HostSettingsTab>(["tokens"]);
+
+export function isNonAdminHostSettingsTab(tab: HostSettingsTab) {
+  return NON_ADMIN_HOST_SETTINGS_TABS.has(tab);
+}
+
 export function shellViewRequiresAdmin(view: ShellView) {
   return ADMIN_SHELL_VIEWS.has(view);
 }
 
-export function getAuthorizedShellView(view: ShellView, canManageApps: boolean): ShellView {
-  return canManageApps || !shellViewRequiresAdmin(view) ? view : "available-apps";
+export function getAuthorizedShellView(
+  view: ShellView,
+  canManageApps: boolean,
+  settingsTab?: HostSettingsTab,
+): ShellView {
+  if (canManageApps || !shellViewRequiresAdmin(view)) {
+    return view;
+  }
+
+  // Settings is admin-only as a page, not as a whole: one tab on it belongs to every user.
+  return view === "settings" && settingsTab && isNonAdminHostSettingsTab(settingsTab)
+    ? view
+    : "available-apps";
 }
 
 export function readHostSettingsTab(value: string | null | undefined): HostSettingsTab {

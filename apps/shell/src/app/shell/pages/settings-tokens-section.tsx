@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { redirectToCoreLoginIfAuthRequired } from "../core-api";
 import type { AccessTokenView, DeviceAuthorizationRequestView } from "../types";
 import { EmptyState, IconButton, InlineError } from "../ui";
 
@@ -39,12 +40,21 @@ export function SettingsTokensSection({
         fetch(`${coreOrigin}/api/auth/device/requests`, { credentials: "include" }),
         fetch(`${coreOrigin}/api/auth/credentials`, { credentials: "include" }),
       ]);
-      if (pending.ok) {
-        setRequests(((await pending.json()) as { requests?: DeviceAuthorizationRequestView[] }).requests ?? []);
+
+      // An expired session must take the operator to /login. Without this the poll below would keep
+      // firing forever against a dead session, showing stale rows and never saying why.
+      redirectToCoreLoginIfAuthRequired(pending, coreOrigin);
+      redirectToCoreLoginIfAuthRequired(existing, coreOrigin);
+
+      if (!pending.ok || !existing.ok) {
+        // Surface the failure rather than silently leaving the last good data on screen.
+        setError(`Core answered ${pending.ok ? existing.status : pending.status}.`);
+        return;
       }
-      if (existing.ok) {
-        setCredentials(((await existing.json()) as { credentials?: AccessTokenView[] }).credentials ?? []);
-      }
+
+      setRequests(((await pending.json()) as { requests?: DeviceAuthorizationRequestView[] }).requests ?? []);
+      setCredentials(((await existing.json()) as { credentials?: AccessTokenView[] }).credentials ?? []);
+      setError(null);
     } catch {
       setError("Could not reach Core.");
     }
