@@ -118,8 +118,8 @@ struct UpdateReviewSheet: View {
                         .foregroundStyle(.secondary)
                 }
             } else {
-                ForEach(plan.changes, id: \.self) { change in
-                    Text(change).font(.callout)
+                ForEach(plan.readableChanges) { change in
+                    ChangeRow(change: change)
                 }
             }
         } header: {
@@ -163,3 +163,52 @@ struct UpdateReviewSheet: View {
         }
     }
 }
+
+/// One change: what moved, and what it moved between.
+///
+/// The two are separated because they read differently. The subject is prose and belongs in the body
+/// font; the values are identifiers — digests, image refs, port signatures — and belong on their own
+/// monospaced line, where a 64-character digest cannot wrap through the middle of the sentence naming
+/// it. Run together, as Core writes them, a change list is a wall of tokens that no one reviews.
+private struct ChangeRow: View {
+    let change: AppUpdateChange
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(change.title)
+                .font(.callout)
+
+            if let detail = change.detail {
+                Text(detail)
+                    .font(.caption)
+                    .monospaced()
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+        }
+        .padding(.vertical, 1)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+#if DEBUG
+#Preview("Change list") {
+    List {
+        ForEach(
+            [
+                "version:0.4.9->0.4.10",
+                "artifact:backend:sha256:f05e326e71aa7814ea34f68ed6282ac6932ee84cc23d058db05b1c00dcf59273->sha256:1df50287b502fdabd7ec616b46ada2c9cd44698f699963e4d96d1c0c77afe8c0",
+                "manifest",
+                "service:worker:added:docker",
+                "port:backend.http:8080/tcp->9090/tcp",
+                "setting:apiKey:type:string->secret",
+                "endpoint:api:removed:http/8080",
+                "data:compatible",
+                "somethingNewCoreInvented:tomorrow",
+            ].map(AppUpdateChange.init(parsing:))
+        ) { change in
+            ChangeRow(change: change)
+        }
+    }
+}
+#endif

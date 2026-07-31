@@ -10,12 +10,10 @@ struct DashboardView: View {
     let session: HostSession
     let model: AppsModel
     let router: ShellRouter
-    let switcher: HostSwitcher
 
     var body: some View {
         NavigationSplitView {
             DashboardListView(session: session, model: model, router: router)
-                .toolbar { ToolbarItem(placement: .principal) { switcher } }
         } detail: {
             if let id = router.managedAppID {
                 NavigationStack {
@@ -38,6 +36,8 @@ private struct DashboardListView: View {
     let model: AppsModel
     let router: ShellRouter
     @State private var searchText = ""
+    @State private var confirmingUpdateAll = false
+    @State private var reviewingApp: AppSummary?
 
     var body: some View {
         List(selection: managedSelection) {
@@ -57,7 +57,11 @@ private struct DashboardListView: View {
             Section {
                 ForEach(filtered) { app in
                     NavigationLink(value: app.id) {
-                        AppRow(app: app, icons: model.icons)
+                        AppRow(
+                            app: app,
+                            icons: model.icons,
+                            onUpdate: { act(onUpdateFor: app) },
+                            isBusy: model.isBusy(app))
                     }
                 }
             } header: {
@@ -73,6 +77,25 @@ private struct DashboardListView: View {
         }
         .searchable(text: $searchText, prompt: "Search apps")
         .navigationTitle("Dashboard")
+        // The host this screen is about. Naming it here is what makes removing the switcher a move
+        // rather than a loss: every destination shows exactly one host's data, and an operator with
+        // more than one saved host has to be able to see which — they just do not need a control
+        // spending a row on it.
+        .navigationSubtitle(session.connection.displayName)
+        // Two bands of chrome above the host: a large title repeating the word the selected tab already
+        // says, and a search field for a list most operators can see all of. Both collapse into the bar
+        // the actions are already in — inline title, search as a button — which is worth about an app
+        // row of the screen. Swapping only the title would gain nothing: the search field takes the
+        // band the large title vacates.
+        //
+        // `inlineLarge` rather than `inline` because it pins the title to the leading edge. A plain
+        // inline title is centered until the toolbar runs out of room and then jumps left — which here
+        // means the title moves depending on whether an update happens to be waiting.
+        .toolbarTitleDisplayMode(.inlineLarge)
+        #if os(iOS)
+        .searchToolbarBehavior(.minimize)
+        .contentMargins(.top, 0, for: .scrollContent)
+        #endif
         .toolbar {
             ToolbarItem {
                 Button {
@@ -86,9 +109,76 @@ private struct DashboardListView: View {
                 }
                 .disabled(model.isCheckingUpdates)
             }
+
+            // Absent rather than disabled when there is nothing routine to apply: a permanently greyed
+            // button on a host that is up to date is one more thing to read and dismiss.
+            if !model.routineUpdates.isEmpty || model.isUpdatingAll {
+                ToolbarItem {
+                    Button {
+                        confirmingUpdateAll = true
+                    } label: {
+                        if model.isUpdatingAll {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Label("Update all apps", systemImage: "arrow.up.circle")
+                        }
+                    }
+                    .disabled(model.isUpdatingAll)
+                }
+            }
+        }
+        // A toolbar button renders icon-only, so the count that the browser Shell puts in the button's
+        // own label has nowhere to go there. It goes here instead: the one action that applies updates
+        // to several apps at once must say how many before it runs, not after.
+        .confirmationDialog(
+            updateAllTitle,
+            isPresented: $confirmingUpdateAll,
+            titleVisibility: .visible
+        ) {
+            Button("Update all") { Task { await model.updateAllApps() } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(updateAllMessage)
+        }
+        // The other half of the row marker: a plan that has to be read is opened here rather than
+        // applied, so one control means "act on this update" whichever kind it turns out to be.
+        .sheet(item: $reviewingApp) { app in
+            UpdateReviewSheet(app: app, model: model)
         }
         .refreshable { await model.reload() }
         .task { await model.loadCoreUpdateStatus() }
+    }
+
+    /// One tap on a row's update marker. A routine verdict is applied on the spot — its plan is already
+    /// built and its digest is what Core asks for — while a review-class one opens that plan instead.
+    /// Applying it silently is the one thing this must never do.
+    private func act(onUpdateFor app: AppSummary) {
+        if app.hasRoutineUpdate {
+            Task { await model.applyUpdate(app) }
+        } else {
+            reviewingApp = app
+        }
+    }
+
+    private var updateAllTitle: String {
+        let count = model.routineUpdates.count
+        return count == 1 ? "Apply 1 update?" : "Apply \(count) updates?"
+    }
+
+    private var updateAllMessage: String {
+        var lines = ["The host applies these in the background, and the list shows each app's progress."]
+
+        // Named rather than silently skipped: the count above is smaller than the number of update
+        // badges on screen, and an operator who is not told why would read it as apps being missed.
+        let review = model.reviewOnlyUpdateCount
+        if review > 0 {
+            lines.append(
+                review == 1
+                    ? "1 more update changes more than the version and has to be reviewed on the app's own screen."
+                    : "\(review) more updates change more than the version and have to be reviewed on each app's own screen.")
+        }
+
+        return lines.joined(separator: "\n\n")
     }
 
     private var managedSelection: Binding<String?> {
@@ -158,12 +248,13 @@ private struct CoreRow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else if model.coreUpdate?.canApply == true {
+                // Just "Update": the row it sits in already says what is being updated, and the release
+                // tag it used to carry is a build identifier — on a dev channel it reads as a branch
+                // name, which says nothing about the version the operator would end up on.
                 Button {
                     Task { await model.applyCoreUpdate() }
                 } label: {
-                    Label(
-                        "Update Core to \(model.coreUpdate?.releaseTag ?? "the latest release")",
-                        systemImage: "arrow.up.circle")
+                    Label("Update", systemImage: "arrow.up.circle")
                 }
                 .font(.callout)
             }
@@ -187,17 +278,50 @@ private struct AppCounts: View {
             VStack(alignment: .leading, spacing: 4) { counts }
         }
         .textCase(nil)
+        // Header-sized, not row-sized. These numbers describe the rows below rather than competing with
+        // them, and at this size all three fit one line at standard Dynamic Type — so the caption costs
+        // two fewer lines than it did while saying the same thing.
+        .font(.footnote)
     }
 
+    // Standing figures first, then the three that only appear when they have something to report — so
+    // the line grows rightwards from a shape the operator already knows, and the one thing that might be
+    // wrong sits at the end where a colour is doing the work.
     @ViewBuilder
     private var counts: some View {
-        Label("\(running) running", systemImage: "bolt.horizontal")
+        count(running, "running", systemImage: "bolt.horizontal")
+        count(apps.count, "total", systemImage: "shippingbox")
+
         if transitioning > 0 {
-            Label("\(transitioning) in progress", systemImage: "arrow.triangle.2.circlepath")
+            count(transitioning, "in progress", systemImage: "arrow.triangle.2.circlepath")
         }
-        Label("\(attention) need attention", systemImage: "exclamationmark.circle")
-            .foregroundStyle(attention > 0 ? Color.orange : Color.secondary)
-        Label("\(apps.count) total", systemImage: "shippingbox")
+
+        // In the same blue as the markers on the rows it counts, so the header and the list are visibly
+        // talking about the same thing.
+        if updatable > 0 {
+            count(updatable, "with an update available", systemImage: "arrow.up.circle")
+                .foregroundStyle(Color.blue)
+        }
+
+        // A zero here is the normal state of a healthy host, and a warning icon standing beside one
+        // every day is how a warning stops being read at all. Red only when something actually failed:
+        // an unmet dependency is a shortfall, and spending the alarm colour on it would leave nothing
+        // louder for the app that is genuinely broken.
+        if attention > 0 {
+            count(attention, "need attention", systemImage: "exclamationmark.circle")
+                .foregroundStyle(failed > 0 ? Color.red : Color.orange)
+        }
+    }
+
+    /// Icon and number, no word.
+    ///
+    /// The words fit on one line only while there were three counters. The fourth appears exactly when
+    /// apps are mid-verb — the moment the header is worth reading — and spelling them out turned the
+    /// line into a column right then. The word survives where it costs no width: the accessibility
+    /// label, which is the one place it was load-bearing.
+    private func count(_ value: Int, _ meaning: String, systemImage: String) -> some View {
+        Label("\(value)", systemImage: systemImage)
+            .accessibilityLabel("\(value) \(meaning)")
     }
 
     private var running: Int { apps.filter { $0.runtimeState.isUp }.count }
@@ -206,8 +330,15 @@ private struct AppCounts: View {
     // during a boot that is going fine, and calling them a problem is worse.
     private var transitioning: Int { apps.filter { $0.runtimeState.isBusy }.count }
 
-    private var attention: Int {
-        apps.filter { !$0.problems.isEmpty || $0.operationStatus == AppOperationStatus.failed }.count
+    private var attention: Int { apps.filter(\.needsAttention).count }
+
+    /// How many of those are failures rather than shortfalls — the difference between red and orange.
+    private var failed: Int { apps.filter(\.hasFailed).count }
+
+    // Every update the rows mark, review-class ones included — the header counts what is on screen, not
+    // what one particular button would apply.
+    private var updatable: Int {
+        apps.filter { $0.updateCheck?.updateAvailable == true }.count
     }
 }
 

@@ -36,6 +36,15 @@ struct AppsView: View {
         }
         .searchable(text: $searchText, prompt: "Search apps")
         .navigationTitle("Apps")
+        .navigationSubtitle(model.hostName)
+        // The same trade as Dashboard, which this destination sits beside: a leading inline title, the
+        // search collapsed into the bar, and no band of chrome above the list. Peer tabs that disagreed
+        // about their own chrome would read as two different screens.
+        .toolbarTitleDisplayMode(.inlineLarge)
+        #if os(iOS)
+        .searchToolbarBehavior(.minimize)
+        .contentMargins(.top, 0, for: .scrollContent)
+        #endif
         .refreshable { await model.reload() }
     }
 

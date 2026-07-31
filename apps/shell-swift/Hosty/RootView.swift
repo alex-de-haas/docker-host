@@ -86,6 +86,8 @@ private struct HostScene: View {
     let appsModel: AppsModel?
     let router: ShellRouter
     let settings: SettingsView
+
+    /// Only the pre-session states show this: once signed in, Settings owns host switching.
     let switcher: HostSwitcher
 
     @State private var signingIn = false
@@ -97,11 +99,12 @@ private struct HostScene: View {
                     session: session,
                     appsModel: appsModel,
                     router: router,
-                    settings: settings,
-                    switcher: switcher)
+                    settings: settings)
             } else {
                 // Every pre-session state is one screen about the host, and each keeps the switcher:
-                // a host that cannot be reached is exactly when the operator needs to leave it.
+                // a host that cannot be reached is exactly when the operator needs to leave it, and
+                // Settings — where switching otherwise lives — is behind the very session that is
+                // missing here.
                 NavigationStack {
                     gate
                         .navigationTitle("")
@@ -176,7 +179,6 @@ private struct ShellTabs: View {
     let appsModel: AppsModel
     let router: ShellRouter
     let settings: SettingsView
-    let switcher: HostSwitcher
     @Environment(\.scenePhase) private var scenePhase
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -204,7 +206,7 @@ private struct ShellTabs: View {
             // anyone else: Core does not return the data it would show.
             if session.canManageApps {
                 Tab("Dashboard", systemImage: "gauge", value: ShellRouter.Destination.dashboard) {
-                    DashboardView(session: session, model: appsModel, router: router, switcher: switcher)
+                    DashboardView(session: session, model: appsModel, router: router)
                 }
                 .badge(pendingUpdateCount)
             }
@@ -212,7 +214,6 @@ private struct ShellTabs: View {
             Tab("Apps", systemImage: "square.grid.2x2", value: ShellRouter.Destination.apps) {
                 NavigationStack {
                     AppsView(model: appsModel, router: router)
-                        .toolbar { ToolbarItem(placement: .principal) { switcher } }
                         // Compact only, and the reason the section below is compact-excluded rather
                         // than merely hidden: pushing keeps the three destinations in the tab bar.
                         .navigationDestination(item: openedApp) { app in
@@ -243,7 +244,6 @@ private struct ShellTabs: View {
             Tab("Settings", systemImage: "gearshape", value: ShellRouter.Destination.settings) {
                 NavigationStack {
                     settings
-                        .toolbar { ToolbarItem(placement: .principal) { switcher } }
                 }
             }
         }

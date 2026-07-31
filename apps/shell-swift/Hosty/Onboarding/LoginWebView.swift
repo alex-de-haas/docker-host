@@ -113,5 +113,12 @@ struct LoginSheet: View {
                 }
             }
         }
+        #if os(macOS)
+        // A macOS sheet takes its size from its content, and a web view has no size of its own to
+        // offer. Without an explicit one the sheet collapses to its title bar and Cancel button:
+        // the login page loads and is simply never visible, so pressing Sign in appears to do
+        // nothing. Big enough for Core's own form and for whatever a hosted provider shows instead.
+        .frame(minWidth: 520, minHeight: 640)
+        #endif
     }
 }

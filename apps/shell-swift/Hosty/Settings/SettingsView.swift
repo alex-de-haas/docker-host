@@ -48,6 +48,14 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("Settings")
+        .navigationSubtitle(activeHost?.displayName ?? "No host")
+        // Inline and leading like its peer destinations. A tab bar already names the screen, so a large
+        // title is a band of chrome saying it twice — and three tabs that disagreed about their own
+        // chrome would read as three different apps.
+        .toolbarTitleDisplayMode(.inlineLarge)
+        #if os(iOS)
+        .contentMargins(.top, 0, for: .scrollContent)
+        #endif
         .confirmationDialog(
             "Forget this host?",
             isPresented: $confirmingRemoval,

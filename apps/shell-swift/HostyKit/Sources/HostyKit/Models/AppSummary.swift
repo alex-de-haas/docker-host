@@ -80,6 +80,42 @@ public struct AppSummary: Identifiable, Hashable, Sendable, Codable {
         operationStatus == AppOperationStatus.updating
     }
 
+    /// True when the cached verdict can be applied without a person reading the plan first.
+    ///
+    /// Every clause is a refusal in disguise. `requiresReview` means the plan changes more than the
+    /// version and the resolved artifacts, so it belongs to a human rather than to a batch. A missing
+    /// `planDigest` means there is no plan to echo back and Core would reject the apply — checking it
+    /// here rather than at send time keeps a count of "what will be applied" from including one that
+    /// cannot be. And an app already `updating` must not be handed a second apply.
+    public var hasRoutineUpdate: Bool {
+        updateCheck?.updateAvailable == true
+            && updateCheck?.requiresReview != true
+            && updateCheck?.planDigest != nil
+            && !isOperating
+    }
+
+    /// True when an update is waiting that a batch deliberately leaves alone. Counted rather than
+    /// silently skipped: it is the difference between the badges on screen and what a batch would take.
+    public var needsUpdateReview: Bool {
+        updateCheck?.updateAvailable == true && updateCheck?.requiresReview == true
+    }
+
+    /// True when something about this app is worth a person's attention.
+    public var needsAttention: Bool {
+        !problems.isEmpty || operationStatus == AppOperationStatus.failed
+    }
+
+    /// True when what it needs attention *for* is a failure: the host tried something and it broke, the
+    /// record carries an error, or Core cannot read the manifest at all.
+    ///
+    /// The one problem that is not a failure is an unsatisfied dependency — the app itself is intact and
+    /// something it needs is missing. Worth showing, not worth the colour that means "broken".
+    public var hasFailed: Bool {
+        operationStatus == AppOperationStatus.failed
+            || !(lastError ?? "").isEmpty
+            || !(manifestError ?? "").isEmpty
+    }
+
     /// Problems worth a marker in the list, in the order a person would want to see them.
     public var problems: [String] {
         var problems: [String] = []

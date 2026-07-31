@@ -1,7 +1,7 @@
 # Swift Shell
 
 Created: 2026-07-29
-Updated: 2026-07-30
+Updated: 2026-07-31
 
 `apps/shell-swift` is a native SwiftUI client for iOS, iPadOS, and macOS that manages a Hosty host's
 installed apps: their state, lifecycle, and updates.
@@ -54,6 +54,10 @@ change. Success is detected by observing the cookie, never the redirect: `return
 `/api/apps/*/open`, so a successful login lands on a Shell origin the device may be unable to reach, or on
 Core's "no web UI installed" page. Both are successes, and a failed navigation to an unreachable Shell is
 not a failed login.
+
+The sign-in sheet carries an explicit minimum size on macOS, where a sheet is sized by its content and a
+web view has no size of its own to give: without one the sheet collapses to its title bar, and the login
+page loads where nobody can see it.
 
 The session id is stored in the Keychain per host, keyed by origin. The login web view uses a
 non-persistent data store, so nothing it collects outlives the sheet. A `401` on any request drops the
@@ -118,12 +122,26 @@ artifact locks and dependency state.
 states of the host, not of a section of it, and three tabs over a sign-in prompt would describe
 nothing.
 
-**A host is the session's account, not a section.** A switcher in every destination's toolbar names
-the active host and offers the saved ones; it is present in the pre-session states too, because a host
-that cannot be reached is exactly when the operator needs to leave it. Selecting another host rebuilds
-the session, its app model, and its event stream as one unit, and clears every per-host selection —
-an app id left over from the previous host either selects nothing or, if both hosts run the same app,
+**A host is the session's account, not a section.** Switching one is a rare act, so once there is a
+session the Hosts list in Settings is the only place that offers it — a switcher standing above every
+destination spent a toolbar naming a host the operator already knows they are on. What it named is
+kept: each destination carries the host as its navigation subtitle, so which machine the screen
+describes is still on screen, without a control spending a row to say it. The pre-session states keep
+the switcher itself, because a host that cannot be reached is exactly when the operator needs to leave
+it and Settings is behind the very session that is missing. Selecting another host rebuilds the
+session, its app model, and its event stream as one unit, and clears every per-host selection — an app
+id left over from the previous host either selects nothing or, if both hosts run the same app,
 silently opens a different machine's copy.
+
+**Chrome is spent on the host, not on the client.** Every destination uses a leading inline title with
+the host beneath it (`toolbarTitleDisplayMode(.inlineLarge)`), and the two searchable ones collapse
+their search field into a toolbar button rather than a band above the list. A large title costs a
+screen's worth of height to repeat the word the selected tab already says, and swapping *only* the
+title gains nothing — the search field takes the band the large title vacates. `inlineLarge` rather
+than `inline` because a plain inline title is centered until the toolbar runs out of room and then
+jumps to the leading edge, which would move the title depending on whether an update happens to be
+waiting. Pushed and modal screens keep an ordinary centered inline title: they are titled by what the
+operator came from, not by where they are.
 
 **Apps appear as sidebar entries in regular width and as a pushed screen in compact.** In compact they
 are not declared as tabs at all: `defaultVisibility(.hidden, for: .tabBar)` does not keep a
@@ -140,10 +158,32 @@ empty tab.
 Administrator-only, and absent rather than disabled for anyone else — Core answers none of it to a
 non-administrator.
 
-Core's own row sits above the app list: its version, and the update action when a newer release is
-waiting. The list header carries one line of counts — running, in progress, needs attention, total —
-describing every row, system apps included. Apps mid-verb are counted in neither the running nor the
-attention bucket: calling them "not running" reads as a shortfall during a boot that is going fine.
+Core's own row sits above the app list: its version, and an `Update` action when a newer release is
+waiting. The action is labelled by the verb alone — the row already says what is being updated, and
+the release tag it could name is a build identifier that on a dev channel reads as a branch name. The
+toolbar carries the two fleet-wide actions: check for updates, and apply every routine one.
+
+The list header carries one caption-sized line of counts describing every row, system apps included:
+running, total, in progress, updates available, needs attention. Each is an icon and a number with no
+word — the words fit one line only while there were three counters, and the extra ones appear exactly
+when the host is busiest and the header is worth reading. The word survives in the accessibility
+label, where it costs no width.
+
+Running and total are always there; the other three appear only when non-zero, which is why they come
+last — the line grows rightwards from a shape the operator already knows. A zero beside a warning icon
+is the normal state of a healthy host, and that is how a warning stops being read. Updates available
+is in the blue of the markers on the rows it counts. Needs attention is red when any of those apps has
+**failed** — a failed operation, a recorded error, or a manifest Core cannot read — and orange when
+the only problem is a shortfall such as an unmet dependency, so the alarm colour still means something
+when an app is genuinely broken. Apps mid-verb are counted in neither the running nor the attention
+bucket: calling them "not running" reads as a shortfall during a boot that is going fine. Core is in
+none of these counts — it is its own row, with its own update action.
+
+A row's update marker is the action, not just the news: one tap applies a routine update, and opens
+the plan of one that must be read first. It carries a 44pt target of its own and a borderless button
+style, because the row around it is a navigation link and a `List` would otherwise hand the button
+every tap in the row. The marker is disabled, not hidden, while the host already owns work on that
+app.
 
 Selecting an app drives the detail column rather than creating a second navigation hierarchy, so on
 iPad the client is three columns: destinations, apps, detail.
@@ -265,6 +305,54 @@ The change list is **always** shown; `requiresReview` raises the emphasis but do
 operator is told. The apply is asynchronous — the record reports `operationStatus: "updating"` while it
 runs.
 
+Core writes its changes as machine tokens — `artifact:backend:sha256:f05e…->sha256:1df5…`,
+`setting:apiKey:type:string->secret`. Each is parsed into the thing that changed and the values it
+moved between, and the two are rendered apart: the subject as prose, the values on their own
+monospaced line, with digests shortened to twelve hex characters. Run together as Core writes them,
+a change list is a wall of tokens nobody reviews, which defeats the point of showing it. The
+vocabulary mirrors `formatUpdateChange` in the browser Shell — two clients reading the same tokens
+must not invent two names for them. An unrecognized token is shown verbatim rather than dropped:
+Core's vocabulary grows, and a dropped line is approval given for something never seen.
+
+Two parts of that parse are deliberately non-structural, because Core's value signatures are built from
+the same punctuation as its tokens. A named facet (`type`, `secret`, `runtimeType`) is recognized from a
+closed list rather than from "there is a separator before the arrow" — an endpoint signature is
+`http:public=True:service=web:port=8080`, whose first field is a protocol. And the arrow that separates
+old from new is the **middle** one, not the first: a port signature is `{protocol}:{host}->{container}:…`
+and carries an arrow of its own, so a port transition holds three. Both sides of a transition are the
+same grammar and therefore hold the same number of internal arrows, which makes the middle occurrence
+the separator whenever the count is odd; an even count means that assumption does not hold, and the
+value is shown whole rather than split in the wrong place. Both rules fail towards raw text, so a
+signature grammar that moves degrades to something unhelpful rather than to something untrue.
+
+A verdict is **routine** when it is applicable without a person reading the plan: `updateAvailable`,
+not `requiresReview`, a `planDigest` to echo back, and no update already running. That is the same
+filter the browser Shell uses, and it lives on `AppSummary` so the count shown and the set sent are
+provably one set. The digest clause belongs to the filter rather than to send time: an app with no
+plan to echo back is refused by Core, so counting it would promise an apply that cannot happen.
+
+Routine verdicts have two one-tap paths, both of which apply the plan the fleet check already built
+rather than building a new one. A row's marker applies that app; **Update all** in the toolbar applies
+every routine verdict at once, confirming first with the count — a toolbar button renders icon-only,
+so the count the browser Shell puts in its label has nowhere else to go. Neither path can reach a
+review-class plan: the batch skips it and the confirmation says how many it left behind for that
+reason, and the row marker opens the plan instead of applying it. A count smaller than the markers on
+screen would otherwise read as apps being missed.
+
+The batch's applies are separate requests, and a refusal is counted rather than ending the sweep; the
+rows carry the progress, because each accepted apply shows as `updating`. There is no "Shell last"
+ordering as in the browser Shell: this client is not served by any app on the host, so nothing it runs
+from can restart underneath it. The button is absent, not disabled, when there is nothing routine to
+apply.
+
+Both paths reserve an app for the length of its own request, and re-read the digest from the current
+list immediately before sending. Neither is optional: an apply this client has already sent is invisible
+in the record until Core commits `updating` and a reload brings it back, and the batch awaits between
+sends, so its snapshot can name an app a row tap has meanwhile applied. Without the reservation the two
+submit the same plan twice, Core's single-flight guard refuses one, and the client reports a failed
+update that in fact started. An app skipped for being no longer applicable is skipped, not counted as a
+failure — the summary counts what was actually sent.
+
 Three states are never rendered as "up to date": a null verdict means never checked, a service marked
 `unknown` means the registry could not be reached, and an empty change list with `sourceConfigured: false`
 means Core had nothing to compare against. An app on a live source runtime has no reviewed-update path at
@@ -319,13 +407,30 @@ Distribution is by local Xcode build; nothing packages or publishes this app.
   widen.
 - SwiftUI previews cover an empty host list, a representative app row, its accessibility-size layout,
   and app detail at standard and accessibility text sizes without contacting Core.
+- The routine-update filter is pinned on `AppSummary` rather than in a view: each clause is a refusal
+  (review-class, no digest, already updating), and routine and needs-review are asserted exclusive, so
+  the count an operator confirms cannot drift from the set that is sent.
+- Change-token parsing is covered per token shape against Core's own vocabulary, including the two
+  digest endpoints that are not digests (`none`, `unknown`), `data:compatible` — which means the
+  opposite of a change — and an invented token, which must survive verbatim. A plan is approved on the
+  strength of this list, so a mis-read or dropped line is approval given for something else.
+- The signature shapes are pinned with Core's real output, not with simplified stand-ins: a colon-built
+  endpoint and dependency signature, whose first field must not be read as a facet, and a port
+  transition, whose signature carries an arrow of its own so that the separating arrow is not the first
+  one. An arrow count that cannot be resolved is asserted to leave the value whole.
 - Visual verification covers the compact tab bar holding exactly the three destinations — the per-app
   tab leak is invisible to every other check — and the expanded iPad hierarchy of destinations, apps
-  and detail. App rows and the Dashboard counts are also inspected at an accessibility Dynamic Type
-  size.
+  and detail. It also covers every sheet **on macOS**, where a sheet without an explicitly sized
+  content view collapses to its title bar while behaving correctly everywhere else. App rows and the
+  Dashboard counts are also inspected at an accessibility Dynamic Type size, where the update marker
+  becomes a labelled row rather than a glyph at the far edge.
 - Live verification against a running host covers sign-in, the app list, lifecycle verbs, an
   externally-driven change arriving over the event stream while both the list and a detail screen are
   open, a fleet update check, a reviewed update applied end to end, opening an app and confirming it
   reports the signed-in user, switching apps and back without a reload, two apps open at once keeping
   their own identity in the shared data store, a workspace recovering after its app session expires,
   and a Core update surviving the restart it causes.
+- A row's update marker is verified against a live host in both directions: the tap applies the update
+  rather than opening the app, and a tap anywhere else on the row still navigates. A `List` gives a
+  plain button the whole row, so this is the check that the borderless style and the marker's own
+  target actually took effect.
