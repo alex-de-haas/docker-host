@@ -37,7 +37,7 @@ internal sealed class AppUpdateSweepService(
     // Optional only for unit fixtures; production DI always supplies it.
     CoreEventHub? events = null,
     // Overridable only so tests can hit the per-app deadline without waiting it out.
-    TimeSpan? perAppCheckTimeout = null)
+    TimeSpan? appCheckTimeout = null)
 {
     // Bounded fan-out over apps. This used to be 3, to keep an image-heavy fleet from burst-spawning
     // docker CLI processes — but the per-app probe gate it was compensating for is now host-wide
@@ -52,7 +52,7 @@ internal sealed class AppUpdateSweepService(
     // cousins — the docker runner's for `pull`, git's for `clone` — so a dark registry or an
     // unreachable git host could hold a sweep slot for many minutes while every client's "Check
     // updates" spinner kept turning. A check that has not answered in this long is not going to.
-    private readonly TimeSpan perAppCheckTimeout = perAppCheckTimeout ?? TimeSpan.FromSeconds(90);
+    private readonly TimeSpan perAppCheckTimeout = appCheckTimeout ?? TimeSpan.FromSeconds(90);
 
     private readonly object gate = new();
     private Task? running;

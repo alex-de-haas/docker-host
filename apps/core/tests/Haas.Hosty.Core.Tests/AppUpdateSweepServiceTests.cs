@@ -351,7 +351,7 @@ public sealed class AppUpdateSweepServiceTests
                 clock,
                 NullLogger<AppUpdateSweepService>.Instance,
                 events: Events,
-                perAppCheckTimeout: perAppCheckTimeout);
+                appCheckTimeout: perAppCheckTimeout);
         }
 
         public string Root { get; }
