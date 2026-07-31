@@ -209,10 +209,23 @@ contradicted.
 
 ## Apps and workspaces
 
-The Apps destination lists exactly the apps Core resolved a UI for — a headless app never appears, and
+The Apps destination shows exactly the apps Core resolved a UI for — a headless app never appears, and
 public endpoints alone do not make one. There is no system/ordinary split: Core already filters
 `GET /api/apps` per user and refuses a launch code for a system app to a non-administrator, so a
 second visibility rule here would be a copy of an authorization decision.
+
+**A grid of icons, not a list of rows.** This destination answers one question — which app do I want to
+open — and an icon answers it faster than a line of text. Everything a row carried besides the name is
+management detail and lives on Dashboard: version, runtime, and the `System` badge, which marks
+ownership and has nothing to say to someone opening an app. The columns are `.adaptive` against a
+scaled minimum width, so Dynamic Type reflows the grid to fewer, wider tiles rather than squeezing
+names; the name itself takes two reserved lines rather than the home screen's single truncated one,
+because "Hosty Marketplace" and "Project Manager" do not fit in one and a reserved second line keeps
+every tile the same height.
+
+Being openable and being ready stay different questions. An app that is not running is dimmed and
+carries a corner dot — orange while starting or stopping, grey while stopped — and its accessibility
+label says which in words, since neither dimming nor a colour survives being read aloud.
 
 Opening an app is the browser Shell's mechanism exactly, with no Core change: `POST
 /api/apps/{id}/launch-code` against the URL Core advertises, then load the URL it returns and let the
@@ -407,6 +420,10 @@ Distribution is by local Xcode build; nothing packages or publishes this app.
   widen.
 - SwiftUI previews cover an empty host list, a representative app row, its accessibility-size layout,
   and app detail at standard and accessibility text sizes without contacting Core.
+- The launcher's readiness treatment is covered by preview rather than by live checking: every app on a
+  healthy host is running, so a dimmed tile and its corner dot cannot be seen against one without
+  stopping something real. The fixture reaches the other states by round-tripping an `AppSummary`
+  through its own wire format, which keeps HostyKit from needing a public initializer for a preview.
 - The routine-update filter is pinned on `AppSummary` rather than in a view: each clause is a refusal
   (review-class, no digest, already updating), and routine and needs-review are asserted exclusive, so
   the count an operator confirms cannot drift from the set that is sent.
