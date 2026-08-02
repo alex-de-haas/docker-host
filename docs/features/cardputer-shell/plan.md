@@ -601,11 +601,14 @@ this plan is updated.
 - [ ] Record the exact Cardputer ADV board revision, schematic assumptions,
   GPIO ownership, flash layout, whether a battery-backed RTC is present, and
   measured baseline behavior.
-- [x] Define and check in representative Core fixtures — `apps/shell-cardputer/fixtures/`,
-  2026-07-31: 50 apps (213,748 bytes), the same 50 with every optional field
-  inflated (533,198), unknown enum values, and long notification bodies, all
-  deterministic and generated from the field distribution measured on a real
-  host.
+- [x] Define and check in a representative Core fixture —
+  `apps/shell-cardputer/fixtures/apps-50.json`, 2026-07-31: 50 apps carrying a
+  3,000-byte ignored description, nested optional fields, unknown runtime and
+  operation states, routine and review-required updates, nulls and Unicode. Host
+  tests feed it in chunk sizes from one byte to 1,024 to prove the parser does
+  not depend on response boundaries. The sizes quoted earlier (213,748 and
+  533,198 bytes) came from a throwaway measurement spike that is not in the tree;
+  the checked-in fixture is the one that counts.
 - [ ] Prototype TLS with SNTP-set time, streaming app parsing, SSE reconnect,
   screen power control, keyboard wake, BMI270 polling, and speaker notification
   on real hardware.

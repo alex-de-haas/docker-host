@@ -48,7 +48,10 @@ bool WifiManager::connect(const DeviceSettings& settings, std::uint32_t timeout_
         last_disconnect_reason_.store(0);
 
         wifi_config_t config{};
-        const auto ssid_length = std::min(settings.wifi_ssid.size(), sizeof(config.sta.ssid) - 1);
+        // The whole array, not one less: an SSID is up to 32 bytes and is not NUL-terminated here —
+        // esp_wifi_set_config measures it with strnlen over the full field. Reserving a terminator made
+        // a valid 32-character SSID unreachable even though setup accepts one.
+        const auto ssid_length = std::min(settings.wifi_ssid.size(), sizeof(config.sta.ssid));
         const auto password_length = std::min(settings.wifi_password.size(), sizeof(config.sta.password) - 1);
         std::memcpy(config.sta.ssid, settings.wifi_ssid.c_str(), ssid_length);
         std::memcpy(config.sta.password, settings.wifi_password.c_str(), password_length);

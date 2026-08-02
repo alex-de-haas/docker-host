@@ -466,12 +466,14 @@ jobs:
             echo "Firmware is ${actual} bytes; OTA slot is ${maximum} bytes" >&2
             exit 1
           fi
-          sha256sum "$image" > apps/shell-cardputer/build/SHA256SUMS
+          # The container builds as root, so build/ is root-owned and this step cannot write into it.
+          # Collect what gets uploaded in a directory this job owns instead.
+          mkdir -p cardputer-artifacts
+          cp "$image" cardputer-artifacts/
+          ( cd cardputer-artifacts && sha256sum hosty_cardputer_shell.bin > SHA256SUMS )
 
       - name: Upload firmware verification artifact
         uses: actions/upload-artifact@v7.0.1
         with:
           name: hosty-cardputer-${{ github.sha }}
-          path: |
-            apps/shell-cardputer/build/hosty_cardputer_shell.bin
-            apps/shell-cardputer/build/SHA256SUMS
+          path: cardputer-artifacts/

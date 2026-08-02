@@ -92,6 +92,20 @@ void test_semver() {
     CHECK(hosty::version_at_least("0.74.1+abc", "0.73.0"));
     CHECK(!hosty::version_at_least("0.72.9", "0.73.0"));
     CHECK(!hosty::version_at_least("not-a-version", "0.73.0"));
+    // A prerelease ranks below the release it precedes, which is what makes OTA downgrade protection
+    // and the minimum-Core check mean anything.
+    CHECK(!hosty::version_at_least("0.73.0-alpha", "0.73.0"));
+    CHECK(hosty::version_at_least("0.73.0", "0.73.0-alpha"));
+    CHECK(hosty::version_at_least("0.73.0-alpha", "0.73.0-alpha"));
+    // SemVer identifier ordering: numeric compares numerically, alphanumeric beats numeric, and a
+    // shorter identifier list ranks below a longer one that shares its prefix.
+    CHECK(hosty::version_at_least("0.73.0-alpha.2", "0.73.0-alpha.1"));
+    CHECK(!hosty::version_at_least("0.73.0-alpha.2", "0.73.0-alpha.10"));
+    CHECK(hosty::version_at_least("0.73.0-beta", "0.73.0-alpha"));
+    CHECK(hosty::version_at_least("0.73.0-alpha.1", "0.73.0-alpha"));
+    CHECK(hosty::version_at_least("0.73.0-alpha", "0.73.0-1"));
+    // Build metadata still takes no part in precedence.
+    CHECK(hosty::version_at_least("0.73.0+build", "0.73.0"));
 }
 
 void test_endpoint_validation() {
@@ -103,6 +117,13 @@ void test_endpoint_validation() {
     CHECK(endpoint.local_network);
     CHECK(hosty::validate_core_origin("http://hosty.local", endpoint) == hosty::EndpointError::None);
     CHECK(hosty::validate_core_origin("http://public.example", endpoint) == hosty::EndpointError::PublicHttpNotAllowed);
+    // A bare label is not evidence of a private address: a search suffix or a rebinding answer can put
+    // it anywhere, and plaintext here would carry an administrator bearer token.
+    CHECK(hosty::validate_core_origin("http://core", endpoint) == hosty::EndpointError::PublicHttpNotAllowed);
+    CHECK(hosty::validate_core_origin("https://core", endpoint) == hosty::EndpointError::None);
+    CHECK(hosty::validate_core_origin("http://localhost:7070", endpoint) == hosty::EndpointError::None);
+    CHECK(hosty::validate_core_origin("http://10.0.0.5", endpoint) == hosty::EndpointError::None);
+    CHECK(hosty::validate_core_origin("http://8.8.8.8", endpoint) == hosty::EndpointError::PublicHttpNotAllowed);
     CHECK(hosty::validate_core_origin("https://user:pass@hosty.example", endpoint) == hosty::EndpointError::CredentialsNotAllowed);
     CHECK(hosty::validate_core_origin("https://hosty.example/path", endpoint) == hosty::EndpointError::PathNotAllowed);
     CHECK(hosty::validate_core_origin("http://hosty.local:abc", endpoint) == hosty::EndpointError::InvalidPort);

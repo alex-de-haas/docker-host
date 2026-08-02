@@ -45,6 +45,10 @@ private:
 
     enum class MenuContext : std::uint8_t { None, App, Updates, Core, Device };
 
+    // What the shared sync worker is fetching. Notifications run on it too, so an alert arriving while
+    // Core is slow cannot block the task that draws the screen.
+    enum class SyncMode : std::uint8_t { Apps, Full, Notifications };
+
     struct Confirmation {
         PendingAction action = PendingAction::None;
         hosty::FixedString<96> app_id;
@@ -86,6 +90,7 @@ private:
     bool start_command_task();
     void finish_command();
     void request_apps_sync();
+    void request_notifications_sync();
     void request_full_sync();
     void finish_apps_sync();
     void show_overlay(std::string_view title, std::string_view body);
@@ -153,7 +158,7 @@ private:
     bool command_waiting_for_sync_ = false;
     bool apps_sync_in_flight_ = false;
     bool apps_sync_pending_ = false;
-    bool apps_sync_full_ = false;
+    SyncMode apps_sync_mode_ = SyncMode::Apps;
     bool full_sync_pending_ = false;
     bool notifications_sync_pending_ = false;
     bool eco_sleeping_ = false;

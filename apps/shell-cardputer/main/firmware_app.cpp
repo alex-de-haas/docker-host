@@ -485,7 +485,7 @@ void FirmwareApp::request_apps_sync() {
     if (apps_sync_in_flight_ || command_requires_stable_apps || full_sync_pending_) return;
 
     apps_sync_pending_ = false;
-    apps_sync_full_ = false;
+    apps_sync_mode_ = SyncMode::Apps;
     staging_core_ = state_.core();
     apps_sync_result_ = {};
     apps_sync_operation_.assign_truncated("Apps");
@@ -501,13 +501,37 @@ void FirmwareApp::request_apps_sync() {
     }
 }
 
+// A notification refresh is a network request like any other, so it runs on a worker rather than on
+// the task that draws the screen and reads the keyboard. It used to be performed inline here, which
+// meant a slow or unreachable Core froze the whole console for up to the 20-second request timeout —
+// at exactly the moment an alert arrived and the operator was most likely to be looking at it.
+void FirmwareApp::request_notifications_sync() {
+    notifications_sync_pending_ = true;
+    if (apps_sync_in_flight_ || command_in_flight_) return;
+
+    notifications_sync_pending_ = false;
+    staging_notifications_ = {};
+    apps_sync_result_ = {};
+    apps_sync_operation_.assign_truncated("Notifications");
+    apps_sync_mode_ = SyncMode::Notifications;
+    apps_sync_in_flight_ = true;
+    if (xTaskCreate(&FirmwareApp::apps_sync_task_entry, "hosty_alerts", kSyncStackBytes,
+                    this, 4, nullptr) != pdPASS) {
+        apps_sync_in_flight_ = false;
+        notifications_sync_pending_ = true;
+        ESP_LOGE(kTag, "Unable to allocate notification sync task heap-free=%u largest=%u",
+                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                 static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+    }
+}
+
 void FirmwareApp::request_full_sync() {
     full_sync_pending_ = true;
     if (apps_sync_in_flight_ || command_in_flight_) return;
 
     full_sync_pending_ = false;
     apps_sync_pending_ = false;
-    apps_sync_full_ = true;
+    apps_sync_mode_ = SyncMode::Full;
     last_full_sync_ms_ = now_ms();
     staging_core_ = {};
     staging_notifications_ = {};
@@ -526,7 +550,9 @@ void FirmwareApp::request_full_sync() {
 }
 
 void FirmwareApp::apps_sync_task() {
-    if (apps_sync_full_) {
+    if (apps_sync_mode_ == SyncMode::Notifications) {
+        apps_sync_result_ = client_.read_notifications(staging_notifications_);
+    } else if (apps_sync_mode_ == SyncMode::Full) {
         apps_sync_result_ = client_.read_core_status(staging_core_);
         if (apps_sync_result_.ok()) {
             apps_sync_operation_.assign_truncated("Core update");
@@ -544,7 +570,8 @@ void FirmwareApp::apps_sync_task() {
         apps_sync_result_ = client_.read_apps(staging_core_);
     }
     ESP_LOGI(kTag, "%s synchronization finished stack-free=%u bytes",
-             apps_sync_full_ ? "Full" : "Apps",
+             apps_sync_mode_ == SyncMode::Full ? "Full"
+                 : apps_sync_mode_ == SyncMode::Notifications ? "Notification" : "Apps",
              static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
     signal_transport(kAppsSyncFinished);
     vTaskDelete(nullptr);
@@ -552,7 +579,8 @@ void FirmwareApp::apps_sync_task() {
 
 void FirmwareApp::finish_apps_sync() {
     const HttpResult result = apps_sync_result_;
-    const bool full = apps_sync_full_;
+    const SyncMode mode = apps_sync_mode_;
+    const bool full = mode == SyncMode::Full;
     apps_sync_in_flight_ = false;
     if (!result.ok()) {
         set_request_failure(apps_sync_operation_.view(), result);
@@ -568,6 +596,16 @@ void FirmwareApp::finish_apps_sync() {
                       static_cast<int>(hosty::kMinimumCoreVersion.size()), hosty::kMinimumCoreVersion.data());
         set_status(message);
         state_.apply({hosty::ConnectionEvent::Type::UnsupportedCore, now_ms()});
+    } else if (mode == SyncMode::Notifications) {
+        // Only the notification snapshot moved, so the app state and the connection's sync age are
+        // left alone; ringing for a genuinely new alert is the one side effect.
+        if (staging_notifications_.unread_count > last_unread_count_ && !staging_notifications_.items.empty()) {
+            state_.install_notifications(staging_notifications_);
+            apply_power_action(power_.notification(now_ms(), staging_notifications_.items[0].level, quiet_hours()));
+        }
+        last_unread_count_ = staging_notifications_.unread_count;
+        state_.install_notifications(staging_notifications_);
+        render_requested_ = true;
     } else {
         state_.install_snapshot(staging_core_, now_ms());
         reapply_prediction();
@@ -1417,10 +1455,7 @@ void FirmwareApp::handle_transport_events() {
     if ((events & kFullSync) != 0) request_full_sync();
     else {
         if ((events & kSyncApps) != 0) request_apps_sync();
-        if ((events & kSyncNotifications) != 0) {
-            if (command_in_flight_ || apps_sync_in_flight_) notifications_sync_pending_ = true;
-            else static_cast<void>(sync_notifications(true));
-        }
+        if ((events & kSyncNotifications) != 0) request_notifications_sync();
     }
     if ((events & kTransportFailed) != 0) {
         state_.apply({hosty::ConnectionEvent::Type::TransportFailed, now_ms()});

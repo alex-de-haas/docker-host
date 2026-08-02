@@ -85,8 +85,13 @@ EndpointError validate_core_origin(std::string_view input, ValidatedEndpoint& ou
             host = host.substr(0, colon);
         }
         if (host.empty()) return EndpointError::MissingHost;
-        output.local_network = host == "localhost" || host.find('.') == std::string_view::npos ||
-                               ends_with(host, ".local") || private_ipv4(host);
+        // Deliberately not "any name without a dot". A bare label such as `core` says nothing about
+        // where it resolves: a DNS search suffix or a rebinding answer can put it on a public address,
+        // and this device would then send a full administrator bearer token there in the clear. What
+        // remains are names whose address is settled by definition — loopback, mDNS link-local, and
+        // literal private IPv4. A LAN host reachable only by a single-label name is still usable over
+        // plain HTTP by its address, and over HTTPS by any name at all.
+        output.local_network = host == "localhost" || ends_with(host, ".local") || private_ipv4(host);
     }
     if (!output.secure && !output.local_network) return EndpointError::PublicHttpNotAllowed;
     if (!output.origin.assign(input) || !output.host.assign(host)) return EndpointError::TooLong;
