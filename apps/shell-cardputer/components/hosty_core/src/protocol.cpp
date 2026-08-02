@@ -227,18 +227,7 @@ bool AppsResponseParser::on_json_event(const JsonEvent& event) {
             return false;
         }
         app_object_depth_ = -1;
-        capabilities_depth_ = -1;
         app_update_depth_ = -1;
-        return true;
-    }
-
-    if (app_object_depth_ >= 0 && event.type == JsonEventType::ArrayBegin &&
-        event.depth == app_object_depth_ + 1 && key_at(event.depth) == "capabilities") {
-        capabilities_depth_ = event.depth;
-        return true;
-    }
-    if (event.type == JsonEventType::ArrayEnd && event.depth == capabilities_depth_) {
-        capabilities_depth_ = -1;
         return true;
     }
     if (app_object_depth_ >= 0 && event.type == JsonEventType::ObjectBegin &&
@@ -262,11 +251,6 @@ bool AppsResponseParser::on_json_event(const JsonEvent& event) {
         return true;
     }
 
-    if (event.type == JsonEventType::String && capabilities_depth_ >= 0 &&
-        event.depth == capabilities_depth_ + 1) {
-        if (event.value == "logs") current_app_.logs_available = true;
-        return true;
-    }
     if (!is_scalar(event.type)) return true;
 
     if (app_update_depth_ >= 0 && event.depth == app_update_depth_ + 1) apply_app_update_scalar(event);
@@ -383,19 +367,6 @@ bool NotificationsParser::on_json_event(const JsonEvent& event) {
 bool NotificationsParser::validate() {
     return saw_notifications_ && notification_depth_ < 0;
 }
-
-LogTailParser::LogTailParser(LogTail& output) : output_(output) { output_ = {}; }
-
-bool LogTailParser::on_json_event(const JsonEvent& event) {
-    if (!remember_key(event)) return false;
-    if (event.depth != 1 || event.type != JsonEventType::String) return true;
-    const auto key = key_at(1);
-    if (key == "appId" && !output_.app_id.assign(event.value)) reject(ProtocolError::FieldTooLong);
-    else if (key == "text") output_.text.assign_truncated(event.value);
-    return protocol_error_ == ProtocolError::None;
-}
-
-bool LogTailParser::validate() { return !output_.app_id.empty(); }
 
 const char* protocol_error_name(ProtocolError error) {
     switch (error) {

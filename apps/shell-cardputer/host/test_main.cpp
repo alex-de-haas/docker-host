@@ -41,6 +41,12 @@ hosty::ProtocolError feed_chunked(Parser& parser, std::string_view document, std
     return parser.finish();
 }
 
+std::uint8_t rgb332_bucket(hosty::Color color) {
+    return static_cast<std::uint8_t>((((color >> 13U) & 0x07U) << 5U) |
+                                     (((color >> 8U) & 0x07U) << 2U) |
+                                     ((color >> 3U) & 0x03U));
+}
+
 class CollectSse final : public hosty::SseListener {
 public:
     bool on_sse_event(const hosty::SseEvent& event) override {
@@ -192,15 +198,6 @@ void test_notifications() {
     CHECK(notifications.items[0].app_id == "com.example.app");
 }
 
-void test_log_tail_is_bounded() {
-    hosty::LogTail logs;
-    hosty::LogTailParser parser(logs);
-    constexpr std::string_view json = R"({"appId":"com.example","text":"one\ntwo","services":[]})";
-    CHECK(feed_chunked(parser, json, 2) == hosty::ProtocolError::None);
-    CHECK(logs.app_id == "com.example");
-    CHECK(logs.text == "one\ntwo");
-}
-
 void test_sse() {
     CollectSse listener;
     hosty::SseParser parser(listener);
@@ -232,10 +229,15 @@ void test_state_and_power() {
     CHECK(power.tick(999, false, 0).display_off == false);
     CHECK(power.tick(1000, false, 0).display_off);
     CHECK(power.mode() == hosty::PowerMode::OnlineStandby);
-    CHECK(power.tick(1100, false, 120).display_on);
-    CHECK(power.notification(1200, hosty::NotificationLevel::Info, false).play_sound);
+    CHECK(!power.tick(1100, false, 120).display_on);
+    CHECK(!power.tick(1200, false, 80).display_on);
+    CHECK(!power.tick(1300, false, 120).display_on);
+    const hosty::PowerAction motion_wake = power.tick(1550, false, 120);
+    CHECK(motion_wake.display_on);
+    CHECK(motion_wake.wake_reason == hosty::WakeReason::Motion);
+    CHECK(power.notification(1600, hosty::NotificationLevel::Info, false).play_sound);
     CHECK(power.request_deep_standby().enter_deep_sleep);
-    CHECK(power.tick(1300, true, 0).leave_deep_sleep);
+    CHECK(power.tick(1700, true, 0).leave_deep_sleep);
 }
 
 void test_render() {
@@ -254,8 +256,38 @@ void test_render() {
     ui.battery_percent = 90;
     hosty::host::PpmCanvas canvas;
     hosty::Renderer renderer;
+    const auto& amber = hosty::theme_palette(hosty::ColorTheme::Amber);
+    const auto& ocean = hosty::theme_palette(hosty::ColorTheme::Ocean);
+    const auto& violet = hosty::theme_palette(hosty::ColorTheme::Violet);
+    CHECK(rgb332_bucket(amber.background) != rgb332_bucket(ocean.background));
+    CHECK(rgb332_bucket(amber.background) != rgb332_bucket(violet.background));
+    CHECK(rgb332_bucket(ocean.background) != rgb332_bucket(violet.background));
+    CHECK(rgb332_bucket(amber.panel) != rgb332_bucket(ocean.panel));
+    CHECK(rgb332_bucket(amber.panel) != rgb332_bucket(violet.panel));
+    CHECK(rgb332_bucket(ocean.panel) != rgb332_bucket(violet.panel));
+
+    std::uint64_t theme_checksums[3]{};
+    for (unsigned theme = 0; theme < 3; ++theme) {
+        ui.theme = static_cast<hosty::ColorTheme>(theme);
+        hosty::host::PpmCanvas themed_canvas;
+        renderer.render(themed_canvas, state, ui);
+        theme_checksums[theme] = themed_canvas.checksum();
+        CHECK(theme_checksums[theme] != 0);
+    }
+    CHECK(theme_checksums[0] != theme_checksums[1]);
+    CHECK(theme_checksums[0] != theme_checksums[2]);
+    CHECK(theme_checksums[1] != theme_checksums[2]);
+
+    ui.view = hosty::View::Apps;
+    ui.overlay_visible = true;
+    ui.overlay_mode = hosty::OverlayMode::Menu;
+    ui.overlay_title.assign_truncated("Example");
+    hosty::MenuItem action;
+    action.shortcut = 'R';
+    action.label.assign_truncated("Restart");
+    CHECK(ui.menu_items.push_back(action));
     renderer.render(canvas, state, ui);
-    CHECK(canvas.checksum() != 0);
+    CHECK(canvas.checksum() != theme_checksums[2]);
 }
 
 }  // namespace
@@ -270,7 +302,6 @@ int main() {
     test_apps_fixture();
     test_app_collection_limit();
     test_notifications();
-    test_log_tail_is_bounded();
     test_sse();
     test_state_and_power();
     test_render();

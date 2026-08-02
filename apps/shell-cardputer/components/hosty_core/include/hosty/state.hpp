@@ -31,6 +31,18 @@ public:
     void apply(const ConnectionEvent& event);
     void install_snapshot(const CoreSnapshot& snapshot, std::uint64_t now_ms);
     void install_notifications(const NotificationSnapshot& notifications);
+
+    // Show a lifecycle transition the moment the operator asks for it, without waiting to be told.
+    //
+    // Core does publish `starting` and `stopping`, but the device only learns of them by re-reading
+    // /api/apps, and that round-trip costs about a second and a half — dominated by a fresh TLS
+    // handshake. An app frequently passes through the intermediate state faster than that, so the
+    // snapshot that finally arrives already says `running` and the operator sees nothing happen
+    // between pressing the key and the app changing colour.
+    //
+    // This is a local prediction, not a fact: the next snapshot overwrites it unconditionally, so a
+    // failed or refused operation corrects itself within one sync rather than sticking.
+    [[nodiscard]] bool predict_runtime_state(std::string_view app_id, RuntimeState state);
     [[nodiscard]] SyncHint on_sse_event(std::string_view event_name);
     [[nodiscard]] bool stale(std::uint64_t now_ms, std::uint64_t threshold_ms) const;
 

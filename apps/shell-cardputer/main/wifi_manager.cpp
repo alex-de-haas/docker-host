@@ -10,8 +10,9 @@
 namespace {
 
 constexpr EventBits_t kConnected = BIT0;
-constexpr EventBits_t kFailed = BIT1;
+constexpr EventBits_t kStarted = BIT1;
 constexpr const char* kTag = "hosty_wifi";
+constexpr std::uint32_t kDriverStartTimeoutMs = 5'000;
 
 }  // namespace
 
@@ -39,48 +40,115 @@ bool WifiManager::begin() {
 
 bool WifiManager::connect(const DeviceSettings& settings, std::uint32_t timeout_ms) {
     if (!initialized_ || settings.wifi_ssid.empty()) return false;
-    xEventGroupClearBits(events_, kConnected | kFailed);
+    reconnect_enabled_.store(true);
+    if (connected()) return true;
 
-    wifi_config_t config{};
-    const auto ssid_length = std::min(settings.wifi_ssid.size(), sizeof(config.sta.ssid) - 1);
-    const auto password_length = std::min(settings.wifi_password.size(), sizeof(config.sta.password) - 1);
-    std::memcpy(config.sta.ssid, settings.wifi_ssid.c_str(), ssid_length);
-    std::memcpy(config.sta.password, settings.wifi_password.c_str(), password_length);
-    config.sta.threshold.authmode = settings.wifi_password.empty() ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA2_PSK;
-    config.sta.pmf_cfg.capable = true;
-    config.sta.pmf_cfg.required = false;
+    if (!started_) {
+        xEventGroupClearBits(events_, kConnected | kStarted);
+        last_disconnect_reason_.store(0);
 
-    if (esp_wifi_set_config(WIFI_IF_STA, &config) != ESP_OK) return false;
-    const esp_err_t started = esp_wifi_start();
-    if (started != ESP_OK && started != ESP_ERR_WIFI_CONN) return false;
-    if (esp_wifi_connect() != ESP_OK) return false;
+        wifi_config_t config{};
+        const auto ssid_length = std::min(settings.wifi_ssid.size(), sizeof(config.sta.ssid) - 1);
+        const auto password_length = std::min(settings.wifi_password.size(), sizeof(config.sta.password) - 1);
+        std::memcpy(config.sta.ssid, settings.wifi_ssid.c_str(), ssid_length);
+        std::memcpy(config.sta.password, settings.wifi_password.c_str(), password_length);
+        config.sta.threshold.authmode = settings.wifi_password.empty() ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA2_PSK;
+        config.sta.pmf_cfg.capable = true;
+        config.sta.pmf_cfg.required = false;
+        config.sta.failure_retry_cnt = 5;
 
-    const EventBits_t bits = xEventGroupWaitBits(events_, kConnected | kFailed, pdFALSE, pdFALSE,
-                                                 pdMS_TO_TICKS(timeout_ms));
+        if (esp_wifi_set_config(WIFI_IF_STA, &config) != ESP_OK) return false;
+        const esp_err_t start = esp_wifi_start();
+        if (start != ESP_OK) {
+            ESP_LOGE(kTag, "Unable to start Wi-Fi: %s", esp_err_to_name(start));
+            return false;
+        }
+        started_ = true;
+    }
+
+    const EventBits_t ready = xEventGroupWaitBits(events_, kStarted, pdFALSE, pdFALSE,
+                                                  pdMS_TO_TICKS(kDriverStartTimeoutMs));
+    if ((ready & kStarted) == 0) {
+        ESP_LOGW(kTag, "Wi-Fi driver did not report station readiness within %u ms",
+                 static_cast<unsigned>(kDriverStartTimeoutMs));
+        return false;
+    }
+
+    const esp_err_t connect = esp_wifi_connect();
+    if (connect != ESP_OK && connect != ESP_ERR_WIFI_CONN) {
+        ESP_LOGW(kTag, "Unable to start Wi-Fi connection attempt: %s", esp_err_to_name(connect));
+        return false;
+    }
+
+    ESP_LOGI(kTag, "Waiting up to %u ms for Wi-Fi; last-disconnect-reason=%u",
+             static_cast<unsigned>(timeout_ms),
+             static_cast<unsigned>(last_disconnect_reason_.load()));
+    const EventBits_t bits = xEventGroupWaitBits(events_, kConnected, pdFALSE, pdFALSE, pdMS_TO_TICKS(timeout_ms));
     return (bits & kConnected) != 0;
 }
 
 void WifiManager::disconnect() {
     if (!initialized_) return;
+    reconnect_enabled_.store(false);
     static_cast<void>(esp_wifi_disconnect());
     static_cast<void>(esp_wifi_stop());
-    xEventGroupClearBits(events_, kConnected | kFailed);
+    started_ = false;
+    xEventGroupClearBits(events_, kConnected | kStarted);
 }
 
 bool WifiManager::connected() const {
     return events_ != nullptr && (xEventGroupGetBits(events_) & kConnected) != 0;
 }
 
-void WifiManager::event_handler(void* context, esp_event_base_t base, std::int32_t id, void*) {
+const char* WifiManager::last_failure_message() const {
+    const std::uint8_t reason = last_disconnect_reason_.load();
+    switch (reason) {
+        case WIFI_REASON_NO_AP_FOUND:
+        case WIFI_REASON_NO_AP_FOUND_W_COMPATIBLE_SECURITY:
+        case WIFI_REASON_NO_AP_FOUND_IN_AUTHMODE_THRESHOLD:
+        case WIFI_REASON_NO_AP_FOUND_IN_RSSI_THRESHOLD:
+            return "Wi-Fi network not found";
+        case WIFI_REASON_AUTH_FAIL:
+        case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
+        case WIFI_REASON_HANDSHAKE_TIMEOUT:
+            return "Wi-Fi authentication failed";
+        case WIFI_REASON_BEACON_TIMEOUT:
+        case WIFI_REASON_ASSOC_FAIL:
+        case WIFI_REASON_CONNECTION_FAIL:
+        case WIFI_REASON_TIMEOUT:
+            return "Wi-Fi connection timed out";
+        default:
+            return reason == 0 ? "Wi-Fi association timed out" : "Wi-Fi disconnected; retrying";
+    }
+}
+
+void WifiManager::event_handler(void* context, esp_event_base_t base, std::int32_t id, void* data) {
     auto& manager = *static_cast<WifiManager*>(context);
-    if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+    if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
+        xEventGroupSetBits(manager.events_, kStarted);
+        ESP_LOGI(kTag, "Wi-Fi station ready");
+    } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_STOP) {
+        xEventGroupClearBits(manager.events_, kConnected | kStarted);
+        ESP_LOGI(kTag, "Wi-Fi station stopped");
+    } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         xEventGroupClearBits(manager.events_, kConnected);
-        xEventGroupSetBits(manager.events_, kFailed);
-        ESP_LOGW(kTag, "Wi-Fi disconnected");
-        static_cast<void>(esp_wifi_connect());
+        const auto* disconnected = static_cast<const wifi_event_sta_disconnected_t*>(data);
+        const std::uint8_t reason = disconnected == nullptr ? 0 : disconnected->reason;
+        manager.last_disconnect_reason_.store(reason);
+        const bool reconnect = manager.reconnect_enabled_.load();
+        ESP_LOGW(kTag, "Wi-Fi disconnected reason=%u rssi=%d reconnect=%s",
+                 static_cast<unsigned>(reason),
+                 disconnected == nullptr ? 0 : static_cast<int>(disconnected->rssi),
+                 reconnect ? "yes" : "no");
+        if (reconnect && reason != WIFI_REASON_ROAMING) {
+            const esp_err_t retry = esp_wifi_connect();
+            if (retry != ESP_OK && retry != ESP_ERR_WIFI_CONN && retry != ESP_ERR_WIFI_NOT_STARTED) {
+                ESP_LOGW(kTag, "Unable to schedule Wi-Fi reconnect: %s", esp_err_to_name(retry));
+            }
+        }
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
-        xEventGroupClearBits(manager.events_, kFailed);
         xEventGroupSetBits(manager.events_, kConnected);
+        manager.last_disconnect_reason_.store(0);
         ESP_LOGI(kTag, "Wi-Fi connected");
     }
 }

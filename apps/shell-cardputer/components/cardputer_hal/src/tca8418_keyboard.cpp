@@ -103,6 +103,8 @@ bool Tca8418Keyboard::begin() {
     return gpio_isr_handler_add(kInterruptPin, &Tca8418Keyboard::interrupt_handler, this) == ESP_OK;
 }
 
+void Tca8418Keyboard::set_wake_task(TaskHandle_t task) { wake_task_ = task; }
+
 bool Tca8418Keyboard::read(KeyInput& input) {
     input = {};
     std::uint8_t count = 0;
@@ -142,7 +144,13 @@ bool Tca8418Keyboard::activity_pending() const {
 }
 
 void IRAM_ATTR Tca8418Keyboard::interrupt_handler(void* context) {
-    static_cast<Tca8418Keyboard*>(context)->interrupt_pending_ = true;
+    auto* keyboard = static_cast<Tca8418Keyboard*>(context);
+    keyboard->interrupt_pending_ = true;
+    if (keyboard->wake_task_ != nullptr) {
+        BaseType_t higher_priority_task_woken = pdFALSE;
+        vTaskNotifyGiveFromISR(keyboard->wake_task_, &higher_priority_task_woken);
+        portYIELD_FROM_ISR(higher_priority_task_woken);
+    }
 }
 
 bool Tca8418Keyboard::read_register(std::uint8_t address, std::uint8_t& value) const {
@@ -184,4 +192,3 @@ bool Tca8418Keyboard::pressed(std::uint8_t row, std::uint8_t column) const {
 }
 
 }  // namespace cardputer
-

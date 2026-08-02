@@ -2,6 +2,9 @@
 
 #include "cardputer/key_input.hpp"
 
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+
 #include <cstdint>
 
 namespace cardputer {
@@ -12,6 +15,7 @@ namespace cardputer {
 class Tca8418Keyboard {
 public:
     bool begin();
+    void set_wake_task(TaskHandle_t task);
     bool read(KeyInput& input);
     [[nodiscard]] bool activity_pending() const;
 
@@ -24,8 +28,8 @@ private:
     [[nodiscard]] bool pressed(std::uint8_t row, std::uint8_t column) const;
 
     volatile bool interrupt_pending_ = false;
+    TaskHandle_t wake_task_ = nullptr;
     std::uint64_t pressed_mask_ = 0;
 };
 
 }  // namespace cardputer
-

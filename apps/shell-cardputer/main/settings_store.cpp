@@ -1,5 +1,6 @@
 #include "settings_store.hpp"
 
+#include <esp_log.h>
 #include <nvs.h>
 
 #include <array>
@@ -7,12 +8,24 @@
 namespace {
 
 constexpr const char* kNamespace = "hosty_shell";
+constexpr const char* kTag = "hosty_settings";
 
 template <std::size_t Capacity>
 void read_string(nvs_handle_t handle, const char* key, hosty::FixedString<Capacity>& value) {
     std::array<char, Capacity + 1> buffer{};
     std::size_t length = buffer.size();
-    if (nvs_get_str(handle, key, buffer.data(), &length) == ESP_OK) value.assign_truncated(buffer.data());
+    const esp_err_t error = nvs_get_str(handle, key, buffer.data(), &length);
+    if (error == ESP_OK) {
+        value.assign_truncated(buffer.data());
+        return;
+    }
+    // A missing key is ordinary — it is how an unconfigured device looks. Anything else means a stored
+    // setting exists but did not survive the read, most plausibly because a later firmware shrank this
+    // field's capacity and NVS answered ESP_ERR_NVS_INVALID_LENGTH. Silently leaving the value empty
+    // presents that as "the device forgot its settings", with nothing anywhere to explain it.
+    if (error != ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGW(kTag, "Setting '%s' could not be read: %s", key, esp_err_to_name(error));
+    }
 }
 
 template <std::size_t Capacity>
@@ -45,6 +58,15 @@ bool SettingsStore::load(DeviceSettings& settings) const {
     if (nvs_get_u8(handle, "quiet", &value8) == ESP_OK) settings.quiet_hours_enabled = value8 != 0;
     if (nvs_get_u8(handle, "quiet_start", &value8) == ESP_OK && value8 < 24) settings.quiet_start_hour = value8;
     if (nvs_get_u8(handle, "quiet_end", &value8) == ESP_OK && value8 < 24) settings.quiet_end_hour = value8;
+    if (nvs_get_u8(handle, "eco", &value8) == ESP_OK) settings.eco_standby = value8 != 0;
+    if (nvs_get_u32(handle, "eco_alert_ms", &value32) == ESP_OK &&
+        (value32 == 5 * 60'000 || value32 == 10 * 60'000 || value32 == 30 * 60'000)) {
+        settings.eco_alert_interval_ms = value32;
+    }
+    if (nvs_get_u8(handle, "theme", &value8) == ESP_OK &&
+        value8 <= static_cast<std::uint8_t>(hosty::ColorTheme::Violet)) {
+        settings.theme = static_cast<hosty::ColorTheme>(value8);
+    }
     nvs_close(handle);
     return !settings.wifi_ssid.empty() && !settings.core_origin.empty();
 }
@@ -66,6 +88,9 @@ bool SettingsStore::save(const DeviceSettings& settings) const {
         nvs_set_u8(handle, "quiet", settings.quiet_hours_enabled ? 1 : 0) == ESP_OK &&
         nvs_set_u8(handle, "quiet_start", settings.quiet_start_hour) == ESP_OK &&
         nvs_set_u8(handle, "quiet_end", settings.quiet_end_hour) == ESP_OK &&
+        nvs_set_u8(handle, "eco", settings.eco_standby ? 1 : 0) == ESP_OK &&
+        nvs_set_u32(handle, "eco_alert_ms", settings.eco_alert_interval_ms) == ESP_OK &&
+        nvs_set_u8(handle, "theme", static_cast<std::uint8_t>(settings.theme)) == ESP_OK &&
         nvs_commit(handle) == ESP_OK;
     nvs_close(handle);
     return written;

@@ -13,9 +13,12 @@ public:
     constexpr FixedString() = default;
     constexpr explicit FixedString(std::string_view value) { assign_truncated(value); }
 
+    // Fails without touching the target: a rejected assignment must not also destroy what was already
+    // there. Callers treat false as "this input was refused", and several of them keep using the
+    // previous value afterwards — clearing here turned an over-long entry into silent data loss.
+    // Use assign_truncated when truncation is the wanted behavior.
     [[nodiscard]] constexpr bool assign(std::string_view value) {
         if (value.size() > Capacity) {
-            clear();
             return false;
         }
         size_ = value.size();

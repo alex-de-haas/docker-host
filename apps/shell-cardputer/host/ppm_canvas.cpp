@@ -16,6 +16,7 @@ constexpr Glyph kGlyphs[] = {
     {' ', {0, 0, 0, 0, 0}}, {'!', {0, 0, 0x5f, 0, 0}}, {'%', {0x63, 0x13, 0x08, 0x64, 0x63}},
     {'+', {0x08, 0x08, 0x3e, 0x08, 0x08}}, {',', {0, 0x50, 0x30, 0, 0}}, {'-', {0x08, 0x08, 0x08, 0x08, 0x08}},
     {'.', {0, 0x60, 0x60, 0, 0}}, {'/', {0x20, 0x10, 0x08, 0x04, 0x02}}, {':', {0, 0x36, 0x36, 0, 0}},
+    {'<', {0x08, 0x14, 0x22, 0x41, 0}}, {'>', {0x41, 0x22, 0x14, 0x08, 0}},
     {'0', {0x3e, 0x51, 0x49, 0x45, 0x3e}}, {'1', {0, 0x42, 0x7f, 0x40, 0}}, {'2', {0x42, 0x61, 0x51, 0x49, 0x46}},
     {'3', {0x21, 0x41, 0x45, 0x4b, 0x31}}, {'4', {0x18, 0x14, 0x12, 0x7f, 0x10}}, {'5', {0x27, 0x45, 0x45, 0x45, 0x39}},
     {'6', {0x3c, 0x4a, 0x49, 0x49, 0x30}}, {'7', {0x01, 0x71, 0x09, 0x05, 0x03}}, {'8', {0x36, 0x49, 0x49, 0x49, 0x36}},
@@ -28,6 +29,7 @@ constexpr Glyph kGlyphs[] = {
     {'R', {0x7f, 0x09, 0x19, 0x29, 0x46}}, {'S', {0x46, 0x49, 0x49, 0x49, 0x31}}, {'T', {0x01, 0x01, 0x7f, 0x01, 0x01}},
     {'U', {0x3f, 0x40, 0x40, 0x40, 0x3f}}, {'V', {0x1f, 0x20, 0x40, 0x20, 0x1f}}, {'W', {0x3f, 0x40, 0x38, 0x40, 0x3f}},
     {'X', {0x63, 0x14, 0x08, 0x14, 0x63}}, {'Y', {0x07, 0x08, 0x70, 0x08, 0x07}}, {'Z', {0x61, 0x51, 0x49, 0x45, 0x43}},
+    {'[', {0, 0x7f, 0x41, 0x41, 0}}, {']', {0, 0x41, 0x41, 0x7f, 0}},
     {'_', {0x40, 0x40, 0x40, 0x40, 0x40}}, {'|', {0, 0, 0x7f, 0, 0}}, {'?', {0x02, 0x01, 0x51, 0x09, 0x06}},
 };
 
@@ -43,9 +45,22 @@ const std::array<std::uint8_t, 5>& columns_for(char character) {
 std::uint8_t expand5(std::uint16_t value) { return static_cast<std::uint8_t>((value * 255U + 15U) / 31U); }
 std::uint8_t expand6(std::uint16_t value) { return static_cast<std::uint8_t>((value * 255U + 31U) / 63U); }
 
+// The firmware uses an 8-bit RGB332 sprite to keep the full framebuffer in
+// internal RAM. Quantize host renders the same way so palette reviews match
+// the physical Cardputer display instead of the source RGB565 values.
+Color quantize_rgb332(Color color) {
+    const std::uint8_t red = static_cast<std::uint8_t>((color >> 13U) & 0x07U);
+    const std::uint8_t green = static_cast<std::uint8_t>((color >> 8U) & 0x07U);
+    const std::uint8_t blue = static_cast<std::uint8_t>((color >> 3U) & 0x03U);
+    const std::uint8_t red8 = static_cast<std::uint8_t>((((red << 3U) + red) << 2U) + (red >> 1U));
+    const std::uint8_t green8 = static_cast<std::uint8_t>((((green << 3U) + green) << 2U) + (green >> 1U));
+    const std::uint8_t blue8 = static_cast<std::uint8_t>(blue * 0x55U);
+    return static_cast<Color>(((red8 >> 3U) << 11U) | ((green8 >> 2U) << 5U) | (blue8 >> 3U));
+}
+
 }  // namespace
 
-void PpmCanvas::fill(Color color) { pixels_.fill(color); }
+void PpmCanvas::fill(Color color) { pixels_.fill(quantize_rgb332(color)); }
 
 void PpmCanvas::fill_rect(int x, int y, int width, int height, Color color) {
     const int left = std::max(0, x);
@@ -91,7 +106,9 @@ std::uint64_t PpmCanvas::checksum() const {
 }
 
 void PpmCanvas::pixel(int x, int y, Color color) {
-    if (x >= 0 && x < kWidth && y >= 0 && y < kHeight) pixels_[static_cast<std::size_t>(y * kWidth + x)] = color;
+    if (x >= 0 && x < kWidth && y >= 0 && y < kHeight) {
+        pixels_[static_cast<std::size_t>(y * kWidth + x)] = quantize_rgb332(color);
+    }
 }
 
 void PpmCanvas::glyph(int x, int y, char character, Color foreground, Color background) {
@@ -105,4 +122,3 @@ void PpmCanvas::glyph(int x, int y, char character, Color foreground, Color back
 }
 
 }  // namespace hosty::host
-

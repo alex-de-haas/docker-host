@@ -49,25 +49,43 @@ list and revoke the entry carrying the same device label.
 
 ## Controls
 
-`Fn+1` through `Fn+4` select Dashboard, Apps, Updates, and Device. Arrow keys
-move the selected app. Available commands are deliberately limited:
+Left and Right cycle through Home, Apps, Updates, and Device. The header names
+the current page, shows the live connection phase, and keeps battery state in
+view. The footer shows only the controls that apply to the current page.
+`Fn+1` through `Fn+4` remain available as direct, undisclosed page shortcuts.
+
+Up and Down select an app or Device setting. Press `Enter` on an app, the
+Updates page, or a Device action row to open a named action menu; each entry
+also displays its direct letter shortcut. The legacy shortcuts remain active:
 
 - Apps: `S` starts/stops, `R` restarts, `A` toggles autostart, `U` applies a
-  routine update, and `L` opens a bounded log tail. Lifecycle/autostart commands
-  do not appear for system apps.
+  routine update. Lifecycle/autostart commands do not appear for system apps.
 - Updates: `C` starts a fleet check and `A` confirms all routine updates.
   Review-required updates remain read-only and are completed from normal Shell.
-- Device: `Enter` edits setup, `Delete` revokes the current Core credential and signs out, `R`
-  restarts Core, `U` updates Core, `O` installs firmware OTA, and `D` enters
-  deep standby. Core and firmware operations require two Enter presses.
-- Device power: `M` toggles motion wake, `S` toggles sound, `Q` toggles the
-  default 22:00-07:00 quiet-hours window, and `+`/`-` adjust screen timeout.
+- Home: `U` opens Core-update confirmation only when `Update [U]` is visible.
+- Device: select Standby, Screen off, Check alerts, Motion wake, Theme, Sound,
+  or Quiet hours and press `Enter` to cycle or toggle its value. Connection
+  setup, Core actions, and Device actions are named rows in the same list.
+- Direct Device shortcuts: `R` restarts Core, `U` updates Core, `O` installs
+  firmware OTA, `D` enters deep standby, and `Delete` revokes the credential.
+  Core and firmware operations require two Enter presses.
+
+The Theme setting cycles between the dark Amber, Ocean, and Violet palettes.
+Amber is the default. The selected palette and all power preferences persist
+across restarts without changing Wi-Fi credentials or authorization.
+
+Informational popups close with `Esc` (`Fn+\``), the bare backtick key,
+`Enter`, `Backspace`, or `Q`. `Esc`/backtick and `N` cancel confirmation
+popups.
 
 Mutations are refused below 15% battery unless USB-C power is connected.
-Firmware OTA requires 50% or USB-C power and a valid clock. Online standby
-keeps Wi-Fi/SSE active with the screen asleep; keyboard or threshold motion
-wakes it. Deep standby disconnects Wi-Fi and therefore cannot receive live
-notifications.
+Firmware OTA requires 50% or USB-C power and a valid clock. Live standby keeps
+Wi-Fi/SSE active with the screen asleep. Eco standby disconnects Wi-Fi and
+checks alerts every 5, 10, or 30 minutes; notifications can therefore arrive
+up to one interval late. A keyboard interrupt wakes either mode immediately,
+reconnects Eco mode, and performs a full sync. The IMU is sampled at 4 Hz only
+in standby when Motion wake is enabled. Deep standby disconnects Wi-Fi and does
+not poll notifications.
 
 ## Build and flash
 
@@ -109,15 +127,22 @@ apps/shell-cardputer/tools/host-test.sh
 apps/shell-cardputer/tools/render-harness.sh
 ```
 
-The render harness writes four 240 x 135 PPM images under
+The render harness writes the four 240 x 135 views, Ocean/Violet theme samples,
+a conditional Core-update indicator, and an action-menu sample under
 `apps/shell-cardputer/build-host/render/` for review without a Cardputer.
 
 ## Troubleshooting
 
 - A board-identification failure means the target is not Cardputer ADV; the
   original Cardputer and v1.1 are intentionally unsupported.
-- `Clock not set` blocks HTTPS and OTA. Confirm the access point permits UDP
-  NTP, then retry. Local-network HTTP remains usable without time.
+- Wi-Fi association retries automatically after transient startup failures; it
+  does not require re-entering or re-saving valid credentials. Press `Enter`
+  to retry immediately, or `F4` to edit credentials when the displayed reason
+  says the network was not found or authentication failed.
+- `Setting time` is a normal HTTPS startup phase. The firmware tries three NTP
+  services and shows a technical failure popup only after repeated attempts.
+  If it persists, confirm the access point permits UDP NTP. Local-network HTTP
+  remains usable without time, but OTA and quiet hours still need a valid clock.
 - `Administrator required` means a `host.user` approved the code. Deny/revoke
   that credential in Shell and approve the new code as `host.admin`.
 - `stale` or `offline` keeps the last bounded snapshot visible but disables

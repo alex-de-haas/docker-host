@@ -132,6 +132,16 @@ void ClientState::install_notifications(const NotificationSnapshot& notification
     notifications_ = notifications;
 }
 
+bool ClientState::predict_runtime_state(std::string_view app_id, RuntimeState state) {
+    for (auto& app : core_.apps) {
+        if (app.id.view() != app_id) continue;
+        if (app.runtime_state == state) return false;
+        app.runtime_state = state;
+        return true;
+    }
+    return false;
+}
+
 SyncHint ClientState::on_sse_event(std::string_view event_name) {
     if (event_name == "notification") return SyncHint::Notifications;
     if (event_name == "app.changed" || event_name == "app.removed" ||

@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-07-31
-Updated: 2026-07-31
+Updated: 2026-08-02
 
 ## Goal
 
@@ -30,8 +30,7 @@ figure is a promise rather than a note to self.
 The first release provides:
 
 - Core reachability, version, update availability, and restart/update status;
-- app inventory, health, runtime state, autostart state, and a bounded recent
-  log tail;
+- app inventory, health, runtime state, and autostart state;
 - app start, stop, restart, autostart change, and supported update operations;
 - fleet update checks and routine update-all;
 - notification counters, compact notification details, and configurable sound;
@@ -281,13 +280,35 @@ The keyboard-first interface has four top-level views:
 1. **Dashboard** — connection and battery state, Core version/update state,
    app health counts, active operations, and unread notifications.
 2. **Apps** — searchable compact list, detail/status view, start/stop/restart,
-   autostart toggle, supported update action, and bounded log tail.
+   autostart toggle, and supported update action.
 3. **Updates** — check progress, routine updates, apply-by-digest confirmation,
    and reconnect/resync after Core update. An update Core marks as requiring
    operator review is listed with its reason and a note that it is applied from
    Shell.
 4. **Device** — endpoint, Wi-Fi, time zone, sound, screen timeout, motion
    policy, authorization, diagnostics, firmware version, and firmware OTA.
+
+Left and right cycle through the four views. The single-line header always
+shows both arrows around the current view, the connection phase (`Wi-Fi`,
+`Setting time`, `Syncing`, `Synced`, `Stale`, or `Offline`), and battery
+percentage. `Online` is not shown separately because it duplicates `Synced`.
+The footer is contextual: it exposes selection and the next available action
+rather than repeating global navigation.
+
+Enter opens a bounded action menu for the selected item. Menus name actions in
+plain language and show their existing letter shortcuts as accelerators, so a
+new operator can discover `Restart`, `Stop`, `Autostart`, and `Update` without
+reading external documentation. Up/down select, Enter chooses, and Escape
+closes. The direct shortcuts and Fn+1 through Fn+4 remain available but are not
+required knowledge.
+
+Device settings are a selectable list rather than a hidden collection of
+letter commands. It includes standby mode, display timeout, delayed-alert
+interval, motion wake, sound, quiet hours, and color theme. The firmware ships
+three intentionally distinct dark themes — Amber, Ocean, and Violet — using
+the same semantic success/warning/error roles and persisting the selection in
+NVS. Amber is the default instrument-panel palette rather than the previous
+white-and-green presentation.
 
 All mutating actions provide immediate in-flight feedback and an explicit
 success or failure result. System-app start, stop, restart, and autostart
@@ -303,18 +324,27 @@ the whole interface, and it is the reason those updates stay in Shell.
 The default power policy has three modes:
 
 - **Active** — display and backlight on, normal keyboard interaction, active
-  refresh while an operation is visible.
+  refresh while an operation is visible. Automatic light sleep is held off in
+  this mode because it interrupts the GPIO38 LEDC/PWM backlight on the ADV and
+  produces visible flicker.
 - **Online standby** — ST7789 sleep, GPIO38/backlight off, Wi-Fi connection and
-  SSE retained, ESP-IDF power management enabled, keyboard wake enabled, and
-  BMI270 sampled at a default 4 Hz.
+  SSE retained, ESP-IDF automatic light sleep and dynamic frequency scaling
+  enabled, keyboard wake enabled, and BMI270 sampled at a default 4 Hz.
+- **Eco standby** — begins when the configured display timeout expires, turns
+  off the display, closes SSE, stops Wi-Fi, and checks notifications on a
+  selectable 5, 10, or 30 minute cadence. Keyboard wake is immediate and
+  performs a full reconnect/resync; timer wake checks bounded notifications,
+  sounds or wakes the display according to the existing alert policy, then
+  returns to sleep. The maximum normal alert delay is the selected cadence.
 - **Deep standby** — optional manual/night mode; Wi-Fi is disconnected and
   immediate remote notifications are unavailable. Wake uses supported timer or
   keyboard paths and is followed by full reconnect/resync.
 
-Online standby wakes the display on keyboard activity or on motion above a
-configurable threshold, followed by a cooldown. That is the whole algorithm:
-there is no hysteresis, no debounce window, and no attempt to tell being
-carried apart from being picked up.
+Online standby wakes the display on keyboard activity or after two consecutive
+motion samples exceed a configurable threshold within 750 ms, followed by a
+cooldown. The two-sample confirmation rejects isolated BMI270 noise observed on
+the physical ADV without attempting to tell being carried apart from being
+picked up.
 
 The reason is that **the device has no function outside Wi-Fi range**, so
 nobody carries it far or long, and the travel case this filtering would exist
@@ -324,7 +354,7 @@ worth an algorithm to avoid. Wake-on-motion is a nicety and is treated as one;
 it can be turned off, and turning it off costs nothing else.
 
 Because the accelerometer has no wired interrupt, motion is found by polling,
-and the target motion-to-display latency is at most 250 ms at the default 4 Hz
+and the target motion-to-display latency is at most 500 ms at the default 4 Hz
 sampling rate. Moving detection into the BMI270's own motion feature and
 polling only its status is an available optimization if Phase 3 finds the wake
 cost matters; with no filtering left to implement it is no longer a
@@ -415,7 +445,8 @@ peripherals. FreeRTOS responsibilities remain explicit and bounded:
 - `alerts` owns notification filtering, sound, and quiet hours;
 - `ota` owns image download over validated HTTPS, boot selection, and rollback.
 
-Tasks communicate through fixed-capacity queues. Network parsing is streaming,
+Tasks communicate through fixed event bits and direct task notifications, with
+bounded staging buffers for transferred state. Network parsing is streaming,
 and the normalized state retains only fields needed by the product boundary.
 Secrets never enter logs, crash reports, UI snapshots, or generic state events.
 
@@ -520,7 +551,7 @@ decides.
 ### Budgets recorded in Phase 0
 
 - peak and steady free heap for connect, full sync, app list, SSE reconnect,
-  log tail, and OTA;
+  and OTA;
 - firmware image and A/B partition headroom;
 - TLS handshake and full-sync duration on a representative large host;
 - the deep-sleep floor run above;
@@ -540,6 +571,16 @@ that make it checkable, and it is **provisional**: it was chosen before the
 floor was known, and Phase 0 replaces it with a number derived from the
 measured floor. Committing to it now would be committing to an outcome nobody
 has evidence for.
+
+The first reported overnight observation on 2026-08-01 lost 30 percentage
+points in 8 hours with the display normally asleep. A linear projection is
+about **26.7 hours** or **66 mA average**, roughly 1.8 times the 48-hour
+working budget. This partial gauge segment is not an acceptance run: battery
+percentage is nonlinear, and the run did not cover full charge to the defined
+cutoff. It is enough to reject the original estimate as credible evidence and
+trigger the first standby-duty-cycle pass: interrupt-driven keyboard wake,
+4 Hz rather than 50 Hz IMU work, no IMU sampling when motion wake is disabled,
+and event-driven main-task sleeps.
 
 The acceptance profile is room temperature, stable 2.4 GHz Wi-Fi, display off,
 the standby transport chosen above, 4 Hz motion sampling, and one audible
@@ -562,9 +603,9 @@ this plan is updated.
   measured baseline behavior.
 - [x] Define and check in representative Core fixtures — `apps/shell-cardputer/fixtures/`,
   2026-07-31: 50 apps (213,748 bytes), the same 50 with every optional field
-  inflated (533,198), unknown enum values, long notification bodies and a
-  500-line log tail, all deterministic and generated from the field distribution
-  measured on a real host.
+  inflated (533,198), unknown enum values, and long notification bodies, all
+  deterministic and generated from the field distribution measured on a real
+  host.
 - [ ] Prototype TLS with SNTP-set time, streaming app parsing, SSE reconnect,
   screen power control, keyboard wake, BMI270 polling, and speaker notification
   on real hardware.
@@ -617,7 +658,10 @@ own PR under the platform version, never inside the firmware PR.
   minimum-Core-version handling, and diagnostics.
 - [ ] Implement the keyboard-first Dashboard, Apps, Updates, and Device views
   with unknown/stale/busy/error states.
-- [ ] Implement lifecycle, autostart, log-tail, Core operation, and routine
+- [x] Replace discoverability-dependent hotkeys with cyclic left/right view
+  navigation, connection-aware header, contextual footer/action menus, and a
+  selectable persisted Amber/Ocean/Violet theme.
+- [ ] Implement lifecycle, autostart, Core operation, and routine
   update flows with confirmation and idempotency behavior aligned to Core, and
   surface review-required updates as read-only with their reason.
 
@@ -626,6 +670,8 @@ own PR under the platform version, never inside the firmware PR.
 - [x] Implement Active, Online standby, and optional Deep standby transitions,
   including display sleep, GPIO38 control, Wi-Fi power management, keyboard
   wake, and motion wake as a threshold plus cooldown that can be switched off.
+- [x] Implement configurable Eco standby with Wi-Fi/SSE suspension, 5/10/30
+  minute delayed-notification polling, keyboard reconnect, and full resync.
 - [x] Implement bounded notification delivery, priority/quiet-hours filtering,
   sound rate limiting, and screen-wake policy.
 - [x] Implement battery guards for mutation and OTA operations and expose
@@ -752,9 +798,13 @@ its own deliverable.
 - **The firmware is a public artifact, and the OTA origin is compiled in.** A
   Hosty Core is never a firmware source and cannot influence one; the Core
   origin and the firmware origin are separate channels by construction.
-- **Motion wake stays, its false-wake filtering does not.** Threshold plus
-  cooldown, no hysteresis or debounce: the device is useless outside Wi-Fi
-  range, so the carried-around case the filtering existed for is not real.
+- **Motion wake stays; travel filtering does not.** The device is useless
+  outside Wi-Fi range, so the carried-around case that hysteresis and a debounce
+  window would have existed for is not real. What shipped is a threshold, a
+  cooldown, and a two-samples-within-750 ms confirmation — the last one was not
+  in the original decision and is kept deliberately: it costs one extra sample
+  and rejects the single knock on a desk, which is the false wake that actually
+  happens to a device sitting still.
 - **No bench power instrumentation.** Runtime is accepted from observed battery
   drain, and the 48-hour figure is provisional until Phase 0 measures the floor.
 - **Review-required updates stay in Shell.** Routine updates are applied from
@@ -762,6 +812,23 @@ its own deliverable.
 - **Firmware OTA is in scope for `0.1.0`.** Dropping it later would be a scope
   change the user decides and this plan records, not something implementation
   settles by leaving a deliverable unchecked.
+
+### Resolved 2026-08-02
+
+- **Navigation cycles and the interface teaches its actions.** Left/right
+  replaces the visible Fn+1–Fn+4 tab strip, the header carries connection and
+  battery state, and Enter menus expose both plain action names and accelerator
+  keys. Direct Fn and letter shortcuts remain compatible but undisclosed.
+- **Eco standby trades notification latency for radio savings.** It is an
+  explicit alternative to live SSE standby, exposes both display timeout and
+  5/10/30 minute alert cadence, and always retains immediate keyboard wake.
+- **Time remains a security prerequisite, not a dashboard feature.** HTTPS
+  certificate validation, firmware OTA, and quiet hours need wall-clock time.
+  Initial SNTP retries in the background as `Setting time`; implementation
+  jargon and a blocking popup are reserved for persistent failure diagnostics.
+- **Themes are semantic, dark, and bounded.** Amber is the new default, with
+  Ocean and Violet alternatives; theme choice changes presentation only and is
+  stored in NVS without affecting credentials or authorization.
 
 Approved by the user on 2026-07-31, with the shared authorization dependency
 now covered by a Ready plan of its own.
@@ -778,7 +845,7 @@ Automated verification includes:
 - Core contract tests for lifecycle/update idempotency and any compact read
   contract added by this work; device authorization, revocation and audit are
   verified by [`access-tokens`](../access-tokens/feature.md), not restated here;
-- fixture tests at maximum supported app, notification, string, and log sizes;
+- fixture tests at maximum supported app, notification, and string sizes;
 - deterministic firmware builds, dependency/license checks, partition and
   image-size gates, and documentation-index checks.
 
@@ -787,14 +854,18 @@ Physical-device verification includes:
 - clean USB-C flash, onboarding, authorization, revocation of a device that is
   powered on and connected, credential expiry, wrong device clock, and recovery
   without a reachable Core;
-- Wi-Fi loss, AP restart, Core restart/update, SSE disconnect, reconnect storm,
-  stale-state indication, full resync, and a Core older than the firmware's
-  minimum;
-- every supported lifecycle/update action, and the administrator-role warning
-  when the device is authorized by a `host.user`;
+- repeated cold-boot Wi-Fi association, transient association failure without
+  re-entering valid credentials, Wi-Fi loss, AP restart, Core restart/update,
+  SSE disconnect, reconnect storm, stale-state indication, full resync, and a
+  Core older than the firmware's minimum;
+- every supported lifecycle/update action, confirmation dismissal and visible
+  Core-reported `stopping`/`starting` transitions through SSE-driven refresh,
+  responsive navigation during network waits, and the administrator-role
+  warning when the device is authorized by a `host.user`;
 - display timeout, keyboard wake, motion wake at each threshold setting and
-  with motion wake off, quiet hours, sound rate limiting, and notifications
-  with the display off;
+  with motion wake off, flicker-free active display while automatic light
+  sleep is held off, automatic light-sleep resumption in standby, quiet hours,
+  sound rate limiting, and notifications with the display off;
 - onboarding against both a plain-HTTP LAN origin and an HTTPS origin;
 - cold boot with no clock against each origin type, a network that blocks NTP,
   and an NTP server answering with a time before the build timestamp;
@@ -822,6 +893,30 @@ build and firmware tests, and `node scripts/docs-index.mjs --check`.
 - Physical Cardputer ADV and end-to-end Core acceptance remain unchecked in the
   deliverables above; no battery-runtime, wake-electrical, or rollback claim is
   inferred from a compiler-only build.
+
+### Implementation evidence — 2026-08-02
+
+- `apps/shell-cardputer/tools/host-test.sh` passes, including distinct render
+  checksums for all three persisted themes and the action-menu overlay.
+- `apps/shell-cardputer/tools/render-harness.sh` renders the four views, Ocean
+  and Violet theme samples, the conditional Core-update indicator, and an
+  app-action menu at 240 x 135 for visual review. The harness quantizes RGB565
+  colors through the firmware's RGB332 framebuffer path, and tests require
+  distinct physical background and panel buckets for Amber, Ocean, and Violet.
+  All eight frames were inspected without clipping or overlap.
+- `apps/shell-cardputer/tools/docker-build.sh` completes with ESP-IDF 5.5. The
+  `0.1.0` ESP32-S3 image is 1,329,376 bytes against a 3,997,696-byte OTA slot
+  (67% free).
+- `node scripts/check-versions.mjs`, `node scripts/docs-index.mjs --check`, and
+  `git diff --check` pass. Core build/tests are not rerun because the redesign,
+  persisted settings, standby orchestration, and SNTP behavior change no Core
+  contract or source.
+- An app-only USB flash at `0x20000` completes on the physical Cardputer ADV
+  with the written-data hash verified, preserving NVS and OTA metadata. The
+  subsequent boot log reports firmware `0.1.0`, identifies M5CardputerADV,
+  associates with Wi-Fi on the first attempt, validates HTTPS, restores the
+  `host.admin` credential, and completes a full sync with Core `0.73.0`.
+  Runtime and delayed-alert battery acceptance remain open.
 
 ## References
 

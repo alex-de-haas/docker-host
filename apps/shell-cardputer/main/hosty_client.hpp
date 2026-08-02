@@ -7,6 +7,8 @@
 
 #include <esp_err.h>
 #include <esp_http_client.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 
 #include <cstdint>
 #include <string_view>
@@ -41,8 +43,6 @@ public:
     HttpResult read_core_update_status(hosty::CoreSnapshot& output) const;
     HttpResult read_apps(hosty::CoreSnapshot& output) const;
     HttpResult read_notifications(hosty::NotificationSnapshot& output) const;
-    HttpResult read_log_tail(std::string_view app_id, hosty::LogTail& output) const;
-
     HttpResult app_lifecycle(std::string_view app_id, std::string_view action) const;
     HttpResult set_autostart(std::string_view app_id, bool enabled) const;
     HttpResult start_update_check() const;
@@ -50,6 +50,7 @@ public:
     HttpResult restart_core() const;
     HttpResult update_core() const;
     HttpResult logout() const;
+    HttpResult mark_notifications_read() const;
 
     HttpResult stream_events(EventStreamObserver& observer) const;
 
@@ -61,7 +62,8 @@ private:
 
     static esp_err_t http_event(esp_http_client_event_t* event);
     HttpResult request(esp_http_client_method_t method, std::string_view path, std::string_view body,
-                       bool authenticated, hosty::ProtocolParserBase* parser) const;
+                       bool authenticated, hosty::ProtocolParserBase* parser,
+                       int timeout_ms = 20'000) const;
     bool make_url(std::string_view path, hosty::FixedString<320>& output) const;
     bool make_app_path(std::string_view app_id, std::string_view suffix, hosty::FixedString<256>& output) const;
     static bool append_json_string(std::string_view value, hosty::FixedString<256>& output);
@@ -71,4 +73,8 @@ private:
     hosty::FixedString<192> origin_;
     hosty::FixedString<96> access_token_;
     bool secure_ = false;
+    // Serializes requests across the sync and command tasks; see request() for why concurrent TLS
+    // handshakes are not survivable here. The event stream keeps its own connection and is not gated
+    // by this, because it blocks for minutes by design.
+    mutable SemaphoreHandle_t request_lock_ = nullptr;
 };

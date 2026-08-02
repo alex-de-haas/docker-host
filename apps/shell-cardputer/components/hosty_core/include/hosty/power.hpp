@@ -8,6 +8,8 @@ namespace hosty {
 
 enum class PowerMode : std::uint8_t { Active, OnlineStandby, DeepStandby };
 
+enum class WakeReason : std::uint8_t { None, Keyboard, Motion, Notification };
+
 struct PowerPolicy {
     std::uint32_t display_timeout_ms = 30'000;
     std::uint32_t motion_cooldown_ms = 3'000;
@@ -18,6 +20,7 @@ struct PowerPolicy {
 };
 
 struct PowerAction {
+    WakeReason wake_reason = WakeReason::None;
     bool display_on = false;
     bool display_off = false;
     bool enter_deep_sleep = false;
@@ -45,7 +48,8 @@ private:
     PowerMode mode_ = PowerMode::Active;
     std::uint64_t last_interaction_ms_ = 0;
     std::uint64_t motion_cooldown_until_ms_ = 0;
+    std::uint64_t motion_candidate_until_ms_ = 0;
+    std::uint8_t motion_sample_count_ = 0;
 };
 
 }  // namespace hosty
-

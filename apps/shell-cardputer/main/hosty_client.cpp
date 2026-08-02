@@ -2,12 +2,20 @@
 
 #include <esp_crt_bundle.h>
 #include <esp_log.h>
+#include <esp_heap_caps.h>
+#include <esp_timer.h>
 
 #include <cerrno>
+#include <cstdint>
 
 namespace {
 
 constexpr const char* kTag = "hosty_http";
+constexpr int kLifecycleRequestTimeoutMs = 120'000;
+
+// Two missed keep-alive comments. Core sends one every 20 seconds, so this tolerates a single late
+// heartbeat and still notices a dead connection long before TCP keepalive would.
+constexpr std::int64_t kStreamSilenceLimitUs = 50LL * 1'000'000;
 
 bool unreserved(char character) {
     return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
@@ -22,6 +30,10 @@ char hex_digit(unsigned value) { return static_cast<char>(value < 10 ? '0' + val
 bool HostyClient::configure(std::string_view origin, std::string_view access_token) {
     if (!origin_.assign(origin) || !access_token_.assign(access_token)) return false;
     secure_ = origin.starts_with("https://");
+    if (request_lock_ == nullptr) {
+        request_lock_ = xSemaphoreCreateMutex();
+        if (request_lock_ == nullptr) return false;
+    }
     return true;
 }
 
@@ -72,13 +84,6 @@ HttpResult HostyClient::read_notifications(hosty::NotificationSnapshot& output) 
     return request(HTTP_METHOD_GET, "/api/notifications?limit=16&offset=0", {}, true, &parser);
 }
 
-HttpResult HostyClient::read_log_tail(std::string_view app_id, hosty::LogTail& output) const {
-    hosty::FixedString<256> path;
-    if (!make_app_path(app_id, "/logs?tail=8", path)) return {ESP_ERR_INVALID_SIZE};
-    hosty::LogTailParser parser(output);
-    return request(HTTP_METHOD_GET, path.view(), {}, true, &parser);
-}
-
 HttpResult HostyClient::app_lifecycle(std::string_view app_id, std::string_view action) const {
     if (action != "start" && action != "stop" && action != "restart") return {ESP_ERR_INVALID_ARG};
     hosty::FixedString<256> path;
@@ -86,7 +91,7 @@ HttpResult HostyClient::app_lifecycle(std::string_view app_id, std::string_view 
     static_cast<void>(suffix.append('/'));
     static_cast<void>(suffix.append(action));
     if (!make_app_path(app_id, suffix.view(), path)) return {ESP_ERR_INVALID_SIZE};
-    return request(HTTP_METHOD_POST, path.view(), "{}", true, nullptr);
+    return request(HTTP_METHOD_POST, path.view(), "{}", true, nullptr, kLifecycleRequestTimeoutMs);
 }
 
 HttpResult HostyClient::set_autostart(std::string_view app_id, bool enabled) const {
@@ -121,6 +126,13 @@ HttpResult HostyClient::logout() const {
     return request(HTTP_METHOD_POST, "/api/auth/logout", "{}", true, nullptr);
 }
 
+HttpResult HostyClient::mark_notifications_read() const {
+    // A null id list means "all of them", the same request the Shell notification bell sends for its
+    // mark-all-read button. This console shows the newest alert rather than a selectable list, so
+    // per-notification acknowledgement would have nothing to select.
+    return request(HTTP_METHOD_POST, "/api/notifications/read", "{\"ids\":null}", true, nullptr);
+}
+
 HttpResult HostyClient::stream_events(EventStreamObserver& observer) const {
     hosty::FixedString<320> url;
     if (!make_url("/api/events", url)) return {ESP_ERR_INVALID_SIZE};
@@ -128,7 +140,10 @@ HttpResult HostyClient::stream_events(EventStreamObserver& observer) const {
     esp_http_client_config_t config{};
     config.url = url.c_str();
     config.method = HTTP_METHOD_GET;
-    config.timeout_ms = 25'000;
+    // Comfortably past Core's 20-second keep-alive rather than 5 seconds past it: one heartbeat
+    // delayed by a loaded host or a busy access point should not cost a reconnect and a full resync.
+    // Liveness is enforced by kStreamSilenceLimitUs below, not by this timeout.
+    config.timeout_ms = 45'000;
     config.buffer_size = 1024;
     config.buffer_size_tx = 512;
     config.keep_alive_enable = true;
@@ -149,18 +164,38 @@ HttpResult HostyClient::stream_events(EventStreamObserver& observer) const {
     hosty::SseParser parser(observer);
     if (result.transport_error == ESP_OK && result.status_code >= 200 && result.status_code < 300) {
         observer.on_stream_connected();
-        char buffer[768];
+        // esp_http_client_read() fills the requested length before returning. A
+        // large destination therefore retains small SSE frames indefinitely
+        // because Core's heartbeat arrives before the socket timeout. Reading
+        // one byte at a time lets the streaming parser dispatch each frame as
+        // soon as its terminating blank line arrives.
+        char byte = 0;
+        std::int64_t last_byte_us = esp_timer_get_time();
         while (true) {
-            const int read = esp_http_client_read(client, buffer, sizeof(buffer));
+            const int read = esp_http_client_read(client, &byte, 1);
             if (read > 0) {
-                if (parser.feed(std::string_view(buffer, static_cast<std::size_t>(read))) != hosty::SseError::None) {
+                last_byte_us = esp_timer_get_time();
+                if (parser.feed(std::string_view(&byte, 1)) != hosty::SseError::None) {
                     result.transport_error = ESP_FAIL;
                     break;
                 }
                 continue;
             }
             if (read == 0) break;
-            if (read == -ESP_ERR_HTTP_EAGAIN || errno == EAGAIN) continue;
+            if (read == -ESP_ERR_HTTP_EAGAIN || errno == EAGAIN) {
+                // A socket timeout is indistinguishable from "nothing to read yet", so silence is the
+                // only signal that the connection died without telling us — a NAT entry dropped, an
+                // access point rebooted. Core sends a keep-alive comment every 20 seconds, so silence
+                // well past that means the stream is gone and waiting for TCP keepalive to notice
+                // would leave the console showing stale state in the meantime.
+                if (esp_timer_get_time() - last_byte_us > kStreamSilenceLimitUs) {
+                    ESP_LOGW(kTag, "Event stream silent for %lld s; reconnecting",
+                             static_cast<long long>(kStreamSilenceLimitUs / 1'000'000));
+                    result.transport_error = ESP_ERR_TIMEOUT;
+                    break;
+                }
+                continue;
+            }
             result.transport_error = ESP_FAIL;
             break;
         }
@@ -186,7 +221,7 @@ esp_err_t HostyClient::http_event(esp_http_client_event_t* event) {
 }
 
 HttpResult HostyClient::request(esp_http_client_method_t method, std::string_view path, std::string_view body,
-                                bool authenticated, hosty::ProtocolParserBase* parser) const {
+                                bool authenticated, hosty::ProtocolParserBase* parser, int timeout_ms) const {
     hosty::FixedString<320> url;
     if (!make_url(path, url)) return {ESP_ERR_INVALID_SIZE};
     ResponseContext context{parser, false};
@@ -194,7 +229,7 @@ HttpResult HostyClient::request(esp_http_client_method_t method, std::string_vie
     esp_http_client_config_t config{};
     config.url = url.c_str();
     config.method = method;
-    config.timeout_ms = 20'000;
+    config.timeout_ms = timeout_ms;
     config.buffer_size = 1024;
     config.buffer_size_tx = 512;
     config.keep_alive_enable = true;
@@ -202,8 +237,30 @@ HttpResult HostyClient::request(esp_http_client_method_t method, std::string_vie
     config.user_data = &context;
     if (secure_) config.crt_bundle_attach = esp_crt_bundle_attach;
 
+    // One client per request, torn down when it returns — and only one at a time.
+    //
+    // A pooled, kept-alive connection was tried here and reverted: it cut a full sync from 5,990 ms to
+    // 460 ms, but the device already keeps one TLS context alive permanently for the event stream, and
+    // holding a second one across requests pushed mbedTLS into MBEDTLS_ERR_SSL_ALLOC_FAILED mid-read
+    // (a 12.8 KB allocation refused) and starved xTaskCreate of a contiguous 10 KB for the sync task.
+    // On 512 KB of internal SRAM with a 32 KB frame buffer and three task stacks, latency is the
+    // cheaper thing to spend. Intermediate lifecycle states stay visible regardless, because the UI
+    // predicts them locally instead of waiting for the round-trip.
+    //
+    // The lock is what survived that experiment, and it turned out to be the valuable half. Requests
+    // come from the sync task and the command task independently, so without it a lifecycle POST and an
+    // /api/apps GET perform their TLS handshakes simultaneously — three live contexts counting the
+    // event stream, two certificate-bundle validations competing for the same heap. That fails as
+    // ESP_ERR_HTTP_FETCH_HEADER after ten or fifteen seconds of retrying, on operations that take an
+    // instant when they are allowed to run one after another.
+    if (request_lock_ == nullptr) return {ESP_ERR_INVALID_STATE};
+    xSemaphoreTake(request_lock_, portMAX_DELAY);
+
     esp_http_client_handle_t client = esp_http_client_init(&config);
-    if (client == nullptr) return {ESP_ERR_NO_MEM};
+    if (client == nullptr) {
+        xSemaphoreGive(request_lock_);
+        return {ESP_ERR_NO_MEM};
+    }
     apply_common_headers(client, authenticated);
     if (!body.empty()) {
         esp_http_client_set_header(client, "Content-Type", "application/json");
@@ -219,13 +276,16 @@ HttpResult HostyClient::request(esp_http_client_method_t method, std::string_vie
         result.protocol_error = hosty::ProtocolError::Json;
     }
     if (!result.ok()) {
-        ESP_LOGW(kTag, "%.*s %.*s failed: transport=%s status=%d protocol=%s",
+        ESP_LOGW(kTag, "%.*s %.*s failed: transport=%s status=%d protocol=%s heap-free=%u largest=%u",
                  static_cast<int>(method == HTTP_METHOD_GET ? 3 : method == HTTP_METHOD_POST ? 4 : 6),
                  method == HTTP_METHOD_GET ? "GET" : method == HTTP_METHOD_POST ? "POST" : "DELETE",
                  static_cast<int>(path.size()), path.data(), esp_err_to_name(result.transport_error), result.status_code,
-                 hosty::protocol_error_name(result.protocol_error));
+                 hosty::protocol_error_name(result.protocol_error),
+                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                 static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
     }
     esp_http_client_cleanup(client);
+    xSemaphoreGive(request_lock_);
     return result;
 }
 

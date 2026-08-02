@@ -110,7 +110,6 @@ private:
     AppSummary current_app_;
     int apps_array_depth_ = -1;
     int app_object_depth_ = -1;
-    int capabilities_depth_ = -1;
     int app_update_depth_ = -1;
     int fleet_update_depth_ = -1;
     bool saw_apps_ = false;
@@ -129,16 +128,6 @@ private:
     int notification_depth_ = -1;
     int source_depth_ = -1;
     bool saw_notifications_ = false;
-};
-
-class LogTailParser final : public ProtocolParserBase {
-public:
-    explicit LogTailParser(LogTail& output);
-    bool on_json_event(const JsonEvent& event) override;
-
-private:
-    bool validate() override;
-    LogTail& output_;
 };
 
 [[nodiscard]] const char* protocol_error_name(ProtocolError error);

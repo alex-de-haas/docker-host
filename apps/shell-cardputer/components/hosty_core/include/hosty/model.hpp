@@ -61,7 +61,6 @@ struct AppSummary {
     bool system = false;
     bool autostart = true;
     bool live = false;
-    bool logs_available = false;
     FixedString<160> last_error;
     AppUpdateState update;
 };
@@ -102,11 +101,6 @@ struct NotificationSnapshot {
     FixedVector<Notification, kMaximumNotifications> items;
     std::uint32_t unread_count = 0;
     FixedString<40> updated_at;
-};
-
-struct LogTail {
-    FixedString<96> app_id;
-    FixedString<2048> text;
 };
 
 struct SessionInfo {
