@@ -18,8 +18,8 @@
     "server-only": "^0.0.1"
   },
   "peerDependencies": {
-    "next": ">=16",
-    "react": ">=19"
+    "next": "^16.2.10",
+    "react": "^19.2.8"
   },
   "peerDependenciesMeta": {
     "next": {
@@ -30,10 +30,10 @@
     }
   },
   "devDependencies": {
-    "typescript": "^6",
-    "vitest": "^4",
     "@types/node": "^24",
-    "@types/react": "^19"
+    "@types/react": "^19",
+    "typescript": "^6",
+    "vitest": "^4"
   },
   "repository": {
     "type": "git",
