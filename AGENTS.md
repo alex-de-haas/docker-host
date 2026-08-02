@@ -16,6 +16,7 @@ Where the version lives:
 - **`apps/shell`**, **`apps/marketplace`**, and **`apps/demo-app`** are first-party runtime apps: bump `version` in their respective `manifest.json` (the artifact source of truth) and keep their `package.json` in step. They version independently from the platform.
 - **`apps/telemetry`** (collector + backend + `apps/telemetry-ui`) ships as one app: bump `version` in `apps/telemetry/manifest.json` and keep the first-party service image tags (`backend`, `ui`) and `apps/telemetry-ui/package.json` in step (`scripts/check-versions.mjs` enforces this). The collector is a third-party image and is exempt.
 - **`apps/shell-swift`** is the native Apple client, not a runtime app: it is installed on the operator's own device rather than on a host, so it has no `manifest.json`. Bump `MARKETING_VERSION` in `apps/shell-swift/Config/Version.xcconfig`. It versions independently from the platform and from `apps/shell`.
+- **`apps/shell-cardputer`** is the native M5Stack Cardputer ADV firmware, not a runtime app. Bump its single version source in `apps/shell-cardputer/version.txt`; ESP-IDF reads that file as `PROJECT_VER`, and `scripts/check-versions.mjs` validates it. It versions independently from every other artifact.
 - **Runtime app manifests** (including external apps like project-manager, media-server, torrent-engine) follow the hosty-app-skill rules in `skills/hosty-app-skill/references/app-manifest.md`. Do not bump `schemaVersion` for ordinary changes - it only tracks the manifest contract format.
 
 ## Pull Requests

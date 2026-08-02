@@ -42,6 +42,7 @@ jobs:
       marketplace: ${{ steps.filter.outputs.marketplace }}
       telemetry_ui: ${{ steps.filter.outputs.telemetry_ui }}
       swift_shell: ${{ steps.filter.outputs.swift_shell }}
+      cardputer_shell: ${{ steps.filter.outputs.cardputer_shell }}
       workflows: ${{ steps.filter.outputs.workflows }}
     steps:
       - name: Check out repository
@@ -123,6 +124,11 @@ jobs:
             # own version file, and it is the only job that needs a macOS runner.
             swift_shell:
               - 'apps/shell-swift/**'
+              - '.github/workflows/ci.yml'
+
+            cardputer_shell:
+              - 'apps/shell-cardputer/**'
+              - 'scripts/check-versions.mjs'
               - '.github/workflows/ci.yml'
 
             workflows:
@@ -434,3 +440,40 @@ jobs:
             -scheme Hosty \
             -destination 'generic/platform=iOS Simulator' \
             CODE_SIGNING_ALLOWED=NO
+
+  cardputer-shell:
+    name: Cardputer Shell
+    runs-on: ubuntu-latest
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.cardputer_shell == 'true'
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Run bounded host tests
+        run: apps/shell-cardputer/tools/host-test.sh
+
+      - name: Build ESP32-S3 firmware
+        run: apps/shell-cardputer/tools/docker-build.sh
+
+      - name: Enforce OTA slot size and create checksum
+        run: |
+          set -euo pipefail
+          image=apps/shell-cardputer/build/hosty_cardputer_shell.bin
+          maximum=$((0x3d0000))
+          actual=$(stat --format=%s "$image")
+          if (( actual > maximum )); then
+            echo "Firmware is ${actual} bytes; OTA slot is ${maximum} bytes" >&2
+            exit 1
+          fi
+          # The container builds as root, so build/ is root-owned and this step cannot write into it.
+          # Collect what gets uploaded in a directory this job owns instead.
+          mkdir -p cardputer-artifacts
+          cp "$image" cardputer-artifacts/
+          ( cd cardputer-artifacts && sha256sum hosty_cardputer_shell.bin > SHA256SUMS )
+
+      - name: Upload firmware verification artifact
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: hosty-cardputer-${{ github.sha }}
+          path: cardputer-artifacts/

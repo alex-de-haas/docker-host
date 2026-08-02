@@ -1,7 +1,7 @@
 # Repository And Release Model
 
 Created: 2026-05-12
-Updated: 2026-07-29
+Updated: 2026-07-31
 
 This document records the current repository layout and release artifact boundaries after the Core/Shell split and retirement of the legacy combined Host package.
 
@@ -15,6 +15,7 @@ Hosty uses one repository for:
 - `apps/demo-app` - the first-party example runtime app;
 - `apps/cli` - the standalone `hosty` CLI;
 - `apps/shell-swift` - the native Apple client (iOS, iPadOS, macOS) for a Hosty host;
+- `apps/shell-cardputer` - native M5Stack Cardputer ADV operator-console firmware;
 - `skills/hosty-app-skill` - the repository-shipped Codex skill for wrapping apps as Hosty runtime apps;
 - product/channel metadata and documentation.
 
@@ -34,11 +35,18 @@ flowchart LR
   Marketplace --> MarketplaceImage["Marketplace image"]
   Demo --> DemoImage["Demo App image"]
   SwiftShell["apps/shell-swift Hosty (Apple)"] --> Core
+  CardputerShell["apps/shell-cardputer Cardputer ADV"] --> Core
 ```
 
 Core owns API, auth, app lifecycle, source/feed state, backup state, local control discovery, and runtime adapters. Shell owns the host browser UI. Marketplace owns its catalog source and storefront UI. The CLI bootstraps local Core and calls Core APIs for ordinary operations.
 
 `apps/shell-swift` sits outside the runtime-app model entirely. It is a client installed on the operator's device, not on a host: it has no manifest, Core neither installs nor supervises it, and it is never a `ui-client` Core can redirect a browser to. It consumes the same browser API as Shell. Its version lives in `apps/shell-swift/Config/Version.xcconfig` and moves independently of every other artifact here.
+
+`apps/shell-cardputer` is also a native operator client rather than a runtime
+app. It is ESP-IDF firmware installed on an M5Stack Cardputer ADV, consumes a
+bounded administrative subset of the Core API, and has no runtime-app manifest.
+Its version lives only in `apps/shell-cardputer/version.txt` and moves
+independently of the platform, browser Shell, and Apple client.
 
 ## GitHub Actions Model
 
@@ -49,8 +57,9 @@ Builds are independent:
 - `marketplace-image.yml` - test, build, attest, and push the Hosty Marketplace Docker image on `main`;
 - `demo-app-image.yml` - build and push the first-party Demo App Docker image;
 - `cli-release.yml` - build and publish standalone CLI and Core executable artifacts.
+- `cardputer-release.yml` - build, attest, and publish rolling Cardputer ADV firmware and recovery images.
 
-No workflow packages or publishes `apps/shell-swift` (see [Swift Shell](../swift-shell/feature.md)); it is built from Xcode and checked by the `swift-shell` job in `ci.yml`.
+No workflow packages or publishes `apps/shell-swift` (see [Swift Shell](../swift-shell/feature.md)); it is built from Xcode and checked by the `swift-shell` job in `ci.yml`. Cardputer uses the pinned ESP-IDF container in both the `cardputer-shell` CI job and its dedicated release workflow.
 
 ### Path filtering in `ci.yml`
 
@@ -83,6 +92,7 @@ App SDK (.NET):     <dotnet_shared> + packages/app-sdk-dotnet/**
 Core:               <dotnet_shared> + apps/core/**
 Telemetry Backend:  <dotnet_shared> + apps/telemetry-backend/**
 CLI:                <dotnet_shared> + apps/cli/** + scripts/install.sh + scripts/install.ps1
+Cardputer Shell:    apps/shell-cardputer/** + scripts/check-versions.mjs
 Workflow lint:      .github/workflows/**
 ```
 
@@ -130,6 +140,8 @@ component each, the union problem does not arise.
 Full CI runs Shell build, Marketplace lint/test/build, Demo App lint/build, Telemetry UI
 lint/test/build, Core build/tests, Telemetry Backend build/tests, App SDK tests (Node and .NET),
 installer syntax validation for shell and PowerShell installers, CLI build, and CLI xUnit tests. The
+Cardputer job runs bounded host tests, builds the ESP32-S3 image, enforces the OTA-slot limit, and
+uploads the image with its checksum. The
 root `npm run ci` script mirrors the primary Shell, Marketplace, Demo App, Core, and CLI validation
 sequence for local validation.
 
@@ -187,6 +199,22 @@ hosty-core-windows-x64.exe
 SHA256SUMS
 ```
 
+Cardputer development firmware artifacts:
+
+```text
+hosty-cardputer.bin
+hosty-cardputer-bootloader.bin
+hosty-cardputer-partition-table.bin
+hosty-cardputer-ota-data.bin
+SHA256SUMS
+```
+
+The rolling `cardputer-dev` prerelease publishes these ESP32-S3 images after
+host tests and a pinned ESP-IDF 5.5.4 build. GitHub build-provenance
+attestations cover every binary. The firmware OTA client downloads only
+`hosty-cardputer.bin` from this compiled-in release location; Core cannot
+select or serve firmware.
+
 For development and early usage, CLI and Core artifacts are published to one rolling GitHub prerelease with tag `cli-dev`. The `cli-dev` workflow overwrites existing release assets for every new release build, so installation URLs stay stable while the binaries track the latest development build.
 
 Unix users install the current development CLI through `scripts/install.sh`:
@@ -224,7 +252,7 @@ Manual validation for the current artifact model:
 
 ## Versioning
 
-Every component uses semantic versioning `major.minor.patch`, applied per release artifact rather than as one global number. There are two tiers.
+Every component uses semantic versioning `major.minor.patch`, applied per release artifact rather than as one global number. There are three tiers.
 
 ### Tier 1 - Platform (`apps/core` + `apps/cli`)
 
@@ -235,6 +263,15 @@ Core and CLI are tightly coupled and ship together as one bundle (`cli-dev` / `c
 Each runtime app is its own release artifact (its own image / repository) and versions independently through the `version` field in its `manifest.json`. Shell and Marketplace are versioned exactly like other runtime apps, not as part of the platform.
 
 `version` is a separate axis from `schemaVersion` (`app.0.1`), which is the manifest *contract* version owned by Core (`RuntimeAppManifest.cs`). Bump `schemaVersion` only when the manifest format changes; it is unrelated to any single app's `version`. An app declares the `schemaVersion` it targets, and that declaration is the compatibility handshake, so no cross-repository version matrix is required.
+
+### Tier 3 - Native clients (`apps/shell-swift`, `apps/shell-cardputer`)
+
+Native clients install on operator-owned devices and do not have runtime-app
+manifests. The Apple client uses `MARKETING_VERSION` in
+`apps/shell-swift/Config/Version.xcconfig`. Cardputer firmware uses the single
+line in `apps/shell-cardputer/version.txt`, which ESP-IDF consumes as
+`PROJECT_VER` and `scripts/check-versions.mjs` validates as semantic versioning.
+Each native client versions independently.
 
 ### Bump rules
 
@@ -255,3 +292,4 @@ During early development, `cli-dev` is the main platform distribution channel. I
 - `scripts/check-versions.mjs` fails when any two copies of one component's version disagree.
 - `ci.yml` gates each component job on its own paths filter, and a skipped job still reports a status.
 - Workflows pass `actionlint`, which type-checks expressions, `needs`/`outputs` references, and every `run:` block.
+- Cardputer host tests and the ESP32-S3 firmware build pass, the binary fits a 3.8125 MiB OTA slot, and release assets carry checksums and provenance.
