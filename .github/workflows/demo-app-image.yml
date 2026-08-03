@@ -48,6 +48,12 @@ jobs:
   build-and-push:
     needs: test
     runs-on: ubuntu-latest
+    # Serialize publishes and never cancel: two runs racing to move the `:latest` and version tags can
+    # leave them pointing at the older image, and a half-finished registry push is worse than a queued
+    # one. Only this job is grouped, so the gate tests of a later commit still run in parallel.
+    concurrency:
+      group: ${{ github.workflow }}-publish
+      cancel-in-progress: false
     permissions:
       contents: read
       packages: write
