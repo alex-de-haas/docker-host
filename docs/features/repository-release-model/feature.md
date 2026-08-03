@@ -1,7 +1,7 @@
 # Repository And Release Model
 
 Created: 2026-05-12
-Updated: 2026-07-31
+Updated: 2026-08-03
 
 This document records the current repository layout and release artifact boundaries after the Core/Shell split and retirement of the legacy combined Host package.
 
@@ -61,6 +61,16 @@ Builds are independent:
 
 No workflow packages or publishes `apps/shell-swift` (see [Swift Shell](../swift-shell/feature.md)); it is built from Xcode and checked by the `swift-shell` job in `ci.yml`. Cardputer uses the pinned ESP-IDF container in both the `cardputer-shell` CI job and its dedicated release workflow.
 
+Unlike `ci.yml`, the publishing workflows do filter at the workflow level - there is no required status
+check to leave pending, and not publishing is the correct outcome for an unrelated commit. Their
+`paths:` lists must match what actually lands in the artifact, in both directions. The four Node image
+workflows watch `package.json` and `package-lock.json` because each Dockerfile's `deps` stage copies
+exactly those two files and runs `npm ci` against them, so a root lockfile bump changes the shipped
+image even when nothing under `apps/<component>/` does. Conversely they must *not* watch `global.json`
+or `Directory.Build.props`: those are .NET-only, and while `marketplace-image.yml` listed them every
+platform version bump republished the image - the slowest build here, multi-arch under QEMU - for no
+change at all.
+
 ### Path filtering in `ci.yml`
 
 `ci.yml` carries every component's checks as sibling jobs, so its filtering is **per job, not per
@@ -110,14 +120,38 @@ four Node apps, because a version-only bump and a real dependency bump are indis
 Under-triggering on a shared dependency change is the failure worth avoiding, so when in doubt a path
 belongs in the shared list for its runtime.
 
-Two deliberate exceptions:
+Two jobs are deliberately ungated:
 
-- **Version consistency is ungated.** `scripts/check-versions.mjs` reads version fields from every
-  manifest and `package.json` in the repository, so any filter narrow enough to be useful would also be
-  wrong. It needs no `npm ci` and finishes in seconds.
-- **Pushes to `main` always run the full matrix**, ignoring the filter. `main` is the release path - the
-  image and CLI publish workflows fire off the same commits - so it is verified in full rather than
-  against a diff. The filter only narrows pull requests.
+- **Version consistency.** `scripts/check-versions.mjs` reads version fields from every manifest and
+  `package.json` in the repository, so any filter narrow enough to be useful would also be wrong. It
+  needs no `npm ci` and finishes in seconds.
+- **Docs index.** `scripts/docs-index.mjs --check` validates headers and the generated index across the
+  whole `docs/` tree, for the same reason and at the same cost.
+
+The filter applies to **pushes to `main` as well as pull requests**. The `changes` job passes
+`base: ${{ github.ref }}`, which on a push diffs against the commit before the push - for a merge
+commit, the merged pull request's whole changeset. On a zero `before` (force-push, or a branch's first
+push) `paths-filter` degrades to listing every file as added, so the full matrix runs rather than
+nothing.
+
+This relies on a branch protection rule. A push-side diff cannot see a semantic conflict between two
+pull requests merged in parallel: the repository uses merge commits, so `main` can differ from the tree
+any single pull request tested. **Require branches to be up to date before merging** closes that gap by
+forcing a pull request onto current `main` before it can land, so the pull request run and the push run
+see the same tree. That rule is load-bearing; without it the filter has to go back to running the full
+matrix on every push.
+
+### Concurrency
+
+`ci.yml` groups runs by pull request number, cancelling superseded ones - a branch pushed three times
+no longer keeps three full matrices alive. Pushes to `main` are keyed by commit instead, so no `main`
+commit loses its validation to the commit merged seconds after it.
+
+Every publishing workflow serializes its publishing job (`build-and-push`, or the release job in
+`cli-release.yml` and `cardputer-release.yml`) and never cancels in progress: two runs racing to move
+`:latest`, a version tag, or the `cli-dev` / `cardputer-dev` tag can leave the moving tag on whichever
+finished last, and a half-finished registry push is worse than a queued one. Only the publishing job is
+grouped, so a later commit's gate tests still run in parallel.
 
 ### Workflow lint
 
@@ -145,8 +179,9 @@ uploads the image with its checksum. The
 root `npm run ci` script mirrors the primary Shell, Marketplace, Demo App, Core, and CLI validation
 sequence for local validation.
 
-Pull request CI therefore runs the same checks as default-branch CI, restricted to the components the
-diff touches; pushes to `main` run all of them.
+Pull request CI and default-branch CI therefore run the same checks, both restricted to the components
+the diff touches - a push to `main` is filtered against the commit before the push exactly as a pull
+request is filtered against its base.
 
 ## Release Artifacts
 

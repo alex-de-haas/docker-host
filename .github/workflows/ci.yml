@@ -18,10 +18,26 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  # Collapse superseded runs of the same pull request — every push to a branch used to start a full
+  # matrix without cancelling the one before it. Pushes to main are keyed by commit instead, so no
+  # main commit loses its validation to the commit merged a few seconds later.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
 jobs:
-  # Maps the changed files onto the components they affect. Only consulted for pull requests: a push to
-  # main is the release path (the image and CLI publish workflows fire off the same commits), so it
-  # always runs the full matrix rather than trusting a diff.
+  # Maps the changed files onto the components they affect — for pushes to main as much as for pull
+  # requests. The push side used to skip the filter and run the full matrix: a merge that bumped one
+  # Dockerfile still built the Swift client and the Cardputer firmware, ~10x the runner time the diff
+  # justified, and it duplicated the gate jobs the image and release workflows already run before they
+  # publish anything.
+  #
+  # What a push-side diff cannot catch is a semantic conflict between two PRs merged in parallel: this
+  # repository uses merge commits, so main can differ from the tree any single PR tested. The branch
+  # protection rule "Require branches to be up to date before merging" is what closes that gap — it
+  # forces a PR onto current main before it can land, so the PR run and the push run see the same tree.
+  # That rule is load-bearing here; if it is ever turned off, this filter has to go back to running the
+  # full matrix on push.
   changes:
     name: Detect changes
     runs-on: ubuntu-latest
@@ -50,9 +66,15 @@ jobs:
 
       - name: Filter changed paths
         id: filter
-        if: github.event_name == 'pull_request'
         uses: dorny/paths-filter@v3
         with:
+          # A branch name, not a SHA: when `base` names the branch that was pushed to, the action diffs
+          # against the push's `before` commit — for a merge commit that is the PR's whole changeset.
+          # On pull_request events this input is ignored outright and the PR's base branch is used. On a
+          # zero `before` (force-push, or a branch's first push) it degrades to listing every file as
+          # added, so the full matrix runs rather than nothing.
+          base: ${{ github.ref }}
+
           # Shared paths are scoped by runtime rather than pooled into one list. A single `global` pool
           # looked safe but made the filtering nearly inert: every version bump touches either
           # `package-lock.json` (npm workspaces record their version there) or `Directory.Build.props`
@@ -178,7 +200,7 @@ jobs:
     name: Workflow lint
     runs-on: ubuntu-latest
     needs: changes
-    if: github.event_name == 'push' || needs.changes.outputs.workflows == 'true'
+    if: needs.changes.outputs.workflows == 'true'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -192,7 +214,7 @@ jobs:
     name: Shell
     runs-on: ubuntu-latest
     needs: changes
-    if: github.event_name == 'push' || needs.changes.outputs.shell == 'true'
+    if: needs.changes.outputs.shell == 'true'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -213,7 +235,7 @@ jobs:
     name: App SDK
     runs-on: ubuntu-latest
     needs: changes
-    if: github.event_name == 'push' || needs.changes.outputs.app_sdk == 'true'
+    if: needs.changes.outputs.app_sdk == 'true'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -234,7 +256,7 @@ jobs:
     name: App SDK (.NET)
     runs-on: ubuntu-latest
     needs: changes
-    if: github.event_name == 'push' || needs.changes.outputs.app_sdk_dotnet == 'true'
+    if: needs.changes.outputs.app_sdk_dotnet == 'true'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -251,7 +273,7 @@ jobs:
     name: Demo App
     runs-on: ubuntu-latest
     needs: changes
-    if: github.event_name == 'push' || needs.changes.outputs.demo_app == 'true'
+    if: needs.changes.outputs.demo_app == 'true'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -275,7 +297,7 @@ jobs:
     name: Core
     runs-on: ubuntu-latest
     needs: changes
-    if: github.event_name == 'push' || needs.changes.outputs.core == 'true'
+    if: needs.changes.outputs.core == 'true'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -295,7 +317,7 @@ jobs:
     name: CLI
     runs-on: ubuntu-latest
     needs: changes
-    if: github.event_name == 'push' || needs.changes.outputs.cli == 'true'
+    if: needs.changes.outputs.cli == 'true'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -320,7 +342,7 @@ jobs:
     name: Telemetry Backend
     runs-on: ubuntu-latest
     needs: changes
-    if: github.event_name == 'push' || needs.changes.outputs.telemetry_backend == 'true'
+    if: needs.changes.outputs.telemetry_backend == 'true'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -340,7 +362,7 @@ jobs:
     name: Marketplace
     runs-on: ubuntu-latest
     needs: changes
-    if: github.event_name == 'push' || needs.changes.outputs.marketplace == 'true'
+    if: needs.changes.outputs.marketplace == 'true'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -367,7 +389,7 @@ jobs:
     name: Telemetry UI
     runs-on: ubuntu-latest
     needs: changes
-    if: github.event_name == 'push' || needs.changes.outputs.telemetry_ui == 'true'
+    if: needs.changes.outputs.telemetry_ui == 'true'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -393,10 +415,10 @@ jobs:
   swift-shell:
     name: Swift Shell
     # The only macOS job in the workflow: Xcode exists nowhere else. The repository is public, so
-    # GitHub-hosted macOS runners are free; the paths filter keeps it off unrelated pull requests anyway.
+    # GitHub-hosted macOS runners are free; the paths filter keeps it off unrelated commits anyway.
     runs-on: macos-latest
     needs: changes
-    if: github.event_name == 'push' || needs.changes.outputs.swift_shell == 'true'
+    if: needs.changes.outputs.swift_shell == 'true'
     defaults:
       run:
         working-directory: apps/shell-swift
@@ -445,7 +467,7 @@ jobs:
     name: Cardputer Shell
     runs-on: ubuntu-latest
     needs: changes
-    if: github.event_name == 'push' || needs.changes.outputs.cardputer_shell == 'true'
+    if: needs.changes.outputs.cardputer_shell == 'true'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7

@@ -8,10 +8,10 @@ on:
     paths:
       - "apps/core/**"
       - "apps/cli/**"
-      - "docs/features/core-api/feature.md"
       - "scripts/install.sh"
       - "scripts/install.ps1"
       - "global.json"
+      - "Directory.Build.props"
       - ".github/workflows/cli-release.yml"
 
 permissions:
