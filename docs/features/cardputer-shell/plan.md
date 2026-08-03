@@ -611,12 +611,16 @@ ships, not after.**
 
 - [x] ~~Measure the deep-sleep board floor.~~ Dropped 2026-08-02 with the runtime
   target; see [The runtime target is withdrawn](#the-runtime-target-is-withdrawn--decided-2026-08-02).
-- [x] Record the board's flash layout and baseline behavior — 8 MB, A/B slots of
+- [ ] Record the board evidence. **Partly done**: 8 MB flash with A/B slots of
   3.8125 MiB each, ESP32-S3 rev 0.2, 40 MHz crystal, no PSRAM, USB-Serial/JTAG,
-  observed across many flash-and-run cycles against a live Core. Whether a
-  battery-backed RTC is fitted was never established: the boot path proves it is
-  not needed, because SNTP over UDP sets the clock before any TLS request and a
-  plain-HTTP LAN origin needs no clock at all.
+  observed across many flash-and-run cycles against a live Core. Still owed: the
+  schematic assumptions and GPIO ownership this plan already relies on — GPIO38
+  driving the backlight rail with the RGB LED, GPIO11 carrying the keyboard
+  interrupt, the BMI270 interrupt outputs being unconnected — none of which has
+  been checked against the published schematic, and whether a battery-backed RTC
+  is fitted, which was never established. The RTC answer is not urgent, because
+  the boot path does not need one: SNTP over UDP sets the clock before any TLS
+  request, and a plain-HTTP LAN origin needs no clock at all.
 - [x] Define and check in a representative Core fixture —
   `apps/shell-cardputer/fixtures/apps-50.json`, 2026-07-31: 50 apps carrying a
   3,000-byte ignored description, nested optional fields, unknown runtime and
@@ -768,8 +772,9 @@ the supported subset.
 ### Phase 3 — Standby And Alerts
 
 Add screen/motion behavior, Wi-Fi power management, audible notifications,
-quiet hours, and battery policy. Tune on hardware and meet the Online standby
-runtime target.
+quiet hours, and battery policy, and tune them on hardware. There is no runtime
+figure to hit — the target was withdrawn on 2026-08-02 — so the exit criterion
+is that each behaves correctly, not that the battery lasts any particular time.
 
 ### Phase 4 — Firmware OTA And Release Hardening
 
@@ -826,8 +831,9 @@ its own deliverable.
   in the original decision and is kept deliberately: it costs one extra sample
   and rejects the single knock on a desk, which is the false wake that actually
   happens to a device sitting still.
-- **No bench power instrumentation.** Runtime is accepted from observed battery
-  drain, and the 48-hour figure is provisional until Phase 0 measures the floor.
+- **No runtime target at all**, decided 2026-08-02. There was never bench
+  instrumentation, the 48-hour figure was provisional, and the owner withdrew
+  both rather than spend more on measuring something use will reveal anyway.
 - **Review-required updates stay in Shell.** Routine updates are applied from
   the device; review-required ones are listed read-only with their reason.
 - **Firmware OTA is in scope for `0.1.0`.** Dropping it later would be a scope

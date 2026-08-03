@@ -18,13 +18,27 @@ if [[ ! -f "${build}/hosty_cardputer_shell.bin" ]]; then
   exit 1
 fi
 
-# esptool from the bundled ESP-IDF's Python environment, so this needs no global install. The image is
-# written from the host rather than the container because USB passthrough is unavailable on macOS.
-python="$(command -v esptool.py || true)"
-if [[ -n "${python}" ]]; then
+# The image is written from the host rather than the container, because USB passthrough is unavailable
+# on macOS. esptool is looked for in three places and the script says which one it found — or fails with
+# something actionable, rather than a Python import traceback from a module that was never installed.
+esptool=""
+if command -v esptool.py >/dev/null 2>&1; then
   esptool="esptool.py"
-else
+elif python3 -c "import esptool" >/dev/null 2>&1; then
   esptool="python3 -m esptool"
+else
+  # The ESP-IDF installer puts one in its own environment, which is what tools/install-idf.sh created.
+  for candidate in "${HOME}"/.espressif/python_env/*/bin/python; do
+    if [[ -x "${candidate}" ]] && "${candidate}" -c "import esptool" >/dev/null 2>&1; then
+      esptool="${candidate} -m esptool"
+      break
+    fi
+  done
+fi
+
+if [[ -z "${esptool}" ]]; then
+  echo "esptool not found. Run tools/install-idf.sh, or pip install esptool." >&2
+  exit 1
 fi
 
 # shellcheck disable=SC2086

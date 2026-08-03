@@ -171,13 +171,9 @@ void FirmwareApp::run() {
 }
 
 bool FirmwareApp::initialize() {
+    // NVS is initialized once, in app_main, before anything reads it.
     boot_start_ms_ = now_ms();
-    esp_err_t nvs = nvs_flash_init();
-    if (nvs == ESP_ERR_NVS_NO_FREE_PAGES || nvs == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        if (nvs_flash_erase() != ESP_OK) return false;
-        nvs = nvs_flash_init();
-    }
-    if (nvs != ESP_OK || !hardware_.begin()) return false;
+    if (!hardware_.begin()) return false;
     hardware_.set_wake_task(main_task_);
 
 #if CONFIG_PM_ENABLE
@@ -1300,8 +1296,6 @@ void FirmwareApp::reapply_prediction() {
     if (!command_in_flight_ || predicted_app_id_.empty()) return;
     static_cast<void>(state_.predict_runtime_state(predicted_app_id_.view(), predicted_state_));
 }
-
-
 
 // Progress text for the boot and reconnect screens only; nothing in the steady-state UI renders it.
 void FirmwareApp::set_status(std::string_view message) {
