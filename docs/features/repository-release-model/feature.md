@@ -179,8 +179,9 @@ uploads the image with its checksum. The
 root `npm run ci` script mirrors the primary Shell, Marketplace, Demo App, Core, and CLI validation
 sequence for local validation.
 
-Pull request CI therefore runs the same checks as default-branch CI, restricted to the components the
-diff touches; pushes to `main` run all of them.
+Pull request CI and default-branch CI therefore run the same checks, both restricted to the components
+the diff touches - a push to `main` is filtered against the commit before the push exactly as a pull
+request is filtered against its base.
 
 ## Release Artifacts
 
