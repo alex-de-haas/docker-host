@@ -1,7 +1,7 @@
 # Core App Shell
 
 Created: 2026-05-19
-Updated: 2026-07-30
+Updated: 2026-08-03
 
 Hosty Shell is the Core-managed browser UI runtime app. It renders a single authenticated Shell surface backed by Hosty Core APIs; it does not own Core lifecycle logic and it does not reintroduce the retired combined Next.js Host package.
 
@@ -38,7 +38,9 @@ Feature UI lives under `apps/shell/src/app/shell/`:
   sections for Core and shared mounts;
 - `dialogs/` contains install review and installed-app detail dialogs;
 - `workspace/` contains embedded app workspace loading and iframe surfaces;
-- `ui.tsx`, `settings.tsx`, `app-helpers.ts`, and `clipboard.ts` contain shared presentational and formatting helpers.
+- `ui.tsx`, `settings.tsx`, `app-helpers.ts`, and `clipboard.ts` contain shared presentational and formatting helpers;
+- `settings-draft.ts` holds the app settings form's pure rules — the draft, the configure payload, and
+  a secret field's rendered state — kept out of the JSX so they can be tested directly.
 
 Each top-level route file renders only its route surface; the route table, the legacy paths that
 still resolve, and the sidebar's two groups are described in
@@ -79,6 +81,30 @@ Apps expose actions according to Core state, plus — for the two entries that a
 - create, restore, delete, and prune backups;
 - remove an app, with optional backup deletion.
 
+### Secret settings
+
+Core masks a `secret: true` setting's value out of the app summary and serves it only from
+`/api/apps/{appId}/settings/{settingKey}/value`, so the settings form never receives it with the rest
+of the app record. The field therefore renders from three states rather than one stored string:
+
+- **Untouched.** The input is empty and reads `Unchanged` when a value is stored, `Not set` when none
+  is. Revealing it fetches the stored value for display only — it never enters the draft, so looking at
+  a secret cannot mark the form dirty or resave it. Hiding discards the fetched plaintext, so the next
+  reveal fetches again.
+- **Touched.** The input renders exactly what the operator typed, the empty string included. An
+  untouched field may stand in the stored value; a touched one never does. (Falling back to the stored
+  value whenever the draft read empty made a revealed secret impossible to delete: deleting the last
+  character restored the whole value.)
+- **Cleared.** A touched, empty field is a pending delete and says `Will be cleared on save`.
+
+Core merges a configure payload key by key, so what the form omits decides what survives: an untouched
+secret is left out and keeps its stored value, while a touched one is submitted verbatim. A clear is
+submitted as `""` rather than `null`, because Core reapplies the manifest default over a `null` on the
+next rebuild (install, update, or runtime switch) while an empty string stays empty.
+
+Clearing a secret that the manifest marks `required` is allowed; Core then refuses to start the app
+with `app_required_settings_missing` until it is set again.
+
 ### Lifecycle operations vs. app capabilities
 
 These are two different things, and only one of them is the app's to declare.
@@ -117,3 +143,28 @@ Gateway and external ingress readiness remain target architecture topics for ser
 
 - [System App Pages](../ideas/system-app-pages.md) - originating design for administrator-only pages.
 - [Marketplace System App](runtime-app-marketplace/feature.md) - the first storefront using the generic system-app and install-intent paths.
+
+## Testing Expectations
+
+Shell has no browser or component-rendering harness: `npm test --workspace @haas/hosty-shell` runs
+`node --test` over `apps/shell/test/*.test.mjs`, which import the TypeScript modules directly. Coverage
+therefore depends on decision logic living in a pure module rather than inside JSX, and that is the
+requirement rather than an accident of the current layout — any rule that decides **what Shell sends to
+Core** or **what a field shows** belongs in such a module, with tests, not in a component body.
+
+Required coverage:
+
+- `settings-draft.ts` — the draft's untouched/cleared split, the configure payload it produces, and a
+  secret field's display value and placeholder across the reveal-and-delete sequence;
+- `app-problems.ts` — the problems derived for an app row, including settings a required field leaves
+  missing;
+- `runtime-states.ts` — the busy/idle/up predicates and their mutual exclusivity;
+- `shell-routes.ts` — route parsing and building agreeing in both directions, legacy paths
+  canonicalizing without looping, and administrator-only surfaces;
+- `workspace/install-intent.ts` and `workspace/insecure-embed.ts` — the versioned install-feed intent's
+  accept/reject rules and the insecure-embed guard;
+- `ingress.ts` — public-origin and ingress-provider resolution.
+
+What the harness cannot reach — JSX wiring, event handling, and anything requiring a live Core session —
+is verified by `npx tsc --noEmit`, `npx eslint`, `npm run build`, and manual checks against a running
+Shell.

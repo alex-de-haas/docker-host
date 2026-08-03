@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { resolveSecretFieldState } from "./settings-draft";
 import type { CoreApp, CoreEndpoint, CoreInstallSetting, CoreSetting } from "./types";
 
 export function ConfigureSection({ title, testId, count, open, attention, onOpenChange, children }: { title: string; testId: string; count: number; open: boolean; attention?: boolean; onOpenChange: (open: boolean) => void; children: ReactNode }) {
@@ -54,7 +55,7 @@ export function PublicOriginInput({ setting, endpoint, value, disabled, onChange
   );
 }
 
-export function SettingInput({ setting, value, disabled, onChange, onReveal }: { setting: CoreInstallSetting | CoreSetting; value: string; disabled?: boolean; onChange: (value: string) => void; onReveal?: () => Promise<string | null> }) {
+export function SettingInput({ setting, value, disabled, onChange, onReveal }: { setting: CoreInstallSetting | CoreSetting; value: string | null; disabled?: boolean; onChange: (value: string) => void; onReveal?: () => Promise<string | null> }) {
   const controlId = `setting-${setting.key}`;
   const label = setting.label?.trim() || formatSettingLabel(setting.key);
   const description = setting.description?.trim();
@@ -106,33 +107,32 @@ function isBooleanSettingChecked(value: string) {
 
 // Renders the editor matched to the setting's declared type: a toggle for booleans, a numeric field
 // for numbers, an icon-prefixed URL field, a reveal-able password for secrets, and plain text otherwise.
-function SettingControl({ controlId, setting, value, disabled, onChange, onReveal }: { controlId: string; setting: CoreInstallSetting | CoreSetting; value: string; disabled?: boolean; onChange: (value: string) => void; onReveal?: () => Promise<string | null> }) {
+function SettingControl({ controlId, setting, value, disabled, onChange, onReveal }: { controlId: string; setting: CoreInstallSetting | CoreSetting; value: string | null; disabled?: boolean; onChange: (value: string) => void; onReveal?: () => Promise<string | null> }) {
   const [revealed, setRevealed] = useState(false);
   // The stored value fetched on demand for a secret whose draft is untouched. Display-only: it never
-  // enters the draft, so revealing cannot mark the form dirty or resave the value.
+  // enters the draft, so revealing cannot mark the form dirty or resave the value. Hiding drops it
+  // deliberately (see toggleReveal), so the plaintext lives only as long as it is on screen.
   const [stored, setStored] = useState<string | null>(null);
   const [revealError, setRevealError] = useState(false);
-  // The value prop is typed string, but upstream setting values are nullable; coalesce so .trim()
-  // never throws and the Input stays controlled even if a null slips through.
+  // For a secret, null is the draft's "untouched" marker (see AppSettingsDraft); elsewhere it is just
+  // a nullable upstream setting value. Coalesce so .trim() never throws and the Input stays controlled.
   const safeValue = value ?? "";
 
   if (setting.secret) {
-    // Install-time settings never carry hasValue -- nothing is stored yet -- so they read "Not
-    // set" until the operator types something. Platform rows never mark secret, so only app
-    // summaries (which always carry the flag) can show "Unchanged".
+    // Platform rows never mark secret, so only app summaries carry hasValue at all.
     const hasStored = "hasValue" in setting && setting.hasValue === true;
-    // A typed draft always wins; otherwise show the fetched stored value while revealed.
-    const displayValue = safeValue.length > 0 ? safeValue : revealed && stored !== null ? stored : "";
+    const { displayValue, placeholder, shouldFetchStored } = resolveSecretFieldState({ draftValue: value, hasStored, revealed, stored });
     const toggleReveal = () => {
       setRevealError(false);
       if (revealed) {
         setRevealed(false);
+        // Discard the plaintext rather than cache it for a cheaper second reveal: it is worth one
+        // more request to keep a secret out of component state once it is no longer displayed.
         setStored(null);
         return;
       }
       setRevealed(true);
-      // Fetch the stored value only when there is nothing typed to show and one exists to fetch.
-      if (safeValue.length === 0 && hasStored && onReveal && stored === null) {
+      if (shouldFetchStored && onReveal) {
         onReveal().then(
           (fetched) => setStored(fetched ?? ""),
           () => {
@@ -149,7 +149,7 @@ function SettingControl({ controlId, setting, value, disabled, onChange, onRevea
           type={revealed ? "text" : "password"}
           className="pr-9"
           value={displayValue}
-          placeholder={hasStored ? "Unchanged" : "Not set"}
+          placeholder={placeholder}
           disabled={disabled}
           onChange={(event) => onChange(event.target.value)}
         />
@@ -297,6 +297,6 @@ export function normalizePublicOriginEndpointKey(value: string) {
   return normalized.length > 0 ? normalized : "ENDPOINT";
 }
 
-export function hasMissingRequiredSettings(settings: CoreSetting[], draft: Record<string, string>) {
+export function hasMissingRequiredSettings(settings: CoreSetting[], draft: Record<string, string | null>) {
   return settings.some((setting) => setting.required && !setting.secret && (draft[setting.key] ?? "").trim().length === 0);
 }
