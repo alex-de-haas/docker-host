@@ -162,15 +162,28 @@ even starts. Whichever runs last wins the mutable tags, which is exactly how `:l
 older build than `main`.
 
 Every publishing job therefore calls [`.github/actions/publish-guard`](../../../.github/actions/publish-guard/action.yml)
-after it holds the slot. The guard answers two questions and returns them as `fresh` and `push_version`:
+as soon as it holds the slot. The guard answers two **independent** questions:
 
-| Question | Effect when the answer is no |
-| --- | --- |
-| Is `github.sha` still the tip of `main`? | Publish immutable tags only. `sha-<commit>` still ships; `:latest`, the version tag, and the rolling `cli-dev` / `cardputer-dev` release are left on the newer build. |
-| Is the declared version tag still unpublished in the registry? | Publish `:latest` and `sha-<commit>`, but leave the existing version tag untouched. |
+| Output | Question | Effect when the answer is no |
+| --- | --- | --- |
+| `fresh` | Is `github.sha` still the tip of `main`, so this run may **move** a mutable tag that already points elsewhere? | `:latest` and the rolling `cli-dev` / `cardputer-dev` release are left on the newer build. `sha-<commit>` still ships. |
+| `push_version` | Is the declared version tag absent from the registry, so this run may **create** it? | Leave the existing version tag untouched; `:latest` and `sha-<commit>` still publish. |
+
+The independence matters. Creating an absent tag is not moving one, so a stale run may still create
+the version tag it declares - and must, or version tags get stranded. A queued Marketplace or Telemetry
+run goes stale the moment *any* unrelated commit lands on `main`, including a docs-only one, and those
+commits do not match the image workflow's `paths:` filter, so no successor run is ever started to
+publish the version. `main`'s manifest would keep pinning an image that does not exist, breaking
+installation until someone happened to touch that app again.
 
 Because the guard runs while the job holds the slot, no sibling run can publish between its check and
 the resulting push - the check and the tagging are atomic with respect to the group.
+
+The guard is the **first** step after checkout, not a late gate before publishing. The publishing job
+is itself the concurrency unit, so every step it runs holds the slot shut against the fresh run queued
+behind it; a stale run has to decide before doing work it will discard. This matters most in
+`cardputer-release.yml`, which builds firmware inside its own group - `ci.yml`'s `cardputer-shell` job
+covers that build on the pull request side, so skipping it in a stale release run costs no validation.
 
 **Version tags are immutable: first publish wins.** A rebuild that does not change the declared version
 still publishes, so its content genuinely ships - it just may not claim a version tag that already
@@ -272,9 +285,8 @@ each also publishes `latest` and `sha-<commit>` into its own repository.
 Across all of these, `sha-<commit>` is the only tag guaranteed to name one immutable build. A version
 tag is written once and never moved afterwards, and `:latest` tracks the newest commit that was still
 the tip of `main` when it published; both are enforced by the
-[publish guard](#mutable-tags-and-the-publish-guard). A commit that publishes no version tag - because
-the version was already taken, or because the run was overtaken by a newer commit - is still fully
-retrievable as `sha-<commit>`.
+[publish guard](#mutable-tags-and-the-publish-guard). A commit whose declared version was already
+published claims no version tag, and is still fully retrievable as `sha-<commit>`.
 
 CLI release artifacts:
 
@@ -391,8 +403,9 @@ During early development, `cli-dev` is the main platform distribution channel. I
 - `ci.yml` gates each component job on its own paths filter, and a skipped job still reports a status.
 - Workflows pass `actionlint`, which type-checks expressions, `needs`/`outputs` references, and every `run:` block.
 - Composite action scripts under `.github/actions/**/*.sh` pass `shellcheck`.
-- A publishing run whose commit is no longer the tip of `main` publishes `sha-<commit>` and moves no
-  mutable tag; in `cli-release.yml` and `cardputer-release.yml` it publishes nothing at all.
+- A publishing run whose commit is no longer the tip of `main` moves no mutable tag: it publishes
+  `sha-<commit>`, and still creates its declared version tag if that tag is absent. In
+  `cli-release.yml` and `cardputer-release.yml` it publishes nothing at all and skips its build.
 - A publishing run whose declared version tag already exists in the registry leaves that tag on the
   existing image and still publishes `:latest` and `sha-<commit>`.
 - Cardputer host tests and the ESP32-S3 firmware build pass, the binary fits a 3.8125 MiB OTA slot, and release assets carry checksums and provenance.
