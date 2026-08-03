@@ -103,7 +103,7 @@ Core:               <dotnet_shared> + apps/core/**
 Telemetry Backend:  <dotnet_shared> + apps/telemetry-backend/**
 CLI:                <dotnet_shared> + apps/cli/** + scripts/install.sh + scripts/install.ps1
 Cardputer Shell:    apps/shell-cardputer/** + scripts/check-versions.mjs
-Workflow lint:      .github/workflows/**
+Workflow lint:      .github/workflows/** + .github/actions/**
 ```
 
 The split is not cosmetic. A single shared pool was tried first and made the filtering nearly inert:
@@ -153,6 +153,60 @@ Every publishing workflow serializes its publishing job (`build-and-push`, or th
 finished last, and a half-finished registry push is worse than a queued one. Only the publishing job is
 grouped, so a later commit's gate tests still run in parallel.
 
+### Mutable tags and the publish guard
+
+Serializing publishes is not the same as ordering them. GitHub makes no FIFO promise about which queued
+run a concurrency group admits next, and the gate `test` job sits **outside** the group - so a newer
+commit can clear testing first, take the publish slot, and finish before an older commit's publish job
+even starts. Whichever runs last wins the mutable tags, which is exactly how `:latest` ends up on an
+older build than `main`.
+
+Every publishing job therefore calls [`.github/actions/publish-guard`](../../../.github/actions/publish-guard/action.yml)
+as soon as it holds the slot. The guard answers two **independent** questions:
+
+| Output | Question | Effect when the answer is no |
+| --- | --- | --- |
+| `fresh` | Is `github.sha` still the tip of `main`, so this run may **move** a mutable tag that already points elsewhere? | `:latest` and the rolling `cli-dev` / `cardputer-dev` release are left on the newer build. `sha-<commit>` still ships. |
+| `push_version` | Is the declared version tag absent from the registry, so this run may **create** it? | Leave the existing version tag untouched; `:latest` and `sha-<commit>` still publish. |
+
+The independence matters. Creating an absent tag is not moving one, so a stale run may still create
+the version tag it declares - and must, or version tags get stranded. A queued Marketplace or Telemetry
+run goes stale the moment *any* unrelated commit lands on `main`, including a docs-only one, and those
+commits do not match the image workflow's `paths:` filter, so no successor run is ever started to
+publish the version. `main`'s manifest would keep pinning an image that does not exist, breaking
+installation until someone happened to touch that app again.
+
+Because the guard runs while the job holds the slot, no sibling run can publish between its check and
+the resulting push - the check and the tagging are atomic with respect to the group.
+
+The guard is the **first** step after checkout, not a late gate before publishing. The publishing job
+is itself the concurrency unit, so every step it runs holds the slot shut against the fresh run queued
+behind it; a stale run has to decide before doing work it will discard. This matters most in
+`cardputer-release.yml`, which builds firmware inside its own group - `ci.yml`'s `cardputer-shell` job
+covers that build on the pull request side, so skipping it in a stale release run costs no validation.
+
+**Version tags are immutable: first publish wins.** A rebuild that does not change the declared version
+still publishes, so its content genuinely ships - it just may not claim a version tag that already
+means something else. This is forced by two rules meeting: Dependabot pull requests are exempt from
+version bumps (see [Versioning](#versioning)), yet they do change what `npm ci` installs into the image;
+and Hosty's docker adapter TOFU-freezes a tag at install time. Without the freeze, a host resolving
+`hosty-marketplace:0.3.6` could get different artifacts than another host that resolved the same
+declared app version a week earlier.
+
+The rejected alternative was to gate publication itself on a version bump. That is worse: the image
+would then never be rebuilt for a lockfile-only change, so the dependency fix would reach no host at
+all - not even through `:latest`. The guard's registry probe is also preferred over diffing the manifest
+against the previous commit, because it stays correct for `workflow_dispatch` re-publishes (a tag that
+was never pushed is still missing, so it is created) without reasoning about merge-commit ancestry.
+
+Not every workflow has a version tag to protect. `shell-image.yml` and `demo-app-image.yml` publish only
+`:latest` and `sha-<commit>`, and their manifests pin `"tag": "latest"`, so the guard gates `:latest`
+alone there. `marketplace-image.yml`, `telemetry-ui-image.yml`, and `telemetry-backend-image.yml` each
+tag with a manifest version and use both answers. The two telemetry workflows read the same version from
+`apps/telemetry/manifest.json` but publish different repositories, so each probes its own tag. In
+`cli-release.yml` and `cardputer-release.yml` there is no immutable fallback at all - the rolling tag is
+force-moved and the assets are clobbered - so a stale run publishes nothing.
+
 ### Workflow lint
 
 A `Workflow lint` job runs [`actionlint`](https://github.com/rhysd/actionlint) (pinned image, not
@@ -167,6 +221,11 @@ names referenced from expressions are therefore underscored, while job ids stay 
 Note that shellcheck cannot see through `${{ }}` interpolation - `[[ "${{ matrix.rid }}" == win-* ]]`
 reads to it as a comparison that can never match (SC2193). Bind workflow values to `env:` and reference
 them as shell variables, which is the recommended shape anyway.
+
+actionlint's shellcheck pass covers `run:` blocks in workflows but does not descend into a composite
+action, so the same job runs shellcheck (pinned image, same rationale) over `.github/actions/**/*.sh`.
+That is why the publish guard's logic sits in `guard.sh` rather than inline in its `action.yml`: as an
+ordinary script it is lintable, and `action.yml` stays declarative.
 
 The single-purpose image and release workflows keep their own workflow-level `paths:` filters; with one
 component each, the union problem does not arise.
@@ -212,6 +271,22 @@ ghcr.io/alex-de-haas/hosty-marketplace:sha-<commit>
 ```
 
 Marketplace is versioned and shipped independently as a runtime app. Its manifest pins the versioned image tag; `marketplace-image.yml` also publishes `latest` and the commit tag and attaches build provenance.
+
+Telemetry image artifacts:
+
+```text
+ghcr.io/alex-de-haas/hosty-telemetry-backend:<manifest-version>
+ghcr.io/alex-de-haas/hosty-telemetry-ui:<manifest-version>
+```
+
+Both read their version from `apps/telemetry/manifest.json` - the telemetry app ships as one unit - and
+each also publishes `latest` and `sha-<commit>` into its own repository.
+
+Across all of these, `sha-<commit>` is the only tag guaranteed to name one immutable build. A version
+tag is written once and never moved afterwards, and `:latest` tracks the newest commit that was still
+the tip of `main` when it published; both are enforced by the
+[publish guard](#mutable-tags-and-the-publish-guard). A commit whose declared version was already
+published claims no version tag, and is still fully retrievable as `sha-<commit>`.
 
 CLI release artifacts:
 
@@ -327,4 +402,10 @@ During early development, `cli-dev` is the main platform distribution channel. I
 - `scripts/check-versions.mjs` fails when any two copies of one component's version disagree.
 - `ci.yml` gates each component job on its own paths filter, and a skipped job still reports a status.
 - Workflows pass `actionlint`, which type-checks expressions, `needs`/`outputs` references, and every `run:` block.
+- Composite action scripts under `.github/actions/**/*.sh` pass `shellcheck`.
+- A publishing run whose commit is no longer the tip of `main` moves no mutable tag: it publishes
+  `sha-<commit>`, and still creates its declared version tag if that tag is absent. In
+  `cli-release.yml` and `cardputer-release.yml` it publishes nothing at all and skips its build.
+- A publishing run whose declared version tag already exists in the registry leaves that tag on the
+  existing image and still publishes `:latest` and `sha-<commit>`.
 - Cardputer host tests and the ESP32-S3 firmware build pass, the binary fits a 3.8125 MiB OTA slot, and release assets carry checksums and provenance.

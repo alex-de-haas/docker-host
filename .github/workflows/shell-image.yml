@@ -67,6 +67,13 @@ jobs:
         shell: bash
         run: echo "name=${REGISTRY}/${GITHUB_REPOSITORY_OWNER,,}/hosty-shell" >> "$GITHUB_OUTPUT"
 
+      # Runs inside the concurrency group above, so its answer holds until this job releases the
+      # slot. Shell publishes no version tag - its manifest pins `:latest` - so only `latest` is
+      # gated here; `sha-<commit>` is immutable and always published.
+      - name: Guard mutable tags
+        id: guard
+        uses: ./.github/actions/publish-guard
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
 
@@ -78,9 +85,11 @@ jobs:
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
           images: ${{ steps.image.outputs.name }}
+          # `latest` is gated on the guard rather than {{is_default_branch}} - a stricter test, since
+          # the commit must still *be* main's tip, not merely have been on main when the run started.
           tags: |
             type=sha,prefix=sha-
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ steps.guard.outputs.fresh }}
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4

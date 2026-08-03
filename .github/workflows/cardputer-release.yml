@@ -27,13 +27,30 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
+      # `cardputer-dev` is force-retagged and its assets are clobbered, and the firmware OTA client
+      # downloads from exactly this release, so an older run admitted to the group after a newer one
+      # would push stale firmware to every device. Nothing is published unless this commit is still
+      # the tip of main; the newer run has already shipped, or is queued behind us.
+      #
+      # First step after checkout on purpose. Unlike the image workflows, this job builds *inside*
+      # its own concurrency group, so a stale run would otherwise hold `cardputer-dev-release` shut
+      # through a full ESP-IDF build whose output it then discards, delaying the fresh run behind it.
+      # `ci.yml`'s `cardputer-shell` job covers the build on the PR side, so skipping it here costs
+      # no validation.
+      - name: Guard the rolling tag
+        id: guard
+        uses: ./.github/actions/publish-guard
+
       - name: Run bounded host tests
+        if: steps.guard.outputs.fresh == 'true'
         run: apps/shell-cardputer/tools/host-test.sh
 
       - name: Build ESP32-S3 firmware
+        if: steps.guard.outputs.fresh == 'true'
         run: apps/shell-cardputer/tools/docker-build.sh
 
       - name: Prepare release assets
+        if: steps.guard.outputs.fresh == 'true'
         run: |
           set -euo pipefail
           image=apps/shell-cardputer/build/hosty_cardputer_shell.bin
@@ -54,11 +71,13 @@ jobs:
           )
 
       - name: Attest build provenance
+        if: steps.guard.outputs.fresh == 'true'
         uses: actions/attest-build-provenance@v4
         with:
           subject-path: "dist/hosty-cardputer*.bin"
 
       - name: Publish rolling prerelease
+        if: steps.guard.outputs.fresh == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

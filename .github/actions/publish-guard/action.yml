@@ -1,0 +1,52 @@
+name: Publish guard
+description: >-
+  Decides which mutable tags a publishing job is allowed to move. Answers two questions: is this
+  commit still the tip of main, and has this artifact version already been published.
+
+inputs:
+  image:
+    description: >-
+      Fully qualified ghcr.io image to check the version tag against, e.g.
+      ghcr.io/alex-de-haas/hosty-shell. Required whenever `version` is set.
+    required: false
+    default: ""
+  version:
+    description: >-
+      Declared artifact version (the app manifest's `version`). Leave empty for artifacts that
+      publish no version tag; `push_version` is then always false.
+    required: false
+    default: ""
+  registry_token:
+    description: >-
+      Token used to request a ghcr.io pull token. `secrets.GITHUB_TOKEN` from a job holding
+      `packages: write` (or `packages: read`) is enough.
+    required: false
+    default: ""
+
+outputs:
+  fresh:
+    description: >-
+      "true" when github.sha is still the tip of main, i.e. this run may MOVE a mutable tag
+      (`latest`, a rolling release tag) that already points elsewhere.
+    value: ${{ steps.guard.outputs.fresh }}
+  push_version:
+    description: >-
+      "true" when `image`:`version` does not yet exist in the registry, i.e. this run may CREATE
+      the version tag. Never "true" for a tag that already exists. Independent of `fresh` on
+      purpose: creating an absent tag is not moving one, and suppressing it would strand a version
+      that main's manifest already pins.
+    value: ${{ steps.guard.outputs.push_version }}
+
+runs:
+  using: composite
+  steps:
+    # The logic lives in guard.sh so shellcheck can lint it as an ordinary script - actionlint's
+    # shellcheck pass covers `run:` blocks in workflows, but not a composite action's body.
+    - name: Resolve mutable tag eligibility
+      id: guard
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+        VERSION: ${{ inputs.version }}
+        REGISTRY_TOKEN: ${{ inputs.registry_token }}
+      run: "${GITHUB_ACTION_PATH}/guard.sh"

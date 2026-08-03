@@ -185,12 +185,26 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
+      # `cli-dev` is force-retagged and its assets are clobbered, so this job has no immutable output
+      # to fall back on: an older run admitted to the group after a newer one would move the default
+      # install/update target backwards. Nothing is published unless this commit is still the tip of
+      # main; the newer run has already shipped, or is queued behind us.
+      #
+      # First step after checkout on purpose. This job *is* the concurrency unit, so every step it
+      # runs holds the `cli-dev-release` slot shut against the fresh run waiting behind it — a stale
+      # run must decide before doing work it will throw away, not after.
+      - name: Guard the rolling tag
+        id: guard
+        uses: ./.github/actions/publish-guard
+
       - name: Download release artifacts
+        if: steps.guard.outputs.fresh == 'true'
         uses: actions/download-artifact@v8.0.1
         with:
           path: release-assets
 
       - name: Prepare release assets
+        if: steps.guard.outputs.fresh == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -227,11 +241,13 @@ jobs:
           )
 
       - name: Attest build provenance
+        if: steps.guard.outputs.fresh == 'true'
         uses: actions/attest-build-provenance@v4
         with:
           subject-path: "dist/hosty-*"
 
       - name: Publish rolling prerelease
+        if: steps.guard.outputs.fresh == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
