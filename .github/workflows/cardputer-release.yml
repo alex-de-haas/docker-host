@@ -58,7 +58,16 @@ jobs:
         with:
           subject-path: "dist/hosty-cardputer*.bin"
 
+      # `cardputer-dev` is force-retagged and its assets are clobbered, and the firmware OTA client
+      # downloads from exactly this release, so an older run admitted to the group after a newer one
+      # would push stale firmware to every device. Nothing is published unless this commit is still
+      # the tip of main; the newer run has already shipped, or is queued behind us.
+      - name: Guard the rolling tag
+        id: guard
+        uses: ./.github/actions/publish-guard
+
       - name: Publish rolling prerelease
+        if: steps.guard.outputs.fresh == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

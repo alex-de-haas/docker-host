@@ -155,6 +155,8 @@ jobs:
 
             workflows:
               - '.github/workflows/**'
+              # Composite actions the workflows call are linted by the same job.
+              - '.github/actions/**'
 
   # Ungated on purpose: it reads version fields out of every manifest and package.json in the repo, so
   # any filter narrow enough to be useful would also be wrong. It needs no `npm ci` and finishes in
@@ -209,6 +211,22 @@ jobs:
         uses: docker://rhysd/actionlint:1.7.12
         with:
           args: -color
+
+      # actionlint shellchecks `run:` blocks in workflows but never descends into a composite
+      # action, so the publish guard's logic would otherwise ship unlinted. Same pinning rationale
+      # as actionlint above: the runner's preinstalled shellcheck floats and would fail unrelated PRs.
+      - name: Lint composite action scripts
+        shell: bash
+        # find/xargs rather than `mapfile` or `**`: both are bash 4+, so this stays runnable verbatim
+        # on a macOS bash 3.2 for local reproduction.
+        run: |
+          set -euo pipefail
+          if [[ -z "$(find .github/actions -type f -name '*.sh' -print -quit)" ]]; then
+            echo "No composite action scripts found — drop this step or fix the pattern" >&2
+            exit 1
+          fi
+          find .github/actions -type f -name '*.sh' -print0 | sort -z | xargs -0 \
+            docker run --rm -v "$PWD":/repo -w /repo koalaman/shellcheck:v0.10.0
 
   shell:
     name: Shell
