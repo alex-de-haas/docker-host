@@ -16,6 +16,8 @@ import {
   PublicOriginInput,
   SettingInput,
 } from "../settings";
+import type { AppSettingsDraft } from "../settings-draft";
+import { buildAppSettingsDraft, buildAppSettingsPayload } from "../settings-draft";
 import type {
   CoreApp,
   CoreAppFeedsResponse,
@@ -506,10 +508,12 @@ function SettingsForm({
   // either way, and the field says why rather than failing on save.
   const managedPublicOrigins = useManagedPublicOrigins(app, publicOriginSettings.length > 0);
   const publicOriginGroups = buildPublicOriginGroups(app, publicOriginSettings);
+  // A secret's `value` is always masked to null, so hasValue is the only part of its summary that
+  // moves when one is set or cleared -- without it the form would stay dirty across a saved delete.
   const settingsSignature = settings
-    .map((setting) => [setting.key, setting.type, setting.secret ? "1" : "0", setting.required ? "1" : "0", setting.value ?? ""].join("\u0000"))
+    .map((setting) => [setting.key, setting.type, setting.secret ? "1" : "0", setting.required ? "1" : "0", setting.hasValue ? "1" : "0", setting.value ?? ""].join("\u0000"))
     .join("\u0001");
-  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [draft, setDraft] = useState<AppSettingsDraft>({});
   const [autostartDraft, setAutostartDraft] = useState(isAppAutostartEnabled(app));
 
   // Reset the draft while rendering when the app identity or its settings change, not in an effect.
@@ -518,20 +522,13 @@ function SettingsForm({
   const [prevResetSignature, setPrevResetSignature] = useState<string | null>(null);
   if (prevResetSignature !== resetSignature) {
     setPrevResetSignature(resetSignature);
-    setDraft(Object.fromEntries(settings.map((setting) => [setting.key, setting.secret ? "" : setting.value || ""])));
+    setDraft(buildAppSettingsDraft(settings));
     setAutostartDraft(isAppAutostartEnabled(app));
   }
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const payload: Record<string, string | null> = {};
-    for (const setting of settings) {
-      const value = draft[setting.key] ?? "";
-      if (!setting.secret || value.length > 0) {
-        payload[setting.key] = value;
-      }
-    }
-    onConfigure(app, payload, autostartDraft);
+    onConfigure(app, buildAppSettingsPayload(settings, draft), autostartDraft);
   };
 
   return (
@@ -548,7 +545,7 @@ function SettingsForm({
                   <SettingInput
                     key={setting.key}
                     setting={setting}
-                    value={draft[setting.key] ?? ""}
+                    value={draft[setting.key] ?? null}
                     disabled={!canManageApps}
                     onChange={(value) => setDraft((current) => ({ ...current, [setting.key]: value }))}
                     onReveal={onRevealSetting && setting.secret ? () => onRevealSetting(app, setting.key) : undefined}
