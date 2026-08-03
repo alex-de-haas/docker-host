@@ -8,7 +8,7 @@ namespace {
 
 constexpr int kHeaderHeight = 18;
 constexpr int kFooterHeight = 15;
-constexpr int kVisibleDeviceItems = 5;
+constexpr int kVisibleDeviceItems = 6;
 constexpr int kVisibleMenuItems = 5;
 
 constexpr ThemePalette kAmber{
@@ -244,6 +244,19 @@ void Renderer::footer(Canvas& canvas, const ClientState& state, const UiState& u
                     key_hint(canvas, x, y + 2, "ENT", "Next", palette);
                     break;
             }
+            // Right-aligned so it never collides with the hints growing from the left, and dropped
+            // entirely when the two would overlap on a long hint rather than drawn over it.
+            if (!ui.firmware_version.empty()) {
+                // firmware_version holds up to 32 characters, so the buffer is sized to take all of
+                // them rather than relying on a version staying short.
+                char version[40];
+                std::snprintf(version, sizeof(version), "FW %s", ui.firmware_version.c_str());
+                const int width = static_cast<int>(std::char_traits<char>::length(version)) * 6;
+                const int version_x = canvas.width() - width - 5;
+                if (version_x > x + 4) {
+                    canvas.text(version_x, y + 4, version, palette.muted, palette.panel_raised);
+                }
+            }
             break;
     }
 }
@@ -366,16 +379,14 @@ void Renderer::updates(Canvas& canvas, const ClientState& state, const UiState&,
 
 void Renderer::device(Canvas& canvas, const ClientState&, const UiState& ui,
                       const ThemePalette& palette) const {
-    char line[96];
-    std::snprintf(line, sizeof(line), "Firmware %s", ui.firmware_version.c_str());
-    canvas.text(7, 23, line, palette.muted, palette.background);
-
+    // The firmware version used to occupy a whole line at the top of this list. It is a fact one reads
+    // once, not a setting, so it moved to the far right of this view's footer and the list gained a row.
     const std::uint8_t item_count = static_cast<std::uint8_t>(DeviceItem::Count);
     const std::uint8_t start = std::min(ui.device_scroll, static_cast<std::uint8_t>(item_count - 1));
     for (std::uint8_t row = 0; row < kVisibleDeviceItems && start + row < item_count; ++row) {
         const auto index = static_cast<std::uint8_t>(start + row);
         const auto item = static_cast<DeviceItem>(index);
-        const int y = 35 + static_cast<int>(row) * 16;
+        const int y = 23 + static_cast<int>(row) * 16;
         const bool selected = index == ui.selected_device;
         const Color background = selected ? palette.panel_raised : palette.background;
         if (selected) {

@@ -1,0 +1,13 @@
+# Debug-only overrides layered on top of sdkconfig.defaults.
+#
+# Light sleep and dynamic frequency scaling take the USB-Serial/JTAG peripheral down with them, so a
+# device running the shipping configuration disappears from the host between a build and a flash —
+# which turns every edit into a reconnect. Turning power management off keeps it enumerated.
+#
+# This costs battery life and disables the conditions the runtime target is measured under, so it is
+# never the image that ships. Build it with tools/debug-build.sh into its own directory.
+CONFIG_PM_ENABLE=n
+CONFIG_FREERTOS_USE_TICKLESS_IDLE=n
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ=240
+CONFIG_LOG_DEFAULT_LEVEL_DEBUG=y

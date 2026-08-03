@@ -171,15 +171,12 @@ void FirmwareApp::run() {
 }
 
 bool FirmwareApp::initialize() {
+    // NVS is initialized once, in app_main, before anything reads it.
     boot_start_ms_ = now_ms();
-    esp_err_t nvs = nvs_flash_init();
-    if (nvs == ESP_ERR_NVS_NO_FREE_PAGES || nvs == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        if (nvs_flash_erase() != ESP_OK) return false;
-        nvs = nvs_flash_init();
-    }
-    if (nvs != ESP_OK || !hardware_.begin()) return false;
+    if (!hardware_.begin()) return false;
     hardware_.set_wake_task(main_task_);
 
+#if CONFIG_PM_ENABLE
     esp_pm_config_t power_management{};
     power_management.max_freq_mhz = 240;
     power_management.min_freq_mhz = 40;
@@ -201,6 +198,13 @@ bool FirmwareApp::initialize() {
     }
     display_awake_lock_held_ = true;
     display_apb_lock_held_ = true;
+#else
+    // Power management is compiled out in the debug profile: without light sleep and frequency scaling
+    // the USB-Serial/JTAG peripheral stays enumerated, so the device does not vanish from the host
+    // between a build and a flash. It costs battery life, which is exactly why it is not the shipping
+    // configuration.
+    ESP_LOGW(kTag, "Built without power management: light sleep and frequency scaling are off");
+#endif
 
     image_pending_verification_ = FirmwareOta::pending_verification();
     transport_events_ = xEventGroupCreate();
@@ -830,7 +834,12 @@ void FirmwareApp::handle_key(const cardputer::KeyInput& key) {
     }
     else if (ui_.view == hosty::View::Device) {
         if (character == 'r' || character == 'u') execute_shortcut(MenuContext::Core, character);
-        else if (character == 'o' || character == 'd' || character == 'x') execute_shortcut(MenuContext::Device, character);
+        else if (character == 'o' || character == 'd' || character == 'x') {
+            // The Device view forwards its shortcuts straight through, without opening the menu first.
+            // Every action offered in that menu has to be listed here too, or the key does nothing at
+            // all and looks like a dead button.
+            execute_shortcut(MenuContext::Device, character);
+        }
         else if (character == 'm') {
             ui_.selected_device = static_cast<std::uint8_t>(hosty::DeviceItem::MotionWake);
             change_device_item();
@@ -1337,12 +1346,14 @@ void FirmwareApp::apply_power_action(const hosty::PowerAction& action) {
     if (action.display_on) {
         ESP_LOGI(kTag, "Display waking reason=%s motion_delta_mg=%u", wake_reason_name(action.wake_reason),
                  static_cast<unsigned>(last_motion_delta_mg_));
-        if (!display_awake_lock_held_ && esp_pm_lock_acquire(display_awake_lock_) == ESP_OK) {
+        if (display_awake_lock_ != nullptr && !display_awake_lock_held_ &&
+            esp_pm_lock_acquire(display_awake_lock_) == ESP_OK) {
             display_awake_lock_held_ = true;
         }
         // Pinned together with the sleep lock: a lit panel needs a stable APB or its backlight PWM
         // drifts with the CPU frequency (see the lock's creation).
-        if (!display_apb_lock_held_ && esp_pm_lock_acquire(display_apb_lock_) == ESP_OK) {
+        if (display_apb_lock_ != nullptr && !display_apb_lock_held_ &&
+            esp_pm_lock_acquire(display_apb_lock_) == ESP_OK) {
             display_apb_lock_held_ = true;
         }
         hardware_.display_on();
@@ -1351,12 +1362,14 @@ void FirmwareApp::apply_power_action(const hosty::PowerAction& action) {
     if (action.display_off) {
         ESP_LOGI(kTag, "Display entering %s standby", settings_.eco_standby ? "Eco" : "live");
         hardware_.display_off();
-        if (display_awake_lock_held_ && esp_pm_lock_release(display_awake_lock_) == ESP_OK) {
+        if (display_awake_lock_ != nullptr && display_awake_lock_held_ &&
+            esp_pm_lock_release(display_awake_lock_) == ESP_OK) {
             display_awake_lock_held_ = false;
         }
         // Released with the panel, so standby — the mode the runtime target is measured in — keeps the
         // full frequency-scaling range.
-        if (display_apb_lock_held_ && esp_pm_lock_release(display_apb_lock_) == ESP_OK) {
+        if (display_apb_lock_ != nullptr && display_apb_lock_held_ &&
+            esp_pm_lock_release(display_apb_lock_) == ESP_OK) {
             display_apb_lock_held_ = false;
         }
         if (settings_.eco_standby) enter_eco_standby();

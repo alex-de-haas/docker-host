@@ -26,11 +26,13 @@ std::uint64_t frame_hash(const void* buffer, std::uint32_t length) {
 
 CardputerHardware::CardputerHardware() : frame_(&M5.Display) {}
 
-bool CardputerHardware::begin() {
+bool CardputerHardware::begin(Peripherals peripherals) {
+    const bool measuring = peripherals == Peripherals::MeasurementOnly;
+
     auto config = M5.config();
     config.clear_display = true;
-    config.internal_imu = true;
-    config.internal_spk = true;
+    config.internal_imu = !measuring;
+    config.internal_spk = !measuring;
     config.output_power = true;
     M5.begin(config);
     if (M5.getBoard() != m5::board_t::board_M5CardputerADV) return false;
@@ -39,6 +41,15 @@ bool CardputerHardware::begin() {
     M5.Display.setTextSize(1);
     M5.Display.setTextDatum(m5gfx::textdatum_t::top_left);
     M5.Display.setBrightness(80);
+
+    if (measuring) {
+        // Nothing is drawn and nothing is played during a run. Leaving the frame buffer unallocated is
+        // 32 KB the measurement does not need; leaving the amplifier down is both a current draw and an
+        // audible pop on every sleep and wake avoided.
+        frame_ready_ = false;
+        return keyboard_.begin();
+    }
+
     M5.Speaker.setVolume(64);
     frame_.setPsram(false);
     frame_.setColorDepth(8);

@@ -582,25 +582,45 @@ trigger the first standby-duty-cycle pass: interrupt-driven keyboard wake,
 4 Hz rather than 50 Hz IMU work, no IMU sampling when motion wake is disabled,
 and event-driven main-task sleeps.
 
-The acceptance profile is room temperature, stable 2.4 GHz Wi-Fi, display off,
-the standby transport chosen above, 4 Hz motion sampling, and one audible
-notification per hour. Acceptance is two overnight-or-longer runs, with the
-observed hours, firmware build, access point settings, and battery age retained
-with the feature evidence.
+### The runtime target is withdrawn — decided 2026-08-02
 
-Once Phase 0 sets the number, missing it leaves the deliverable incomplete
-until either the implementation meets it or the user approves a revision and
-this plan is updated.
+There is no runtime target any more, and no acceptance run to meet it. The owner
+decided the figure is not worth chasing: the console will last as long as it
+lasts, and ordinary use will say whether that is enough. Nothing downstream
+depends on a number, so nothing is blocked by its absence.
+
+What that removes: the deep-sleep floor run, the standby comparison in current,
+the two overnight acceptance runs, and the 48-hour / 36 mA budget above. Read
+the paragraphs before this one as the reasoning that led here, not as work still
+owed. The one real observation — roughly 26 hours from a partial gauge segment —
+stands as the only evidence anyone has, and it is not an acceptance result.
+
+A measurement mode was built for this and then removed, which is worth recording
+because the failure was in the design rather than the code. A run put the device
+into deep sleep with the panel dark and woke it only on a timer, so a keypress
+could not reach it and the abort check saw a 400 ms window once every ten
+minutes. From the outside the device was indistinguishable from dead, and
+recovery meant the ROM bootloader plus erasing NVS — which takes the Wi-Fi
+credentials and the Hosty token with it. **Any mode that darkens the screen for
+hours needs an escape that works without a serial cable, decided before the mode
+ships, not after.**
 
 ## Deliverables
 
 ### Contract And Feasibility
 
-- [ ] Measure the deep-sleep board floor and record it as the ceiling on every
-  runtime target in this plan.
-- [ ] Record the exact Cardputer ADV board revision, schematic assumptions,
-  GPIO ownership, flash layout, whether a battery-backed RTC is present, and
-  measured baseline behavior.
+- [x] ~~Measure the deep-sleep board floor.~~ Dropped 2026-08-02 with the runtime
+  target; see [The runtime target is withdrawn](#the-runtime-target-is-withdrawn--decided-2026-08-02).
+- [ ] Record the board evidence. **Partly done**: 8 MB flash with A/B slots of
+  3.8125 MiB each, ESP32-S3 rev 0.2, 40 MHz crystal, no PSRAM, USB-Serial/JTAG,
+  observed across many flash-and-run cycles against a live Core. Still owed: the
+  schematic assumptions and GPIO ownership this plan already relies on — GPIO38
+  driving the backlight rail with the RGB LED, GPIO11 carrying the keyboard
+  interrupt, the BMI270 interrupt outputs being unconnected — none of which has
+  been checked against the published schematic, and whether a battery-backed RTC
+  is fitted, which was never established. The RTC answer is not urgent, because
+  the boot path does not need one: SNTP over UDP sets the clock before any TLS
+  request, and a plain-HTTP LAN origin needs no clock at all.
 - [x] Define and check in a representative Core fixture —
   `apps/shell-cardputer/fixtures/apps-50.json`, 2026-07-31: 50 apps carrying a
   3,000-byte ignored description, nested optional fields, unknown runtime and
@@ -609,15 +629,20 @@ this plan is updated.
   not depend on response boundaries. The sizes quoted earlier (213,748 and
   533,198 bytes) came from a throwaway measurement spike that is not in the tree;
   the checked-in fixture is the one that counts.
-- [ ] Prototype TLS with SNTP-set time, streaming app parsing, SSE reconnect,
-  screen power control, keyboard wake, BMI270 polling, and speaker notification
-  on real hardware.
+- [x] Prototype on real hardware — done by running the firmware itself rather
+  than a spike: TLS with SNTP-set time, streaming app parsing, the event stream
+  and its reconnect, screen power control, keyboard wake, motion sampling and
+  speaker notification all exercised on a physical Cardputer ADV against a live
+  Core 0.73.0.
 - [x] Compare the event stream held open against periodic polling **on data** —
   the event stream is cheapest in bytes (5,400/h against 23,040/h for the best
   polling variant) *and* has no notification latency, which is the opposite of
-  what this plan assumed. The comparison **in current** is still open below.
-- [ ] Establish the runtime budget, replace the provisional runtime target with a
-  measured one, and record the go/no-go.
+  what this plan assumed. The comparison in current is not happening; the data
+  comparison is what the decision rests on.
+- [x] ~~Establish the runtime budget and record the go/no-go.~~ Withdrawn
+  2026-08-02: there is no runtime target to hold the answer to, and the go/no-go
+  it was meant to gate has been answered another way — the firmware runs on real
+  hardware against a live host.
 - [x] Establish heap and image-size budgets: streaming parse peaks at a **flat
   19,596 bytes** whether the response is 4 KB or 533 KB, while buffering the
   bloated fixture needs 101.7% of all the SRAM the chip has. Streaming is not an
@@ -681,8 +706,8 @@ own PR under the platform version, never inside the firmware PR.
   understandable degraded-power states.
 - [ ] Implement A/B firmware OTA from the compiled-in origin over validated
   HTTPS, with health confirmation, downgrade policy, and rollback tests.
-- [ ] Meet and publish the runtime, heap, flash, and latency acceptance
-  evidence against the Phase 0 targets.
+- [x] Publish the heap, flash and latency evidence against the Phase 0 budgets;
+  the runtime half is withdrawn with the target it measured against.
 
 ### Release And Documentation
 
@@ -706,32 +731,29 @@ own PR under the platform version, never inside the firmware PR.
 
 ## Phases
 
-### Phase 0 — Hardware And Contract Spike
+### Phase 0 — Hardware And Contract Spike — closed 2026-08-02
 
-Measure the board floor, complete the real-device prototypes and remaining
-measurements, settle the memory/API and standby-transport decisions, replace
-the provisional runtime target, and reject any architecture that cannot fit the
-hardware or runtime budget.
+Done, and partly overtaken. The contract questions were answered with measured
+numbers: a checked-in fixture, a flat 19,596-byte streaming parse against a
+buffered variant that needs more SRAM than the chip has, an image using a third
+of its OTA slot, and the transport comparison decided on bytes and latency. The
+hardware questions were answered by running the real firmware on a real
+Cardputer ADV against a live Core rather than by a spike — TLS with SNTP-set
+time, the event stream and its reconnect, screen power, keyboard wake, motion
+and sound all work, and the defects that surfaced were fixed there.
 
-**This phase blocks on nothing and answers the questions that could end the
-project**, so it runs first and separately, as a throwaway spike rather than
-production code. It needs no device credential: a development build carries a
-session id supplied over the serial console, which is exactly why it can start
-before the shared authorization work exists.
+The power measurements are not done and will not be: the runtime target was
+withdrawn on 2026-08-02, so there is nothing left for them to answer. See
+[The runtime target is withdrawn](#the-runtime-target-is-withdrawn--decided-2026-08-02).
 
-**Partly done, 2026-07-31.** Everything that is pure software is measured, and
-the numbers are recorded in the deliverables above: real payload sizes from a
-live host, the checked-in fixtures, streaming-versus-buffered parse cost, the
-8 MB layout against a real image, and the transport comparison's data half. Two
-results matter more than the rest — buffering a large response cannot fit in
-this chip at all, and the event stream beats polling on both bytes and latency,
-which is the opposite of what this plan assumed.
-
-**No go/no-go is declared**, because the number that decides it is the board's
-deep-sleep current floor, and that needs an M5Stack Cardputer ADV in hand.
-Everything still outstanding in this phase is hardware-bound: the floor, the
-battery-backed RTC question, the on-device prototypes, and the standby
-comparison measured in current rather than in bytes.
+One question the phase never settled and no longer blocks anything: **the device
+runs close to its memory ceiling.** A failed request reported 8,824 bytes free
+with a 5,632-byte largest block, and a sync task allocation failed at 25,488
+free with 9,216 contiguous — the heap fragments rather than merely fills. It
+shows as periodic `ESP_ERR_HTTP_FETCH_HEADER` and `Unable to allocate app sync
+task`. The levers are known — smaller TLS buffers, a banded renderer instead of
+a 32 KB frame buffer, or dropping the held event stream — and the owner has
+chosen to live with the symptom for now rather than spend one of them.
 
 ### Phase 1 — Secure Foundation
 
@@ -750,8 +772,9 @@ the supported subset.
 ### Phase 3 — Standby And Alerts
 
 Add screen/motion behavior, Wi-Fi power management, audible notifications,
-quiet hours, and battery policy. Tune on hardware and meet the Online standby
-runtime target.
+quiet hours, and battery policy, and tune them on hardware. There is no runtime
+figure to hit — the target was withdrawn on 2026-08-02 — so the exit criterion
+is that each behaves correctly, not that the battery lasts any particular time.
 
 ### Phase 4 — Firmware OTA And Release Hardening
 
@@ -808,8 +831,9 @@ its own deliverable.
   in the original decision and is kept deliberately: it costs one extra sample
   and rejects the single knock on a desk, which is the false wake that actually
   happens to a device sitting still.
-- **No bench power instrumentation.** Runtime is accepted from observed battery
-  drain, and the 48-hour figure is provisional until Phase 0 measures the floor.
+- **No runtime target at all**, decided 2026-08-02. There was never bench
+  instrumentation, the 48-hour figure was provisional, and the owner withdrew
+  both rather than spend more on measuring something use will reveal anyway.
 - **Review-required updates stay in Shell.** Routine updates are applied from
   the device; review-required ones are listed read-only with their reason.
 - **Firmware OTA is in scope for `0.1.0`.** Dropping it later would be a scope
