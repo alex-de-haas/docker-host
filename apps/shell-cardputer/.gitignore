@@ -1,4 +1,5 @@
 build/
+build-debug/
 build-host/
 managed_components/
 sdkconfig

@@ -16,7 +16,13 @@ class CardputerHardware final : public hosty::Canvas {
 public:
     CardputerHardware();
 
-    bool begin();
+    /// What to power up. A measurement run wants as little alive as possible: the speaker amplifier
+    /// and the IMU both draw current continuously, which corrupts the very reading being taken, and the
+    /// amplifier additionally pops audibly each time the device sleeps and wakes. Nothing is rendered
+    /// during a run either, so the 32 KB frame buffer is skipped with them.
+    enum class Peripherals : std::uint8_t { Full, MeasurementOnly };
+
+    bool begin(Peripherals peripherals = Peripherals::Full);
     void update();
     void set_wake_task(TaskHandle_t task);
     [[nodiscard]] bool keyboard_activity_pending() const;
