@@ -37,8 +37,10 @@ if [[ -z "$tip" ]]; then
 fi
 
 if [[ "$tip" == "$GITHUB_SHA" ]]; then
+  fresh=true
   echo "fresh=true" >> "$GITHUB_OUTPUT"
 else
+  fresh=false
   echo "fresh=false" >> "$GITHUB_OUTPUT"
   # Deliberately generic: callers differ in what they still publish when stale. The image workflows
   # push their immutable `sha-` tag (and may still create an absent version tag); cli-release and
@@ -90,11 +92,21 @@ case "$http_status" in
     ;;
   200)
     echo "push_version=false" >> "$GITHUB_OUTPUT"
+    # Name only the tags this build actually gets, since the point of the notice is to hand the
+    # operator something they can pull. `sha-` is unconditional, but the image workflows gate
+    # `latest` on `fresh`, and this branch is reachable while stale (see the header) - a stale
+    # rebuild of an already-published version publishes the `sha-` tag alone.
+    #
     # The short SHA, not $GITHUB_SHA: the image workflows tag with docker/metadata-action's
     # `type=sha,prefix=sha-`, whose default `format=short` is the 7-character abbreviation. Printing
     # the full 40-character SHA names a tag that does not exist, so following this notice to
     # `docker pull` it 404s. Keep the two in step if any workflow ever sets `format=long`.
-    echo "::notice title=Version tag frozen::${IMAGE}:${VERSION} already exists and is not moved. Bump the app manifest version to publish a new one; this build is still available as latest and sha-${GITHUB_SHA:0:7}."
+    if [[ "$fresh" == "true" ]]; then
+      reachable="latest and sha-${GITHUB_SHA:0:7}"
+    else
+      reachable="sha-${GITHUB_SHA:0:7}"
+    fi
+    echo "::notice title=Version tag frozen::${IMAGE}:${VERSION} already exists and is not moved. Bump the app manifest version to publish a new one; this build is still available as ${reachable}."
     ;;
   *)
     # Do not guess. Silently skipping would leave a manifest pinning an unpublished tag; silently
