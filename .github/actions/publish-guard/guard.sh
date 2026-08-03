@@ -90,7 +90,11 @@ case "$http_status" in
     ;;
   200)
     echo "push_version=false" >> "$GITHUB_OUTPUT"
-    echo "::notice title=Version tag frozen::${IMAGE}:${VERSION} already exists and is not moved. Bump the app manifest version to publish a new one; this build is still available as latest and sha-${GITHUB_SHA}."
+    # The short SHA, not $GITHUB_SHA: the image workflows tag with docker/metadata-action's
+    # `type=sha,prefix=sha-`, whose default `format=short` is the 7-character abbreviation. Printing
+    # the full 40-character SHA names a tag that does not exist, so following this notice to
+    # `docker pull` it 404s. Keep the two in step if any workflow ever sets `format=long`.
+    echo "::notice title=Version tag frozen::${IMAGE}:${VERSION} already exists and is not moved. Bump the app manifest version to publish a new one; this build is still available as latest and sha-${GITHUB_SHA:0:7}."
     ;;
   *)
     # Do not guess. Silently skipping would leave a manifest pinning an unpublished tag; silently

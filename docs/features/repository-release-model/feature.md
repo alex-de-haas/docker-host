@@ -282,7 +282,9 @@ ghcr.io/alex-de-haas/hosty-telemetry-ui:<manifest-version>
 Both read their version from `apps/telemetry/manifest.json` - the telemetry app ships as one unit - and
 each also publishes `latest` and `sha-<commit>` into its own repository.
 
-Across all of these, `sha-<commit>` is the only tag guaranteed to name one immutable build. A version
+Across all of these, `sha-<commit>` is the only tag guaranteed to name one immutable build. `<commit>`
+is the 7-character short SHA (`sha-d2d339e`), not the full 40-character one - the image workflows tag
+with docker/metadata-action's `type=sha,prefix=sha-`, which abbreviates by default. A version
 tag is written once and never moved afterwards, and `:latest` tracks the newest commit that was still
 the tip of `main` when it published; both are enforced by the
 [publish guard](#mutable-tags-and-the-publish-guard). A commit whose declared version was already
