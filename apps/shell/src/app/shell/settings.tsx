@@ -110,7 +110,8 @@ function isBooleanSettingChecked(value: string) {
 function SettingControl({ controlId, setting, value, disabled, onChange, onReveal }: { controlId: string; setting: CoreInstallSetting | CoreSetting; value: string | null; disabled?: boolean; onChange: (value: string) => void; onReveal?: () => Promise<string | null> }) {
   const [revealed, setRevealed] = useState(false);
   // The stored value fetched on demand for a secret whose draft is untouched. Display-only: it never
-  // enters the draft, so revealing cannot mark the form dirty or resave the value.
+  // enters the draft, so revealing cannot mark the form dirty or resave the value. Hiding drops it
+  // deliberately (see toggleReveal), so the plaintext lives only as long as it is on screen.
   const [stored, setStored] = useState<string | null>(null);
   const [revealError, setRevealError] = useState(false);
   // For a secret, null is the draft's "untouched" marker (see AppSettingsDraft); elsewhere it is just
@@ -125,6 +126,8 @@ function SettingControl({ controlId, setting, value, disabled, onChange, onRevea
       setRevealError(false);
       if (revealed) {
         setRevealed(false);
+        // Discard the plaintext rather than cache it for a cheaper second reveal: it is worth one
+        // more request to keep a secret out of component state once it is no longer displayed.
         setStored(null);
         return;
       }

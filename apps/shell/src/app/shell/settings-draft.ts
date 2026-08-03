@@ -37,9 +37,11 @@ export function buildAppSettingsPayload(settings: CoreSetting[], draft: AppSetti
 export type SecretFieldState = {
   displayValue: string;
   placeholder: string;
-  // Whether the stored value is worth fetching: there is one, it is not in hand, and the field is
-  // untouched so it has somewhere to go. Deliberately independent of `revealed` -- the caller reads
-  // this while turning reveal on, when its own `revealed` still holds the pre-toggle value.
+  // Whether the stored value is worth fetching: there is one, it is not already in hand, and the
+  // field is untouched so it has somewhere to go. Deliberately independent of `revealed` -- the
+  // caller reads this while turning reveal on, when its own `revealed` still holds the pre-toggle
+  // value. This guards one reveal against fetching twice; it does not cache across a hide, which
+  // drops the plaintext on purpose.
   shouldFetchStored: boolean;
 };
 

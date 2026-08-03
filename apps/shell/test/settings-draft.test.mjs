@@ -116,7 +116,8 @@ test("the stored value is fetched once, and never for a field the operator has t
   const untouched = { draftValue: null, revealed: false };
 
   assert.equal(resolveSecretFieldState({ ...untouched, hasStored: true, stored: null }).shouldFetchStored, true);
-  // Already in hand, so revealing again must not refetch.
+  // Already in hand, so a single reveal cannot fetch twice. Hiding drops the plaintext, so the reveal
+  // after that legitimately fetches again -- this is not a cache.
   assert.equal(resolveSecretFieldState({ ...untouched, hasStored: true, stored: "s3cret" }).shouldFetchStored, false);
   // Nothing stored to fetch.
   assert.equal(resolveSecretFieldState({ ...untouched, hasStored: false, stored: null }).shouldFetchStored, false);
