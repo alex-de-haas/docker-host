@@ -1,15 +1,14 @@
-# Feature: Global (Shared) Host-Path Mounts
+# Global (Shared) Host-Path Mounts
 
-> Status: implemented (platform 0.16.0 / Shell 0.10.0). Core `GlobalMountStore` + `GlobalMountService`
-> + `/api/global-mounts`, CLI `hosty storage`, and the Shell Shared-mounts dialog + consolidated
-> Settings dialog all ship together.
+Created: 2026-06-30
+Updated: 2026-08-04
 
 ## Goal
 
 Let an operator register large, operator-owned host folders **once** at the host level (a
 "shared mounts" library) and attach them to any runtime app by reference, instead of re-typing
 the same host path into every app. Editing a library entry's path updates every app that
-references it on the next start. This builds directly on per-app [external mounts](external-mounts.md)
+references it on the next start. This builds directly on per-app [external mounts](../external-mounts.md)
 — the manifest slot stays the opt-in point and the source of all binding authority; only the
 **source of the host path** changes from inline text to a reference into the shared library.
 
@@ -23,17 +22,9 @@ references it on the next start. This builds directly on per-app [external mount
   library is the default, inline is the escape hatch. No migration of existing bindings.
 - Named docker volumes / non-host-path kinds (unchanged from external mounts).
 
-## Current Behavior
-
-Today every external-mount binding stores an inline absolute host path on `AppRecord.Mounts`
-(`AppMountBinding(Key, Label, HostPath)`). An operator who wants three apps to share `/srv/media`
-types `/srv/media` into each app separately and picks a label per app; there is no single source
-of truth, and moving the folder means editing every app. See [external mounts](external-mounts.md)
-for the full per-app contract this extends.
-
 ## Behavior
 
-A new host-level **shared mounts library** holds named host folders:
+A host-level **shared mounts library** holds named host folders:
 
 ```jsonc
 // core/global-mounts.json
@@ -66,8 +57,9 @@ entry currently resolves to at start time.
 
 ## User/API Scenarios
 
-- An operator opens **Shared mounts** from the Installed Apps header and registers `/srv/media` as
-  `media` (rw). Core validates the path against the mount path policy and stores it.
+- An operator opens **Settings → Shared mounts** and registers `/srv/media` as `media` (rw)
+  through the **Add mount** dialog. Core validates the path against the mount path policy and
+  stores it.
 - In an app's **Settings → Mounts** tab the operator adds a binding to the `catalogRoots` slot,
   picks source **Global** and entry `media`; the path field shows `/srv/media` read-only. A second
   app references the same `media` entry — both see `/mnt/catalogRoots/media`.
@@ -155,23 +147,23 @@ changes unless an operator deliberately restricts a shared folder to read-only l
 
 ### Shell
 
-- **Shared mounts button + dialog.** A `Shared mounts` action in the Installed Apps page header
-  (admin-only) opens a dialog over the library: a table of `Name · Host path · Mode · Used by ·
-  actions`, and an add/edit form (`name`, `host path`, `mode ro/rw`, optional `description`). The
-  library list is loaded into shell state so the per-app picker can reuse it.
-- **Consolidated Settings dialog.** Configuration that today lives across the `configure` view and
-  the separate `mounts` view collapses into one tabbed dialog:
-  - `DetailView`: drop `"mounts"`, rename `"configure"` → `"settings"`.
-  - `OpenPanelOptions.configureSection` generalizes to `settingsTab?: "app" | "publicOrigins" |
-    "mounts"`, preserving deep-links (e.g. the per-service "Configure public origins" button opens
-    Settings on the Public origins tab, as `initialOpenSection` does now).
-  - Tabs: **App settings** (non-public-origin settings), **Public origins** (when the app has
-    public-origin-capable endpoints), **Mounts** (when the app declares `externalMounts`). Each tab
-    is hidden when its data is absent; if exactly one tab qualifies it renders without tab chrome;
-    if none qualify the menu item is not shown.
-  - The actions menu's `Configure` and `External storage` items are replaced by a single `Settings`
-    item. `Backups`, `Logs`, `Observability`, `Update`, `Remove` stay separate (lifecycle, not
-    configuration).
+- **Shared mounts section** on the host **Settings** page (`/settings?tab=mounts`, admin-only): a
+  table of `Name · Host path · Mode · Used by · actions` with an **Add mount** button in the
+  section header. Add and edit each open a modal dialog (`name`, `mode ro/rw`, `host path`,
+  optional `description`); the name identifies the entry in Core, so the edit dialog shows it
+  read-only. A save rejected by Core surfaces inline in the dialog; deleting an in-use entry
+  surfaces Core's rejection above the table and arms the same trash button for a force delete.
+  The table flags a `ro` entry with a lock icon and a registered path that does not currently
+  exist with an advisory warning icon. The library list is loaded into shell state so the per-app
+  picker can reuse it.
+- **Consolidated per-app Settings dialog.** Per-app configuration lives in one tabbed dialog:
+  **App settings** (non-public-origin settings), **Public origins** (when the app has
+  public-origin-capable endpoints), **Mounts** (when the app declares `externalMounts`). Each tab
+  is hidden when its data is absent; if exactly one tab qualifies it renders without tab chrome;
+  if none qualify the menu item is not shown. Deep-links open a named tab via
+  `OpenPanelOptions.settingsTab` (`"app" | "publicOrigins" | "mounts"`). The actions menu has a
+  single `Settings` item; `Backups`, `Logs`, `Observability`, `Update`, `Remove` stay separate
+  (lifecycle, not configuration).
 - **Per-binding source toggle** in the Mounts tab: a `Source` select (`Global`/`Local`). Global →
   the `Label` field becomes a two-line picker over the library (name above, path below) and the
   `Path` field is read-only; already-attached entries are hidden/disabled in the picker for a
@@ -211,18 +203,6 @@ backed up or deleted by app lifecycle. Because global mounts still require a man
 the least-privilege invariant — an app only sees what it declared — is preserved; the library only
 changes how the operator supplies the path, not what the app is allowed to receive.
 
-## Testing
-
-- `GlobalMountStore`/service: upsert + path policy at registration, name validation/uniqueness,
-  `maxMode` default, `usedBy` count, delete blocked while in use and allowed with force.
-- Binding: ref persists across update / runtime-switch (like inline); ref `Label` forced to name;
-  same global entry rejected twice on one slot; non-`multiple` slot still one binding.
-- Resolution/start: ref dereferences into the runtime context; start fails on a deleted/missing
-  global for a required slot; mode precedence (a `ro` library entry forces read-only even when the
-  slot is `rw`).
-- Shell: Settings tab visibility by manifest data, source toggle global/local, Shared mounts CRUD.
-- CLI: `storage` commands and `apps mounts set --ref`.
-
 ## Decision
 
 - **Reference by name, resolved live.** The whole value of the feature is a single source of truth —
@@ -239,10 +219,15 @@ changes how the operator supplies the path, not what the app is allowed to recei
 - **Inline kept as an escape hatch.** Local bindings remain valid, so the change is additive with no
   migration; the library is the default path source, inline is for one-offs.
 
-## Sequencing
+## Testing Expectations
 
-1. **Core** — extract `MountPathPolicy`; add `GlobalMountStore` + service + endpoints + AOT DTOs;
-   extend `AppMountBinding`/inputs/summaries with the ref; deref in resolution and the start gate;
-   tests.
-2. **Clients** — CLI `storage` commands + `--ref`; Shell Shared-mounts dialog, Settings-dialog
-   consolidation (tabs), and the per-binding source toggle.
+- `GlobalMountStore`/service: upsert + path policy at registration, name validation/uniqueness,
+  `maxMode` default, `usedBy` count, delete blocked while in use and allowed with force.
+- Binding: ref persists across update / runtime-switch (like inline); ref `Label` forced to name;
+  same global entry rejected twice on one slot; non-`multiple` slot still one binding.
+- Resolution/start: ref dereferences into the runtime context; start fails on a deleted/missing
+  global for a required slot; mode precedence (a `ro` library entry forces read-only even when the
+  slot is `rw`).
+- Shell: Settings tab visibility by manifest data, source toggle global/local, Shared mounts CRUD
+  through the add/edit dialogs, in-use delete rejection + force delete.
+- CLI: `storage` commands and `apps mounts set --ref`.
