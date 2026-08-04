@@ -54,8 +54,17 @@ struct AppWorkspaceView: View {
             ProgressView("Opening \(app.displayName)…")
 
         case .ready:
-            WorkspaceWebView(webView: session.workspaces.webView(for: app.id))
-                .ignoresSafeArea(edges: .bottom)
+            // A pure read. The store's other accessor records use and can evict, and writing observed
+            // state here would invalidate this very view — the render loop that pinned a core and never
+            // got as far as loading the page. `open(page:)` has already prepared the view before it set
+            // this state, so the fallback is unreachable in practice and is a spinner rather than a
+            // second chance to create one.
+            if let webView = session.workspaces.existingWebView(for: app.id) {
+                WorkspaceWebView(webView: webView)
+                    .ignoresSafeArea(edges: .bottom)
+            } else {
+                ProgressView("Opening \(app.displayName)…")
+            }
 
         case .unreachableLoopback:
             ContentUnavailableView {
@@ -124,7 +133,7 @@ struct AppWorkspaceView: View {
             return
         }
 
-        let webView = session.workspaces.webView(for: app.id)
+        let webView = session.workspaces.prepare(app.id)
 
         // A page switch inside an app that is already open is a plain navigation: the app's own cookie
         // is already set on that origin, so a second code would be minted for nothing.
