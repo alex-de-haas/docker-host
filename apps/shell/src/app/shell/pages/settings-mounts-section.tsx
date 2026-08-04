@@ -4,6 +4,15 @@ import type { FormEvent } from "react";
 import { useState } from "react";
 import { HardDrive, LoaderCircle, Lock, Pencil, Plus, Trash2, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -31,29 +40,42 @@ export function SettingsMountsSection({
   onSave: (input: { name: string; hostPath: string; mode?: string; description?: string | null }) => Promise<void>;
   onDelete: (name: string, force?: boolean) => Promise<void>;
 }) {
+  const [dialogOpen, setDialogOpen] = useState(false);
   const [draft, setDraft] = useState<DraftMount>(emptyDraft);
+  // Name of the mount being edited; null means the dialog adds a new one. Names are the mount's
+  // identity in Core, so editing never allows renaming.
   const [editing, setEditing] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // Save failures render inside the dialog; delete failures render above the table.
+  const [dialogError, setDialogError] = useState<string | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // Names whose delete was blocked because they are still referenced; a second click forces it.
   const [confirmForce, setConfirmForce] = useState<string | null>(null);
 
-  const resetForm = () => {
+  const openAdd = () => {
     setDraft(emptyDraft);
     setEditing(null);
-    setConfirmForce(null);
+    setDialogError(null);
+    setDialogOpen(true);
   };
 
-  const startEdit = (mount: CoreGlobalMount) => {
+  const openEdit = (mount: CoreGlobalMount) => {
     setDraft({ name: mount.name, hostPath: mount.hostPath, mode: mount.mode, description: mount.description ?? "" });
     setEditing(mount.name);
-    setError(null);
-    setConfirmForce(null);
+    setDialogError(null);
+    setDialogOpen(true);
+  };
+
+  const closeDialog = () => {
+    setDialogOpen(false);
+    setDraft(emptyDraft);
+    setEditing(null);
+    setDialogError(null);
   };
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setError(null);
+    setDialogError(null);
     setBusy(true);
     try {
       await onSave({
@@ -62,30 +84,27 @@ export function SettingsMountsSection({
         mode: draft.mode,
         description: draft.description.trim() || null,
       });
-      resetForm();
+      closeDialog();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Saving the shared mount failed.");
+      setDialogError(caught instanceof Error ? caught.message : "Saving the shared mount failed.");
     } finally {
       setBusy(false);
     }
   };
 
   const remove = async (mount: CoreGlobalMount, force: boolean) => {
-    setError(null);
+    setListError(null);
     setBusy(true);
     try {
       await onDelete(mount.name, force);
       setConfirmForce(null);
-      if (editing === mount.name) {
-        resetForm();
-      }
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "Deleting the shared mount failed.";
       // Core's in-use rejection message names how many apps reference the mount; offer a force delete.
       if (!force && /referenced by|in[_ ]use/i.test(message)) {
         setConfirmForce(mount.name);
       }
-      setError(message);
+      setListError(message);
     } finally {
       setBusy(false);
     }
@@ -93,76 +112,21 @@ export function SettingsMountsSection({
 
   return (
     <div className="space-y-5">
-      <div>
-        <h3 className="text-sm font-medium">Shared mounts</h3>
-        <p className="text-xs text-muted-foreground">
-          Host folders apps can attach by reference. Paths must be absolute and outside the Hosty data root.
-        </p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-medium">Shared mounts</h3>
+          <p className="text-xs text-muted-foreground">Host folders apps can attach by reference.</p>
+        </div>
+        <Button onClick={openAdd} disabled={!canManageApps}>
+          <Plus className="h-4 w-4" />
+          Add mount
+        </Button>
       </div>
 
-      {error && <InlineError message={error} />}
-      <form onSubmit={submit} className="space-y-3 rounded-md border p-3">
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1">
-            <Label htmlFor="shared-mount-name">Name</Label>
-            <Input
-              id="shared-mount-name"
-              placeholder="media"
-              value={draft.name}
-              disabled={!canManageApps || editing !== null}
-              onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="shared-mount-mode">Mode</Label>
-            <select
-              id="shared-mount-mode"
-              className={`${CONTROL_CLASS} w-full`}
-              value={draft.mode}
-              disabled={!canManageApps}
-              onChange={(event) => setDraft((current) => ({ ...current, mode: event.target.value }))}
-            >
-              <option value="ro">ro</option>
-              <option value="rw">rw</option>
-            </select>
-          </div>
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor="shared-mount-path">Host path</Label>
-          <Input
-            id="shared-mount-path"
-            placeholder="/srv/media"
-            className="font-mono text-xs"
-            value={draft.hostPath}
-            disabled={!canManageApps}
-            onChange={(event) => setDraft((current) => ({ ...current, hostPath: event.target.value }))}
-          />
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor="shared-mount-description">Description</Label>
-          <Input
-            id="shared-mount-description"
-            placeholder="Optional"
-            value={draft.description}
-            disabled={!canManageApps}
-            onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))}
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <Button type="submit" disabled={busy || !canManageApps || draft.name.trim().length === 0 || draft.hostPath.trim().length === 0}>
-            {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-            {editing ? "Save mount" : "Add mount"}
-          </Button>
-          {editing && (
-            <Button type="button" variant="ghost" onClick={resetForm} disabled={busy}>
-              Cancel
-            </Button>
-          )}
-        </div>
-      </form>
+      {listError && <InlineError message={listError} />}
 
       {globalMounts.length === 0 ? (
-        <EmptyState icon={HardDrive} title="No shared mounts" description="Add a host folder above to make it available to apps." />
+        <EmptyState icon={HardDrive} title="No shared mounts" description="Add a host folder to make it available to apps." />
       ) : (
         <div className="rounded-lg border">
           <Table>
@@ -198,7 +162,7 @@ export function SettingsMountsSection({
                   <TableCell className="text-sm text-muted-foreground">{mount.usedBy > 0 ? `${mount.usedBy} app${mount.usedBy === 1 ? "" : "s"}` : "—"}</TableCell>
                   <TableCell>
                     <div className="flex items-center justify-end gap-1">
-                      <IconButton title="Edit mount" disabled={!canManageApps || busy} onClick={() => startEdit(mount)}>
+                      <IconButton title="Edit mount" disabled={!canManageApps || busy} onClick={() => openEdit(mount)}>
                         <Pencil className="h-4 w-4" />
                       </IconButton>
                       <IconButton
@@ -217,6 +181,72 @@ export function SettingsMountsSection({
           </Table>
         </div>
       )}
+
+      <Dialog open={dialogOpen} onOpenChange={(open) => !open && closeDialog()}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{editing ? `Edit shared mount: ${editing}` : "Add shared mount"}</DialogTitle>
+            <DialogDescription>Paths must be absolute and outside the Hosty data root.</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col gap-4">
+            <DialogBody className="space-y-3">
+              {dialogError && <InlineError message={dialogError} />}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label htmlFor="shared-mount-name">Name</Label>
+                  <Input
+                    id="shared-mount-name"
+                    placeholder="media"
+                    value={draft.name}
+                    disabled={editing !== null}
+                    onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="shared-mount-mode">Mode</Label>
+                  <select
+                    id="shared-mount-mode"
+                    className={`${CONTROL_CLASS} w-full`}
+                    value={draft.mode}
+                    onChange={(event) => setDraft((current) => ({ ...current, mode: event.target.value }))}
+                  >
+                    <option value="ro">ro</option>
+                    <option value="rw">rw</option>
+                  </select>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="shared-mount-path">Host path</Label>
+                <Input
+                  id="shared-mount-path"
+                  placeholder="/srv/media"
+                  className="font-mono text-xs"
+                  value={draft.hostPath}
+                  onChange={(event) => setDraft((current) => ({ ...current, hostPath: event.target.value }))}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="shared-mount-description">Description</Label>
+                <Input
+                  id="shared-mount-description"
+                  placeholder="Optional"
+                  value={draft.description}
+                  onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))}
+                />
+              </div>
+            </DialogBody>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={closeDialog} disabled={busy}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={busy || draft.name.trim().length === 0 || draft.hostPath.trim().length === 0}>
+                {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : editing ? <Pencil className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+                {editing ? "Save mount" : "Add mount"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
