@@ -281,6 +281,17 @@ involved. A code is single-use and expires in five minutes, so re-opening always
 than replaying a spent URL — which would land on a signed-out app. A page switch inside an app that is
 already open is a plain navigation: its cookie is already set on that origin.
 
+**The client declares its launch mode on the URL it loads**, `hosty_launch=native`, so the app drops
+the name and page navigation this client already renders in its navigation bar and pages menu — see
+[Embedded App Chrome](../embedded-app-chrome/feature.md). It is declared on both paths that open a
+page, the fresh launch and the plain navigation of a loaded web view, and deliberately not on *Open
+in Browser*, which exists to leave the client. The loopback diagnosis still reads the address Core
+advertised: what it judges is where the app lives, which a parameter cannot change.
+
+`native` rather than `embedded` because the two modes differ in exactly the way this client does. In
+a web view the app is the top frame, so it has no parent to post `hosty:auth-required` to; `native`
+keeps the standalone redirect, which is the navigation the recovery interception below is built on.
+
 **Web views are cached per app for the host session**, so switching apps or looking at Dashboard does
 not reload the page and re-run the code exchange. The cache is bounded — a web view is an expensive
 object — and an evicted app re-opens the way a first open does. One non-persistent data store per host

@@ -18,6 +18,7 @@ Use this skill to implement Hosty runtime apps in the shape expected by this rep
 - Read `references/app-manifest.md` when authoring or reviewing `manifest.json`, runtime profiles, service implementations, settings, storage, dependencies, endpoints, install/update behavior, or backups.
 - Read `references/app-auth-and-users.md` when adding app identity, app-owned roles, or scoped app directory access.
 - Read `references/app-feeds.md` when publishing or reviewing repository-owned `feeds.json` for Marketplace discovery and Core-managed updates.
+- Read `references/app-launch-mode.md` when the app has a UI, to keep it from drawing the name and page navigation a shell already renders around it.
 - Read `references/demo-app-patterns.md` when validating against the repository Demo App.
 - Read `references/app-implementation-checklist.md` before final verification.
 

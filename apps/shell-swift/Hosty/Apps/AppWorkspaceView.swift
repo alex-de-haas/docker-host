@@ -135,9 +135,14 @@ struct AppWorkspaceView: View {
 
         let webView = session.workspaces.prepare(app.id)
 
+        // Declared on both paths below. The loopback diagnosis above deliberately reads the address
+        // Core advertised rather than this one: what it judges is where the app lives, which a
+        // parameter cannot change.
+        let workspaceUrl = HostyLaunch.declaringNativeMode(embeddedUrl)
+
         // A page switch inside an app that is already open is a plain navigation: the app's own cookie
         // is already set on that origin, so a second code would be minted for nothing.
-        if session.workspaces.isLoaded(app.id), let url = URL(string: embeddedUrl) {
+        if session.workspaces.isLoaded(app.id), let url = URL(string: workspaceUrl) {
             webView.load(URLRequest(url: url))
             state = .ready
             return
@@ -146,7 +151,7 @@ struct AppWorkspaceView: View {
         state = .launching
 
         do {
-            let launch = try await session.client.createLaunchCode(appID: app.id, redirectURI: embeddedUrl)
+            let launch = try await session.client.createLaunchCode(appID: app.id, redirectURI: workspaceUrl)
             guard let url = URL(string: launch.redirectUri) else {
                 state = .failed("The host returned a launch URL this app could not read.")
                 return
@@ -171,6 +176,8 @@ struct AppWorkspaceView: View {
     /// A *fresh* code, minted immediately before the handover: the URL already loaded in the web view
     /// carries a code that has been spent, and following it would open a signed-out app.
     private func openInBrowser() async {
+        // No launch mode declared: this hand-off exists to leave the client, and a browser tab has
+        // nothing else drawing the app's name and pages.
         guard let embeddedUrl = (page ?? app.pages.first)?.embeddedUrl else { return }
 
         do {

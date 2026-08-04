@@ -134,13 +134,55 @@ export function buildCoreOpenUrl(
   return target.toString();
 }
 
-/** Launch mode drives the logout affordance: embedded apps hide logout entirely (the
- * session belongs to the Shell), standalone apps may show one. `window.self !== window.top`
- * is the baseline signal; a Core-reported launch channel can replace it later without
- * changing callers. */
-export type AppLaunchMode = "embedded" | "standalone";
+/**
+ * How a shell is presenting this app.
+ *
+ * - `embedded` — framed by the browser Shell. The shell renders navigation for this app, and a
+ *   parent frame exists, so identity recovery is a `hosty:auth-required` post to it.
+ * - `native` — the top frame inside a native shell's web view (`apps/shell-swift`). The shell
+ *   renders navigation, but there is no parent to post to, so recovery takes the standalone
+ *   redirect — which is exactly the navigation that client intercepts to re-mint a launch code.
+ * - `standalone` — a plain browser tab on the app's own origin. Nothing else renders navigation
+ *   for this app, so it keeps its own.
+ *
+ * Two independent decisions read this one value and they do not split it the same way: chrome
+ * is hidden whenever the mode is not `standalone` (`hidesAppChrome`), while the parent post
+ * belongs to `embedded` alone (`decideRecoveryAction`). That asymmetry is the whole reason
+ * `native` exists as its own value — calling a native web view `embedded` to get its chrome
+ * hidden would send recovery to a parent that is not there.
+ */
+export type AppLaunchMode = "embedded" | "native" | "standalone";
 
-export function detectLaunchMode(win: Pick<Window, "self" | "top">): AppLaunchMode {
+/** The query parameter a shell appends to the launch URL to declare the mode. */
+export const LAUNCH_MODE_PARAM = "hosty_launch";
+/** Where a resolved mode is kept for the life of the tab or web view. */
+export const LAUNCH_MODE_STORAGE_KEY = "hosty.launch.mode";
+/** The root attribute the launch bridge writes; CSS hides duplicated chrome off it. */
+export const LAUNCH_MODE_ATTRIBUTE = "data-hosty-launch";
+/**
+ * Marks an element that duplicates chrome a shell already renders — the app's own name and the
+ * navigation between its manifest pages. Contextual controls and information a shell does not
+ * render (a project picker, a refresh action, an identity badge) are not chrome in this sense
+ * and must not carry it.
+ */
+export const SHELL_DUPLICATED_CHROME_CLASS = "hosty-shell-chrome";
+
+export function normalizeLaunchMode(value: unknown): AppLaunchMode | null {
+  return value === "embedded" || value === "native" || value === "standalone" ? value : null;
+}
+
+/**
+ * The structural signal: is this document framed? It can only ever answer `embedded` or
+ * `standalone` — a native shell's web view makes the app the top frame, so it reads as
+ * `standalone`, which is why the declared `hosty_launch` parameter exists at all.
+ *
+ * This stays the input to the *recovery* decision, because whether a parent exists is a
+ * structural fact that a declared value cannot override: a stale `embedded` would otherwise
+ * post into a window with no shell listening.
+ */
+export function detectLaunchMode(
+  win: Pick<Window, "self" | "top">,
+): Exclude<AppLaunchMode, "native"> {
   try {
     return win.self !== win.top ? "embedded" : "standalone";
   } catch {
@@ -149,6 +191,79 @@ export function detectLaunchMode(win: Pick<Window, "self" | "top">): AppLaunchMo
     return "embedded";
   }
 }
+
+export interface LaunchModeResolution {
+  mode: AppLaunchMode;
+  /** True when the mode came from the URL parameter, and so is worth persisting for this tab. */
+  fromParam: boolean;
+}
+
+/**
+ * Resolves the launch mode with explicit precedence: the URL parameter a shell just sent, then
+ * the value persisted for this tab, then the structural heuristic.
+ *
+ * An unrecognized parameter value is ignored rather than honoured or stored — a newer shell must
+ * degrade an older app to its previous behavior, never to a mode it cannot render.
+ */
+export function resolveLaunchMode(input: {
+  param?: string | null;
+  stored?: string | null;
+  heuristic: AppLaunchMode;
+}): LaunchModeResolution {
+  const declared = normalizeLaunchMode(input.param);
+  if (declared) {
+    return { mode: declared, fromParam: true };
+  }
+
+  const stored = normalizeLaunchMode(input.stored);
+  return { mode: stored ?? input.heuristic, fromParam: false };
+}
+
+/**
+ * True when a shell around this app already renders its name and page navigation, so the app's
+ * own copies are duplication. False for `standalone`, where nothing else renders them.
+ */
+export function hidesAppChrome(mode: AppLaunchMode): boolean {
+  return mode !== "standalone";
+}
+
+/**
+ * The pre-hydration bootstrap: sets the root attribute from the same precedence
+ * `resolveLaunchMode` implements, so chrome that a shell duplicates is never painted before
+ * React can hide it. Mount it as an inline `<script>` in the document head.
+ *
+ * It deliberately does not clean the parameter out of the URL — that is `HostLaunchBridge`'s
+ * job, on the same reasoning the theme bridges clean theirs from an effect rather than from
+ * their bootstrap: a `history.replaceState` before hydration is a router's business, not a
+ * paint-blocking script's.
+ */
+export const launchModeBootstrapScript = `
+(() => {
+  const attribute = ${JSON.stringify(LAUNCH_MODE_ATTRIBUTE)};
+  const storageKey = ${JSON.stringify(LAUNCH_MODE_STORAGE_KEY)};
+  const known = ["embedded", "native", "standalone"];
+  const normalize = (value) => (known.indexOf(value) >= 0 ? value : null);
+  try {
+    const param = normalize(new URLSearchParams(window.location.search).get(${JSON.stringify(LAUNCH_MODE_PARAM)}));
+    let stored = null;
+    try {
+      stored = normalize(window.sessionStorage.getItem(storageKey));
+    } catch {}
+    let heuristic;
+    try {
+      heuristic = window.self !== window.top ? "embedded" : "standalone";
+    } catch {
+      heuristic = "embedded";
+    }
+    document.documentElement.setAttribute(attribute, param || stored || heuristic);
+    if (param) {
+      try {
+        window.sessionStorage.setItem(storageKey, param);
+      } catch {}
+    }
+  } catch {}
+})();
+`;
 
 /**
  * The recovery decision: state × launch mode → what the app should do, per the UX
@@ -184,6 +299,11 @@ export function decideRecoveryAction(input: {
   }
 
   // expired / not-present — the recoverable pair.
+  //
+  // `embedded` is the only mode with a parent to ask. `native` deliberately falls through to the
+  // redirect beside `standalone`: a native shell's web view has no parent, and the redirect to
+  // Core's `/open` is the navigation that client watches for to re-mint a launch code. Adding a
+  // mode must never quietly add a case here — a mode that cannot reach a shell has to redirect.
   if (mode === "embedded") {
     return { kind: "post-auth-required", intent: createAuthRequiredIntent(appId) };
   }

@@ -5,8 +5,13 @@ import {
   classifyRevalidationHttpStatus,
   decideRecoveryAction,
   detectLaunchMode,
+  hidesAppChrome,
   isLoopbackHost,
+  launchModeBootstrapScript,
+  normalizeLaunchMode,
   readRecoveryParams,
+  resolveLaunchMode,
+  LAUNCH_MODE_ATTRIBUTE,
 } from "./index";
 import { createReissueRateLimiter, parseActiveFrameAuthRequired } from "./embedder";
 import {
@@ -296,6 +301,105 @@ describe("core helpers", () => {
       kind: "card",
       card: "misconfigured",
     });
+  });
+
+  // The invariant the native client's recovery depends on. It has no parent frame to answer a
+  // `hosty:auth-required` post, and it recovers by intercepting exactly the redirect this row
+  // must keep producing.
+  it("recovers a native launch by redirect, never by posting to a parent", () => {
+    const base = { appId: "a.b", openUrl: "http://c/open", redirectAlreadyAttempted: false } as const;
+    expect(decideRecoveryAction({ ...base, status: "expired", mode: "native" })).toEqual({
+      kind: "redirect",
+      openUrl: "http://c/open",
+    });
+    expect(decideRecoveryAction({ ...base, status: "not-present", mode: "native" })).toEqual({
+      kind: "redirect",
+      openUrl: "http://c/open",
+    });
+    expect(
+      decideRecoveryAction({ ...base, status: "expired", mode: "native", redirectAlreadyAttempted: true }),
+    ).toEqual({ kind: "card", card: "signin" });
+  });
+});
+
+describe("launch mode", () => {
+  it("prefers the declared parameter, then the stored value, then the heuristic", () => {
+    expect(resolveLaunchMode({ param: "native", stored: "embedded", heuristic: "standalone" })).toEqual({
+      mode: "native",
+      fromParam: true,
+    });
+    expect(resolveLaunchMode({ param: null, stored: "native", heuristic: "standalone" })).toEqual({
+      mode: "native",
+      fromParam: false,
+    });
+    expect(resolveLaunchMode({ param: null, stored: null, heuristic: "embedded" })).toEqual({
+      mode: "embedded",
+      fromParam: false,
+    });
+  });
+
+  // A newer shell must degrade an older app to what it did before, never to a mode it cannot
+  // render — and an ignored value must not be persisted as if it had been honoured.
+  it("ignores an unrecognized parameter rather than honouring or storing it", () => {
+    expect(resolveLaunchMode({ param: "chromeless", stored: null, heuristic: "standalone" })).toEqual({
+      mode: "standalone",
+      fromParam: false,
+    });
+    expect(resolveLaunchMode({ param: "", stored: "embedded", heuristic: "standalone" })).toEqual({
+      mode: "embedded",
+      fromParam: false,
+    });
+    expect(normalizeLaunchMode("chromeless")).toBeNull();
+    expect(normalizeLaunchMode(null)).toBeNull();
+  });
+
+  it("hides chrome for every mode a shell renders navigation in", () => {
+    expect(hidesAppChrome("embedded")).toBe(true);
+    expect(hidesAppChrome("native")).toBe(true);
+    expect(hidesAppChrome("standalone")).toBe(false);
+  });
+
+  // The bootstrap runs before hydration, where an exception would leave the page unstyled and
+  // unrecoverable. It is evaluated here against the same precedence the resolver implements.
+  it("bootstraps the root attribute with the same precedence", () => {
+    const run = (search: string, stored: string | null, framed: boolean) => {
+      const root = { attributes: {} as Record<string, string> };
+      const storage = {
+        getItem: () => stored,
+        setItem: (_key: string, value: string) => {
+          stored = value;
+        },
+      };
+      const self = {};
+      const win = {
+        location: { search },
+        sessionStorage: storage,
+        self,
+        top: framed ? {} : self,
+      };
+      const doc = {
+        documentElement: {
+          setAttribute: (name: string, value: string) => {
+            root.attributes[name] = value;
+          },
+        },
+      };
+      new Function("window", "document", "URLSearchParams", launchModeBootstrapScript)(
+        win,
+        doc,
+        URLSearchParams,
+      );
+      return { applied: root.attributes[LAUNCH_MODE_ATTRIBUTE], stored };
+    };
+
+    expect(run("?hosty_launch=native", null, false)).toEqual({ applied: "native", stored: "native" });
+    // A page switch inside an app carries no parameter; the stored value keeps the mode.
+    expect(run("", "native", false).applied).toBe("native");
+    // No parameter and nothing stored: the frame heuristic, exactly as before this contract.
+    expect(run("", null, true).applied).toBe("embedded");
+    expect(run("", null, false).applied).toBe("standalone");
+    // An unrecognized value is neither applied nor stored.
+    expect(run("?hosty_launch=chromeless", null, false)).toEqual({ applied: "standalone", stored: null });
   });
 });
 
