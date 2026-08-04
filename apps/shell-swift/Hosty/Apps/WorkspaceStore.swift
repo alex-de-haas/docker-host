@@ -29,8 +29,21 @@ final class WorkspaceStore {
 
     private var recoveries: [String: RecoveryCoordinator] = [:]
 
-    /// The web view for an app, created on first use.
-    func webView(for appID: String) -> WKWebView {
+    /// The web view an app already has, or nil.
+    ///
+    /// **The only accessor a `body` may call**, because it is the only one that writes nothing. Its
+    /// mutating sibling below records use and can evict, and observed state written while SwiftUI is
+    /// rendering invalidates the very view being rendered: `body` → `prepare(_:)` → `order` → willSet →
+    /// invalidate → `body`, a loop that pins a core and grows the transaction graph until the process
+    /// is killed. The app never opened, because the run loop never got as far as loading the page.
+    func existingWebView(for appID: String) -> WKWebView? {
+        webViews[appID]
+    }
+
+    /// The web view for an app, created on first use and marked as most recently used.
+    ///
+    /// Call it from a task or an event handler, never from `body` — see above.
+    func prepare(_ appID: String) -> WKWebView {
         touch(appID)
 
         if let existing = webViews[appID] {
@@ -57,7 +70,7 @@ final class WorkspaceStore {
     /// on `/login`. That navigation is this client's cue — the native equivalent of the browser
     /// Shell's `hosty:auth-required` — and nothing in the SDK changes for it.
     /// Safe in either order: it registers the coordinator for this app, and attaches it to the web
-    /// view if one already exists — `webView(for:)` attaches it to any view created later.
+    /// view if one already exists — `prepare(_:)` attaches it to any view created later.
     func installRecovery(for appID: String, origin: HostOrigin, reopen: @escaping () -> Void) {
         let coordinator = recoveries[appID] ?? RecoveryCoordinator(appID: appID, origin: origin)
         coordinator.reopen = reopen

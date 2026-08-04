@@ -282,6 +282,15 @@ operator taps Sign out: an expired or revoked bearer ends it just as finally, an
 outlives the Core session that authorized it, so a workspace left loaded would hand the next person to
 sign in the previous user's app identity.
 
+The cache has **two accessors, and only one of them may be called from a `body`**. Looking a web view
+up is a pure read; creating one, recording it as most recently used, and evicting the oldest are
+writes. The store is `@Observable`, so a write made while SwiftUI is rendering invalidates the very
+view being rendered — `body` reads the store, the store writes its use-order, the write invalidates,
+and `body` runs again. That loop pinned a core and grew until the process was killed, and the app
+never appeared at all: the run loop never got far enough to load the page. The lookup used from `body`
+therefore writes nothing, and the mutating one is called from the task that opens the app, before the
+state that renders the web view is set.
+
 **Identity expiry arrives as a navigation, not a callback.** In a web view the app is the top frame,
 so the app SDK takes its standalone path: a redirect to Core's `/api/apps/{id}/open`, which without a
 Core cookie lands on `/login`. That navigation is intercepted and turned into a fresh launch — main
@@ -489,6 +498,9 @@ Distribution is by local Xcode build; nothing packages or publishes this app.
   content view collapses to its title bar while behaving correctly everywhere else. App rows and the
   Dashboard counts are also inspected at an accessibility Dynamic Type size, where the update marker
   becomes a labelled row rather than a glyph at the far edge.
+- Opening an app is verified with the process's CPU in view, not only with a screenshot: a render loop
+  in the workspace shows up as a pinned core and a growing footprint while the screen sits on its
+  spinner, which reads as "the app is slow to open" in a screenshot and as nothing at all in a test.
 - The sign-in sheet is verified against a host that answers the device routes: the label reaching the
   host as typed, the code and its countdown, approval closing the sheet on the collecting poll, a
   denial stating itself, the password fallback reaching the web view, and a host below 0.73.0 going
