@@ -68,6 +68,61 @@ public actor CoreClient {
         sessionID = nil
     }
 
+    // MARK: - Device login
+
+    /// Asks Core for a device authorization request: a code to show, and a code to poll with.
+    ///
+    /// Unauthenticated by nature — this is what a client with no credential calls to get one — so any
+    /// credential this client still holds is deliberately left off. A dead session must not be presented
+    /// to the one endpoint whose purpose is replacing it.
+    ///
+    /// `label` is what the approving human reads in Shell before they say yes, so it names this device
+    /// rather than this app.
+    public func requestDeviceCode(label: String?) async throws -> DeviceAuthorization {
+        var request = makeRequest(.post, "/api/auth/device/code")
+        request.setValue(nil, forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(DeviceCodeRequest(label: label))
+
+        return try decode(await send(request))
+    }
+
+    /// One poll. `nil` means pending — the only answer that is not an end.
+    ///
+    /// Core consumes an approved request on the first poll that collects it, so the token comes back
+    /// exactly once and a repeated poll answers `expired`. That is why the caller stores what it gets
+    /// before doing anything else with it.
+    public func pollDeviceToken(deviceCode: String) async throws -> DeviceLoginOutcome? {
+        var request = makeRequest(.post, "/api/auth/device/token")
+        request.setValue(nil, forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(DeviceTokenRequest(deviceCode: deviceCode))
+
+        let answer: DeviceAuthorizationToken = try decode(await send(request))
+        if answer.status == "pending" {
+            return nil
+        }
+
+        guard let outcome = DeviceLoginOutcome(status: answer.status, token: answer.token) else {
+            // Two different failures, and reporting them as one would send the reader looking for a
+            // protocol mismatch that is not there: a status this app cannot read, and an approval that
+            // arrived without the credential it exists to carry.
+            throw CoreError.invalidResponse(answer.status == "approved"
+                ? "The host approved this device but sent no credential with the approval."
+                : "The host answered a device authorization status this app does not know: \(answer.status).")
+        }
+
+        return outcome
+    }
+
+    private struct DeviceCodeRequest: Encodable {
+        let label: String?
+    }
+
+    private struct DeviceTokenRequest: Encodable {
+        let deviceCode: String
+    }
+
     // MARK: - Apps
 
     public func apps() async throws -> AppsResponse {

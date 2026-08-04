@@ -1,3 +1,4 @@
+import { loginContinuation } from "./shell-routes";
 import type { CoreAppFeedsResponse, CoreError } from "./types";
 
 export class AuthRequiredRedirectError extends Error {
@@ -16,7 +17,8 @@ export function isAuthRequiredResponse(response: Response) {
 }
 
 export function redirectToCoreLogin(coreOrigin: string): never {
-  window.location.assign(`${coreOrigin}/login`);
+  const continuation = loginContinuation(window.location.pathname, window.location.search);
+  window.location.assign(`${coreOrigin}/login${continuation}`);
   throw new AuthRequiredRedirectError();
 }
 

@@ -15,14 +15,24 @@ final class StubURLProtocol: URLProtocol, @unchecked Sendable {
     }
 
     private static let lock = NSLock()
-    nonisolated(unsafe) private static var stub = Stub()
+    nonisolated(unsafe) private static var stubs = [Stub()]
     nonisolated(unsafe) private static var recorded: [(request: URLRequest, body: Data?)] = []
 
     static func install(status: Int = 200, json: String = "{}") {
+        install([Stub(status: status, body: Data(json.utf8))])
+    }
+
+    /// A reply per request, in order. The last one repeats once the sequence runs out, so a poll loop
+    /// under test cannot run off the end of its fixture and start reading someone else's.
+    static func install(_ sequence: [Stub]) {
         lock.withLock {
-            stub = Stub(status: status, body: Data(json.utf8))
+            stubs = sequence.isEmpty ? [Stub()] : sequence
             recorded = []
         }
+    }
+
+    static func stub(status: Int = 200, json: String) -> Stub {
+        Stub(status: status, body: Data(json.utf8))
     }
 
     static var requests: [(request: URLRequest, body: Data?)] {
@@ -57,8 +67,9 @@ final class StubURLProtocol: URLProtocol, @unchecked Sendable {
         }
 
         let stub = Self.lock.withLock {
+            let stub = Self.stubs.count > 1 ? Self.stubs.removeFirst() : Self.stubs[0]
             Self.recorded.append((request, body))
-            return Self.stub
+            return stub
         }
 
         let response = HTTPURLResponse(

@@ -14,6 +14,21 @@ public struct PlatformVersion: Hashable, Sendable, Comparable, CustomStringConve
     /// The first platform release whose Core accepts a session presented as a bearer token.
     public static let minimumSupported = PlatformVersion(0, 70, 0)
 
+    /// The first platform release with the device authorization endpoints, which is what lets this app
+    /// hand sign-in to a real browser instead of an embedded web view.
+    public static let minimumDeviceLogin = PlatformVersion(0, 73, 0)
+
+    /// Whether a host reporting this version has the device authorization endpoints.
+    ///
+    /// An unparseable version counts as having them, for the same reason it counts as supported at all:
+    /// a scheme this client cannot read is likelier newer than older. A missing version does not — that
+    /// is "not asked yet", and the answer to an unknown host is the flow that works on every host.
+    public static func supportsDeviceLogin(hostVersion: String?) -> Bool {
+        guard let hostVersion else { return false }
+        guard let version = PlatformVersion(hostVersion) else { return true }
+        return version >= minimumDeviceLogin
+    }
+
     public init(_ major: Int, _ minor: Int, _ patch: Int) {
         self.major = major
         self.minor = minor

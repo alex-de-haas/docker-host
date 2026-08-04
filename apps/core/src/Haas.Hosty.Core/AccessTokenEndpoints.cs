@@ -39,10 +39,13 @@ internal static class AccessTokenEndpoints
             return CoreJson.Json(new DeviceAuthorizationCodeResponse(
                 result.Request.DeviceCode,
                 result.Request.UserCode,
-                // Straight to the tab that approves it — Settings opens on Users otherwise. Null when
-                // this host has no Shell: the device shows the code and the operator finds the approval
-                // screen themselves rather than being sent to an invented address.
-                string.IsNullOrWhiteSpace(origin) ? null : $"{origin.TrimEnd('/')}/shell/settings?tab=tokens",
+                // Straight to the tab that approves it — Settings opens on Users otherwise. The path is
+                // Shell's own route (`/settings`), not a `/shell`-prefixed one: Shell serves its pages
+                // at the root of its origin, so the prefix this used to carry was a 404 for everyone who
+                // followed it. Null when this host has no Shell: the device shows the code and the
+                // operator finds the approval screen themselves rather than being sent to an invented
+                // address.
+                string.IsNullOrWhiteSpace(origin) ? null : $"{origin.TrimEnd('/')}/settings?tab=tokens",
                 (int)DeviceAuthorizationStore.PollInterval.TotalSeconds,
                 (int)DeviceAuthorizationStore.RequestLifetime.TotalSeconds));
         });

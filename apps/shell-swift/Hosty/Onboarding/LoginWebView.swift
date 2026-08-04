@@ -89,20 +89,40 @@ struct LoginWebView: PlatformViewRepresentable {
     }
 }
 
-/// The sheet the sign-in button presents.
+/// The sheet the sign-in button presents: a code to approve in the operator's own browser, or — on a
+/// host whose Core predates the device authorization routes — Core's `/login` page in the web view.
+///
+/// The choice is made from the host's reported version and is not a setting. Two ways to sign in, one of
+/// which cannot offer a saved password, is not a preference worth exposing; `supportsDeviceLogin` is
+/// where the line sits.
 struct LoginSheet: View {
     let origin: HostOrigin
+    let supportsDeviceLogin: Bool
     let onSession: (String) -> Void
 
+    /// Set when the operator takes the way out the device flow offers — a host with no Shell to approve
+    /// in, a denial, or simply preferring the form.
+    @State private var usesPasswordForm = false
     @Environment(\.dismiss) private var dismiss
+
+    private var showsDeviceLogin: Bool { supportsDeviceLogin && !usesPasswordForm }
 
     var body: some View {
         NavigationStack {
-            LoginWebView(origin: origin) { session in
-                onSession(session)
-                dismiss()
+            Group {
+                if showsDeviceLogin {
+                    DeviceLoginView(origin: origin) { session in
+                        adopt(session)
+                    } onUsePasswordForm: {
+                        usesPasswordForm = true
+                    }
+                } else {
+                    LoginWebView(origin: origin) { session in
+                        adopt(session)
+                    }
+                    .ignoresSafeArea(edges: .bottom)
+                }
             }
-            .ignoresSafeArea(edges: .bottom)
             .navigationTitle("Sign in to \(origin.displayName)")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -120,5 +140,10 @@ struct LoginSheet: View {
         // nothing. Big enough for Core's own form and for whatever a hosted provider shows instead.
         .frame(minWidth: 520, minHeight: 640)
         #endif
+    }
+
+    private func adopt(_ session: String) {
+        onSession(session)
+        dismiss()
     }
 }

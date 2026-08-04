@@ -1,7 +1,7 @@
 # Swift Shell
 
 Created: 2026-07-29
-Updated: 2026-07-31
+Updated: 2026-08-04
 
 `apps/shell-swift` is a native SwiftUI client for iOS, iPadOS, and macOS that manages a Hosty host's
 installed apps: their state, lifecycle, and updates.
@@ -48,9 +48,36 @@ name fails as an App Transport Security policy error that says nothing about add
 `GET /api/core/status` confirms a Hosty Core answers there. Core identifies itself as `hosty-core`; a
 well-formed JSON reply from anything else is not accepted as a host.
 
-Core has no JSON login, so sign-in shows Core's own `/login` page in a `WKWebView` and takes the session
-**once**. Keeping login inside Core's page means any provider Core gains later works with no client
-change. Success is detected by observing the cookie, never the redirect: `returnTo` accepts only
+Signing in happens **in the operator's own browser**, through Core's device authorization flow
+([access-tokens](../access-tokens/feature.md)). The sheet asks for a device name, requests a code, shows
+it as `ABCD-EFGH` with the time it has left, and opens the host's approval page. The operator signs in
+there — where their saved password, their password manager, and their passkeys actually are — approves
+the code, and the sheet closes on its own when the poll collects the credential.
+
+That detour is the whole point. A `WKWebView` embedded in a third-party app gets **no** AutoFill: it
+belongs to Safari, not to WebKit's public API, and the credential saved for `https://core.example` is
+bound to that web origin, so a native `TextField` would not be offered it either without an Associated
+Domains entitlement — which a client that talks to arbitrary operator-owned hosts cannot declare. Every
+fix that stays inside the app is unreachable by design; handing sign-in to a real browser is the only one
+that is not.
+
+What comes back is an access token rather than a harvested browser session: the same `AuthSessionRecord`
+presented the same way, with a 90-day idle window instead of a browser session's, revocable from Shell's
+Access tokens tab. The label the sheet prefills from the device's own name is what the approving human
+reads before they say yes — and it stays editable, because on iOS the system name is a model name to an
+unentitled app and two phones in one household would otherwise be the same word.
+
+The approval address is shown before it is opened and is opened only when it is `http` or `https`. It is
+a string the *host* chose, and this is the last point where a person can see where they are being sent.
+
+**The web view remains, for the hosts that need it.** Core gained the device routes in 0.73.0, so an
+older host still shows Core's own `/login` page in a `WKWebView` and takes the session once — and so does
+a host whose Core has no Shell to approve a code in, or an operator who simply picks "sign in with a
+password instead". The choice is made from the version the status probe already reported, not discovered
+from a 404 halfway through showing a code, and it is not a setting: two ways in, one of which cannot
+offer a saved password, is not a preference worth exposing.
+
+In the web view, success is detected by observing the cookie, never the redirect: `returnTo` accepts only
 `/api/apps/*/open`, so a successful login lands on a Shell origin the device may be unable to reach, or on
 Core's "no web UI installed" page. Both are successes, and a failed navigation to an unreachable Shell is
 not a failed login.
@@ -59,10 +86,19 @@ The sign-in sheet carries an explicit minimum size on macOS, where a sheet is si
 web view has no size of its own to give: without one the sheet collapses to its title bar, and the login
 page loads where nobody can see it.
 
-The session id is stored in the Keychain per host, keyed by origin. The login web view uses a
-non-persistent data store, so nothing it collects outlives the sheet. A `401` on any request drops the
-credential centrally, so "signed out" never depends on which concurrent request noticed first; a `403`
-deliberately does not, because the session is valid and the answer is still no.
+The credential is stored in the Keychain per host, keyed by origin. The login web view uses a
+non-persistent data store, so nothing it collects outlives the sheet, and the device flow presents no
+credential at all on the two routes whose purpose is producing one — a dead session must not be offered
+to the endpoint that replaces it. A `401` on any request drops the credential centrally, so "signed out"
+never depends on which concurrent request noticed first; a `403` deliberately does not, because the
+session is valid and the answer is still no.
+
+The poll belongs to the sheet, not to a detached task: closing the sheet cancels it, or a device code
+would go on being polled for its full ten minutes after the screen that showed it is gone. A host that is
+briefly unavailable is waited out rather than reported — the operator is mid-approval in a browser and a
+Core that blinks must not cost them the request — while a failure that repeating cannot fix ends the wait
+at once. Requests live in Core's memory only, so the poller also stops on its own deadline: a Core that
+restarted mid-approval answers `pending` for a code nobody can approve any more.
 
 Installed Apps, every lifecycle verb, and every update endpoint are administrator-only, so a signed-in
 non-administrator gets an explicit explanation rather than an empty list.
@@ -414,6 +450,14 @@ Distribution is by local Xcode build; nothing packages or publishes this app.
   truthful load failure with a wrong explanation.
 - Client error mapping distinguishes 401 (re-sign-in, credential dropped), 403 (terminal, credential
   kept), 503 (transient), and a non-JSON error body.
+- Device login is covered as a state machine, not as a screen: each status maps to its outcome, an
+  approval with no token and an unknown status are refused rather than stored, the loop honours the
+  interval Core asked for, a transient failure is waited out while a permanent one ends the wait, and a
+  request that outlives its own lifetime expires locally. Neither device route presents a credential
+  even when the client still holds a stale one, and only an `http`/`https` verification address is
+  opened.
+- The version floor for device login is pinned in both directions, including the two ways a version is
+  not a number: unreadable counts as new enough, absent does not.
 - Requests carry the credential as a bearer header and never a cookie; `update/plan` sends a JSON body,
   which Core's model binding requires.
 - Asset fetches attach the session only for the host's own origin — a relative icon URL keeps its
@@ -445,6 +489,10 @@ Distribution is by local Xcode build; nothing packages or publishes this app.
   content view collapses to its title bar while behaving correctly everywhere else. App rows and the
   Dashboard counts are also inspected at an accessibility Dynamic Type size, where the update marker
   becomes a labelled row rather than a glyph at the far edge.
+- The sign-in sheet is verified against a host that answers the device routes: the label reaching the
+  host as typed, the code and its countdown, approval closing the sheet on the collecting poll, a
+  denial stating itself, the password fallback reaching the web view, and a host below 0.73.0 going
+  straight to it.
 - Live verification against a running host covers sign-in, the app list, lifecycle verbs, an
   externally-driven change arriving over the event stream while both the list and a detail screen are
   open, a fleet update check, a reviewed update applied end to end, opening an app and confirming it

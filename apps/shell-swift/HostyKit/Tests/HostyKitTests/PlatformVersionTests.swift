@@ -52,6 +52,22 @@ struct PlatformVersionTests {
         #expect(try status("1.0.0").isSupportedVersion)
     }
 
+    // Which sign-in the sheet offers. The device flow needs Core's device authorization routes, added in
+    // 0.73.0; an older host has to keep the embedded web view, and finding that out from a 404 halfway
+    // through would mean showing a code nobody can approve.
+    @Test("Device login is offered only to a host that has the endpoints")
+    func deviceLoginFloor() {
+        #expect(!PlatformVersion.supportsDeviceLogin(hostVersion: "0.72.9"))
+        #expect(!PlatformVersion.supportsDeviceLogin(hostVersion: "0.70.0"))
+        #expect(PlatformVersion.supportsDeviceLogin(hostVersion: "0.73.0"))
+        #expect(PlatformVersion.supportsDeviceLogin(hostVersion: "1.2.3"))
+
+        // Unreadable is newer, for the same reason it is supported at all. Unknown is not: a host nobody
+        // has asked yet gets the flow that works everywhere.
+        #expect(PlatformVersion.supportsDeviceLogin(hostVersion: "nightly"))
+        #expect(!PlatformVersion.supportsDeviceLogin(hostVersion: nil))
+    }
+
     // Refusing to talk to a host because its version string is unfamiliar would be the worse failure: a
     // scheme this client cannot read is far more likely to be newer than older.
     @Test("An unreadable version is treated as supported")

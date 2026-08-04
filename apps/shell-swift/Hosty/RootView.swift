@@ -121,7 +121,10 @@ private struct HostScene: View {
             }
         }
         .sheet(isPresented: $signingIn) {
-            LoginSheet(origin: session.connection.origin) { sessionID in
+            LoginSheet(
+                origin: session.connection.origin,
+                supportsDeviceLogin: session.supportsDeviceLogin
+            ) { sessionID in
                 Task { await session.adopt(sessionID: sessionID) }
             }
         }
@@ -137,7 +140,9 @@ private struct HostScene: View {
             ContentUnavailableView {
                 Label("Sign in", systemImage: "person.badge.key")
             } description: {
-                Text("Hosty opens \(session.connection.displayName)'s own sign-in page.")
+                Text(session.supportsDeviceLogin
+                    ? "Approve a code in your own browser, where your saved password is."
+                    : "Hosty opens \(session.connection.displayName)'s own sign-in page.")
             } actions: {
                 Button("Sign in") { signingIn = true }
             }
