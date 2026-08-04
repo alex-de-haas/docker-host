@@ -52,10 +52,15 @@ export function SettingsMountsSection({
   // Names whose delete was blocked because they are still referenced; a second click forces it.
   const [confirmForce, setConfirmForce] = useState<string | null>(null);
 
+  // Opening either dialog also disarms a pending force delete: leaving it armed across an edit
+  // would turn a later single click on that row's trash button into a force delete with no fresh
+  // rejection in sight.
   const openAdd = () => {
     setDraft(emptyDraft);
     setEditing(null);
     setDialogError(null);
+    setListError(null);
+    setConfirmForce(null);
     setDialogOpen(true);
   };
 
@@ -63,6 +68,8 @@ export function SettingsMountsSection({
     setDraft({ name: mount.name, hostPath: mount.hostPath, mode: mount.mode, description: mount.description ?? "" });
     setEditing(mount.name);
     setDialogError(null);
+    setListError(null);
+    setConfirmForce(null);
     setDialogOpen(true);
   };
 
@@ -75,6 +82,9 @@ export function SettingsMountsSection({
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!canManageApps) {
+      return;
+    }
     setDialogError(null);
     setBusy(true);
     try {
@@ -117,7 +127,7 @@ export function SettingsMountsSection({
           <h3 className="text-sm font-medium">Shared mounts</h3>
           <p className="text-xs text-muted-foreground">Host folders apps can attach by reference.</p>
         </div>
-        <Button onClick={openAdd} disabled={!canManageApps}>
+        <Button onClick={openAdd} disabled={!canManageApps || busy}>
           <Plus className="h-4 w-4" />
           Add mount
         </Button>
@@ -182,8 +192,11 @@ export function SettingsMountsSection({
         </div>
       )}
 
-      <Dialog open={dialogOpen} onOpenChange={(open) => !open && closeDialog()}>
-        <DialogContent className="sm:max-w-lg">
+      {/* Dismissal (Escape, overlay, the X button) is ignored while a save is in flight: resetting
+          the form under a pending request would let its completion close or error a dialog the
+          operator has since repurposed. */}
+      <Dialog open={dialogOpen} onOpenChange={(open) => !open && !busy && closeDialog()}>
+        <DialogContent className="sm:max-w-lg" showCloseButton={!busy}>
           <DialogHeader>
             <DialogTitle>{editing ? `Edit shared mount: ${editing}` : "Add shared mount"}</DialogTitle>
             <DialogDescription>Paths must be absolute and outside the Hosty data root.</DialogDescription>
@@ -239,7 +252,7 @@ export function SettingsMountsSection({
               <Button type="button" variant="outline" onClick={closeDialog} disabled={busy}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={busy || draft.name.trim().length === 0 || draft.hostPath.trim().length === 0}>
+              <Button type="submit" disabled={busy || !canManageApps || draft.name.trim().length === 0 || draft.hostPath.trim().length === 0}>
                 {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : editing ? <Pencil className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
                 {editing ? "Save mount" : "Add mount"}
               </Button>
