@@ -81,6 +81,13 @@ The SDK surfaces the resolved mode the way the theme bridges surface the theme: 
 it. The resolution helper lives in `@hosty-sdk/app` — the theme bridge is already copied per app
 three times; the launch bridge should not become a fourth copy.
 
+**The rule for what hides: an app drops only what the shell already renders — its own name and the
+navigation between its manifest pages. Everything else stays.** Contextual controls and information
+that no shell renders are not duplication, whichever bar they happen to sit in: a project picker in
+project-manager, a refresh action, an identity badge. If removing an element would take away
+something the operator can no longer reach through the shell, it was never chrome in this plan's
+sense.
+
 Each first-party app then drops its duplicated chrome when the mode is not `standalone`:
 
 - **telemetry-ui** — `AppShell` hides its `<header>`: the "Telemetry" wordmark and the
@@ -88,8 +95,15 @@ Each first-party app then drops its duplicated chrome when the mode is not `stan
   already render.
 - **demo-app** — `DemoNavigation` (Overview / People / Roles / Settings) disappears; the page
   header keeps the *page* title and description, which no shell renders.
-- **marketplace** — the header's `<h1>Marketplace</h1>` and description go; Refresh stays with the
-  content it refreshes. What happens to the identity badge is an open question below.
+- **marketplace** — the header's `<h1>Marketplace</h1>` and description go; Refresh and the
+  identity badge stay, per the rule above — the badge is information (the app-origin session and
+  who holds it), not navigation.
+
+The signal is a platform convention, not a first-party trick: external apps (project-manager,
+media-server, torrent-engine) duplicate their navigation the same way and adopt the same rule —
+project-manager, for example, keeps its project selection while dropping its page tabs. The
+`hosty-app-skill` documents `hosty_launch`, the SDK helper, and the hide-only-duplication rule
+next to the theme-param contract it already describes.
 
 Hiding is a client-side decision (the pages are prerendered), so first paint matters. In the
 browser Shell the iframe is faded in on `load`, which masks it. The Swift web view surfaces first
@@ -135,16 +149,16 @@ this trade-off is this paragraph.
 - **Removing app navigation outright.** Standalone opens on the direct origin remain first-class
   ([Direct Origin Runtime App UI](../direct-origin-runtime-app-ui.md)) and need it.
 
-## Open questions
+## Decisions
 
-1. **Marketplace's identity badge.** Embedded, the shell's own chrome already answers "who am I",
-   so the badge is arguably duplication too — but it is also the only visible confirmation that the
-   app-origin session works, which has diagnostic value. Keep, drop, or demote it when embedded?
-2. **Does the external-app skill document the convention?** Third-party apps
-   (project-manager, media-server, torrent-engine) duplicate their navigation the same way. If the
-   signal is meant for them too, `skills/hosty-app-skill` should describe `hosty_launch` and the
-   SDK helper once this ships; if not, it stays a first-party convention. Leaning yes — the skill
-   already documents the theme params' contract sibling.
+- **Mode resolution lives in the SDK.** Confirmed as the load-bearing deliverable: apps consume a
+  helper, never re-implement the precedence.
+- **Only shell-duplicated chrome hides; contextual information and controls stay.** The rule above
+  settles the per-app scope, including the marketplace identity badge (kept — it is information,
+  not navigation) and project-manager's project selection (kept, by the same rule).
+- **The convention is documented for external apps.** `skills/hosty-app-skill` describes
+  `hosty_launch`, the SDK helper, and the rule once this ships, alongside the theme-param contract
+  it already covers.
 
 ## Phases
 
@@ -165,14 +179,16 @@ this trade-off is this paragraph.
 ### Phase 3 — Apps
 
 - [ ] telemetry-ui, demo-app, and marketplace hide their duplicated chrome off the signal, per the
-      per-app list above and the answer to open question 1.
+      per-app list and the hide-only-duplication rule above.
+- [ ] `skills/hosty-app-skill` documents the convention for external apps.
 
 ## Deliverables
 
-- [ ] Answer both open questions.
 - [ ] SDK: mode, resolver, recovery pinning, bridge, hook, tests.
 - [ ] Browser Shell and Swift Shell send the param from their workspaces only.
-- [ ] All three first-party apps drop duplicated chrome when not standalone.
+- [ ] All three first-party apps drop duplicated chrome when not standalone; contextual controls
+      and information (Refresh, the identity badge) remain.
+- [ ] The `hosty-app-skill` reference covers `hosty_launch`, the SDK helper, and the rule.
 - [ ] Versions: minor bumps for `apps/shell`, `apps/marketplace`, `apps/demo-app`,
       `apps/telemetry` (manifest + `package.json` kept in step), `@hosty-sdk/app`, and
       `apps/shell-swift` (`MARKETING_VERSION`). No platform bump — Core and CLI are untouched.
