@@ -126,8 +126,10 @@ description.
 - The Shell's parameter builder is covered for idempotence — a workspace URL is re-derived on a
   reissue — and for preserving the app path and the theme parameters it rides beside.
 - The native client's URL helper is covered for replacing rather than duplicating an existing
-  value, preserving other query items and the fragment, and returning an unparseable string
-  unchanged: the loopback diagnosis depends on a bad URL staying bad.
+  value, preserving other query items and the fragment, and leaving anything that is not an
+  absolute URL alone. That last one is not a formality: `URLComponents` reads `not a url` as a
+  relative path and percent-encodes it rather than refusing it, so a helper that trusted the parse
+  would rewrite an address Core never advertised and misname the failure the operator sees.
 - Visual verification covers both shells: an embedded app showing one header rather than two while
   the shell's own navigation still moves it between pages, the same app standalone showing
   everything, and *open in a new tab* / *Open in Browser* landing on full chrome.

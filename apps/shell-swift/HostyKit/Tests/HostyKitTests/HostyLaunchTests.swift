@@ -46,10 +46,13 @@ struct HostyLaunchTests {
         #expect(items?.first?.value == "native")
     }
 
-    // The loopback diagnosis reads the address Core advertised. Rewriting one this cannot parse would
-    // replace a truthful failure with an invented URL that fails somewhere less informative.
-    @Test("A string that is not a URL comes back unchanged")
-    func leavesUnparseableInputAlone() {
+    // `URLComponents` refuses almost nothing: it reads `not a url` as a relative path and hands back
+    // `not%20a%20url`, so a parse that merely succeeded would let this rewrite an address Core never
+    // advertised — and the operator's failure would then name the invented URL.
+    @Test("Anything that is not an absolute URL comes back unchanged")
+    func leavesNonAbsoluteInputAlone() {
         #expect(HostyLaunch.declaringNativeMode("not a url") == "not a url")
+        #expect(HostyLaunch.declaringNativeMode("/metrics") == "/metrics")
+        #expect(HostyLaunch.declaringNativeMode("") == "")
     }
 }

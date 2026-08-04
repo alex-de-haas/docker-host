@@ -22,11 +22,18 @@ public enum HostyLaunch {
     /// `urlString` with the mode declared: every other query item and the fragment survive, and a value
     /// the URL already carries is replaced rather than added to, so re-declaring is idempotent.
     ///
-    /// A string that cannot be parsed as a URL comes back unchanged. Failing on the URL Core actually
-    /// advertised says something truer than failing on one invented here — the same reason
-    /// `HostOrigin.advertisesUnreachableLoopback` declines to guess about what it cannot read.
+    /// Anything that is not an absolute URL with a scheme and a host comes back **unchanged**, which is
+    /// the whole guard: `URLComponents` accepts far more than it rejects, and parses a string like
+    /// `not a url` into a percent-encoded relative path rather than refusing it. Rewriting one of those
+    /// would replace the address Core actually advertised with an invented one, and the failure the
+    /// operator then sees would be about the wrong URL. Core advertises absolute origins, so this
+    /// admits every real workspace URL — the same shape `HostOrigin.advertisesUnreachableLoopback`
+    /// requires before it will judge an address at all.
     public static func declaringNativeMode(_ urlString: String) -> String {
-        guard var components = URLComponents(string: urlString) else { return urlString }
+        guard var components = URLComponents(string: urlString),
+              components.scheme != nil,
+              components.host != nil
+        else { return urlString }
 
         var items = (components.queryItems ?? []).filter { $0.name != parameter }
         items.append(URLQueryItem(name: parameter, value: nativeMode))
