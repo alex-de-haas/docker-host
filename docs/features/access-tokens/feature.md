@@ -1,16 +1,17 @@
 # Access Tokens — Credentials For Clients Without A Browser
 
 Created: 2026-07-31
-Updated: 2026-07-31
+Updated: 2026-08-04
 
-Core accepts a session as `Authorization: Bearer <session id>`, but until now a session could only be
-created by posting Core's HTML login form — which is why the Swift Shell signs in through a `WKWebView`
-on `/login` ([swift-shell](../swift-shell/feature.md)). A client with no browser engine had no way in at
-all.
+Core accepts a session as `Authorization: Bearer <session id>`, but a session could once only be created
+by posting Core's HTML login form — which is why the Swift Shell used to sign in through a `WKWebView`
+on `/login`. A client with no browser engine had no way in at all.
 
 Two ways in now exist. A device shows a short code and someone approves it in Shell; or a credential is
-created in Shell directly and its value shown once. Both produce the same thing, and `hosty login` is
-the first consumer.
+created in Shell directly and its value shown once. Both produce the same thing. `hosty login` was the
+first consumer, and the Swift Shell is the second — it signs in this way rather than in a web view,
+because an embedded web view is where a saved password cannot be reached
+([swift-shell](../swift-shell/feature.md)).
 
 ## One credential type, marked by kind
 
@@ -54,6 +55,14 @@ POST /api/auth/device/token    → pending | approved(token) | denied | expired
 Both are unauthenticated, because the caller has no credential yet — that is the whole point. They are
 the only two public routes here; approval and credential management are session-gated
 ([AccessTokenEndpoints.cs](../../../apps/core/src/Haas.Hosty.Core/AccessTokenEndpoints.cs)).
+
+`verificationUri` points at Shell's own Settings route (`/settings?tab=tokens`), because Settings opens
+on Users otherwise. It survives a sign-in: Shell names the page it was heading for when it sends a
+visitor without a session to `/login`, and Core resolves that continuation against the Shell origin
+([local-password-login](../local-password-login/feature.md)). Without both halves the operator who
+follows an approval link with no browser session lands on Shell's bare origin, having lost the pending
+code they came to approve — the likeliest case of all, since a device is usually enrolled from a browser
+that has not signed in yet.
 
 Pending requests live in memory only
 ([DeviceAuthorizationStore.cs](../../../apps/core/src/Haas.Hosty.Core/DeviceAuthorizationStore.cs)).

@@ -170,6 +170,22 @@ export function getShellViewHref(view: ShellView) {
   return SHELL_VIEW_HREFS[view];
 }
 
+// Where the browser was heading, handed to Core's `/login` so the sign-in returns there instead of to
+// Shell's bare origin. Without it a link into a particular page — the device authorization approval
+// screen, say, where someone is waiting to approve a pending code — is lost by the very redirect that
+// asks them to sign in, and the page they came for has to be found by hand.
+//
+// Offered only as a relative path, and never one that could be read as an origin of its own. Core
+// re-checks the shape before acting on it (`AuthEndpoints.IsAllowedShellReturnTo`) and falls back to the
+// bare origin for anything it rejects, so this is a request, not a promise.
+export function loginContinuation(pathname: string, search: string) {
+  if (!pathname.startsWith("/") || pathname.startsWith("//") || pathname === "/") {
+    return "";
+  }
+
+  return `?returnTo=${encodeURIComponent(`${pathname}${search}`)}`;
+}
+
 export function getSettingsHref(tab: HostSettingsTab) {
   const params = new URLSearchParams();
   params.set("tab", tab);

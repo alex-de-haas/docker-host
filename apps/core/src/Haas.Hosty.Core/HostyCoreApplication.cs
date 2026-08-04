@@ -456,9 +456,9 @@ internal static class HostyCoreApplication
           """;
     }
 
-    // The two origins every Core page ends with: which Core answered, and where its web UI lives. On the
-    // login page they are the only way to tell two hosts apart when the browser was sent there by a
-    // redirect, so they stay on the page — as a quiet footer rather than as body copy.
+    // The two origins a signed-in operator is shown: which Core answered, and where its web UI lives.
+    // Not on `/login` — that page is reachable by anyone who can reach the host, and what it says about
+    // the deployment should be nothing.
     private static string RenderOriginMeta(HostyCoreRuntimeConfig config, string? shellOrigin, string? hint = null)
     {
         var encodedCoreOrigin = HtmlEncoder.Default.Encode(config.EffectiveCorePublicOrigin);
@@ -476,7 +476,7 @@ internal static class HostyCoreApplication
     // Reflect the login continuation into the form only when it passes the same allow-list the
     // post-login redirect enforces, so a rejected value is never echoed back into the page.
     private static string RenderReturnToField(string? returnTo)
-        => AuthEndpoints.IsAllowedLoginReturnTo(returnTo)
+        => AuthEndpoints.IsAllowedLoginContinuation(returnTo)
             ? $"""<input type="hidden" name="returnTo" value="{HtmlEncoder.Default.Encode(returnTo!)}">"""
             : string.Empty;
 

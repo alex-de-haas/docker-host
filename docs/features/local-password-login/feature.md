@@ -8,9 +8,30 @@ password, and gets the ordinary browser session every other surface already unde
 ([Auth And Gateway Model](../auth-gateway/feature.md)). No CLI-generated recovery token is involved in
 the normal case — that path exists for break-glass only.
 
-Shell stays a browser client that redirects an unauthenticated visitor to Core-owned `/login`, and the
-native client shows the same page in a web view ([swift-shell](../swift-shell/feature.md)). Keeping the
-form inside Core's page is what lets a provider Core gains later work everywhere without a client change.
+Shell stays a browser client that redirects an unauthenticated visitor to Core-owned `/login`. Keeping
+the form inside Core's page is what lets a provider Core gains later work everywhere without a client
+change. The native client signs in through the browser instead, over the device authorization flow, and
+falls back to this page in a web view only where that flow cannot run
+([swift-shell](../swift-shell/feature.md)).
+
+## Where a sign-in returns to
+
+A `returnTo` continuation is honoured in two shapes, both relative and both passing the same hardening —
+no absolute or protocol-relative form, no backslash, no control character — so `/login` cannot be turned
+into an open redirect:
+
+- a Core-relative app-open continuation (`/api/apps/{id}/open…`), which stays on Core's origin;
+- a page of Shell's own (`/shell/…`), appended to the Shell origin.
+
+Anything else lands on the Shell origin, or — on a host with no Shell installed — on Core's own "signed
+in, no web UI here" page, because there is then nowhere to send the browser at all.
+
+The second shape is what lets a destination inside Shell survive the sign-in. Shell sends a visitor
+without a session to `/login` naming the page it was heading for; without that the browser comes back at
+Shell's bare origin. The device authorization approval screen is the case that made it matter: an
+operator opening a pending code's approval link with no session used to arrive at the dashboard instead,
+having lost the code they came to approve — and a browser without a session is exactly the browser whose
+saved password has not been used yet.
 
 In `Development` the same route is a different page: a selector over the enabled seeded users, with no
 password. Production login and the development helper are separate renderers, so neither drifts into the

@@ -104,7 +104,12 @@ public actor CoreClient {
         }
 
         guard let outcome = DeviceLoginOutcome(status: answer.status, token: answer.token) else {
-            throw CoreError.invalidResponse("The host answered a device authorization status this app does not know: \(answer.status).")
+            // Two different failures, and reporting them as one would send the reader looking for a
+            // protocol mismatch that is not there: a status this app cannot read, and an approval that
+            // arrived without the credential it exists to carry.
+            throw CoreError.invalidResponse(answer.status == "approved"
+                ? "The host approved this device but sent no credential with the approval."
+                : "The host answered a device authorization status this app does not know: \(answer.status).")
         }
 
         return outcome

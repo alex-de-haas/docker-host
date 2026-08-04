@@ -234,21 +234,58 @@ internal static class AuthEndpoints
         _ => StatusCodes.Status403Forbidden,
     };
 
-    // Only a Core-relative app-open continuation may be used as a post-login redirect target, so
-    // /login can never be turned into an open redirect. Anything else falls back to the Shell origin —
-    // and null when this host has no Shell (an optional distribution app), because then there is
-    // genuinely nowhere to send the browser and the caller has to say so instead of inventing a target.
+    // Two shapes may be used as a post-login redirect target. Both are relative and both pass the same
+    // hardening, so /login can never be turned into an open redirect:
+    //
+    //   - a Core-relative app-open continuation, which stays on this origin;
+    //   - any other relative path, resolved against the Shell origin. It cannot leave that origin — a
+    //     relative path appended to it can only extend it — and Shell's pages sit at the root of it, so
+    //     there is no prefix to match on that would not have to be revised every time it gains a page.
+    //
+    // The second exists because a destination inside Shell otherwise cannot survive a sign-in. Shell
+    // sends a browser with no session here and gets it back at its bare origin, which loses the page it
+    // was heading for — including the device authorization approval screen, where someone is waiting to
+    // approve a pending code. A browser with no session is exactly the browser this matters in.
+    //
+    // Anything else falls back to the Shell origin — and null when this host has no Shell (an optional
+    // distribution app), because then there is genuinely nowhere to send the browser and the caller has
+    // to say so instead of inventing a target.
     internal static string? ResolveLoginRedirect(string? returnTo, string? shellOrigin)
-        => IsAllowedLoginReturnTo(returnTo) ? returnTo! : shellOrigin;
+    {
+        if (IsAllowedLoginReturnTo(returnTo))
+        {
+            return returnTo!;
+        }
+
+        // Concatenated onto the Shell origin rather than parsed into a URL: the value has already been
+        // checked to be a relative path that cannot begin with `//`, so it can only extend that origin.
+        return shellOrigin is not null && IsAllowedShellReturnTo(returnTo)
+            ? $"{shellOrigin.TrimEnd('/')}{returnTo}"
+            : shellOrigin;
+    }
+
+    /// Whether this is a continuation /login may echo back into its form and act on afterwards.
+    internal static bool IsAllowedLoginContinuation(string? returnTo)
+        => IsAllowedLoginReturnTo(returnTo) || IsAllowedShellReturnTo(returnTo);
 
     internal static bool IsAllowedLoginReturnTo(string? returnTo)
+        => IsRelativeContinuation(returnTo, out var path) &&
+            path.StartsWith("/api/apps/", StringComparison.Ordinal) &&
+            path.EndsWith("/open", StringComparison.Ordinal);
+
+    internal static bool IsAllowedShellReturnTo(string? returnTo)
+        => IsRelativeContinuation(returnTo, out _);
+
+    /// The shared hardening: a relative path this Core can hand to a browser, and its path portion.
+    private static bool IsRelativeContinuation(string? returnTo, out ReadOnlySpan<char> path)
     {
+        path = default;
         if (string.IsNullOrWhiteSpace(returnTo))
         {
             return false;
         }
 
-        // Reject anything that could escape the Core origin or inject into the Location header:
+        // Reject anything that could escape the origin or inject into the Location header:
         // protocol-relative (`//host`), backslash tricks browsers normalize to `//`, and control chars.
         if (returnTo[0] != '/' ||
             returnTo.StartsWith("//", StringComparison.Ordinal) ||
@@ -260,9 +297,8 @@ internal static class AuthEndpoints
         }
 
         var queryIndex = returnTo.IndexOf('?', StringComparison.Ordinal);
-        var path = queryIndex >= 0 ? returnTo.AsSpan(0, queryIndex) : returnTo.AsSpan();
-        return path.StartsWith("/api/apps/", StringComparison.Ordinal) &&
-            path.EndsWith("/open", StringComparison.Ordinal);
+        path = queryIndex >= 0 ? returnTo.AsSpan(0, queryIndex) : returnTo.AsSpan();
+        return true;
     }
 
     private static string CreateSessionId()

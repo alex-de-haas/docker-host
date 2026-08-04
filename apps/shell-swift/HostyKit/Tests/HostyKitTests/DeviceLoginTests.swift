@@ -20,7 +20,7 @@ extension CoreClientTests {
         @Test("Requesting a code posts the label and reads Core's answer")
         func requestCode() async throws {
             StubURLProtocol.install(json: #"""
-            {"deviceCode":"dev_1","userCode":"ABCDEFGH","verificationUri":"https://shell.example/shell/settings?tab=tokens",
+            {"deviceCode":"dev_1","userCode":"ABCDEFGH","verificationUri":"https://shell.example/settings?tab=tokens",
              "intervalSeconds":5,"expiresInSeconds":600}
             """#)
 
@@ -78,18 +78,31 @@ extension CoreClientTests {
         // one. Better to fail loudly here.
         @Test("An approval without a token, or a status this app does not know, is a bad answer")
         func unusableAnswers() async throws {
+            // Both are refused, and they say different things: reported as one, an approval that lost
+            // its credential would send the reader looking for a protocol mismatch that is not there.
             StubURLProtocol.install(json: #"{"status":"approved","token":null}"#)
             await #expect(throws: CoreError.self) { try await client().pollDeviceToken(deviceCode: "dev_1") }
+            #expect(try await message(forPolling: client())?.contains("no credential") == true)
 
             StubURLProtocol.install(json: #"{"status":"contemplating","token":null}"#)
             await #expect(throws: CoreError.self) { try await client().pollDeviceToken(deviceCode: "dev_1") }
+            #expect(try await message(forPolling: client())?.contains("contemplating") == true)
+        }
+
+        private func message(forPolling client: CoreClient) async -> String? {
+            do {
+                _ = try await client.pollDeviceToken(deviceCode: "dev_1")
+                return nil
+            } catch {
+                return error.localizedDescription
+            }
         }
     }
 
     @Suite("Device login polling")
     struct DeviceLoginPollerTests {
         private func authorization(
-            verificationUri: String? = "https://shell.example/shell/settings?tab=tokens",
+            verificationUri: String? = "https://shell.example/settings?tab=tokens",
             intervalSeconds: Int = 5,
             expiresInSeconds: Int = 600
         ) -> DeviceAuthorization {
@@ -217,8 +230,8 @@ extension CoreClientTests {
 
         @Test("A web address is opened")
         func webAddresses() {
-            #expect(authorization(verificationUri: "https://shell.example/shell/settings?tab=tokens").approvalURL != nil)
-            #expect(authorization(verificationUri: "http://10.0.0.5:7171/shell/settings?tab=tokens").approvalURL != nil)
+            #expect(authorization(verificationUri: "https://shell.example/settings?tab=tokens").approvalURL != nil)
+            #expect(authorization(verificationUri: "http://10.0.0.5:7171/settings?tab=tokens").approvalURL != nil)
         }
 
         // The address comes from the host, and the app is about to send its operator there. A host is

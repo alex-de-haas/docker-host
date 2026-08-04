@@ -108,6 +108,45 @@ public sealed class AuthEndpointsTests
     public void IsAllowedLoginReturnTo_RejectsEverythingElse(string? returnTo)
         => Assert.False(AuthEndpoints.IsAllowedLoginReturnTo(returnTo));
 
+    // A Shell page is the other continuation /login honours, and it is resolved against the Shell origin
+    // rather than Core's. Without it a browser sent to sign in comes back at Shell's bare origin, having
+    // lost the page it was heading for — the device approval screen, in the case that made this matter.
+    [Theory]
+    [InlineData("/settings?tab=tokens")]
+    [InlineData("/installed-apps")]
+    public void ResolveLoginRedirect_KeepsAShellPageAcrossTheSignIn(string returnTo)
+        => Assert.Equal(
+            $"https://shell.example{returnTo}",
+            AuthEndpoints.ResolveLoginRedirect(returnTo, "https://shell.example/"));
+
+    [Fact]
+    public void ResolveLoginRedirect_PrefersACoreContinuationAndFallsBackToTheOrigin()
+    {
+        // A Core app-open continuation stays on Core, and is checked first: it is the one shape that
+        // must not be appended to the Shell origin.
+        Assert.Equal(
+            "/api/apps/demo/open",
+            AuthEndpoints.ResolveLoginRedirect("/api/apps/demo/open", "https://shell.example"));
+
+        // Nothing usable, and a host with no Shell at all: the caller has to be told there is nowhere
+        // to send the browser rather than handed an invented address.
+        Assert.Equal("https://shell.example", AuthEndpoints.ResolveLoginRedirect("https://evil.example", "https://shell.example"));
+        Assert.Null(AuthEndpoints.ResolveLoginRedirect("/settings?tab=tokens", null));
+    }
+
+    // The Shell shape passes exactly the same hardening as the Core one: it is a path appended to an
+    // origin, so anything that could escape that origin or forge a header must be refused here too.
+    [Theory]
+    [InlineData("https://evil.example/settings")]
+    [InlineData("//evil.example/settings")]
+    [InlineData("/\\evil.example/settings")]
+    [InlineData("/settings\r\nSet-Cookie: a=b")]
+    [InlineData("settings")]
+    [InlineData("")]
+    [InlineData(null)]
+    public void IsAllowedShellReturnTo_RejectsAnythingThatCouldLeaveTheShellOrigin(string? returnTo)
+        => Assert.False(AuthEndpoints.IsAllowedShellReturnTo(returnTo));
+
     private sealed class AuthEndpointFixture
     {
         private AuthEndpointFixture(UserDirectoryStore users, FakeClock clock)
