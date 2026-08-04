@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import { AppIdentityBridge } from "@hosty-sdk/app/react";
+import { launchModeBootstrapScript } from "@hosty-sdk/app";
+import { AppIdentityBridge, HostLaunchBridge } from "@hosty-sdk/app/react";
 import { HostThemeBridge } from "@/components/HostThemeBridge";
 import "./globals.css";
 
@@ -38,7 +39,9 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body className="font-sans antialiased">
         <script dangerouslySetInnerHTML={{ __html: hostThemeBootstrapScript }} />
+        <script dangerouslySetInnerHTML={{ __html: launchModeBootstrapScript }} />
         <HostThemeBridge />
+        <HostLaunchBridge />
         <AppIdentityBridge />
         {children}
       </body>

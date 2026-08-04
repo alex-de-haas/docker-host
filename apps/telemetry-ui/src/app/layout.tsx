@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
-import { AppIdentityBridge } from "@hosty-sdk/app/react";
+import { launchModeBootstrapScript } from "@hosty-sdk/app";
+import { AppIdentityBridge, HostLaunchBridge } from "@hosty-sdk/app/react";
 import { AppShell } from "@/components/app-shell";
 import { HostThemeBridge } from "@/components/host-theme-bridge";
 import "./globals.css";
@@ -15,10 +16,17 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   // probe, never from a layout render — this app's pages are prerendered at image build time,
   // where the HOSTY_* environment does not exist yet.
   return (
-    <html lang="en">
+    // The bootstrap script sets `data-hosty-launch` on the root before hydration — an attribute the
+    // server never rendered, which React would otherwise report as a hydration difference.
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        {/* Ahead of any body markup, so chrome a shell already renders is never painted. */}
+        <script dangerouslySetInnerHTML={{ __html: launchModeBootstrapScript }} />
+      </head>
       <body>
         <AppIdentityBridge />
         <HostThemeBridge />
+        <HostLaunchBridge />
         <AppShell>{children}</AppShell>
       </body>
     </html>

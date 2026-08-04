@@ -1,6 +1,6 @@
 {
   "name": "@haas/hosty-demo-app",
-  "version": "0.5.5",
+  "version": "0.6.0",
   "private": true,
   "license": "AGPL-3.0-only",
   "type": "module",

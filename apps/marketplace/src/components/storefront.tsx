@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Download, LoaderCircle, Package, PackageSearch, RefreshCw, Search, Store, TriangleAlert } from "lucide-react";
+import { SHELL_DUPLICATED_CHROME_CLASS } from "@hosty-sdk/app";
 import type {
   CatalogAppDetailResponse,
   CatalogAppFeed,
@@ -149,13 +150,15 @@ export function Storefront() {
   return (
     <main className="mx-auto w-full max-w-6xl space-y-6 px-4 py-6 sm:px-6">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0 space-y-1">
+        {/* The app's own name, which every shell already renders. The badge and Refresh beside it are
+            not: one is the state of this app's session and the other acts on the catalog below. */}
+        <div className={cn("min-w-0 space-y-1", SHELL_DUPLICATED_CHROME_CLASS)}>
           <h1 className="truncate text-xl font-semibold leading-7">Marketplace</h1>
           <p className="text-sm text-muted-foreground">
             Discover runtime apps from your configured catalog. Hosty Core validates every feed again before installation.
           </p>
         </div>
-        <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2 sm:justify-end">
+        <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2 sm:ml-auto sm:justify-end">
           <IdentityBadge identity={identity} />
           <Button type="button" variant="outline" size="sm" onClick={refresh} disabled={loading}>
             <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />

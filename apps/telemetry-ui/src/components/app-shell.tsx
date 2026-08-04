@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Activity, LineChart, LoaderCircle, ScrollText, Waypoints } from "lucide-react";
+import { SHELL_DUPLICATED_CHROME_CLASS } from "@hosty-sdk/app";
 import { cn } from "@/lib/utils";
 import type { TelemetryApp } from "@/lib/types";
 
@@ -56,7 +57,9 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-6 p-4 sm:p-6">
-      <header className="flex flex-col gap-3">
+      {/* Wordmark plus the manifest `ui.navigation` pages — both drawn by a surrounding shell, so
+          the whole header is marked as duplicated chrome and hidden there by globals.css. */}
+      <header className={cn("flex flex-col gap-3", SHELL_DUPLICATED_CHROME_CLASS)}>
         <div className="flex items-center gap-2">
           <Activity className="h-5 w-5 text-muted-foreground" />
           <span className="text-sm font-semibold">Telemetry</span>

@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import type { LucideIcon } from "lucide-react";
+import { SHELL_DUPLICATED_CHROME_CLASS } from "@hosty-sdk/app";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -75,9 +76,15 @@ export function DemoPageHeader({
   );
 }
 
+// The manifest `ui.navigation` pages. A surrounding shell draws them in its own sidebar or pages
+// menu, so this copy is hidden there; the page header beside it is not, because a page's own title
+// is something no shell renders.
 export function DemoNavigation({ active }: { active: DemoRoute }) {
   return (
-    <nav aria-label="Demo app navigation" className="rounded-lg border bg-card p-1 shadow-sm">
+    <nav
+      aria-label="Demo app navigation"
+      className={cn("rounded-lg border bg-card p-1 shadow-sm", SHELL_DUPLICATED_CHROME_CLASS)}
+    >
       <div className="flex flex-col gap-1 sm:flex-row">
         {demoNavigationItems.map(item => {
           const isActive = item.id === active;

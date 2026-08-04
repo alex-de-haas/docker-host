@@ -29,6 +29,7 @@ import {
   shellViewRequiresAdmin,
 } from "./shell/shell-routes";
 import { emptyDetailPanelState, emptyInstallPanelState } from "./shell/state";
+import { appendHostyLaunchParam } from "./shell/launch";
 import { appendHostyThemeParams, normalizeThemePreference, resolveShellTheme } from "./shell/theme";
 import { EmptyState } from "./shell/ui";
 import { EmbeddedWorkspacePanel } from "./shell/workspace/embedded-workspace-panel";
@@ -431,7 +432,9 @@ export function ShellClient({
       }
 
       const routePath = normalizeAppPath(page.path);
-      const themedRedirectUri = appendHostyThemeParams(page.redirectUri, shellResolvedTheme, shellThemePreference);
+      const embeddedRedirectUri = appendHostyLaunchParam(
+        appendHostyThemeParams(page.redirectUri, shellResolvedTheme, shellThemePreference),
+      );
       // One workspace route for every app. A system app used to get its own admin-gated path; the
       // gate it expressed is Core's, not the client's.
       const workspaceHref = getWorkspaceHref(app.id, routePath);
@@ -444,7 +447,7 @@ export function ShellClient({
           title: app.displayName,
           pageLabel: page.label,
           path: routePath,
-          src: themedRedirectUri,
+          src: embeddedRedirectUri,
           externalUrl: getStandaloneAppHref(app, page),
         });
         router.push(workspaceHref);
@@ -458,7 +461,7 @@ export function ShellClient({
       router.push(workspaceHref);
 
       try {
-        const response = await sendCsrfJson(appEndpoint(app, "/launch-code"), { redirectUri: themedRedirectUri });
+        const response = await sendCsrfJson(appEndpoint(app, "/launch-code"), { redirectUri: embeddedRedirectUri });
         const launch = (await response.json()) as AppLaunchResponse;
         const currentUrl = new URL(window.location.href);
         if (
@@ -475,7 +478,9 @@ export function ShellClient({
           pageLabel: page.label,
           path: routePath,
           src: launch.redirectUri,
-          externalUrl: launch.redirectUri,
+          // The standalone href, never the frame's own URL: that one declares the embedded mode,
+          // and a new tab opened on it would be an app hiding the navigation nothing else renders.
+          externalUrl: getStandaloneAppHref(app, page),
         });
       } catch (error) {
         if (isAuthRequiredRedirectError(error)) {
@@ -1595,7 +1600,9 @@ export function ShellClient({
       return;
     }
 
-    const themedRedirectUri = appendHostyThemeParams(page.redirectUri, shellResolvedTheme, shellThemePreference);
+    const embeddedRedirectUri = appendHostyLaunchParam(
+      appendHostyThemeParams(page.redirectUri, shellResolvedTheme, shellThemePreference),
+    );
     if (workspace?.appId === app.id) {
       pendingWorkspaceRoute.current = null;
       setBusyAction((current) => current?.endsWith(":open") ? null : current);
@@ -1605,7 +1612,7 @@ export function ShellClient({
         title: app.displayName,
         pageLabel: page.label,
         path: routePath,
-        src: themedRedirectUri,
+        src: embeddedRedirectUri,
         externalUrl: getStandaloneAppHref(app, page),
       });
       return;
@@ -1620,7 +1627,7 @@ export function ShellClient({
 
     async function openWorkspace() {
       try {
-        const response = await sendCsrfJson(appEndpoint(workspaceApp, "/launch-code"), { redirectUri: themedRedirectUri });
+        const response = await sendCsrfJson(appEndpoint(workspaceApp, "/launch-code"), { redirectUri: embeddedRedirectUri });
         const launch = (await response.json()) as AppLaunchResponse;
         if (cancelled) {
           return;
@@ -1632,7 +1639,7 @@ export function ShellClient({
           pageLabel: workspacePage.label,
           path: routePath,
           src: launch.redirectUri,
-          externalUrl: launch.redirectUri,
+          externalUrl: getStandaloneAppHref(workspaceApp, workspacePage),
         });
       } catch (error) {
         if (isAuthRequiredRedirectError(error) || cancelled) {
@@ -1730,8 +1737,8 @@ export function ShellClient({
 
       void (async () => {
         try {
-          // Reuse the current frame URL as the redirect target, minus the spent code, so theme and
-          // page params are preserved and Core appends a fresh code.
+          // Reuse the current frame URL as the redirect target, minus the spent code, so the theme,
+          // launch-mode and page params are preserved and Core appends a fresh code.
           const base = new URL(current.src);
           base.searchParams.delete("code");
           const response = await sendCsrfJson(appEndpoint(app, "/launch-code"), { redirectUri: base.toString() });
@@ -1741,7 +1748,9 @@ export function ShellClient({
             return;
           }
 
-          setWorkspace({ ...stillCurrent, src: launch.redirectUri, externalUrl: launch.redirectUri });
+          // Only the frame moves. The standalone href is unaffected by a reissue, and the frame's
+          // own URL is not a substitute for it: it declares the embedded mode.
+          setWorkspace({ ...stillCurrent, src: launch.redirectUri });
         } catch (error) {
           if (isAuthRequiredRedirectError(error)) {
             return;

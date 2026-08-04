@@ -9,7 +9,13 @@ import {
   buildCoreOpenUrl,
   decideRecoveryAction,
   detectLaunchMode,
+  normalizeLaunchMode,
   readRecoveryParams,
+  resolveLaunchMode,
+  LAUNCH_MODE_ATTRIBUTE,
+  LAUNCH_MODE_PARAM,
+  LAUNCH_MODE_STORAGE_KEY,
+  type AppLaunchMode,
   type AppSessionStatus,
   type RecoveryAction,
 } from "./index";
@@ -75,6 +81,90 @@ function writeGuard(value: boolean): void {
   } catch {
     // sessionStorage may be blocked; recovery still works, only the guard is lost.
   }
+}
+
+function readStoredLaunchMode(): string | null {
+  try {
+    return window.sessionStorage.getItem(LAUNCH_MODE_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/** The mode already applied to the document, or a fresh resolution when nothing applied one. */
+function currentLaunchMode(): AppLaunchMode {
+  const applied = normalizeLaunchMode(document.documentElement.getAttribute(LAUNCH_MODE_ATTRIBUTE));
+  if (applied) {
+    return applied;
+  }
+
+  return resolveLaunchMode({
+    param: new URL(window.location.href).searchParams.get(LAUNCH_MODE_PARAM),
+    stored: readStoredLaunchMode(),
+    heuristic: detectLaunchMode(window),
+  }).mode;
+}
+
+/**
+ * Mount once in the root layout. Applies the resolved launch mode to `<html>` as
+ * `data-hosty-launch`, persists a mode the shell declared, and cleans the parameter out of the
+ * URL so a copied link cannot carry a shell's presentation into a plain browser tab.
+ *
+ * Pair it with `launchModeBootstrapScript` in the head: this effect runs after first paint, so
+ * without the script an app's own header is painted for a frame before it is hidden. Where that
+ * matters most is the native web view, which shows first paint directly — the browser Shell
+ * fades its iframe in on load and masks it.
+ */
+export function HostLaunchBridge() {
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const param = url.searchParams.get(LAUNCH_MODE_PARAM);
+    const { mode, fromParam } = resolveLaunchMode({
+      param,
+      stored: readStoredLaunchMode(),
+      heuristic: detectLaunchMode(window),
+    });
+
+    document.documentElement.setAttribute(LAUNCH_MODE_ATTRIBUTE, mode);
+
+    if (fromParam) {
+      try {
+        window.sessionStorage.setItem(LAUNCH_MODE_STORAGE_KEY, mode);
+      } catch {
+        // sessionStorage may be blocked. The shell re-declares the mode on every launch and on
+        // every page switch it drives, so only app-internal navigation loses it.
+      }
+    }
+
+    // Cleaned whenever it is present, including an unrecognized value: a parameter this app
+    // ignored must not survive into a link someone copies.
+    if (url.searchParams.has(LAUNCH_MODE_PARAM)) {
+      url.searchParams.delete(LAUNCH_MODE_PARAM);
+      window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+    }
+  }, []);
+
+  return null;
+}
+
+/**
+ * The resolved launch mode, for logic that needs it — `null` until the first client effect.
+ *
+ * Rendering off this value costs a frame and risks a hydration mismatch, which is why chrome is
+ * hidden with CSS keyed on the root attribute instead. Reach for the hook only where CSS cannot
+ * express the decision.
+ */
+export function useLaunchMode(): AppLaunchMode | null {
+  const [mode, setMode] = useState<AppLaunchMode | null>(null);
+
+  useEffect(() => {
+    // Effects run child-first, so a consumer deeper in the tree runs before `HostLaunchBridge`
+    // has applied the attribute. Resolving here rather than only reading the attribute makes the
+    // hook correct in either order.
+    setMode(currentLaunchMode());
+  }, []);
+
+  return mode;
 }
 
 type RecoveryUi =
