@@ -507,8 +507,8 @@ Distribution is by local Xcode build; nothing packages or publishes this app.
   becomes a labelled row rather than a glyph at the far edge.
 - Signing in on macOS is verified across a relaunch, not only within one: the credential surviving a
   quit and reopen is the check that catches a keychain write failing silently, which inside a single
-  run looks like nothing at all. The built product's entitlements must carry the keychain access group
-  (`codesign -d --entitlements`).
+  run looks like nothing at all. The built product's entitlements must carry the keychain access group:
+  `codesign -d --entitlements - <path to the built Hosty.app>`.
 - Opening an app is verified with the process's CPU in view, not only with a screenshot: a render loop
   in the workspace shows up as a pinned core and a growing footprint while the screen sits on its
   spinner, which reads as "the app is slow to open" in a screenshot and as nothing at all in a test.
