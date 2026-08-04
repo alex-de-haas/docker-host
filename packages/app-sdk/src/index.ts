@@ -180,7 +180,9 @@ export function normalizeLaunchMode(value: unknown): AppLaunchMode | null {
  * structural fact that a declared value cannot override: a stale `embedded` would otherwise
  * post into a window with no shell listening.
  */
-export function detectLaunchMode(win: Pick<Window, "self" | "top">): AppLaunchMode {
+export function detectLaunchMode(
+  win: Pick<Window, "self" | "top">,
+): Exclude<AppLaunchMode, "native"> {
   try {
     return win.self !== win.top ? "embedded" : "standalone";
   } catch {
