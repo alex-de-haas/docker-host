@@ -57,6 +57,12 @@ final class HostSession {
     /// rather than an empty list.
     var canManageApps: Bool { user?.isAdmin == true }
 
+    /// Whether this host can sign the operator in through their own browser.
+    ///
+    /// Known from the version check that already ran before any sign-in screen appeared, so the sheet
+    /// never has to discover the answer from a 404 halfway through showing a code.
+    var supportsDeviceLogin: Bool { PlatformVersion.supportsDeviceLogin(hostVersion: hostVersion) }
+
     /// Works out the current state: is the host there, and does the stored credential still work?
     func refresh() async {
         if case .unreachable = state {
