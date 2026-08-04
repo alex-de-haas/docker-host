@@ -50,7 +50,16 @@ nonisolated struct KeychainStore {
         // After first unlock rather than when-unlocked: the app refreshes app state in the background, and
         // a credential it cannot read then is a session that appears to have expired.
         insert[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        SecItemAdd(insert as CFDictionary, nil)
+
+        let added = SecItemAdd(insert as CFDictionary, nil)
+
+        // A credential store that drops credentials must say so, at least to a developer. Discarding this
+        // status is how a real failure hid for weeks: on macOS the data protection keychain refuses every
+        // write from an app without a keychain access group (errSecMissingEntitlement, -34018), nothing
+        // was ever stored, and the only visible symptom was a sign-in on each launch. The group now comes
+        // from Config/Hosty.entitlements; this assert is what turns its loss into a named error instead
+        // of a silent one.
+        assert(added == errSecSuccess, "Keychain write failed (\(added)); the session will not survive a relaunch.")
     }
 
     func removeSessionID(for origin: HostOrigin) {

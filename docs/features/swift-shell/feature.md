@@ -86,12 +86,19 @@ The sign-in sheet carries an explicit minimum size on macOS, where a sheet is si
 web view has no size of its own to give: without one the sheet collapses to its title bar, and the login
 page loads where nobody can see it.
 
-The credential is stored in the Keychain per host, keyed by origin. The login web view uses a
-non-persistent data store, so nothing it collects outlives the sheet, and the device flow presents no
-credential at all on the two routes whose purpose is producing one — a dead session must not be offered
-to the endpoint that replaces it. A `401` on any request drops the credential centrally, so "signed out"
-never depends on which concurrent request noticed first; a `403` deliberately does not, because the
-session is valid and the answer is still no.
+The credential is stored in the Keychain per host, keyed by origin — in the **data protection keychain**
+on both platforms, so one set of semantics covers both. On macOS that keychain refuses every write from
+an app with no keychain access group, and a macOS dev build gets one only from an entitlement:
+`Config/Hosty.entitlements` declares `$(AppIdentifierPrefix)com.haas.hosty`, and automatic signing embeds
+the provisioning profile that authorizes it. Without it nothing was ever stored — `errSecMissingEntitlement`
+on each write, discarded — and the only symptom was a sign-in on every launch, on macOS alone, because an
+iOS build always carries the group via its application identifier. The store now asserts on a failed
+write instead of discarding the status, so losing the entitlement is a named error rather than a silent
+one. The login web view uses a non-persistent data store, so nothing it collects outlives the sheet, and
+the device flow presents no credential at all on the two routes whose purpose is producing one — a dead
+session must not be offered to the endpoint that replaces it. A `401` on any request drops the credential
+centrally, so "signed out" never depends on which concurrent request noticed first; a `403` deliberately
+does not, because the session is valid and the answer is still no.
 
 The poll belongs to the sheet, not to a detached task: closing the sheet cancels it, or a device code
 would go on being polled for its full ten minutes after the screen that showed it is gone. A host that is
@@ -498,6 +505,10 @@ Distribution is by local Xcode build; nothing packages or publishes this app.
   content view collapses to its title bar while behaving correctly everywhere else. App rows and the
   Dashboard counts are also inspected at an accessibility Dynamic Type size, where the update marker
   becomes a labelled row rather than a glyph at the far edge.
+- Signing in on macOS is verified across a relaunch, not only within one: the credential surviving a
+  quit and reopen is the check that catches a keychain write failing silently, which inside a single
+  run looks like nothing at all. The built product's entitlements must carry the keychain access group:
+  `codesign -d --entitlements - <path to the built Hosty.app>`.
 - Opening an app is verified with the process's CPU in view, not only with a screenshot: a render loop
   in the workspace shows up as a pinned core and a growing footprint while the screen sits on its
   spinner, which reads as "the app is slow to open" in a screenshot and as nothing at all in a test.

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  The keychain access group the session credential lives in (KeychainStore). It exists for macOS:
+	  the store opts into the data protection keychain on both platforms, and on macOS that keychain
+	  refuses every write from an app with no access group — errSecMissingEntitlement, on each launch,
+	  so the credential never persisted and the app asked for a sign-in every time.
+
+	  iOS never showed the problem because every iOS build carries an application identifier from its
+	  provisioning profile, which doubles as the default access group. Declaring the same group here is
+	  a no-op for iOS and the fix for macOS; automatic signing embeds the provisioning profile that
+	  authorizes it. Sandbox, hardened runtime, and network client stay build settings — Xcode merges
+	  them with this file.
+	-->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)com.haas.hosty</string>
+	</array>
+</dict>
+</plist>
