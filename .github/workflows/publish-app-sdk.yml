@@ -2,14 +2,27 @@ name: Publish App SDK
 
 # Publishes @hosty-sdk/app to npmjs via OIDC trusted publishing — no tokens, no secrets.
 # The npm-side binding lives in the package's Trusted Publisher settings (this repository +
-# this workflow filename). Triggered manually; the version comes from the package.json in
-# the checked-out ref, and npm rejects an already-published version, so a re-run is safe.
+# this workflow filename). Runs on every main-branch change to the package: every
+# non-documentation SDK change bumps the package version in the same commit (AGENTS.md),
+# so a merge normally publishes exactly one new version. The guard step makes the
+# remaining runs (doc-only changes, reverts, manual re-runs) a clean skip, because npm
+# rejects an already-published version.
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "packages/app-sdk/**"
+      - ".github/workflows/publish-app-sdk.yml"
 
 permissions:
   contents: read
   id-token: write
+
+# One publish at a time: two close merges must not race the same registry check.
+concurrency:
+  group: publish-app-sdk
+  cancel-in-progress: false
 
 jobs:
   publish:
@@ -26,23 +39,42 @@ jobs:
           cache: npm
           registry-url: https://registry.npmjs.org
 
+      - name: Skip when the version is already published
+        id: guard
+        working-directory: packages/app-sdk
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          if [ "$(npm view "@hosty-sdk/app@${version}" version 2>/dev/null || true)" = "${version}" ]; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "@hosty-sdk/app@${version} is already on npm — nothing to publish."
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
       # OIDC publishing needs a current npm CLI regardless of what ships with Node.
       - name: Update npm
+        if: steps.guard.outputs.publish == 'true'
         run: npm install -g npm@latest
 
       - name: Install Node dependencies
+        if: steps.guard.outputs.publish == 'true'
         run: npm ci
 
       - name: Test
+        if: steps.guard.outputs.publish == 'true'
         run: npm run sdk:test
 
       - name: Build
+        if: steps.guard.outputs.publish == 'true'
         run: npm run build --workspace @hosty-sdk/app
 
       - name: Point the manifest at dist
+        if: steps.guard.outputs.publish == 'true'
         run: node scripts/prepare-publish.mjs
         working-directory: packages/app-sdk
 
       - name: Publish
+        if: steps.guard.outputs.publish == 'true'
         run: npm publish
         working-directory: packages/app-sdk

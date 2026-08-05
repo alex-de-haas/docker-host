@@ -4,13 +4,26 @@ name: Publish App SDK (.NET)
 # The NuGet-side policy lives under the hosty-sdk organization's Trusted Publishing settings
 # (repository owner alex-de-haas, repository docker-host, this workflow's filename). The
 # NuGet/login step exchanges the job's OIDC token for a short-lived (~1h) API key.
-# Triggered manually; NuGet rejects an already-published version, so a re-run is safe.
+# Runs on every main-branch change to the package: every non-documentation SDK change bumps
+# `<Version>` in the same commit (AGENTS.md), so a merge normally publishes exactly one new
+# version. The guard step makes the remaining runs (doc-only changes, reverts, manual
+# re-runs) a clean skip; `--skip-duplicate` stays as the second line of defense.
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "packages/app-sdk-dotnet/**"
+      - ".github/workflows/publish-app-sdk-dotnet.yml"
 
 permissions:
   contents: read
   id-token: write
+
+# One publish at a time: two close merges must not race the same registry check.
+concurrency:
+  group: publish-app-sdk-dotnet
+  cancel-in-progress: false
 
 jobs:
   publish:
@@ -25,13 +38,31 @@ jobs:
         with:
           global-json-file: global.json
 
+      - name: Skip when the version is already published
+        id: guard
+        # The flat-container index 404s while the package has no published version at all;
+        # `|| true` turns that into an empty list, i.e. "publish".
+        run: |
+          version="$(dotnet msbuild packages/app-sdk-dotnet/HostySdk.App/HostySdk.App.csproj -getProperty:Version)"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          published="$(curl -fsSL https://api.nuget.org/v3-flatcontainer/hostysdk.app/index.json | tr -d ' "' || true)"
+          if printf '%s\n' "$published" | grep -qxF -e "${version}" -e "${version},"; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "HostySdk.App ${version} is already on NuGet — nothing to publish."
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Test
+        if: steps.guard.outputs.publish == 'true'
         run: dotnet test packages/app-sdk-dotnet/HostySdk.App.Tests/HostySdk.App.Tests.csproj --configuration Release
 
       - name: Pack
+        if: steps.guard.outputs.publish == 'true'
         run: dotnet pack packages/app-sdk-dotnet/HostySdk.App/HostySdk.App.csproj --configuration Release --output out/nuget
 
       - name: NuGet login (OIDC → short-lived key)
+        if: steps.guard.outputs.publish == 'true'
         uses: NuGet/login@v1
         id: nuget-login
         with:
@@ -42,6 +73,7 @@ jobs:
           user: ${{ vars.NUGET_USER }}
 
       - name: Publish
+        if: steps.guard.outputs.publish == 'true'
         run: >
           dotnet nuget push out/nuget/*.nupkg
           --source https://api.nuget.org/v3/index.json
