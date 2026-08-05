@@ -41,12 +41,13 @@ jobs:
       - name: Skip when the version is already published
         id: guard
         # The flat-container index 404s while the package has no published version at all;
-        # `|| true` turns that into an empty list, i.e. "publish".
+        # `|| true` turns that into an empty list, i.e. "publish". jq keeps the check
+        # independent of the response's formatting.
         run: |
           version="$(dotnet msbuild packages/app-sdk-dotnet/HostySdk.App/HostySdk.App.csproj -getProperty:Version)"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
-          published="$(curl -fsSL https://api.nuget.org/v3-flatcontainer/hostysdk.app/index.json | tr -d ' "' || true)"
-          if printf '%s\n' "$published" | grep -qxF -e "${version}" -e "${version},"; then
+          published="$(curl -fsSL https://api.nuget.org/v3-flatcontainer/hostysdk.app/index.json | jq -r '.versions[]' || true)"
+          if printf '%s\n' "$published" | grep -qxF "${version}"; then
             echo "publish=false" >> "$GITHUB_OUTPUT"
             echo "HostySdk.App ${version} is already on NuGet — nothing to publish."
           else
