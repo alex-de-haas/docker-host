@@ -20,10 +20,10 @@ permissions:
   contents: read
   id-token: write
 
-# One publish at a time: two close merges must not race the same registry check.
-concurrency:
-  group: publish-app-sdk-dotnet
-  cancel-in-progress: false
+# Deliberately no concurrency group: Actions keeps at most one pending run per group, so a
+# third quick merge would silently cancel the middle version's publish. Parallel runs each
+# publish their own checked-out version; a duplicate-version race is absorbed by
+# `--skip-duplicate` — never a silently dropped version.
 
 jobs:
   publish:
