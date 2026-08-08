@@ -33,6 +33,7 @@ Prerequisite note: the umbrella flags token scopes as a prerequisite for scoped 
 - The manifest declares the `ai-gateway` interface (draft extension of `app.0.1`, per the umbrella decision). When the interface is not installed, no assistant surface exists anywhere in the platform.
 - Harness configuration (which CLI, binary path, pinned version) is gateway app config. Harness CLIs authenticate through their own vendor mechanisms under the host user; the gateway never stores or proxies those credentials.
 - The gateway detects a missing or logged-out harness and reports an "assistant unavailable" state with the reason through its health/status surface; Shell renders that state instead of a chat box.
+- The gateway answers CORS preflight for the Shell origin on its API routes. No runtime app emits CORS headers today, and without them a browser call cannot leave the page — this lands with the phase-2 app skeleton; the phase-1 token plumbing is verified with direct HTTP calls, which need no CORS.
 
 ### Sessions and the harness adapter
 
