@@ -118,7 +118,7 @@ async function route(
   }
 
   if (rest === "/events" && method === "GET") {
-    await streamEvents(request, response, manager, sessionId, url);
+    await streamEvents(request, response, manager, sessionId, url, actor.exp);
     return;
   }
 
@@ -172,6 +172,7 @@ async function streamEvents(
   manager: SessionManager,
   sessionId: string,
   url: URL,
+  tokenExpSeconds: number,
 ): Promise<void> {
   const afterSeq = Number.parseInt(url.searchParams.get("after") ?? "0", 10) || 0;
   response.writeHead(200, {
@@ -192,8 +193,17 @@ async function streamEvents(
 
   // Comment heartbeat keeps intermediaries from timing the idle stream out.
   const heartbeat = setInterval(() => response.write(":hb\n\n"), 25_000);
+  // The token was checked when the stream opened; a long-lived connection must not outlive it —
+  // a revoked or downgraded admin would otherwise keep receiving transcripts indefinitely. The
+  // stream ends at token expiry and the client reconnects with a freshly issued token, which
+  // re-runs the full access policy on the Core side.
+  const tokenDeadline = setTimeout(
+    () => response.end(),
+    Math.max(0, tokenExpSeconds * 1000 - Date.now()),
+  );
   request.on("close", () => {
     clearInterval(heartbeat);
+    clearTimeout(tokenDeadline);
     unsubscribe();
   });
 }

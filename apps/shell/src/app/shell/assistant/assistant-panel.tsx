@@ -24,11 +24,23 @@ type AssistantPanelProps = {
   coreOrigin: string;
   /** Structured page context ("app", "page") seeding the first message; never parsed by the model. */
   context: Record<string, string> | null;
+  /** The session the panel last held. Closing the panel never stops the harness run, so reopening
+   * must reattach here instead of orphaning the old session behind a brand-new one. */
+  sessionId: string | null;
+  onSessionId: (sessionId: string | null) => void;
   onClose: () => void;
   sendCsrfJson: (endpoint: string, body?: unknown, method?: string) => Promise<Response>;
 };
 
-export function AssistantPanel({ gateway, coreOrigin, context, onClose, sendCsrfJson }: AssistantPanelProps) {
+export function AssistantPanel({
+  gateway,
+  coreOrigin,
+  context,
+  sessionId,
+  onSessionId,
+  onClose,
+  sendCsrfJson,
+}: AssistantPanelProps) {
   const client = useMemo(
     () =>
       new AssistantClient(gateway.baseUrl, async () => {
@@ -61,7 +73,7 @@ export function AssistantPanel({ gateway, coreOrigin, context, onClose, sendCsrf
   const streamAbortRef = useRef<AbortController | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
 
-  const startSession = useCallback(async () => {
+  const startSession = useCallback(async (forceNew = false) => {
     streamAbortRef.current?.abort();
     setEvents([]);
     setDraft("");
@@ -76,14 +88,27 @@ export function AssistantPanel({ gateway, coreOrigin, context, onClose, sendCsrf
         return;
       }
 
-      const created = await client.createSession(context ? { context } : {});
-      setSession(created);
-      setStatus(created.status);
+      // Reattach first: closing the panel only dropped the SSE connection — the harness run (and
+      // any pending approval) is still live on the gateway. The stream replays the transcript from
+      // seq 0, which also rebuilds unresolved approval cards.
+      let active: AssistantSession | null = null;
+      if (!forceNew && sessionId) {
+        active = await client.getSession(sessionId).catch(() => null);
+        if (active) {
+          contextSentRef.current = true;
+        }
+      }
+      if (!active) {
+        active = await client.createSession(context ? { context } : {});
+        onSessionId(active.id);
+      }
+      setSession(active);
+      setStatus(active.status);
 
       const abort = new AbortController();
       streamAbortRef.current = abort;
       void client.streamEvents(
-        created.id,
+        active.id,
         (event) => {
           if (event.type === "assistant_delta") {
             setDraft((current) => current + String(event.text ?? ""));
@@ -103,14 +128,21 @@ export function AssistantPanel({ gateway, coreOrigin, context, onClose, sendCsrf
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
-  }, [client, context]);
+  }, [client, context, sessionId, onSessionId]);
 
+  // The mount effect goes through a ref: startSession's identity changes when the parent learns
+  // the created session id, and re-running the effect then would tear the fresh stream down just
+  // to reattach to the same session.
+  const startSessionRef = useRef(startSession);
+  useEffect(() => {
+    startSessionRef.current = startSession;
+  }, [startSession]);
   useEffect(() => {
     if (gateway.running) {
-      void startSession();
+      void startSessionRef.current();
     }
     return () => streamAbortRef.current?.abort();
-  }, [gateway.running, startSession]);
+  }, [gateway.running]);
 
   useEffect(() => {
     transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight });
@@ -198,7 +230,7 @@ export function AssistantPanel({ gateway, coreOrigin, context, onClose, sendCsrf
               title="New session"
               aria-label="New session"
               className="ml-auto"
-              onClick={() => void startSession()}
+              onClick={() => void startSession(true)}
             >
               <RotateCcw />
             </Button>

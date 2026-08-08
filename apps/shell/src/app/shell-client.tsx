@@ -161,6 +161,9 @@ export function ShellClient({
   const [assistantOpen, setAssistantOpen] = useState(false);
   // Structured page context ("app", "page") the contextual entry points seed a session with.
   const [assistantContext, setAssistantContext] = useState<Record<string, string> | null>(null);
+  // Survives panel close so reopening reattaches to the still-running session instead of
+  // orphaning it; a contextual entry always starts fresh (its context belongs to a new session).
+  const [assistantSessionId, setAssistantSessionId] = useState<string | null>(null);
   const activeWorkspaceRoute = shellRoute.workspace ?? optimisticWorkspaceRoute;
   const workspaceRouteKey = getWorkspaceRouteKey(activeWorkspaceRoute);
   const pendingWorkspaceRoute = useRef<string | null>(null);
@@ -182,6 +185,9 @@ export function ShellClient({
   const assistantAvailable = Boolean(canManageApps && assistantGateway);
   const openAssistant = useCallback((context: Record<string, string> | null = null) => {
     setAssistantContext(context);
+    if (context) {
+      setAssistantSessionId(null);
+    }
     setAssistantOpen(true);
   }, []);
 
@@ -1997,6 +2003,8 @@ export function ShellClient({
             gateway={assistantGateway}
             coreOrigin={coreOrigin}
             context={assistantContext}
+            sessionId={assistantSessionId}
+            onSessionId={setAssistantSessionId}
             onClose={() => setAssistantOpen(false)}
             sendCsrfJson={sendCsrfJson}
           />

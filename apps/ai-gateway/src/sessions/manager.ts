@@ -132,9 +132,26 @@ export class SessionManager {
     listener: SessionListener,
   ): Promise<{ replay: StoredEvent[]; unsubscribe: () => void }> {
     const session = await this.requireLive(id);
+    // Attach BEFORE reading the replay and buffer until the read finishes: an event persisted
+    // mid-read could otherwise miss both the file snapshot and the listener — for an approval
+    // request that gap would strand the harness on a pause nobody can see. The buffered tail is
+    // deduped against the replay by seq; the flip to passthrough has no await in between, so no
+    // event can slip past it.
+    const buffered: StoredEvent[] = [];
+    let passthrough = false;
+    const wrapped: SessionListener = (event) => {
+      if (passthrough) {
+        listener(event);
+      } else {
+        buffered.push(event);
+      }
+    };
+    session.listeners.add(wrapped);
     const replay = await this.store.readEvents(id, afterSeq);
-    session.listeners.add(listener);
-    return { replay, unsubscribe: () => session.listeners.delete(listener) };
+    const lastReplayed = replay.length > 0 ? replay[replay.length - 1]!.seq : afterSeq;
+    const tail = buffered.filter((event) => event.seq > lastReplayed);
+    passthrough = true;
+    return { replay: [...replay, ...tail], unsubscribe: () => session.listeners.delete(wrapped) };
   }
 
   async shutdown(): Promise<void> {
@@ -203,10 +220,19 @@ export class SessionManager {
         await this.append(id, { ...event });
         await this.setStatus(id, "idle");
         return;
-      case "error":
+      case "error": {
+        // The run is dead: drop it so the next message starts a fresh harness (resuming the
+        // captured harness session when possible) instead of feeding a terminated input stream.
+        const failedRun = session.run;
+        session.run = null;
+        session.pendingApprovals.clear();
+        if (failedRun) {
+          void failedRun.stop().catch(() => undefined);
+        }
         await this.append(id, { ...event });
         await this.setStatus(id, "failed");
         return;
+      }
       default:
         await this.append(id, { ...event });
     }

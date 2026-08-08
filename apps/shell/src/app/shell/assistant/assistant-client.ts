@@ -95,6 +95,12 @@ export class AssistantClient {
     ).json()) as AssistantSession;
   }
 
+  async getSession(sessionId: string): Promise<AssistantSession> {
+    return (await (
+      await this.request(`/sessions/${encodeURIComponent(sessionId)}`)
+    ).json()) as AssistantSession;
+  }
+
   async postMessage(sessionId: string, text: string): Promise<void> {
     await this.request(`/sessions/${encodeURIComponent(sessionId)}/messages`, {
       method: "POST",

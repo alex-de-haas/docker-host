@@ -16,13 +16,13 @@ import { AuditReporter } from "./audit.js";
 const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
 const publicKeyBase64 = publicKey.export({ format: "der", type: "spki" }).toString("base64");
 
-function mintToken(role: string, appId = "hosty.ai-gateway", sub = "user_admin"): string {
+function mintToken(role: string, appId = "hosty.ai-gateway", sub = "user_admin", ttlSeconds = 300): string {
   const claims = {
     sub,
     role,
     aud: appId,
     iat: Math.floor(Date.now() / 1000),
-    exp: Math.floor(Date.now() / 1000) + 300,
+    exp: Math.floor(Date.now() / 1000) + ttlSeconds,
     jti: "test",
   };
   const payload = Buffer.from(JSON.stringify(claims), "utf8").toString("base64url");
@@ -227,6 +227,70 @@ describe("gateway", () => {
 
     const missing = await call("/api/sessions/00000000-0000-0000-0000-000000000000", { method: "GET" });
     expect(missing.status).toBe(404);
+  });
+
+  it("closes the event stream when the delegated token expires", async () => {
+    const record = await manager.createSession({ createdBy: "user_admin" });
+    const shortLived = mintToken("host.admin", "hosty.ai-gateway", "user_admin", 1);
+
+    const started = Date.now();
+    const response = await fetch(`${origin}/api/sessions/${record.id}/events`, {
+      headers: { authorization: `Bearer ${shortLived}` },
+    });
+    expect(response.status).toBe(200);
+    // text() resolves only when the server ends the stream — which must happen at token expiry,
+    // not never (a revoked admin's open stream would otherwise outlive their access).
+    await response.text();
+    expect(Date.now() - started).toBeLessThan(2_500);
+  });
+
+  it("drops a failed harness run so the next message starts a fresh one", async () => {
+    let starts = 0;
+    const failing: import("./harness/adapter.js").HarnessAdapter = {
+      name: "failing",
+      probe: async () => ({ available: true }),
+      start: (options) => {
+        starts += 1;
+        const runIndex = starts;
+        return {
+          send: () =>
+            queueMicrotask(() => {
+              if (runIndex === 1) {
+                options.onEvent({ type: "error", message: "boom" });
+              } else {
+                options.onEvent({ type: "assistant_text", text: "recovered" });
+                options.onEvent({ type: "result", status: "success" });
+              }
+            }),
+          resolveApproval: () => false,
+          interrupt: async () => {},
+          stop: async () => {},
+        };
+      },
+    };
+    const localManager = new SessionManager(
+      store,
+      failing,
+      new AuditReporter(null, null, "hosty.ai-gateway"),
+      dataDir,
+    );
+    const record = await localManager.createSession({ createdBy: "user_admin" });
+
+    await localManager.postMessage(record.id, "first");
+    await waitFor(async () => {
+      const current = await localManager.getSession(record.id);
+      return current?.status === "failed" ? current : null;
+    }, "failed status");
+
+    await localManager.postMessage(record.id, "second");
+    await waitFor(async () => {
+      const events = await store.readEvents(record.id);
+      return events.some((event) => event.type === "assistant_text" && event.text === "recovered")
+        ? events
+        : null;
+    }, "recovery on a fresh run");
+    expect(starts).toBe(2);
+    await localManager.shutdown();
   });
 
   it("sweeps sessions past retention", async () => {
