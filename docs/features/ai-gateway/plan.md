@@ -1,6 +1,6 @@
 # AI Gateway
 
-Status: Draft
+Status: Ready
 Created: 2026-08-08
 Updated: 2026-08-08
 
@@ -72,18 +72,22 @@ Prerequisite note: the umbrella flags token scopes as a prerequisite for scoped 
 - Question: Which harness adapter ships first — Claude Code CLI headless streaming or the Claude Agent SDK?
   Answer: The umbrella prefers either; they differ in supervision complexity, approval-callback fidelity, and version pinning ergonomics.
   Recommendation: Decide with a short spike at the start of phase 2 against three criteria: approval pause fidelity, streaming event quality, and resumability.
+  Decision (2026-08-08): As recommended — the choice is delegated to a short spike at the start of phase 2 against those three criteria; the spike outcome is recorded in this document.
 
 - Question: What is the gateway's implementation stack?
   Answer: The Claude Agent SDK is TypeScript-native, and the existing first-party apps are Node-based; nothing in the gateway needs .NET.
   Recommendation: Node/TypeScript, matching the other first-party runtime apps.
+  Decision (2026-08-08): Node/TypeScript.
 
 - Question: One active session, or concurrent sessions per admin?
   Answer: Concurrent operator sessions can edit the same app checkout — the umbrella lists this edge case; the risk class equals two human administrators working over SSH simultaneously.
   Recommendation: Allow concurrent sessions in v1 without locking, document the risk, revisit if it bites in practice.
+  Decision (2026-08-08): Concurrent sessions are allowed in v1 without locking; the risk class equals two administrators working over SSH and is accepted, to be revisited only if it causes real problems.
 
 - Question: Do sessions survive a closed Shell tab or a gateway restart?
   Answer: Session records persist in app data either way; the question is live harness process continuity.
   Recommendation: Reattach-by-id must work after a tab close (process keeps running). After a gateway restart, resume through the harness-native session-resume mechanism when the chosen adapter supports it; otherwise start a fresh session seeded with the stored transcript.
+  Decision (2026-08-08): As recommended — reattach-by-id after a tab close; after a gateway restart, harness-native resume when the adopted adapter supports it, otherwise a fresh session seeded with the stored transcript.
 
 ## Verification
 
