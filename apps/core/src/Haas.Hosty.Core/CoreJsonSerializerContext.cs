@@ -74,6 +74,9 @@ internal static class CoreJson
 [JsonSerializable(typeof(RuntimeAppInterfaceManifest))]
 [JsonSerializable(typeof(AppInterfaceContract))]
 [JsonSerializable(typeof(AppInterfaceSummary))]
+// Delegated tokens: the signed claims payload and the issue-endpoint response.
+[JsonSerializable(typeof(DelegatedTokenPayload))]
+[JsonSerializable(typeof(DelegatedTokenResponse))]
 [JsonSerializable(typeof(RetainedAppConfig))]
 // App secrets keychain: the persisted apps/<id>/secrets.json document plus the endpoint contracts.
 [JsonSerializable(typeof(AppSecretsDocument))]

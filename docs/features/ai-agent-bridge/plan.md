@@ -345,7 +345,7 @@ Two token mechanics, one management UI (a Shell "Access tokens" page with label,
 | Browser app identity tokens presented to Core for revalidation | Core itself | opaque app session grant + server-side record (2026-07-13); design: [auth-session-lifecycle.md](../../ideas/auth-session-lifecycle.md) |
 | Delegated tokens presented to apps and system apps | the receiving app, locally | signed, short TTL, verification key injected by Core; optional Core introspection for high-risk calls |
 
-Shell's Core session cookie never leaves the browser↔Core pair. When Shell (or any UI client) needs a system app, it exchanges its session for a short-lived delegated token (audience = that app) and calls the app directly — the service-call analogue of the existing app authorization code flow. Core's existing signing infrastructure (AppIdentityService) can issue these.
+Shell's Core session cookie never leaves the browser↔Core pair. When Shell (or any UI client) needs a system app, it exchanges its session for a short-lived delegated token (audience = that app) and calls the app directly — the service-call analogue of the existing app authorization code flow. (Correction 2026-08-08: the earlier assumption that AppIdentityService's signing infrastructure could issue these was stale — that service moved to opaque hashed grants with online revalidation. Delegated tokens are issued by the dedicated `DelegatedTokenService` — ECDSA P-256, durable key, public half injected into app environments as `HOSTY_DELEGATED_TOKEN_PUBLIC_KEY` — shipped with [ai-gateway](../ai-gateway/plan.md) phase 1.)
 
 Core should issue signed delegated identity tokens for agent-client-to-app calls. A token should include at least:
 

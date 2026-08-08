@@ -26,8 +26,10 @@ import {
   readAppIdentityToken,
   resolveAppSession,
   setAppSecret,
+  validateDelegatedToken,
   type HostyAppConfig,
 } from "./server";
+import { generateKeyPairSync, sign as signData } from "node:crypto";
 
 const config: HostyAppConfig = {
   appIdFallback: "com.example.app",
@@ -681,5 +683,94 @@ describe("app secrets", () => {
     expect((fetchMock.mock.calls[0] as [string])[0]).toBe(
       "http://core.test/api/internal/apps/com.example.app/secrets/weird%20key%2Fwith-slash",
     );
+  });
+});
+
+describe("delegated tokens", () => {
+  const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const publicKeyBase64 = publicKey.export({ format: "der", type: "spki" }).toString("base64");
+  const inFiveMinutes = Math.floor(Date.now() / 1000) + 300;
+
+  function mintToken(claims: Record<string, unknown>): string {
+    const payload = Buffer.from(JSON.stringify(claims), "utf8").toString("base64url");
+    const signingInput = `hosty_delegated.1.${payload}`;
+    const signature = signData("sha256", Buffer.from(signingInput, "utf8"), {
+      key: privateKey,
+      dsaEncoding: "ieee-p1363",
+    });
+    return `${signingInput}.${signature.toString("base64url")}`;
+  }
+
+  const validClaims = {
+    sub: "user_1",
+    role: "host.admin",
+    aud: "com.example.app",
+    iat: 1,
+    exp: inFiveMinutes,
+    jti: "j1",
+  };
+
+  it("accepts a valid token and returns its claims", () => {
+    const claims = validateDelegatedToken(mintToken(validClaims), {
+      appId: "com.example.app",
+      publicKey: publicKeyBase64,
+    });
+
+    expect(claims).toEqual(validClaims);
+  });
+
+  it("rejects a token for a different audience", () => {
+    const claims = validateDelegatedToken(mintToken(validClaims), {
+      appId: "com.example.other",
+      publicKey: publicKeyBase64,
+    });
+
+    expect(claims).toBeNull();
+  });
+
+  it("rejects an expired token", () => {
+    const claims = validateDelegatedToken(mintToken(validClaims), {
+      appId: "com.example.app",
+      publicKey: publicKeyBase64,
+      nowMs: (inFiveMinutes + 1) * 1000,
+    });
+
+    expect(claims).toBeNull();
+  });
+
+  it("rejects a tampered payload", () => {
+    const token = mintToken(validClaims);
+    const forgedPayload = Buffer.from(
+      JSON.stringify({ ...validClaims, role: "host.admin", sub: "attacker" }),
+      "utf8",
+    ).toString("base64url");
+    const parts = token.split(".");
+    const forged = `${parts[0]}.${parts[1]}.${forgedPayload}.${parts[3]}`;
+
+    expect(
+      validateDelegatedToken(forged, { appId: "com.example.app", publicKey: publicKeyBase64 }),
+    ).toBeNull();
+  });
+
+  it("rejects a malformed token shape", () => {
+    expect(
+      validateDelegatedToken("hosty_delegated.1.only-three-parts", {
+        appId: "com.example.app",
+        publicKey: publicKeyBase64,
+      }),
+    ).toBeNull();
+  });
+
+  it("rejects everything when no verification key is configured", () => {
+    const savedKey = process.env.HOSTY_DELEGATED_TOKEN_PUBLIC_KEY;
+    const savedAppId = process.env.HOSTY_APP_ID;
+    delete process.env.HOSTY_DELEGATED_TOKEN_PUBLIC_KEY;
+    delete process.env.HOSTY_APP_ID;
+    try {
+      expect(validateDelegatedToken(mintToken(validClaims), { appId: "com.example.app" })).toBeNull();
+    } finally {
+      if (savedKey !== undefined) process.env.HOSTY_DELEGATED_TOKEN_PUBLIC_KEY = savedKey;
+      if (savedAppId !== undefined) process.env.HOSTY_APP_ID = savedAppId;
+    }
   });
 });

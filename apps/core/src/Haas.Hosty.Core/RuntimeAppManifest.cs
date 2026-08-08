@@ -1483,7 +1483,10 @@ internal sealed class DockerRuntimeAdapter(
     TimeSpan? digestProbeTimeout = null,
     // Fast registry HTTP path for remote digest lookups; null falls straight through to the docker
     // CLI, which is also what happens whenever it cannot answer a given image.
-    IRegistryDigestResolver? registryDigestResolver = null) : IAppRuntimeAdapter, IImageDigestResolver, IRunningContainerProbe
+    IRegistryDigestResolver? registryDigestResolver = null,
+    // Public half of the delegated-token key, injected into app environments so apps can validate
+    // delegated tokens locally. Optional so existing direct constructions stay valid; DI supplies it.
+    DelegatedTokenSigningKey? delegatedTokenKey = null) : IAppRuntimeAdapter, IImageDigestResolver, IRunningContainerProbe
 {
     // App ids already advised about WSL2 P2P throttling, so the warning is logged once per app
     // per Core process rather than on every (health-driven) restart. Instance field on the DI
@@ -1638,6 +1641,13 @@ internal sealed class DockerRuntimeAdapter(
             runArgs.Add("-e");
             runArgs.Add("HOSTY_APP_SERVICE_TOKEN");
             containerEnvironment["HOSTY_APP_SERVICE_TOKEN"] = serviceTokens.CreateToken(context.App.Id);
+
+            if (delegatedTokenKey is not null)
+            {
+                runArgs.Add("-e");
+                runArgs.Add("HOSTY_DELEGATED_TOKEN_PUBLIC_KEY");
+                containerEnvironment["HOSTY_DELEGATED_TOKEN_PUBLIC_KEY"] = delegatedTokenKey.PublicKeySpkiBase64;
+            }
 
             foreach (var telemetry in BuildTelemetryEnvironment(context, service.Key))
             {

@@ -46,6 +46,18 @@ await setAppSecret("trakt.connection.1.tokens", refreshed, config);
 Reads are served from a write-through cache, namespaced by Core origin and app id; pass
 `{ refresh: true }` to force a live read.
 
+Delegated tokens — the credential a browser client (Shell) presents when calling a system
+app's API directly. Core signs them (ECDSA P-256, 5-minute TTL) and injects the verification
+key as `HOSTY_DELEGATED_TOKEN_PUBLIC_KEY`, so validation is fully local — no Core round-trip:
+
+```ts
+import { validateDelegatedToken } from "@hosty-sdk/app/server";
+
+// null for anything invalid (bad signature, wrong audience, expired) — treat like a missing token.
+const claims = validateDelegatedToken(bearerToken);
+if (claims?.role !== "host.admin") { /* 401/403 */ }
+```
+
 The design contract lives in the Hosty repository:
 [`docs/ideas/hosty-app-sdk.md`](https://github.com/alex-de-haas/docker-host/blob/main/docs/ideas/hosty-app-sdk.md).
 

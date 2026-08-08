@@ -52,7 +52,7 @@ Prerequisite note: the umbrella flags token scopes as a prerequisite for scoped 
 ## Deliverables
 
 - [x] Manifest interface draft extension: `interfaces.ai-gateway` accepted by Core validation and exposed through the registry/discovery API.
-- [ ] Shell→system-app delegated-token exchange usable by the browser client against the gateway (confirm or build issue/validate/refresh).
+- [x] Shell→system-app delegated-token exchange usable by the browser client against the gateway (confirm or build issue/validate/refresh). Built, not confirmed — nothing existed: Core mints ECDSA P-256 signed tokens (`POST /api/apps/{appId}/delegated-token`, 5-minute TTL, full access policy re-run on every issue; refresh = call again), injects the verification key into every app as `HOSTY_DELEGATED_TOKEN_PUBLIC_KEY`, and the TS SDK validates locally via `validateDelegatedToken`.
 - [ ] Gateway app skeleton: manifest (system app, localCommand profile, `ai-gateway` interface), install/removal through the standard system-app distribution flow, health surface with "harness unavailable" reason.
 - [ ] Harness adapter contract plus the first adapter, pinned version, approval-pause verified end to end.
 - [ ] Session API: create/stream/message/approve/deny/cancel, admin-only, SSE streaming, session records and transcripts in app data with retention config.
