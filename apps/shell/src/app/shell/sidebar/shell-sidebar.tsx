@@ -19,6 +19,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   SlidersHorizontal,
+  Sparkles,
   Sun,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -61,6 +62,7 @@ export function ShellSidebar({
   onLaunchApp,
   getStandaloneHref,
   onOpenCoreSettings,
+  onOpenAssistant,
 }: {
   compact: boolean;
   activeView: ShellView;
@@ -87,6 +89,9 @@ export function ShellSidebar({
   // Navigates to the Core settings tab. Undefined for non-admins, which leaves the version block as
   // plain text.
   onOpenCoreSettings?: () => void;
+  // Opens the assistant chat panel. Undefined when no running app declares the ai-gateway interface
+  // or the viewer is not an admin — the launcher then simply does not exist.
+  onOpenAssistant?: () => void;
 }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -121,6 +126,9 @@ export function ShellSidebar({
             <NavigationSection title="Host" compact={compact}>
               <SidebarButton compact={compact} active={activeView === "dashboard" && !workspace} icon={Gauge} label="Dashboard" onClick={() => onNavigate("dashboard")} />
               <SidebarButton compact={compact} active={activeView === "settings"} icon={SlidersHorizontal} label="Settings" onClick={() => onNavigate("settings")} />
+              {onOpenAssistant && (
+                <SidebarButton compact={compact} active={false} icon={Sparkles} label="Assistant" onClick={onOpenAssistant} />
+              )}
             </NavigationSection>
           )}
 

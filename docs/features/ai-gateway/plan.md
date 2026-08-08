@@ -58,8 +58,8 @@ Prerequisite note: the umbrella flags token scopes as a prerequisite for scoped 
 - [ ] Harness adapter contract plus the first adapter, pinned version, approval-pause verified end to end. Progress: contract + Claude Agent SDK adapter implemented (pinned 0.3.226) and the approval pause is verified end to end through the session pipeline with the in-process fake harness; a live run against the real harness (needs a credential in the gateway environment) is what remains.
 - [x] Session API: create/stream/message/approve/deny/cancel, admin-only, SSE streaming, session records and transcripts in app data with retention config.
 - [x] Core audit records for session lifecycle and approved actions. (`POST /api/internal/apps/{appId}/audit`, service-token-scoped, actions namespaced `app.*`; the gateway reports lifecycle + approvals, never content.)
-- [ ] Shell chat panel: discovery-gated, admin-only, streaming rendering, approval UX.
-- [ ] Shell contextual entry point on the app page passing app id and route as session context.
+- [x] Shell chat panel: discovery-gated, admin-only, streaming rendering, approval UX. (Right-anchored panel + sidebar launcher, both existing only when a running app declares `ai-gateway`; SSE consumed via fetch with the `?after=<seq>` reattach cursor because EventSource cannot carry the bearer token; unavailability states for stopped gateway and missing harness credential. Verified by lint/types/build; live visual verification pending with the rest of Verification.)
+- [x] Shell contextual entry point on the app page passing app id and route as session context. ("Ask assistant" in the app details dialog seeds the session with `{app, page}`; the context is stored structured on the session and prefixed once, as a plain header line, to the first message.)
 - [ ] `feature.md` for this folder, umbrella rollout checkbox, regenerated index.
 
 ## Phases

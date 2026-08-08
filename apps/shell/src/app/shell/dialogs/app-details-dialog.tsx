@@ -2,7 +2,7 @@
 
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Archive, Database, FileText, FolderGit2, HardDrive, Info, LoaderCircle, Lock, Plus, Radio, RefreshCw, Rss, Settings2, Trash2, TriangleAlert, Upload } from "lucide-react";
+import { Archive, Database, FileText, FolderGit2, HardDrive, Info, LoaderCircle, Lock, Plus, Radio, RefreshCw, Rss, Settings2, Sparkles, Trash2, TriangleAlert, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -67,6 +67,7 @@ export function AppDetailsDialog({
   onRemove,
   onLoadRemovalImpact,
   onRevealSetting,
+  onAskAssistant,
 }: {
   app: CoreApp;
   view: DetailView;
@@ -98,6 +99,9 @@ export function AppDetailsDialog({
   onLoadRemovalImpact?: (appId: string) => Promise<CoreRemovalImpact | null>;
   // Fetches one setting's stored value on the operator's explicit reveal click (admin-gated in Core).
   onRevealSetting?: (app: CoreApp, key: string) => Promise<string | null>;
+  // Opens the assistant panel seeded with this app + view as context. Undefined when no ai-gateway
+  // provider is installed (or the viewer is not an admin), which leaves no trace of the feature.
+  onAskAssistant?: () => void;
 }) {
   // Every verb is available for system apps, removal included: "system" governs who may see and reach
   // an app, never whether it can be uninstalled. The remove panel explains the consequences instead.
@@ -109,7 +113,14 @@ export function AppDetailsDialog({
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-3xl">
         <DialogHeader>
-          <DialogTitle>{detailTitle(view)} · {app.displayName}</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            <span className="min-w-0 truncate">{detailTitle(view)} · {app.displayName}</span>
+            {onAskAssistant && (
+              <Button type="button" variant="outline" size="sm" className="mr-6 ml-auto" onClick={onAskAssistant}>
+                <Sparkles /> Ask assistant
+              </Button>
+            )}
+          </DialogTitle>
           <DialogDescription>{app.id}</DialogDescription>
         </DialogHeader>
         {detail.error && <InlineError message={detail.error} />}
