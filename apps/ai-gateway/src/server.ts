@@ -21,6 +21,10 @@ export function createGatewayServer(manager: SessionManager, adapter: HarnessAda
         sendJson(response, 404, { code: "session_not_found", message: error.message });
         return;
       }
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { code: "payload_too_large", message: error.message });
+        return;
+      }
       console.error("[server] unhandled", error);
       if (!response.headersSent) {
         sendJson(response, 500, { code: "internal_error", message: "Unexpected gateway error." });
@@ -30,6 +34,8 @@ export function createGatewayServer(manager: SessionManager, adapter: HarnessAda
     });
   });
 }
+
+class PayloadTooLargeError extends Error {}
 
 async function route(
   request: IncomingMessage,
@@ -209,7 +215,7 @@ async function readJson(request: IncomingMessage): Promise<Record<string, unknow
   for await (const chunk of request) {
     size += (chunk as Buffer).length;
     if (size > MAX_BODY_BYTES) {
-      throw new Error("request body too large");
+      throw new PayloadTooLargeError(`Request body exceeds ${MAX_BODY_BYTES} bytes.`);
     }
     chunks.push(chunk as Buffer);
   }

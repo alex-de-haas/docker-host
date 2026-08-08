@@ -32,10 +32,19 @@ export function AssistantPanel({ gateway, coreOrigin, context, onClose, sendCsrf
   const client = useMemo(
     () =>
       new AssistantClient(gateway.baseUrl, async () => {
+        // sendCsrfJson already throws on non-2xx; this guards the shape so a drifted Core
+        // response can never seed the token cache with undefined fields.
         const response = await sendCsrfJson(
           `${coreOrigin}/api/apps/${encodeURIComponent(gateway.appId)}/delegated-token`,
         );
-        return (await response.json()) as { token: string; expiresAt: string };
+        const issued = (await response.json().catch(() => null)) as {
+          token?: unknown;
+          expiresAt?: unknown;
+        } | null;
+        if (typeof issued?.token !== "string" || typeof issued.expiresAt !== "string") {
+          throw new Error("Core returned an unexpected delegated-token response.");
+        }
+        return { token: issued.token, expiresAt: issued.expiresAt };
       }),
     [gateway.baseUrl, gateway.appId, coreOrigin, sendCsrfJson],
   );

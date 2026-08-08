@@ -48,6 +48,9 @@ export type HarnessHealth = {
 
 type TokenIssuer = () => Promise<{ token: string; expiresAt: string }>;
 
+// Statuses where reconnecting cannot help: bad/insufficient auth or a session that no longer exists.
+const TERMINAL_STREAM_STATUSES = new Set([401, 403, 404, 410]);
+
 export class AssistantClient {
   private token: { value: string; expiresAtMs: number } | null = null;
 
@@ -129,6 +132,18 @@ export class AssistantClient {
           `${this.baseUrl}/sessions/${encodeURIComponent(sessionId)}/events?after=${lastSeq}`,
           { headers: { authorization: await this.authHeader() }, signal },
         );
+        // Auth/gone responses are terminal — retrying cannot fix a revoked role or a swept
+        // session, and a silent retry loop would leave the panel stuck with no explanation.
+        // The synthetic seq is negative so it can never collide with a stored event.
+        if (TERMINAL_STREAM_STATUSES.has(response.status)) {
+          onEvent({
+            seq: -1,
+            ts: new Date().toISOString(),
+            type: "error",
+            message: `The event stream ended (${response.status}) — the session may be gone or access was revoked. Start a new session.`,
+          });
+          return;
+        }
         if (!response.ok || !response.body) {
           throw new Error(`stream failed (${response.status})`);
         }

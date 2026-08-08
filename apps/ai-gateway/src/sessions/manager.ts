@@ -118,7 +118,9 @@ export class SessionManager {
       session.run = null;
     }
     session.pendingApprovals.clear();
-    await this.append(id, { type: "status", status: "cancelled" });
+    // Persisted with the same type the live status fan-out uses, so a transcript replay and a
+    // live subscriber see one status vocabulary.
+    await this.append(id, { type: "session_status", status: "cancelled" });
     await this.setStatus(id, "cancelled");
     this.audit.report("ai_session_cancelled", { sessionId: id });
   }
