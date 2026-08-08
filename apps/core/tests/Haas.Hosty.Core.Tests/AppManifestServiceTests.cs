@@ -79,6 +79,37 @@ public sealed class AppManifestServiceTests
     }
 
     [Fact]
+    public async Task LoadAsync_AcceptsInterfaces()
+    {
+        var manifestPath = await WriteManifestAsync("com.example.gateway", role: """, "interfaces": { "ai-gateway": [{ "key": "default", "endpoint": "web", "path": "/api/ai" }], "some-future-interface": [{ "path": "/api/x" }] } """);
+
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+
+        var declaration = Assert.Single(selection.Manifest.Interfaces["ai-gateway"]);
+        Assert.Equal("default", declaration.Key);
+        Assert.Equal("web", declaration.Endpoint);
+        Assert.Equal("/api/ai", declaration.Path);
+        // Unknown interface names are inert and forward-compatible, like provides slots.
+        Assert.True(selection.Manifest.Interfaces.ContainsKey("some-future-interface"));
+    }
+
+    [Theory]
+    [InlineData("""{ "Ai-Gateway": [{ "path": "/api/ai" }] }""", "app_manifest_interface_name_invalid")]
+    [InlineData("""{ "ai gateway": [{ "path": "/api/ai" }] }""", "app_manifest_interface_name_invalid")]
+    [InlineData("""{ "ai-gateway": [] }""", "app_manifest_interface_empty")]
+    [InlineData("""{ "ai-gateway": [{ "key": "Bad Key", "path": "/api/ai" }] }""", "app_manifest_interface_key_invalid")]
+    [InlineData("""{ "ai-gateway": [{ "path": "/api/ai" }, { "path": "/api/other" }] }""", "app_manifest_interface_key_duplicate")]
+    [InlineData("""{ "ai-gateway": [{ "path": "api/ai" }] }""", "app_manifest_interface_path_invalid")]
+    public async Task LoadAsync_RejectsInvalidInterfaces(string interfacesJson, string expectedCode)
+    {
+        var manifestPath = await WriteManifestAsync("com.example.gateway", role: $$""", "interfaces": {{interfacesJson}} """);
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+
+        Assert.Contains(error.Errors, candidate => candidate.Code == expectedCode);
+    }
+
+    [Fact]
     public async Task LoadAsync_SystemUi_AcceptsExplicitResolvableDeclaration()
     {
         var manifestPath = await WriteSystemUiManifestAsync(

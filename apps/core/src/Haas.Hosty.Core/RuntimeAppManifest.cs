@@ -385,6 +385,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
         }
 
         ValidateProvides(manifest.Provides, errors);
+        ValidateInterfaces(manifest.Interfaces, errors);
 
         // System-app UI is validated strictly and fail-closed (docs/ideas/system-app-pages.md):
         // its pages are rendered as administrator Shell surfaces, so a system app must not rely on
@@ -1180,6 +1181,52 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
             else if (!seen.Add(slot))
             {
                 errors.Add(new("app_manifest_provides_duplicate", $"provides entry '{slot}' is declared more than once.", path));
+            }
+        }
+    }
+
+    // Validates the top-level `interfaces` map — platform interface declarations other components
+    // discover through the registry (draft extension under app.0.1; see ai-agent-bridge/plan.md,
+    // "Manifest Interfaces And Registry"). Mirrors `provides`: interface names are shape-checked
+    // kebab tokens and unknown names are deliberately allowed, so a manifest may declare an
+    // interface a newer Core understands. Declarations are shape-checked: keys must be contract
+    // keys unique within their interface ("default" when omitted), paths must be absolute.
+    private static void ValidateInterfaces(
+        IReadOnlyDictionary<string, IReadOnlyList<RuntimeAppInterfaceManifest>> interfaces,
+        List<AppManifestValidationError> errors)
+    {
+        const string path = "$.interfaces";
+        foreach (var (name, declarations) in interfaces)
+        {
+            if (string.IsNullOrWhiteSpace(name) || !ContractKeyPattern.IsMatch(name))
+            {
+                errors.Add(new("app_manifest_interface_name_invalid", $"interfaces name '{name}' must match ^[a-z][a-z0-9-]{{0,62}}$.", path));
+                continue;
+            }
+
+            if (declarations is null || declarations.Count == 0)
+            {
+                errors.Add(new("app_manifest_interface_empty", $"interfaces['{name}'] must declare at least one entry.", path));
+                continue;
+            }
+
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var declaration in declarations)
+            {
+                var key = string.IsNullOrWhiteSpace(declaration.Key) ? "default" : declaration.Key.Trim();
+                if (!ContractKeyPattern.IsMatch(key))
+                {
+                    errors.Add(new("app_manifest_interface_key_invalid", $"interfaces['{name}'] key '{declaration.Key}' must match ^[a-z][a-z0-9-]{{0,62}}$.", path));
+                }
+                else if (!seen.Add(key))
+                {
+                    errors.Add(new("app_manifest_interface_key_duplicate", $"interfaces['{name}'] declares key '{key}' more than once.", path));
+                }
+
+                if (!string.IsNullOrWhiteSpace(declaration.Path) && !declaration.Path.Trim().StartsWith("/", StringComparison.Ordinal))
+                {
+                    errors.Add(new("app_manifest_interface_path_invalid", $"interfaces['{name}'] path '{declaration.Path}' must be an absolute path starting with '/'.", path));
+                }
             }
         }
     }
@@ -2745,9 +2792,27 @@ internal sealed class RuntimeAppManifest
     // Core reacts only to slots it has a handler for (PlatformCapabilities); unknown slots are inert
     // and forward-compatible. Additive under app.0.1.
     public IReadOnlyList<string> Provides { get => field ?? []; init; } = [];
+    // Platform interfaces this app exposes for other components to discover through the registry,
+    // keyed by interface name (e.g. "ai-gateway" tells UI clients an assistant service is installed).
+    // Like `provides`, unknown interface names are inert and forward-compatible; declarations are
+    // shape-validated only. Draft extension, additive under schemaVersion app.0.1 — see
+    // docs/features/ai-agent-bridge/plan.md, "Manifest Interfaces And Registry".
+    public IReadOnlyDictionary<string, IReadOnlyList<RuntimeAppInterfaceManifest>> Interfaces { get => field ??= new Dictionary<string, IReadOnlyList<RuntimeAppInterfaceManifest>>(); init; } = new Dictionary<string, IReadOnlyList<RuntimeAppInterfaceManifest>>();
     public IReadOnlyDictionary<string, RuntimeAppExternalMountManifest> ExternalMounts { get => field ??= new Dictionary<string, RuntimeAppExternalMountManifest>(); init; } = new Dictionary<string, RuntimeAppExternalMountManifest>();
     public RuntimeAppRestartPolicyManifest? RestartPolicy { get; init; }
     public RuntimeAppTelemetryManifest? Telemetry { get; init; }
+}
+
+// One declared endpoint of a platform interface (top-level `interfaces`). `key` names the
+// declaration within its interface ("default" when omitted); `endpoint` optionally references a
+// declared endpoints[] key that serves the interface (the same reference `ui.entrypoint.endpoint`
+// uses), falling back to the app's usual endpoint resolution; `path` is the absolute HTTP path on
+// that origin ("/" when omitted).
+internal sealed record RuntimeAppInterfaceManifest
+{
+    public string? Key { get; init; }
+    public string? Endpoint { get; init; }
+    public string? Path { get; init; }
 }
 
 // Operator-configured external host-path mount slot. The manifest declares the slot

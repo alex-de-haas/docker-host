@@ -2906,6 +2906,7 @@ internal sealed class CoreLifecycleService(
             SourceState: BuildSourceState(selection, existing),
             Ui: AppUiContract.FromManifest(manifest.Ui),
             CatalogMetadata: AppCatalogMetadataContract.FromManifest(manifest.CatalogMetadata),
+            Interfaces: AppInterfaceContract.FromManifest(manifest.Interfaces),
             Autostart: existing?.Autostart ?? true,
             RuntimeProfiles: BuildRuntimeProfileSummaries(manifest),
             MountSlots: BuildMountSlots(manifest),

@@ -1,6 +1,6 @@
 # AI Gateway
 
-Status: Ready
+Status: In Progress
 Created: 2026-08-08
 Updated: 2026-08-08
 
@@ -51,7 +51,7 @@ Prerequisite note: the umbrella flags token scopes as a prerequisite for scoped 
 
 ## Deliverables
 
-- [ ] Manifest interface draft extension: `interfaces.ai-gateway` accepted by Core validation and exposed through the registry/discovery API.
+- [x] Manifest interface draft extension: `interfaces.ai-gateway` accepted by Core validation and exposed through the registry/discovery API.
 - [ ] Shell→system-app delegated-token exchange usable by the browser client against the gateway (confirm or build issue/validate/refresh).
 - [ ] Gateway app skeleton: manifest (system app, localCommand profile, `ai-gateway` interface), install/removal through the standard system-app distribution flow, health surface with "harness unavailable" reason.
 - [ ] Harness adapter contract plus the first adapter, pinned version, approval-pause verified end to end.

@@ -69,6 +69,11 @@ internal static class CoreJson
 // Reachable via AppRecord, but rooted explicitly (same reason as ArtifactLock): a nested map value on
 // persisted state carrying the Development-Mode enable snapshot bookkeeping.
 [JsonSerializable(typeof(DevelopmentModeBaseline))]
+// Platform-interface declarations: nested map values on the manifest, the persisted record, and the
+// API summary (same explicit-rooting reason as ArtifactLock).
+[JsonSerializable(typeof(RuntimeAppInterfaceManifest))]
+[JsonSerializable(typeof(AppInterfaceContract))]
+[JsonSerializable(typeof(AppInterfaceSummary))]
 [JsonSerializable(typeof(RetainedAppConfig))]
 // App secrets keychain: the persisted apps/<id>/secrets.json document plus the endpoint contracts.
 [JsonSerializable(typeof(AppSecretsDocument))]
