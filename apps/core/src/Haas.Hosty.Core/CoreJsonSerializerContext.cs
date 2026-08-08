@@ -77,6 +77,9 @@ internal static class CoreJson
 // Delegated tokens: the signed claims payload and the issue-endpoint response.
 [JsonSerializable(typeof(DelegatedTokenPayload))]
 [JsonSerializable(typeof(DelegatedTokenResponse))]
+// App-reported audit events (the AI gateway's lifecycle/approval reports).
+[JsonSerializable(typeof(AppAuditReportRequest))]
+[JsonSerializable(typeof(AppAuditReportResponse))]
 [JsonSerializable(typeof(RetainedAppConfig))]
 // App secrets keychain: the persisted apps/<id>/secrets.json document plus the endpoint contracts.
 [JsonSerializable(typeof(AppSecretsDocument))]

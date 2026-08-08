@@ -7,6 +7,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./server": "./src/server.ts",
+    "./delegated": "./src/delegated.ts",
     "./react": "./src/react.tsx",
     "./embedder": "./src/embedder.ts"
   },

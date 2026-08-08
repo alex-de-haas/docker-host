@@ -114,6 +114,12 @@ expectEqual("marketplace version", {
   marketplaceImageTag,
 });
 
+// ai-gateway: manifest ↔ package (localCommand-only app, no image tag to pin).
+expectEqual("ai-gateway version", {
+  manifest: json("apps/ai-gateway/manifest.json").version,
+  packageJson: json("apps/ai-gateway/package.json").version,
+});
+
 // channels: the rolling channel (releaseTag cli-dev tracks main HEAD) must advertise the platform version.
 const channels = json("channels/product-channels.json").channels ?? [];
 for (const channel of channels) {
