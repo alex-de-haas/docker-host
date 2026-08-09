@@ -1,6 +1,6 @@
 # AI Gateway — Harness Selection And Codex Adapter
 
-Status: Draft
+Status: In Progress
 Created: 2026-08-09
 Updated: 2026-08-09
 
@@ -33,11 +33,10 @@ choice never leaks above the adapter seam.
 
 ## Deliverables
 
-- [ ] Spike: drive Codex CLI through its protocol interface (`codex app-server` / proto JSON-RPC,
+- [x] Spike: drive Codex CLI through its protocol interface (`codex app-server` / proto JSON-RPC,
   not `codex exec`) and grade it on the same three criteria as the Claude spike — approval-pause
   fidelity (exec/patch approval requests must block until answered), streaming event quality, and
-  resumability. Record the outcome in this document; it decides whether the adapter ships or the
-  plan is revised.
+  resumability. **Outcome: go** — see Spike Outcome below.
 - [ ] Harness selection as an operator setting on the gateway manifest, wired through config; the
   probe and session start use the selected adapter only.
 - [ ] Codex adapter implementing `HarnessAdapter`, pinned Codex version, with a probe that detects
@@ -49,21 +48,59 @@ choice never leaks above the adapter seam.
   that the 2026-07-11 "codex exec cannot pause per call" premise was re-examined against the
   protocol interface, and regenerate the index.
 
+## Spike Outcome (2026-08-09) — go
+
+Run against `codex-cli 0.147.0` on macOS, driving `codex app-server` over stdio JSON-RPC. The
+2026-07-11 "cannot pause per tool call" limitation holds for `codex exec` only; the app-server
+protocol clears all three criteria.
+
+- **Approval-pause fidelity: yes, and it is a blocking request, not an event.** Approvals arrive as
+  *server→client JSON-RPC requests carrying an `id`* — `item/commandExecution/requestApproval` and
+  `item/fileChange/requestApproval` — and the action does not proceed until the client answers that
+  id. This is a better fit than a fire-and-forget event: the protocol itself models the pause the
+  gateway needs, exactly like the Agent SDK's `canUseTool`. Verified end to end: the probe asked for
+  a file to be created, denied all three approval requests, and the file was never created.
+- **Streaming: yes.** `item/agentMessage/delta` carries incremental assistant text (10–14 deltas per
+  turn in the probe), alongside `item/started` / `item/completed` for typed items (`commandExecution`,
+  `fileChange`, `reasoning`) and `turn/completed` for the terminal event.
+- **Resumability: yes, across processes.** `thread/start` returns a `threadId`; after killing the
+  app-server process, a fresh one accepted `thread/resume` with that id and the model recalled a
+  token from the pre-restart turn. This maps onto the record's existing `harnessSessionId`.
+
+Protocol notes for the adapter (all learned the hard way in the spike — the vocabulary is not
+uniform):
+
+- Handshake is `initialize` (request) then an `initialized` notification.
+- `thread/start` takes `sandbox` as a **plain string** (`"read-only"` | `"workspace-write"` |
+  `"danger-full-access"`), but `turn/start` takes `sandboxPolicy` as an **internally tagged object**
+  (`{ "type": "readOnly" }`). Sending either form to the other endpoint is a `-32600`.
+- `approvalPolicy` accepts `"untrusted"` | `"on-request"` | `"never"` (or a granular object).
+  `"untrusted"` still auto-runs Codex's trusted-command list (`echo` ran unprompted in the probe) —
+  which is why the gateway's own read-only allowance must be enforced by the adapter, not delegated
+  to this setting.
+- The approval response is `{ decision }` where a denial is `{ "denied": { "rejection": "<text>" } }`
+  and an allow is the bare string `"approved"` (`"approved_for_session"` also exists — the gateway
+  must never use it: it would grant blanket approval and break the every-write-asks rule).
+- After a denial Codex retries with a different strategy (patch → patch → shell command in the
+  probe) rather than stopping. The deny message is therefore load-bearing: it must state that the
+  operator refused, so the model stops instead of hunting for a way around the refusal.
+
 ## Open Questions
 
-- Question: Which Codex interface does the adapter drive?
-  Answer: The 2026-07-11 limitation ("cannot pause per tool call") was recorded against headless
-  `codex exec`. Codex's protocol interface (used by its IDE integrations) surfaces exec/patch
-  approval requests as protocol events, which is exactly the pause the gateway needs — but this
-  is unverified here.
-  Recommendation: The protocol interface; the spike confirms or refutes and its outcome is
-  binding.
+- Question: Should a denial end the turn instead of letting Codex retry another approach?
+  Answer: The spike saw three successive approval requests for one refused instruction, each a
+  different mechanism. Claude's harness stops on a denial; Codex treats it as one blocked path.
+  Recommendation: Keep the protocol behavior but make the deny text explicit ("the operator
+  refused this action; do not attempt it another way"), and let the operator use Cancel for a hard
+  stop. Re-evaluate if it still loops in practice.
 
 - Question: How is the Codex version pinned — npm dependency or operator-installed binary?
   Answer: Codex CLI is distributed via npm (native binary wrapper), so a pinned dependency in the
   gateway's package.json mirrors the Claude approach; an operator-installed binary would drift.
-  Recommendation: Pin as a package.json dependency, with `pathToCodex`-style override left to a
-  future need.
+  The probe ran against an operator-installed `codex-cli 0.147.0` on PATH, which also worked.
+  Recommendation: Pin as a package.json dependency and resolve the binary from it, falling back to
+  PATH so an operator install still works; the probe's protocol quirks are version-sensitive, so
+  the pin is what the adapter's tests are written against.
 
 - Question: App-level harness choice only, or per-session?
   Answer: Per-session choice needs UI, per-session credentials resolution, and mixed-harness
@@ -73,9 +110,12 @@ choice never leaks above the adapter seam.
 - Question: How do Codex's tool semantics map onto the read-only auto-allow list?
   Answer: Codex's action vocabulary (commands, patches) differs from Claude's named tools; a
   wrong mapping either nags on reads or silently allows writes.
-  Recommendation: Fail closed — anything the protocol reports as a command execution or file
-  change pauses; only explicitly read-only protocol actions auto-run. Decide the exact mapping
-  during the spike.
+  Decision (2026-08-09, from the spike): fail closed and keep the decision in the adapter. Every
+  `item/commandExecution/requestApproval` and `item/fileChange/requestApproval` becomes a Hosty
+  approval card; nothing is auto-allowed on Codex's behalf. Reads never raise an approval request
+  in the first place (the sandbox handles them), so no allow-list is needed — and Codex's own
+  `approvalPolicy: "untrusted"` trusted-command carve-out must not be relied on, since it silently
+  ran `echo` unprompted in the probe.
 
 ## Verification
 
