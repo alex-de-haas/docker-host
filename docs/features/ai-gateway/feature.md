@@ -56,6 +56,11 @@ this feature.
 - Transcripts are the persisted event log: `{data}/sessions/{id}/record.json` plus append-only
   `events.ndjson` with a monotonic seq; streaming deltas are live-only. A daily sweep deletes
   sessions older than `HOSTY_AI_GATEWAY_RETENTION_DAYS` (default 30).
+- Display: the manifest declares `catalogMetadata.icon` (`assets/icon.svg`) — a sparkle matching the
+  glyph the Shell assistant surface uses, drawn in the same style as the other first-party icons.
+  One declaration serves both surfaces: Core resolves it to its asset endpoint for Shell's app rows
+  and detail dialog, and the marketplace catalog vendors it at publish time, so the catalog entry
+  stays a pointer instead of carrying a copy.
 - Audit: the gateway reports `ai_session_created`, `ai_action_approved` (with the tool name), and
   `ai_session_cancelled` to Core's app-audit endpoint (`POST /api/internal/apps/{appId}/audit`,
   service-token-scoped; Core namespaces actions as `app.*` and caps detail size). Lifecycle and
@@ -167,3 +172,5 @@ gateway restart.
 - Shell: eslint + `next build` gate the surface; there are no unit tests for it, so changes are
   verified live — install the gateway, set a credential, run a chat turn, and confirm a proposed
   write pauses on an approval card and executes only after Allow.
+- Display assets have no automated coverage: a changed icon is checked by rendering it and looking
+  at it at both card and sidebar size, and by confirming the manifest path resolves.
