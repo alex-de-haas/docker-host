@@ -144,3 +144,24 @@ describe("harness selection", () => {
     expect(resolveHarnessKind("gpt-9")).toBe("claude");
   });
 });
+
+describe("codex binary resolution", () => {
+  afterEach(() => {
+    delete process.env.HOSTY_AI_GATEWAY_CODEX_COMMAND;
+  });
+
+  it("prefers the operator override over the pinned dependency", async () => {
+    const { resolveCodexCommand } = await import("./harness/codex-binary.js");
+    process.env.HOSTY_AI_GATEWAY_CODEX_COMMAND = "/custom/codex";
+    expect(resolveCodexCommand()).toBe("/custom/codex");
+  });
+
+  it("resolves the pinned @openai/codex entry when no override is set", async () => {
+    const { resolveCodexCommand, isNodeEntry } = await import("./harness/codex-binary.js");
+    const resolved = resolveCodexCommand();
+    // The pin is what the adapter's protocol handling and tests were written against; falling back
+    // to a PATH install is allowed, but on a workspace with the dependency installed it must win.
+    expect(resolved).toContain("@openai/codex");
+    expect(isNodeEntry(resolved)).toBe(true);
+  });
+});

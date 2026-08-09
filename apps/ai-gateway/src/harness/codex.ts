@@ -10,12 +10,12 @@ import type {
 import {
   APPROVAL_METHODS,
   APPROVAL_POLICY,
-  APPROVE,
+  approvalDecision,
   CODEX_METHODS,
-  denial,
   describeApproval,
   type JsonRpcMessage,
 } from "./codex-protocol.js";
+import { isNodeEntry, resolveCodexCommand } from "./codex-binary.js";
 
 // Second harness adapter (spike outcome 2026-08-09, docs/features/ai-gateway/plan.md): OpenAI Codex
 // CLI driven over `codex app-server` stdio JSON-RPC. Approvals arrive as server→client *requests*
@@ -24,10 +24,13 @@ import {
 // Fail-closed by decision: every approval request the server raises becomes a Hosty approval card;
 // nothing is auto-allowed on Codex's behalf, and "approved_for_session" is never sent.
 
-// Read per call, not once at import: the binary is an operator-configurable override, and tests
-// point it at a scripted stand-in after this module is already loaded.
-function spawnCommand(): string {
-  return process.env.HOSTY_AI_GATEWAY_CODEX_COMMAND?.trim() || "codex";
+// The pinned dependency's JS entry must run under node; a bare binary (PATH install, or the test
+// stand-in with its own shebang) is spawned directly.
+function spawnTarget(args: string[]): { command: string; args: string[] } {
+  const resolved = resolveCodexCommand();
+  return isNodeEntry(resolved)
+    ? { command: process.execPath, args: [resolved, ...args] }
+    : { command: resolved, args };
 }
 
 export class CodexHarnessAdapter implements HarnessAdapter {
@@ -62,6 +65,8 @@ interface PendingApproval {
   requestId: number | string;
   /** Protocol item this approval guards, so a refused item is never reported as executed. */
   itemId: string | null;
+  /** The method that asked, which decides the decision vocabulary of the reply. */
+  method: string;
 }
 
 class CodexRun implements HarnessRun {
@@ -80,7 +85,8 @@ class CodexRun implements HarnessRun {
   private stopped = false;
 
   constructor(private readonly options: HarnessStartOptions) {
-    this.child = spawn(spawnCommand(), ["app-server"], { stdio: ["pipe", "pipe", "pipe"], cwd: options.cwd });
+    const target = spawnTarget(["app-server"]);
+    this.child = spawn(target.command, target.args, { stdio: ["pipe", "pipe", "pipe"], cwd: options.cwd });
     this.child.stdout.on("data", (chunk: Buffer) => this.onStdout(chunk));
     this.child.stderr.on("data", (chunk: Buffer) => {
       const text = chunk.toString().trim();
@@ -118,15 +124,12 @@ class CodexRun implements HarnessRun {
       this.deniedItems.add(pending.itemId);
     }
     this.respond(pending.requestId, {
-      decision:
-        decision === "allow"
-          ? APPROVE
-          : // The deny text is load-bearing: the spike showed Codex retrying the same instruction
-            // through a different mechanism after a refusal, so it must read as a final answer.
-            denial(
-              message ??
-                "The Hosty operator refused this action. Do not attempt it another way; explain what you would have done instead.",
-            ),
+      decision: approvalDecision(
+        pending.method,
+        decision,
+        message ??
+          "The Hosty operator refused this action. Do not attempt it another way; explain what you would have done instead.",
+      ),
     });
     return true;
   }
@@ -142,7 +145,9 @@ class CodexRun implements HarnessRun {
     // Release anything the harness is blocked on before tearing the process down, or the child
     // can sit forever waiting for an approval reply that will never come.
     for (const [, pending] of this.approvals) {
-      this.respond(pending.requestId, { decision: denial("The session was stopped.") });
+      this.respond(pending.requestId, {
+        decision: approvalDecision(pending.method, "deny", "The session was stopped."),
+      });
     }
     this.approvals.clear();
     this.child.kill("SIGTERM");
@@ -167,9 +172,13 @@ class CodexRun implements HarnessRun {
     if (!this.threadId) {
       const started = (await this.request(CODEX_METHODS.threadStart, {
         cwd: this.options.cwd,
-        // Operator profile: the admin already owns this host, so the harness is not sandboxed —
-        // supervision comes from the approval gate, not from a sandbox.
-        sandbox: "danger-full-access",
+        // MUST stay a restricted sandbox. Codex only raises an approval request when an action
+        // needs to escalate *out of* its sandbox — with danger-full-access there is nothing to
+        // escalate past, so writes execute silently and the approval gate is bypassed entirely
+        // (observed live on 2026-08-09: three approvals were denied and the file was still
+        // created). Read-only means every write escalates, which is exactly the gate we want; an
+        // approved action then runs with escalated privileges, outside the sandbox.
+        sandbox: "read-only",
         approvalPolicy: APPROVAL_POLICY,
       })) as { threadId?: string; thread?: { id?: string } };
       this.threadId = started.threadId ?? started.thread?.id ?? null;
@@ -200,7 +209,9 @@ class CodexRun implements HarnessRun {
         threadId: this.threadId,
         input: [{ type: "text", text }],
         approvalPolicy: APPROVAL_POLICY,
-        sandboxPolicy: { type: "dangerFullAccess" },
+        // Same reason as thread/start's sandbox: a permissive policy here silently bypasses the
+        // approval gate. Note the asymmetric vocabulary — string there, tagged object here.
+        sandboxPolicy: { type: "readOnly" },
       });
     } catch (error) {
       this.turnActive = false;
@@ -254,6 +265,7 @@ class CodexRun implements HarnessRun {
         this.approvals.set(approvalId, {
           requestId: message.id,
           itemId: typeof params.itemId === "string" ? params.itemId : null,
+          method: message.method,
         });
         const { toolName, input } = describeApproval(message.method, params);
         this.emit({ type: "approval_request", approvalId, toolName, input });
@@ -362,7 +374,8 @@ function readItemText(item: Record<string, unknown>): string {
 
 function runCodex(args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(spawnCommand(), args, { stdio: ["ignore", "pipe", "pipe"] });
+    const target = spawnTarget(args);
+    const child = spawn(target.command, target.args, { stdio: ["ignore", "pipe", "pipe"] });
     let out = "";
     child.stdout.on("data", (chunk: Buffer) => (out += chunk.toString()));
     child.stderr.on("data", (chunk: Buffer) => (out += chunk.toString()));

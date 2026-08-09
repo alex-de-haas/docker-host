@@ -27,12 +27,22 @@ export const APPROVAL_METHODS = new Set([
   "applyPatchApproval",
 ]);
 
-// The allow decision. Deliberately NOT "approved_for_session": that grants blanket approval for the
-// rest of the thread and would silently break the every-write-asks rule this feature is built on.
-export const APPROVE = "approved" as const;
+// Two decision vocabularies, and sending the wrong one is NOT a protocol error — Codex simply fails
+// to act on it, which reads exactly like a denial (observed 2026-08-09: allow silently did nothing
+// while a v1-shaped reply went to a v2 method). They must be chosen per method:
+//   * v2 item/* methods: "accept" | "decline" | "cancel"
+//   * legacy execCommandApproval / applyPatchApproval: "approved" | { denied: { rejection } }
+// The session-scoped variants ("acceptForSession", "approved_for_session") are never sent: they
+// grant blanket approval for the rest of the thread and would break the every-write-asks rule.
+const LEGACY_APPROVAL_METHODS = new Set(["execCommandApproval", "applyPatchApproval"]);
 
-export function denial(reason: string): { denied: { rejection: string } } {
-  return { denied: { rejection: reason } };
+export function approvalDecision(method: string, decision: "allow" | "deny", reason: string): unknown {
+  if (LEGACY_APPROVAL_METHODS.has(method)) {
+    return decision === "allow" ? "approved" : { denied: { rejection: reason } };
+  }
+  // "decline" (not "cancel") so the agent finishes its turn and explains, matching how a denied
+  // tool call behaves on the Claude adapter; "cancel" would kill the turn outright.
+  return decision === "allow" ? "accept" : "decline";
 }
 
 export type JsonRpcMessage = {

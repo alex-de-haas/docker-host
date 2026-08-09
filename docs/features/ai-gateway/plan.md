@@ -48,6 +48,8 @@ choice never leaks above the adapter seam.
 - [x] Tests: adapter behaviors against a scripted fake of the Codex protocol (handshake, resume,
   streaming, approval allow/deny, denied-item suppression, process death, missing binary) plus the
   selection mapping; `tsc` clean.
+- [x] Pin the Codex CLI: `@openai/codex` is a gateway dependency and the adapter resolves the
+  binary from it (operator override first, then the pin, then PATH).
 - [ ] Docs: fold the shipped behavior into `feature.md`, delete this plan, note in the umbrella
   that the 2026-07-11 "codex exec cannot pause per call" premise was re-examined against the
   protocol interface, and regenerate the index.
@@ -82,9 +84,21 @@ uniform):
   `"untrusted"` still auto-runs Codex's trusted-command list (`echo` ran unprompted in the probe) —
   which is why the gateway's own read-only allowance must be enforced by the adapter, not delegated
   to this setting.
-- The approval response is `{ decision }` where a denial is `{ "denied": { "rejection": "<text>" } }`
-  and an allow is the bare string `"approved"` (`"approved_for_session"` also exists — the gateway
-  must never use it: it would grant blanket approval and break the every-write-asks rule).
+- **Two decision vocabularies, chosen per method, and sending the wrong one is not an error.** The
+  v2 `item/*` approvals take `"accept"` | `"decline"` | `"cancel"`; the legacy
+  `execCommandApproval` / `applyPatchApproval` take `"approved"` | `{ denied: { rejection } }`.
+  A v1-shaped reply to a v2 method is accepted at the wire level and then silently does nothing,
+  which is indistinguishable from a denial — found only by checking that an *allow* actually
+  performed the write (it did not). `decline` is used rather than `cancel` so the agent finishes
+  its turn and explains, matching the Claude adapter. The session-scoped variants
+  (`acceptForSession`, `approved_for_session`) are never sent: blanket approval would break the
+  every-write-asks rule.
+- **The sandbox is what creates the approval, so it must stay restricted.** Codex raises an
+  approval only when an action needs to escalate *out of* its sandbox. With
+  `danger-full-access` there is nothing to escalate past, so writes execute silently: a live run
+  denied three approvals and the file was still created. `read-only` means every write escalates —
+  which is exactly the gate — and an approved action then runs outside the sandbox. Verified both
+  directions live: deny leaves nothing behind, allow performs the write.
 - After a denial Codex retries with a different strategy (patch → patch → shell command in the
   probe) rather than stopping. The deny message is therefore load-bearing: it must state that the
   operator refused, so the model stops instead of hunting for a way around the refusal.

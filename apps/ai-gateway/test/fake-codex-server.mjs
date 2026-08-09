@@ -38,8 +38,16 @@ function handle(msg) {
   // Reply to an approval we raised.
   if (msg.id !== undefined && msg.result !== undefined && msg.id === pendingApprovalId) {
     const decision = msg.result?.decision;
-    if (decision === "approved_for_session") {
-      fail("adapter sent approved_for_session, which grants blanket approval");
+    // v2 item/* methods use accept/decline/cancel; the v1 vocabulary ("approved" / {denied}) on a
+    // v2 method is silently ineffective on live Codex, so treat it as a violation here.
+    if (decision === "acceptForSession" || decision === "approved_for_session") {
+      fail("adapter sent a session-scoped approval, which grants blanket approval");
+    }
+    if (decision === "approved" || (decision && typeof decision === "object" && "denied" in decision)) {
+      fail(`adapter replied with the v1 decision vocabulary (${JSON.stringify(decision)}) to a v2 approval`);
+    }
+    if (decision !== "accept" && decision !== "decline" && decision !== "cancel") {
+      fail(`unrecognized decision ${JSON.stringify(decision)}`);
     }
     pendingApprovalId = null;
     // Live Codex emits item/completed even for a REFUSED item, so the fake does too — the adapter
@@ -49,7 +57,7 @@ function handle(msg) {
       method: "item/completed",
       params: { item: { type: "fileChange", id: "exec-1", changes: [{ path: "/tmp/x", kind: { type: "add" } }] } },
     });
-    const allowed = decision === "approved";
+    const allowed = decision === "accept";
     send({
       jsonrpc: "2.0",
       method: "item/completed",
