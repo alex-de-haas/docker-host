@@ -33,7 +33,11 @@ internal static class CloudflareTunnelConfigPatcher
         var catchAll = CatchAllIndex(ingress);
         if (catchAll < 0)
         {
-            ingress.Add(rule);
+            // Cast to JsonNode to bind JsonArray's non-generic Add. The generic Add<T> can route a value
+            // through JsonValue.Create and is therefore annotated RequiresUnreferencedCode /
+            // RequiresDynamicCode, which Core's Native AOT publish reports as IL2026/IL3050. The rule is
+            // already a JsonNode, so the insert itself is unchanged.
+            ingress.Add((JsonNode)rule);
         }
         else
         {

@@ -1,7 +1,7 @@
 # Feature: Cloudflare Ingress
 
 Created: 2026-06-17
-Updated: 2026-07-30
+Updated: 2026-08-09
 
 Runtime app services listen only on loopback. Ingress is the layer that accepts public traffic,
 terminates HTTPS, and routes by hostname to the right loopback port. Core never runs a reverse proxy
@@ -324,8 +324,9 @@ The `hosty` CLI has no ingress or Cloudflare commands.
   credential, and is cleared by reconnecting.
 - Connector locality matches on IPv6, reports `unknown` across families, and `not_local` on a same-family
   mismatch.
-- The patcher inserts before the catch-all preserving siblings, updates only `service` while keeping
-  `originRequest`, removes only the named rule, never mutates its input, and never touches the catch-all.
+- The patcher inserts before the catch-all preserving siblings, appends when a configuration has no
+  catch-all at all, updates only `service` while keeping `originRequest`, removes only the named rule, never
+  mutates its input, and never touches the catch-all.
 - Publish writes route before DNS and preserves `warp-routing`; a DNS failure rolls back the route; a
   hostname owned by another endpoint and a foreign pre-existing record are both refused; adoption takes over
   the existing record without creating one, survives a re-publish, and leaves the record on unpublish;
