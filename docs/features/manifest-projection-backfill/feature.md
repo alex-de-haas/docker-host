@@ -42,9 +42,8 @@ before the stamp existed, which therefore backfill once. Additive/nullable — n
 and before autostart reconciliation (start ordering reads `Provides`). For every runtime record
 whose `NormalizedBy` differs from the running build, it re-reads the app's reviewed internal
 manifest copy (`apps/<id>/manifest.json`, or the recorded manifest path) with a raw read — the same
-shape as the registry's UI hydration; the copy was validated when it was written — and re-runs the
-projections under the per-app record lock. The heal persists the stamp, so it runs once per record
-per Core build.
+shape as the registry's UI hydration — and re-runs the projections under the per-app record lock.
+The heal persists the stamp, so it runs once per record per Core build.
 
 Properties:
 
@@ -53,9 +52,17 @@ Properties:
   autostart, and lifecycle state are never rebuilt by the backfill.
 - **Steady-state boots are free.** A record stamped by the running build is skipped without a
   manifest read or a `state.json` write.
-- **Failure is retried, not stamped.** A missing or unreadable manifest copy (or an id mismatch)
-  skips the record un-stamped, so a later boot retries; the whole step is best-effort and never
-  aborts boot.
+- **One bad record cannot abort the step.** The stored copy is the raw source JSON, and sections a
+  pre-extension Core did not know were never shape-validated when the copy was written — so the raw
+  read can meet content today's validator would reject. The interface normalization drops null
+  declarations instead of dereferencing them, and each record's read + projection runs under
+  per-record isolation: any failure (unreadable copy, id mismatch, a projection surprise) skips that
+  record un-stamped — a later boot retries — and the boot sequence behind the step (port backfill,
+  autostart) always proceeds.
+- **The stamp is rechecked inside the record lock.** A reviewed update or live adoption that commits
+  between the boot snapshot and the backfill's write has already re-projected from a fresher
+  manifest and stamped the running build; the update lambda sees that and leaves the record alone
+  rather than overwriting it with stale projections.
 - **Live-source apps may briefly show the reviewed contract.** A stale live app is backfilled from
   its last-good internal copy; the next start re-adopts the live folder manifest as always (adoption
   rewrites the internal copy, so the two never drift apart at rest).
@@ -66,7 +73,9 @@ Properties:
   heals a record stripped of `Interfaces` and its stamp (the older-Core shape) while preserving
   operator setting values and the version; a record stamped by the running build is skipped without
   a rewrite (`UpdatedAt` unchanged); a missing manifest copy skips without stamping so a later boot
-  retries; a live-source adoption carries an `interfaces` block added to the folder manifest.
+  retries; a null `interfaces` declaration in a legacy copy is dropped, not dereferenced; a copy the
+  projection throws on skips its own record un-stamped while the records behind it still heal; a
+  live-source adoption carries an `interfaces` block added to the folder manifest.
 
 ## Related
 

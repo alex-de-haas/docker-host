@@ -638,17 +638,22 @@ internal sealed record AppInterfaceContract(string Key, string? EndpointKey, str
         var result = new Dictionary<string, IReadOnlyList<AppInterfaceContract>>(StringComparer.Ordinal);
         foreach (var (name, declarations) in interfaces)
         {
-            if (declarations is null || declarations.Count == 0)
-            {
-                continue;
-            }
-
-            result[name] = declarations
+            // Null entries are dropped, not dereferenced: this normalization also runs on raw manifest
+            // reads (the boot backfill), where the stored copy may carry an `interfaces` section that
+            // was written under a Core too old to shape-validate it — e.g. `"ai-gateway": [null]`.
+            var contracts = (declarations ?? [])
+                .Where(declaration => declaration is not null)
                 .Select(declaration => new AppInterfaceContract(
                     Key: string.IsNullOrWhiteSpace(declaration.Key) ? "default" : declaration.Key.Trim(),
                     EndpointKey: string.IsNullOrWhiteSpace(declaration.Endpoint) ? null : declaration.Endpoint.Trim(),
                     Path: NormalizeInterfacePath(declaration.Path)))
                 .ToArray();
+            if (contracts.Length == 0)
+            {
+                continue;
+            }
+
+            result[name] = contracts;
         }
 
         return result.Count == 0 ? null : result;

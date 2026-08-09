@@ -4718,6 +4718,71 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task BackfillManifestProjections_NullInterfaceDeclarationInLegacyCopy_HealsWithoutThrowing()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifestPath = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath));
+        var installed = await fixture.Apps.GetAppAsync("com.example.notes");
+        await fixture.Apps.UpsertAppAsync(installed! with { NormalizedBy = null });
+
+        // The stored copy is the raw source JSON, and an older Core never shape-validated the
+        // `interfaces` section it did not know — so a null declaration can legitimately sit there.
+        // The projection must drop it, not dereference it.
+        var withNullDeclaration = await fixture.WriteManifestAsync(
+            "1.0.0",
+            interfacesJson: """ "interfaces": { "ai-gateway": [null] }, """);
+        File.Copy(withNullDeclaration, Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "manifest.json"), overwrite: true);
+
+        var healed = await fixture.Service.BackfillManifestProjectionsAsync();
+
+        Assert.Equal(1, healed);
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        // All declarations were null, so the interface key collapses away entirely.
+        Assert.Null(app!.Interfaces);
+        Assert.Equal(CoreStatusResponse.PlatformVersionString, app.NormalizedBy);
+    }
+
+    [Fact]
+    public async Task BackfillManifestProjections_ProjectionFailure_SkipsRecordUnstampedAndHealsTheRest()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        await fixture.Service.InstallAsync(new AppInstallRequest(
+            await fixture.WriteManifestAsync("1.0.0", id: "com.example.other", name: "Other")));
+        foreach (var id in new[] { "com.example.notes", "com.example.other" })
+        {
+            var record = await fixture.Apps.GetAppAsync(id);
+            await fixture.Apps.UpsertAppAsync(record! with { NormalizedBy = null });
+        }
+
+        // A legacy stored copy the projection chokes on (a null dependency entry dereferences in
+        // ToDependencyContract). Per-record isolation must skip it un-stamped — so a later boot
+        // retries — and still heal the record behind it instead of aborting the boot step.
+        await File.WriteAllTextAsync(
+            Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "manifest.json"),
+            """
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.notes",
+              "name": "Notes",
+              "version": "1.0.0",
+              "runtimeProfiles": [{ "key": "docker", "type": "docker", "default": true }],
+              "services": [],
+              "dependencies": [null]
+            }
+            """);
+
+        var healed = await fixture.Service.BackfillManifestProjectionsAsync();
+
+        Assert.Equal(1, healed);
+        var broken = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Null(broken!.NormalizedBy);
+        var other = await fixture.Apps.GetAppAsync("com.example.other");
+        Assert.Equal(CoreStatusResponse.PlatformVersionString, other!.NormalizedBy);
+    }
+
+    [Fact]
     public async Task BackfillManifestProjections_MissingManifestCopy_SkipsWithoutStamping()
     {
         var fixture = await LifecycleFixture.CreateAsync();

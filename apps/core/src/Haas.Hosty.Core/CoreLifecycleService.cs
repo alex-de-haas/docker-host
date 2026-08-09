@@ -2744,28 +2744,47 @@ internal sealed class CoreLifecycleService(
                 continue;
             }
 
-            RuntimeAppManifest? manifest;
             try
             {
-                manifest = await JsonStorage.ReadAsync<RuntimeAppManifest>(manifestPath, cancellationToken);
-            }
-            catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
-            {
-                logger.LogWarning(ex, "Skipped manifest-projection backfill for app {AppId}: the stored manifest copy could not be read.", app.Id);
-                continue;
-            }
+                var manifest = await JsonStorage.ReadAsync<RuntimeAppManifest>(manifestPath, cancellationToken);
+                // A copy that no longer describes this app is an on-disk inconsistency, not something to
+                // project onto the record — same guard as the live-source reconcile's id check.
+                if (manifest is null || !string.Equals(manifest.Id, app.Id, StringComparison.Ordinal))
+                {
+                    continue;
+                }
 
-            // A copy that no longer describes this app is an on-disk inconsistency, not something to
-            // project onto the record — same guard as the live-source reconcile's id check.
-            if (manifest is null || !string.Equals(manifest.Id, app.Id, StringComparison.Ordinal))
-            {
-                continue;
-            }
+                // Re-check the stamp inside the record lock: a reviewed update or live adoption that
+                // committed between the list snapshot and this write already re-projected from a
+                // fresher manifest than the copy read above (every projection writer stamps the running
+                // build), and must not be overwritten with stale projections that would then pass every
+                // later boot's stamp check.
+                var applied = false;
+                await apps.UpdateAppAsync(app.Id, current =>
+                {
+                    if (string.Equals(current.NormalizedBy, CoreStatusResponse.PlatformVersionString, StringComparison.Ordinal))
+                    {
+                        applied = false;
+                        return current;
+                    }
 
-            // Re-apply inside the update lambda so a concurrent write is not clobbered; the projection
-            // is pure and may re-run on a write conflict.
-            await apps.UpdateAppAsync(app.Id, current => ApplyManifestProjections(current, manifest), cancellationToken);
-            healed++;
+                    applied = true;
+                    return ApplyManifestProjections(current, manifest);
+                }, cancellationToken);
+                if (applied)
+                {
+                    healed++;
+                }
+            }
+            // Per-record isolation, deliberately broad: this is the raw-read path, and a stored copy's
+            // sections written under a Core too old to shape-validate them can surprise the projection
+            // (not just the read) in ways no exception list anticipates. One malformed legacy copy must
+            // skip its own record — left un-stamped so a later boot retries — never abort the boot
+            // sequence behind it (port backfill, autostart).
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning(ex, "Skipped manifest-projection backfill for app {AppId}.", app.Id);
+            }
         }
 
         return healed;
