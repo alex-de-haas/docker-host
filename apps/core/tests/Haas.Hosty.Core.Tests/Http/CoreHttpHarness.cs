@@ -15,8 +15,11 @@ namespace Haas.Hosty.Core.Tests.Http;
 //
 // Two production concerns are rewired for the test host, neither of which affects the request pipeline
 // under test:
-//   - the data root is pointed at a fresh temp dir (the env-derived config singleton is replaced), so
-//     tests never touch a real installation and run in parallel without an env race;
+//   - the runtime config is handed to ConfigureServices instead of being read from the process
+//     environment, rooted at a fresh temp dir, so tests never touch a real installation and never race
+//     the env: the whole suite shares one process, and the config-parsing tests set HOSTY_CORE_* on it
+//     (HOSTY_CORE_PORT=65536, among others) while these classes boot in parallel — a harness that read
+//     env at startup failed on the invalid value that another test was mid-way through setting;
 //   - background IHostedService registrations (docker stats, the supervisor, schedulers, control-file
 //     writer, cloudflared) are removed — they do host/process I/O irrelevant to serving a request.
 public sealed class CoreHttpHarness : IAsyncDisposable
@@ -39,13 +42,10 @@ public sealed class CoreHttpHarness : IAsyncDisposable
         var dataRoot = Path.Combine(Path.GetTempPath(), $"hosty-core-http-tests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(dataRoot);
 
+        // Rooted at the temp dir: everything downstream (CoreDataPaths, stores) resolves
+        // HostyCoreRuntimeConfig from DI, so this reroutes all state.
         var builder = WebApplication.CreateSlimBuilder();
-        HostyCoreApplication.ConfigureServices(builder);
-
-        // Replace the env-derived config with one rooted at the temp dir. Everything downstream
-        // (CoreDataPaths, stores) resolves HostyCoreRuntimeConfig from DI, so this reroutes all state.
-        builder.Services.RemoveAll<HostyCoreRuntimeConfig>();
-        builder.Services.AddSingleton(new HostyCoreRuntimeConfig(
+        HostyCoreApplication.ConfigureServices(builder, new HostyCoreRuntimeConfig(
             DataRoot: dataRoot,
             RunDirectory: Path.Combine(dataRoot, "core", "run"),
             ControlDiscoveryPath: Path.Combine(dataRoot, "core", "run", "control.json"),

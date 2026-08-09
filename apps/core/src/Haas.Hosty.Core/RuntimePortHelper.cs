@@ -141,9 +141,12 @@ internal static class RuntimePortHelper
     // address of both families: a loopback probe alone cannot see a holder bound to `0.0.0.0`/`::`, which
     // is what a localCommand app that listens on "all interfaces" produces. On BSD/macOS the kernel lets a
     // specific address bind alongside a wildcard one whenever the new socket carries SO_REUSEADDR — and
-    // .NET turns SO_REUSEADDR on *inside* Socket.Bind on Unix regardless of ExclusiveAddressUse, so no
-    // loopback-only probe can report that conflict. An exact-address match is refused whatever the reuse
-    // flags are, so probing the wildcard itself finds the wildcard holder. TCP-specific by design (the
+    // .NET turns SO_REUSEADDR on *inside* Socket.Bind on Unix, so no loopback-only probe can report that
+    // conflict. On Linux that happens regardless of ExclusiveAddressUse (the property reads back as
+    // requested, but the kernel socket gets the flag anyway); on macOS the flag does reach the kernel.
+    // Either way these probes want no part of it: they look for a *listening* holder, and a listening
+    // holder refuses an exact-address match whatever the reuse flags say, so probing the wildcard itself
+    // finds the wildcard holder. TCP-specific by design (the
     // reservation model is currently TCP-only); a UDP probe would need its own helper. Used by the
     // localCommand adapter's explicit preflight and by the lifecycle start-time reservation preflight.
     // Point-in-time, not a lease.

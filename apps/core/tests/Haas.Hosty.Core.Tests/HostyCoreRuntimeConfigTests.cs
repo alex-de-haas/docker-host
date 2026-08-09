@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 
@@ -296,6 +297,22 @@ public sealed class HostyCoreRuntimeConfigTests
         var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Production));
 
         Assert.Null(config.CollectorBootstrapRuntime);
+    }
+
+    // The flake this class used to cause, made deterministic: every env mutation in the suite happens
+    // here, but the HTTP harness classes run in parallel with it, and while ConfigureServices read the
+    // process environment a harness booting during FromEnvironment_RejectsInvalidPort inherited that
+    // test's HOSTY_CORE_PORT=65536 and failed on a config it never asked for. Booting a harness with the
+    // env deliberately poisoned proves the startup path takes the config it is handed instead. It lives
+    // in this class so the mutation stays serialized with the suite's other env mutations.
+    [Fact]
+    public async Task ConfigureServices_TakesTheGivenConfig_NotThePoisonedEnvironment()
+    {
+        using var corePortEnv = TemporaryEnvironment.With("HOSTY_CORE_PORT", "65536");
+
+        await using var harness = await Http.CoreHttpHarness.StartAsync();
+
+        Assert.Equal(7070, harness.Services.GetRequiredService<HostyCoreRuntimeConfig>().CorePort);
     }
 
     private sealed class TestHostEnvironment(string environmentName) : IHostEnvironment
