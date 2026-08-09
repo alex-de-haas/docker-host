@@ -4,6 +4,7 @@
   "private": true,
   "license": "AGPL-3.0-only",
   "workspaces": [
+    "apps/ai-gateway",
     "apps/demo-app",
     "apps/marketplace",
     "apps/shell",

@@ -21,6 +21,13 @@
       "description": "App discovery storefront.",
       "manifestRef": "apps/marketplace/manifest.json",
       "defaultEnabled": true
+    },
+    {
+      "id": "hosty.ai-gateway",
+      "title": "AI Gateway",
+      "description": "Admin-only Hosty assistant: operator chat sessions on a host-resident agent harness.",
+      "manifestRef": "apps/ai-gateway/manifest.json",
+      "defaultEnabled": false
     }
   ]
 }

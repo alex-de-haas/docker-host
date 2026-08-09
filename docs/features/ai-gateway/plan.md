@@ -1,6 +1,6 @@
 # AI Gateway
 
-Status: Ready
+Status: In Progress
 Created: 2026-08-08
 Updated: 2026-08-08
 
@@ -33,6 +33,7 @@ Prerequisite note: the umbrella flags token scopes as a prerequisite for scoped 
 - The manifest declares the `ai-gateway` interface (draft extension of `app.0.1`, per the umbrella decision). When the interface is not installed, no assistant surface exists anywhere in the platform.
 - Harness configuration (which CLI, binary path, pinned version) is gateway app config. Harness CLIs authenticate through their own vendor mechanisms under the host user; the gateway never stores or proxies those credentials.
 - The gateway detects a missing or logged-out harness and reports an "assistant unavailable" state with the reason through its health/status surface; Shell renders that state instead of a chat box.
+- The gateway answers CORS preflight for the Shell origin on its API routes. No runtime app emits CORS headers today, and without them a browser call cannot leave the page — this lands with the phase-2 app skeleton; the phase-1 token plumbing is verified with direct HTTP calls, which need no CORS.
 
 ### Sessions and the harness adapter
 
@@ -51,14 +52,14 @@ Prerequisite note: the umbrella flags token scopes as a prerequisite for scoped 
 
 ## Deliverables
 
-- [ ] Manifest interface draft extension: `interfaces.ai-gateway` accepted by Core validation and exposed through the registry/discovery API.
-- [ ] Shell→system-app delegated-token exchange usable by the browser client against the gateway (confirm or build issue/validate/refresh).
-- [ ] Gateway app skeleton: manifest (system app, localCommand profile, `ai-gateway` interface), install/removal through the standard system-app distribution flow, health surface with "harness unavailable" reason.
-- [ ] Harness adapter contract plus the first adapter, pinned version, approval-pause verified end to end.
-- [ ] Session API: create/stream/message/approve/deny/cancel, admin-only, SSE streaming, session records and transcripts in app data with retention config.
-- [ ] Core audit records for session lifecycle and approved actions.
-- [ ] Shell chat panel: discovery-gated, admin-only, streaming rendering, approval UX.
-- [ ] Shell contextual entry point on the app page passing app id and route as session context.
+- [x] Manifest interface draft extension: `interfaces.ai-gateway` accepted by Core validation and exposed through the registry/discovery API.
+- [x] Shell→system-app delegated-token exchange usable by the browser client against the gateway (confirm or build issue/validate/refresh). Built, not confirmed — nothing existed: Core mints ECDSA P-256 signed tokens (`POST /api/apps/{appId}/delegated-token`, 5-minute TTL, full access policy re-run on every issue; refresh = call again), injects the verification key into every app as `HOSTY_DELEGATED_TOKEN_PUBLIC_KEY`, and the TS SDK validates locally via `validateDelegatedToken`.
+- [x] Gateway app skeleton: manifest (system app, localCommand profile, `ai-gateway` interface), install/removal through the standard system-app distribution flow, health surface with "harness unavailable" reason. (`apps/ai-gateway`, distribution entries with `defaultEnabled: false`; live install on a host still pending with the rest of Verification.)
+- [ ] Harness adapter contract plus the first adapter, pinned version, approval-pause verified end to end. Progress: contract + Claude Agent SDK adapter implemented (pinned 0.3.226) and the approval pause is verified end to end through the session pipeline with the in-process fake harness; a live run against the real harness (needs a credential in the gateway environment) is what remains.
+- [x] Session API: create/stream/message/approve/deny/cancel, admin-only, SSE streaming, session records and transcripts in app data with retention config.
+- [x] Core audit records for session lifecycle and approved actions. (`POST /api/internal/apps/{appId}/audit`, service-token-scoped, actions namespaced `app.*`; the gateway reports lifecycle + approvals, never content.)
+- [x] Shell chat panel: discovery-gated, admin-only, streaming rendering, approval UX. (Right-anchored panel + sidebar launcher, both existing only when a running app declares `ai-gateway`; SSE consumed via fetch with the `?after=<seq>` reattach cursor because EventSource cannot carry the bearer token; unavailability states for stopped gateway and missing harness credential. Verified by lint/types/build; live visual verification pending with the rest of Verification.)
+- [x] Shell contextual entry point on the app page passing app id and route as session context. ("Ask assistant" in the app details dialog seeds the session with `{app, page}`; the context is stored structured on the session and prefixed once, as a plain header line, to the first message.)
 - [ ] `feature.md` for this folder, umbrella rollout checkbox, regenerated index.
 
 ## Phases
@@ -73,6 +74,7 @@ Prerequisite note: the umbrella flags token scopes as a prerequisite for scoped 
   Answer: The umbrella prefers either; they differ in supervision complexity, approval-callback fidelity, and version pinning ergonomics.
   Recommendation: Decide with a short spike at the start of phase 2 against three criteria: approval pause fidelity, streaming event quality, and resumability.
   Decision (2026-08-08): As recommended — the choice is delegated to a short spike at the start of phase 2 against those three criteria; the spike outcome is recorded in this document.
+  Spike outcome (2026-08-08): the Claude Agent SDK, pinned exactly (`@anthropic-ai/claude-agent-sdk@0.3.226`). It wins all three criteria: `canUseTool` is a native, indefinitely-pending approval pause (driving `claude -p --input-format stream-json` by hand would re-implement the same control protocol untyped); `includePartialMessages` yields typed text deltas; `resume`/`forkSession` restore a session by the id surfaced in the init/result messages. `permissionMode` stays `default` with read-only tools auto-allowed and every other tool routed through the approval flow.
 
 - Question: What is the gateway's implementation stack?
   Answer: The Claude Agent SDK is TypeScript-native, and the existing first-party apps are Node-based; nothing in the gateway needs .NET.

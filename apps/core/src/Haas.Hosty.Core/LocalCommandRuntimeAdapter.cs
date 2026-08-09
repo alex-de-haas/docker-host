@@ -11,7 +11,10 @@ internal sealed class LocalCommandRuntimeAdapter(
     AppServiceTokenService serviceTokens,
     IHealthProbe? probe = null,
     LocalCommandShimOptions? shim = null,
-    ILogger<LocalCommandRuntimeAdapter>? logger = null) : IAppRuntimeAdapter
+    ILogger<LocalCommandRuntimeAdapter>? logger = null,
+    // Public half of the delegated-token key, injected into app environments so apps can validate
+    // delegated tokens locally. Optional so existing direct constructions stay valid; DI supplies it.
+    DelegatedTokenSigningKey? delegatedTokenKey = null) : IAppRuntimeAdapter
 {
     public string Type => "localCommand";
 
@@ -491,6 +494,11 @@ internal sealed class LocalCommandRuntimeAdapter(
         }
 
         startInfo.Environment["HOSTY_APP_SERVICE_TOKEN"] = serviceTokens.CreateToken(context.App.Id);
+
+        if (delegatedTokenKey is not null)
+        {
+            startInfo.Environment["HOSTY_DELEGATED_TOKEN_PUBLIC_KEY"] = delegatedTokenKey.PublicKeySpkiBase64;
+        }
 
         foreach (var dependency in context.DependencyUrls)
         {

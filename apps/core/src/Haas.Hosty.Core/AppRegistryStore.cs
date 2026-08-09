@@ -314,7 +314,12 @@ internal sealed record AppRecord(
     // backfilled by the boot migration (PortAssignmentMigration); once populated, the reservation — not
     // the endpoint URL — is the durable source of a service's assigned port. Additive/nullable, so no
     // AppStateDocument schema bump. See docs/features/automatic-runtime-app-ports/feature.md.
-    IReadOnlyList<AppPortAssignment>? PortAssignments = null);
+    IReadOnlyList<AppPortAssignment>? PortAssignments = null,
+    // Platform interfaces this app exposes for discovery (top-level `interfaces`, keyed by interface
+    // name — e.g. "ai-gateway"), normalized from the manifest at install/update and re-read on each
+    // start for a live source app. Additive/nullable, so no AppStateDocument schema bump. See
+    // docs/features/ai-agent-bridge/plan.md, "Manifest Interfaces And Registry".
+    IReadOnlyDictionary<string, IReadOnlyList<AppInterfaceContract>>? Interfaces = null);
 
 // Well-known InstallOrigin values. Null on the record means a user/operator install; only the
 // distribution bootstrap stamps an explicit origin today.
@@ -608,6 +613,57 @@ internal sealed record AppUiContract(
 
 internal sealed record AppNavigationContract(string Label, string Path, string? EndpointKey, string? IconAsset = null);
 
+// Normalized platform-interface declarations (top-level `interfaces`), denormalized onto the app
+// record and projected onto the summary so clients discover interface providers from the registry
+// instead of re-reading manifests — e.g. Shell gates its assistant UI on an installed "ai-gateway"
+// provider. Names and declaration shapes are validated at manifest selection; normalization here
+// only applies defaults (key "default", path "/").
+internal sealed record AppInterfaceContract(string Key, string? EndpointKey, string Path)
+{
+    public static IReadOnlyDictionary<string, IReadOnlyList<AppInterfaceContract>>? FromManifest(
+        IReadOnlyDictionary<string, IReadOnlyList<RuntimeAppInterfaceManifest>> interfaces)
+    {
+        if (interfaces.Count == 0)
+        {
+            return null;
+        }
+
+        var result = new Dictionary<string, IReadOnlyList<AppInterfaceContract>>(StringComparer.Ordinal);
+        foreach (var (name, declarations) in interfaces)
+        {
+            if (declarations is null || declarations.Count == 0)
+            {
+                continue;
+            }
+
+            result[name] = declarations
+                .Select(declaration => new AppInterfaceContract(
+                    Key: string.IsNullOrWhiteSpace(declaration.Key) ? "default" : declaration.Key.Trim(),
+                    EndpointKey: string.IsNullOrWhiteSpace(declaration.Endpoint) ? null : declaration.Endpoint.Trim(),
+                    Path: NormalizeInterfacePath(declaration.Path)))
+                .ToArray();
+        }
+
+        return result.Count == 0 ? null : result;
+    }
+
+    private static string NormalizeInterfacePath(string? path)
+    {
+        var trimmed = path?.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            return "/";
+        }
+
+        return trimmed.StartsWith("/", StringComparison.Ordinal) ? trimmed : $"/{trimmed}";
+    }
+}
+
+// One declared interface endpoint resolved for clients: the declaration key, its path, and the
+// ready-to-call URL on the app's resolved endpoint origin (null while the app has no endpoint URL
+// yet, e.g. before its first start assigns ports).
+internal sealed record AppInterfaceSummary(string Key, string Path, string? Url);
+
 // Normalized marketplace/catalog display metadata, denormalized onto the app record and surfaced on
 // the summary (like AppUiContract). Normalization is best-effort and applied *after* the manifest
 // deserializes — blanks are dropped and an all-empty block collapses to null. The block's *content*
@@ -799,7 +855,12 @@ internal sealed record AppSummary(
     // none — the same "absent means nothing to say" shape as UpdateCheck, so a client never has to
     // distinguish an empty list from an older Core that predates this field. Attached by the lifecycle
     // service (it needs the other apps' records). Additive/nullable.
-    IReadOnlyList<AppDependencySummary>? Dependencies = null)
+    IReadOnlyList<AppDependencySummary>? Dependencies = null,
+    // Platform interfaces the app exposes (top-level `interfaces`), each declaration resolved to a
+    // ready-to-call URL where possible, so a client can gate a feature on an installed provider —
+    // e.g. Shell shows its assistant UI only when a running app declares "ai-gateway". Null when the
+    // manifest declares none. Additive/nullable.
+    IReadOnlyDictionary<string, IReadOnlyList<AppInterfaceSummary>>? Interfaces = null)
 {
     // The effective Development Mode for a runtime: the operator's explicit toggle if set, else the
     // manifest profile's `development` flag as the default. Always false for a non-source runtime
@@ -893,7 +954,31 @@ internal sealed record AppSummary(
             ResolveIconUrl(app.CatalogMetadata?.Icon, app.Id, assetVersion),
             ResolveAssetUrl(app.CatalogMetadata?.DescriptionFile, app.Id, assetVersion),
             app.FeedsUrl,
-            app.FollowedFeedId);
+            app.FollowedFeedId,
+            Interfaces: BuildInterfaceSummaries(app.Interfaces, endpoints));
+    }
+
+    private static IReadOnlyDictionary<string, IReadOnlyList<AppInterfaceSummary>>? BuildInterfaceSummaries(
+        IReadOnlyDictionary<string, IReadOnlyList<AppInterfaceContract>>? interfaces,
+        IReadOnlyList<AppEndpointContract> endpoints)
+    {
+        if (interfaces is null || interfaces.Count == 0)
+        {
+            return null;
+        }
+
+        var result = new Dictionary<string, IReadOnlyList<AppInterfaceSummary>>(StringComparer.Ordinal);
+        foreach (var (name, declarations) in interfaces)
+        {
+            result[name] = declarations
+                .Select(declaration => new AppInterfaceSummary(
+                    declaration.Key,
+                    declaration.Path,
+                    BuildUiUrl(ResolveEndpointUrl(endpoints, declaration.EndpointKey), declaration.Path)))
+                .ToArray();
+        }
+
+        return result;
     }
 
     // A manifest-declared icon is either an absolute https URL (passed through) or a manifest-relative

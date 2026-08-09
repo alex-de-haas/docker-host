@@ -36,6 +36,10 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton(new ControlSecret(CreateControlSecret()));
         builder.Services.AddSingleton(sp => AppServiceSigningKey.LoadOrCreate(sp.GetRequiredService<CoreDataPaths>()));
         builder.Services.AddSingleton<AppServiceTokenService>();
+        // Durable like the app service key (its public half is baked into app environments and must
+        // survive keep-apps restarts), but asymmetric: apps validate delegated tokens locally.
+        builder.Services.AddSingleton(sp => DelegatedTokenSigningKey.LoadOrCreate(sp.GetRequiredService<CoreDataPaths>()));
+        builder.Services.AddSingleton<DelegatedTokenService>();
         builder.Services.AddSingleton<AppRegistryStore>();
         builder.Services.AddSingleton<AppSecretsStore>();
         builder.Services.AddSingleton<ShellPublicOriginResolver>();

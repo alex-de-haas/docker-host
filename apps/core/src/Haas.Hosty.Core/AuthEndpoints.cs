@@ -165,6 +165,32 @@ internal static class AuthEndpoints
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
+        // Trades the caller's Core session for a short-TTL signed token (audience = the app) that
+        // the browser presents when calling a system app's API directly — the Shell→system-app
+        // data-plane path (docs/features/ai-gateway/plan.md). The receiving app validates it
+        // locally with the public key Core injects into its environment; Core stays out of the
+        // per-request path. Refresh = call again: every issue re-runs the full access policy, so a
+        // role downgrade or removed assignment stops fresh tokens within one 5-minute TTL.
+        app.MapPost("/api/apps/{appId}/delegated-token", async (
+            string appId,
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            AppIdentityService identity,
+            DelegatedTokenService delegatedTokens,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireSessionAsync(
+                request,
+                users,
+                clock,
+                async user => await HandleIdentityError(async () =>
+                {
+                    var (actor, target) = await identity.RequireAccessibleUserAsync(appId, user.Id, cancellationToken);
+                    return CoreJson.Json(delegatedTokens.CreateToken(target.Id, actor.Id, actor.Role));
+                }),
+                requireCsrf: true,
+                cancellationToken: cancellationToken));
+
         app.MapGet("/api/apps/{appId}/open", async (
             string appId,
             string? redirectUri,

@@ -13,6 +13,8 @@ import { createReissueRateLimiter } from "@hosty-sdk/app/embedder";
 import { CoreEventNames, subscribeToCoreEvents } from "./shell/events/core-event-stream";
 import { AppDetailsDialog } from "./shell/dialogs/app-details-dialog";
 import { InstallReviewDialog } from "./shell/dialogs/install-review-dialog";
+import { AssistantPanel } from "./shell/assistant/assistant-panel";
+import { findAssistantGateway } from "./shell/assistant/assistant-client";
 import { ShellSidebar } from "./shell/sidebar/shell-sidebar";
 import { ShellActionsContext, ShellStateContext } from "./shell/shell-context";
 import {
@@ -156,6 +158,12 @@ export function ShellClient({
   const [workspace, setWorkspace] = useState<EmbeddedWorkspace | null>(null);
   const [optimisticWorkspaceRoute, setOptimisticWorkspaceRoute] = useState<WorkspaceRoute | null>(null);
   const [sidebarCompact, setSidebarCompact] = useState(false);
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  // Structured page context ("app", "page") the contextual entry points seed a session with.
+  const [assistantContext, setAssistantContext] = useState<Record<string, string> | null>(null);
+  // Survives panel close so reopening reattaches to the still-running session instead of
+  // orphaning it; a contextual entry always starts fresh (its context belongs to a new session).
+  const [assistantSessionId, setAssistantSessionId] = useState<string | null>(null);
   const activeWorkspaceRoute = shellRoute.workspace ?? optimisticWorkspaceRoute;
   const workspaceRouteKey = getWorkspaceRouteKey(activeWorkspaceRoute);
   const pendingWorkspaceRoute = useRef<string | null>(null);
@@ -171,6 +179,17 @@ export function ShellClient({
   const shellResolvedTheme = resolveShellTheme(resolvedTheme);
   const activeUser = state.session?.authenticated ? state.session.user : null;
   const canManageApps = activeUser?.role === "host.admin";
+  // The assistant surface exists only for admins and only when an installed app declares the
+  // ai-gateway interface (docs/features/ai-gateway/plan.md): no provider ⇒ no launcher, no panel.
+  const assistantGateway = useMemo(() => findAssistantGateway(state.apps), [state.apps]);
+  const assistantAvailable = Boolean(canManageApps && assistantGateway);
+  const openAssistant = useCallback((context: Record<string, string> | null = null) => {
+    setAssistantContext(context);
+    if (context) {
+      setAssistantSessionId(null);
+    }
+    setAssistantOpen(true);
+  }, []);
 
   useEffect(() => {
     setSidebarCompact(window.localStorage.getItem(SIDEBAR_COMPACT_STORAGE_KEY) === "true");
@@ -1886,6 +1905,7 @@ export function ShellClient({
               setOptimisticWorkspaceRoute(null);
               router.push(getSettingsHref("core"));
             } : undefined}
+            onOpenAssistant={assistantAvailable ? () => openAssistant(null) : undefined}
           />
         </aside>
 
@@ -1972,6 +1992,21 @@ export function ShellClient({
             onRemove={removeApp}
             onLoadRemovalImpact={loadRemovalImpact}
             onRevealSetting={revealAppSetting}
+            onAskAssistant={assistantAvailable
+              ? () => openAssistant({ app: selectedApp.id, page: activePanel.view })
+              : undefined}
+          />
+        )}
+
+        {assistantOpen && assistantAvailable && assistantGateway && (
+          <AssistantPanel
+            gateway={assistantGateway}
+            coreOrigin={coreOrigin}
+            context={assistantContext}
+            sessionId={assistantSessionId}
+            onSessionId={setAssistantSessionId}
+            onClose={() => setAssistantOpen(false)}
+            sendCsrfJson={sendCsrfJson}
           />
         )}
 

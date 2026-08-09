@@ -262,6 +262,16 @@ export type CoreApp = {
   // The folder a live source app actually runs from (override folder, else the original folder
   // install); shown in the "Live" badge tooltip. Null when the app is not running live from source.
   sourceLivePath?: string | null;
+  // Platform interfaces the app exposes (manifest `interfaces`, e.g. "ai-gateway"), each declaration
+  // resolved to a ready-to-call URL where possible. Shell gates the assistant surface on a running
+  // app declaring "ai-gateway". Null/absent when none are declared or the Core build predates them.
+  interfaces?: Record<string, CoreAppInterface[]> | null;
+};
+
+export type CoreAppInterface = {
+  key: string;
+  path: string;
+  url?: string | null;
 };
 
 export type CoreArtifactLock = {

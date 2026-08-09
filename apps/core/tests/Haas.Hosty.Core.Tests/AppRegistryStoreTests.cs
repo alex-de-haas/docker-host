@@ -322,6 +322,34 @@ public sealed class AppRegistryStoreTests
     }
 
     [Fact]
+    public void From_ResolvesInterfaceUrlsFromEndpoints()
+    {
+        var app = CreateApp("com.example.gateway") with
+        {
+            Endpoints = [new AppEndpointContract(Key: "app.web", Protocol: "http", Url: "http://127.0.0.1:3200", Public: false, Service: "app")],
+            Interfaces = AppInterfaceContract.FromManifest(new Dictionary<string, IReadOnlyList<RuntimeAppInterfaceManifest>>
+            {
+                ["ai-gateway"] = [new RuntimeAppInterfaceManifest { Endpoint = "web", Path = "/api/ai" }],
+            }),
+        };
+
+        var summary = AppSummary.From(app);
+
+        var declaration = Assert.Single(summary.Interfaces!["ai-gateway"]);
+        Assert.Equal("default", declaration.Key); // omitted key normalizes to "default"
+        Assert.Equal("/api/ai", declaration.Path);
+        Assert.Equal("http://127.0.0.1:3200/api/ai", declaration.Url);
+    }
+
+    [Fact]
+    public void From_WithoutInterfaces_LeavesInterfacesNull()
+    {
+        var summary = AppSummary.From(CreateApp("com.example.notes"));
+
+        Assert.Null(summary.Interfaces);
+    }
+
+    [Fact]
     public void From_AssetUrls_AreNormalizedAndRejectUnsafeDeclarations()
     {
         // A messy-but-safe declaration normalizes to the same path the vendor writes / the endpoint serves.

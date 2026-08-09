@@ -152,3 +152,21 @@ When the app opts in **and** the host has observability enabled (`HOSTY_OBSERVAB
 Instrument with your language's OTel SDK and read these env vars (most SDKs read them automatically). If the env is absent, observability is off or the collector is not up yet — degrade gracefully and emit nothing. See `docs/features/observability/feature.md`.
 
 `OTEL_EXPORTER_OTLP_ENDPOINT` is the base endpoint for all signals — traces, metrics, and **logs** (`/v1/logs`). Apps that want structured, trace-correlated logs only need to enable their OTel logs SDK (no extra Hosty config). These OTLP logs are a **separate stream** from the app's console (`docker logs`) output and are never merged with it; Core/Shell support for receiving and viewing them is planned for P4 (the collector currently has no logs pipeline).
+
+## Interfaces
+
+Declare platform interfaces the app exposes for other components to discover with a top-level `interfaces` map (draft extension, additive under `app.0.1`; absent means the app exposes none). Keys are interface names (lowercase kebab, e.g. `ai-gateway`); unknown names are inert and forward-compatible, like `provides` slots. Each declaration names an HTTP surface on the app's own origin:
+
+```jsonc
+"interfaces": {
+  "ai-gateway": [
+    {
+      "key": "default",     // optional, names the declaration within the interface (default "default")
+      "endpoint": "web",    // optional endpoints[] key that serves the interface (same reference as ui.entrypoint.endpoint)
+      "path": "/api/ai"     // absolute path on that origin (default "/")
+    }
+  ]
+}
+```
+
+Core validates shape only (names and keys are kebab tokens, keys unique per interface, paths absolute) and surfaces the declarations on the apps API with each declaration resolved to a ready-to-call URL, so clients can gate features on an installed provider — e.g. Shell shows its assistant UI only when an installed app declares `ai-gateway`. Declaring an interface does not grant the app anything; it is discovery metadata. See `docs/features/ai-agent-bridge/plan.md` ("Manifest Interfaces And Registry").

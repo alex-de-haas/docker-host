@@ -155,7 +155,10 @@ internal sealed class AppIdentityService(
         return new AppIdentityTokenResult(token, "Bearer", absoluteExpiresAt, (int)absolute.TotalSeconds);
     }
 
-    private async Task<(HostUserRecord User, AppRecord App)> RequireAccessibleUserAsync(
+    // Public because it is the single access-policy gate shared by every identity flow, including
+    // the delegated-token endpoint, which composes it with DelegatedTokenService instead of
+    // duplicating the disabled/system-admin/assignment rules.
+    public async Task<(HostUserRecord User, AppRecord App)> RequireAccessibleUserAsync(
         string appId,
         string userId,
         CancellationToken cancellationToken)

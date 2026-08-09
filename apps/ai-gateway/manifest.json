@@ -1,0 +1,105 @@
+{
+  "schemaVersion": "app.0.1",
+  "id": "hosty.ai-gateway",
+  "name": "Hosty AI Gateway",
+  "description": "Hosty assistant service: admin-only operator chat sessions supervised on a host-resident agent harness. Headless — Shell renders the chat UI and calls this API with delegated tokens.",
+  "version": "0.1.0",
+  "role": "system",
+  "source": {
+    "type": "git",
+    "repository": "https://github.com/alex-de-haas/docker-host.git",
+    "branch": "main"
+  },
+  "runtimeProfiles": [
+    {
+      "key": "local",
+      "type": "localCommand",
+      "default": true
+    }
+  ],
+  "defaultRuntime": "local",
+  "services": [
+    {
+      "key": "api",
+      "runtimes": {
+        "local": {
+          "type": "localCommand",
+          "workingDirectory": "apps/ai-gateway",
+          "setup": "npm install",
+          "command": "npm run start",
+          "ports": [
+            {
+              "key": "http",
+              "containerPort": 3400,
+              "protocol": "http",
+              "public": true
+            }
+          ],
+          "healthcheck": {
+            "type": "http",
+            "port": 3400,
+            "path": "/healthz",
+            "timeoutSeconds": 5
+          }
+        }
+      }
+    }
+  ],
+  "data": {
+    "enabled": true,
+    "targets": [
+      {
+        "runtime": "local",
+        "environment": "HOSTY_APP_DATA_DIR"
+      }
+    ]
+  },
+  "endpoints": [
+    {
+      "key": "http",
+      "service": "api",
+      "port": "http",
+      "protocol": "http",
+      "public": true
+    }
+  ],
+  "interfaces": {
+    "ai-gateway": [
+      {
+        "key": "default",
+        "endpoint": "http",
+        "path": "/api"
+      }
+    ]
+  },
+  "settings": [
+    {
+      "key": "HOSTY_AI_GATEWAY_RETENTION_DAYS",
+      "type": "string",
+      "default": "30",
+      "required": false,
+      "label": "Transcript retention (days)",
+      "description": "Sessions and transcripts older than this are deleted by the daily cleanup sweep."
+    },
+    {
+      "key": "ANTHROPIC_API_KEY",
+      "type": "string",
+      "secret": true,
+      "required": false,
+      "label": "Anthropic API key",
+      "description": "Credential for the Claude harness (the Agent SDK does not read an interactive `claude login` state). Alternative: set the Claude Code OAuth token instead."
+    },
+    {
+      "key": "CLAUDE_CODE_OAUTH_TOKEN",
+      "type": "string",
+      "secret": true,
+      "required": false,
+      "label": "Claude Code OAuth token",
+      "description": "Token minted by `claude setup-token` — the subscription-based alternative to an API key."
+    }
+  ],
+  "capabilities": ["logs"],
+  "catalogMetadata": {
+    "summary": "Admin-only Hosty assistant: operator chat sessions on a host-resident agent harness."
+  }
+}

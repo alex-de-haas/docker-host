@@ -98,6 +98,14 @@ internal sealed class DistributionAppsProvider(
               "manifestRef": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/marketplace/manifest.json",
               "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/marketplace/feeds.json",
               "defaultEnabled": true
+            },
+            {
+              "id": "hosty.ai-gateway",
+              "title": "AI Gateway",
+              "description": "Admin-only Hosty assistant: operator chat sessions on a host-resident agent harness.",
+              "manifestRef": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/ai-gateway/manifest.json",
+              "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/ai-gateway/feeds.json",
+              "defaultEnabled": false
             }
           ]
         }

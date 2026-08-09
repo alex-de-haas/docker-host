@@ -1,10 +1,15 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace Haas.Hosty.Core;
 
 internal static class DomainEndpoints
 {
+    // Shape-only check for app-reported audit action names ("ai_session_created"); the "app."
+    // prefix added at write time is what guarantees no collision with Core's own action vocabulary.
+    private static readonly Regex AppAuditActionPattern = new("^[a-z][a-z0-9_]{0,62}$", RegexOptions.Compiled);
+
     public static void Map(WebApplication app)
     {
         app.MapGet("/api/apps", async (
@@ -94,6 +99,71 @@ internal static class DomainEndpoints
             var installed = await lifecycle.ListAppsAsync(cancellationToken);
             return CoreJson.Json(new AppDirectoryResponse(
                 installed.Select(summary => new AppDirectoryEntry(summary.Id, summary.DisplayName)).ToArray()));
+        });
+
+        // App-reported audit events (docs/features/ai-gateway/plan.md): the AI gateway reports
+        // assistant session lifecycle and approved actions here so they land in the same durable
+        // audit log as Core's own records — lifecycle and approvals only, never transcript content.
+        // Service-token auth scopes the report to the calling app, and the stored action is
+        // namespaced with "app." plus the reported name so an app can never impersonate a Core
+        // action. Details are capped so a misbehaving app cannot flood the log.
+        app.MapPost("/api/internal/apps/{appId}/audit", async (
+            string appId,
+            HttpRequest request,
+            AppServiceTokenService serviceTokens,
+            AppRegistryStore apps,
+            AuditStore audit,
+            IClock clock,
+            AppAuditReportRequest input,
+            CancellationToken cancellationToken) =>
+        {
+            var token = CoreSessionAuthorization.ReadBearerToken(request);
+            if (string.IsNullOrWhiteSpace(token) || !serviceTokens.ValidateToken(appId, token))
+            {
+                return CoreJson.Json(
+                    new ErrorResponse("app_audit_unauthorized", "App service token is missing or invalid."),
+                    statusCode: StatusCodes.Status401Unauthorized);
+            }
+
+            if (await apps.GetAppAsync(appId, cancellationToken) is null)
+            {
+                return CoreJson.Json(
+                    new ErrorResponse("app_not_found", "Runtime app was not found."),
+                    statusCode: StatusCodes.Status404NotFound);
+            }
+
+            if (string.IsNullOrWhiteSpace(input.Action) || !AppAuditActionPattern.IsMatch(input.Action))
+            {
+                return CoreJson.Json(
+                    new ErrorResponse("app_audit_action_invalid", "action must match ^[a-z][a-z0-9_]{0,62}$."),
+                    statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            var details = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var pair in (input.Details ?? new Dictionary<string, string>()).Take(16))
+            {
+                if (string.IsNullOrWhiteSpace(pair.Key))
+                {
+                    continue;
+                }
+
+                var key = pair.Key.Length <= 64 ? pair.Key : pair.Key[..64];
+                var value = pair.Value ?? "";
+                details[key] = value.Length <= 500 ? value : value[..500];
+            }
+
+            await audit.AppendAsync(
+                new AuditRecord(
+                    Id: Guid.NewGuid().ToString("N"),
+                    Action: $"app.{input.Action}",
+                    ResourceType: "app",
+                    ResourceId: appId,
+                    Outcome: "reported",
+                    ActorUserId: null,
+                    CreatedAt: clock.UtcNow,
+                    Details: details),
+                cancellationToken);
+            return CoreJson.Json(new AppAuditReportResponse("recorded"));
         });
 
         // App-authenticated per-app update check. Marketplace calls this (with its own service token)
@@ -237,3 +307,7 @@ internal sealed record AuthSessionSummary(
     DateTimeOffset? RevokedAt);
 
 internal sealed record AuditResponse(IReadOnlyList<AuditRecord> Events);
+
+internal sealed record AppAuditReportRequest(string? Action, IReadOnlyDictionary<string, string>? Details);
+
+internal sealed record AppAuditReportResponse(string Status);
