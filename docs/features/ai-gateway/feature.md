@@ -63,22 +63,60 @@ this feature.
 
 ## Harness
 
-- The adapter contract is start / send / resolveApproval / interrupt / stop plus a single event
-  callback; the concrete harness stays replaceable. The shipped adapter drives the Claude Agent SDK
-  (pinned exactly in package.json) with streaming input, partial-message deltas, and
+The adapter contract is start / send / resolveApproval / interrupt / stop plus a single event
+callback; the concrete harness stays replaceable, and the operator picks one with the
+`HOSTY_AI_GATEWAY_HARNESS` setting (`claude` | `codex`; an unrecognized value falls back to
+`claude` rather than taking the assistant down on a typo, and `fake` is a test-only in-process
+harness that is not offered as an operator choice). Each harness is pinned as a dependency and
+needs its own credential; the health probe names the selected harness and, when it is unusable,
+the reason. Approval policy is identical across harnesses: every write pauses, with no exceptions
+and no session-scoped blanket approvals. A failed run is dropped on its error event so the next
+message starts a fresh one, and the harness-native session id is captured for resume after a
+gateway restart.
+
+### Claude (default)
+
+- Drives the Claude Agent SDK with streaming input, partial-message deltas, and
   `settingSources: ["user", "project"]` — an operator session behaves like the admin running Claude
   Code by hand, their instructions and skills included.
-- Approval policy (v1, no exceptions): `permissionMode: "default"` with read-only tools (Read,
-  Glob, Grep, WebFetch, WebSearch, TodoWrite, Task) auto-allowed; every other tool pauses inside
-  `canUseTool` until the operator decides in Shell. A deny unblocks the harness with a message. A
-  failed run is dropped on its error event so the next message starts a fresh run; the
-  harness-native session id is captured and used to resume after a gateway restart.
+- `permissionMode: "default"` with read-only tools (Read, Glob, Grep, WebFetch, WebSearch,
+  TodoWrite, Task) auto-allowed; every other tool pauses inside `canUseTool` until the operator
+  decides in Shell. A deny unblocks the harness with a message.
 - Credential: the Agent SDK does not read an interactive `claude login` — it needs an environment
   credential (`ANTHROPIC_API_KEY`, a `claude setup-token` OAuth token, or a provider
-  `CLAUDE_CODE_USE_*` configuration), offered as optional secret app settings. Without one the
-  health probe reports the reason and Shell shows "assistant unavailable" instead of a chat box.
-- `HOSTY_AI_GATEWAY_HARNESS=fake` swaps in a deterministic in-process harness (tests and
-  credential-less development).
+  `CLAUDE_CODE_USE_*` configuration), offered as optional secret app settings.
+
+### Codex
+
+- Drives `codex app-server` over stdio JSON-RPC. Approvals arrive as *blocking server→client
+  requests* (`item/commandExecution/requestApproval`, `item/fileChange/requestApproval`) and the
+  action waits for the reply, which is the same pause `canUseTool` provides. Assistant text streams
+  as `item/agentMessage/delta`; `thread/start` yields the id that `thread/resume` restores, and it
+  works across process restarts. (The older "Codex cannot pause per tool call" limitation is true
+  of `codex exec` only.)
+- Credential: `codex login` on the host as the operator, or a `CODEX_API_KEY` app setting. The
+  binary resolves override → the pinned `@openai/codex` dependency → PATH.
+- Three protocol properties are load-bearing and easy to get wrong, so they are pinned in
+  `codex-protocol.ts` and enforced by a scripted test fake that fails the suite on a violation:
+  - **The sandbox is what creates the approval.** Codex asks only when an action must escalate out
+    of its sandbox, so the thread runs `read-only`; with `danger-full-access` there is nothing to
+    escalate past and writes execute silently (a live run denied three approvals and the file was
+    created anyway). An approved action then runs outside the sandbox.
+  - **Two decision vocabularies, chosen per method.** v2 `item/*` approvals take
+    `accept` | `decline` | `cancel`; the legacy `execCommandApproval` / `applyPatchApproval` take
+    `approved` | `{denied: {rejection}}`. A v1-shaped reply to a v2 method is accepted at the wire
+    level and then silently does nothing — indistinguishable from a denial, so it is only caught by
+    checking that an *allow* actually performed the action. Session-scoped variants
+    (`acceptForSession`, `approved_for_session`) are never sent.
+  - **A refused item still completes.** Codex emits `item/completed` for an item whose approval was
+    refused, so the adapter tracks the approval's `itemId` and suppresses the tool-use event;
+    otherwise the transcript would report a denied command as executed.
+- Sandbox vocabulary is asymmetric between endpoints: `thread/start` takes `sandbox` as a plain
+  string (`"read-only"`), `turn/start` takes `sandboxPolicy` as an internally tagged object
+  (`{type: "readOnly"}`). Swapping them is a `-32600`.
+- After a denial Codex tries a different mechanism rather than stopping (patch, then shell), so
+  each attempt raises its own approval card. `decline` is used rather than `cancel` so the agent
+  finishes its turn and explains; Cancel in Shell is the hard stop.
 
 ## Shell Surface
 
@@ -99,6 +137,13 @@ this feature.
   (service-token scoping, `app.*` namespacing, action shape, caps).
 - Gateway (vitest): admin gate, CORS preflight, a full message turn, approval allow and deny,
   SSE replay cursor, token-expiry stream close, failed-run recovery, retention sweep; `tsc` clean.
+- Codex adapter (vitest, against `test/fake-codex-server.mjs`): handshake, resume, streaming,
+  approval allow and deny, suppression of a refused item's tool-use, process death, missing binary,
+  harness selection, and binary resolution. The fake fails the suite on a protocol violation —
+  wrong sandbox shape, the v1 decision vocabulary on a v2 method, or a session-scoped approval.
+- An approval change is never verified by denying alone: a gate that rejects everything looks
+  identical to one that is silently ineffective. Confirm live that a denial leaves nothing behind
+  **and** that an approval performs the action.
 - SDK (vitest): delegated-token validator — valid token, wrong audience, expiry, tampered payload,
   malformed shape, missing key.
 - Shell: eslint + `next build` gate the surface; there are no unit tests for it, so changes are
