@@ -27,6 +27,7 @@
     "core:dev": "dotnet run --project apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj --launch-profile dev",
     "core:build": "dotnet build apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj",
     "core:test": "dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj",
+    "core:aot": "node scripts/check-core-aot.mjs",
     "cli:build": "dotnet build apps/cli/src/Haas.Hosty.Cli/Haas.Hosty.Cli.csproj",
     "cli:test": "dotnet test apps/cli/tests/Haas.Hosty.Cli.Tests/Haas.Hosty.Cli.Tests.csproj",
     "telemetry-backend:dev": "dotnet run --project apps/telemetry-backend/src/Haas.Hosty.TelemetryBackend/Haas.Hosty.TelemetryBackend.csproj",

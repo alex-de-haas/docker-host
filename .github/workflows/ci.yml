@@ -137,6 +137,8 @@ jobs:
             core:
               - *dotnet_shared
               - 'apps/core/**'
+              # The AOT gate is part of this job, so a change to the gate itself must run it.
+              - 'scripts/check-core-aot.mjs'
 
             cli:
               - *dotnet_shared
@@ -336,6 +338,17 @@ jobs:
 
       - name: Test Core
         run: npm run core:test
+
+      # Core ships as a Native AOT binary, but its publish used to run only at release time — so a
+      # trimming regression could sit on main until a release surfaced it. Core now has a NuGet
+      # dependency (the MCP SDK), which makes that surface something a version bump can change.
+      - name: Install Native AOT prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang zlib1g-dev
+
+      - name: Publish Core (Native AOT)
+        run: npm run core:aot
 
   cli:
     name: CLI
