@@ -14,9 +14,15 @@ internal static class HostyCoreApplication
 {
     private const string ControlSecretHeader = "X-Hosty-Control-Secret";
 
-    public static void ConfigureServices(WebApplicationBuilder builder)
+    // `config` defaults to the process environment — what the real entry point wants — and is passed
+    // explicitly by hosts that cannot use ambient state: the process environment is one shared mutable
+    // variable, so a test that sets HOSTY_CORE_* to exercise config parsing poisons every other host
+    // booting in the same process at that instant, and several such hosts need their own data root
+    // simultaneously anyway, which env cannot express per-instance. This is the only env read in the
+    // startup path, so passing a config keeps the boot entirely off the environment.
+    public static void ConfigureServices(WebApplicationBuilder builder, HostyCoreRuntimeConfig? config = null)
     {
-        var config = HostyCoreRuntimeConfig.FromEnvironment(builder.Environment);
+        config ??= HostyCoreRuntimeConfig.FromEnvironment(builder.Environment);
         builder.WebHost.UseUrls(config.ListenUrl);
         builder.Services.ConfigureHttpJsonOptions(options =>
             options.SerializerOptions.TypeInfoResolverChain.Insert(0, CoreJsonSerializerContext.Default));
