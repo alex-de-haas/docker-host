@@ -3,7 +3,7 @@
   "id": "hosty.ai-gateway",
   "name": "Hosty AI Gateway",
   "description": "Hosty assistant service: admin-only operator chat sessions supervised on a host-resident agent harness. Headless — Shell renders the chat UI and calls this API with delegated tokens.",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "role": "system",
   "source": {
     "type": "git",
@@ -118,7 +118,7 @@
       "type": "string",
       "required": false,
       "label": "Codex home directory",
-      "description": "Interactive mode only: where the harness reads the operator's Codex credentials from. Leave empty for the default ~/.codex. Ignored when an API key is set, since that mode owns its own directory."
+      "description": "Interactive mode only: where the harness reads Codex credentials from. Leave empty to use the default ~/.codex of the user Core runs as — which is not necessarily your own account, so sign in as that user or point this at the directory that holds the credentials. When you set a path here, run the login with it too: `CODEX_HOME=<path> codex login`. Ignored when an API key is set, since that mode owns its own directory."
     }
   ],
   "capabilities": ["logs"],

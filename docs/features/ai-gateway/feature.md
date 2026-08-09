@@ -96,12 +96,17 @@ gateway restart.
   of `codex exec` only.)
 - Credential — **two modes, the administrator picks**:
   - *API key* (`CODEX_API_KEY` app setting): the gateway signs Codex in on the operator's behalf.
-    Codex ignores API keys passed through the environment (verified against a clean `CODEX_HOME`:
-    neither `OPENAI_API_KEY` nor `CODEX_API_KEY` authenticates anything), so the gateway runs
-    `codex login --with-api-key`, feeding the key over stdin — never argv, where process listings
-    would expose it. An API key does not expire, which is what a long-running service wants.
-  - *Interactive* (no key set): the operator runs `codex login` on the host as the user Core runs
-    as; the optional `CODEX_HOME` setting points at a non-default credential directory.
+    A key set **only as an environment variable authenticates nothing** — verified against a clean
+    `CODEX_HOME`, where neither `OPENAI_API_KEY` nor `CODEX_API_KEY` produced a session; Codex
+    accepts a key exclusively through `codex login --with-api-key`, which reads it from stdin and
+    writes it into the credential store. The gateway therefore runs that login itself, passing the
+    key over stdin — never argv, where process listings would expose it. An API key does not
+    expire, which is what a long-running service wants.
+  - *Interactive* (no key set): someone runs `codex login` on the host **as the user Core runs as**
+    — credentials are per-user, so signing in as a different account leaves the harness
+    unauthenticated. The optional `CODEX_HOME` setting points at a non-default credential
+    directory; the login must then carry the same directory (`CODEX_HOME=<path> codex login`),
+    which the health reason spells out with the configured path filled in.
 - The API-key mode writes into **its own Codex home** under the app data directory, so choosing it
   never overwrites the operator's personal `~/.codex` session (verified live: after the gateway
   signed in with a key, `codex login status` on the host still reported the operator's own

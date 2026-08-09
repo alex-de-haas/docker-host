@@ -217,4 +217,18 @@ describe("codex auth modes", () => {
     expect(availability.available).toBe(false);
     expect(availability.reason).toMatch(/codex login|API key in this app's settings/i);
   });
+
+  it("tells the operator to sign in with the configured Codex home", async () => {
+    // A login run without this prefix writes credentials into the default home, which the harness
+    // never reads — the operator would sign in and still see the assistant as unavailable.
+    const home = path.join(dir, "custom-home");
+    const availability = await new CodexHarnessAdapter({ codexHome: home, dataDir: dir }).probe();
+    expect(availability.reason).toContain(`CODEX_HOME=${home} codex login`);
+  });
+
+  it("does not prefix the reason when the default Codex home is used", async () => {
+    const availability = await new CodexHarnessAdapter({ dataDir: dir }).probe();
+    expect(availability.reason).toContain("codex login");
+    expect(availability.reason).not.toContain("CODEX_HOME=");
+  });
 });

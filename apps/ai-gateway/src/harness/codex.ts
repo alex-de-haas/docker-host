@@ -58,14 +58,18 @@ export class CodexHarnessAdapter implements HarnessAdapter {
 
     const status = await runCodex(["login", "status"], resolution.env).catch(() => null);
     if (status === null || /not logged in|no credentials/i.test(status)) {
+      // A login run without the configured CODEX_HOME writes credentials into the default home,
+      // where the harness never looks — so the suggested command carries the same directory the
+      // probe reads from. Only in interactive mode: the key mode owns its home and signs itself in.
+      const homePrefix = resolution.env.CODEX_HOME ? `CODEX_HOME=${resolution.env.CODEX_HOME} ` : "";
       return {
         available: false,
-        // Codex ignores API keys passed through the environment: credentials live in its own
-        // store. The operator picks the mode, so the reason names both routes.
+        // Codex accepts an API key only through `login --with-api-key` (over stdin), never from the
+        // environment. The operator picks the mode, so the reason names both routes.
         reason:
           resolution.mode === "api-key"
             ? "The configured Codex API key did not produce a signed-in session. Check that the key is valid, or clear it to use an interactive `codex login` on the host instead."
-            : "Codex is installed but not signed in. Either run `codex login` on the host as the user Core runs as, or set a Codex API key in this app's settings and the gateway will sign in for you.",
+            : `Codex is installed but not signed in. Either run \`${homePrefix}codex login\` on the host as the user Core runs as, or set a Codex API key in this app's settings and the gateway will sign in for you.`,
       };
     }
 
