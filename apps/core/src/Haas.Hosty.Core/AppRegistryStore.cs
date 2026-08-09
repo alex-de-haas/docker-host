@@ -319,7 +319,14 @@ internal sealed record AppRecord(
     // name — e.g. "ai-gateway"), normalized from the manifest at install/update and re-read on each
     // start for a live source app. Additive/nullable, so no AppStateDocument schema bump. See
     // docs/features/ai-agent-bridge/plan.md, "Manifest Interfaces And Registry".
-    IReadOnlyDictionary<string, IReadOnlyList<AppInterfaceContract>>? Interfaces = null);
+    IReadOnlyDictionary<string, IReadOnlyList<AppInterfaceContract>>? Interfaces = null,
+    // The platform version of the Core build that last ran the manifest→record projections
+    // (CoreLifecycleService.ApplyManifestProjections) for this record. A record written by a different
+    // Core build may silently lack manifest sections that build did not parse (e.g. `interfaces` under
+    // a pre-0.74 Core), so the boot backfill re-projects from the reviewed manifest copy whenever this
+    // stamp differs from the running build — see BackfillManifestProjectionsAsync. Null on legacy
+    // records, which therefore backfill once. Additive/nullable, so no AppStateDocument schema bump.
+    string? NormalizedBy = null);
 
 // Well-known InstallOrigin values. Null on the record means a user/operator install; only the
 // distribution bootstrap stamps an explicit origin today.
@@ -631,17 +638,22 @@ internal sealed record AppInterfaceContract(string Key, string? EndpointKey, str
         var result = new Dictionary<string, IReadOnlyList<AppInterfaceContract>>(StringComparer.Ordinal);
         foreach (var (name, declarations) in interfaces)
         {
-            if (declarations is null || declarations.Count == 0)
-            {
-                continue;
-            }
-
-            result[name] = declarations
+            // Null entries are dropped, not dereferenced: this normalization also runs on raw manifest
+            // reads (the boot backfill), where the stored copy may carry an `interfaces` section that
+            // was written under a Core too old to shape-validate it — e.g. `"ai-gateway": [null]`.
+            var contracts = (declarations ?? [])
+                .Where(declaration => declaration is not null)
                 .Select(declaration => new AppInterfaceContract(
                     Key: string.IsNullOrWhiteSpace(declaration.Key) ? "default" : declaration.Key.Trim(),
                     EndpointKey: string.IsNullOrWhiteSpace(declaration.Endpoint) ? null : declaration.Endpoint.Trim(),
                     Path: NormalizeInterfacePath(declaration.Path)))
                 .ToArray();
+            if (contracts.Length == 0)
+            {
+                continue;
+            }
+
+            result[name] = contracts;
         }
 
         return result.Count == 0 ? null : result;

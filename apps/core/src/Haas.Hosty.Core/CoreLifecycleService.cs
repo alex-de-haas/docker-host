@@ -2714,6 +2714,95 @@ internal sealed class CoreLifecycleService(
         return migrated;
     }
 
+    // Records only re-run manifest→record normalization at install/update/switch/live-start, so an app
+    // installed under an older Core permanently lacked any manifest section that build did not parse —
+    // e.g. `interfaces` was silently dropped for hosty.ai-gateway installed under Core 0.73.x, and Shell's
+    // assistant discovery found nothing until a manual same-version reviewed update rebuilt the record.
+    // This boot backfill heals such records without operator action: any runtime record whose
+    // NormalizedBy stamp differs from the running build gets ApplyManifestProjections re-run from the
+    // app's reviewed internal manifest copy (raw read, mirroring the registry's UI hydration — the copy
+    // was validated when it was written) and is stamped, so the heal runs once per record per Core
+    // build. Operator-owned state (setting values, mount bindings, artifact locks, feeds, port
+    // reservations) is untouched by construction. A record whose manifest copy is missing or unreadable
+    // is skipped un-stamped, so a later boot retries. Runs at boot before autostart reconciliation
+    // because start ordering reads Provides. Returns the number of records healed.
+    public async Task<int> BackfillManifestProjectionsAsync(CancellationToken cancellationToken = default)
+    {
+        var healed = 0;
+        foreach (var app in await apps.ListAppRecordsAsync(cancellationToken))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!string.Equals(app.Kind, "runtime", StringComparison.Ordinal) ||
+                string.Equals(app.NormalizedBy, CoreStatusResponse.PlatformVersionString, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var manifestPath = ResolveStoredManifestPath(app);
+            if (manifestPath is null)
+            {
+                continue;
+            }
+
+            try
+            {
+                var manifest = await JsonStorage.ReadAsync<RuntimeAppManifest>(manifestPath, cancellationToken);
+                // A copy that no longer describes this app is an on-disk inconsistency, not something to
+                // project onto the record — same guard as the live-source reconcile's id check.
+                if (manifest is null || !string.Equals(manifest.Id, app.Id, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                // Re-check the stamp inside the record lock: a reviewed update or live adoption that
+                // committed between the list snapshot and this write already re-projected from a
+                // fresher manifest than the copy read above (every projection writer stamps the running
+                // build), and must not be overwritten with stale projections that would then pass every
+                // later boot's stamp check.
+                var applied = false;
+                await apps.UpdateAppAsync(app.Id, current =>
+                {
+                    if (string.Equals(current.NormalizedBy, CoreStatusResponse.PlatformVersionString, StringComparison.Ordinal))
+                    {
+                        applied = false;
+                        return current;
+                    }
+
+                    applied = true;
+                    return ApplyManifestProjections(current, manifest);
+                }, cancellationToken);
+                if (applied)
+                {
+                    healed++;
+                }
+            }
+            // Per-record isolation, deliberately broad: this is the raw-read path, and a stored copy's
+            // sections written under a Core too old to shape-validate them can surprise the projection
+            // (not just the read) in ways no exception list anticipates. One malformed legacy copy must
+            // skip its own record — left un-stamped so a later boot retries — never abort the boot
+            // sequence behind it (port backfill, autostart).
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning(ex, "Skipped manifest-projection backfill for app {AppId}.", app.Id);
+            }
+        }
+
+        return healed;
+    }
+
+    // The app's reviewed internal manifest copy: the recorded path when it still exists, else the
+    // conventional apps/<id>/manifest.json location (same fallback the registry's UI hydration uses).
+    private string? ResolveStoredManifestPath(AppRecord app)
+    {
+        if (!string.IsNullOrWhiteSpace(app.ManifestPath) && File.Exists(app.ManifestPath))
+        {
+            return app.ManifestPath;
+        }
+
+        var localCopy = Path.Combine(GetAppRoot(app.Id), "manifest.json");
+        return File.Exists(localCopy) ? localCopy : null;
+    }
+
     public async Task<IReadOnlyList<AppBackgroundLifecycleResult>> StartAutostartAppsAsync(CancellationToken cancellationToken = default)
     {
         var results = new List<AppBackgroundLifecycleResult>();
@@ -2862,7 +2951,6 @@ internal sealed class CoreLifecycleService(
                     TargetPath: selection.DataTarget.ContainerPath ?? GetAppDataPath(manifest.Id!),
                     ReadOnly: false),
             };
-        var dependencies = manifest.Dependencies.Select(ToDependencyContract).ToArray();
         var endpointContracts = manifest.Endpoints.Count == 0
             ? selection.Services.SelectMany(service => service.Runtime.Ports.Select(port => new AppEndpointContract(
                 Key: $"{service.Key}.{port.Key ?? port.ContainerPort?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "port"}",
@@ -2880,7 +2968,10 @@ internal sealed class CoreLifecycleService(
                 Port: endpoint.Port)).ToArray();
         var endpoints = PreserveEndpointUrls(endpointContracts, existing?.Endpoints);
 
-        return new AppRecord(
+        // Manifest-projection sections (capabilities, provides, dependencies, UI, catalog metadata,
+        // interfaces, runtime profiles, mount slots) are filled by ApplyManifestProjections below —
+        // the ctor passes placeholders for the required positional ones.
+        var record = new AppRecord(
             Id: manifest.Id!,
             DisplayName: manifest.Name!,
             Description: manifest.Description,
@@ -2895,21 +2986,15 @@ internal sealed class CoreLifecycleService(
             RuntimeState: existing?.RuntimeState ?? "stopped",
             LastOperation: existing?.LastOperation,
             LastError: existing?.LastError,
-            Capabilities: ResolveCapabilities(manifest),
-            Provides: manifest.Provides.Count == 0 ? null : manifest.Provides,
+            Capabilities: [],
             Settings: settings,
             StorageMappings: storageMappings,
-            Dependencies: dependencies,
+            Dependencies: [],
             Endpoints: endpoints,
             InstalledAt: existing?.InstalledAt ?? default,
             UpdatedAt: default,
             SourceState: BuildSourceState(selection, existing),
-            Ui: AppUiContract.FromManifest(manifest.Ui),
-            CatalogMetadata: AppCatalogMetadataContract.FromManifest(manifest.CatalogMetadata),
-            Interfaces: AppInterfaceContract.FromManifest(manifest.Interfaces),
             Autostart: existing?.Autostart ?? true,
-            RuntimeProfiles: BuildRuntimeProfileSummaries(manifest),
-            MountSlots: BuildMountSlots(manifest),
             Mounts: PreserveMounts(manifest, existing?.Mounts),
             // Sticky once captured at install; URL installs leave it null (covered by ManifestUrl).
             // At install selection.ManifestPath is the operator's original path, resolved before
@@ -2939,7 +3024,32 @@ internal sealed class CoreLifecycleService(
             // resolves or projects it) and is reconciled when install-time allocation is wired into the
             // update/switch apply path.
             PortAssignments: existing?.PortAssignments);
+
+        return ApplyManifestProjections(record, manifest);
     }
+
+    // The single manifest→record projection choke point: every section that is a pure denormalization
+    // of the manifest (no operator input, no runtime resolution) is (re)computed here, and the record
+    // is stamped with the Core build that ran the normalization. Three paths funnel through it —
+    // install/update/switch/rollback (BuildAppRecord), live-source adoption (ReconcileLiveContractAsync),
+    // and the boot backfill that heals records written by a different Core build
+    // (BackfillManifestProjectionsAsync) — so a future additive manifest section only needs a line here
+    // to reach all of them; hand-copied per-path field lists are what silently dropped Interfaces from
+    // live adoption. Endpoints, Settings and StorageMappings stay in BuildAppRecord: they need the
+    // runtime selection and existing-record carry-forward, not just the manifest.
+    private static AppRecord ApplyManifestProjections(AppRecord record, RuntimeAppManifest manifest)
+        => record with
+        {
+            Capabilities = ResolveCapabilities(manifest),
+            Provides = manifest.Provides.Count == 0 ? null : manifest.Provides,
+            Dependencies = manifest.Dependencies.Select(ToDependencyContract).ToArray(),
+            Ui = AppUiContract.FromManifest(manifest.Ui),
+            CatalogMetadata = AppCatalogMetadataContract.FromManifest(manifest.CatalogMetadata),
+            Interfaces = AppInterfaceContract.FromManifest(manifest.Interfaces),
+            RuntimeProfiles = BuildRuntimeProfileSummaries(manifest),
+            MountSlots = BuildMountSlots(manifest),
+            NormalizedBy = CoreStatusResponse.PlatformVersionString,
+        };
 
     // External-mount slots are redeclared from the manifest on every (re)build, like runtime
     // profiles. Operator bindings are preserved from the existing record (like settings) so they
@@ -4052,23 +4162,20 @@ internal sealed class CoreLifecycleService(
         var updated = await apps.UpdateAppAsync(app.Id, current =>
         {
             var reconciled = BuildAppRecord(selection, current.ManifestPath!, manifestUrl: current.ManifestUrl, system: current.System, existing: current);
-            return current with
+            // Manifest projections come from the shared choke point rather than a hand-copied field
+            // list, so every projected section — including ones added later — reaches a live adoption
+            // without this site naming it (Interfaces was silently missing from the old list). The
+            // remaining fields are the selection/carry-forward rebuilds only BuildAppRecord can do.
+            return ApplyManifestProjections(current, selection.Manifest) with
             {
                 Version = reconciled.Version,
                 DisplayName = reconciled.DisplayName,
                 Description = reconciled.Description,
                 Source = reconciled.Source,
-                Capabilities = reconciled.Capabilities,
-                Provides = reconciled.Provides,
                 Settings = reconciled.Settings,
                 StorageMappings = reconciled.StorageMappings,
-                Dependencies = reconciled.Dependencies,
                 Endpoints = reconciled.Endpoints,
-                MountSlots = reconciled.MountSlots,
                 Mounts = reconciled.Mounts,
-                Ui = reconciled.Ui,
-                CatalogMetadata = reconciled.CatalogMetadata,
-                RuntimeProfiles = reconciled.RuntimeProfiles,
                 SourceState = reconciled.SourceState,
                 // Record this start's adopted deltas; null when nothing changed so clients show no badge.
                 LiveChanges = changes.Count > 0 ? changes : null,

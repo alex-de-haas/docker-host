@@ -1094,6 +1094,7 @@ internal sealed class RuntimeAppSupervisorService(
         await ReclaimOrphanedRuntimeProcessesAsync(stoppingToken);
         await bootstrap.SeedBootAsync(stoppingToken);
 
+        await BackfillManifestProjectionsAsync(stoppingToken);
         await MigratePortAssignmentsAsync(stoppingToken);
         await PurgeRetiredAdvisoriesAsync(stoppingToken);
         await RecoverStrandedLifecycleStatesAsync(stoppingToken);
@@ -1437,6 +1438,31 @@ internal sealed class RuntimeAppSupervisorService(
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidOperationException)
         {
             logger.LogWarning(ex, "Interrupted-update recovery did not complete.");
+        }
+    }
+
+    // Manifest-projection backfill: re-run the manifest→record projections for records written by a
+    // different Core build, before autostart reconciliation (start ordering reads Provides) and before
+    // clients query the registry. Best-effort — a failure is logged and startup continues; an affected
+    // record keeps its stale projections until the next boot or a reviewed update rebuilds it.
+    private async Task BackfillManifestProjectionsAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var healed = await lifecycle.BackfillManifestProjectionsAsync(cancellationToken);
+            if (healed > 0)
+            {
+                logger.LogInformation("Rebuilt manifest projections for {Count} runtime app record(s) written by a different Core build.", healed);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        // Same tolerance as the port backfill below: InvalidOperationException covers a record removed
+        // between the list snapshot and its per-app write.
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidOperationException)
+        {
+            logger.LogWarning(ex, "Hosty manifest-projection backfill did not complete.");
         }
     }
 
