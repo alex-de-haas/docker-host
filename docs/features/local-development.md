@@ -1,7 +1,7 @@
 # Local Development And Testing
 
 Created: 2026-05-13
-Updated: 2026-07-11
+Updated: 2026-08-09
 
 This document describes the current local feedback loops after the Core/Shell/runtime app split.
 
@@ -163,6 +163,13 @@ hosty apps open com.haas.demo-app --user user@docker-host.local --mode standalon
 The CLI helpers use existing enabled Host users and normal app access checks. Disabled users, missing app assignments, incompatible exposure policy, and unavailable runtime state fail instead of silently issuing app identity. There is no deterministic development-user seeding or default bypass flag in the local source runtime workflow.
 
 Do not validate Hosty identity, Shell embedding, app assignments, or scoped directory behavior by running an app only in standalone mode.
+
+## Shared State In Tests
+
+The Core suite runs test classes in parallel inside a single process, so anything process-global is shared with tests that know nothing about each other. A test must therefore never establish a precondition that only holds at the instant it is read; two globals in particular are load-bearing:
+
+- **Ephemeral TCP ports.** Binding a port to learn its number and closing it again proves only that the port was free at that moment — another test, or an unrelated process on the machine, can take it before the assertion runs. A test that needs a port nothing answers on keeps the socket bound and never calls `Listen`: the kernel refuses connections exactly as it would for an unused port, and the bind holds the port for the test's whole run. Set `ExclusiveAddressUse` on that socket, since `Bind` otherwise enables `SO_REUSEADDR`, which lets a second socket share the port of a bound non-listening one and then listen on it.
+- **Environment variables.** `HostyCoreApplication.ConfigureServices` accepts a `HostyCoreRuntimeConfig` and falls back to `HostyCoreRuntimeConfig.FromEnvironment` only when none is given, so a test host boots from an explicit config and reads no environment at all. Environment mutation is confined to the config-parsing tests, in the one class that owns the temporary-environment helper — xUnit serializes tests within a class, so any new test that sets a `HOSTY_*` variable belongs there too.
 
 ## Verification Checklist
 
