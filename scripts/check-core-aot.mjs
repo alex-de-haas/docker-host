@@ -22,14 +22,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// Known AOT hazards that predate this check. Each entry is a source file whose IL warnings are
-// accepted for now; nothing else may warn. Shrinking this list is the goal — never grow it without
-// deciding that the hazard is acceptable.
-const ALLOWED_WARNING_FILES = [
-  // JsonArray.Add<JsonObject> on the cloudflared ingress config: reflection-based JSON node writing,
-  // outside the source-generated context every other Core payload uses.
-  "CloudflareTunnelConfigPatcher.cs",
-];
+// Source files whose IL warnings are tolerated. Empty, and meant to stay that way: Core publishes with
+// no trim/AOT warnings at all, so any entry here is a hazard someone decided to live with. Adding one
+// needs that decision made explicitly, with the reason written next to it.
+const ALLOWED_WARNING_FILES = [];
 
 const PROJECT = "apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj";
 const PROJECT_DIR = "apps/core/src/Haas.Hosty.Core";

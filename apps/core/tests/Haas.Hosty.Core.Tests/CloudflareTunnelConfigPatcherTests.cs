@@ -90,6 +90,26 @@ public sealed class CloudflareTunnelConfigPatcherTests
         => Assert.Equal(["media.example.test", "core.example.test"], CloudflareTunnelConfigPatcher.IngressHostnames(Sample()));
 
     [Fact]
+    public void UpsertIngress_NoCatchAll_AppendsAtTheEnd()
+    {
+        // Without a catch-all to insert before, the rule is appended. Covers the append branch, which is
+        // the one that had to avoid JsonArray's trim/AOT-unsafe generic Add<T>.
+        var config = (JsonObject)JsonNode.Parse("""
+            {"ingress":[{"hostname":"media.example.test","service":"http://localhost:8096"}]}
+            """)!;
+
+        var result = CloudflareTunnelConfigPatcher.UpsertIngress(config, "app.example.test", "http://localhost:4000");
+
+        var ingress = (JsonArray)result["ingress"]!;
+        Assert.Equal(2, ingress.Count);
+        Assert.Equal("media.example.test", (string?)ingress[0]!["hostname"]);
+        // Appended as a real object node, not a serialized value wrapper.
+        var appended = Assert.IsType<JsonObject>(ingress[1]);
+        Assert.Equal("app.example.test", (string?)appended["hostname"]);
+        Assert.Equal("http://localhost:4000", (string?)appended["service"]);
+    }
+
+    [Fact]
     public void UpsertIngress_MissingIngressArray_SynthesizesCatchAllAndInserts()
     {
         var config = (JsonObject)JsonNode.Parse("""{"warp-routing":{"enabled":true}}""")!;

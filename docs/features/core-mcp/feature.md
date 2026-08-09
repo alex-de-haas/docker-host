@@ -80,7 +80,9 @@ discovered and callable from a published native binary.
 Because a package that is AOT-clean today can stop being so on any version bump, `npm run core:aot`
 publishes Core as a native binary and fails on any trim/AOT warning outside an explicit per-file
 allowlist. CI runs it on every Core change; before this, `dotnet publish` ran only in the release
-workflow, so a trimming regression could sit on main until a release surfaced it.
+workflow, so a trimming regression could sit on main until a release surfaced it. The allowlist is
+empty — Core's one remaining hazard was fixed separately — so today any warning at all fails the
+build.
 
 A root `NuGet.config` pins the package source and clears inherited ones. Core having no packages made
 the machine's global NuGet configuration irrelevant here; with one, a developer who has an unrelated
@@ -99,10 +101,12 @@ which presents as a build that hangs for minutes with no output.
   provably covers this route.
 - `npm run core:aot` gates trim/AOT regressions; extending the allowlist in
   `scripts/check-core-aot.mjs` must stay a reviewed decision, not a reflex.
-- The gate is verified in both directions, because a green run proves nothing on its own: emptying the
-  allowlist must turn it red. That is not hypothetical — the first version passed with an empty
-  allowlist on a warm tree, since MSBuild skipped the compile and the scan read a log containing no
-  warnings at all. The script clears the Release intermediates for exactly that reason.
+- The gate is verified in both directions, because a green run proves nothing on its own: a build that
+  does warn must turn it red. That is not hypothetical — the first version passed with the allowlist
+  emptied against a still-warning tree, since MSBuild skipped the compile on a warm build and the scan
+  read a log containing no warnings at all. The script clears the Release intermediates for exactly
+  that reason. With the allowlist now empty, re-checking the failing direction means introducing a
+  deliberate warning rather than shrinking the list.
 - Not yet done: the endpoint has never been exercised by a stock external MCP client. That is the
   umbrella's step 6 milestone and is blocked until a host running this Core version exists to point a
   client at.
