@@ -96,22 +96,34 @@ public sealed class HealthProbeTests
             new HealthProbeTarget("http", "127.0.0.1", closed.Port, "/", TimeSpan.FromSeconds(2))));
     }
 
-    // The reservation's whole contract, and the half the probe assertions cannot see: a port that merely
-    // refuses connections today is worthless if a parallel test can still take it. The rival here binds the
-    // exact same address and port with SO_REUSEADDR — what every TcpListener in this suite carries — and
-    // must be turned away. Drop ExclusiveAddressUse from Reserve and this fails on macOS (measured), which
-    // is the point: the reservation rests on that flag, not on the kernel refusing duplicates on its own.
+    // The half the probe assertions cannot see: a port that refuses connections right now is worthless if
+    // a parallel test can still be handed it and listen there. The taker that actually threatens this
+    // suite is the ephemeral allocator — every `TcpListener(IPAddress.Loopback, 0)` in it — and the kernel
+    // never picks a port that is already bound. That is what the reservation rests on, so it is what gets
+    // asserted; the ports are held simultaneously so each iteration sweeps a different one.
     [Fact]
-    public void ClosedPort_Reserve_ExcludesARivalBinder()
+    public void ClosedPort_Reserve_IsNeverHandedOutToAnEphemeralBind()
     {
         using var closed = ClosedPort.Reserve();
 
-        using var rival = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-        rival.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, 1);
-
-        var error = Assert.Throws<SocketException>(
-            () => rival.Bind(new IPEndPoint(IPAddress.Loopback, closed.Port)));
-        Assert.Equal(SocketError.AddressAlreadyInUse, error.SocketErrorCode);
+        var allocated = new List<TcpListener>();
+        try
+        {
+            for (var attempt = 0; attempt < 64; attempt++)
+            {
+                var listener = new TcpListener(IPAddress.Loopback, 0);
+                listener.Start();
+                allocated.Add(listener);
+                Assert.NotEqual(closed.Port, ((IPEndPoint)listener.LocalEndpoint).Port);
+            }
+        }
+        finally
+        {
+            foreach (var listener in allocated)
+            {
+                listener.Stop();
+            }
+        }
     }
 
     private static LoopbackHttpServer RespondWith(int statusCode)
@@ -145,12 +157,16 @@ public sealed class HealthProbeTests
 
         public static ClosedPort Reserve()
         {
-            // ExclusiveAddressUse is load-bearing, not decoration: a .NET socket carries SO_REUSEADDR from
-            // construction (the property's own default is false, and it maps to that flag on Unix), and a
-            // bound-but-not-listening holder with SO_REUSEADDR does not exclude anyone — a second socket
-            // binds the *exact* same address and port and can then listen on it. Clearing it via
-            // ExclusiveAddressUse is what turns this from a hint into a reservation. Reserve_ExcludesARivalBinder
-            // pins the behavior down, since the flags decide it and no platform refuses this outright.
+            // What the reservation rests on is the bind itself: no platform's ephemeral allocator hands out
+            // a port that is already bound, which is the only way a parallel test here could take it
+            // (Reserve_IsNeverHandedOutToAnEphemeralBind pins that down).
+            //
+            // ExclusiveAddressUse is extra hardening against a *deliberate* bind of this exact port, and it
+            // only bites on macOS: measured on .NET 10, macOS refuses such a rival once the flag is set,
+            // while on Linux the rival binds anyway — the flag reads back as requested, but Bind puts
+            // SO_REUSEADDR on the kernel socket regardless, and Linux lets two SO_REUSEADDR sockets share
+            // the port of a non-listening holder. No test binds a specific port, so nothing here depends on
+            // that difference.
             var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp)
             {
                 ExclusiveAddressUse = true,
