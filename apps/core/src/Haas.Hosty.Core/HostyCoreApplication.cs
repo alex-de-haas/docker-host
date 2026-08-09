@@ -46,6 +46,9 @@ internal static class HostyCoreApplication
         // survive keep-apps restarts), but asymmetric: apps validate delegated tokens locally.
         builder.Services.AddSingleton(sp => DelegatedTokenSigningKey.LoadOrCreate(sp.GetRequiredService<CoreDataPaths>()));
         builder.Services.AddSingleton<DelegatedTokenService>();
+        // Core MCP: the protocol server plus the tool type it reflects over. The tools resolve Core's
+        // own services per call, so the MCP layer holds no state of its own.
+        builder.Services.AddMcpServer().WithHttpTransport().WithTools<HostyCoreTools>();
         builder.Services.AddSingleton<AppRegistryStore>();
         builder.Services.AddSingleton<AppSecretsStore>();
         builder.Services.AddSingleton<ShellPublicOriginResolver>();
@@ -367,6 +370,7 @@ internal static class HostyCoreApplication
         AppSecretsEndpoints.Map(app);
         NotificationEndpoints.Map(app);
         EventStreamEndpoints.Map(app);
+        McpEndpoints.Map(app);
     }
 
     // Query-flag parsing for control endpoints: accepts a bare `?keepApps` (empty value) plus the usual
