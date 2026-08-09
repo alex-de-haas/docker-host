@@ -94,8 +94,26 @@ gateway restart.
   as `item/agentMessage/delta`; `thread/start` yields the id that `thread/resume` restores, and it
   works across process restarts. (The older "Codex cannot pause per tool call" limitation is true
   of `codex exec` only.)
-- Credential: `codex login` on the host as the operator, or a `CODEX_API_KEY` app setting. The
-  binary resolves override → the pinned `@openai/codex` dependency → PATH.
+- Credential — **two modes, the administrator picks**:
+  - *API key* (`CODEX_API_KEY` app setting): the gateway signs Codex in on the operator's behalf.
+    A key set **only as an environment variable authenticates nothing** — verified against a clean
+    `CODEX_HOME`, where neither `OPENAI_API_KEY` nor `CODEX_API_KEY` produced a session; Codex
+    accepts a key exclusively through `codex login --with-api-key`, which reads it from stdin and
+    writes it into the credential store. The gateway therefore runs that login itself, passing the
+    key over stdin — never argv, where process listings would expose it. An API key does not
+    expire, which is what a long-running service wants.
+  - *Interactive* (no key set): someone runs `codex login` on the host **as the user Core runs as**
+    — credentials are per-user, so signing in as a different account leaves the harness
+    unauthenticated. The optional `CODEX_HOME` setting points at a non-default credential
+    directory; the login must then carry the same directory (`CODEX_HOME=<path> codex login`),
+    which the health reason spells out with the configured path filled in.
+- The API-key mode writes into **its own Codex home** under the app data directory, so choosing it
+  never overwrites the operator's personal `~/.codex` session (verified live: after the gateway
+  signed in with a key, `codex login status` on the host still reported the operator's own
+  session). A SHA-256 fingerprint of the key is stored beside those credentials, so rotating the
+  key in app settings re-authenticates on the next health check; the fingerprint is written only
+  after a successful login, so a bad key retries instead of sticking.
+- The binary resolves override → the pinned `@openai/codex` dependency → PATH.
 - Three protocol properties are load-bearing and easy to get wrong, so they are pinned in
   `codex-protocol.ts` and enforced by a scripted test fake that fails the suite on a violation:
   - **The sandbox is what creates the approval.** Codex asks only when an action must escalate out

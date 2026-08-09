@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import type {
   HarnessAdapter,
   HarnessAvailability,
@@ -16,6 +17,7 @@ import {
   type JsonRpcMessage,
 } from "./codex-protocol.js";
 import { isNodeEntry, resolveCodexCommand } from "./codex-binary.js";
+import { authMode, ensureCodexAuth, type CodexAuthConfig } from "./codex-auth.js";
 
 // Second harness adapter (spike outcome 2026-08-09, docs/features/ai-gateway/plan.md): OpenAI Codex
 // CLI driven over `codex app-server` stdio JSON-RPC. Approvals arrive as server→client *requests*
@@ -36,8 +38,10 @@ function spawnTarget(args: string[]): { command: string; args: string[] } {
 export class CodexHarnessAdapter implements HarnessAdapter {
   readonly name = "codex-app-server";
 
+  constructor(private readonly auth: CodexAuthConfig) {}
+
   async probe(): Promise<HarnessAvailability> {
-    const probe = await runCodex(["--version"]).catch((error: Error) => error);
+    const probe = await runCodex(["--version"], {}).catch((error: Error) => error);
     if (probe instanceof Error) {
       return {
         available: false,
@@ -45,11 +49,27 @@ export class CodexHarnessAdapter implements HarnessAdapter {
       };
     }
 
-    const status = await runCodex(["login", "status"]).catch(() => null);
+    // In API-key mode this also performs (or refreshes) the login, so an operator who pastes a key
+    // into app settings is signed in by the next health check without touching the host.
+    const resolution = await ensureCodexAuth(this.auth);
+    if (resolution.error) {
+      return { available: false, reason: resolution.error };
+    }
+
+    const status = await runCodex(["login", "status"], resolution.env).catch(() => null);
     if (status === null || /not logged in|no credentials/i.test(status)) {
+      // A login run without the configured CODEX_HOME writes credentials into the default home,
+      // where the harness never looks — so the suggested command carries the same directory the
+      // probe reads from. Only in interactive mode: the key mode owns its home and signs itself in.
+      const homePrefix = resolution.env.CODEX_HOME ? `CODEX_HOME=${resolution.env.CODEX_HOME} ` : "";
       return {
         available: false,
-        reason: "Codex is installed but not signed in. Run `codex login` as the host user, or provide a Codex API key in the app settings.",
+        // Codex accepts an API key only through `login --with-api-key` (over stdin), never from the
+        // environment. The operator picks the mode, so the reason names both routes.
+        reason:
+          resolution.mode === "api-key"
+            ? "The configured Codex API key did not produce a signed-in session. Check that the key is valid, or clear it to use an interactive `codex login` on the host instead."
+            : `Codex is installed but not signed in. Either run \`${homePrefix}codex login\` on the host as the user Core runs as, or set a Codex API key in this app's settings and the gateway will sign in for you.`,
       };
     }
 
@@ -57,7 +77,7 @@ export class CodexHarnessAdapter implements HarnessAdapter {
   }
 
   start(options: HarnessStartOptions): HarnessRun {
-    return new CodexRun(options);
+    return new CodexRun(options, this.auth);
   }
 }
 
@@ -84,9 +104,23 @@ class CodexRun implements HarnessRun {
   private turnActive = false;
   private stopped = false;
 
-  constructor(private readonly options: HarnessStartOptions) {
+  constructor(
+    private readonly options: HarnessStartOptions,
+    auth: CodexAuthConfig,
+  ) {
+    // Resolved synchronously from the mode: the login itself already happened during probe, and a
+    // session must not wait on it. In interactive mode this is the operator's own home.
+    const env = authMode(auth) === "api-key"
+      ? { CODEX_HOME: path.join(auth.dataDir, "codex-home") }
+      : auth.codexHome?.trim()
+        ? { CODEX_HOME: auth.codexHome.trim() }
+        : {};
     const target = spawnTarget(["app-server"]);
-    this.child = spawn(target.command, target.args, { stdio: ["pipe", "pipe", "pipe"], cwd: options.cwd });
+    this.child = spawn(target.command, target.args, {
+      stdio: ["pipe", "pipe", "pipe"],
+      cwd: options.cwd,
+      env: { ...process.env, ...env },
+    });
     this.child.stdout.on("data", (chunk: Buffer) => this.onStdout(chunk));
     this.child.stderr.on("data", (chunk: Buffer) => {
       const text = chunk.toString().trim();
@@ -372,10 +406,13 @@ function readItemText(item: Record<string, unknown>): string {
   return "";
 }
 
-function runCodex(args: string[]): Promise<string> {
+function runCodex(args: string[], env: Record<string, string>): Promise<string> {
   return new Promise((resolve, reject) => {
     const target = spawnTarget(args);
-    const child = spawn(target.command, target.args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(target.command, target.args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, ...env },
+    });
     let out = "";
     child.stdout.on("data", (chunk: Buffer) => (out += chunk.toString()));
     child.stderr.on("data", (chunk: Buffer) => (out += chunk.toString()));

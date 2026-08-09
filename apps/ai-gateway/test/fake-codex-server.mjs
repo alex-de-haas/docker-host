@@ -13,6 +13,50 @@
 //     internally tagged object.
 //   * an approval reply must never be "approved_for_session".
 
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
+
+// The adapter also drives `login status` / `login --with-api-key` for the API-key auth mode, and
+// both must respect CODEX_HOME — the whole point of that mode is that it never writes into the
+// operator's personal Codex home. Model that here with a real auth file.
+const codexHome = process.env.CODEX_HOME;
+const authFile = codexHome ? path.join(codexHome, "auth.json") : null;
+const argv = process.argv.slice(2);
+
+if (argv[0] === "--version") {
+  process.stdout.write("codex-cli 0.147.0-fake\n");
+  process.exit(0);
+}
+if (argv[0] === "login" && argv[1] === "status") {
+  const signedIn = authFile ? existsSync(authFile) : false;
+  process.stdout.write(signedIn ? "Logged in using an API key\n" : "Not logged in\n");
+  process.exit(signedIn ? 0 : 1);
+}
+if (argv[0] === "login" && argv[1] === "--with-api-key") {
+  if (!authFile) {
+    process.stderr.write("FAKE-CODEX: login --with-api-key without CODEX_HOME would write the operator's own home\n");
+    process.exit(3);
+  }
+  let key = "";
+  process.stdin.on("data", (c) => (key += c.toString()));
+  process.stdin.on("end", () => {
+    if (!key.trim()) {
+      process.stderr.write("FAKE-CODEX: no key on stdin\n");
+      process.exit(3);
+    }
+    mkdirSync(path.dirname(authFile), { recursive: true });
+    writeFileSync(authFile, JSON.stringify({ key: key.trim() }));
+    process.stdout.write("Successfully logged in\n");
+    process.exit(0);
+  });
+} else if (argv[0] !== "app-server") {
+  process.stderr.write(`FAKE-CODEX: unexpected argv ${JSON.stringify(argv)}\n`);
+  process.exit(3);
+} else {
+  runAppServer();
+}
+
+function runAppServer() {
 let buffer = "";
 let pendingApprovalId = null;
 let currentTurnText = "";
@@ -117,4 +161,5 @@ function handle(msg) {
   if (msg.method === "turn/interrupt") {
     send({ jsonrpc: "2.0", id: msg.id, result: {} });
   }
+}
 }

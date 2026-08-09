@@ -16,7 +16,11 @@ const adapter: HarnessAdapter =
   config.harness === "fake"
     ? new FakeHarnessAdapter()
     : config.harness === "codex"
-      ? new CodexHarnessAdapter()
+      ? new CodexHarnessAdapter({
+          apiKey: config.codexApiKey,
+          codexHome: config.codexHome,
+          dataDir: config.dataDir,
+        })
       : new ClaudeHarnessAdapter();
 const store = new SessionStore(config.dataDir);
 const audit = new AuditReporter(config.coreOrigin, config.serviceToken, config.appId);

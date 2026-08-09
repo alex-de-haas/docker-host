@@ -56,6 +56,7 @@ jobs:
       cli: ${{ steps.filter.outputs.cli }}
       telemetry_backend: ${{ steps.filter.outputs.telemetry_backend }}
       marketplace: ${{ steps.filter.outputs.marketplace }}
+      ai_gateway: ${{ steps.filter.outputs.ai_gateway }}
       telemetry_ui: ${{ steps.filter.outputs.telemetry_ui }}
       swift_shell: ${{ steps.filter.outputs.swift_shell }}
       cardputer_shell: ${{ steps.filter.outputs.cardputer_shell }}
@@ -122,6 +123,11 @@ jobs:
               - *node_shared
               - 'packages/app-sdk/**'
               - 'apps/marketplace/**'
+
+            ai_gateway:
+              - *node_shared
+              - 'packages/app-sdk/**'
+              - 'apps/ai-gateway/**'
 
             telemetry_ui:
               - *node_shared
@@ -402,6 +408,30 @@ jobs:
 
       - name: Build Marketplace
         run: npm run marketplace:build
+
+  ai-gateway:
+    name: AI Gateway
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.ai_gateway == 'true'
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Lint AI Gateway
+        run: npm run ai-gateway:lint
+
+      - name: Test AI Gateway
+        run: npm run ai-gateway:test
 
   telemetry-ui:
     name: Telemetry UI
