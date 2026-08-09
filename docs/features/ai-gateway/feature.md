@@ -21,9 +21,10 @@ this feature.
   "Ask assistant" in the app details dialog — only for a `host.admin` viewer and only when an
   installed app declares `ai-gateway` with a resolved URL. No provider or a non-admin viewer means
   the feature leaves no trace in the UI.
-- Rollout caveat: a record built by a Core that predates the extension lacks the section until the
-  next install/update rebuilds it (a reviewed same-version update suffices). The 2026-08-09 rollout
-  hit exactly this when the app was installed before the Core update.
+- A record built by a Core that predates the extension lacks the section, which is what the
+  2026-08-09 rollout hit when the app was installed before the Core update. Since Core 0.74.1 the
+  boot-time [manifest projection backfill](../manifest-projection-backfill/feature.md) re-projects
+  such records from the reviewed manifest copy automatically; no operator action is needed.
 
 ## Delegated Tokens
 

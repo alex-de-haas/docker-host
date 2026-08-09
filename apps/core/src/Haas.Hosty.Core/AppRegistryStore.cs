@@ -319,7 +319,14 @@ internal sealed record AppRecord(
     // name — e.g. "ai-gateway"), normalized from the manifest at install/update and re-read on each
     // start for a live source app. Additive/nullable, so no AppStateDocument schema bump. See
     // docs/features/ai-agent-bridge/plan.md, "Manifest Interfaces And Registry".
-    IReadOnlyDictionary<string, IReadOnlyList<AppInterfaceContract>>? Interfaces = null);
+    IReadOnlyDictionary<string, IReadOnlyList<AppInterfaceContract>>? Interfaces = null,
+    // The platform version of the Core build that last ran the manifest→record projections
+    // (CoreLifecycleService.ApplyManifestProjections) for this record. A record written by a different
+    // Core build may silently lack manifest sections that build did not parse (e.g. `interfaces` under
+    // a pre-0.74 Core), so the boot backfill re-projects from the reviewed manifest copy whenever this
+    // stamp differs from the running build — see BackfillManifestProjectionsAsync. Null on legacy
+    // records, which therefore backfill once. Additive/nullable, so no AppStateDocument schema bump.
+    string? NormalizedBy = null);
 
 // Well-known InstallOrigin values. Null on the record means a user/operator install; only the
 // distribution bootstrap stamps an explicit origin today.

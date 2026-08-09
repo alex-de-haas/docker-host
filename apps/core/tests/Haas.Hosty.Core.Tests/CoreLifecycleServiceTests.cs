@@ -4646,6 +4646,97 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task ReconcileLiveContract_AdoptsAddedInterfacesBlock()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var folder = Path.Combine(fixture.Root, "live-app");
+        Directory.CreateDirectory(folder);
+        var manifestPath = Path.Combine(folder, "manifest.json");
+        await File.WriteAllTextAsync(manifestPath, CreateLocalCommandFolderManifestJson("1.0.0"));
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath));
+
+        // The operator adds an `interfaces` block to the live folder manifest. Adoption must carry it
+        // onto the record — the projections come from the shared choke point, not a hand-copied field
+        // list that once silently omitted Interfaces.
+        await File.WriteAllTextAsync(manifestPath, CreateLocalCommandFolderManifestJson(
+            "2.0.0",
+            ""","interfaces":{"ai-gateway":[{"path":"/assistant"}]}"""));
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        var load = await fixture.Service.LoadSelectionWithStatusAsync(app!, CancellationToken.None);
+
+        var reconciled = await fixture.Service.ReconcileLiveContractAsync(app!, load, CancellationToken.None);
+
+        var declaration = Assert.Single(reconciled.Interfaces!["ai-gateway"]);
+        Assert.Equal("/assistant", declaration.Path);
+    }
+
+    [Fact]
+    public async Task BackfillManifestProjections_HealsRecordWrittenByDifferentCoreBuild()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifestPath = await fixture.WriteManifestAsync(
+            "1.0.0",
+            interfacesJson: """ "interfaces": { "ai-gateway": [{ "endpoint": "app.http", "path": "/assistant" }] }, """);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath));
+
+        // Install runs the projections under this build, so the record is stamped with it.
+        var installed = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.NotNull(installed!.Interfaces);
+        Assert.Equal(CoreStatusResponse.PlatformVersionString, installed.NormalizedBy);
+
+        // Simulate the record an older Core wrote: sections its parser did not know are absent from
+        // state.json, and there is no stamp (the exact shape of the 2026-08-09 ai-gateway rollout).
+        await fixture.Apps.UpsertAppAsync(installed with { Interfaces = null, NormalizedBy = null });
+
+        var healed = await fixture.Service.BackfillManifestProjectionsAsync();
+
+        Assert.Equal(1, healed);
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        var declaration = Assert.Single(app!.Interfaces!["ai-gateway"]);
+        Assert.Equal("app.http", declaration.EndpointKey);
+        Assert.Equal("/assistant", declaration.Path);
+        Assert.Equal(CoreStatusResponse.PlatformVersionString, app.NormalizedBy);
+        // Operator-owned state is untouched by the heal.
+        Assert.Equal("production", app.Settings["APP_MODE"].Value);
+        Assert.Equal("1.0.0", app.Version);
+    }
+
+    [Fact]
+    public async Task BackfillManifestProjections_RecordStampedByThisBuild_SkipsWithoutRewriting()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifestPath = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath));
+        var before = await fixture.Apps.GetAppAsync("com.example.notes");
+
+        var healed = await fixture.Service.BackfillManifestProjectionsAsync();
+
+        // Steady-state boots neither re-read manifests nor rewrite state.json.
+        Assert.Equal(0, healed);
+        var after = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal(before!.UpdatedAt, after!.UpdatedAt);
+    }
+
+    [Fact]
+    public async Task BackfillManifestProjections_MissingManifestCopy_SkipsWithoutStamping()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifestPath = await fixture.WriteManifestAsync("1.0.0");
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath));
+        var installed = await fixture.Apps.GetAppAsync("com.example.notes");
+        await fixture.Apps.UpsertAppAsync(installed! with { NormalizedBy = null });
+        File.Delete(Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "manifest.json"));
+
+        var healed = await fixture.Service.BackfillManifestProjectionsAsync();
+
+        // No stored copy to project from: skip, and leave the record un-stamped so a later boot
+        // retries once the copy exists again.
+        Assert.Equal(0, healed);
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Null(app!.NormalizedBy);
+    }
+
+    [Fact]
     public async Task RestartAsync_LiveSourceApp_AdoptsFolderManifestAndRevendorsAssets()
     {
         var fixture = await LifecycleFixture.CreateAsync();
@@ -4810,7 +4901,7 @@ public sealed class CoreLifecycleServiceTests
             }
             """;
 
-    private static string CreateLocalCommandFolderManifestJson(string version, string? externalMounts = null)
+    private static string CreateLocalCommandFolderManifestJson(string version, string? extraJson = null)
         => $$"""
             {
               "schemaVersion": "app.0.1",
@@ -4827,7 +4918,7 @@ public sealed class CoreLifecycleServiceTests
                     "command": "echo hi"
                   }
                 }
-              }]{{externalMounts ?? ""}}
+              }]{{extraJson ?? ""}}
             }
             """;
 
@@ -5934,6 +6025,7 @@ public sealed class CoreLifecycleServiceTests
             string? externalMountsJson = null,
             string? networkJson = null,
             string? capabilitiesJson = null,
+            string? interfacesJson = null,
             string id = "com.example.notes",
             string name = "Notes")
         {
@@ -6001,6 +6093,7 @@ public sealed class CoreLifecycleServiceTests
                   {{dependencyJson}}
                   {{externalMountsJson ?? ""}}
                   {{capabilitiesJson ?? ""}}
+                  {{interfacesJson ?? ""}}
                   "data": {
                     "enabled": true,
                     "targets": [{
