@@ -96,6 +96,8 @@ internal sealed class LocalCommandRuntimeAdapter(
                     throw;
                 }
 
+                EnsureDynamicRangePortsStillAvailable(service.Key, servicePorts[service.Key], logger);
+
                 var (startInfo, processGroup) = CreateShellStartInfo(service.Runtime.Command, workingDirectory);
                 InjectEnvironment(startInfo, context, service, endpoints, servicePorts);
                 var process = new System.Diagnostics.Process
@@ -559,7 +561,7 @@ internal sealed class LocalCommandRuntimeAdapter(
 
     // Resolves every service's host ports once so the assignment is stable and shared across
     // services within a single start (a dependent must see the exact port its sibling binds).
-    private static IReadOnlyDictionary<string, IReadOnlyDictionary<string, int>> ResolveServicePorts(RuntimeLifecycleContext context)
+    private IReadOnlyDictionary<string, IReadOnlyDictionary<string, int>> ResolveServicePorts(RuntimeLifecycleContext context)
     {
         // Track every port handed out across services so a dynamic allocation never lands on a
         // port already assigned to a sibling (pinned or dynamic) — the assignments here happen
@@ -577,7 +579,7 @@ internal sealed class LocalCommandRuntimeAdapter(
                     continue;
                 }
 
-                var hostPort = RuntimePortHelper.ResolveHostPort(context.App, service.Key, port, key, assigned);
+                var hostPort = RuntimePortHelper.ResolveHostPort(context.App, service.Key, port, key, assigned, logger);
                 ports[key] = hostPort;
                 assigned.Add(hostPort);
             }
@@ -625,6 +627,38 @@ internal sealed class LocalCommandRuntimeAdapter(
 
                 usedPorts.Add(hostPort, service.Key);
             }
+        }
+    }
+
+    // Re-probe a service's ports immediately before its command spawns, closing the window that opens
+    // between EnsureExplicitPortsAvailable and here — for a service with a `setup` step the two are
+    // separated by the whole of that command, and `npm install` alone opens dozens of outbound
+    // connections that each consume a local port from the OS dynamic range.
+    //
+    // Scoped to ports inside that range on purpose. A band port cannot be taken by the OS on its own, so
+    // probing it again would buy nothing and cost something real: on Windows a Node listener binds with
+    // SO_EXCLUSIVEADDRUSE, so this app's own TIME_WAIT sockets from the run we just stopped can still make
+    // its port unbindable, and a strict probe here would turn an ordinary restart into a failed start. In
+    // the dynamic range the trade runs the other way — a holder there is most likely foreign, and naming
+    // the port beats letting the app die with a bind error the operator has to decode.
+    internal static void EnsureDynamicRangePortsStillAvailable(string serviceKey, IReadOnlyDictionary<string, int> ports, ILogger? logger = null)
+    {
+        foreach (var (key, hostPort) in ports)
+        {
+            if (!RuntimePortHelper.IsOsDynamicRangePort(hostPort) ||
+                RuntimePortHelper.IsLoopbackTcpPortAvailable(hostPort))
+            {
+                continue;
+            }
+
+            logger?.LogWarning(
+                "Port {HostPort} for service '{Service}' was free at preflight but is held now; it sits in the OS dynamic port range, where the host may hand it to any process.",
+                hostPort,
+                serviceKey);
+            throw new AppLifecycleException(
+                "local_command_port_unavailable",
+                $"Local command service '{serviceKey}' requires local port {hostPort} for port '{key}', but that port was taken while the service was being prepared. " +
+                "It sits in the range the operating system allocates from; reassign it to move it out.");
         }
     }
 

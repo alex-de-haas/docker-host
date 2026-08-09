@@ -2714,6 +2714,153 @@ internal sealed class CoreLifecycleService(
         return migrated;
     }
 
+    // Automatic ports allocated before 0.76.0 came out of the OS dynamic range (a port-0 bind), so they
+    // live in the pool the OS also hands to every outbound connection on the host — a durable reservation
+    // there is only ever on loan, and the app whose port the OS reclaims fails to start with a raw bind
+    // error. The motivating failure is written up on RuntimePortHelper.AutomaticPortRangeStart. This pass
+    // rehomes such reservations into the Hosty band, at boot, before autostart reconciliation consumes
+    // them, so an existing install is healed without operator action.
+    //
+    // Only `automatic`, remappable, non-host-network assignments move. An operator pin, a manifest port,
+    // and a host-network port are somebody's deliberate choice, and sitting in the dynamic range does not
+    // make it Core's to overrule. An app that is already up keeps its port and is retried on a later boot:
+    // Core may have adopted a live listener (keep-apps light restart, docker adoption), and moving the
+    // record's port would leave it disagreeing with the process actually serving.
+    //
+    // Each move goes through the allocator, so the new port is chosen under the same gate and against the
+    // same exclusion view an operator-driven reassignment uses, and the endpoint URL moves with it. A
+    // record is re-read between moves because each one persists a new revision. Failures are logged and
+    // skipped rather than thrown: this runs at boot, and one unmovable port must not strand the rest.
+    // Returns the number of ports rehomed.
+    public async Task<int> RehomeOsAllocatedPortsAsync(CancellationToken cancellationToken = default)
+    {
+        if (portAllocator is null)
+        {
+            return 0;
+        }
+
+        var rehomed = 0;
+        var records = await apps.ListAppRecordsAsync(cancellationToken);
+        foreach (var app in records.Where(app => string.Equals(app.Kind, "runtime", StringComparison.Ordinal)))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (FindOsAllocatedAssignments(app).Count == 0)
+            {
+                continue;
+            }
+
+            if (AppRuntimeStates.IsUp(app.RuntimeState))
+            {
+                logger.LogInformation(
+                    "App '{AppId}' holds an OS-allocated automatic port but is running; leaving it in place and retrying at a later boot.",
+                    app.Id);
+                continue;
+            }
+
+            rehomed += await WithAppLockAsync(app.Id, () => RehomeAppPortsAsync(app.Id, cancellationToken), cancellationToken);
+        }
+
+        return rehomed;
+    }
+
+    private async Task<int> RehomeAppPortsAsync(string appId, CancellationToken cancellationToken)
+    {
+        var snapshot = await apps.GetAppAsync(appId, cancellationToken);
+        if (snapshot is null)
+        {
+            return 0;
+        }
+
+        var rehomed = 0;
+        // Iterate a target list captured once, not "whatever still matches" — a saturated band makes the
+        // allocator fall back to another OS-range port, which would match the selection again and spin
+        // this loop forever. The record is still re-read per target, because each move persists a new
+        // revision the next allocation has to be based on.
+        foreach (var target in FindOsAllocatedAssignments(snapshot))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var current = await apps.GetAppAsync(appId, cancellationToken);
+            if (current is null || AppRuntimeStates.IsUp(current.RuntimeState))
+            {
+                return rehomed;
+            }
+
+            // The assignment may have been moved or dropped since the snapshot; only act on one that is
+            // still a target on the persisted record.
+            if (!FindOsAllocatedAssignments(current).Any(assignment =>
+                    string.Equals(assignment.Service, target.Service, StringComparison.Ordinal) &&
+                    string.Equals(assignment.PortKey, target.PortKey, StringComparison.Ordinal)))
+            {
+                continue;
+            }
+
+            try
+            {
+                var (_, oldPort, newPort) = await portAllocator!.ReassignAsync(
+                    current,
+                    target.Service,
+                    target.PortKey,
+                    apps.ListAppRecordsAsync,
+                    async (record, ct) => (await apps.UpsertAppAsync(record, ct)).App,
+                    desiredPort: null,
+                    cancellationToken);
+                if (RuntimePortHelper.IsOsDynamicRangePort(newPort))
+                {
+                    // The band had nothing free, so the allocator fell back to the OS and the port is as
+                    // fragile as the one we just replaced. Say so: the next boot will try again, and the
+                    // operator's real fix is to free ports in the band or pin this one.
+                    logger.LogWarning(
+                        "Rehoming '{AppId}' {Service}.{PortKey} landed on {NewPort}, still inside the OS dynamic range; the automatic port band had nothing free.",
+                        appId,
+                        target.Service,
+                        target.PortKey,
+                        newPort);
+                }
+                else
+                {
+                    logger.LogInformation(
+                        "Rehomed '{AppId}' {Service}.{PortKey} off OS-allocated port {OldPort} to {NewPort}.",
+                        appId,
+                        target.Service,
+                        target.PortKey,
+                        oldPort,
+                        newPort);
+                }
+
+                rehomed++;
+            }
+            catch (Exception ex) when (ex is AppLifecycleException or IOException)
+            {
+                // One unmovable port must not skip the app's remaining ones, nor fail the boot pass.
+                logger.LogWarning(
+                    ex,
+                    "Failed to rehome '{AppId}' {Service}.{PortKey} off OS-allocated port {OldPort}; leaving it in place.",
+                    appId,
+                    target.Service,
+                    target.PortKey,
+                    target.HostPort);
+            }
+        }
+
+        return rehomed;
+    }
+
+    // The assignments the rehoming pass moves: automatic, remappable, not host-network, and holding a port
+    // an OS may hand out on its own. An assignment carrying a HOSTY_PORT_* override is left alone even when
+    // it is still classified `automatic` — the configure path can write one without re-reserving (a known
+    // gap), and the override, not the assignment, is what start resolves first.
+    internal static IReadOnlyList<AppPortAssignment> FindOsAllocatedAssignments(AppRecord app)
+        => (app.PortAssignments ?? [])
+            .Where(assignment =>
+                string.Equals(assignment.Source, AppPortSources.Automatic, StringComparison.Ordinal) &&
+                assignment.Remappable &&
+                !string.Equals(assignment.BindScope, AppPortBindScopes.HostNetwork, StringComparison.Ordinal) &&
+                RuntimePortHelper.IsOsDynamicRangePort(assignment.HostPort) &&
+                !RuntimePortHelper.HasHostPortOverride(app, assignment.Service, assignment.PortKey))
+            .OrderBy(assignment => assignment.Service, StringComparer.Ordinal)
+            .ThenBy(assignment => assignment.PortKey, StringComparer.Ordinal)
+            .ToArray();
+
     // Records only re-run manifest→record normalization at install/update/switch/live-start, so an app
     // installed under an older Core permanently lacked any manifest section that build did not parse —
     // e.g. `interfaces` was silently dropped for hosty.ai-gateway installed under Core 0.73.x, and Shell's

@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Net;
+using Microsoft.Extensions.Logging;
 
 namespace Haas.Hosty.Core;
 
@@ -11,7 +12,7 @@ namespace Haas.Hosty.Core;
 // number — plus the Core port (Shell pins its own in its manifest; see ReservedLoopbackPorts). Resolution
 // reuses RuntimePortHelper so install and start agree.
 // See docs/features/automatic-runtime-app-ports/feature.md.
-internal sealed class RuntimePortAllocator(HostyCoreRuntimeConfig config)
+internal sealed class RuntimePortAllocator(HostyCoreRuntimeConfig config, ILogger<RuntimePortAllocator>? logger = null)
 {
     private readonly SemaphoreSlim gate = new(1, 1);
 
@@ -114,7 +115,7 @@ internal sealed class RuntimePortAllocator(HostyCoreRuntimeConfig config)
             else
             {
                 reserved.Add(oldPort);
-                newPort = RuntimePortHelper.AllocateLoopbackPort(reserved);
+                newPort = RuntimePortHelper.AllocateLoopbackPort(reserved, logger);
             }
 
             var manual = desiredPort is not null;
@@ -308,7 +309,7 @@ internal sealed class RuntimePortAllocator(HostyCoreRuntimeConfig config)
                 }
                 else
                 {
-                    hostPort = RuntimePortHelper.ResolveHostPort(record, service.Key, port, key, reserved);
+                    hostPort = RuntimePortHelper.ResolveHostPort(record, service.Key, port, key, reserved, logger);
                     reserved.Add(hostPort);
                     bindScope = string.Equals(port.Expose, "host", StringComparison.OrdinalIgnoreCase)
                         ? AppPortBindScopes.Host
@@ -388,11 +389,11 @@ internal sealed class RuntimePortAllocator(HostyCoreRuntimeConfig config)
     // installed its assignment is in the set below. That does drop a guarantee — before Shell installs,
     // nothing holds its pinned port — but only to the exact degree every other app already lives with: no
     // one reserves a pinned port for an app that is not installed yet. Reserving Shell's would be the
-    // special case this exists to remove. In practice the window is narrower still: allocation takes
-    // whatever the OS hands out for port 0, and every default ephemeral range (Linux 32768+, Windows and
-    // macOS 49152+) sits well above the ports apps pin. A host with a deliberately widened range could
-    // collide, and then Shell's start fails with the same reassign-able runtime_port_unavailable any app
-    // gets — recoverable by setting HOSTY_PORT_HTTP on it, which now sticks instead of being re-stamped.
+    // special case this exists to remove. In practice the window is narrower still: automatic allocation
+    // draws from the Hosty band (RuntimePortHelper.AutomaticPortRangeStart), which is deliberately above
+    // the development-port neighbourhood apps pin by hand. An app that pins inside the band could still
+    // collide, and then its start fails with the same reassign-able runtime_port_unavailable any app gets
+    // — recoverable by setting HOSTY_PORT_HTTP on it, which now sticks instead of being re-stamped.
     private HashSet<int> ReservedLoopbackPorts(IEnumerable<AppRecord> apps)
     {
         var reserved = new HashSet<int>(apps

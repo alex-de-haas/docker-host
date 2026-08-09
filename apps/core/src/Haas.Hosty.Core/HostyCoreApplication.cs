@@ -1100,6 +1100,9 @@ internal sealed class RuntimeAppSupervisorService(
 
         await BackfillManifestProjectionsAsync(stoppingToken);
         await MigratePortAssignmentsAsync(stoppingToken);
+        // After the backfill, so a reservation this boot derived from a legacy endpoint URL is rehomed in
+        // the same pass rather than waiting for the next boot.
+        await RehomeOsAllocatedPortsAsync(stoppingToken);
         await PurgeRetiredAdvisoriesAsync(stoppingToken);
         await RecoverStrandedLifecycleStatesAsync(stoppingToken);
         await RecoverInterruptedUpdatesAsync(stoppingToken);
@@ -1492,6 +1495,28 @@ internal sealed class RuntimeAppSupervisorService(
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidOperationException)
         {
             logger.LogWarning(ex, "Hosty port assignment backfill did not complete.");
+        }
+    }
+
+    // Move automatic ports off the OS dynamic range and into the Hosty band, before autostart consumes
+    // the reservations. Best-effort on the same terms as the backfill above: a host that cannot complete
+    // the pass keeps the ports it has, which is exactly the pre-0.76.0 behavior.
+    private async Task RehomeOsAllocatedPortsAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var rehomed = await lifecycle.RehomeOsAllocatedPortsAsync(cancellationToken);
+            if (rehomed > 0)
+            {
+                logger.LogInformation("Rehomed {Count} automatic app port(s) off the OS dynamic range.", rehomed);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidOperationException)
+        {
+            logger.LogWarning(ex, "Hosty automatic port rehoming did not complete.");
         }
     }
 
