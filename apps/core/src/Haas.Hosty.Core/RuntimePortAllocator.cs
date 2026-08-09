@@ -279,9 +279,11 @@ internal sealed class RuntimePortAllocator(HostyCoreRuntimeConfig config, ILogge
         // (service, portKey) -> (host port, protocol) for projecting endpoint URLs after resolution.
         var resolved = new Dictionary<(string Service, string PortKey), (int HostPort, string Protocol)>();
 
+        // Declaration-order list of what has to be assigned, deduplicated on (service, port key).
+        var pending = new List<(RuntimeSelectedService Service, RuntimePortManifest Port, string Key)>();
+        var seen = new HashSet<(string, string)>();
         foreach (var service in selection.Services)
         {
-            var hostNetwork = service.Runtime.IsHostNetwork;
             foreach (var port in service.Runtime.Ports)
             {
                 if (port.ContainerPort is null)
@@ -290,45 +292,74 @@ internal sealed class RuntimePortAllocator(HostyCoreRuntimeConfig config, ILogge
                 }
 
                 var key = port.Key ?? port.ContainerPort.Value.ToString(CultureInfo.InvariantCulture);
-                var identity = (service.Key, key);
-                if (resolved.ContainsKey(identity))
+                if (seen.Add((service.Key, key)))
                 {
-                    continue;
+                    pending.Add((service, port, key));
                 }
-
-                int hostPort;
-                string bindScope;
-                string source;
-                bool remappable;
-                if (hostNetwork)
-                {
-                    hostPort = port.ContainerPort.Value;
-                    bindScope = AppPortBindScopes.HostNetwork;
-                    source = AppPortSources.HostNetwork;
-                    remappable = false;
-                }
-                else
-                {
-                    hostPort = RuntimePortHelper.ResolveHostPort(record, service.Key, port, key, reserved, logger);
-                    reserved.Add(hostPort);
-                    bindScope = string.Equals(port.Expose, "host", StringComparison.OrdinalIgnoreCase)
-                        ? AppPortBindScopes.Host
-                        : AppPortBindScopes.Loopback;
-                    (source, remappable) = ClassifySource(record, service.Key, port, key);
-                }
-
-                assignments.Add(new AppPortAssignment(
-                    Service: service.Key,
-                    PortKey: key,
-                    HostPort: hostPort,
-                    Transport: AppPortTransports.Tcp,
-                    BindScope: bindScope,
-                    Source: source,
-                    Remappable: remappable,
-                    AssignedAt: now));
-                var protocol = string.IsNullOrWhiteSpace(port.Protocol) ? "http" : port.Protocol;
-                resolved[identity] = (hostPort, protocol);
             }
+        }
+
+        // Pass 1: every port whose number this app does not get to choose — host-network, an operator
+        // override, a manifest pin, an existing reservation, a started endpoint's sticky port. Seeding
+        // the exclusion set with all of them BEFORE any automatic allocation is what stops a drawn port
+        // from landing on a number a later service pins. The old single-pass order excluded only what it
+        // had already visited, which was harmless while automatic ports came from the OS ephemeral range
+        // (nothing pins up there) and is not harmless now that they come from a band apps pin inside:
+        // two services of one app could be handed the same host port, and the record would persist it.
+        var fixedPorts = new Dictionary<(string, string), int>();
+        foreach (var (service, port, key) in pending)
+        {
+            if (service.Runtime.IsHostNetwork)
+            {
+                fixedPorts[(service.Key, key)] = port.ContainerPort!.Value;
+                continue;
+            }
+
+            if (RuntimePortHelper.TryResolvePinnedHostPort(record, service.Key, port, key, out var pinned))
+            {
+                fixedPorts[(service.Key, key)] = pinned;
+                reserved.Add(pinned);
+            }
+        }
+
+        // Pass 2: assign, allocating only the ports left over.
+        foreach (var (service, port, key) in pending)
+        {
+            var hostNetwork = service.Runtime.IsHostNetwork;
+            int hostPort;
+            string bindScope;
+            string source;
+            bool remappable;
+            if (hostNetwork)
+            {
+                hostPort = fixedPorts[(service.Key, key)];
+                bindScope = AppPortBindScopes.HostNetwork;
+                source = AppPortSources.HostNetwork;
+                remappable = false;
+            }
+            else
+            {
+                hostPort = fixedPorts.TryGetValue((service.Key, key), out var pinned)
+                    ? pinned
+                    : RuntimePortHelper.AllocateLoopbackPort(reserved, logger);
+                reserved.Add(hostPort);
+                bindScope = string.Equals(port.Expose, "host", StringComparison.OrdinalIgnoreCase)
+                    ? AppPortBindScopes.Host
+                    : AppPortBindScopes.Loopback;
+                (source, remappable) = ClassifySource(record, service.Key, port, key);
+            }
+
+            assignments.Add(new AppPortAssignment(
+                Service: service.Key,
+                PortKey: key,
+                HostPort: hostPort,
+                Transport: AppPortTransports.Tcp,
+                BindScope: bindScope,
+                Source: source,
+                Remappable: remappable,
+                AssignedAt: now));
+            var protocol = string.IsNullOrWhiteSpace(port.Protocol) ? "http" : port.Protocol;
+            resolved[(service.Key, key)] = (hostPort, protocol);
         }
 
         var endpoints = ProjectEndpointUrls(record.Endpoints ?? [], resolved);

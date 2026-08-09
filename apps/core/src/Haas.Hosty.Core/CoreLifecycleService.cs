@@ -2757,13 +2757,79 @@ internal sealed class CoreLifecycleService(
                 continue;
             }
 
-            rehomed += await WithAppLockAsync(app.Id, () => RehomeAppPortsAsync(app.Id, cancellationToken), cancellationToken);
+            var manifestPinned = await ReadManifestPinnedPortKeysAsync(app, cancellationToken);
+            rehomed += await WithAppLockAsync(app.Id, () => RehomeAppPortsAsync(app.Id, manifestPinned, cancellationToken), cancellationToken);
         }
 
         return rehomed;
     }
 
-    private async Task<int> RehomeAppPortsAsync(string appId, CancellationToken cancellationToken)
+    // The (service, port key) pairs the app's manifest pins with an explicit localPort/hostPort, across
+    // every runtime profile. The boot backfill cannot see them: it derives assignments from stored
+    // endpoint URLs and classifies anything without a matching HOSTY_PORT_* setting as `automatic`
+    // (PortAssignmentMigration.ResolveSource), because a URL cannot say whether its port was chosen by
+    // Core or written in the manifest. A legacy record whose manifest pins a port in the dynamic range —
+    // 51413 and friends — would therefore look remappable and be moved by the pass below, breaking the
+    // guarantee that a manifest pin stays put and any firewall rule or router forward aimed at it.
+    // Reading the reviewed manifest copy is the only way to tell the two apart.
+    //
+    // Every profile is consulted rather than the record's selected one: skipping is the safe direction,
+    // and a port pinned under a profile the app is not currently running is still a pin. An unreadable or
+    // missing copy yields an empty set, which is the pre-existing behavior — the pass is best-effort.
+    private async Task<IReadOnlySet<(string Service, string PortKey)>> ReadManifestPinnedPortKeysAsync(
+        AppRecord app,
+        CancellationToken cancellationToken)
+    {
+        var pinned = new HashSet<(string, string)>();
+        var manifestPath = ResolveStoredManifestPath(app);
+        if (manifestPath is null)
+        {
+            return pinned;
+        }
+
+        RuntimeAppManifest? manifest;
+        try
+        {
+            manifest = await JsonStorage.ReadAsync<RuntimeAppManifest>(manifestPath, cancellationToken);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            logger.LogWarning(ex, "Could not read the manifest copy for '{AppId}' while rehoming ports; treating every automatic port as movable.", app.Id);
+            return pinned;
+        }
+
+        if (manifest is null || !string.Equals(manifest.Id, app.Id, StringComparison.Ordinal))
+        {
+            return pinned;
+        }
+
+        foreach (var service in manifest.Services)
+        {
+            foreach (var profile in service.Runtimes.Values)
+            {
+                foreach (var port in profile.Ports)
+                {
+                    if ((port.LocalPort ?? port.HostPort) is null)
+                    {
+                        continue;
+                    }
+
+                    var key = port.Key ?? port.ContainerPort?.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    if (!string.IsNullOrWhiteSpace(key))
+                    {
+                        pinned.Add((service.Key, key!));
+                    }
+                }
+            }
+        }
+
+        return pinned;
+    }
+
+    private async Task<int> RehomeAppPortsAsync(
+        string appId,
+        IReadOnlySet<(string Service, string PortKey)> manifestPinned,
+        CancellationToken cancellationToken)
     {
         var snapshot = await apps.GetAppAsync(appId, cancellationToken);
         if (snapshot is null)
@@ -2779,6 +2845,17 @@ internal sealed class CoreLifecycleService(
         foreach (var target in FindOsAllocatedAssignments(snapshot))
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (manifestPinned.Contains((target.Service, target.PortKey)))
+            {
+                logger.LogInformation(
+                    "Leaving '{AppId}' {Service}.{PortKey} on {HostPort}: the manifest pins it, and the boot backfill only classified it automatic because a stored endpoint URL cannot say so.",
+                    appId,
+                    target.Service,
+                    target.PortKey,
+                    target.HostPort);
+                continue;
+            }
+
             var current = await apps.GetAppAsync(appId, cancellationToken);
             if (current is null || AppRuntimeStates.IsUp(current.RuntimeState))
             {
@@ -2829,9 +2906,13 @@ internal sealed class CoreLifecycleService(
 
                 rehomed++;
             }
-            catch (Exception ex) when (ex is AppLifecycleException or IOException)
+            // One unmovable port must not skip the app's remaining ones, nor fail the boot pass. The set
+            // matches what the boot caller tolerates, plus InvalidOperationException for a record removed
+            // between the snapshot and its write — a narrower filter would let a persistence failure
+            // abort the whole pass, which is not the best-effort behavior this documents.
+            catch (Exception ex) when (ex is AppLifecycleException or IOException or UnauthorizedAccessException
+                or System.Text.Json.JsonException or InvalidOperationException)
             {
-                // One unmovable port must not skip the app's remaining ones, nor fail the boot pass.
                 logger.LogWarning(
                     ex,
                     "Failed to rehome '{AppId}' {Service}.{PortKey} off OS-allocated port {OldPort}; leaving it in place.",

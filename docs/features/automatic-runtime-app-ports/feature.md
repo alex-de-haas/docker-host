@@ -85,6 +85,15 @@ The excluded set is every non-host-network reservation held by any other install
 own port. On top of it, a process-wide memory of the last 64 allocations keeps a port handed to a
 start that has not bound it yet from being handed out again — the bind probe cannot see that one.
 
+Resolution runs in two passes over the app's declared ports. The first resolves every port whose
+number the app does not get to choose — host-network, an operator override, a manifest pin, an
+existing reservation, a started endpoint's sticky port — and seeds the exclusion set with all of
+them; the second allocates what is left. Reserving pins *before* drawing matters because the band is
+a range apps may legitimately pin inside: a single pass excluding only the siblings it had already
+visited could hand an early service the number a later one pins, and the record would persist the
+same host port twice. Both the install-time allocator and the localCommand adapter's start-time
+resolution work this way.
+
 Shell is not special-cased: it pins its port in its own manifest like any app, and once installed its
 reservation is in the set. Before Shell installs, nothing holds its pinned port — but that is exactly
 the position every other app is already in, and the band is deliberately clear of the ports apps pin
@@ -184,7 +193,16 @@ an existing install heals without operator action.
 An assignment qualifies when it is `automatic`, remappable, not host-network, holds a port at or
 above 32768, and is not shadowed by a `HOSTY_PORT_*` setting. An operator pin and a manifest-declared
 port are someone's deliberate choice and are left where they are, even inside the dynamic range —
-the operator may have a firewall rule on one. 32768 is used as the threshold on every platform rather
+the operator may have a firewall rule on one.
+
+A legacy record needs one extra check. The backfill above derives its assignments from stored
+endpoint URLs and classifies anything without a matching `HOSTY_PORT_*` setting as `automatic`,
+because a URL cannot say whether Core chose the port or the manifest declared it. A pre-reservation
+record whose manifest pins a port in the dynamic range would therefore look remappable. Before moving
+anything, the pass reads the app's reviewed manifest copy and skips every `(service, port key)` the
+manifest pins with an explicit `localPort`/`hostPort`, across all runtime profiles — skipping is the
+safe direction, and a port pinned under a profile the app is not currently running is still a pin. An
+unreadable or missing copy yields no pins and is logged. 32768 is used as the threshold on every platform rather
 than the running OS's actual floor: it is the lowest of the three, so a Windows 52306 and a Linux
 40000 both qualify, and reading `netsh` or `sysctl` would put platform-specific shelling out on a
 boot path that stays AOT-friendly.
@@ -327,8 +345,12 @@ beyond blocking its own app's reassigned ports.
   floor that no `HOSTY_PORT_*` setting shadows, and orders them by service then port key
   ([PortRehomingSelectionTests.cs](../../../apps/core/tests/Haas.Hosty.Core.Tests/PortRehomingSelectionTests.cs)).
 - The rehoming pass moves an OS-allocated port into the band and carries the endpoint URL with it,
-  leaves an operator pin in the same range alone, changes nothing on a second run, and skips an app
-  that is running.
+  leaves an operator pin in the same range alone, changes nothing on a second run, skips an app that
+  is running, keeps several ports on one app distinct, and leaves a legacy manifest pin in place while
+  still moving that app's genuinely automatic ports.
+- A port a later service pins inside the band is reserved before an earlier service's automatic port
+  is drawn, so one app never persists the same host port twice
+  ([RuntimePortAllocatorTests.cs](../../../apps/core/tests/Haas.Hosty.Core.Tests/RuntimePortAllocatorTests.cs)).
 - The pre-spawn probe rejects a dynamic-range port taken during `setup` with
   `local_command_port_unavailable` naming the port, and does not probe a band port even when one is
   held ([LocalCommandRuntimeAdapterTests.cs](../../../apps/core/tests/Haas.Hosty.Core.Tests/LocalCommandRuntimeAdapterTests.cs)).

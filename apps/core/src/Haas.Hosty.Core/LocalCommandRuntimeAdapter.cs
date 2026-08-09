@@ -567,27 +567,61 @@ internal sealed class LocalCommandRuntimeAdapter(
         // port already assigned to a sibling (pinned or dynamic) — the assignments here happen
         // before any process binds, so the OS alone cannot keep them distinct.
         var assigned = new HashSet<int>();
-        var map = new Dictionary<string, IReadOnlyDictionary<string, int>>(StringComparer.Ordinal);
+        var map = new Dictionary<string, Dictionary<string, int>>(StringComparer.Ordinal);
         foreach (var service in context.Manifest.Services)
         {
-            var ports = new Dictionary<string, int>(StringComparer.Ordinal);
+            map[service.Key] = new Dictionary<string, int>(StringComparer.Ordinal);
+        }
+
+        // Two passes, mirroring RuntimePortAllocator.Assign: every pinned port is reserved before a
+        // single automatic one is drawn. A one-pass walk excludes only the siblings it has already
+        // visited, so a port drawn for an early service could collide with a later service's pin — a
+        // live hazard now that automatic ports come from a band apps pin inside.
+        foreach (var (service, port, key) in EnumerateDeclaredPorts(context, map))
+        {
+            if (RuntimePortHelper.TryResolvePinnedHostPort(context.App, service.Key, port, key, out var pinned))
+            {
+                map[service.Key][key] = pinned;
+                assigned.Add(pinned);
+            }
+        }
+
+        foreach (var (service, port, key) in EnumerateDeclaredPorts(context, map))
+        {
+            if (map[service.Key].ContainsKey(key))
+            {
+                continue;
+            }
+
+            var hostPort = RuntimePortHelper.ResolveHostPort(context.App, service.Key, port, key, assigned, logger);
+            map[service.Key][key] = hostPort;
+            assigned.Add(hostPort);
+        }
+
+        return map.ToDictionary(pair => pair.Key, pair => (IReadOnlyDictionary<string, int>)pair.Value, StringComparer.Ordinal);
+    }
+
+    // Declared (service, port, key) triples in manifest order, deduplicated on the service's port key —
+    // the same identity ResolveServicePorts keys its map by. `map` supplies the per-service key set so
+    // both passes agree on which duplicates were dropped.
+    private static IEnumerable<(RuntimeSelectedService Service, RuntimePortManifest Port, string Key)> EnumerateDeclaredPorts(
+        RuntimeLifecycleContext context,
+        IReadOnlyDictionary<string, Dictionary<string, int>> map)
+    {
+        foreach (var service in context.Manifest.Services)
+        {
+            var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (var port in service.Runtime.Ports)
             {
                 var key = port.Key ?? port.ContainerPort?.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                if (string.IsNullOrWhiteSpace(key) || ports.ContainsKey(key))
+                if (string.IsNullOrWhiteSpace(key) || !seen.Add(key) || !map.ContainsKey(service.Key))
                 {
                     continue;
                 }
 
-                var hostPort = RuntimePortHelper.ResolveHostPort(context.App, service.Key, port, key, assigned, logger);
-                ports[key] = hostPort;
-                assigned.Add(hostPort);
+                yield return (service, port, key);
             }
-
-            map[service.Key] = ports;
         }
-
-        return map;
     }
 
     internal static IReadOnlyDictionary<string, string> BuildCoreEnvironment(HostyCoreRuntimeConfig config)

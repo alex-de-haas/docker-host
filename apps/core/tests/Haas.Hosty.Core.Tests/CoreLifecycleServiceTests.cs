@@ -6027,6 +6027,70 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task RehomeOsAllocatedPortsAsync_LegacyManifestPin_IsLeftAlone()
+    {
+        // The boot backfill derives assignments from stored endpoint URLs and classifies anything without
+        // a matching HOSTY_PORT_* setting as `automatic`, because a URL cannot say whether Core chose the
+        // port or the manifest declared it. A legacy record whose manifest pins a port in the dynamic
+        // range therefore *looks* remappable — moving it would break the firewall rule or router forward
+        // the operator built around that number.
+        var fixture = await LifecycleFixture.CreateAsync(withPortAllocator: true);
+        await SeedRehomableAppAsync(fixture);
+        await WriteManifestCopyPinningAppHttpAsync(fixture, 52306);
+
+        Assert.Equal(0, await fixture.Service.RehomeOsAllocatedPortsAsync());
+
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal(52306, Assert.Single(app!.PortAssignments!, assignment => assignment.Service == "app").HostPort);
+        Assert.Equal("http://localhost:52306", Assert.Single(app.Endpoints, endpoint => endpoint.Service == "app").Url);
+    }
+
+    [Fact]
+    public async Task RehomeOsAllocatedPortsAsync_ManifestPinningAnotherKey_StillMovesTheAutomaticOne()
+    {
+        // The skip is per (service, port key), not per app: a manifest that pins one port must not freeze
+        // the app's genuinely automatic ones.
+        var fixture = await LifecycleFixture.CreateAsync(withPortAllocator: true);
+        await SeedRehomableAppAsync(fixture, extraAutomaticPort: 52307);
+        await WriteManifestCopyPinningAppHttpAsync(fixture, 52306);
+
+        Assert.Equal(1, await fixture.Service.RehomeOsAllocatedPortsAsync());
+
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal(52306, Assert.Single(app!.PortAssignments!, assignment => assignment.Service == "app").HostPort);
+        var worker = Assert.Single(app.PortAssignments!, assignment => assignment.Service == "worker");
+        Assert.False(RuntimePortHelper.IsOsDynamicRangePort(worker.HostPort));
+    }
+
+    // The reviewed manifest copy Core keeps beside the app, declaring `app.http` with an explicit
+    // localPort — the shape the rehoming pass has to read to recognise a legacy pin.
+    private static async Task WriteManifestCopyPinningAppHttpAsync(LifecycleFixture fixture, int localPort)
+    {
+        var appRoot = Path.Combine(fixture.Paths.AppsRoot, "com.example.notes");
+        Directory.CreateDirectory(appRoot);
+        await File.WriteAllTextAsync(Path.Combine(appRoot, "manifest.json"), $$"""
+        {
+          "schemaVersion": "app.0.1",
+          "id": "com.example.notes",
+          "name": "Notes",
+          "version": "1.0.0",
+          "runtimeProfiles": [{ "key": "docker", "type": "docker", "default": true }],
+          "defaultRuntime": "docker",
+          "services": [{
+            "key": "app",
+            "runtimes": {
+              "docker": {
+                "type": "docker",
+                "image": "example/notes:1.0.0",
+                "ports": [{ "key": "http", "containerPort": 8080, "localPort": {{localPort}} }]
+              }
+            }
+          }]
+        }
+        """);
+    }
+
+    [Fact]
     public async Task RehomeOsAllocatedPortsAsync_RunningApp_KeepsItsPort()
     {
         // Core may have adopted a live listener (keep-apps light restart, docker adoption) before this
