@@ -529,7 +529,7 @@ This is a large multi-stage feature and should be rolled out incrementally:
 2. Build the token infrastructure — owned by [access-tokens](../access-tokens/feature.md), with remote CLI contexts as its first consumer.
 3. Add manifest interface discovery metadata design without model execution.
 4. Add one demo app MCP interface, preferably a project/task/time-tracking domain.
-5. Add embedded Core MCP: discovery, delegated token issuance, read-only observability tools.
+5. Add embedded Core MCP: discovery, delegated token issuance, read-only observability tools. Shipped 2026-08-09 — the read-only discovery and observability tools plus the admin gate: [core-mcp](../core-mcp/feature.md). Delegated token issuance already shipped with [ai-gateway](../ai-gateway/feature.md) as a Core HTTP route rather than an MCP tool.
 6. Validate with stock external agent clients (Claude Code / Codex + a Hosty skill, static endpoint entries) — no gateway code.
 7. Add the `hosty mcp` connector (generic mode → namespaced re-export → `notifications/tools/list_changed` → remote login flow) and the Claude Code plugin packaging.
 8. Ship the operator milestone — the `hosty.ai-gateway` system app (admin-only operator sessions on a host-resident CLI harness) plus the Shell assistant UI. Shipped 2026-08-09 and verified live: [ai-gateway](../ai-gateway/feature.md).

@@ -17,6 +17,10 @@ internal static class CoreJson
 
     public static IResult Json<T>(T value, int? statusCode = null)
         => Results.Json(value, TypeInfo<T>(), statusCode: statusCode);
+
+    // Same AOT-safe path, but returning the JSON as a string — for callers that embed a payload in
+    // another protocol's envelope rather than writing an HTTP response body (Core MCP tool results).
+    public static string Text<T>(T value) => JsonSerializer.Serialize(value, TypeInfo<T>());
 }
 
 // Source-generated JSON metadata for Native AOT compatibility.
@@ -77,6 +81,13 @@ internal static class CoreJson
 // Delegated tokens: the signed claims payload and the issue-endpoint response.
 [JsonSerializable(typeof(DelegatedTokenPayload))]
 [JsonSerializable(typeof(DelegatedTokenResponse))]
+// Core MCP tool payloads. Serialized to strings and embedded in MCP tool results, so they take the
+// same source-generated path as every HTTP response.
+[JsonSerializable(typeof(McpAppList))]
+[JsonSerializable(typeof(McpAppDetail))]
+[JsonSerializable(typeof(McpHostStatus))]
+[JsonSerializable(typeof(McpLogTail))]
+[JsonSerializable(typeof(McpError))]
 // App-reported audit events (the AI gateway's lifecycle/approval reports).
 [JsonSerializable(typeof(AppAuditReportRequest))]
 [JsonSerializable(typeof(AppAuditReportResponse))]
