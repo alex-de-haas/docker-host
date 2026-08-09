@@ -13,7 +13,23 @@ export interface GatewayConfig {
   coreOrigin: string | null;
   serviceToken: string | null;
   retentionDays: number;
-  harness: "claude" | "fake";
+  harness: HarnessKind;
+}
+
+/** `fake` is the in-process test harness; it is deliberately not offered as an operator choice. */
+export type HarnessKind = "claude" | "codex" | "fake";
+
+export function resolveHarnessKind(value: string | undefined): HarnessKind {
+  switch (value?.trim().toLowerCase()) {
+    case "codex":
+      return "codex";
+    case "fake":
+      return "fake";
+    default:
+      // Unknown values fall back to the shipped default rather than failing startup: the setting
+      // is operator-entered free text, and a typo must not take the assistant down.
+      return "claude";
+  }
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig {
@@ -26,6 +42,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     coreOrigin: env.HOSTY_CORE_ORIGIN?.trim() || null,
     serviceToken: env.HOSTY_APP_SERVICE_TOKEN?.trim() || null,
     retentionDays: Number.isFinite(retention) && retention > 0 ? retention : 30,
-    harness: env.HOSTY_AI_GATEWAY_HARNESS === "fake" ? "fake" : "claude",
+    harness: resolveHarnessKind(env.HOSTY_AI_GATEWAY_HARNESS),
   };
 }

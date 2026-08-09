@@ -5,12 +5,19 @@ import { SessionStore } from "./sessions/store.js";
 import { SessionManager } from "./sessions/manager.js";
 import { createGatewayServer } from "./server.js";
 import { ClaudeHarnessAdapter } from "./harness/claude.js";
+import { CodexHarnessAdapter } from "./harness/codex.js";
 import { FakeHarnessAdapter } from "./harness/fake.js";
+import type { HarnessAdapter } from "./harness/adapter.js";
 
 const config = loadConfig();
 await mkdir(config.dataDir, { recursive: true });
 
-const adapter = config.harness === "fake" ? new FakeHarnessAdapter() : new ClaudeHarnessAdapter();
+const adapter: HarnessAdapter =
+  config.harness === "fake"
+    ? new FakeHarnessAdapter()
+    : config.harness === "codex"
+      ? new CodexHarnessAdapter()
+      : new ClaudeHarnessAdapter();
 const store = new SessionStore(config.dataDir);
 const audit = new AuditReporter(config.coreOrigin, config.serviceToken, config.appId);
 const manager = new SessionManager(store, adapter, audit, config.workDir);

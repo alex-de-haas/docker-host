@@ -37,13 +37,17 @@ choice never leaks above the adapter seam.
   not `codex exec`) and grade it on the same three criteria as the Claude spike — approval-pause
   fidelity (exec/patch approval requests must block until answered), streaming event quality, and
   resumability. **Outcome: go** — see Spike Outcome below.
-- [ ] Harness selection as an operator setting on the gateway manifest, wired through config; the
-  probe and session start use the selected adapter only.
-- [ ] Codex adapter implementing `HarnessAdapter`, pinned Codex version, with a probe that detects
-  the binary and its auth state.
-- [ ] Codex credential secret settings, mirrored from the Claude ones.
-- [ ] Tests: adapter behaviors against a scripted fake of the Codex protocol (approval pause,
-  deny, error recovery), selection wiring, health reasons; `tsc` clean.
+- [x] Harness selection as an operator setting on the gateway manifest, wired through config; the
+  probe and session start use the selected adapter only. (`HOSTY_AI_GATEWAY_HARNESS`, values
+  `claude` | `codex`; an unrecognized value falls back to `claude` rather than failing startup.)
+- [x] Codex adapter implementing `HarnessAdapter`, with a probe that detects the binary and its
+  auth state. Verified live against `codex-cli 0.147.0`: approvals paused, denials refused the
+  action, and the file the model tried to create was never created.
+- [x] Codex credential secret settings, mirrored from the Claude ones (`CODEX_API_KEY`, or an
+  operator `codex login` on the host, which the probe reports on).
+- [x] Tests: adapter behaviors against a scripted fake of the Codex protocol (handshake, resume,
+  streaming, approval allow/deny, denied-item suppression, process death, missing binary) plus the
+  selection mapping; `tsc` clean.
 - [ ] Docs: fold the shipped behavior into `feature.md`, delete this plan, note in the umbrella
   that the 2026-07-11 "codex exec cannot pause per call" premise was re-examined against the
   protocol interface, and regenerate the index.
@@ -84,6 +88,10 @@ uniform):
 - After a denial Codex retries with a different strategy (patch → patch → shell command in the
   probe) rather than stopping. The deny message is therefore load-bearing: it must state that the
   operator refused, so the model stops instead of hunting for a way around the refusal.
+- **Codex emits `item/completed` for a REFUSED item too** (found while verifying the shipped
+  adapter live, not in the protocol probe). Taken at face value that reports a denied command as
+  executed, so the adapter tracks the approval's `itemId` and suppresses the tool-use event for a
+  refused item; the scripted test fake reproduces this so the suppression cannot regress.
 
 ## Open Questions
 

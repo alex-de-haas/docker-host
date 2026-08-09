@@ -3,7 +3,7 @@
   "id": "hosty.ai-gateway",
   "name": "Hosty AI Gateway",
   "description": "Hosty assistant service: admin-only operator chat sessions supervised on a host-resident agent harness. Headless — Shell renders the chat UI and calls this API with delegated tokens.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "role": "system",
   "source": {
     "type": "git",
@@ -82,6 +82,14 @@
       "description": "Sessions and transcripts older than this are deleted by the daily cleanup sweep."
     },
     {
+      "key": "HOSTY_AI_GATEWAY_HARNESS",
+      "type": "string",
+      "default": "claude",
+      "required": false,
+      "label": "Agent harness",
+      "description": "Which agent powers operator sessions: `claude` (Claude Agent SDK) or `codex` (OpenAI Codex CLI). Each needs its own credential below and must be installed on the host. Restart the app after changing this."
+    },
+    {
       "key": "ANTHROPIC_API_KEY",
       "type": "string",
       "secret": true,
@@ -96,6 +104,14 @@
       "required": false,
       "label": "Claude Code OAuth token",
       "description": "Token minted by `claude setup-token` — the subscription-based alternative to an API key."
+    },
+    {
+      "key": "CODEX_API_KEY",
+      "type": "string",
+      "secret": true,
+      "required": false,
+      "label": "Codex API key",
+      "description": "Credential for the Codex harness. Alternatively sign in once on the host with `codex login`, which the harness picks up from the operator's own Codex configuration."
     }
   ],
   "capabilities": ["logs"],

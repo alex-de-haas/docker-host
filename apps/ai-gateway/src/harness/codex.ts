@@ -1,0 +1,376 @@
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import type {
+  HarnessAdapter,
+  HarnessAvailability,
+  HarnessEvent,
+  HarnessRun,
+  HarnessStartOptions,
+} from "./adapter.js";
+import {
+  APPROVAL_METHODS,
+  APPROVAL_POLICY,
+  APPROVE,
+  CODEX_METHODS,
+  denial,
+  describeApproval,
+  type JsonRpcMessage,
+} from "./codex-protocol.js";
+
+// Second harness adapter (spike outcome 2026-08-09, docs/features/ai-gateway/plan.md): OpenAI Codex
+// CLI driven over `codex app-server` stdio JSON-RPC. Approvals arrive as server→client *requests*
+// with an id and block until answered — the same pause the Claude adapter gets from canUseTool.
+//
+// Fail-closed by decision: every approval request the server raises becomes a Hosty approval card;
+// nothing is auto-allowed on Codex's behalf, and "approved_for_session" is never sent.
+
+// Read per call, not once at import: the binary is an operator-configurable override, and tests
+// point it at a scripted stand-in after this module is already loaded.
+function spawnCommand(): string {
+  return process.env.HOSTY_AI_GATEWAY_CODEX_COMMAND?.trim() || "codex";
+}
+
+export class CodexHarnessAdapter implements HarnessAdapter {
+  readonly name = "codex-app-server";
+
+  async probe(): Promise<HarnessAvailability> {
+    const probe = await runCodex(["--version"]).catch((error: Error) => error);
+    if (probe instanceof Error) {
+      return {
+        available: false,
+        reason: `The Codex CLI could not be started (${probe.message}). Install it on the host or set HOSTY_AI_GATEWAY_CODEX_COMMAND to its path.`,
+      };
+    }
+
+    const status = await runCodex(["login", "status"]).catch(() => null);
+    if (status === null || /not logged in|no credentials/i.test(status)) {
+      return {
+        available: false,
+        reason: "Codex is installed but not signed in. Run `codex login` as the host user, or provide a Codex API key in the app settings.",
+      };
+    }
+
+    return { available: true };
+  }
+
+  start(options: HarnessStartOptions): HarnessRun {
+    return new CodexRun(options);
+  }
+}
+
+interface PendingApproval {
+  requestId: number | string;
+  /** Protocol item this approval guards, so a refused item is never reported as executed. */
+  itemId: string | null;
+}
+
+class CodexRun implements HarnessRun {
+  private readonly child: ChildProcessWithoutNullStreams;
+  private readonly pendingRequests = new Map<number | string, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
+  private readonly approvals = new Map<string, PendingApproval>();
+  // Items whose approval the operator refused. Codex still emits item/completed for them, so
+  // without this the transcript would claim a refused command ran.
+  private readonly deniedItems = new Set<string>();
+  private readonly queue: string[] = [];
+  private nextId = 1;
+  private buffer = "";
+  private threadId: string | null = null;
+  private ready: Promise<void>;
+  private turnActive = false;
+  private stopped = false;
+
+  constructor(private readonly options: HarnessStartOptions) {
+    this.child = spawn(spawnCommand(), ["app-server"], { stdio: ["pipe", "pipe", "pipe"], cwd: options.cwd });
+    this.child.stdout.on("data", (chunk: Buffer) => this.onStdout(chunk));
+    this.child.stderr.on("data", (chunk: Buffer) => {
+      const text = chunk.toString().trim();
+      // Codex logs routine startup noise (MCP status, OAuth refreshes) to stderr; only surface a
+      // hard failure, which arrives as the process exiting.
+      if (text) {
+        console.warn(`[codex] ${text.slice(0, 400)}`);
+      }
+    });
+    this.child.on("exit", (code) => {
+      if (!this.stopped) {
+        this.emit({ type: "error", message: `The Codex app-server exited unexpectedly (code ${code ?? "unknown"}).` });
+      }
+      for (const [, pending] of this.pendingRequests) {
+        pending.reject(new Error("codex app-server exited"));
+      }
+      this.pendingRequests.clear();
+    });
+    this.ready = this.handshake();
+  }
+
+  send(text: string): void {
+    this.queue.push(text);
+    void this.pump();
+  }
+
+  resolveApproval(approvalId: string, decision: "allow" | "deny", message?: string): boolean {
+    const pending = this.approvals.get(approvalId);
+    if (!pending) {
+      return false;
+    }
+
+    this.approvals.delete(approvalId);
+    if (decision === "deny" && pending.itemId) {
+      this.deniedItems.add(pending.itemId);
+    }
+    this.respond(pending.requestId, {
+      decision:
+        decision === "allow"
+          ? APPROVE
+          : // The deny text is load-bearing: the spike showed Codex retrying the same instruction
+            // through a different mechanism after a refusal, so it must read as a final answer.
+            denial(
+              message ??
+                "The Hosty operator refused this action. Do not attempt it another way; explain what you would have done instead.",
+            ),
+    });
+    return true;
+  }
+
+  async interrupt(): Promise<void> {
+    if (this.threadId) {
+      await this.request(CODEX_METHODS.turnInterrupt, { threadId: this.threadId }).catch(() => undefined);
+    }
+  }
+
+  async stop(): Promise<void> {
+    this.stopped = true;
+    // Release anything the harness is blocked on before tearing the process down, or the child
+    // can sit forever waiting for an approval reply that will never come.
+    for (const [, pending] of this.approvals) {
+      this.respond(pending.requestId, { decision: denial("The session was stopped.") });
+    }
+    this.approvals.clear();
+    this.child.kill("SIGTERM");
+  }
+
+  private async handshake(): Promise<void> {
+    await this.request(CODEX_METHODS.initialize, {
+      clientInfo: { name: "hosty-ai-gateway", version: "1" },
+      capabilities: null,
+    });
+    this.notify(CODEX_METHODS.initialized, {});
+
+    if (this.options.resumeHarnessSessionId) {
+      const resumed = (await this.request(CODEX_METHODS.threadResume, {
+        threadId: this.options.resumeHarnessSessionId,
+      }).catch(() => null)) as { thread?: { id?: string } } | null;
+      if (resumed) {
+        this.threadId = resumed.thread?.id ?? this.options.resumeHarnessSessionId;
+      }
+    }
+
+    if (!this.threadId) {
+      const started = (await this.request(CODEX_METHODS.threadStart, {
+        cwd: this.options.cwd,
+        // Operator profile: the admin already owns this host, so the harness is not sandboxed —
+        // supervision comes from the approval gate, not from a sandbox.
+        sandbox: "danger-full-access",
+        approvalPolicy: APPROVAL_POLICY,
+      })) as { threadId?: string; thread?: { id?: string } };
+      this.threadId = started.threadId ?? started.thread?.id ?? null;
+    }
+
+    if (this.threadId) {
+      this.emit({ type: "harness_session", harnessSessionId: this.threadId });
+    }
+  }
+
+  /** One turn at a time: Codex rejects a second turn/start while one is running. */
+  private async pump(): Promise<void> {
+    if (this.turnActive || this.stopped) {
+      return;
+    }
+    const text = this.queue.shift();
+    if (text === undefined) {
+      return;
+    }
+
+    this.turnActive = true;
+    try {
+      await this.ready;
+      if (!this.threadId) {
+        throw new Error("Codex did not return a thread id.");
+      }
+      await this.request(CODEX_METHODS.turnStart, {
+        threadId: this.threadId,
+        input: [{ type: "text", text }],
+        approvalPolicy: APPROVAL_POLICY,
+        sandboxPolicy: { type: "dangerFullAccess" },
+      });
+    } catch (error) {
+      this.turnActive = false;
+      if (!this.stopped) {
+        this.emit({ type: "error", message: error instanceof Error ? error.message : String(error) });
+      }
+      return;
+    }
+    // turnActive is cleared by the turn/completed notification, which also drives the next pump.
+  }
+
+  private onStdout(chunk: Buffer): void {
+    this.buffer += chunk.toString();
+    for (;;) {
+      const newline = this.buffer.indexOf("\n");
+      if (newline < 0) {
+        return;
+      }
+      const line = this.buffer.slice(0, newline).trim();
+      this.buffer = this.buffer.slice(newline + 1);
+      if (!line) {
+        continue;
+      }
+      try {
+        this.dispatch(JSON.parse(line) as JsonRpcMessage);
+      } catch {
+        // A non-JSON line is log noise on stdout; ignore it rather than killing the session.
+      }
+    }
+  }
+
+  private dispatch(message: JsonRpcMessage): void {
+    // Response to one of our requests.
+    if (message.id !== undefined && !message.method && this.pendingRequests.has(message.id)) {
+      const pending = this.pendingRequests.get(message.id)!;
+      this.pendingRequests.delete(message.id);
+      if (message.error) {
+        pending.reject(new Error(message.error.message ?? "Codex returned an error."));
+      } else {
+        pending.resolve(message.result);
+      }
+      return;
+    }
+
+    // Server→client request. Approvals block until answered; anything else gets a minimal reply so
+    // the harness never wedges on an unimplemented capability.
+    if (message.id !== undefined && message.method) {
+      if (APPROVAL_METHODS.has(message.method)) {
+        const approvalId = randomUUID();
+        const params = message.params ?? {};
+        this.approvals.set(approvalId, {
+          requestId: message.id,
+          itemId: typeof params.itemId === "string" ? params.itemId : null,
+        });
+        const { toolName, input } = describeApproval(message.method, params);
+        this.emit({ type: "approval_request", approvalId, toolName, input });
+      } else {
+        this.respond(message.id, {});
+      }
+      return;
+    }
+
+    if (!message.method) {
+      return;
+    }
+
+    const params = message.params ?? {};
+    if (message.method === "item/agentMessage/delta") {
+      this.emit({ type: "assistant_delta", text: String(params.delta ?? "") });
+      return;
+    }
+
+    if (message.method === "item/completed") {
+      const item = (params.item ?? {}) as Record<string, unknown>;
+      const type = String(item.type ?? "");
+      if (type === "agentMessage") {
+        const text = readItemText(item);
+        if (text) {
+          this.emit({ type: "assistant_text", text });
+        }
+      } else if (type === "commandExecution" || type === "fileChange") {
+        // Codex reports a refused item as completed too; reporting it as a tool use would tell the
+        // operator their denial ran anyway.
+        const itemId = typeof item.id === "string" ? item.id : null;
+        if (itemId && this.deniedItems.has(itemId)) {
+          this.deniedItems.delete(itemId);
+          return;
+        }
+        this.emit({
+          type: "tool_use",
+          toolName: type === "commandExecution" ? "Command" : "FileChange",
+          input: type === "commandExecution" ? { command: item.command ?? null } : { changes: item.changes ?? null },
+        });
+      }
+      return;
+    }
+
+    if (message.method === "turn/completed") {
+      this.turnActive = false;
+      const usage = (params.turn as Record<string, unknown> | undefined)?.usage as Record<string, unknown> | undefined;
+      this.emit({
+        type: "result",
+        status: "success",
+        usage: usage
+          ? {
+              inputTokens: typeof usage.inputTokens === "number" ? usage.inputTokens : undefined,
+              outputTokens: typeof usage.outputTokens === "number" ? usage.outputTokens : undefined,
+            }
+          : undefined,
+      });
+      void this.pump();
+      return;
+    }
+
+    if (message.method === "turn/failed" || message.method === "thread/error") {
+      this.turnActive = false;
+      this.emit({ type: "error", message: String(params.message ?? "The Codex turn failed.") });
+      void this.pump();
+    }
+  }
+
+  private request(method: string, params: Record<string, unknown>): Promise<unknown> {
+    const id = this.nextId++;
+    this.write({ jsonrpc: "2.0", id, method, params });
+    return new Promise((resolve, reject) => this.pendingRequests.set(id, { resolve, reject }));
+  }
+
+  private respond(id: number | string, result: unknown): void {
+    this.write({ jsonrpc: "2.0", id, result });
+  }
+
+  private notify(method: string, params: Record<string, unknown>): void {
+    this.write({ jsonrpc: "2.0", method, params });
+  }
+
+  private write(message: unknown): void {
+    if (!this.child.stdin.destroyed) {
+      this.child.stdin.write(`${JSON.stringify(message)}\n`);
+    }
+  }
+
+  private emit(event: HarnessEvent): void {
+    this.options.onEvent(event);
+  }
+}
+
+function readItemText(item: Record<string, unknown>): string {
+  if (typeof item.text === "string") {
+    return item.text;
+  }
+  const content = item.content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => (typeof part === "object" && part !== null && "text" in part ? String((part as { text: unknown }).text ?? "") : ""))
+      .join("");
+  }
+  return "";
+}
+
+function runCodex(args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(spawnCommand(), args, { stdio: ["ignore", "pipe", "pipe"] });
+    let out = "";
+    child.stdout.on("data", (chunk: Buffer) => (out += chunk.toString()));
+    child.stderr.on("data", (chunk: Buffer) => (out += chunk.toString()));
+    child.on("error", (error) => reject(error));
+    child.on("exit", (code) => (code === 0 ? resolve(out) : reject(new Error(out.trim().slice(0, 200) || `exit ${code}`))));
+    setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error("timed out"));
+    }, 10_000).unref();
+  });
+}
