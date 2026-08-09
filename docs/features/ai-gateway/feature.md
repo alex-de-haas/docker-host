@@ -94,8 +94,14 @@ gateway restart.
   as `item/agentMessage/delta`; `thread/start` yields the id that `thread/resume` restores, and it
   works across process restarts. (The older "Codex cannot pause per tool call" limitation is true
   of `codex exec` only.)
-- Credential: `codex login` on the host as the operator, or a `CODEX_API_KEY` app setting. The
-  binary resolves override → the pinned `@openai/codex` dependency → PATH.
+- Credential: Codex keeps credentials in its own store and **ignores API keys passed through the
+  environment** (verified against a clean `CODEX_HOME`: neither `OPENAI_API_KEY` nor
+  `CODEX_API_KEY` authenticates anything). There is therefore no key setting — the operator signs
+  in on the host, as the user Core runs as, with `codex login` (interactive, expires) or
+  `printenv OPENAI_API_KEY | codex login --with-api-key` (API key, does not expire and is the
+  right choice for a service). The optional `CODEX_HOME` setting points the harness at a different
+  credential directory. The binary resolves override → the pinned `@openai/codex` dependency →
+  PATH.
 - Three protocol properties are load-bearing and easy to get wrong, so they are pinned in
   `codex-protocol.ts` and enforced by a scripted test fake that fails the suite on a violation:
   - **The sandbox is what creates the approval.** Codex asks only when an action must escalate out

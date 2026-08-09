@@ -3,7 +3,7 @@
   "id": "hosty.ai-gateway",
   "name": "Hosty AI Gateway",
   "description": "Hosty assistant service: admin-only operator chat sessions supervised on a host-resident agent harness. Headless — Shell renders the chat UI and calls this API with delegated tokens.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "role": "system",
   "source": {
     "type": "git",
@@ -106,12 +106,11 @@
       "description": "Token minted by `claude setup-token` — the subscription-based alternative to an API key."
     },
     {
-      "key": "CODEX_API_KEY",
+      "key": "CODEX_HOME",
       "type": "string",
-      "secret": true,
       "required": false,
-      "label": "Codex API key",
-      "description": "Credential for the Codex harness. Alternatively sign in once on the host with `codex login`, which the harness picks up from the operator's own Codex configuration."
+      "label": "Codex home directory",
+      "description": "Where the Codex harness reads its credentials from. Leave empty to use the operator's own ~/.codex. Codex authenticates only through `codex login` (interactive) or `printenv OPENAI_API_KEY | codex login --with-api-key` (API key, does not expire) run on the host as the user Core runs as — it ignores API keys passed as environment variables, so there is no key setting here."
     }
   ],
   "capabilities": ["logs"],

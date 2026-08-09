@@ -49,7 +49,11 @@ export class CodexHarnessAdapter implements HarnessAdapter {
     if (status === null || /not logged in|no credentials/i.test(status)) {
       return {
         available: false,
-        reason: "Codex is installed but not signed in. Run `codex login` as the host user, or provide a Codex API key in the app settings.",
+        // Codex ignores API keys passed through the environment: credentials live in its own
+        // store, written by one of these two commands. Naming them both is the whole fix an
+        // operator needs, so the reason states them literally.
+        reason:
+          "Codex is installed but not signed in. On the host, as the user Core runs as, run `codex login` (interactive) or `printenv OPENAI_API_KEY | codex login --with-api-key` (API key, does not expire).",
       };
     }
 
