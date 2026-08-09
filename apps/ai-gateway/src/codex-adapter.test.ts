@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import path from "node:path";
+import os from "node:os";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { CodexHarnessAdapter } from "./harness/codex.js";
 import { resolveHarnessKind } from "./config.js";
@@ -11,6 +13,8 @@ import type { HarnessEvent, HarnessRun } from "./harness/adapter.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fakeServer = path.join(here, "..", "test", "fake-codex-server.mjs");
+// Each run gets a throwaway data dir: the API-key mode writes its isolated Codex home under it.
+const authDir = mkdtempSync(path.join(os.tmpdir(), "codex-auth-test-"));
 
 async function waitFor<T>(probe: () => T | null | undefined | false, what: string): Promise<T> {
   const deadline = Date.now() + 5_000;
@@ -40,7 +44,7 @@ describe("codex harness adapter", () => {
   });
 
   function start(resumeHarnessSessionId?: string): HarnessRun {
-    const adapter = new CodexHarnessAdapter();
+    const adapter = new CodexHarnessAdapter({ dataDir: authDir });
     run = adapter.start({
       sessionId: "s1",
       cwd: process.cwd(),
@@ -128,7 +132,7 @@ describe("codex harness adapter", () => {
 
   it("probes as unavailable with an actionable reason when the CLI is missing", async () => {
     process.env.HOSTY_AI_GATEWAY_CODEX_COMMAND = path.join(here, "..", "test", "definitely-not-installed");
-    const availability = await new CodexHarnessAdapter().probe();
+    const availability = await new CodexHarnessAdapter({ dataDir: authDir }).probe();
     expect(availability.available).toBe(false);
     expect(availability.reason).toMatch(/could not be started/i);
   });
@@ -163,5 +167,54 @@ describe("codex binary resolution", () => {
     // to a PATH install is allowed, but on a workspace with the dependency installed it must win.
     expect(resolved).toContain("@openai/codex");
     expect(isNodeEntry(resolved)).toBe(true);
+  });
+});
+
+describe("codex auth modes", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(path.join(os.tmpdir(), "codex-auth-mode-"));
+    process.env.HOSTY_AI_GATEWAY_CODEX_COMMAND = fakeServer;
+  });
+
+  afterEach(() => {
+    delete process.env.HOSTY_AI_GATEWAY_CODEX_COMMAND;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("signs Codex in with the configured API key, in a home of its own", async () => {
+    const availability = await new CodexHarnessAdapter({ apiKey: "sk-test-key", dataDir: dir }).probe();
+    expect(availability.available).toBe(true);
+    // The login landed in the app's own Codex home, never the operator's ~/.codex.
+    const authFile = path.join(dir, "codex-home", "auth.json");
+    expect(JSON.parse(readFileSync(authFile, "utf8")).key).toBe("sk-test-key");
+  });
+
+  it("re-authenticates when the operator rotates the key", async () => {
+    const config = { apiKey: "sk-first", dataDir: dir };
+    await new CodexHarnessAdapter(config).probe();
+    const authFile = path.join(dir, "codex-home", "auth.json");
+    expect(JSON.parse(readFileSync(authFile, "utf8")).key).toBe("sk-first");
+
+    await new CodexHarnessAdapter({ ...config, apiKey: "sk-second" }).probe();
+    expect(JSON.parse(readFileSync(authFile, "utf8")).key).toBe("sk-second");
+  });
+
+  it("uses the operator's own login when no key is configured", async () => {
+    const operatorHome = path.join(dir, "operator-codex");
+    mkdirSync(operatorHome, { recursive: true });
+    writeFileSync(path.join(operatorHome, "auth.json"), JSON.stringify({ chatgpt: true }));
+
+    const availability = await new CodexHarnessAdapter({ codexHome: operatorHome, dataDir: dir }).probe();
+    expect(availability.available).toBe(true);
+    // No isolated home was created: the interactive mode leaves credential handling to the host.
+    expect(existsSync(path.join(dir, "codex-home"))).toBe(false);
+  });
+
+  it("reports an actionable reason when neither mode is set up", async () => {
+    const availability = await new CodexHarnessAdapter({ codexHome: path.join(dir, "empty"), dataDir: dir }).probe();
+    expect(availability.available).toBe(false);
+    expect(availability.reason).toMatch(/codex login|API key in this app's settings/i);
   });
 });

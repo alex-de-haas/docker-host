@@ -3,7 +3,7 @@
   "id": "hosty.ai-gateway",
   "name": "Hosty AI Gateway",
   "description": "Hosty assistant service: admin-only operator chat sessions supervised on a host-resident agent harness. Headless — Shell renders the chat UI and calls this API with delegated tokens.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "role": "system",
   "source": {
     "type": "git",
@@ -106,11 +106,19 @@
       "description": "Token minted by `claude setup-token` — the subscription-based alternative to an API key."
     },
     {
+      "key": "CODEX_API_KEY",
+      "type": "string",
+      "secret": true,
+      "required": false,
+      "label": "Codex API key",
+      "description": "Pick one of the two Codex sign-in modes. Set a key here and the gateway signs Codex in for you, into a credential directory of its own — an API key does not expire, which suits a long-running service, and this never touches your personal Codex login. Leave empty to use the interactive mode instead: run `codex login` on the host as the user Core runs as."
+    },
+    {
       "key": "CODEX_HOME",
       "type": "string",
       "required": false,
       "label": "Codex home directory",
-      "description": "Where the Codex harness reads its credentials from. Leave empty to use the operator's own ~/.codex. Codex authenticates only through `codex login` (interactive) or `printenv OPENAI_API_KEY | codex login --with-api-key` (API key, does not expire) run on the host as the user Core runs as — it ignores API keys passed as environment variables, so there is no key setting here."
+      "description": "Interactive mode only: where the harness reads the operator's Codex credentials from. Leave empty for the default ~/.codex. Ignored when an API key is set, since that mode owns its own directory."
     }
   ],
   "capabilities": ["logs"],
