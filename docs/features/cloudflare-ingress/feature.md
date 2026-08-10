@@ -191,9 +191,11 @@ Publication runs only on request. There is no timer and no background reconcilia
 ### Publication state
 
 `GET /api/apps/{appId}/public-origins` reports a state per endpoint: `active`, `app_stopped`,
-`restart_required`, or `error` (the stored token stopped working, so the publication cannot be verified or
-changed). An endpoint with no publication has no summary, which is `not_configured`. There is no `syncing`
-state — publishing is synchronous, so nothing could produce it.
+`restart_required`, `origin_drifted` (the endpoint's local port moved and Core could not push the new
+target, so the hostname still routes to the old one — see
+[Public Origins](../public-origins/feature.md)), or `error` (the stored token stopped working, so the
+publication cannot be verified or changed). An endpoint with no publication has no summary, which is
+`not_configured`. There is no `syncing` state — publishing is synchronous, so nothing could produce it.
 
 `restart_required` comes from a `PendingRestart` flag recorded when a publish or unpublish lands on a running
 app and cleared the next time that app starts. Core cannot observe a running app's environment and an app
@@ -355,6 +357,8 @@ The `hosty` CLI has no ingress or Cloudflare commands.
 ## Links
 
 - [Cloudflare Ingress Plan](plan.md) — the one deliverable that remains, and what it is blocked on.
+- [Public Origins](../public-origins/feature.md) — the control, the ownership rule and the reconcile
+  both Cloudflare providers share with the manual one.
 - [Shell Navigation](../shell-navigation/feature.md) — the Settings page this feature's tab belongs to.
 - [Automatic Runtime App Ports](../automatic-runtime-app-ports/feature.md) — install-time port reservations,
   which give a stopped app the local URL a publication targets.
