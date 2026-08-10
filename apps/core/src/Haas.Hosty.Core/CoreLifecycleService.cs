@@ -2714,6 +2714,275 @@ internal sealed class CoreLifecycleService(
         return migrated;
     }
 
+    // Automatic ports allocated before 0.76.0 came out of the OS dynamic range (a port-0 bind), so they
+    // live in the pool the OS also hands to every outbound connection on the host — a durable reservation
+    // there is only ever on loan, and the app whose port the OS reclaims fails to start with a raw bind
+    // error. The motivating failure is written up on RuntimePortHelper.AutomaticPortRangeStart. This pass
+    // rehomes such reservations into the Hosty band, at boot, before autostart reconciliation consumes
+    // them, so an existing install is healed without operator action.
+    //
+    // Only `automatic`, remappable, non-host-network assignments move. An operator pin, a manifest port,
+    // and a host-network port are somebody's deliberate choice, and sitting in the dynamic range does not
+    // make it Core's to overrule. An app that is already up keeps its port and is retried on a later boot:
+    // Core may have adopted a live listener (keep-apps light restart, docker adoption), and moving the
+    // record's port would leave it disagreeing with the process actually serving.
+    //
+    // Each move goes through the allocator, so the new port is chosen under the same gate and against the
+    // same exclusion view an operator-driven reassignment uses, and the endpoint URL moves with it. A
+    // record is re-read between moves because each one persists a new revision. Failures are logged and
+    // skipped rather than thrown: this runs at boot, and one unmovable port must not strand the rest.
+    // Returns the number of ports rehomed.
+    public async Task<int> RehomeOsAllocatedPortsAsync(CancellationToken cancellationToken = default)
+    {
+        if (portAllocator is null)
+        {
+            return 0;
+        }
+
+        var rehomed = 0;
+        var records = await apps.ListAppRecordsAsync(cancellationToken);
+        foreach (var app in records.Where(app => string.Equals(app.Kind, "runtime", StringComparison.Ordinal)))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (FindOsAllocatedAssignments(app).Count == 0)
+            {
+                continue;
+            }
+
+            if (AppRuntimeStates.IsUp(app.RuntimeState))
+            {
+                logger.LogInformation(
+                    "App '{AppId}' holds an OS-allocated automatic port but is running; leaving it in place and retrying at a later boot.",
+                    app.Id);
+                continue;
+            }
+
+            var frozen = new HashSet<(string, string)>(await ReadManifestPinnedPortKeysAsync(app, cancellationToken));
+            foreach (var identity in await FindApiPublishedPortKeysAsync(app, cancellationToken))
+            {
+                frozen.Add(identity);
+            }
+
+            rehomed += await WithAppLockAsync(app.Id, () => RehomeAppPortsAsync(app.Id, frozen, cancellationToken), cancellationToken);
+        }
+
+        return rehomed;
+    }
+
+    // The (service, port key) pairs the app's manifest pins with an explicit localPort/hostPort, across
+    // every runtime profile. The boot backfill cannot see them: it derives assignments from stored
+    // endpoint URLs and classifies anything without a matching HOSTY_PORT_* setting as `automatic`
+    // (PortAssignmentMigration.ResolveSource), because a URL cannot say whether its port was chosen by
+    // Core or written in the manifest. A legacy record whose manifest pins a port in the dynamic range —
+    // 51413 and friends — would therefore look remappable and be moved by the pass below, breaking the
+    // guarantee that a manifest pin stays put and any firewall rule or router forward aimed at it.
+    // Reading the reviewed manifest copy is the only way to tell the two apart.
+    //
+    // Every profile is consulted rather than the record's selected one: skipping is the safe direction,
+    // and a port pinned under a profile the app is not currently running is still a pin. An unreadable or
+    // missing copy yields an empty set, which is the pre-existing behavior — the pass is best-effort.
+    private async Task<IReadOnlySet<(string Service, string PortKey)>> ReadManifestPinnedPortKeysAsync(
+        AppRecord app,
+        CancellationToken cancellationToken)
+    {
+        var pinned = new HashSet<(string, string)>();
+        var manifestPath = ResolveStoredManifestPath(app);
+        if (manifestPath is null)
+        {
+            return pinned;
+        }
+
+        RuntimeAppManifest? manifest;
+        try
+        {
+            manifest = await JsonStorage.ReadAsync<RuntimeAppManifest>(manifestPath, cancellationToken);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            logger.LogWarning(ex, "Could not read the manifest copy for '{AppId}' while rehoming ports; treating every automatic port as movable.", app.Id);
+            return pinned;
+        }
+
+        if (manifest is null || !string.Equals(manifest.Id, app.Id, StringComparison.Ordinal))
+        {
+            return pinned;
+        }
+
+        foreach (var service in manifest.Services)
+        {
+            foreach (var profile in service.Runtimes.Values)
+            {
+                foreach (var port in profile.Ports)
+                {
+                    if ((port.LocalPort ?? port.HostPort) is null)
+                    {
+                        continue;
+                    }
+
+                    var key = port.Key ?? port.ContainerPort?.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    if (!string.IsNullOrWhiteSpace(key))
+                    {
+                        pinned.Add((service.Key, key!));
+                    }
+                }
+            }
+        }
+
+        return pinned;
+    }
+
+    // The (service, port key) pairs whose port is routed by a Cloudflare API publication.
+    //
+    // Interim guard, and it exists because of an asymmetry between the two ingress providers. The local
+    // one re-renders its whole config from the app records on every reconcile, so a moved port reaches it
+    // by itself; the API one pushes `serviceUrl` into a remotely-managed tunnel and is only ever driven by
+    // an operator's explicit publish (CloudflarePublicationService), so nothing re-pushes it when the port
+    // changes. Until the API provider sits behind IIngressController like the local one does, Core cannot
+    // re-materialize those routes — and moving a port it cannot re-point would leave a public hostname
+    // aimed at a port nothing listens on. Not moving it is the honest half: the app keeps a reservation in
+    // the OS dynamic range (so it keeps that exposure) but its public address keeps working, and the guard
+    // disappears with the provider unification.
+    private async Task<IReadOnlyCollection<(string Service, string PortKey)>> FindApiPublishedPortKeysAsync(
+        AppRecord app,
+        CancellationToken cancellationToken)
+    {
+        if (publicOrigins is null)
+        {
+            return [];
+        }
+
+        var published = await publicOrigins.FindPublishedEndpointKeysAsync(app.Id, cancellationToken);
+        if (published.Count == 0)
+        {
+            return [];
+        }
+
+        // A publication names an endpoint key; an assignment is keyed by (service, port key). The record's
+        // endpoint contract is what maps one to the other.
+        return app.Endpoints
+            .Where(endpoint => published.Contains(endpoint.Key) &&
+                !string.IsNullOrWhiteSpace(endpoint.Service) &&
+                !string.IsNullOrWhiteSpace(endpoint.Port))
+            .Select(endpoint => (endpoint.Service!, endpoint.Port!))
+            .ToArray();
+    }
+
+    private async Task<int> RehomeAppPortsAsync(
+        string appId,
+        IReadOnlySet<(string Service, string PortKey)> frozen,
+        CancellationToken cancellationToken)
+    {
+        var snapshot = await apps.GetAppAsync(appId, cancellationToken);
+        if (snapshot is null)
+        {
+            return 0;
+        }
+
+        var rehomed = 0;
+        // Iterate a target list captured once, not "whatever still matches" — a saturated band makes the
+        // allocator fall back to another OS-range port, which would match the selection again and spin
+        // this loop forever. The record is still re-read per target, because each move persists a new
+        // revision the next allocation has to be based on.
+        foreach (var target in FindOsAllocatedAssignments(snapshot))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (frozen.Contains((target.Service, target.PortKey)))
+            {
+                logger.LogInformation(
+                    "Leaving '{AppId}' {Service}.{PortKey} on {HostPort}: the manifest pins it, or a Cloudflare publication routes a public hostname to it that Core cannot re-point on its own.",
+                    appId,
+                    target.Service,
+                    target.PortKey,
+                    target.HostPort);
+                continue;
+            }
+
+            var current = await apps.GetAppAsync(appId, cancellationToken);
+            if (current is null || AppRuntimeStates.IsUp(current.RuntimeState))
+            {
+                return rehomed;
+            }
+
+            // The assignment may have been moved or dropped since the snapshot; only act on one that is
+            // still a target on the persisted record.
+            if (!FindOsAllocatedAssignments(current).Any(assignment =>
+                    string.Equals(assignment.Service, target.Service, StringComparison.Ordinal) &&
+                    string.Equals(assignment.PortKey, target.PortKey, StringComparison.Ordinal)))
+            {
+                continue;
+            }
+
+            try
+            {
+                var (_, oldPort, newPort) = await portAllocator!.ReassignAsync(
+                    current,
+                    target.Service,
+                    target.PortKey,
+                    apps.ListAppRecordsAsync,
+                    async (record, ct) => (await apps.UpsertAppAsync(record, ct)).App,
+                    desiredPort: null,
+                    cancellationToken);
+                if (RuntimePortHelper.IsOsDynamicRangePort(newPort))
+                {
+                    // The band had nothing free, so the allocator fell back to the OS and the port is as
+                    // fragile as the one we just replaced. Say so: the next boot will try again, and the
+                    // operator's real fix is to free ports in the band or pin this one.
+                    logger.LogWarning(
+                        "Rehoming '{AppId}' {Service}.{PortKey} landed on {NewPort}, still inside the OS dynamic range; the automatic port band had nothing free.",
+                        appId,
+                        target.Service,
+                        target.PortKey,
+                        newPort);
+                }
+                else
+                {
+                    logger.LogInformation(
+                        "Rehomed '{AppId}' {Service}.{PortKey} off OS-allocated port {OldPort} to {NewPort}.",
+                        appId,
+                        target.Service,
+                        target.PortKey,
+                        oldPort,
+                        newPort);
+                }
+
+                rehomed++;
+            }
+            // One unmovable port must not skip the app's remaining ones, nor fail the boot pass. The set
+            // matches what the boot caller tolerates, plus InvalidOperationException for a record removed
+            // between the snapshot and its write — a narrower filter would let a persistence failure
+            // abort the whole pass, which is not the best-effort behavior this documents.
+            catch (Exception ex) when (ex is AppLifecycleException or IOException or UnauthorizedAccessException
+                or System.Text.Json.JsonException or InvalidOperationException)
+            {
+                logger.LogWarning(
+                    ex,
+                    "Failed to rehome '{AppId}' {Service}.{PortKey} off OS-allocated port {OldPort}; leaving it in place.",
+                    appId,
+                    target.Service,
+                    target.PortKey,
+                    target.HostPort);
+            }
+        }
+
+        return rehomed;
+    }
+
+    // The assignments the rehoming pass moves: automatic, remappable, not host-network, and holding a port
+    // an OS may hand out on its own. An assignment carrying a HOSTY_PORT_* override is left alone even when
+    // it is still classified `automatic` — the configure path can write one without re-reserving (a known
+    // gap), and the override, not the assignment, is what start resolves first.
+    internal static IReadOnlyList<AppPortAssignment> FindOsAllocatedAssignments(AppRecord app)
+        => (app.PortAssignments ?? [])
+            .Where(assignment =>
+                string.Equals(assignment.Source, AppPortSources.Automatic, StringComparison.Ordinal) &&
+                assignment.Remappable &&
+                !string.Equals(assignment.BindScope, AppPortBindScopes.HostNetwork, StringComparison.Ordinal) &&
+                RuntimePortHelper.IsOsDynamicRangePort(assignment.HostPort) &&
+                !RuntimePortHelper.HasHostPortOverride(app, assignment.Service, assignment.PortKey))
+            .OrderBy(assignment => assignment.Service, StringComparer.Ordinal)
+            .ThenBy(assignment => assignment.PortKey, StringComparer.Ordinal)
+            .ToArray();
+
     // Records only re-run manifest→record normalization at install/update/switch/live-start, so an app
     // installed under an older Core permanently lacked any manifest section that build did not parse —
     // e.g. `interfaces` was silently dropped for hosty.ai-gateway installed under Core 0.73.x, and Shell's

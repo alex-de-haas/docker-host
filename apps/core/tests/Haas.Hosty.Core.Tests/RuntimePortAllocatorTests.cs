@@ -485,6 +485,64 @@ public sealed class RuntimePortAllocatorTests
     private const int CorePort = 7070;
     private const int ShellPort = 7171;
 
+    [Fact]
+    public async Task AssignAsync_LaterServicePinsAPortInTheBand_IsReservedBeforeTheEarlierAutomaticOne()
+    {
+        // Automatic ports come from 20000-32767, a range apps may legitimately pin inside. Resolution
+        // must therefore reserve every pin BEFORE drawing any automatic port: a single pass that excludes
+        // only the siblings it has already visited would let `web` (declared first, automatic) be handed
+        // the number `api` pins two lines later, and the record would persist the same host port twice.
+        //
+        // The pin sits *outside* the window another app leaves free, so it is reachable by a draw and
+        // only the pre-reservation keeps `web` off it. The window is wide enough that 128 attempts cannot
+        // all miss it — a narrow one would push the allocation into the OS fallback and test nothing.
+        var allocator = new RuntimePortAllocator(CreateConfig());
+        const int Pinned = RuntimePortHelper.AutomaticPortRangeStart;
+        var windowStart = RuntimePortHelper.OsDynamicPortFloor - 2000;
+        var hog = CreateApp("com.example.hog", []) with
+        {
+            PortAssignments = BandReservationsBelow(windowStart, except: Pinned),
+        };
+        var record = CreateApp("com.example.suite", [Endpoint("web", "http"), Endpoint("api", "http")]);
+        var selection = Selection(
+            Service("web", Port("http", containerPort: 8080)),
+            Service("api", Port("http", containerPort: 9090, localPort: Pinned)));
+
+        var result = await allocator.AssignAsync(record, selection, [hog]);
+
+        var api = Assert.Single(result.PortAssignments!, assignment => assignment.Service == "api").HostPort;
+        var web = Assert.Single(result.PortAssignments!, assignment => assignment.Service == "web").HostPort;
+        Assert.Equal(Pinned, api);
+        Assert.NotEqual(api, web);
+        // In the window, i.e. drawn from the band rather than fallen back to an OS port.
+        Assert.InRange(web, windowStart, RuntimePortHelper.OsDynamicPortFloor - 1);
+    }
+
+    // Reservations covering the band below `windowStart`, minus `except`, as one other installed app —
+    // the exclusion view AssignAsync builds from other apps' assignments. What is left free is the window
+    // from `windowStart` up, plus `except`.
+    private static AppPortAssignment[] BandReservationsBelow(int windowStart, int except)
+    {
+        var assignments = new List<AppPortAssignment>();
+        for (var port = RuntimePortHelper.AutomaticPortRangeStart; port < windowStart; port++)
+        {
+            if (port != except)
+            {
+                assignments.Add(new AppPortAssignment(
+                    "hog",
+                    port.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    port,
+                    AppPortTransports.Tcp,
+                    AppPortBindScopes.Loopback,
+                    AppPortSources.Automatic,
+                    Remappable: true,
+                    AssignedAt: DateTimeOffset.UnixEpoch));
+            }
+        }
+
+        return [.. assignments];
+    }
+
     private static HostyCoreRuntimeConfig CreateConfig()
         => new(
             DataRoot: "/tmp/hosty",

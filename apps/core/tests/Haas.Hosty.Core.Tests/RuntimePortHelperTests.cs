@@ -98,6 +98,120 @@ public sealed class RuntimePortHelperTests
         }
     }
 
+    [Fact]
+    public void AllocateLoopbackPort_ReturnsPortInsideTheHostyBand()
+    {
+        // The regression that motivated the band: a port-0 bind hands back an OS dynamic-range port, so a
+        // durable reservation sat in the pool the OS itself allocates from and could be taken back at any
+        // time. Several allocations, because one landing in the band could be luck.
+        var exclude = new HashSet<int>();
+        for (var i = 0; i < 8; i++)
+        {
+            var port = RuntimePortHelper.AllocateLoopbackPort(exclude);
+
+            Assert.InRange(port, RuntimePortHelper.AutomaticPortRangeStart, RuntimePortHelper.OsDynamicPortFloor - 1);
+            Assert.False(RuntimePortHelper.IsOsDynamicRangePort(port));
+            Assert.DoesNotContain(port, exclude);
+            exclude.Add(port);
+        }
+    }
+
+    [Fact]
+    public void AllocateLoopbackPort_HonoursExclusionSet()
+    {
+        // Candidates are drawn at random now rather than handed over by the OS, so the exclusion set has
+        // to be applied to the draw. The window left open is wide enough that 128 attempts cannot all miss
+        // it by chance — a narrow one would make this flake into the fallback path.
+        var windowStart = RuntimePortHelper.OsDynamicPortFloor - 2000;
+        var exclude = new HashSet<int>();
+        for (var port = RuntimePortHelper.AutomaticPortRangeStart; port < windowStart; port++)
+        {
+            exclude.Add(port);
+        }
+
+        var allocated = RuntimePortHelper.AllocateLoopbackPort(exclude);
+
+        Assert.DoesNotContain(allocated, exclude);
+        Assert.InRange(allocated, windowStart, RuntimePortHelper.OsDynamicPortFloor - 1);
+    }
+
+    [Fact]
+    public void AllocateLoopbackPort_BandExhausted_FallsBackToOperatingSystemPort()
+    {
+        // Every port in the band is spoken for. Allocation must degrade to the pre-0.76.0 OS port rather
+        // than fail — a fragile reservation on a saturated host still beats a host that cannot install
+        // anything. The fallback logs a warning; the caller here passes no logger.
+        var exclude = WholeBandExcept(keep: null);
+
+        Assert.True(RuntimePortHelper.IsOsDynamicRangePort(RuntimePortHelper.AllocateLoopbackPort(exclude)));
+    }
+
+    [Fact]
+    public void AllocateLoopbackPort_HeldBandPort_IsNeverHandedOut()
+    {
+        // Unlike a port-0 bind, a drawn candidate is not free by construction, so the allocator has to
+        // probe it. The only port the exclusion set leaves open is held by a live listener: if the probe
+        // were skipped, that port would come straight back.
+        var held = HoldAnyBandPort(out var port);
+        using (held)
+        {
+            Assert.NotEqual(port, RuntimePortHelper.AllocateLoopbackPort(WholeBandExcept(port)));
+        }
+    }
+
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(20000, false)]
+    [InlineData(32767, false)]
+    [InlineData(32768, true)]
+    [InlineData(49152, true)]
+    [InlineData(65535, true)]
+    [InlineData(65536, false)]
+    public void IsOsDynamicRangePort_CoversEveryPlatformFloor(int port, bool expected)
+    {
+        // 32768 is Linux's floor and the lowest of the three; Windows and macOS start at 49152. The
+        // predicate is deliberately the widest of them, so a Windows 52306 and a Linux 40000 both rehome.
+        Assert.Equal(expected, RuntimePortHelper.IsOsDynamicRangePort(port));
+    }
+
+    // Every band port except `keep`, as an allocator exclusion set.
+    private static HashSet<int> WholeBandExcept(int? keep)
+    {
+        var exclude = new HashSet<int>();
+        for (var port = RuntimePortHelper.AutomaticPortRangeStart; port < RuntimePortHelper.OsDynamicPortFloor; port++)
+        {
+            if (port != keep)
+            {
+                exclude.Add(port);
+            }
+        }
+
+        return exclude;
+    }
+
+    // Listens on some band port and reports which one. Scans rather than picking a constant: a developer
+    // machine may already hold any given port, and the test needs a listener it actually owns.
+    private static Socket HoldAnyBandPort(out int port)
+    {
+        for (var candidate = RuntimePortHelper.AutomaticPortRangeStart; candidate < RuntimePortHelper.OsDynamicPortFloor; candidate++)
+        {
+            var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+            try
+            {
+                socket.Bind(new IPEndPoint(IPAddress.Loopback, candidate));
+                socket.Listen(1);
+                port = candidate;
+                return socket;
+            }
+            catch (SocketException)
+            {
+                socket.Dispose();
+            }
+        }
+
+        throw new InvalidOperationException("No bindable port in the automatic band.");
+    }
+
     // Runs a listener, serves one connection, closes the server side first (so the server end is the one
     // left in TIME_WAIT), then drops the listener — the state a just-stopped app leaves behind.
     private static int ServeOneConnectionThenStop()

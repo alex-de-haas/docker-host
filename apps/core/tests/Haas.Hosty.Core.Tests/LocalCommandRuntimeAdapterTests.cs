@@ -395,6 +395,73 @@ public sealed class LocalCommandRuntimeAdapterTests
         }
     }
 
+    [Fact]
+    public void EnsureDynamicRangePortsStillAvailable_DynamicRangePortTakenDuringSetup_Throws()
+    {
+        // The gateway's failure: the port is free at the adapter's first preflight, then `npm install`
+        // runs — dozens of outbound connections drawing local ports from this very range — and by the
+        // time the command spawns the port is gone. Naming it beats an EADDRINUSE from inside the app.
+        using var holder = HoldHighDynamicRangePort(out var taken);
+
+        var error = Assert.Throws<AppLifecycleException>(() =>
+            LocalCommandRuntimeAdapter.EnsureDynamicRangePortsStillAvailable("api", new Dictionary<string, int> { ["http"] = taken }));
+
+        Assert.Equal("local_command_port_unavailable", error.Code);
+        Assert.Contains(taken.ToString(System.Globalization.CultureInfo.InvariantCulture), error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EnsureDynamicRangePortsStillAvailable_HeldBandPort_IsNotProbed()
+    {
+        // Deliberate scoping, not an oversight. A band port cannot be taken by the OS on its own, so
+        // re-probing it buys nothing — and would cost a real regression: on Windows a Node listener binds
+        // with SO_EXCLUSIVEADDRUSE, so the app's own TIME_WAIT sockets from the run we just stopped can
+        // still hold its port, and a strict probe here would fail ordinary restarts.
+        var band = RuntimePortHelper.AllocateLoopbackPort();
+        using var holder = new System.Net.Sockets.Socket(System.Net.Sockets.AddressFamily.InterNetwork, System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+        holder.Bind(new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, band));
+        holder.Listen(1);
+
+        LocalCommandRuntimeAdapter.EnsureDynamicRangePortsStillAvailable("api", new Dictionary<string, int> { ["http"] = band });
+    }
+
+    [Fact]
+    public void EnsureDynamicRangePortsStillAvailable_FreePorts_Pass()
+    {
+        var free = RuntimePortHelper.AllocateLoopbackPort();
+
+        LocalCommandRuntimeAdapter.EnsureDynamicRangePortsStillAvailable(
+            "api",
+            new Dictionary<string, int> { ["http"] = free, ["metrics"] = RuntimePortHelper.AllocateLoopbackPort() });
+    }
+
+    // Listens on a dynamic-range port scanned down from the top of the range, rather than taking whatever
+    // a port-0 bind hands back. The suite already shares an ephemeral-port race — every
+    // `TcpListener(IPAddress.Loopback, 0)` helper competes for the same OS cursor, see LoopbackHttpServer
+    // — and a long-lived listener on an OS-assigned port is one more competitor. 65535 downward is where
+    // that cursor is least likely to be: it is above Linux's range entirely and at the far end of the
+    // Windows and macOS one.
+    private static System.Net.Sockets.Socket HoldHighDynamicRangePort(out int port)
+    {
+        for (var candidate = 65535; candidate >= RuntimePortHelper.OsDynamicPortFloor; candidate--)
+        {
+            var socket = new System.Net.Sockets.Socket(System.Net.Sockets.AddressFamily.InterNetwork, System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+            try
+            {
+                socket.Bind(new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, candidate));
+                socket.Listen(1);
+                port = candidate;
+                return socket;
+            }
+            catch (System.Net.Sockets.SocketException)
+            {
+                socket.Dispose();
+            }
+        }
+
+        throw new InvalidOperationException("No bindable port in the OS dynamic range.");
+    }
+
     private static HostyCoreRuntimeConfig CreateConfig(int corePort, string listenUrl, string? corePublicOrigin)
         => new(
             DataRoot: "/tmp/hosty",

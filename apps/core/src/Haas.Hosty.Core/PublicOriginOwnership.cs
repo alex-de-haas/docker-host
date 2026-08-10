@@ -15,6 +15,17 @@ namespace Haas.Hosty.Core;
 // Core's behavior disagreed.
 internal sealed class PublicOriginOwnership(CoreSettingsService settings, CloudflarePublicationStore publications)
 {
+    // The endpoint keys this app has a Cloudflare API publication for. Deliberately NOT gated on the
+    // active provider: a publication means a hostname is routed to this endpoint's local port in a
+    // remotely-managed tunnel, and switching the provider setting does not retract that route. Anything
+    // that would move the port out from under it has to know, whichever provider is selected today.
+    public async Task<IReadOnlySet<string>> FindPublishedEndpointKeysAsync(
+        string appId,
+        CancellationToken cancellationToken = default)
+        => (await publications.ListForAppAsync(appId, cancellationToken))
+            .Select(publication => publication.EndpointKey)
+            .ToHashSet(StringComparer.Ordinal);
+
     // The subset of `settingKeys` that the active provider owns. Keys that are not public-origin
     // settings are never returned.
     public async Task<IReadOnlyCollection<string>> FindManagedKeysAsync(

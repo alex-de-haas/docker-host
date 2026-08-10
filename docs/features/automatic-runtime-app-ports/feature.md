@@ -1,7 +1,7 @@
 # Feature: Automatic Runtime App Ports
 
 Created: 2026-06-05
-Updated: 2026-07-28
+Updated: 2026-08-09
 
 Runtime apps do not hard-code host ports. Core reserves an available host port for every declared
 service port at install, exposes it to the app through the environment, and keeps the stored endpoint
@@ -47,6 +47,32 @@ the adapter at start and persisted only as an endpoint URL, which resolution ste
 starts. A reservation whose port key the new manifest no longer declares stays on the record, inert —
 nothing resolves or projects it.
 
+### The allocation pool
+
+Automatic ports come from a fixed band, **20000–32767**
+([RuntimePortHelper.AutomaticPortRangeStart](../../../apps/core/src/Haas.Hosty.Core/RuntimePortHelper.cs)).
+A candidate is drawn at random and probed; the first free one that is not excluded wins.
+
+The band exists because a reservation is durable and an OS-allocated port is not. Until 0.76.0 an
+automatic port was whatever a bind on port 0 returned — that is, a port out of the OS dynamic range
+(Linux 32768+, macOS and Windows 49152+), which is also the pool every outbound connection on the
+host draws from. Nothing tells the kernel to keep such a port aside, so the reservation was only ever
+on loan. A Windows host reserved 52306 for `hosty.ai-gateway` and then handed the port out again
+during the app's own `npm install` setup step, between Core's start preflight and the app's listen;
+the app died with `EADDRINUSE` on every start. The band sits above the crowded development-port
+neighbourhood apps pin by hand and below the lowest dynamic-range floor of any supported platform, so
+no operating system allocates inside it unless told to.
+
+Candidates are drawn at random rather than swept from the floor: a sweep would put every host's first
+app on the same number, so one unlucky foreign service would collide identically everywhere. The band
+does contain a few familiar services (MongoDB 27017, CockroachDB 26257, Plex 32400) and there is no
+deny-list for them — a running one is never handed its port because every candidate is probed, and a
+stopped one is the same exposure any pinned port already carries.
+
+A band with no free candidate left falls back to the old port-0 allocation and logs a warning. The
+resulting reservation is as fragile as every automatic port was before the band existed, which is
+worth saying out loud, but a saturated host that can still install beats one that cannot.
+
 ### Allocation coordination
 
 Every allocation runs under one process-wide gate
@@ -56,15 +82,23 @@ concurrent installs cannot each allocate against a snapshot that predates the ot
 second observes the first's reservation.
 
 The excluded set is every non-host-network reservation held by any other installed app, plus Core's
-own port. Automatic ports come from the OS (a bind on port 0), so a port an unrelated process already
-holds is never handed out in the first place.
+own port. On top of it, a process-wide memory of the last 64 allocations keeps a port handed to a
+start that has not bound it yet from being handed out again — the bind probe cannot see that one.
+
+Resolution runs in two passes over the app's declared ports. The first resolves every port whose
+number the app does not get to choose — host-network, an operator override, a manifest pin, an
+existing reservation, a started endpoint's sticky port — and seeds the exclusion set with all of
+them; the second allocates what is left. Reserving pins *before* drawing matters because the band is
+a range apps may legitimately pin inside: a single pass excluding only the siblings it had already
+visited could hand an early service the number a later one pins, and the record would persist the
+same host port twice. Both the install-time allocator and the localCommand adapter's start-time
+resolution work this way.
 
 Shell is not special-cased: it pins its port in its own manifest like any app, and once installed its
 reservation is in the set. Before Shell installs, nothing holds its pinned port — but that is exactly
-the position every other app is already in, and the ephemeral range every platform allocates from
-(Linux 32768+, macOS and Windows 49152+) sits well above the ports apps pin. A host with a
-deliberately widened range can collide, and Shell then fails start with the same reassignable
-`runtime_port_unavailable` any app gets.
+the position every other app is already in, and the band is deliberately clear of the ports apps pin
+by hand. An app that pins inside the band can still collide, and it then fails start with the same
+reassignable `runtime_port_unavailable` any app gets.
 
 ## Environment
 
@@ -143,6 +177,57 @@ live link, and configuration actions such as Public origins remain available whi
 
 ## Existing-record migration
 
+Two boot passes run ahead of autostart reconciliation, in this order
+([HostyCoreApplication.cs:1102](../../../apps/core/src/Haas.Hosty.Core/HostyCoreApplication.cs)): the
+backfill below, then the rehoming pass, so a reservation derived from a legacy endpoint URL on this
+boot is rehomed in the same pass rather than waiting for the next one. Both are best-effort — a
+failure is logged and boot continues.
+
+### Rehoming OS-allocated ports
+
+Every automatic port reserved before 0.76.0 came out of the OS dynamic range, where it was never
+safe to hold (see [the allocation pool](#the-allocation-pool)). A boot pass moves them into the band
+([`RehomeOsAllocatedPortsAsync`](../../../apps/core/src/Haas.Hosty.Core/CoreLifecycleService.cs)), so
+an existing install heals without operator action.
+
+An assignment qualifies when it is `automatic`, remappable, not host-network, holds a port at or
+above 32768, and is not shadowed by a `HOSTY_PORT_*` setting. An operator pin and a manifest-declared
+port are someone's deliberate choice and are left where they are, even inside the dynamic range —
+the operator may have a firewall rule on one.
+
+An endpoint that a Cloudflare API publication routes to is also left alone, whatever the currently
+selected ingress provider. That provider pushes the local `serviceUrl` into a remotely-managed tunnel
+and is only ever driven by an operator's explicit publish, so nothing re-points it when a port moves —
+unlike the local-config provider, which re-renders its whole config from the app records on every
+reconcile and therefore follows a moved port by itself. Moving a published port would aim a live
+public hostname at a port nothing listens on. This is an interim guard: the app keeps a reservation in
+the dynamic range, and it goes away once the API provider sits behind `IIngressController` like the
+local one does. See [Public Origins](../public-origins/plan.md).
+
+A legacy record needs one extra check. The backfill above derives its assignments from stored
+endpoint URLs and classifies anything without a matching `HOSTY_PORT_*` setting as `automatic`,
+because a URL cannot say whether Core chose the port or the manifest declared it. A pre-reservation
+record whose manifest pins a port in the dynamic range would therefore look remappable. Before moving
+anything, the pass reads the app's reviewed manifest copy and skips every `(service, port key)` the
+manifest pins with an explicit `localPort`/`hostPort`, across all runtime profiles — skipping is the
+safe direction, and a port pinned under a profile the app is not currently running is still a pin. An
+unreadable or missing copy yields no pins and is logged. 32768 is used as the threshold on every platform rather
+than the running OS's actual floor: it is the lowest of the three, so a Windows 52306 and a Linux
+40000 both qualify, and reading `netsh` or `sysctl` would put platform-specific shelling out on a
+boot path that stays AOT-friendly.
+
+Each move runs through the allocator, so the new port is chosen under the same gate and against the
+same exclusion view an operator-driven reassignment uses, and the endpoint URL moves with the
+assignment. One port moves per round and the record is re-read between rounds, since each move
+persists a new revision. Selection is by port range, so the pass is idempotent — a rehomed record
+stops matching, and steady-state boots move nothing.
+
+An app that is currently up is skipped and retried on a later boot. Core may have adopted a live
+listener (keep-apps light restart, docker adoption), and moving the reservation would leave the
+record disagreeing with the process actually serving.
+
+### Backfilling pre-reservation records
+
 A boot pass ahead of autostart reconciliation backfills reservations for records written before the
 model existed
 ([PortAssignmentMigration.cs](../../../apps/core/src/Haas.Hosty.Core/PortAssignmentMigration.cs)). It
@@ -173,7 +258,14 @@ gets a named, reassignable conflict instead of a bind failure from inside docker
   clear; the start half of a stop→start pair waits longer and then starts anyway, since the port is
   almost certainly our own still being torn down.
 - `local_command_port_unavailable` — the localCommand adapter's own preflight over fixed and sticky
-  ports, which also rejects two services of one app claiming the same port.
+  ports, which also rejects two services of one app claiming the same port. The adapter probes a
+  second time immediately before each service's command spawns, closing the window the first preflight
+  leaves open: the two are separated by the whole of the service's `setup` command, and `npm install`
+  alone opens dozens of outbound connections that each take a local port from the OS dynamic range.
+  That second probe covers only ports inside that range. A band port cannot be taken by the OS on its
+  own, so re-probing it would buy nothing and cost something real — on Windows a Node listener binds
+  with `SO_EXCLUSIVEADDRUSE`, so an app's own `TIME_WAIT` sockets from the run just stopped can still
+  hold its port, and a strict probe there would fail ordinary restarts.
 - `port_in_use` — an operator's manual port choice during reassignment.
 
 All three ask the same question,
@@ -187,9 +279,10 @@ is refused whatever the reuse flags are, so the wildcard holder is found by prob
 
 Only the loopback bind has to succeed; for the other three probes just `AddressAlreadyInUse` is
 disqualifying, so a platform that refuses a wildcard bind for an unrelated reason does not invent a
-conflict. Because every probe binds with `SO_REUSEADDR`, TIME_WAIT sockets left by a just-stopped app
-never register as one either — restarting an app that served traffic is not blocked. Probes bind
-without listening: the answer comes from `bind()`, and no probe ever accepts a connection.
+conflict. On Unix, where .NET enables `SO_REUSEADDR` inside `Socket.Bind`, TIME_WAIT sockets left by a
+just-stopped app do not register as one either, so restarting an app that served traffic is not
+blocked; that is the platform the covering test asserts on. Probes bind without listening: the answer
+comes from `bind()`, and no probe ever accepts a connection.
 
 The probe is TCP-only (as is the reservation model) and point-in-time, not a lease: a port taken
 between preflight and the runtime's own bind still fails at the runtime, where app health and logs
@@ -253,6 +346,23 @@ beyond blocking its own app's reassigned ports.
 - Migration derives assignments from started endpoint URLs, is idempotent, preserves existing
   assignments, classifies an operator override, and tolerates duplicate identities
   ([PortAssignmentMigrationTests.cs](../../../apps/core/tests/Haas.Hosty.Core.Tests/PortAssignmentMigrationTests.cs)).
+- Allocation lands inside the band and never returns an excluded port; a held candidate is never
+  handed out; an exhausted band falls back to an OS-allocated port; `IsOsDynamicRangePort` covers
+  every platform floor
+  ([RuntimePortHelperTests.cs](../../../apps/core/tests/Haas.Hosty.Core.Tests/RuntimePortHelperTests.cs)).
+- Rehoming selects only automatic, remappable, non-host-network assignments above the dynamic-range
+  floor that no `HOSTY_PORT_*` setting shadows, and orders them by service then port key
+  ([PortRehomingSelectionTests.cs](../../../apps/core/tests/Haas.Hosty.Core.Tests/PortRehomingSelectionTests.cs)).
+- The rehoming pass moves an OS-allocated port into the band and carries the endpoint URL with it,
+  leaves an operator pin in the same range alone, changes nothing on a second run, skips an app that
+  is running, keeps several ports on one app distinct, and leaves a legacy manifest pin — or an endpoint
+  with a Cloudflare API publication — in place while still moving that app's genuinely automatic ports.
+- A port a later service pins inside the band is reserved before an earlier service's automatic port
+  is drawn, so one app never persists the same host port twice
+  ([RuntimePortAllocatorTests.cs](../../../apps/core/tests/Haas.Hosty.Core.Tests/RuntimePortAllocatorTests.cs)).
+- The pre-spawn probe rejects a dynamic-range port taken during `setup` with
+  `local_command_port_unavailable` naming the port, and does not probe a band port even when one is
+  held ([LocalCommandRuntimeAdapterTests.cs](../../../apps/core/tests/Haas.Hosty.Core.Tests/LocalCommandRuntimeAdapterTests.cs)).
 - `IsLoopbackTcpPortAvailable` reports a conflict for every holder shape — loopback, IPv4 wildcard,
   IPv6 wildcard, dual-stack wildcard — and reports a port left in TIME_WAIT by a stopped app as
   available
