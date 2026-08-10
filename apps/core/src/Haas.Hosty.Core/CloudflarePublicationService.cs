@@ -138,7 +138,15 @@ internal sealed class CloudflarePublicationService(
         if (reconnectRequired)
         {
             // The routes and the record are still there; what is gone is Hosty's ability to manage them.
+            // Ranked above drift because drift cannot be repaired before the connection is.
             return CloudflarePublicationStates.Error;
+        }
+
+        if (!string.IsNullOrWhiteSpace(publication.DriftedServiceUrl))
+        {
+            // The hostname routes to a port that moved out from under it. Outranks app_stopped: starting
+            // the app does not repair this, and it is broken whether or not the app is up.
+            return CloudflarePublicationStates.OriginDrifted;
         }
 
         if (!appRunning)
@@ -394,6 +402,11 @@ internal static class CloudflarePublicationStates
     public const string Active = "active";
     public const string AppStopped = "app_stopped";
     public const string RestartRequired = "restart_required";
+
+    // The endpoint's local port moved and Core could not push the new target into the tunnel, so the
+    // hostname still routes to a port nothing listens on. Distinct from Error: the connection may be
+    // perfectly healthy and the fix is another reconcile, not another token.
+    public const string OriginDrifted = "origin_drifted";
     public const string Error = "error";
 }
 

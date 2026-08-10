@@ -103,7 +103,7 @@ export type CloudflareSelectionRequired = { kind: "account" | "zone" | "tunnel";
 export type CloudflareSelectionError = { code: string; message: string; selection: CloudflareSelectionRequired };
 
 // GET /api/apps/{id}/public-origins
-export type CloudflarePublicationState = "not_configured" | "active" | "app_stopped" | "restart_required" | "error";
+export type CloudflarePublicationState = "not_configured" | "active" | "app_stopped" | "restart_required" | "origin_drifted" | "error";
 export type CloudflarePublicationSummary = {
   endpointKey: string;
   label: string;

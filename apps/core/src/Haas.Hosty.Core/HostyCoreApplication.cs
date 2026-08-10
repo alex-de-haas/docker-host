@@ -128,7 +128,9 @@ internal static class HostyCoreApplication
         builder.Services.AddHostedService(sp => sp.GetRequiredService<DockerStatsExposition>());
         // One controller: it reads the live ingress provider from CoreSettingsService and no-ops for every
         // provider that is not "cloudflared", so switching providers is a settings edit, not a restart.
-        builder.Services.AddSingleton<IIngressController, CloudflaredIngressController>();
+        builder.Services.AddSingleton<CloudflaredIngressController>();
+        builder.Services.AddSingleton<CloudflareRemoteIngressController>();
+        builder.Services.AddSingleton<IIngressController, ProviderIngressController>();
         // Generic bootstrap: the release-owned distribution list and the operator's bootstrap
         // choices drive which first-party apps the supervisor preinstalls at boot; the service is
         // shared with the host-admin bootstrap endpoints for live toggles.
