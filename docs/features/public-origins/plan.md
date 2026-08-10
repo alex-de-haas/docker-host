@@ -1,6 +1,6 @@
 # Public Origins — One Control, One Owner, One Materialization
 
-Status: Draft
+Status: Ready
 Created: 2026-08-10
 Updated: 2026-08-10
 
@@ -92,9 +92,20 @@ thing for free — including callers that do not exist yet.
 - The API implementation pushes only what actually differs: a publication stores the last written
   `serviceUrl`, so an unchanged route costs no API call. Without this, a boot that rehomes ten apps
   becomes ten tunnel-config PUTs.
-- It stays best-effort in the sense the contract already requires, but the failure modes become
-  "Cloudflare unreachable" and "token expired" rather than "file locked". A missing connection is a
-  legitimate state and must degrade quietly, not stall boot.
+- **It reconciles at boot**, like the local provider. That is what makes "who moved the port"
+  genuinely irrelevant — the alternative, reconciling only on the change event, loses the change
+  permanently if Core dies between the port move and the push, and nobody ever learns. Diffing keeps
+  the steady-state cost at zero API calls, so boot only does work on the boot where something moved.
+- A push that cannot happen — no connection, expired token, Cloudflare unreachable — records drift on
+  the publication and surfaces it through the existing publication state machine and diagnostics
+  endpoint. It does not retry on the startup path and it never stalls boot. Best-effort in the sense
+  the contract already requires, with failure modes that are now "Cloudflare unreachable" rather than
+  "file locked".
+- An endpoint with no resolved URL is skipped by both providers, exactly as the local one already
+  skips it. This is reachable but narrow: a port key appearing for the first time in an update, a
+  runtime switch, or a live manifest gets no install-time reservation, so it carries no URL until the
+  app's next start ([automatic-runtime-app-ports/feature.md](../automatic-runtime-app-ports/feature.md)).
+  The route appears at that start; nothing special-cases it.
 - The rehoming guard in
   [automatic-runtime-app-ports/feature.md](../automatic-runtime-app-ports/feature.md) is deleted in
   the same change: once a moved port re-points its own route, there is nothing to protect.
@@ -121,7 +132,8 @@ DNS, and the tunnel only routes what already resolves to it.
 - [ ] `IIngressController` implementation for `cloudflare-remote`, materializing publications as
       desired state, with per-endpoint diffing against the stored `serviceUrl`.
 - [ ] Boot and lifecycle paths reconcile through the provider without special-casing it; a missing or
-      invalid Cloudflare connection degrades without stalling.
+      invalid Cloudflare connection degrades without stalling, recording drift instead of retrying.
+- [ ] Notify once when a port moves under provider `none`, naming the old and new local port.
 - [ ] Remove the rehoming guard (`FindApiPublishedPortKeysAsync`) and its test, and the paragraph
       describing it in `automatic-runtime-app-ports/feature.md`.
 - [ ] One public-origin dialog on the endpoint row, replacing `cloudflare-publish-control.tsx` and the
@@ -168,16 +180,17 @@ DNS, and the tunnel only routes what already resolves to it.
 
 ## Open questions
 
-- **Does the API provider reconcile at boot, or only on change?** Boot reconciliation is what makes
-  "whoever moved the port" truly irrelevant, but it puts network calls and a token requirement on the
-  startup path. Diffing makes the steady-state cost zero, so the real question is what happens on the
-  one boot where something did change and Cloudflare is unreachable.
-- **What does the unified dialog show under `none` for an endpoint whose port just moved?** The stored
-  URL is now wrong and only the operator can fix it. A warning is cheap; whether it rises to an app
-  problem is a judgement call.
-- **Does a never-started app with no resolved endpoint URL get a route?** Install-time reservation
-  gives one in practice, so this may be unreachable — worth confirming before writing code that
-  handles it.
+None. All three were settled on 2026-08-10:
+
+- **Boot reconciliation for the API provider: yes**, with drift recorded rather than retried. Written
+  into Target behavior above.
+- **A moved port under `none`: a notification at the moment of the move, not a standing problem
+  state.** Core cannot detect staleness there even in principle — an operator's manual origin is
+  typically `https://app.example.com` with no port, pointing at their own reverse proxy, whose
+  upstream Core neither writes nor can read. What Core does know is the event, so it says so once:
+  "the local port of X moved from A to B; if you front it with your own proxy, update the upstream."
+  A persistent badge would have to assert something Core cannot know.
+- **A never-started endpoint with no URL: skipped**, same as today. Written into Target behavior.
 
 ## Verification
 
