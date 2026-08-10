@@ -189,6 +189,44 @@ internal sealed class CloudflarePublicationReconciler(
         }
     }
 
+    // Re-point an existing publication's tunnel route at a new local target, and nothing else.
+    //
+    // Deliberately not PublishAsync with a fresh service URL. The hostname, the label, the DNS record and
+    // the ownership state are all unchanged here — only the local port moved — so this touches neither DNS
+    // (the CNAME points at the tunnel, not at a port) nor the conflict and adoption logic, which exist to
+    // decide who owns a hostname and have no question to answer when the hostname is already ours. It is
+    // the operation a declarative reconcile needs: one route rule rewritten, verified, recorded.
+    //
+    // On success the drift marker is cleared; the caller records drift when this throws.
+    public async Task<CloudflarePublication> RepointAsync(
+        string token,
+        CloudflareIngressTarget target,
+        CloudflarePublication publication,
+        string serviceUrl,
+        CancellationToken cancellationToken = default)
+    {
+        var config = await RequireConfigAsync(token, target, cancellationToken);
+        var unrelatedBefore = UnrelatedProjection(config, publication.Hostname, oldHostname: null);
+        var patched = CloudflareTunnelConfigPatcher.UpsertIngress(config, publication.Hostname, serviceUrl);
+
+        await client.PutTunnelConfigurationAsync(token, target.AccountId, target.TunnelId, patched, cancellationToken);
+        var readback = await RequireConfigAsync(token, target, cancellationToken);
+        VerifyReadback(readback, publication.Hostname, serviceUrl, unrelatedBefore, oldHostname: null);
+
+        var updated = publication with
+        {
+            ServiceUrl = serviceUrl,
+            DriftedServiceUrl = null,
+            UpdatedAt = DateTimeOffset.UtcNow,
+        };
+        await publications.UpsertAsync(updated, cancellationToken);
+        logger.LogInformation(
+            "Re-pointed the Cloudflare route for '{Hostname}' at {ServiceUrl}.",
+            publication.Hostname,
+            serviceUrl);
+        return updated;
+    }
+
     private async Task<JsonObject> RequireConfigAsync(string token, CloudflareIngressTarget target, CancellationToken cancellationToken)
         => (await client.GetTunnelConfigurationAsync(token, target.AccountId, target.TunnelId, cancellationToken))?.Config
             ?? throw new CloudflareConnectionException("cloudflare_config_unavailable", "Could not read the tunnel configuration.");

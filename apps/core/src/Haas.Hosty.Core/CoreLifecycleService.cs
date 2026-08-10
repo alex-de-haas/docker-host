@@ -2757,13 +2757,8 @@ internal sealed class CoreLifecycleService(
                 continue;
             }
 
-            var frozen = new HashSet<(string, string)>(await ReadManifestPinnedPortKeysAsync(app, cancellationToken));
-            foreach (var identity in await FindApiPublishedPortKeysAsync(app, cancellationToken))
-            {
-                frozen.Add(identity);
-            }
-
-            rehomed += await WithAppLockAsync(app.Id, () => RehomeAppPortsAsync(app.Id, frozen, cancellationToken), cancellationToken);
+            var manifestPinned = await ReadManifestPinnedPortKeysAsync(app, cancellationToken);
+            rehomed += await WithAppLockAsync(app.Id, () => RehomeAppPortsAsync(app.Id, manifestPinned, cancellationToken), cancellationToken);
         }
 
         return rehomed;
@@ -2831,45 +2826,67 @@ internal sealed class CoreLifecycleService(
         return pinned;
     }
 
-    // The (service, port key) pairs whose port is routed by a Cloudflare API publication.
+    // Tell the operator once when a port this pass moved sits behind an origin THEY own.
     //
-    // Interim guard, and it exists because of an asymmetry between the two ingress providers. The local
-    // one re-renders its whole config from the app records on every reconcile, so a moved port reaches it
-    // by itself; the API one pushes `serviceUrl` into a remotely-managed tunnel and is only ever driven by
-    // an operator's explicit publish (CloudflarePublicationService), so nothing re-pushes it when the port
-    // changes. Until the API provider sits behind IIngressController like the local one does, Core cannot
-    // re-materialize those routes — and moving a port it cannot re-point would leave a public hostname
-    // aimed at a port nothing listens on. Not moving it is the honest half: the app keeps a reservation in
-    // the OS dynamic range (so it keeps that exposure) but its public address keeps working, and the guard
-    // disappears with the provider unification.
-    private async Task<IReadOnlyCollection<(string Service, string PortKey)>> FindApiPublishedPortKeysAsync(
+    // A managed origin needs no notice: the active provider re-materializes it, which is the whole point
+    // of putting both providers behind IIngressController. An operator-owned one is the opposite — under
+    // `none`, or for an unpublished endpoint under the API provider, the stored origin usually reads
+    // `https://app.example.com` with no port at all, because it names their own reverse proxy and the
+    // upstream lives in that proxy's config. Core neither writes nor can read that file, so it cannot
+    // detect staleness and must not pretend to: a standing "broken" badge would assert something unknown.
+    // What Core does know is the event, so it reports the event, once, and says what to do with it.
+    private async Task NotifyOperatorOwnedOriginMovedAsync(
         AppRecord app,
+        AppPortAssignment target,
+        int oldPort,
+        int newPort,
         CancellationToken cancellationToken)
     {
-        if (publicOrigins is null)
+        if (notifications is null || publicOrigins is null)
         {
-            return [];
+            return;
         }
 
-        var published = await publicOrigins.FindPublishedEndpointKeysAsync(app.Id, cancellationToken);
-        if (published.Count == 0)
+        try
         {
-            return [];
-        }
+            var endpoint = app.Endpoints.FirstOrDefault(candidate =>
+                string.Equals(candidate.Service, target.Service, StringComparison.Ordinal) &&
+                string.Equals(candidate.Port, target.PortKey, StringComparison.Ordinal));
+            if (endpoint is null)
+            {
+                return;
+            }
 
-        // A publication names an endpoint key; an assignment is keyed by (service, port key). The record's
-        // endpoint contract is what maps one to the other.
-        return app.Endpoints
-            .Where(endpoint => published.Contains(endpoint.Key) &&
-                !string.IsNullOrWhiteSpace(endpoint.Service) &&
-                !string.IsNullOrWhiteSpace(endpoint.Port))
-            .Select(endpoint => (endpoint.Service!, endpoint.Port!))
-            .ToArray();
+            var settingKey = PublicOriginSettings.BuildSettingKey(endpoint.Key);
+            if (!app.Settings.TryGetValue(settingKey, out var origin) || string.IsNullOrWhiteSpace(origin.Value))
+            {
+                return;
+            }
+
+            var managed = await publicOrigins.FindManagedKeysAsync(app.Id, [settingKey], cancellationToken);
+            if (managed.Contains(settingKey))
+            {
+                return;
+            }
+
+            await notifications.PublishAsync(
+                new CoreScope(), NotificationService.BroadcastTarget, NotificationService.AudienceHostAdmin,
+                "warning",
+                $"'{app.DisplayName}' moved to a new local port",
+                $"{endpoint.Key} now listens on {newPort} instead of {oldPort}. {origin.Value} is yours to maintain, so update the upstream wherever it is configured.",
+                link: null,
+                $"public-origin-port-moved:{app.Id}:{endpoint.Key}:{newPort}",
+                cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            logger.LogWarning(exception, "Failed to publish the moved-port notification for {AppId}.", app.Id);
+        }
     }
 
     private async Task<int> RehomeAppPortsAsync(
         string appId,
-        IReadOnlySet<(string Service, string PortKey)> frozen,
+        IReadOnlySet<(string Service, string PortKey)> manifestPinned,
         CancellationToken cancellationToken)
     {
         var snapshot = await apps.GetAppAsync(appId, cancellationToken);
@@ -2886,10 +2903,10 @@ internal sealed class CoreLifecycleService(
         foreach (var target in FindOsAllocatedAssignments(snapshot))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (frozen.Contains((target.Service, target.PortKey)))
+            if (manifestPinned.Contains((target.Service, target.PortKey)))
             {
                 logger.LogInformation(
-                    "Leaving '{AppId}' {Service}.{PortKey} on {HostPort}: the manifest pins it, or a Cloudflare publication routes a public hostname to it that Core cannot re-point on its own.",
+                    "Leaving '{AppId}' {Service}.{PortKey} on {HostPort}: the manifest pins it, and the boot backfill only classified it automatic because a stored endpoint URL cannot say so.",
                     appId,
                     target.Service,
                     target.PortKey,
@@ -2945,6 +2962,7 @@ internal sealed class CoreLifecycleService(
                         newPort);
                 }
 
+                await NotifyOperatorOwnedOriginMovedAsync(current, target, oldPort, newPort, cancellationToken);
                 rehomed++;
             }
             // One unmovable port must not skip the app's remaining ones, nor fail the boot pass. The set
