@@ -57,8 +57,9 @@ start.
 `IIngressController`
 ([CloudflareIngress.cs:19](../../../apps/core/src/Haas.Hosty.Core/CloudflareIngress.cs)) is the
 provider abstraction, and both providers now sit behind it. `ProviderIngressController` asks each of
-them on every reconcile and each no-ops unless it is the selected one — dispatching to exactly one
-would strand the `config.yml` the local provider has to delete after a provider switch.
+them on every reconcile and each decides for itself whether it has anything to do — dispatching to
+exactly one would strand the `config.yml` the local provider has to delete after a provider switch,
+and would stop the API one from maintaining a publication retained across that switch.
 
 This is what makes "who changed the port" irrelevant. Install, operator reassignment, the boot
 rehoming pass and boot itself already call `ReconcileIngressAsync`; each now materializes the right
@@ -93,8 +94,7 @@ unpublish is ungated too — so its hostname stays routed and live after a switc
 Creating a publication stays gated on the provider. The work is bounded by publications, so a host
 that never published pays nothing.
 
-A
-publication records the target last written into the tunnel, so reconciliation diffs two strings and
+A publication records the target last written into the tunnel, so reconciliation diffs two strings and
 pushes only what actually moved: a steady-state boot makes no API call at all, and only the boot where
 something moved talks to Cloudflare.
 
@@ -109,9 +109,11 @@ A push that cannot happen — no connection, an expired token, Cloudflare unreac
 the startup path and never stalls boot; the next reconcile that reaches Cloudflare repairs it and
 clears the marker. Connecting Cloudflare reconciles immediately, so the reconnect the drift message
 asks for is itself the repair. A port that moved and moved back before anyone could push clears the
-marker without an API call — the route was never wrong by the time it mattered — and the dialog
-offers Reapply on a drifted publication so the state is actionable rather than only described. `origin_drifted` outranks `app_stopped` (starting the app repairs nothing) and
-ranks below `error` (a broken connection must be fixed before the drift can be).
+marker without an API call — the route was never wrong by the time it mattered — and the dialog offers
+Reapply on a drifted publication so the state is actionable rather than only described.
+
+`origin_drifted` outranks `app_stopped` (starting the app repairs nothing) and ranks below `error` (a
+broken connection must be fixed before the drift can be).
 
 ### When nobody can materialize it
 
