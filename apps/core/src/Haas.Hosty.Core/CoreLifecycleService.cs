@@ -502,8 +502,26 @@ internal sealed class CoreLifecycleService(
             };
         }, cancellationToken);
 
+        // A public-origin or subdomain edit is a routing change, so materialize it now rather than leaving
+        // it for whatever start, stop or settings save happens next: the whole point of the unified
+        // control is that saving it takes effect. Scoped to those keys so an ordinary settings write does
+        // not pay for a reconcile, and cheap when it does fire — the local provider re-renders a file and
+        // the API one diffs two strings before deciding whether to call Cloudflare at all.
+        if (TouchesRouting(request.Settings))
+        {
+            await ReconcileIngressAsync(cancellationToken);
+        }
+
         return new AppLifecycleResponse(await BuildAppSummaryAsync(document.App, cancellationToken), null, "configured");
     }
+
+    // True when a configure write changes where an app is reachable from: its public origin, or the
+    // subdomain the local provider derives every one of its hostnames from.
+    private static bool TouchesRouting(IReadOnlyDictionary<string, string?>? settings)
+        => settings is { Count: > 0 } &&
+            settings.Keys.Any(key =>
+                PublicOriginSettings.IsSettingKey(key) ||
+                string.Equals(key, CloudflaredIngressPlanner.SubdomainSettingKey, StringComparison.Ordinal));
 
     // Validates an operator-supplied update policy. null leaves the policy unchanged; the only valid
     // value is "pinned" (case-insensitive), normalized to lowercase for storage. "rolling" — which

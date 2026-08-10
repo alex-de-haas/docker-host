@@ -97,18 +97,62 @@ public sealed class CloudflareRemoteIngressControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task ReconcileAsync_UnderAnotherProvider_DoesNothing()
+    public async Task ReconcileAsync_UnderAnotherProvider_StillFollowsARetainedPublication()
     {
+        // A publication outlives a provider change — that is why unpublish is ungated too — so its
+        // hostname stays routed and live after the operator switches to `none` or `cloudflared`. Gating
+        // reconciliation on the active provider would stranded that hostname on a dead port the moment
+        // anything moved it, with nothing even recording the drift. Creating a publication stays gated;
+        // keeping one that exists correct is maintenance.
         var fixture = await CreateAsync(connected: true);
         await fixture.PublishAsync();
         await fixture.MovePortAsync("http://127.0.0.1:24500");
         await fixture.SetProviderAsync(IngressSettings.ProviderCloudflared);
+
+        await fixture.Controller.ReconcileAsync(await fixture.Apps.ListAppRecordsAsync());
+
+        Assert.Equal("http://127.0.0.1:24500", fixture.RouteService("media.example.test"));
+        Assert.Equal("http://127.0.0.1:24500", (await fixture.Publications.GetAsync("com.example.media", "web.http"))!.ServiceUrl);
+    }
+
+    [Fact]
+    public async Task ReconcileAsync_NoPublications_DoesNothingUnderAnyProvider()
+    {
+        // The ungating above is bounded by publications, not by the provider: a host that never published
+        // pays nothing for it.
+        var fixture = await CreateAsync(connected: true);
+        await fixture.SetProviderAsync(IngressSettings.ProviderNone);
         fixture.Api.ResetCallCounts();
 
         await fixture.Controller.ReconcileAsync(await fixture.Apps.ListAppRecordsAsync());
 
+        Assert.Equal(0, fixture.Api.GetConfigCalls);
         Assert.Equal(0, fixture.Api.PutConfigCalls);
-        Assert.Equal("http://127.0.0.1:8096", (await fixture.Publications.GetAsync("com.example.media", "web.http"))!.ServiceUrl);
+    }
+
+    [Fact]
+    public async Task ReconcileAsync_PortMovedBackWhileOffline_ClearsTheDriftWithoutAnApiCall()
+    {
+        // A reassignment undone, or a rehoming fallback the next boot corrected: the route was never
+        // actually wrong by the time anyone could act. Without clearing the marker the endpoint would
+        // report origin_drifted forever while being perfectly in sync.
+        var fixture = await CreateAsync(connected: true);
+        await fixture.PublishAsync();
+        await fixture.MovePortAsync("http://127.0.0.1:24500");
+        fixture.Api.Failure = new CloudflareApiException(503, ["Cloudflare is unreachable."]);
+        await fixture.Controller.ReconcileAsync(await fixture.Apps.ListAppRecordsAsync());
+        Assert.NotNull((await fixture.Publications.GetAsync("com.example.media", "web.http"))!.DriftedServiceUrl);
+
+        await fixture.MovePortAsync("http://127.0.0.1:8096");
+        fixture.Api.Failure = null;
+        fixture.Api.ResetCallCounts();
+        await fixture.Controller.ReconcileAsync(await fixture.Apps.ListAppRecordsAsync());
+
+        var publication = await fixture.Publications.GetAsync("com.example.media", "web.http");
+        Assert.Null(publication!.DriftedServiceUrl);
+        Assert.Equal("http://127.0.0.1:8096", publication.ServiceUrl);
+        // Nothing had to be pushed — the route already named this port.
+        Assert.Equal(0, fixture.Api.PutConfigCalls);
     }
 
     [Fact]

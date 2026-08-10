@@ -86,7 +86,14 @@ or a public-origin change. An ordinary start or stop produces byte-identical out
 ### The API provider
 
 `cloudflare-remote` materializes publications
-([CloudflareRemoteIngress.cs](../../../apps/core/src/Haas.Hosty.Core/CloudflareRemoteIngress.cs)). A
+([CloudflareRemoteIngress.cs](../../../apps/core/src/Haas.Hosty.Core/CloudflareRemoteIngress.cs)), and
+does so whatever provider is selected. A publication outlives a provider change — which is why
+unpublish is ungated too — so its hostname stays routed and live after a switch to `none` or
+`cloudflared`; gating reconciliation would strand it on a dead port the moment anything moved one.
+Creating a publication stays gated on the provider. The work is bounded by publications, so a host
+that never published pays nothing.
+
+A
 publication records the target last written into the tunnel, so reconciliation diffs two strings and
 pushes only what actually moved: a steady-state boot makes no API call at all, and only the boot where
 something moved talks to Cloudflare.
@@ -100,7 +107,10 @@ question to answer when the hostname is already ours.
 A push that cannot happen — no connection, an expired token, Cloudflare unreachable — records
 `DriftedServiceUrl` on the publication and surfaces the `origin_drifted` state. It is not retried on
 the startup path and never stalls boot; the next reconcile that reaches Cloudflare repairs it and
-clears the marker. `origin_drifted` outranks `app_stopped` (starting the app repairs nothing) and
+clears the marker. Connecting Cloudflare reconciles immediately, so the reconnect the drift message
+asks for is itself the repair. A port that moved and moved back before anyone could push clears the
+marker without an API call — the route was never wrong by the time it mattered — and the dialog
+offers Reapply on a drifted publication so the state is actionable rather than only described. `origin_drifted` outranks `app_stopped` (starting the app repairs nothing) and
 ranks below `error` (a broken connection must be fixed before the drift can be).
 
 ### When nobody can materialize it
@@ -125,6 +135,9 @@ and saying to update the upstream. A standing "broken" badge would claim knowled
   with no URL
   ([CloudflareRemoteIngressControllerTests.cs](../../../apps/core/tests/Haas.Hosty.Core.Tests/CloudflareRemoteIngressControllerTests.cs)).
 - `origin_drifted` is projected ahead of `app_stopped` and behind `error`.
+- A retained publication is reconciled under any provider, a host with no publications makes no API
+  call under any provider, and a port that moved back clears the drift without one.
+- Saving a public origin or a subdomain reconciles ingress; an ordinary settings write does not.
 - The control's provider-to-shape selection is total, an unknown provider never becomes a publish
   surface, the subdomain sanitizer accepts only DNS-label characters, and the setting key it writes
   matches Core's normalization

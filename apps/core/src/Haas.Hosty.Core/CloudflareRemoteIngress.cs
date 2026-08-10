@@ -34,15 +34,21 @@ internal sealed class CloudflareRemoteIngressController(
         string? subdomainOverride,
         IReadOnlyList<string> publicEndpointKeys) => Empty;
 
+    // Deliberately NOT gated on the active provider. A publication outlives a provider change — that is
+    // why unpublish is ungated too (CloudflarePublicationService.RequireConnectionAsync) — so switching to
+    // `none` or `cloudflared` leaves its hostname routed and live. Gating here would mean a port moved
+    // after such a switch strands that hostname on a dead port with nothing even recording it. Creating a
+    // publication stays gated; keeping an existing one correct is maintenance of something that exists.
+    // The work is bounded by publications, so a host with none does nothing at all here.
     public async Task ReconcileAsync(IReadOnlyList<AppRecord> apps, CancellationToken cancellationToken = default)
     {
-        if (!settings.Ingress.PublishesThroughApi)
-        {
-            return;
-        }
-
         try
         {
+            // A port that moved and came back before anyone could push needs no API call — the route is
+            // already right — but the marker recorded while it was wrong has to go, or the endpoint stays
+            // reported as drifted forever.
+            await ClearResolvedDriftAsync(apps, cancellationToken);
+
             var pending = await FindDriftedPublicationsAsync(apps, cancellationToken);
             if (pending.Count == 0)
             {
@@ -118,6 +124,39 @@ internal sealed class CloudflareRemoteIngressController(
         }
 
         return pending;
+    }
+
+    // Drop the drift marker from any publication whose endpoint URL now matches the target already in the
+    // tunnel. Reached when a port moved while Cloudflare was unreachable and then moved back — a
+    // reassignment undone, or a rehoming fallback the next boot corrected — so the route was never wrong
+    // by the time anyone could act on it.
+    private async Task ClearResolvedDriftAsync(IReadOnlyList<AppRecord> apps, CancellationToken cancellationToken)
+    {
+        var byId = apps.ToDictionary(app => app.Id, StringComparer.Ordinal);
+        foreach (var publication in await publications.ListAsync(cancellationToken))
+        {
+            if (string.IsNullOrWhiteSpace(publication.DriftedServiceUrl) ||
+                !byId.TryGetValue(publication.AppId, out var app))
+            {
+                continue;
+            }
+
+            var url = app.Endpoints
+                .FirstOrDefault(candidate => string.Equals(candidate.Key, publication.EndpointKey, StringComparison.Ordinal))?.Url;
+            if (string.IsNullOrWhiteSpace(url) || !string.Equals(url, publication.ServiceUrl, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            await publications.UpdateAsync(
+                publication.AppId,
+                publication.EndpointKey,
+                entry => entry with { DriftedServiceUrl = null },
+                cancellationToken);
+            logger.LogInformation(
+                "'{Hostname}' is back on the port its route already names; clearing the recorded drift.",
+                publication.Hostname);
+        }
     }
 
     private async Task RecordDriftAsync(

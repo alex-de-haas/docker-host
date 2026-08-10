@@ -290,10 +290,21 @@ export function PublicOriginControl({ app, endpoint }: { app: CoreApp; endpoint:
             <Button type="button" variant="ghost" disabled={busy} onClick={() => setOpen(false)}>Close</Button>
             {publishes ? (
               connected && publication ? (
-                <Button type="button" variant="outline" disabled={busy} onClick={() => void unpublish()}>
-                  {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
-                  Unpublish
-                </Button>
+                <>
+                  {/* A drifted route says "reapply to repair it", so there has to be something to press.
+                      Re-publishing under the same label is that repair: it re-points the route at the
+                      endpoint's current local URL and is idempotent for the hostname and DNS record. */}
+                  {publication.state === "origin_drifted" && (
+                    <Button type="button" disabled={busy} onClick={() => void publish()}>
+                      {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
+                      Reapply
+                    </Button>
+                  )}
+                  <Button type="button" variant="outline" disabled={busy} onClick={() => void unpublish()}>
+                    {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
+                    Unpublish
+                  </Button>
+                </>
               ) : connected ? (
                 <>
                   {conflict && (
