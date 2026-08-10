@@ -74,7 +74,7 @@ import type {
 } from "../types";
 import { Alert, EmptyState, Fact, IconButton, PageHeader, StatusBadge } from "../ui";
 import { EndpointAvailabilityMarker, PortReassignControl } from "./port-reassign-control";
-import { CloudflarePublishControl } from "./cloudflare-publish-control";
+import { PublicOriginControl } from "./public-origin-control";
 
 // The administrator's home: what the host is, and every app on it. Dashboard and Installed Apps used
 // to be two pages, and the first was an aggregate of the second — a summary of a screen you had to
@@ -523,8 +523,6 @@ function AppServiceDetailsPanel({
   app,
   healthState,
   updateStatusState,
-  canConfigurePublicOrigins,
-  onConfigurePublicOrigins,
 }: {
   app: CoreApp;
   healthState?: RuntimeHealthState;
@@ -532,8 +530,6 @@ function AppServiceDetailsPanel({
   // from the row's actions menu. Expanding a row does not probe: whether an update exists is the
   // row's own Update/Review affordance (the fleet-check verdict), not this panel's job.
   updateStatusState?: UpdateStatusState;
-  canConfigurePublicOrigins: boolean;
-  onConfigurePublicOrigins: () => void;
 }) {
   const serviceRows = buildRuntimeServiceRows(app, healthState?.health);
   const copyEndpointUrl = async (url: string) => {
@@ -715,9 +711,7 @@ function AppServiceDetailsPanel({
                               copyTitle="Copy public origin"
                               openTitle="Open public origin"
                               onCopy={copyEndpointUrl}
-                              configureTitle="Configure public origin"
-                              onConfigure={canConfigurePublicOrigins ? onConfigurePublicOrigins : undefined}
-                              actions={<CloudflarePublishControl app={app} endpoint={endpoint} />}
+                              actions={<PublicOriginControl app={app} endpoint={endpoint} />}
                             />
                           )}
                         </div>
@@ -956,8 +950,6 @@ function InstalledAppsTable({
                         app={app}
                         healthState={healthState}
                         updateStatusState={updateStatusState}
-                        canConfigurePublicOrigins={canManageApps}
-                        onConfigurePublicOrigins={() => onOpenPanel(app, "settings", { settingsTab: "publicOrigins" })}
                       />
                     </TableCell>
                   </TableRow>
