@@ -195,6 +195,15 @@ above 32768, and is not shadowed by a `HOSTY_PORT_*` setting. An operator pin an
 port are someone's deliberate choice and are left where they are, even inside the dynamic range —
 the operator may have a firewall rule on one.
 
+An endpoint that a Cloudflare API publication routes to is also left alone, whatever the currently
+selected ingress provider. That provider pushes the local `serviceUrl` into a remotely-managed tunnel
+and is only ever driven by an operator's explicit publish, so nothing re-points it when a port moves —
+unlike the local-config provider, which re-renders its whole config from the app records on every
+reconcile and therefore follows a moved port by itself. Moving a published port would aim a live
+public hostname at a port nothing listens on. This is an interim guard: the app keeps a reservation in
+the dynamic range, and it goes away once the API provider sits behind `IIngressController` like the
+local one does. See [Public Origins](../public-origins/plan.md).
+
 A legacy record needs one extra check. The backfill above derives its assignments from stored
 endpoint URLs and classifies anything without a matching `HOSTY_PORT_*` setting as `automatic`,
 because a URL cannot say whether Core chose the port or the manifest declared it. A pre-reservation
@@ -346,8 +355,8 @@ beyond blocking its own app's reassigned ports.
   ([PortRehomingSelectionTests.cs](../../../apps/core/tests/Haas.Hosty.Core.Tests/PortRehomingSelectionTests.cs)).
 - The rehoming pass moves an OS-allocated port into the band and carries the endpoint URL with it,
   leaves an operator pin in the same range alone, changes nothing on a second run, skips an app that
-  is running, keeps several ports on one app distinct, and leaves a legacy manifest pin in place while
-  still moving that app's genuinely automatic ports.
+  is running, keeps several ports on one app distinct, and leaves a legacy manifest pin — or an endpoint
+  with a Cloudflare API publication — in place while still moving that app's genuinely automatic ports.
 - A port a later service pins inside the band is reserved before an earlier service's automatic port
   is drawn, so one app never persists the same host port twice
   ([RuntimePortAllocatorTests.cs](../../../apps/core/tests/Haas.Hosty.Core.Tests/RuntimePortAllocatorTests.cs)).

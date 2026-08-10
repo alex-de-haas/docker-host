@@ -2757,8 +2757,13 @@ internal sealed class CoreLifecycleService(
                 continue;
             }
 
-            var manifestPinned = await ReadManifestPinnedPortKeysAsync(app, cancellationToken);
-            rehomed += await WithAppLockAsync(app.Id, () => RehomeAppPortsAsync(app.Id, manifestPinned, cancellationToken), cancellationToken);
+            var frozen = new HashSet<(string, string)>(await ReadManifestPinnedPortKeysAsync(app, cancellationToken));
+            foreach (var identity in await FindApiPublishedPortKeysAsync(app, cancellationToken))
+            {
+                frozen.Add(identity);
+            }
+
+            rehomed += await WithAppLockAsync(app.Id, () => RehomeAppPortsAsync(app.Id, frozen, cancellationToken), cancellationToken);
         }
 
         return rehomed;
@@ -2826,9 +2831,45 @@ internal sealed class CoreLifecycleService(
         return pinned;
     }
 
+    // The (service, port key) pairs whose port is routed by a Cloudflare API publication.
+    //
+    // Interim guard, and it exists because of an asymmetry between the two ingress providers. The local
+    // one re-renders its whole config from the app records on every reconcile, so a moved port reaches it
+    // by itself; the API one pushes `serviceUrl` into a remotely-managed tunnel and is only ever driven by
+    // an operator's explicit publish (CloudflarePublicationService), so nothing re-pushes it when the port
+    // changes. Until the API provider sits behind IIngressController like the local one does, Core cannot
+    // re-materialize those routes — and moving a port it cannot re-point would leave a public hostname
+    // aimed at a port nothing listens on. Not moving it is the honest half: the app keeps a reservation in
+    // the OS dynamic range (so it keeps that exposure) but its public address keeps working, and the guard
+    // disappears with the provider unification.
+    private async Task<IReadOnlyCollection<(string Service, string PortKey)>> FindApiPublishedPortKeysAsync(
+        AppRecord app,
+        CancellationToken cancellationToken)
+    {
+        if (publicOrigins is null)
+        {
+            return [];
+        }
+
+        var published = await publicOrigins.FindPublishedEndpointKeysAsync(app.Id, cancellationToken);
+        if (published.Count == 0)
+        {
+            return [];
+        }
+
+        // A publication names an endpoint key; an assignment is keyed by (service, port key). The record's
+        // endpoint contract is what maps one to the other.
+        return app.Endpoints
+            .Where(endpoint => published.Contains(endpoint.Key) &&
+                !string.IsNullOrWhiteSpace(endpoint.Service) &&
+                !string.IsNullOrWhiteSpace(endpoint.Port))
+            .Select(endpoint => (endpoint.Service!, endpoint.Port!))
+            .ToArray();
+    }
+
     private async Task<int> RehomeAppPortsAsync(
         string appId,
-        IReadOnlySet<(string Service, string PortKey)> manifestPinned,
+        IReadOnlySet<(string Service, string PortKey)> frozen,
         CancellationToken cancellationToken)
     {
         var snapshot = await apps.GetAppAsync(appId, cancellationToken);
@@ -2845,10 +2886,10 @@ internal sealed class CoreLifecycleService(
         foreach (var target in FindOsAllocatedAssignments(snapshot))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (manifestPinned.Contains((target.Service, target.PortKey)))
+            if (frozen.Contains((target.Service, target.PortKey)))
             {
                 logger.LogInformation(
-                    "Leaving '{AppId}' {Service}.{PortKey} on {HostPort}: the manifest pins it, and the boot backfill only classified it automatic because a stored endpoint URL cannot say so.",
+                    "Leaving '{AppId}' {Service}.{PortKey} on {HostPort}: the manifest pins it, or a Cloudflare publication routes a public hostname to it that Core cannot re-point on its own.",
                     appId,
                     target.Service,
                     target.PortKey,

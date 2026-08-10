@@ -6091,6 +6091,35 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task RehomeOsAllocatedPortsAsync_EndpointWithACloudflarePublication_KeepsItsPort()
+    {
+        // The API provider pushes `serviceUrl` into a remotely-managed tunnel and is only ever driven by
+        // an operator's explicit publish, so nothing re-points it when a port moves. Moving that port
+        // would aim a live public hostname at a port nothing listens on. Until the provider sits behind
+        // IIngressController, the honest answer is to leave it alone.
+        var fixture = await LifecycleFixture.CreateAsync(withPortAllocator: true);
+        await SeedRehomableAppAsync(fixture, extraAutomaticPort: 52307);
+        await fixture.Publications.UpsertAsync(new CloudflarePublication(
+            "com.example.notes",
+            "app.http",
+            "notes",
+            "notes.example.com",
+            DnsRecordId: "dns-1",
+            ServiceUrl: "http://localhost:52306",
+            OwnershipState: CloudflareOwnershipStates.Owned,
+            UpdatedAt: DateTimeOffset.UnixEpoch));
+
+        // The published endpoint stays; the app's other automatic port still moves.
+        Assert.Equal(1, await fixture.Service.RehomeOsAllocatedPortsAsync());
+
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal(52306, Assert.Single(app!.PortAssignments!, assignment => assignment.Service == "app").HostPort);
+        Assert.Equal("http://localhost:52306", Assert.Single(app.Endpoints, endpoint => endpoint.Service == "app").Url);
+        var worker = Assert.Single(app.PortAssignments!, assignment => assignment.Service == "worker");
+        Assert.False(RuntimePortHelper.IsOsDynamicRangePort(worker.HostPort));
+    }
+
+    [Fact]
     public async Task RehomeOsAllocatedPortsAsync_RunningApp_KeepsItsPort()
     {
         // Core may have adopted a live listener (keep-apps light restart, docker adoption) before this
