@@ -4,6 +4,7 @@ import { AuditReporter } from "./audit.js";
 import { SessionStore } from "./sessions/store.js";
 import { SessionManager } from "./sessions/manager.js";
 import { createGatewayServer } from "./server.js";
+import { SettingsStore } from "./settings/store.js";
 import { ClaudeHarnessAdapter } from "./harness/claude.js";
 import { CodexHarnessAdapter } from "./harness/codex.js";
 import { FakeHarnessAdapter } from "./harness/fake.js";
@@ -24,7 +25,8 @@ const adapter: HarnessAdapter =
       : new ClaudeHarnessAdapter();
 const store = new SessionStore(config.dataDir);
 const audit = new AuditReporter(config.coreOrigin, config.serviceToken, config.appId);
-const manager = new SessionManager(store, adapter, audit, config.workDir);
+const settings = new SettingsStore(config.dataDir);
+const manager = new SessionManager(store, adapter, audit, config.workDir, settings);
 
 // Retention: once at boot, then daily. The sweep is cheap (a directory listing), and running it
 // in-process keeps retention working without any external scheduler.
@@ -41,7 +43,7 @@ const sweep = (): void => {
 sweep();
 const sweepTimer = setInterval(sweep, 24 * 60 * 60 * 1000);
 
-const server = createGatewayServer(manager, adapter);
+const server = createGatewayServer(manager, adapter, settings);
 server.listen(config.port, () => {
   console.log(
     `hosty.ai-gateway listening on :${config.port} (harness=${adapter.name}, data=${config.dataDir})`,

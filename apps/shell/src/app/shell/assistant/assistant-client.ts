@@ -44,6 +44,16 @@ export type HarnessHealth = {
   name: string;
   available: boolean;
   reason?: string;
+  /** Absent on a gateway older than this Shell; treated as "cannot", so nothing is over-promised. */
+  capabilities?: { questions?: boolean; liveReconfigure?: boolean };
+};
+
+/** One question the harness is waiting on, as carried by a `question_request` event. */
+export type AssistantQuestion = {
+  question: string;
+  header: string;
+  multiSelect: boolean;
+  options: Array<{ label: string; description: string; preview?: string }>;
 };
 
 type TokenIssuer = () => Promise<{ token: string; expiresAt: string }>;
@@ -112,6 +122,21 @@ export class AssistantClient {
     await this.request(
       `/sessions/${encodeURIComponent(sessionId)}/approvals/${encodeURIComponent(approvalId)}`,
       { method: "POST", body: JSON.stringify({ decision }) },
+    );
+  }
+
+  /**
+   * Answers a pending question. `answers` is keyed by question text, which is the gateway's (and
+   * the harness's) own keying — no index correlation anywhere in the chain.
+   */
+  async resolveQuestion(
+    sessionId: string,
+    questionId: string,
+    answers: Record<string, string>,
+  ): Promise<void> {
+    await this.request(
+      `/sessions/${encodeURIComponent(sessionId)}/questions/${encodeURIComponent(questionId)}`,
+      { method: "POST", body: JSON.stringify({ answers }) },
     );
   }
 

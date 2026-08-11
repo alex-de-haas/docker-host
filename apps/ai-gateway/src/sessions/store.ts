@@ -5,7 +5,16 @@ import path from "node:path";
 // standard app backup/removal semantics apply, Core audit never receives transcript content.
 // Layout: {dataDir}/sessions/{id}/record.json + events.ndjson (append-only transcript).
 
-export type SessionStatus = "idle" | "running" | "awaiting_approval" | "cancelled" | "failed";
+// "awaiting_question" is deliberately its own status rather than a flavor of awaiting_approval: the
+// two pauses look identical from the outside but resolve through different routes with different
+// payloads, and a client that cannot tell them apart cannot render the right card.
+export type SessionStatus =
+  | "idle"
+  | "running"
+  | "awaiting_approval"
+  | "awaiting_question"
+  | "cancelled"
+  | "failed";
 
 export interface SessionRecord {
   id: string;
