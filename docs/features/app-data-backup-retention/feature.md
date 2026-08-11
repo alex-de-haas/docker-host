@@ -1,8 +1,11 @@
-# App Data Backup Retention
+# Feature: App Data Backup Retention
+
+Created: 2026-06-03
+Updated: 2026-08-11
 
 ## Description
 
-Hosty manages retention for app data backups stored under the Hosty backup root. Backups cover only the primary app `data/` directory; external mounts and additional app storage mappings are excluded from retention cleanup.
+Hosty manages retention for app data backups stored under the Hosty backup root. Backups cover only the primary app `data/` directory; the app `cache/` directory ([app-cache-storage](../app-cache-storage/feature.md)), external mounts, and additional app storage mappings are excluded from backups and from retention cleanup.
 
 ```mermaid
 flowchart LR
@@ -20,7 +23,7 @@ The default retention policy is conservative:
 - `pre-update`, `pre-restore`, `pre-runtime-switch`, and `scheduled` backups keep the latest 5 backups per app.
 - No age-based deletion is enabled by default.
 - Retention cleanup does not delete the only known backup candidate unless policy support is explicitly expanded later.
-- Per-app retention overrides are not part of the current implementation. Future retention policy extensions are tracked in [Backup Retention Extensions](../ideas/backup-retention-extensions.md).
+- Per-app retention overrides are not part of the current implementation. Future retention policy extensions are tracked in [Backup Retention Extensions](../../ideas/backup-retention-extensions.md).
 
 Backup list responses include retention status so Shell and CLI can show whether each backup is retained by policy, manually kept, or part of the current cleanup plan.
 
@@ -77,3 +80,9 @@ hosty apps restore <app-id> <backup-id> [--pre-restore-backup]
 ```
 
 Destructive CLI commands require `--yes`. Manual filesystem cleanup remains a recovery fallback, not the preferred workflow.
+
+## Testing Expectations
+
+- Retention policy, cleanup preview/apply digests, and malformed-metadata tolerance — `AppBackupServiceTests`.
+- The scheduled cleanup pass — `AppBackupRetentionSchedulerTests`.
+- Backup scope (the `cache/` sibling stays out of archives and restores) — `AppBackupServiceTests`.

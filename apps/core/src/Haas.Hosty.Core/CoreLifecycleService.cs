@@ -387,6 +387,11 @@ internal sealed class CoreLifecycleService(
             Directory.CreateDirectory(GetAppDataPath(selection.Manifest.Id!));
         }
 
+        if (selection.Manifest.Cache?.Enabled == true)
+        {
+            Directory.CreateDirectory(GetAppCachePath(selection.Manifest.Id!));
+        }
+
         var record = BuildAppRecord(
             selection,
             manifestCopyPath,
@@ -2397,6 +2402,10 @@ internal sealed class CoreLifecycleService(
         if (request.DeleteData)
         {
             TryDeleteDirectory(GetAppDataPath(appId));
+            // The cache follows the data directory's fate: it is keyed by identities in the app's own
+            // database (which lives in data), so keeping one without the other either forces a full
+            // rebuild or retains orphaned bytes. Kept when data is kept, deleted when data is deleted.
+            TryDeleteDirectory(GetAppCachePath(appId));
             // Through the store, not TryDelete: its shared per-app lock fences an in-flight secret
             // write, which could otherwise recreate secrets.json after this removal completes. Runs
             // after the state.json deletion above so late writes fail the store's existence check.
@@ -3246,16 +3255,24 @@ internal sealed class CoreLifecycleService(
                 }
             }
         }
-        var storageMappings = selection.DataTarget is null
-            ? []
-            : new AppStorageMapping[]
-            {
-                new(
-                    Key: "data",
-                    HostPath: GetAppDataPath(manifest.Id!),
-                    TargetPath: selection.DataTarget.ContainerPath ?? GetAppDataPath(manifest.Id!),
-                    ReadOnly: false),
-            };
+        var storageMappings = new List<AppStorageMapping>();
+        if (selection.DataTarget is not null)
+        {
+            storageMappings.Add(new(
+                Key: "data",
+                HostPath: GetAppDataPath(manifest.Id!),
+                TargetPath: selection.DataTarget.ContainerPath ?? GetAppDataPath(manifest.Id!),
+                ReadOnly: false));
+        }
+
+        if (EffectiveCacheTargetPath(selection, manifest.Id!) is { } cacheTargetPath)
+        {
+            storageMappings.Add(new(
+                Key: "cache",
+                HostPath: GetAppCachePath(manifest.Id!),
+                TargetPath: cacheTargetPath,
+                ReadOnly: false));
+        }
         var endpointContracts = manifest.Endpoints.Count == 0
             ? selection.Services.SelectMany(service => service.Runtime.Ports.Select(port => new AppEndpointContract(
                 Key: $"{service.Key}.{port.Key ?? port.ContainerPort?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "port"}",
@@ -4060,7 +4077,8 @@ internal sealed class CoreLifecycleService(
             await ResolveDependencyUrlsAsync(app, cancellationToken),
             mounts,
             await ResolveTelemetryEndpointAsync(app, cancellationToken),
-            ResolveLockedSourceRoot(app, await ResolveRuntimeProfilesAsync(app, cancellationToken)));
+            ResolveLockedSourceRoot(app, await ResolveRuntimeProfilesAsync(app, cancellationToken)),
+            AppCachePath: GetAppCachePath(app.Id));
     }
 
     // The source root a locked (Development Mode off) source runtime executes from: the managed checkout
@@ -4603,6 +4621,12 @@ internal sealed class CoreLifecycleService(
 
     private string GetAppDataPath(string appId)
         => Path.Combine(GetAppRoot(appId), "data");
+
+    // The cache directory is data's disposable sibling. Being a sibling rather than a subdirectory
+    // is the whole backup-exclusion mechanism: AppBackupService archives and restores GetAppDataPath
+    // only, so neither ever has to know caches exist.
+    private string GetAppCachePath(string appId)
+        => Path.Combine(GetAppRoot(appId), "cache");
 
     // Writes a Core-owned file into a system app's data dir, which the runtime mounts into the
     // container (see RuntimeAppDataTarget). Used by the collector bootstrap to deliver the
@@ -5339,57 +5363,66 @@ internal sealed class CoreLifecycleService(
         }
     }
 
-    private void AddDataTargetChanges(List<string> changes, AppRecord app, RuntimeAppManifestSelection targetSelection)
+    // The cache target path a selection actually produces, regardless of how it was declared.
+    // CacheTarget covers docker (explicit or synthesized) and explicitly-targeted profiles; the
+    // `enabled`-only localCommand form has no target yet still gets the host-path cache from the
+    // adapter, so the record and the plan diffs must see it too — otherwise a runtime switch
+    // reports a false cache:removed while the directory keeps existing.
+    private string? EffectiveCacheTargetPath(RuntimeAppManifestSelection selection, string appId)
     {
-        var currentData = app.StorageMappings.FirstOrDefault(mapping => string.Equals(mapping.Key, "data", StringComparison.Ordinal));
-        var targetPath = targetSelection.DataTarget is null
-            ? null
-            : targetSelection.DataTarget.ContainerPath ?? GetAppDataPath(app.Id);
-        if (currentData is null && targetPath is null)
+        if (selection.CacheTarget is not null)
         {
-            return;
+            return selection.CacheTarget.ContainerPath ?? GetAppCachePath(appId);
         }
 
-        if (currentData is null)
-        {
-            changes.Add($"data:added:{targetPath}");
-        }
-        else if (targetPath is null)
-        {
-            changes.Add($"data:removed:{currentData.TargetPath}");
-        }
-        else if (!string.Equals(currentData.TargetPath, targetPath, StringComparison.Ordinal))
-        {
-            changes.Add($"data:target:{currentData.TargetPath}->{targetPath}");
-        }
-        else
-        {
-            changes.Add("data:compatible");
-        }
+        return selection.Manifest.Cache?.Enabled == true ? GetAppCachePath(appId) : null;
+    }
+
+    private void AddDataTargetChanges(List<string> changes, AppRecord app, RuntimeAppManifestSelection targetSelection)
+    {
+        AddStorageTargetChanges(changes, app, "data", EffectiveDataTargetPath(targetSelection, app.Id), reportCompatible: true);
+        AddStorageTargetChanges(changes, app, "cache", EffectiveCacheTargetPath(targetSelection, app.Id), reportCompatible: true);
     }
 
     private void AddUpdateDataTargetChanges(List<string> changes, AppRecord app, RuntimeAppManifestSelection targetSelection)
     {
-        var currentData = app.StorageMappings.FirstOrDefault(mapping => string.Equals(mapping.Key, "data", StringComparison.Ordinal));
-        var targetPath = targetSelection.DataTarget is null
-            ? null
-            : targetSelection.DataTarget.ContainerPath ?? GetAppDataPath(app.Id);
-        if (currentData is null && targetPath is null)
+        AddStorageTargetChanges(changes, app, "data", EffectiveDataTargetPath(targetSelection, app.Id), reportCompatible: false);
+        AddStorageTargetChanges(changes, app, "cache", EffectiveCacheTargetPath(targetSelection, app.Id), reportCompatible: false);
+    }
+
+    private string? EffectiveDataTargetPath(RuntimeAppManifestSelection selection, string appId)
+        => selection.DataTarget is null ? null : selection.DataTarget.ContainerPath ?? GetAppDataPath(appId);
+
+    // One diff for both storage keys. `reportCompatible` is the switch-plan variant, where an
+    // unchanged target is still worth a line; update plans stay silent about it.
+    private static void AddStorageTargetChanges(
+        List<string> changes,
+        AppRecord app,
+        string key,
+        string? targetPath,
+        bool reportCompatible)
+    {
+        var current = app.StorageMappings.FirstOrDefault(mapping => string.Equals(mapping.Key, key, StringComparison.Ordinal));
+        if (current is null && targetPath is null)
         {
             return;
         }
 
-        if (currentData is null)
+        if (current is null)
         {
-            changes.Add($"data:added:{targetPath}");
+            changes.Add($"{key}:added:{targetPath}");
         }
         else if (targetPath is null)
         {
-            changes.Add($"data:removed:{currentData.TargetPath}");
+            changes.Add($"{key}:removed:{current.TargetPath}");
         }
-        else if (!string.Equals(currentData.TargetPath, targetPath, StringComparison.Ordinal))
+        else if (!string.Equals(current.TargetPath, targetPath, StringComparison.Ordinal))
         {
-            changes.Add($"data:target:{currentData.TargetPath}->{targetPath}");
+            changes.Add($"{key}:target:{current.TargetPath}->{targetPath}");
+        }
+        else if (reportCompatible)
+        {
+            changes.Add($"{key}:compatible");
         }
     }
 

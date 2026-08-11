@@ -159,7 +159,7 @@ a missing secret as a defined reconnect-required state, not an error.
 ## Links
 
 - [Implementation planning](../planning/app-secrets-store.md)
-- [App data backup retention](../features/app-data-backup-retention.md)
+- [App data backup retention](../features/app-data-backup-retention/feature.md)
 - [Core API](../features/core-api/feature.md)
 - [Cross-app auth](cross-app-auth.md) — the precedent for "platform gap →
   per-app hand-rolled security"

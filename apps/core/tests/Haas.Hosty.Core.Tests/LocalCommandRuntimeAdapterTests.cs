@@ -66,6 +66,50 @@ public sealed class LocalCommandRuntimeAdapterTests
     }
 
     [Fact]
+    public async Task StartAsync_InjectsCacheDirOnlyWhenDeclared()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return; // The setup/command scripts here are POSIX shell; Core runs sh only off-Windows.
+        }
+
+        // Setup shares the command's environment and runs to completion inside StartAsync,
+        // so probing the variable there needs no synchronization with the command process.
+        var declaredRoot = CreateTempDirectory();
+        var undeclaredRoot = CreateTempDirectory();
+        try
+        {
+            var (adapter, _, context) = CreateSetupScenario(
+                declaredRoot,
+                setup: "printf \"${HOSTY_APP_CACHE_DIR-unset}\" > cache-env.txt",
+                command: "sleep 30",
+                cacheEnabled: true);
+            var result = await adapter.StartAsync(context);
+            Assert.Equal("running", result.RuntimeState);
+            await adapter.StopAsync(context);
+
+            var cachePath = Path.Combine(declaredRoot, "cache");
+            Assert.Equal(cachePath, await File.ReadAllTextAsync(Path.Combine(declaredRoot, "cache-env.txt")));
+            Assert.True(Directory.Exists(cachePath));
+
+            var (undeclaredAdapter, _, undeclaredContext) = CreateSetupScenario(
+                undeclaredRoot,
+                setup: "printf \"${HOSTY_APP_CACHE_DIR-unset}\" > cache-env.txt",
+                command: "sleep 30");
+            _ = await undeclaredAdapter.StartAsync(undeclaredContext);
+            await undeclaredAdapter.StopAsync(undeclaredContext);
+
+            Assert.Equal("unset", await File.ReadAllTextAsync(Path.Combine(undeclaredRoot, "cache-env.txt")));
+            Assert.False(Directory.Exists(Path.Combine(undeclaredRoot, "cache")));
+        }
+        finally
+        {
+            TryDeleteDirectory(declaredRoot);
+            TryDeleteDirectory(undeclaredRoot);
+        }
+    }
+
+    [Fact]
     public async Task StartAsync_FailsWithoutStartingCommandWhenSetupExitsNonZero()
     {
         if (OperatingSystem.IsWindows())
@@ -320,7 +364,7 @@ public sealed class LocalCommandRuntimeAdapterTests
     }
 
     private static (LocalCommandRuntimeAdapter Adapter, LocalCommandProcessRegistry Registry, RuntimeLifecycleContext Context) CreateSetupScenario(
-        string workRoot, string? setup, string command)
+        string workRoot, string? setup, string command, bool cacheEnabled = false)
     {
         var registry = new LocalCommandProcessRegistry();
         var adapter = new LocalCommandRuntimeAdapter(
@@ -334,7 +378,14 @@ public sealed class LocalCommandRuntimeAdapterTests
             new RuntimeServiceProfileManifest { Type = "localCommand", Setup = setup, Command = command },
             null,
             "source");
-        var manifest = new RuntimeAppManifest { SchemaVersion = "app.0.1", Id = "com.example.app", Name = "App", Version = "1.0.0" };
+        var manifest = new RuntimeAppManifest
+        {
+            SchemaVersion = "app.0.1",
+            Id = "com.example.app",
+            Name = "App",
+            Version = "1.0.0",
+            Cache = cacheEnabled ? new RuntimeAppDataManifest { Enabled = true } : null,
+        };
         var profile = new RuntimeProfileManifest { Key = "dev", Type = "localCommand", Default = true };
         var selection = new RuntimeAppManifestSelection(manifest, "/tmp/manifest.json", "digest", profile, [service], null, "{}", null);
         // SourceState is null and the service declares no workingDirectory, so ResolveWorkingDirectory

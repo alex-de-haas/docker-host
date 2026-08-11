@@ -876,6 +876,75 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task InstallAndRemove_CacheDirectoryFollowsData()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await fixture.WriteManifestAsync("1.0.0", cacheJson: """
+            "cache": { "enabled": true },
+            """);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        var appRoot = Path.Combine(fixture.Paths.AppsRoot, "com.example.notes");
+        var cachePath = Path.Combine(appRoot, "cache");
+        Assert.True(Directory.Exists(cachePath));
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        var mapping = Assert.Single(app!.StorageMappings, candidate => candidate.Key == "cache");
+        // No explicit target in the manifest, so the docker default is synthesized.
+        Assert.Equal("/app/cache", mapping.TargetPath);
+        Assert.Equal(cachePath, mapping.HostPath);
+
+        // Kept when data is kept: the cache is keyed by identities in the app's database.
+        await File.WriteAllTextAsync(Path.Combine(cachePath, "entry.idx"), "derived");
+        await fixture.Service.RemoveAsync("com.example.notes", new AppRemoveRequest(DeleteData: false));
+        Assert.Equal("derived", await File.ReadAllTextAsync(Path.Combine(cachePath, "entry.idx")));
+
+        // Deleted with data.
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        await fixture.Service.RemoveAsync("com.example.notes", new AppRemoveRequest(DeleteData: true));
+        Assert.False(Directory.Exists(cachePath));
+    }
+
+    [Fact]
+    public async Task Install_RecordsCacheMappingForTargetlessLocalRuntime()
+    {
+        // The `enabled`-only localCommand form resolves no CacheTarget, yet the adapter still
+        // creates and injects the cache — the record must reflect that, or update/switch plans
+        // diff against a missing mapping and report false cache transitions.
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifestPath = Path.Combine(Path.GetTempPath(), $"hosty-local-cache-{Guid.NewGuid():N}.json");
+        await File.WriteAllTextAsync(manifestPath, """
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.notes",
+              "name": "Notes",
+              "version": "1.0.0",
+              "runtimeProfiles": [{ "key": "dev", "type": "localCommand", "default": true }],
+              "services": [{
+                "key": "app",
+                "runtimes": { "dev": { "type": "localCommand", "command": "npm run dev" } }
+              }],
+              "cache": { "enabled": true }
+            }
+            """);
+        try
+        {
+            await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath));
+
+            var app = await fixture.Apps.GetAppAsync("com.example.notes");
+            var mapping = Assert.Single(app!.StorageMappings, candidate => candidate.Key == "cache");
+            var cachePath = Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "cache");
+            // No container anywhere in a localCommand profile, so the target is the host path itself.
+            Assert.Equal(cachePath, mapping.HostPath);
+            Assert.Equal(cachePath, mapping.TargetPath);
+            Assert.True(Directory.Exists(cachePath));
+        }
+        finally
+        {
+            File.Delete(manifestPath);
+        }
+    }
+
+    [Fact]
     public async Task RemoveAsync_DiscardsConfigWhenDataDeleted()
     {
         var fixture = await LifecycleFixture.CreateAsync();
@@ -6292,7 +6361,8 @@ public sealed class CoreLifecycleServiceTests
             string? capabilitiesJson = null,
             string? interfacesJson = null,
             string id = "com.example.notes",
-            string name = "Notes")
+            string name = "Notes",
+            string? cacheJson = null)
         {
             var path = Path.Combine(Root, $"{id}-{version}.json");
             var dependencyJson = includeDependency
@@ -6359,6 +6429,7 @@ public sealed class CoreLifecycleServiceTests
                   {{externalMountsJson ?? ""}}
                   {{capabilitiesJson ?? ""}}
                   {{interfacesJson ?? ""}}
+                  {{cacheJson ?? ""}}
                   "data": {
                     "enabled": true,
                     "targets": [{
