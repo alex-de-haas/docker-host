@@ -2,6 +2,8 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { resolveAdmin } from "./auth.js";
 import { SessionNotFoundError, type SessionManager } from "./sessions/manager.js";
 import type { HarnessAdapter } from "./harness/adapter.js";
+import { MAX_SYSTEM_PROMPT_CHARS, type SettingsStore } from "./settings/store.js";
+import { renderSettingsPage } from "./settings/page.js";
 
 // Plain node:http — the API is a handful of JSON routes plus one SSE stream; a framework would be
 // the largest dependency in the app for no gain.
@@ -14,9 +16,13 @@ import type { HarnessAdapter } from "./harness/adapter.js";
 
 const MAX_BODY_BYTES = 64 * 1024;
 
-export function createGatewayServer(manager: SessionManager, adapter: HarnessAdapter): Server {
+export function createGatewayServer(
+  manager: SessionManager,
+  adapter: HarnessAdapter,
+  settings: SettingsStore | null = null,
+): Server {
   return createServer((request, response) => {
-    void route(request, response, manager, adapter).catch((error) => {
+    void route(request, response, manager, adapter, settings).catch((error) => {
       if (error instanceof SessionNotFoundError) {
         sendJson(response, 404, { code: "session_not_found", message: error.message });
         return;
@@ -42,6 +48,7 @@ async function route(
   response: ServerResponse,
   manager: SessionManager,
   adapter: HarnessAdapter,
+  settings: SettingsStore | null,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", "http://gateway.local");
   const method = request.method ?? "GET";
@@ -56,8 +63,21 @@ async function route(
     const availability = await adapter.probe();
     sendJson(response, 200, {
       status: "ok",
-      harness: { name: adapter.name, ...availability },
+      harness: { name: adapter.name, capabilities: adapter.capabilities, ...availability },
     });
+    return;
+  }
+
+  // The settings page itself is a static shell — it holds no data and fetches everything through
+  // the admin-gated /api routes below with a delegated token, exactly as the chat panel does. Serving
+  // the shell without a token is what lets Shell embed it as an ordinary app UI.
+  if (method === "GET" && (url.pathname === "/" || url.pathname === "/settings")) {
+    const html = renderSettingsPage();
+    response.writeHead(200, {
+      "content-type": "text/html; charset=utf-8",
+      "content-length": Buffer.byteLength(html),
+    });
+    response.end(html);
     return;
   }
 
@@ -78,7 +98,54 @@ async function route(
 
   if (method === "GET" && url.pathname === "/api/health") {
     const availability = await adapter.probe();
-    sendJson(response, 200, { status: "ok", harness: { name: adapter.name, ...availability } });
+    // Capabilities travel with health because the client needs them to decide what to render: a
+    // harness that cannot ask questions must not get a question card, and one that cannot be
+    // reconfigured live must not be described as applying a toggle immediately.
+    sendJson(response, 200, {
+      status: "ok",
+      harness: { name: adapter.name, capabilities: adapter.capabilities, ...availability },
+    });
+    return;
+  }
+
+  if (url.pathname === "/api/settings" && settings && (method === "GET" || method === "PUT")) {
+    if (method === "PUT") {
+      const body = await readJson(request);
+      if (body.systemPrompt !== undefined && typeof body.systemPrompt !== "string") {
+        sendJson(response, 400, {
+          code: "system_prompt_invalid",
+          message: "systemPrompt must be a string.",
+        });
+        return;
+      }
+      if (typeof body.systemPrompt === "string" && body.systemPrompt.length > MAX_SYSTEM_PROMPT_CHARS) {
+        sendJson(response, 400, {
+          code: "system_prompt_too_long",
+          message: `systemPrompt must be at most ${MAX_SYSTEM_PROMPT_CHARS} characters.`,
+        });
+        return;
+      }
+      if (body.mcpProviders !== undefined && !isBooleanRecord(body.mcpProviders)) {
+        sendJson(response, 400, {
+          code: "mcp_providers_invalid",
+          message: "mcpProviders must be an object of appId -> boolean.",
+        });
+        return;
+      }
+      await settings.update({
+        systemPrompt: typeof body.systemPrompt === "string" ? body.systemPrompt : undefined,
+        mcpProviders: isBooleanRecord(body.mcpProviders) ? body.mcpProviders : undefined,
+      });
+    }
+
+    const current = await settings.read();
+    // Capabilities ride along so the page can say what a change actually does on this harness
+    // instead of one wording that is false on one of them.
+    sendJson(response, 200, {
+      settings: current,
+      harness: { name: adapter.name, capabilities: adapter.capabilities },
+      limits: { systemPromptChars: MAX_SYSTEM_PROMPT_CHARS },
+    });
     return;
   }
 
@@ -150,6 +217,30 @@ async function route(
       sendJson(response, 409, {
         code: "approval_not_pending",
         message: "The approval is unknown or already resolved.",
+      });
+      return;
+    }
+    sendJson(response, 200, { resolved: true });
+    return;
+  }
+
+  const questionMatch = rest.match(/^\/questions\/([a-zA-Z0-9-]+)$/);
+  if (questionMatch && method === "POST") {
+    const body = await readJson(request);
+    if (!isStringRecord(body.answers) || Object.keys(body.answers).length === 0) {
+      sendJson(response, 400, {
+        code: "answers_required",
+        message: "answers must be a non-empty object keyed by question text.",
+      });
+      return;
+    }
+    const resolved = await manager.resolveQuestion(sessionId, questionMatch[1]!, body.answers);
+    if (!resolved) {
+      // Same contract as a second approval decision: the first answer wins and the second is told
+      // so, rather than silently overwriting what already steered the run.
+      sendJson(response, 409, {
+        code: "question_not_pending",
+        message: "The question is unknown or already answered.",
       });
       return;
     }
@@ -239,6 +330,15 @@ async function readJson(request: IncomingMessage): Promise<Record<string, unknow
   } catch {
     return {};
   }
+}
+
+function isBooleanRecord(value: unknown): value is Record<string, boolean> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.values(value).every((entry) => typeof entry === "boolean")
+  );
 }
 
 function isStringRecord(value: unknown): value is Record<string, string> {

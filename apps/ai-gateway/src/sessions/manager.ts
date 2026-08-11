@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { HarnessAdapter, HarnessEvent, HarnessRun } from "../harness/adapter.js";
 import type { SessionRecord, SessionStatus, SessionStore, StoredEvent } from "./store.js";
 import type { AuditReporter } from "../audit.js";
+import type { SettingsStore } from "../settings/store.js";
 
 // Owns session lifecycle: one harness run per live session, an append-only event log with a
 // monotonic seq (the SSE reattach cursor), and status transitions driven by harness events.
@@ -17,6 +18,8 @@ interface LiveSession {
   listeners: Set<SessionListener>;
   /** approvalId -> toolName, so approval decisions can be audited with what they approved. */
   pendingApprovals: Map<string, string>;
+  /** questionId -> the question texts, which are the keys the answers must come back under. */
+  pendingQuestions: Map<string, string[]>;
 }
 
 export class SessionManager {
@@ -27,6 +30,7 @@ export class SessionManager {
     private readonly adapter: HarnessAdapter,
     private readonly audit: AuditReporter,
     private readonly workDir: string,
+    private readonly settings: SettingsStore | null = null,
   ) {}
 
   async createSession(input: {
@@ -52,6 +56,7 @@ export class SessionManager {
       run: null,
       listeners: new Set(),
       pendingApprovals: new Map(),
+      pendingQuestions: new Map(),
     });
     await this.append(record.id, { type: "session_created", createdBy: input.createdBy });
     this.audit.report("ai_session_created", { sessionId: record.id, actor: input.createdBy });
@@ -71,9 +76,14 @@ export class SessionManager {
     await this.append(id, { type: "user_message", text });
     await this.setStatus(id, "running");
     if (!session.run) {
+      // Read at start, not at every turn: the system prompt is the session's instruction set, so a
+      // mid-conversation swap would leave a transcript whose halves ran under different rules. An
+      // edit takes effect in the next session, which the settings UI states plainly.
+      const systemPrompt = (await this.settings?.read())?.systemPrompt?.trim() || undefined;
       session.run = this.adapter.start({
         sessionId: id,
         cwd: this.workDir,
+        systemPrompt,
         // A gateway restart loses the process but not the record: resume the harness-native
         // session when one was captured, per the reattach/resume decision in the plan.
         resumeHarnessSessionId: session.record.harnessSessionId ?? undefined,
@@ -111,6 +121,46 @@ export class SessionManager {
     return true;
   }
 
+  /**
+   * Answers a pending question. `answers` is keyed by question text — the harness's own keying, kept
+   * end to end so nothing has to correlate by index.
+   *
+   * Returns false when the question is unknown or already answered, which the route turns into a 409
+   * exactly as a second approval decision does: two operators on the same session must not both
+   * think they steered it.
+   */
+  async resolveQuestion(
+    id: string,
+    questionId: string,
+    answers: Record<string, string>,
+  ): Promise<boolean> {
+    const session = await this.requireLive(id);
+    const questions = session.pendingQuestions.get(questionId);
+    if (!session.run || questions === undefined) {
+      return false;
+    }
+
+    // Only answers to questions that were actually asked are forwarded. The harness keys its lookup
+    // by question text, so an unrecognized key would be silently ignored downstream — dropping it
+    // here keeps the transcript honest about what was answered.
+    const accepted: Record<string, string> = {};
+    for (const question of questions) {
+      const answer = answers[question];
+      if (typeof answer === "string") {
+        accepted[question] = answer;
+      }
+    }
+
+    if (!session.run.resolveQuestion(questionId, accepted)) {
+      return false;
+    }
+
+    session.pendingQuestions.delete(questionId);
+    await this.append(id, { type: "question_answered", questionId, answers: accepted });
+    await this.setStatus(id, "running");
+    return true;
+  }
+
   async cancelSession(id: string): Promise<void> {
     const session = await this.requireLive(id);
     if (session.run) {
@@ -118,6 +168,7 @@ export class SessionManager {
       session.run = null;
     }
     session.pendingApprovals.clear();
+    session.pendingQuestions.clear();
     // Persisted with the same type the live status fan-out uses, so a transcript replay and a
     // live subscriber see one status vocabulary.
     await this.append(id, { type: "session_status", status: "cancelled" });
@@ -181,6 +232,7 @@ export class SessionManager {
       run: null,
       listeners: new Set(),
       pendingApprovals: new Map(),
+      pendingQuestions: new Map(),
     };
     this.live.set(id, session);
     return session;
@@ -216,6 +268,16 @@ export class SessionManager {
         await this.append(id, { ...event });
         await this.setStatus(id, "awaiting_approval");
         return;
+      case "question_request":
+        session.pendingQuestions.set(
+          event.questionId,
+          event.questions.map((question) => question.question),
+        );
+        // Persisted, not live-only: a reconnecting client rebuilds the card from the event log, the
+        // same way a pending approval already does.
+        await this.append(id, { ...event });
+        await this.setStatus(id, "awaiting_question");
+        return;
       case "result":
         await this.append(id, { ...event });
         await this.setStatus(id, "idle");
@@ -226,6 +288,7 @@ export class SessionManager {
         const failedRun = session.run;
         session.run = null;
         session.pendingApprovals.clear();
+        session.pendingQuestions.clear();
         if (failedRun) {
           void failedRun.stop().catch(() => undefined);
         }

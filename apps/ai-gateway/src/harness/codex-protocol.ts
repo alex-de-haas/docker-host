@@ -17,6 +17,26 @@ export const CODEX_METHODS = {
   turnInterrupt: "turn/interrupt",
 } as const;
 
+// Codex CAN ask the user a question — `item/tool/requestUserInput` sits in the same server→client
+// request family as the approval methods below — but the gateway does not implement it, and the
+// adapter reports `questions: false` so the gateway degrades loudly instead of appearing to support
+// it. Read out of the pinned 0.147.0 binary on 2026-08-11:
+//
+//   * It is gated behind `tools.experimental_request_user_input` in `ToolsToml` — experimental, and
+//     off by default, so a stock Codex never sends the request at all.
+//   * Its wire shape is only inferable from serde symbol tables (`ToolRequestUserInputResponse` and
+//     `ToolRequestUserInputAnswer`, both single-field; request fields near `questions`, `isBlocking`,
+//     `autoResolutionMs`; per-question `header`, `question`, `options`, `isOther`, `isSecret`). That
+//     is a guess, not a contract.
+//
+// Implementing a guessed shape is precisely how this adapter has been bitten twice: a reply Codex
+// cannot act on is indistinguishable from one it never received. The one mitigation that survives is
+// that the binary carries "failed to deserialize ToolRequestUserInputResponse", so a wrong reply
+// fails loudly rather than silently — which is why the generic `{}` fallback for unimplemented
+// server requests is safe to leave in place here. Implement this only against a live Codex run with
+// the flag enabled, not against these symbols.
+export const REQUEST_USER_INPUT_METHOD = "item/tool/requestUserInput";
+
 /** Server→client requests that block until answered. Anything here becomes a Hosty approval card. */
 export const APPROVAL_METHODS = new Set([
   "item/commandExecution/requestApproval",
