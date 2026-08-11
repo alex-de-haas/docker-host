@@ -5960,6 +5960,206 @@ public sealed class CoreLifecycleServiceTests
         Assert.Equal(reviewedDigest, updateLock.ImageDigest);
     }
 
+    [Fact]
+    public async Task RehomeOsAllocatedPortsAsync_MovesAutomaticPortIntoTheBandAndCarriesTheEndpointUrl()
+    {
+        // Every automatic port allocated before 0.76.0 came from a port-0 bind, i.e. out of the range the
+        // OS hands to every outbound connection on the host — a reservation only ever on loan. The
+        // operator's own pin is in that range too, and must survive untouched: they may have a firewall
+        // rule on it.
+        var fixture = await LifecycleFixture.CreateAsync(withPortAllocator: true);
+        await SeedRehomableAppAsync(fixture);
+
+        Assert.Equal(1, await fixture.Service.RehomeOsAllocatedPortsAsync());
+
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        var moved = Assert.Single(app!.PortAssignments!, assignment => assignment.Service == "app");
+        Assert.False(RuntimePortHelper.IsOsDynamicRangePort(moved.HostPort));
+        Assert.InRange(moved.HostPort, RuntimePortHelper.AutomaticPortRangeStart, RuntimePortHelper.OsDynamicPortFloor - 1);
+        Assert.Equal(AppPortSources.Automatic, moved.Source);
+        Assert.True(moved.Remappable);
+        // The URL is the app's durable address; leaving it on the old port would be worse than not moving.
+        Assert.Equal($"http://localhost:{moved.HostPort}", Assert.Single(app.Endpoints, endpoint => endpoint.Service == "app").Url);
+
+        var pinned = Assert.Single(app.PortAssignments!, assignment => assignment.Service == "admin");
+        Assert.Equal(52999, pinned.HostPort);
+        Assert.Equal("http://localhost:52999", Assert.Single(app.Endpoints, endpoint => endpoint.Service == "admin").Url);
+    }
+
+    [Fact]
+    public async Task RehomeOsAllocatedPortsAsync_SecondRun_ChangesNothing()
+    {
+        // Selection is by port range, so a rehomed record stops matching. Without that, every boot would
+        // churn endpoint URLs and invalidate dependents' injected addresses for no reason.
+        var fixture = await LifecycleFixture.CreateAsync(withPortAllocator: true);
+        await SeedRehomableAppAsync(fixture);
+        await fixture.Service.RehomeOsAllocatedPortsAsync();
+        var afterFirst = await fixture.Apps.GetAppAsync("com.example.notes");
+
+        Assert.Equal(0, await fixture.Service.RehomeOsAllocatedPortsAsync());
+
+        var afterSecond = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal(
+            afterFirst!.PortAssignments!.Select(assignment => assignment.HostPort),
+            afterSecond!.PortAssignments!.Select(assignment => assignment.HostPort));
+    }
+
+    [Fact]
+    public async Task RehomeOsAllocatedPortsAsync_SeveralPortsOnOneApp_AllMoveAndStayDistinct()
+    {
+        // Each move persists a new revision, so the next one has to allocate against the record as
+        // written — otherwise two ports on the same app could be handed the same number. The loop is also
+        // bounded by a target list captured once: re-deriving it per round would never terminate if the
+        // allocator fell back to another OS-range port.
+        var fixture = await LifecycleFixture.CreateAsync(withPortAllocator: true);
+        await SeedRehomableAppAsync(fixture, extraAutomaticPort: 52307);
+
+        Assert.Equal(2, await fixture.Service.RehomeOsAllocatedPortsAsync());
+
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        var moved = app!.PortAssignments!
+            .Where(assignment => assignment.Source == AppPortSources.Automatic)
+            .Select(assignment => assignment.HostPort)
+            .ToArray();
+        Assert.Equal(2, moved.Length);
+        Assert.Equal(2, moved.Distinct().Count());
+        Assert.All(moved, port => Assert.False(RuntimePortHelper.IsOsDynamicRangePort(port)));
+    }
+
+    [Fact]
+    public async Task RehomeOsAllocatedPortsAsync_LegacyManifestPin_IsLeftAlone()
+    {
+        // The boot backfill derives assignments from stored endpoint URLs and classifies anything without
+        // a matching HOSTY_PORT_* setting as `automatic`, because a URL cannot say whether Core chose the
+        // port or the manifest declared it. A legacy record whose manifest pins a port in the dynamic
+        // range therefore *looks* remappable — moving it would break the firewall rule or router forward
+        // the operator built around that number.
+        var fixture = await LifecycleFixture.CreateAsync(withPortAllocator: true);
+        await SeedRehomableAppAsync(fixture);
+        await WriteManifestCopyPinningAppHttpAsync(fixture, 52306);
+
+        Assert.Equal(0, await fixture.Service.RehomeOsAllocatedPortsAsync());
+
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal(52306, Assert.Single(app!.PortAssignments!, assignment => assignment.Service == "app").HostPort);
+        Assert.Equal("http://localhost:52306", Assert.Single(app.Endpoints, endpoint => endpoint.Service == "app").Url);
+    }
+
+    [Fact]
+    public async Task RehomeOsAllocatedPortsAsync_ManifestPinningAnotherKey_StillMovesTheAutomaticOne()
+    {
+        // The skip is per (service, port key), not per app: a manifest that pins one port must not freeze
+        // the app's genuinely automatic ones.
+        var fixture = await LifecycleFixture.CreateAsync(withPortAllocator: true);
+        await SeedRehomableAppAsync(fixture, extraAutomaticPort: 52307);
+        await WriteManifestCopyPinningAppHttpAsync(fixture, 52306);
+
+        Assert.Equal(1, await fixture.Service.RehomeOsAllocatedPortsAsync());
+
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal(52306, Assert.Single(app!.PortAssignments!, assignment => assignment.Service == "app").HostPort);
+        var worker = Assert.Single(app.PortAssignments!, assignment => assignment.Service == "worker");
+        Assert.False(RuntimePortHelper.IsOsDynamicRangePort(worker.HostPort));
+    }
+
+    // The reviewed manifest copy Core keeps beside the app, declaring `app.http` with an explicit
+    // localPort — the shape the rehoming pass has to read to recognise a legacy pin.
+    private static async Task WriteManifestCopyPinningAppHttpAsync(LifecycleFixture fixture, int localPort)
+    {
+        var appRoot = Path.Combine(fixture.Paths.AppsRoot, "com.example.notes");
+        Directory.CreateDirectory(appRoot);
+        await File.WriteAllTextAsync(Path.Combine(appRoot, "manifest.json"), $$"""
+        {
+          "schemaVersion": "app.0.1",
+          "id": "com.example.notes",
+          "name": "Notes",
+          "version": "1.0.0",
+          "runtimeProfiles": [{ "key": "docker", "type": "docker", "default": true }],
+          "defaultRuntime": "docker",
+          "services": [{
+            "key": "app",
+            "runtimes": {
+              "docker": {
+                "type": "docker",
+                "image": "example/notes:1.0.0",
+                "ports": [{ "key": "http", "containerPort": 8080, "localPort": {{localPort}} }]
+              }
+            }
+          }]
+        }
+        """);
+    }
+
+    [Fact]
+    public async Task RehomeOsAllocatedPortsAsync_RunningApp_KeepsItsPort()
+    {
+        // Core may have adopted a live listener (keep-apps light restart, docker adoption) before this
+        // pass runs. Moving the reservation would leave the record disagreeing with the process actually
+        // serving; the app is retried on a later boot, when it is down.
+        var fixture = await LifecycleFixture.CreateAsync(withPortAllocator: true);
+        await SeedRehomableAppAsync(fixture, runtimeState: AppRuntimeStates.Running);
+
+        Assert.Equal(0, await fixture.Service.RehomeOsAllocatedPortsAsync());
+
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal(52306, Assert.Single(app!.PortAssignments!, assignment => assignment.Service == "app").HostPort);
+    }
+
+    // A record in the pre-0.76.0 shape: one automatic reservation the OS handed out, plus an operator pin
+    // that happens to sit in the same range. Seeded directly rather than installed, because the rehoming
+    // pass reads nothing but the record.
+    private static async Task SeedRehomableAppAsync(
+        LifecycleFixture fixture,
+        string runtimeState = AppRuntimeStates.Stopped,
+        int? extraAutomaticPort = null)
+    {
+        AppEndpointContract[] extraEndpoints = extraAutomaticPort is { } extraPort
+            ? [new AppEndpointContract("worker.http", "http", $"http://localhost:{extraPort}", Public: false, Service: "worker", Port: "http")]
+            : [];
+        AppPortAssignment[] extraAssignments = extraAutomaticPort is { } extra
+            ? [new AppPortAssignment("worker", "http", extra, AppPortTransports.Tcp, AppPortBindScopes.Loopback, AppPortSources.Automatic, Remappable: true, AssignedAt: DateTimeOffset.UnixEpoch)]
+            : [];
+
+        await fixture.Apps.UpsertAppAsync(new AppRecord(
+            Id: "com.example.notes",
+            DisplayName: "Notes",
+            Description: null,
+            Version: "1.0.0",
+            Kind: "runtime",
+            System: false,
+            Source: "installed",
+            ManifestPath: null,
+            ManifestUrl: null,
+            SelectedRuntime: "docker",
+            OperationStatus: "installed",
+            RuntimeState: runtimeState,
+            LastOperation: null,
+            LastError: null,
+            Capabilities: [],
+            Settings: new Dictionary<string, AppSettingValue>(StringComparer.Ordinal)
+            {
+                ["HOSTY_PORT_ADMIN_HTTP"] = new("HOSTY_PORT_ADMIN_HTTP", "string", "52999", Secret: false),
+            },
+            StorageMappings: [],
+            Dependencies: [],
+            Endpoints:
+            [
+                new AppEndpointContract("app.http", "http", "http://localhost:52306", Public: true, Service: "app", Port: "http"),
+                new AppEndpointContract("admin.http", "http", "http://localhost:52999", Public: false, Service: "admin", Port: "http"),
+                .. extraEndpoints,
+            ],
+            InstalledAt: DateTimeOffset.UtcNow,
+            UpdatedAt: DateTimeOffset.UtcNow)
+        {
+            PortAssignments =
+            [
+                new AppPortAssignment("app", "http", 52306, AppPortTransports.Tcp, AppPortBindScopes.Loopback, AppPortSources.Automatic, Remappable: true, AssignedAt: DateTimeOffset.UnixEpoch),
+                new AppPortAssignment("admin", "http", 52999, AppPortTransports.Tcp, AppPortBindScopes.Loopback, AppPortSources.Operator, Remappable: false, AssignedAt: DateTimeOffset.UnixEpoch),
+                .. extraAssignments,
+            ],
+        });
+    }
+
     private sealed class LifecycleFixture
     {
         private LifecycleFixture(

@@ -14,9 +14,15 @@ internal static class HostyCoreApplication
 {
     private const string ControlSecretHeader = "X-Hosty-Control-Secret";
 
-    public static void ConfigureServices(WebApplicationBuilder builder)
+    // `config` defaults to the process environment — what the real entry point wants — and is passed
+    // explicitly by hosts that cannot use ambient state: the process environment is one shared mutable
+    // variable, so a test that sets HOSTY_CORE_* to exercise config parsing poisons every other host
+    // booting in the same process at that instant, and several such hosts need their own data root
+    // simultaneously anyway, which env cannot express per-instance. This is the only env read in the
+    // startup path, so passing a config keeps the boot entirely off the environment.
+    public static void ConfigureServices(WebApplicationBuilder builder, HostyCoreRuntimeConfig? config = null)
     {
-        var config = HostyCoreRuntimeConfig.FromEnvironment(builder.Environment);
+        config ??= HostyCoreRuntimeConfig.FromEnvironment(builder.Environment);
         builder.WebHost.UseUrls(config.ListenUrl);
         builder.Services.ConfigureHttpJsonOptions(options =>
             options.SerializerOptions.TypeInfoResolverChain.Insert(0, CoreJsonSerializerContext.Default));
@@ -122,7 +128,9 @@ internal static class HostyCoreApplication
         builder.Services.AddHostedService(sp => sp.GetRequiredService<DockerStatsExposition>());
         // One controller: it reads the live ingress provider from CoreSettingsService and no-ops for every
         // provider that is not "cloudflared", so switching providers is a settings edit, not a restart.
-        builder.Services.AddSingleton<IIngressController, CloudflaredIngressController>();
+        builder.Services.AddSingleton<CloudflaredIngressController>();
+        builder.Services.AddSingleton<CloudflareRemoteIngressController>();
+        builder.Services.AddSingleton<IIngressController, ProviderIngressController>();
         // Generic bootstrap: the release-owned distribution list and the operator's bootstrap
         // choices drive which first-party apps the supervisor preinstalls at boot; the service is
         // shared with the host-admin bootstrap endpoints for live toggles.
@@ -1100,6 +1108,9 @@ internal sealed class RuntimeAppSupervisorService(
 
         await BackfillManifestProjectionsAsync(stoppingToken);
         await MigratePortAssignmentsAsync(stoppingToken);
+        // After the backfill, so a reservation this boot derived from a legacy endpoint URL is rehomed in
+        // the same pass rather than waiting for the next boot.
+        await RehomeOsAllocatedPortsAsync(stoppingToken);
         await PurgeRetiredAdvisoriesAsync(stoppingToken);
         await RecoverStrandedLifecycleStatesAsync(stoppingToken);
         await RecoverInterruptedUpdatesAsync(stoppingToken);
@@ -1492,6 +1503,28 @@ internal sealed class RuntimeAppSupervisorService(
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidOperationException)
         {
             logger.LogWarning(ex, "Hosty port assignment backfill did not complete.");
+        }
+    }
+
+    // Move automatic ports off the OS dynamic range and into the Hosty band, before autostart consumes
+    // the reservations. Best-effort on the same terms as the backfill above: a host that cannot complete
+    // the pass keeps the ports it has, which is exactly the pre-0.76.0 behavior.
+    private async Task RehomeOsAllocatedPortsAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var rehomed = await lifecycle.RehomeOsAllocatedPortsAsync(cancellationToken);
+            if (rehomed > 0)
+            {
+                logger.LogInformation("Rehomed {Count} automatic app port(s) off the OS dynamic range.", rehomed);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidOperationException)
+        {
+            logger.LogWarning(ex, "Hosty automatic port rehoming did not complete.");
         }
     }
 

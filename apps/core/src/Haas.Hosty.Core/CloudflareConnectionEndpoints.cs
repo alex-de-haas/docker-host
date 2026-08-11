@@ -71,13 +71,24 @@ internal static class CloudflareConnectionEndpoints
             UserDirectoryStore users,
             IClock clock,
             CloudflareConnectionService service,
+            CoreLifecycleService lifecycle,
             CloudflareConnectRequest input,
             CancellationToken cancellationToken) =>
             CoreSessionAuthorization.RequireAdminSessionAsync(
                 request,
                 users,
                 clock,
-                async () => await HandleCloudflareError(() => service.ConnectAsync(input.Token, input.Selection, cancellationToken)),
+                async () =>
+                {
+                    var result = await HandleCloudflareError(() => service.ConnectAsync(input.Token, input.Selection, cancellationToken));
+                    // A connection is exactly what a publication recorded as drifted was waiting for: the
+                    // port moved while there was no usable token, and the operator was told reconnecting
+                    // would repair it. Reconcile here so that promise is kept the moment they do, instead
+                    // of at whatever unrelated lifecycle operation happens next. Best-effort by contract,
+                    // and free when nothing drifted.
+                    await lifecycle.ReconcileIngressAsync(cancellationToken);
+                    return result;
+                },
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 

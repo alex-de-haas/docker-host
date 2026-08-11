@@ -238,19 +238,20 @@ function SettingControl({ controlId, setting, value, disabled, onChange, onRevea
   );
 }
 
-const publicOriginSettingPrefix = "HOSTY_PUBLIC_ORIGIN_";
+// The pure key vocabulary lives in public-origin.ts so a `node --test` file can import it; re-exported
+// here because every existing caller reaches for it through settings.
+import {
+  isPublicOriginSettingKey,
+  getPublicOriginEndpointLabel,
+  buildPublicOriginSettingKey,
+} from "./public-origin";
 
-export function isPublicOriginSettingKey(key: string) {
-  return key.startsWith(publicOriginSettingPrefix);
-}
-
-export function getPublicOriginEndpointLabel(key: string) {
-  if (!isPublicOriginSettingKey(key)) {
-    return "";
-  }
-
-  return key.slice(publicOriginSettingPrefix.length).toLowerCase().replaceAll("_", ".");
-}
+export {
+  isPublicOriginSettingKey,
+  getPublicOriginEndpointLabel,
+  buildPublicOriginSettingKey,
+  normalizePublicOriginEndpointKey,
+} from "./public-origin";
 
 export function formatSettingLabel(key: string) {
   if (isPublicOriginSettingKey(key)) {
@@ -282,19 +283,6 @@ export function buildPublicOriginGroups(app: CoreApp, settings: CoreSetting[]) {
         (left.endpoint?.key || left.setting.key).localeCompare(right.endpoint?.key || right.setting.key)),
     }))
     .sort((left, right) => left.service.localeCompare(right.service));
-}
-
-export function buildPublicOriginSettingKey(endpointKey: string) {
-  return `${publicOriginSettingPrefix}${normalizePublicOriginEndpointKey(endpointKey)}`;
-}
-
-export function normalizePublicOriginEndpointKey(value: string) {
-  const normalized = (value || "endpoint")
-    .split("")
-    .map((character) => /[a-zA-Z0-9]/.test(character) ? character.toUpperCase() : "_")
-    .join("")
-    .replace(/^_+|_+$/g, "");
-  return normalized.length > 0 ? normalized : "ENDPOINT";
 }
 
 export function hasMissingRequiredSettings(settings: CoreSetting[], draft: Record<string, string | null>) {

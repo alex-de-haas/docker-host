@@ -2,13 +2,13 @@
 
 Status: Draft
 Created: 2026-07-14
-Updated: 2026-07-28
+Updated: 2026-08-09
 
 The install-time reservation model shipped across PRs #187–#191 (persistent model and boot migration,
 coordinated allocation and adapter consumption, reassignment plan/apply with dependency impact,
-start-time preflight, Shell reassignment UI), and operator port pinning shipped in #227. What that
-built is described in [feature.md](feature.md); this document is what an audit on 2026-07-28 found
-still missing.
+start-time preflight, Shell reassignment UI), operator port pinning shipped in #227, and the fixed
+allocation band plus its boot rehoming pass shipped in 0.76.0. What that built is described in
+[feature.md](feature.md); this document is what an audit on 2026-07-28 found still missing.
 
 The original plan was approved on 2026-07-14 and its checkboxes were never maintained — all 42 read
 unchecked while most of the work had merged. The deliverables below are the audited remainder, so the
@@ -37,7 +37,8 @@ Written as a diff against [feature.md](feature.md).
   resolves for every matching service, handing the same port to each.
 - `POST /api/apps/{appId}/configure` validates a `HOSTY_PORT_*` value and re-reserves, or rejects it
   and points at the reassign endpoint. Today it stores anything, and the record disagrees with the
-  setting until the next install.
+  setting until the next install. The rehoming pass already has to skip an assignment shadowed this
+  way, which is the clearest sign the gap is worth closing.
 - Uninstalling with data retained records the automatic port as a non-binding reuse preference, and a
   reinstall takes it back only when it is free in both Hosty and the OS. Today the port is dropped —
   including an operator's pin, because `HOSTY_PORT_*` is not a manifest-declared setting and the
@@ -102,7 +103,12 @@ Written as a diff against [feature.md](feature.md).
 - **A pre-allocated candidate port in the reassign plan.** The plan reports the current port and
   impact; the new port is chosen inside apply under the gate. Showing a candidate would mean holding
   or re-validating it across two requests for no operator benefit.
-- **A configurable automatic port range.** OS ephemeral allocation remains the pool.
+- **An operator-tunable automatic port range.** 0.76.0 replaced OS ephemeral allocation with a fixed
+  band because a durable reservation cannot live in a range the OS reallocates. The band being a
+  constant is the point; making it configurable is still not planned.
+- **A well-known-port deny-list inside the band.** Every candidate is probed, so a running service is
+  never handed its own port, and a stopped one is the exposure any pinned port already carries. A
+  hard-coded list would go stale for no gain.
 
 ## Open questions
 

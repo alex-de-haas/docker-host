@@ -494,8 +494,11 @@ function SettingsDialog({
 
 const MANAGED_ORIGIN_HINTS: Record<ManagedPublicOriginReason, string> = {
   derived: "Derived by the ingress provider from the base domain and this app's subdomain, on every start.",
-  published: "Published through Cloudflare. Change or remove it from the endpoint's publish control.",
+  published: "Published through Cloudflare. Change or remove it from the endpoint's public-origin control.",
 };
+
+// Shown for an origin the operator owns. It is theirs to set, just not from here.
+const OPERATOR_ORIGIN_HINT = "Yours to set, from the public-origin control on the endpoint.";
 
 function SettingsForm({
   app,
@@ -577,14 +580,23 @@ function SettingsForm({
                     const managed = managedPublicOrigins.get(setting.key);
                     return (
                       <div key={setting.key} className="space-y-1">
+                        {/* Read-only everywhere now. One control writes a public origin — the globe on the
+                            endpoint row — because what applying it does differs per provider: a local
+                            string under `none`, an app subdomain under `cloudflared`, a DNS record and a
+                            tunnel route under `cloudflare-remote`. A second editable field here could
+                            only ever express the first of the three, which is how the two surfaces came
+                            to disagree in the first place. The value stays visible next to the app's
+                            other settings. */}
                         <PublicOriginInput
                           setting={setting}
                           endpoint={endpoint}
                           value={draft[setting.key] ?? ""}
-                          disabled={!canManageApps || managed !== undefined}
-                          onChange={(value) => setDraft((current) => ({ ...current, [setting.key]: value }))}
+                          disabled
+                          onChange={() => {}}
                         />
-                        {managed && <p className="text-[11px] text-muted-foreground">{MANAGED_ORIGIN_HINTS[managed]}</p>}
+                        <p className="text-[11px] text-muted-foreground">
+                          {managed ? MANAGED_ORIGIN_HINTS[managed] : OPERATOR_ORIGIN_HINT}
+                        </p>
                       </div>
                     );
                   })}

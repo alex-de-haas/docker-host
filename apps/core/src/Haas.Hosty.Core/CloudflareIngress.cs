@@ -29,8 +29,16 @@ internal interface IIngressController
         string? subdomainOverride,
         IReadOnlyList<string> publicEndpointKeys);
 
-    // Re-render the whole tunnel config from the set of running apps. Declarative and idempotent;
-    // best-effort (never throws into a lifecycle operation).
+    // Re-render the whole desired routing state from the set of INSTALLED apps. Declarative and
+    // idempotent; best-effort (never throws into a lifecycle operation).
+    //
+    // Installed, not running, and deliberately so. A public origin is a durable property of an
+    // endpoint: Core reserves the port at install, projects an endpoint URL onto a stopped app, and
+    // has an `availability: "assigned"` state that says exactly "stopped, but a durable target
+    // exists". Routing only what happens to be up contradicted that, rewrote the config on every
+    // start and stop, and forked the meaning of "desired state" between providers — which is what
+    // kept the API provider from living behind this interface at all. An endpoint with no resolved
+    // URL is still skipped: there is no target to route to until its first start.
     Task ReconcileAsync(IReadOnlyList<AppRecord> apps, CancellationToken cancellationToken = default);
 }
 
@@ -81,8 +89,12 @@ internal sealed class CloudflaredIngressController(
         var path = config.EffectiveIngressConfigPath;
         try
         {
+            // Every installed app, whatever its runtime state — see the note on ReconcileAsync. A
+            // stopped app's hostname now resolves to a route whose local port has no listener, so
+            // cloudflared answers 502 ("the address exists, the app is down") instead of falling
+            // through to the catch-all 404 ("no such hostname"). That is the more honest answer, and
+            // it is why this file is no longer rewritten by every start and stop.
             var ingressApps = apps
-                .Where(app => AppRuntimeStates.IsUp(app.RuntimeState))
                 .Select(app => new IngressApp(
                     CloudflaredIngressPlanner.ResolveSubdomain(app.Id, ReadSubdomainOverride(app)),
                     (app.Endpoints ?? [])

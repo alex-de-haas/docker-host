@@ -130,6 +130,11 @@ internal sealed class CloudflarePublicationStore(CoreDataPaths paths)
 // serving the old value. Core cannot observe a running app's environment, and an app record carries no
 // start time, so this is the only honest way to answer "is this live yet?": it is set when a publish or
 // unpublish lands on a running app and cleared the next time that app starts.
+// `DriftedServiceUrl` is the local target the endpoint has NOW when Core could not push it into the
+// tunnel — no connection, an expired token, Cloudflare unreachable. The hostname is still routed to
+// `ServiceUrl`, which no longer exists, so the publication is broken until a reconcile succeeds. Recording
+// it is what lets boot reconciliation be honest without retrying on the startup path: the next successful
+// reconcile clears it, and until then the state projection reports the drift. Null means no drift.
 internal sealed record CloudflarePublication(
     string AppId,
     string EndpointKey,
@@ -139,7 +144,8 @@ internal sealed record CloudflarePublication(
     string? ServiceUrl,
     string OwnershipState,
     DateTimeOffset UpdatedAt,
-    bool PendingRestart = false);
+    bool PendingRestart = false,
+    string? DriftedServiceUrl = null);
 
 internal static class CloudflareOwnershipStates
 {

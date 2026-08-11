@@ -37,6 +37,44 @@ public sealed class CloudflaredIngressControllerTests : IDisposable
     private CloudflaredIngressController CreateController(CoreSettingsService settings)
         => new(settings, Config, NullLogger<CloudflaredIngressController>.Instance);
 
+    // A cloudflared controller with a complete provider configuration, ready to render routes.
+    private async Task<CloudflaredIngressController> CreateConfiguredControllerAsync()
+    {
+        var settings = CreateSettings();
+        await settings.UpdateAsync(new Dictionary<string, string?>
+        {
+            ["HOSTY_INGRESS_PROVIDER"] = "cloudflared",
+            ["HOSTY_INGRESS_BASE_DOMAIN"] = "apps.example.test",
+            ["HOSTY_INGRESS_TUNNEL_ID"] = "tunnel-abc",
+            ["HOSTY_INGRESS_CREDENTIALS_FILE"] = Path.Combine(root, "creds.json"),
+        });
+        return CreateController(settings);
+    }
+
+    private static AppRecord AppWithPublicEndpoint(string appId, string? url, string runtimeState)
+        => new(
+            Id: appId,
+            DisplayName: appId,
+            Description: null,
+            Version: "1.0.0",
+            Kind: "runtime",
+            System: false,
+            Source: "installed",
+            ManifestPath: null,
+            ManifestUrl: null,
+            SelectedRuntime: "docker",
+            OperationStatus: "installed",
+            RuntimeState: runtimeState,
+            LastOperation: null,
+            LastError: null,
+            Capabilities: [],
+            Settings: new Dictionary<string, AppSettingValue>(),
+            StorageMappings: [],
+            Dependencies: [],
+            Endpoints: [new AppEndpointContract($"{appId}.http", "http", url, Public: true, Service: "app", Port: "http")],
+            InstalledAt: DateTimeOffset.UtcNow,
+            UpdatedAt: DateTimeOffset.UtcNow);
+
     [Fact]
     public async Task ProviderNone_DoesNotManageOriginsOrWriteConfig()
     {
@@ -73,6 +111,51 @@ public sealed class CloudflaredIngressControllerTests : IDisposable
         var yaml = await File.ReadAllTextAsync(ConfigPath);
         Assert.Contains("core.apps.example.test", yaml);
         Assert.Contains("tunnel-abc", yaml);
+    }
+
+    [Theory]
+    [InlineData(AppRuntimeStates.Running)]
+    [InlineData(AppRuntimeStates.Stopped)]
+    public async Task ReconcileAsync_RoutesAnInstalledApp_WhateverItsRuntimeState(string runtimeState)
+    {
+        // A public origin is a durable property of an endpoint, not of a process: the port is reserved
+        // at install and the endpoint URL is projected onto a stopped app. Routing only what was up
+        // rewrote this file on every start and stop, and made a stopped app's hostname answer 404 as
+        // if it did not exist. It now answers 502 from a route that is always present.
+        var controller = await CreateConfiguredControllerAsync();
+
+        await controller.ReconcileAsync([AppWithPublicEndpoint("pm", "http://127.0.0.1:24001", runtimeState)]);
+
+        var yaml = await File.ReadAllTextAsync(ConfigPath);
+        Assert.Contains("hostname: pm.apps.example.test", yaml, StringComparison.Ordinal);
+        Assert.Contains("http://127.0.0.1:24001", yaml, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ReconcileAsync_StartAndStopOfTheSameApp_ProduceIdenticalConfigs()
+    {
+        // The churn this removes: two reconciles that differ only in runtime state must render the
+        // same bytes, so an ordinary lifecycle change no longer rewrites the file cloudflared watches.
+        var controller = await CreateConfiguredControllerAsync();
+
+        await controller.ReconcileAsync([AppWithPublicEndpoint("pm", "http://127.0.0.1:24001", AppRuntimeStates.Running)]);
+        var whileRunning = await File.ReadAllTextAsync(ConfigPath);
+        await controller.ReconcileAsync([AppWithPublicEndpoint("pm", "http://127.0.0.1:24001", AppRuntimeStates.Stopped)]);
+
+        Assert.Equal(whileRunning, await File.ReadAllTextAsync(ConfigPath));
+    }
+
+    [Fact]
+    public async Task ReconcileAsync_EndpointWithNoResolvedUrl_IsSkipped()
+    {
+        // Reachable for a port key that first appears in an update: it gets no install-time
+        // reservation, so it carries no URL until the app's next start. There is nothing to route to.
+        var controller = await CreateConfiguredControllerAsync();
+
+        await controller.ReconcileAsync([AppWithPublicEndpoint("pm", url: null, AppRuntimeStates.Stopped)]);
+
+        var yaml = await File.ReadAllTextAsync(ConfigPath);
+        Assert.DoesNotContain("pm.apps.example.test", yaml, StringComparison.Ordinal);
     }
 
     [Fact]

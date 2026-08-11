@@ -502,8 +502,26 @@ internal sealed class CoreLifecycleService(
             };
         }, cancellationToken);
 
+        // A public-origin or subdomain edit is a routing change, so materialize it now rather than leaving
+        // it for whatever start, stop or settings save happens next: the whole point of the unified
+        // control is that saving it takes effect. Scoped to those keys so an ordinary settings write does
+        // not pay for a reconcile, and cheap when it does fire — the local provider re-renders a file and
+        // the API one diffs two strings before deciding whether to call Cloudflare at all.
+        if (TouchesRouting(request.Settings))
+        {
+            await ReconcileIngressAsync(cancellationToken);
+        }
+
         return new AppLifecycleResponse(await BuildAppSummaryAsync(document.App, cancellationToken), null, "configured");
     }
+
+    // True when a configure write changes where an app is reachable from: its public origin, or the
+    // subdomain the local provider derives every one of its hostnames from.
+    private static bool TouchesRouting(IReadOnlyDictionary<string, string?>? settings)
+        => settings is { Count: > 0 } &&
+            settings.Keys.Any(key =>
+                PublicOriginSettings.IsSettingKey(key) ||
+                string.Equals(key, CloudflaredIngressPlanner.SubdomainSettingKey, StringComparison.Ordinal));
 
     // Validates an operator-supplied update policy. null leaves the policy unchanged; the only valid
     // value is "pinned" (case-insensitive), normalized to lowercase for storage. "rolling" — which
@@ -2713,6 +2731,293 @@ internal sealed class CoreLifecycleService(
 
         return migrated;
     }
+
+    // Automatic ports allocated before 0.76.0 came out of the OS dynamic range (a port-0 bind), so they
+    // live in the pool the OS also hands to every outbound connection on the host — a durable reservation
+    // there is only ever on loan, and the app whose port the OS reclaims fails to start with a raw bind
+    // error. The motivating failure is written up on RuntimePortHelper.AutomaticPortRangeStart. This pass
+    // rehomes such reservations into the Hosty band, at boot, before autostart reconciliation consumes
+    // them, so an existing install is healed without operator action.
+    //
+    // Only `automatic`, remappable, non-host-network assignments move. An operator pin, a manifest port,
+    // and a host-network port are somebody's deliberate choice, and sitting in the dynamic range does not
+    // make it Core's to overrule. An app that is already up keeps its port and is retried on a later boot:
+    // Core may have adopted a live listener (keep-apps light restart, docker adoption), and moving the
+    // record's port would leave it disagreeing with the process actually serving.
+    //
+    // Each move goes through the allocator, so the new port is chosen under the same gate and against the
+    // same exclusion view an operator-driven reassignment uses, and the endpoint URL moves with it. A
+    // record is re-read between moves because each one persists a new revision. Failures are logged and
+    // skipped rather than thrown: this runs at boot, and one unmovable port must not strand the rest.
+    // Returns the number of ports rehomed.
+    public async Task<int> RehomeOsAllocatedPortsAsync(CancellationToken cancellationToken = default)
+    {
+        if (portAllocator is null)
+        {
+            return 0;
+        }
+
+        var rehomed = 0;
+        var records = await apps.ListAppRecordsAsync(cancellationToken);
+        foreach (var app in records.Where(app => string.Equals(app.Kind, "runtime", StringComparison.Ordinal)))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (FindOsAllocatedAssignments(app).Count == 0)
+            {
+                continue;
+            }
+
+            if (AppRuntimeStates.IsUp(app.RuntimeState))
+            {
+                logger.LogInformation(
+                    "App '{AppId}' holds an OS-allocated automatic port but is running; leaving it in place and retrying at a later boot.",
+                    app.Id);
+                continue;
+            }
+
+            var manifestPinned = await ReadManifestPinnedPortKeysAsync(app, cancellationToken);
+            rehomed += await WithAppLockAsync(app.Id, () => RehomeAppPortsAsync(app.Id, manifestPinned, cancellationToken), cancellationToken);
+        }
+
+        return rehomed;
+    }
+
+    // The (service, port key) pairs the app's manifest pins with an explicit localPort/hostPort, across
+    // every runtime profile. The boot backfill cannot see them: it derives assignments from stored
+    // endpoint URLs and classifies anything without a matching HOSTY_PORT_* setting as `automatic`
+    // (PortAssignmentMigration.ResolveSource), because a URL cannot say whether its port was chosen by
+    // Core or written in the manifest. A legacy record whose manifest pins a port in the dynamic range —
+    // 51413 and friends — would therefore look remappable and be moved by the pass below, breaking the
+    // guarantee that a manifest pin stays put and any firewall rule or router forward aimed at it.
+    // Reading the reviewed manifest copy is the only way to tell the two apart.
+    //
+    // Every profile is consulted rather than the record's selected one: skipping is the safe direction,
+    // and a port pinned under a profile the app is not currently running is still a pin. An unreadable or
+    // missing copy yields an empty set, which is the pre-existing behavior — the pass is best-effort.
+    private async Task<IReadOnlySet<(string Service, string PortKey)>> ReadManifestPinnedPortKeysAsync(
+        AppRecord app,
+        CancellationToken cancellationToken)
+    {
+        var pinned = new HashSet<(string, string)>();
+        var manifestPath = ResolveStoredManifestPath(app);
+        if (manifestPath is null)
+        {
+            return pinned;
+        }
+
+        RuntimeAppManifest? manifest;
+        try
+        {
+            manifest = await JsonStorage.ReadAsync<RuntimeAppManifest>(manifestPath, cancellationToken);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            logger.LogWarning(ex, "Could not read the manifest copy for '{AppId}' while rehoming ports; treating every automatic port as movable.", app.Id);
+            return pinned;
+        }
+
+        if (manifest is null || !string.Equals(manifest.Id, app.Id, StringComparison.Ordinal))
+        {
+            return pinned;
+        }
+
+        foreach (var service in manifest.Services)
+        {
+            foreach (var profile in service.Runtimes.Values)
+            {
+                foreach (var port in profile.Ports)
+                {
+                    if ((port.LocalPort ?? port.HostPort) is null)
+                    {
+                        continue;
+                    }
+
+                    var key = port.Key ?? port.ContainerPort?.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    if (!string.IsNullOrWhiteSpace(key))
+                    {
+                        pinned.Add((service.Key, key!));
+                    }
+                }
+            }
+        }
+
+        return pinned;
+    }
+
+    // Tell the operator once when a port this pass moved sits behind an origin THEY own.
+    //
+    // A managed origin needs no notice: the active provider re-materializes it, which is the whole point
+    // of putting both providers behind IIngressController. An operator-owned one is the opposite — under
+    // `none`, or for an unpublished endpoint under the API provider, the stored origin usually reads
+    // `https://app.example.com` with no port at all, because it names their own reverse proxy and the
+    // upstream lives in that proxy's config. Core neither writes nor can read that file, so it cannot
+    // detect staleness and must not pretend to: a standing "broken" badge would assert something unknown.
+    // What Core does know is the event, so it reports the event, once, and says what to do with it.
+    private async Task NotifyOperatorOwnedOriginMovedAsync(
+        AppRecord app,
+        AppPortAssignment target,
+        int oldPort,
+        int newPort,
+        CancellationToken cancellationToken)
+    {
+        if (notifications is null || publicOrigins is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var endpoint = app.Endpoints.FirstOrDefault(candidate =>
+                string.Equals(candidate.Service, target.Service, StringComparison.Ordinal) &&
+                string.Equals(candidate.Port, target.PortKey, StringComparison.Ordinal));
+            if (endpoint is null)
+            {
+                return;
+            }
+
+            var settingKey = PublicOriginSettings.BuildSettingKey(endpoint.Key);
+            if (!app.Settings.TryGetValue(settingKey, out var origin) || string.IsNullOrWhiteSpace(origin.Value))
+            {
+                return;
+            }
+
+            var managed = await publicOrigins.FindManagedKeysAsync(app.Id, [settingKey], cancellationToken);
+            if (managed.Contains(settingKey))
+            {
+                return;
+            }
+
+            await notifications.PublishAsync(
+                new CoreScope(), NotificationService.BroadcastTarget, NotificationService.AudienceHostAdmin,
+                "warning",
+                $"'{app.DisplayName}' moved to a new local port",
+                $"{endpoint.Key} now listens on {newPort} instead of {oldPort}. {origin.Value} is yours to maintain, so update the upstream wherever it is configured.",
+                link: null,
+                $"public-origin-port-moved:{app.Id}:{endpoint.Key}:{newPort}",
+                cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            logger.LogWarning(exception, "Failed to publish the moved-port notification for {AppId}.", app.Id);
+        }
+    }
+
+    private async Task<int> RehomeAppPortsAsync(
+        string appId,
+        IReadOnlySet<(string Service, string PortKey)> manifestPinned,
+        CancellationToken cancellationToken)
+    {
+        var snapshot = await apps.GetAppAsync(appId, cancellationToken);
+        if (snapshot is null)
+        {
+            return 0;
+        }
+
+        var rehomed = 0;
+        // Iterate a target list captured once, not "whatever still matches" — a saturated band makes the
+        // allocator fall back to another OS-range port, which would match the selection again and spin
+        // this loop forever. The record is still re-read per target, because each move persists a new
+        // revision the next allocation has to be based on.
+        foreach (var target in FindOsAllocatedAssignments(snapshot))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (manifestPinned.Contains((target.Service, target.PortKey)))
+            {
+                logger.LogInformation(
+                    "Leaving '{AppId}' {Service}.{PortKey} on {HostPort}: the manifest pins it, and the boot backfill only classified it automatic because a stored endpoint URL cannot say so.",
+                    appId,
+                    target.Service,
+                    target.PortKey,
+                    target.HostPort);
+                continue;
+            }
+
+            var current = await apps.GetAppAsync(appId, cancellationToken);
+            if (current is null || AppRuntimeStates.IsUp(current.RuntimeState))
+            {
+                return rehomed;
+            }
+
+            // The assignment may have been moved or dropped since the snapshot; only act on one that is
+            // still a target on the persisted record.
+            if (!FindOsAllocatedAssignments(current).Any(assignment =>
+                    string.Equals(assignment.Service, target.Service, StringComparison.Ordinal) &&
+                    string.Equals(assignment.PortKey, target.PortKey, StringComparison.Ordinal)))
+            {
+                continue;
+            }
+
+            try
+            {
+                var (_, oldPort, newPort) = await portAllocator!.ReassignAsync(
+                    current,
+                    target.Service,
+                    target.PortKey,
+                    apps.ListAppRecordsAsync,
+                    async (record, ct) => (await apps.UpsertAppAsync(record, ct)).App,
+                    desiredPort: null,
+                    cancellationToken);
+                if (RuntimePortHelper.IsOsDynamicRangePort(newPort))
+                {
+                    // The band had nothing free, so the allocator fell back to the OS and the port is as
+                    // fragile as the one we just replaced. Say so: the next boot will try again, and the
+                    // operator's real fix is to free ports in the band or pin this one.
+                    logger.LogWarning(
+                        "Rehoming '{AppId}' {Service}.{PortKey} landed on {NewPort}, still inside the OS dynamic range; the automatic port band had nothing free.",
+                        appId,
+                        target.Service,
+                        target.PortKey,
+                        newPort);
+                }
+                else
+                {
+                    logger.LogInformation(
+                        "Rehomed '{AppId}' {Service}.{PortKey} off OS-allocated port {OldPort} to {NewPort}.",
+                        appId,
+                        target.Service,
+                        target.PortKey,
+                        oldPort,
+                        newPort);
+                }
+
+                await NotifyOperatorOwnedOriginMovedAsync(current, target, oldPort, newPort, cancellationToken);
+                rehomed++;
+            }
+            // One unmovable port must not skip the app's remaining ones, nor fail the boot pass. The set
+            // matches what the boot caller tolerates, plus InvalidOperationException for a record removed
+            // between the snapshot and its write — a narrower filter would let a persistence failure
+            // abort the whole pass, which is not the best-effort behavior this documents.
+            catch (Exception ex) when (ex is AppLifecycleException or IOException or UnauthorizedAccessException
+                or System.Text.Json.JsonException or InvalidOperationException)
+            {
+                logger.LogWarning(
+                    ex,
+                    "Failed to rehome '{AppId}' {Service}.{PortKey} off OS-allocated port {OldPort}; leaving it in place.",
+                    appId,
+                    target.Service,
+                    target.PortKey,
+                    target.HostPort);
+            }
+        }
+
+        return rehomed;
+    }
+
+    // The assignments the rehoming pass moves: automatic, remappable, not host-network, and holding a port
+    // an OS may hand out on its own. An assignment carrying a HOSTY_PORT_* override is left alone even when
+    // it is still classified `automatic` — the configure path can write one without re-reserving (a known
+    // gap), and the override, not the assignment, is what start resolves first.
+    internal static IReadOnlyList<AppPortAssignment> FindOsAllocatedAssignments(AppRecord app)
+        => (app.PortAssignments ?? [])
+            .Where(assignment =>
+                string.Equals(assignment.Source, AppPortSources.Automatic, StringComparison.Ordinal) &&
+                assignment.Remappable &&
+                !string.Equals(assignment.BindScope, AppPortBindScopes.HostNetwork, StringComparison.Ordinal) &&
+                RuntimePortHelper.IsOsDynamicRangePort(assignment.HostPort) &&
+                !RuntimePortHelper.HasHostPortOverride(app, assignment.Service, assignment.PortKey))
+            .OrderBy(assignment => assignment.Service, StringComparer.Ordinal)
+            .ThenBy(assignment => assignment.PortKey, StringComparer.Ordinal)
+            .ToArray();
 
     // Records only re-run manifest→record normalization at install/update/switch/live-start, so an app
     // installed under an older Core permanently lacked any manifest section that build did not parse —

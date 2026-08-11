@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Net;
+using Microsoft.Extensions.Logging;
 
 namespace Haas.Hosty.Core;
 
@@ -11,7 +12,7 @@ namespace Haas.Hosty.Core;
 // number — plus the Core port (Shell pins its own in its manifest; see ReservedLoopbackPorts). Resolution
 // reuses RuntimePortHelper so install and start agree.
 // See docs/features/automatic-runtime-app-ports/feature.md.
-internal sealed class RuntimePortAllocator(HostyCoreRuntimeConfig config)
+internal sealed class RuntimePortAllocator(HostyCoreRuntimeConfig config, ILogger<RuntimePortAllocator>? logger = null)
 {
     private readonly SemaphoreSlim gate = new(1, 1);
 
@@ -114,7 +115,7 @@ internal sealed class RuntimePortAllocator(HostyCoreRuntimeConfig config)
             else
             {
                 reserved.Add(oldPort);
-                newPort = RuntimePortHelper.AllocateLoopbackPort(reserved);
+                newPort = RuntimePortHelper.AllocateLoopbackPort(reserved, logger);
             }
 
             var manual = desiredPort is not null;
@@ -278,9 +279,11 @@ internal sealed class RuntimePortAllocator(HostyCoreRuntimeConfig config)
         // (service, portKey) -> (host port, protocol) for projecting endpoint URLs after resolution.
         var resolved = new Dictionary<(string Service, string PortKey), (int HostPort, string Protocol)>();
 
+        // Declaration-order list of what has to be assigned, deduplicated on (service, port key).
+        var pending = new List<(RuntimeSelectedService Service, RuntimePortManifest Port, string Key)>();
+        var seen = new HashSet<(string, string)>();
         foreach (var service in selection.Services)
         {
-            var hostNetwork = service.Runtime.IsHostNetwork;
             foreach (var port in service.Runtime.Ports)
             {
                 if (port.ContainerPort is null)
@@ -289,45 +292,74 @@ internal sealed class RuntimePortAllocator(HostyCoreRuntimeConfig config)
                 }
 
                 var key = port.Key ?? port.ContainerPort.Value.ToString(CultureInfo.InvariantCulture);
-                var identity = (service.Key, key);
-                if (resolved.ContainsKey(identity))
+                if (seen.Add((service.Key, key)))
                 {
-                    continue;
+                    pending.Add((service, port, key));
                 }
-
-                int hostPort;
-                string bindScope;
-                string source;
-                bool remappable;
-                if (hostNetwork)
-                {
-                    hostPort = port.ContainerPort.Value;
-                    bindScope = AppPortBindScopes.HostNetwork;
-                    source = AppPortSources.HostNetwork;
-                    remappable = false;
-                }
-                else
-                {
-                    hostPort = RuntimePortHelper.ResolveHostPort(record, service.Key, port, key, reserved);
-                    reserved.Add(hostPort);
-                    bindScope = string.Equals(port.Expose, "host", StringComparison.OrdinalIgnoreCase)
-                        ? AppPortBindScopes.Host
-                        : AppPortBindScopes.Loopback;
-                    (source, remappable) = ClassifySource(record, service.Key, port, key);
-                }
-
-                assignments.Add(new AppPortAssignment(
-                    Service: service.Key,
-                    PortKey: key,
-                    HostPort: hostPort,
-                    Transport: AppPortTransports.Tcp,
-                    BindScope: bindScope,
-                    Source: source,
-                    Remappable: remappable,
-                    AssignedAt: now));
-                var protocol = string.IsNullOrWhiteSpace(port.Protocol) ? "http" : port.Protocol;
-                resolved[identity] = (hostPort, protocol);
             }
+        }
+
+        // Pass 1: every port whose number this app does not get to choose — host-network, an operator
+        // override, a manifest pin, an existing reservation, a started endpoint's sticky port. Seeding
+        // the exclusion set with all of them BEFORE any automatic allocation is what stops a drawn port
+        // from landing on a number a later service pins. The old single-pass order excluded only what it
+        // had already visited, which was harmless while automatic ports came from the OS ephemeral range
+        // (nothing pins up there) and is not harmless now that they come from a band apps pin inside:
+        // two services of one app could be handed the same host port, and the record would persist it.
+        var fixedPorts = new Dictionary<(string, string), int>();
+        foreach (var (service, port, key) in pending)
+        {
+            if (service.Runtime.IsHostNetwork)
+            {
+                fixedPorts[(service.Key, key)] = port.ContainerPort!.Value;
+                continue;
+            }
+
+            if (RuntimePortHelper.TryResolvePinnedHostPort(record, service.Key, port, key, out var pinned))
+            {
+                fixedPorts[(service.Key, key)] = pinned;
+                reserved.Add(pinned);
+            }
+        }
+
+        // Pass 2: assign, allocating only the ports left over.
+        foreach (var (service, port, key) in pending)
+        {
+            var hostNetwork = service.Runtime.IsHostNetwork;
+            int hostPort;
+            string bindScope;
+            string source;
+            bool remappable;
+            if (hostNetwork)
+            {
+                hostPort = fixedPorts[(service.Key, key)];
+                bindScope = AppPortBindScopes.HostNetwork;
+                source = AppPortSources.HostNetwork;
+                remappable = false;
+            }
+            else
+            {
+                hostPort = fixedPorts.TryGetValue((service.Key, key), out var pinned)
+                    ? pinned
+                    : RuntimePortHelper.AllocateLoopbackPort(reserved, logger);
+                reserved.Add(hostPort);
+                bindScope = string.Equals(port.Expose, "host", StringComparison.OrdinalIgnoreCase)
+                    ? AppPortBindScopes.Host
+                    : AppPortBindScopes.Loopback;
+                (source, remappable) = ClassifySource(record, service.Key, port, key);
+            }
+
+            assignments.Add(new AppPortAssignment(
+                Service: service.Key,
+                PortKey: key,
+                HostPort: hostPort,
+                Transport: AppPortTransports.Tcp,
+                BindScope: bindScope,
+                Source: source,
+                Remappable: remappable,
+                AssignedAt: now));
+            var protocol = string.IsNullOrWhiteSpace(port.Protocol) ? "http" : port.Protocol;
+            resolved[(service.Key, key)] = (hostPort, protocol);
         }
 
         var endpoints = ProjectEndpointUrls(record.Endpoints ?? [], resolved);
@@ -388,11 +420,11 @@ internal sealed class RuntimePortAllocator(HostyCoreRuntimeConfig config)
     // installed its assignment is in the set below. That does drop a guarantee — before Shell installs,
     // nothing holds its pinned port — but only to the exact degree every other app already lives with: no
     // one reserves a pinned port for an app that is not installed yet. Reserving Shell's would be the
-    // special case this exists to remove. In practice the window is narrower still: allocation takes
-    // whatever the OS hands out for port 0, and every default ephemeral range (Linux 32768+, Windows and
-    // macOS 49152+) sits well above the ports apps pin. A host with a deliberately widened range could
-    // collide, and then Shell's start fails with the same reassign-able runtime_port_unavailable any app
-    // gets — recoverable by setting HOSTY_PORT_HTTP on it, which now sticks instead of being re-stamped.
+    // special case this exists to remove. In practice the window is narrower still: automatic allocation
+    // draws from the Hosty band (RuntimePortHelper.AutomaticPortRangeStart), which is deliberately above
+    // the development-port neighbourhood apps pin by hand. An app that pins inside the band could still
+    // collide, and then its start fails with the same reassign-able runtime_port_unavailable any app gets
+    // — recoverable by setting HOSTY_PORT_HTTP on it, which now sticks instead of being re-stamped.
     private HashSet<int> ReservedLoopbackPorts(IEnumerable<AppRecord> apps)
     {
         var reserved = new HashSet<int>(apps
