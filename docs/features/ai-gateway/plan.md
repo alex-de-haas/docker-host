@@ -114,7 +114,7 @@ happened.
       no app declares an MCP interface — which is currently true: none does.
 - [x] `feature.md` updated, index regenerated.
 
-Version outcome: `apps/ai-gateway` minor, `apps/shell` minor (the question card).
+Version outcome: `apps/ai-gateway` 0.5.2 → 0.6.0, `apps/shell` 0.54.0 → 0.55.0 (the question card).
 
 ### Deferred — deliberately not in this iteration
 
