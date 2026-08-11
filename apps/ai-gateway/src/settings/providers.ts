@@ -57,7 +57,13 @@ export class ProviderDirectory {
         return null;
       }
       const body = (await response.json()) as { apps?: unknown };
-      entries = Array.isArray(body.apps) ? (body.apps as AppDirectoryEntry[]) : [];
+      // A 200 whose body is not the expected shape is a failed read, not an empty fleet. Treating it
+      // as empty would flow into prune([]) below and permanently delete every provider toggle the
+      // operator had set — data loss caused by a version skew or a mangling intermediary.
+      if (!Array.isArray(body.apps)) {
+        return null;
+      }
+      entries = body.apps as AppDirectoryEntry[];
     } catch {
       return null;
     }

@@ -526,6 +526,38 @@ describe("gateway", () => {
     }
   });
 
+  it("does not wipe provider toggles when Core answers 200 with a malformed body", async () => {
+    // The dangerous path: a 200 whose body is not the expected shape would otherwise read as an
+    // empty fleet, flow into prune([]) and permanently delete every toggle the operator had set.
+    const core = createServer((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ unexpected: "shape" }));
+    });
+    await new Promise<void>((resolve) => core.listen(0, resolve));
+    const coreOrigin = `http://127.0.0.1:${(core.address() as AddressInfo).port}`;
+
+    await settings.update({ mcpProviders: { "com.example.notes": true } });
+    const directory = new ProviderDirectory(coreOrigin, "service-token", "hosty.ai-gateway");
+    const server3 = createGatewayServer(manager, new FakeHarnessAdapter(), settings, directory);
+    await new Promise<void>((resolve) => server3.listen(0, resolve));
+    const origin3 = `http://127.0.0.1:${(server3.address() as AddressInfo).port}`;
+
+    try {
+      const response = await fetch(`${origin3}/api/settings`, {
+        headers: { authorization: `Bearer ${mintToken("host.admin")}` },
+      });
+      const body = (await response.json()) as {
+        discovery: string;
+        settings: { mcpProviders: Record<string, boolean> };
+      };
+      expect(body.discovery).toBe("unavailable");
+      expect(body.settings.mcpProviders).toEqual({ "com.example.notes": true });
+    } finally {
+      await new Promise((resolve) => server3.close(resolve));
+      await new Promise((resolve) => core.close(resolve));
+    }
+  });
+
   it("drops a failed harness run so the next message starts a fresh one", async () => {
     let starts = 0;
     const failing: import("./harness/adapter.js").HarnessAdapter = {

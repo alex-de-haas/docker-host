@@ -85,6 +85,14 @@ which are enabled; Core stays the registry.
   and reports an unreachable Core as `discovery: "unavailable"` rather than as an empty list — an
   unreachable Core and a host where no app declares MCP are different facts, and conflating them
   would quietly tell the operator their apps vanished.
+- The same distinction is load-bearing twice more, and both were caught in review after being got
+  wrong first:
+  - A `200` whose body is not the expected shape counts as a failed read, **not** an empty fleet.
+    Otherwise it flows into the prune and permanently deletes every provider toggle the operator set
+    — data loss from a version skew. Asserted by a test that goes red without the guard.
+  - `list_people` checks the directory snapshot's status before projecting it. An unreachable
+    directory returns an `isError` result saying so, because reporting zero people during an outage
+    is a false statement about the domain rather than a report about the failure.
 - demo-app has no test suite; its MCP route is covered by `tsc`, `eslint` and `next build`, the same
   gates as the rest of that app.
 - Not yet done: no MCP client has called the demo-app endpoint. The contract is exercised by Core's

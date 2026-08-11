@@ -140,6 +140,19 @@ async function callTool(
     }
 
     const directory = await getAppDirectorySnapshot();
+    if (directory.status !== "ok") {
+      // An unreachable directory is not an empty one. Returning zero people here would have the
+      // agent report "there is nobody" during an outage — a false statement about the domain rather
+      // than a report about the failure.
+      return toolResult(
+        id,
+        {
+          error: `The people directory is unavailable (${directory.status}${directory.error ? `: ${directory.error.message}` : ""}). This is a failure to read, not an empty directory.`,
+        },
+        true,
+      );
+    }
+
     return toolResult(id, {
       people: directory.users.map((user) => {
         const resolved = resolveDemoDirectoryUserRole(user, assignments);

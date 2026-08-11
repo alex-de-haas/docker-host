@@ -1,6 +1,6 @@
 # AI Agent Bridge
 
-Status: Draft
+Status: In Progress
 Created: 2026-06-09
 Updated: 2026-08-11
 
@@ -523,7 +523,12 @@ Future implementation should test the old features and the new agent surface tog
 
 ## Rollout / Migration Notes
 
-This is a large multi-stage feature and should be rolled out incrementally:
+This is a large multi-stage feature and should be rolled out incrementally. Each step is designed
+here and then implemented under its **own** plan, which is what carries the Ready approval; this
+document holds the shared concepts and boundaries and records which steps have landed. Its status was
+`Draft` until 2026-08-11 while steps 2, 5 and 8 had already shipped — a stale label that read as
+"nothing here is approved to build". `In Progress` is what it has actually been since the first step
+landed.
 
 1. Document the shared concept and boundaries.
 2. Build the token infrastructure — owned by [access-tokens](../access-tokens/feature.md), with remote CLI contexts as its first consumer.
