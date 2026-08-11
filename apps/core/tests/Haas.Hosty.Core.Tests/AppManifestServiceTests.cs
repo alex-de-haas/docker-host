@@ -1076,6 +1076,106 @@ public sealed class AppManifestServiceTests
         Assert.Equal("/etc/otelcol-contrib", selection.DataTarget?.ContainerPath);
     }
 
+    [Fact]
+    public async Task LoadAsync_SynthesizesDockerCacheTargetDefaults()
+    {
+        var manifestPath = await WriteRawManifestAsync("""
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.notes",
+              "name": "Notes",
+              "version": "1.0.0",
+              "runtimeProfiles": [{ "key": "docker", "type": "docker", "default": true }],
+              "services": [{
+                "key": "app",
+                "runtimes": { "docker": { "type": "docker", "image": "ghcr.io/example/notes:1.0.0" } }
+              }],
+              "cache": { "enabled": true }
+            }
+            """);
+
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+
+        Assert.Equal("/app/cache", selection.CacheTarget?.ContainerPath);
+        Assert.Equal("HOSTY_APP_CACHE_DIR", selection.CacheTarget?.Environment);
+        Assert.Equal("app", selection.CacheTarget?.Service);
+    }
+
+    [Fact]
+    public async Task LoadAsync_SelectsExplicitCacheTarget()
+    {
+        var manifestPath = await WriteRawManifestAsync("""
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.notes",
+              "name": "Notes",
+              "version": "1.0.0",
+              "runtimeProfiles": [{ "key": "docker", "type": "docker", "default": true }],
+              "services": [{
+                "key": "app",
+                "runtimes": { "docker": { "type": "docker", "image": "ghcr.io/example/notes:1.0.0" } }
+              }],
+              "cache": {
+                "enabled": true,
+                "targets": [{
+                  "runtime": "docker",
+                  "service": "app",
+                  "containerPath": "/var/cache/notes",
+                  "environment": "NOTES_CACHE_DIR"
+                }]
+              }
+            }
+            """);
+
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+
+        Assert.Equal("/var/cache/notes", selection.CacheTarget?.ContainerPath);
+        Assert.Equal("NOTES_CACHE_DIR", selection.CacheTarget?.Environment);
+    }
+
+    [Fact]
+    public async Task LoadAsync_LeavesCacheTargetNullWhenAbsentDisabledOrLocalCommand()
+    {
+        // Absent block.
+        var absent = await new AppManifestService().LoadAsync(await WriteManifestAsync("com.example.notes"));
+        Assert.Null(absent.CacheTarget);
+
+        // Declared but disabled.
+        var disabled = await new AppManifestService().LoadAsync(await WriteRawManifestAsync("""
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.notes",
+              "name": "Notes",
+              "version": "1.0.0",
+              "runtimeProfiles": [{ "key": "docker", "type": "docker", "default": true }],
+              "services": [{
+                "key": "app",
+                "runtimes": { "docker": { "type": "docker", "image": "ghcr.io/example/notes:1.0.0" } }
+              }],
+              "cache": { "enabled": false }
+            }
+            """));
+        Assert.Null(disabled.CacheTarget);
+
+        // Enabled under localCommand with no explicit target: the /app/cache default is
+        // docker-only; the local adapter injects the host path from `enabled` alone.
+        var local = await new AppManifestService().LoadAsync(await WriteRawManifestAsync("""
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.notes",
+              "name": "Notes",
+              "version": "1.0.0",
+              "runtimeProfiles": [{ "key": "dev", "type": "localCommand", "default": true }],
+              "services": [{
+                "key": "app",
+                "runtimes": { "dev": { "type": "localCommand", "command": "npm run dev" } }
+              }],
+              "cache": { "enabled": true }
+            }
+            """));
+        Assert.Null(local.CacheTarget);
+    }
+
     private static string ResolveRepoFile(string relativePath)
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

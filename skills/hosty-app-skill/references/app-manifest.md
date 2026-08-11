@@ -97,6 +97,25 @@ Use `data.enabled: true` when the app needs a primary persistent data directory.
 
 When an operator takes a manual backup of a running app, Core briefly stops and restarts the app to copy a consistent snapshot (the same happens for updates and runtime switches). Design the app to tolerate a clean stop/restart at any time and to flush or checkpoint persistent state on shutdown.
 
+### Cache Directory
+
+Use `cache.enabled: true` for **derived, rebuildable data** — media indexes, transcode output, downloaded artwork — that would bloat backups for nothing. The cache directory persists across restarts, updates, and runtime switches like `data` does, but it is never backed up and never restored, and it is deleted together with `data` when the operator removes the app with its data. The block mirrors `data` exactly:
+
+```jsonc
+"cache": {
+  "enabled": true,
+  "targets": [
+    { "runtime": "docker", "service": "api", "containerPath": "/app/cache", "environment": "HOSTY_APP_CACHE_DIR" },
+    { "runtime": "dev", "environment": "HOSTY_APP_CACHE_DIR" }
+  ]
+}
+```
+
+- Under a `docker` profile with no explicit target, Core synthesizes the default: `/app/cache` bind-mounted into the first service, announced as `HOSTY_APP_CACHE_DIR`.
+- Under `localCommand`/`dev` runtimes no target is needed: `enabled: true` alone injects `HOSTY_APP_CACHE_DIR` with the host path.
+- **The app must treat cache content as absent-at-any-time**: a restore can make the database older than the cache, a runtime switch to a profile without a cache target runs without the variable entirely (that is not an error, unlike a missing `data` target), and the operator may delete the directory between runs. Key cache entries so stale ones invalidate themselves — for example by stamping them with the source file's size and mtime.
+- Additive under `app.0.1`; a Core that predates the contract simply never sets the variable, so apps should fall back (typically to a subdirectory of `HOSTY_APP_DATA_DIR`).
+
 ## External Mounts
 
 Use `externalMounts` when the app needs large operator-owned host folders that live **outside** app data — for example media catalog roots. Unlike `data`, external mounts are operator-configured after install, are never backed up or deleted by Hosty, and survive update / restart / runtime-switch / app removal.

@@ -25,6 +25,34 @@ public sealed class AppBackupServiceTests
     }
 
     [Fact]
+    public async Task BackupAndRestore_IgnoreTheCacheSibling()
+    {
+        var fixture = BackupFixture.Create();
+        await File.WriteAllTextAsync(Path.Combine(fixture.DataPath, "notes.txt"), "kept");
+        // The cache directory sits beside data/, which is the entire exclusion mechanism:
+        // this test pins the layout so a cache move into data/ cannot go unnoticed.
+        var cachePath = Path.Combine(Path.GetDirectoryName(fixture.DataPath)!, "cache");
+        Directory.CreateDirectory(cachePath);
+        await File.WriteAllTextAsync(Path.Combine(cachePath, "entry.idx"), "derived");
+
+        var backup = await fixture.Service.CreateBackupAsync("com.example.notes", "manual");
+
+        Assert.NotNull(backup);
+        using (var archive = System.IO.Compression.ZipFile.OpenRead(backup.ArchivePath))
+        {
+            Assert.Contains(archive.Entries, entry => entry.Name == "notes.txt");
+            Assert.DoesNotContain(archive.Entries, entry => entry.FullName.Contains("cache", StringComparison.Ordinal));
+        }
+
+        await File.WriteAllTextAsync(Path.Combine(fixture.DataPath, "notes.txt"), "changed");
+        var restored = await fixture.Service.RestoreBackupAsync("com.example.notes", backup.BackupId, createPreRestoreBackup: false);
+
+        Assert.NotNull(restored);
+        Assert.Equal("kept", await File.ReadAllTextAsync(Path.Combine(fixture.DataPath, "notes.txt")));
+        Assert.Equal("derived", await File.ReadAllTextAsync(Path.Combine(cachePath, "entry.idx")));
+    }
+
+    [Fact]
     public async Task CreateBackupAsync_WritesTheArchiveAndMetadataOwnerOnly()
     {
         if (OperatingSystem.IsWindows())

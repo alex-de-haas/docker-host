@@ -784,6 +784,52 @@ public sealed class DockerRuntimeAdapterTests
         }
     }
 
+    [Fact]
+    public async Task StartAsync_BindsCacheTargetAndInjectsItsEnvironment()
+    {
+        var digest = "sha256:" + new string('b', 64);
+        var runner = new FakeDockerCommandRunner();
+        var appRoot = Path.Combine(Path.GetTempPath(), $"hosty-docker-cache-test-{Guid.NewGuid():N}");
+        try
+        {
+            var context = CreateDockerContext(CreateDockerAppRecord("pinned", LockMap(digest))) with
+            {
+                AppRoot = appRoot,
+                AppDataPath = Path.Combine(appRoot, "data"),
+                AppCachePath = Path.Combine(appRoot, "cache"),
+            };
+            context = context with
+            {
+                Manifest = context.Manifest with
+                {
+                    CacheTarget = new RuntimeAppDataTarget
+                    {
+                        Runtime = "docker",
+                        Service = "app",
+                        ContainerPath = "/app/cache",
+                        Environment = "HOSTY_APP_CACHE_DIR",
+                    },
+                },
+            };
+
+            await CreateAdapter(runner).StartAsync(context);
+
+            var run = runner.Find("run");
+            Assert.NotNull(run);
+            var arguments = string.Join(' ', run);
+            Assert.Contains($"-v {Path.Combine(appRoot, "cache")}:/app/cache", arguments, StringComparison.Ordinal);
+            Assert.Contains("-e HOSTY_APP_CACHE_DIR=/app/cache", arguments, StringComparison.Ordinal);
+            Assert.True(Directory.Exists(Path.Combine(appRoot, "cache")));
+        }
+        finally
+        {
+            if (Directory.Exists(appRoot))
+            {
+                Directory.Delete(appRoot, recursive: true);
+            }
+        }
+    }
+
     private static RuntimeLifecycleContext CreateDockerContext(AppRecord app)
     {
         var service = new RuntimeSelectedService(

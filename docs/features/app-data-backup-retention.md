@@ -2,7 +2,7 @@
 
 ## Description
 
-Hosty manages retention for app data backups stored under the Hosty backup root. Backups cover only the primary app `data/` directory; external mounts and additional app storage mappings are excluded from retention cleanup.
+Hosty manages retention for app data backups stored under the Hosty backup root. Backups cover only the primary app `data/` directory; the app `cache/` directory ([app-cache-storage](app-cache-storage/feature.md)), external mounts, and additional app storage mappings are excluded from backups and from retention cleanup.
 
 ```mermaid
 flowchart LR
