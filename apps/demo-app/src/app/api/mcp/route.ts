@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { validateDelegatedToken, type DelegatedTokenClaims } from "@hosty-sdk/app/delegated";
 import { getAppDirectorySnapshot } from "@/lib/host-auth";
+import { getDemoConfig } from "@/lib/demo-config";
 import {
   readDemoAppRoleAssignments,
   resolveDemoAppPermissions,
@@ -60,12 +61,17 @@ export async function POST(request: Request) {
   }
 
   switch (body.method) {
-    case "initialize":
+    case "initialize": {
+      // Identity comes from the app's own resolved config (HOSTY_APP_ID / HOSTY_APP_VERSION, which
+      // Core injects) rather than literals: a hard-coded pair silently drifts from the manifest at
+      // the next version bump, and this file is meant to be copied.
+      const config = getDemoConfig();
       return jsonRpcResult(id, {
         protocolVersion: PROTOCOL_VERSION,
         capabilities: { tools: {} },
-        serverInfo: { name: "com.haas.demo-app", version: "1" },
+        serverInfo: { name: config.appId, version: config.appVersion },
       });
+    }
     case "tools/list":
       return jsonRpcResult(id, { tools: TOOLS });
     case "tools/call":
@@ -121,9 +127,16 @@ async function callTool(
       // A refusal the model can act on: it names the permission and the role that lacks it, so the
       // agent can explain the gap instead of retrying blindly. Still a normal tool result — a
       // transport error would just end the turn.
-      return toolResult(id, {
-        error: `The app role '${permissions.role}' does not grant demo.people.read, so this directory is not readable for ${claims.sub}.`,
-      });
+      return toolResult(
+        id,
+        {
+          error: `The app role '${permissions.role}' does not grant demo.people.read, so this directory is not readable for ${claims.sub}.`,
+        },
+        // isError is the protocol's own failure signal: a client can tell the call failed without
+        // parsing the JSON inside the text content. It stays a tool *result*, so the model still
+        // reads the explanation and can act on it — unlike a JSON-RPC error, which just ends the turn.
+        true,
+      );
     }
 
     const directory = await getAppDirectorySnapshot();
@@ -153,8 +166,11 @@ function readDelegatedClaims(request: Request): DelegatedTokenClaims | null {
 }
 
 /** Tool payloads go back as JSON text content, the shape MCP clients expect. */
-function toolResult(id: number | string | null, payload: unknown) {
-  return jsonRpcResult(id, { content: [{ type: "text", text: JSON.stringify(payload) }] });
+function toolResult(id: number | string | null, payload: unknown, isError = false) {
+  return jsonRpcResult(id, {
+    content: [{ type: "text", text: JSON.stringify(payload) }],
+    ...(isError ? { isError: true } : {}),
+  });
 }
 
 function jsonRpcResult(id: number | string | null, result: unknown) {

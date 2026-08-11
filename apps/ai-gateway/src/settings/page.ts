@@ -96,7 +96,7 @@ function renderProviders() {
   if (state.discovery !== "ok") {
     const warn = document.createElement("p");
     warn.className = "banner";
-    warn.textContent = "Could not reach Core to discover apps, so this list may be incomplete. Existing choices are unchanged.";
+    warn.textContent = "Could not reach Core, so the app list could not be loaded. Providers you have already enabled are unchanged and still in effect.";
     host.append(warn);
     return;
   }

@@ -64,8 +64,13 @@ which are enabled; Core stays the registry.
 - Authentication is checked before the method is dispatched, so an unauthenticated caller learns
   nothing about which tools exist.
 - `list_people` requires `demo.people.read` **for the delegated actor**, resolved through the app's
-  own role model. A refusal comes back as a normal tool result naming the permission and the role
-  that lacks it, so the agent can explain the gap; a transport error would just end the turn.
+  own role model. A refusal comes back as a tool result carrying `isError: true` — the protocol's own
+  failure signal, so a client knows the call failed without parsing the JSON inside the text content
+  — while the explanation naming the permission and the role that lacks it stays readable to the
+  model. A JSON-RPC error would instead just end the turn.
+- `serverInfo` is read from the app's resolved config (`HOSTY_APP_ID` / `HOSTY_APP_VERSION`, injected
+  by Core) rather than written as literals: hard-coded identity drifts from the manifest at the next
+  version bump, and a reference implementation is copied as-is.
 - `get_my_app_role` returns the caller's resolved role, its source, and the permissions it grants —
   the app turning a Hosty identity into its own domain role, which is the step every Hosty-aware app
   has to implement.
