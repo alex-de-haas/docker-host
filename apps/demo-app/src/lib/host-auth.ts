@@ -257,7 +257,7 @@ async function getAppSessionSnapshot(headersList: HeaderReader): Promise<AppSess
   }
 }
 
-async function getAppDirectorySnapshot(): Promise<AppDirectorySnapshot> {
+export async function getAppDirectorySnapshot(): Promise<AppDirectorySnapshot> {
   const config = getDemoConfig();
   const endpoint = buildAppDirectoryEndpoint(config.host.coreOrigin, config.host.appId);
   const serviceToken = process.env.HOSTY_APP_SERVICE_TOKEN;

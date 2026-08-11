@@ -98,7 +98,16 @@ internal static class DomainEndpoints
 
             var installed = await lifecycle.ListAppsAsync(cancellationToken);
             return CoreJson.Json(new AppDirectoryResponse(
-                installed.Select(summary => new AppDirectoryEntry(summary.Id, summary.DisplayName)).ToArray()));
+                installed
+                    .Select(summary => new AppDirectoryEntry(
+                        summary.Id,
+                        summary.DisplayName,
+                        summary.RuntimeState,
+                        (summary.Interfaces ?? new Dictionary<string, IReadOnlyList<AppInterfaceSummary>>())
+                            .SelectMany(pair => pair.Value.Select(declaration =>
+                                new AppDirectoryInterface(pair.Key, declaration.Key, declaration.Url)))
+                            .ToArray()))
+                    .ToArray()));
         });
 
         // App-reported audit events (docs/features/ai-gateway/plan.md): the AI gateway reports
@@ -288,7 +297,14 @@ internal sealed record InstalledAppsResponse(IReadOnlyList<string> AppIds);
 // Telemetry UI) to label their appId-keyed data. A generic capability, not telemetry-specific.
 internal sealed record AppDirectoryResponse(IReadOnlyList<AppDirectoryEntry> Apps);
 
-internal sealed record AppDirectoryEntry(string Id, string DisplayName);
+internal sealed record AppDirectoryEntry(
+    string Id,
+    string DisplayName,
+    string RuntimeState,
+    IReadOnlyList<AppDirectoryInterface> Interfaces);
+
+/// One declared platform interface, resolved to a ready-to-call URL from the app's endpoints.
+internal sealed record AppDirectoryInterface(string Name, string Key, string? Url);
 
 internal sealed record AppUpdateAvailabilityResponse(string AppId, bool Installed, bool UpdateAvailable);
 

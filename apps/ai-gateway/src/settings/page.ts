@@ -55,7 +55,7 @@ const STYLES = `
 // same posture as the chat panel, and it keeps the gateway out of the business of storing operator
 // credentials. Without an embedder it says so instead of silently rendering an empty form.
 const SCRIPT = `
-const state = { settings: null, harness: null, providers: [] };
+const state = { settings: null, harness: null, providers: [], discovery: "ok" };
 
 function token() {
   return new Promise((resolve, reject) => {
@@ -93,6 +93,13 @@ function say(text, kind) {
 function renderProviders() {
   const host = document.getElementById("providers");
   host.innerHTML = "";
+  if (state.discovery !== "ok") {
+    const warn = document.createElement("p");
+    warn.className = "banner";
+    warn.textContent = "Could not reach Core to discover apps, so this list may be incomplete. Existing choices are unchanged.";
+    host.append(warn);
+    return;
+  }
   if (state.providers.length === 0) {
     const empty = document.createElement("p");
     empty.className = "empty";
@@ -109,7 +116,8 @@ function renderProviders() {
     name.textContent = provider.displayName || provider.appId;
     const id = document.createElement("div");
     id.className = "id";
-    id.textContent = provider.appId + (provider.url ? " · " + provider.url : "");
+    id.textContent = provider.appId + (provider.url ? " · " + provider.url : " · no reachable URL")
+      + (provider.running ? "" : " · stopped");
     meta.append(name, id);
     const toggle = document.createElement("button");
     const enabled = state.settings.mcpProviders[provider.appId] === true;
@@ -141,6 +149,7 @@ async function load() {
     state.settings = body.settings;
     state.harness = body.harness;
     state.providers = body.providers || [];
+    state.discovery = body.discovery || "ok";
     document.getElementById("prompt").value = state.settings.systemPrompt;
     document.getElementById("harness").textContent = state.harness.name;
     renderProviders();
