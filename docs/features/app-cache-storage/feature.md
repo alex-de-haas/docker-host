@@ -40,7 +40,10 @@ The manifest block mirrors `data` (same shape, same manifest type), additive und
   exists only for apps that declared it.
 - **App record**: a `cache` storage mapping is stored beside `data`, and
   install/update/runtime-switch plans diff both keys the same way
-  (`cache:added:…`, `cache:target:…->…`, `cache:removed:…`).
+  (`cache:added:…`, `cache:target:…->…`, `cache:removed:…`). The mapping exists
+  for the `enabled`-only localCommand form too — no container anywhere, so its
+  target path is the host path itself; record and plan diffs resolve it through
+  one `EffectiveCacheTargetPath`, so they cannot disagree with the adapter.
 
 ## Lifecycle
 

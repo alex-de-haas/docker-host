@@ -816,9 +816,9 @@ public sealed class DockerRuntimeAdapterTests
 
             var run = runner.Find("run");
             Assert.NotNull(run);
-            var arguments = string.Join(' ', run);
-            Assert.Contains($"-v {Path.Combine(appRoot, "cache")}:/app/cache", arguments, StringComparison.Ordinal);
-            Assert.Contains("-e HOSTY_APP_CACHE_DIR=/app/cache", arguments, StringComparison.Ordinal);
+            var arguments = string.Join(' ', run);
+            Assert.Contains($"-v {Path.Combine(appRoot, "cache")}:/app/cache", arguments, StringComparison.Ordinal);
+            Assert.Contains("-e HOSTY_APP_CACHE_DIR=/app/cache", arguments, StringComparison.Ordinal);
             Assert.True(Directory.Exists(Path.Combine(appRoot, "cache")));
         }
         finally

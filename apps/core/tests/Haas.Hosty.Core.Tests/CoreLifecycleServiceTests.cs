@@ -905,6 +905,46 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task Install_RecordsCacheMappingForTargetlessLocalRuntime()
+    {
+        // The `enabled`-only localCommand form resolves no CacheTarget, yet the adapter still
+        // creates and injects the cache — the record must reflect that, or update/switch plans
+        // diff against a missing mapping and report false cache transitions.
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifestPath = Path.Combine(Path.GetTempPath(), $"hosty-local-cache-{Guid.NewGuid():N}.json");
+        await File.WriteAllTextAsync(manifestPath, """
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.notes",
+              "name": "Notes",
+              "version": "1.0.0",
+              "runtimeProfiles": [{ "key": "dev", "type": "localCommand", "default": true }],
+              "services": [{
+                "key": "app",
+                "runtimes": { "dev": { "type": "localCommand", "command": "npm run dev" } }
+              }],
+              "cache": { "enabled": true }
+            }
+            """);
+        try
+        {
+            await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath));
+
+            var app = await fixture.Apps.GetAppAsync("com.example.notes");
+            var mapping = Assert.Single(app!.StorageMappings, candidate => candidate.Key == "cache");
+            var cachePath = Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "cache");
+            // No container anywhere in a localCommand profile, so the target is the host path itself.
+            Assert.Equal(cachePath, mapping.HostPath);
+            Assert.Equal(cachePath, mapping.TargetPath);
+            Assert.True(Directory.Exists(cachePath));
+        }
+        finally
+        {
+            File.Delete(manifestPath);
+        }
+    }
+
+    [Fact]
     public async Task RemoveAsync_DiscardsConfigWhenDataDeleted()
     {
         var fixture = await LifecycleFixture.CreateAsync();

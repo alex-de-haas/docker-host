@@ -3265,12 +3265,12 @@ internal sealed class CoreLifecycleService(
                 ReadOnly: false));
         }
 
-        if (selection.CacheTarget is not null)
+        if (EffectiveCacheTargetPath(selection, manifest.Id!) is { } cacheTargetPath)
         {
             storageMappings.Add(new(
                 Key: "cache",
                 HostPath: GetAppCachePath(manifest.Id!),
-                TargetPath: selection.CacheTarget.ContainerPath ?? GetAppCachePath(manifest.Id!),
+                TargetPath: cacheTargetPath,
                 ReadOnly: false));
         }
         var endpointContracts = manifest.Endpoints.Count == 0
@@ -5363,17 +5363,35 @@ internal sealed class CoreLifecycleService(
         }
     }
 
+    // The cache target path a selection actually produces, regardless of how it was declared.
+    // CacheTarget covers docker (explicit or synthesized) and explicitly-targeted profiles; the
+    // `enabled`-only localCommand form has no target yet still gets the host-path cache from the
+    // adapter, so the record and the plan diffs must see it too — otherwise a runtime switch
+    // reports a false cache:removed while the directory keeps existing.
+    private string? EffectiveCacheTargetPath(RuntimeAppManifestSelection selection, string appId)
+    {
+        if (selection.CacheTarget is not null)
+        {
+            return selection.CacheTarget.ContainerPath ?? GetAppCachePath(appId);
+        }
+
+        return selection.Manifest.Cache?.Enabled == true ? GetAppCachePath(appId) : null;
+    }
+
     private void AddDataTargetChanges(List<string> changes, AppRecord app, RuntimeAppManifestSelection targetSelection)
     {
-        AddStorageTargetChanges(changes, app, "data", targetSelection.DataTarget, GetAppDataPath(app.Id), reportCompatible: true);
-        AddStorageTargetChanges(changes, app, "cache", targetSelection.CacheTarget, GetAppCachePath(app.Id), reportCompatible: true);
+        AddStorageTargetChanges(changes, app, "data", EffectiveDataTargetPath(targetSelection, app.Id), reportCompatible: true);
+        AddStorageTargetChanges(changes, app, "cache", EffectiveCacheTargetPath(targetSelection, app.Id), reportCompatible: true);
     }
 
     private void AddUpdateDataTargetChanges(List<string> changes, AppRecord app, RuntimeAppManifestSelection targetSelection)
     {
-        AddStorageTargetChanges(changes, app, "data", targetSelection.DataTarget, GetAppDataPath(app.Id), reportCompatible: false);
-        AddStorageTargetChanges(changes, app, "cache", targetSelection.CacheTarget, GetAppCachePath(app.Id), reportCompatible: false);
+        AddStorageTargetChanges(changes, app, "data", EffectiveDataTargetPath(targetSelection, app.Id), reportCompatible: false);
+        AddStorageTargetChanges(changes, app, "cache", EffectiveCacheTargetPath(targetSelection, app.Id), reportCompatible: false);
     }
+
+    private string? EffectiveDataTargetPath(RuntimeAppManifestSelection selection, string appId)
+        => selection.DataTarget is null ? null : selection.DataTarget.ContainerPath ?? GetAppDataPath(appId);
 
     // One diff for both storage keys. `reportCompatible` is the switch-plan variant, where an
     // unchanged target is still worth a line; update plans stay silent about it.
@@ -5381,12 +5399,10 @@ internal sealed class CoreLifecycleService(
         List<string> changes,
         AppRecord app,
         string key,
-        RuntimeAppDataTarget? target,
-        string defaultTargetPath,
+        string? targetPath,
         bool reportCompatible)
     {
         var current = app.StorageMappings.FirstOrDefault(mapping => string.Equals(mapping.Key, key, StringComparison.Ordinal));
-        var targetPath = target is null ? null : target.ContainerPath ?? defaultTargetPath;
         if (current is null && targetPath is null)
         {
             return;
