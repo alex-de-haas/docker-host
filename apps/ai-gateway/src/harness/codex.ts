@@ -4,6 +4,7 @@ import path from "node:path";
 import type {
   HarnessAdapter,
   HarnessAvailability,
+  HarnessCapabilities,
   HarnessEvent,
   HarnessRun,
   HarnessStartOptions,
@@ -37,6 +38,11 @@ function spawnTarget(args: string[]): { command: string; args: string[] } {
 
 export class CodexHarnessAdapter implements HarnessAdapter {
   readonly name = "codex-app-server";
+  // No questions: the mechanism exists but is experimental, off by default, and its shape is only
+  // inferable from binary symbols — see REQUEST_USER_INPUT_METHOD in codex-protocol.ts. No live
+  // reconfiguration either: the protocol has no setMcpServers equivalent, so a settings change here
+  // takes effect at the next session and the UI must say so.
+  readonly capabilities: HarnessCapabilities = { questions: false, liveReconfigure: false };
 
   constructor(private readonly auth: CodexAuthConfig) {}
 
@@ -103,6 +109,8 @@ class CodexRun implements HarnessRun {
   private ready: Promise<void>;
   private turnActive = false;
   private stopped = false;
+  /** The operator prompt rides on the first message only; later turns must not repeat it. */
+  private systemPromptSent = false;
 
   constructor(
     private readonly options: HarnessStartOptions,
@@ -143,7 +151,17 @@ class CodexRun implements HarnessRun {
   }
 
   send(text: string): void {
-    this.queue.push(text);
+    // Codex's app-server protocol exposes no instruction channel the gateway can set per session, so
+    // the operator prompt rides in once as a header on the first message — the same shape the panel
+    // already uses for page context. Additive by construction: it prepends, and Codex's own
+    // instruction sources are untouched.
+    const prompt = this.options.systemPrompt?.trim();
+    if (prompt && !this.systemPromptSent) {
+      this.systemPromptSent = true;
+      this.queue.push(`[Hosty operator instructions]\n${prompt}\n\n${text}`);
+    } else {
+      this.queue.push(text);
+    }
     void this.pump();
   }
 
@@ -166,6 +184,12 @@ class CodexRun implements HarnessRun {
       ),
     });
     return true;
+  }
+
+  // Never any pending question: this adapter reports questions: false, so the manager will not route
+  // one here. Present because the contract requires it, and returning false is the correct answer.
+  resolveQuestion(): boolean {
+    return false;
   }
 
   async interrupt(): Promise<void> {

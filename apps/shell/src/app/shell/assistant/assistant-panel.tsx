@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, RotateCcw, Send, Sparkles, Wrench } from "lucide-react";
+import { HelpCircle, Loader2, RotateCcw, Send, Sparkles, Wrench } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -11,6 +11,7 @@ import {
   AssistantClient,
   type AssistantEvent,
   type AssistantGateway,
+  type AssistantQuestion,
   type AssistantSession,
   type HarnessHealth,
 } from "./assistant-client";
@@ -191,6 +192,20 @@ export function AssistantPanel({
     [client, session],
   );
 
+  const answer = useCallback(
+    async (questionId: string, answers: Record<string, string>) => {
+      if (!session) {
+        return;
+      }
+      try {
+        await client.resolveQuestion(session.id, questionId, answers);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      }
+    },
+    [client, session],
+  );
+
   const decidedApprovals = useMemo(() => {
     const decisions = new Map<string, string>();
     for (const event of events) {
@@ -199,6 +214,18 @@ export function AssistantPanel({
       }
     }
     return decisions;
+  }, [events]);
+
+  // Answered questions collapse to their chosen values, the same way a resolved approval collapses
+  // to a badge — a replayed transcript must not offer buttons for a pause that is already over.
+  const answeredQuestions = useMemo(() => {
+    const answers = new Map<string, Record<string, string>>();
+    for (const event of events) {
+      if (event.type === "question_answered") {
+        answers.set(String(event.questionId), (event.answers ?? {}) as Record<string, string>);
+      }
+    }
+    return answers;
   }, [events]);
 
   return (
@@ -259,7 +286,13 @@ export function AssistantPanel({
                   ? decidedApprovals.get(String(event.approvalId)) ?? null
                   : null
               }
+              answers={
+                event.type === "question_request"
+                  ? answeredQuestions.get(String(event.questionId)) ?? null
+                  : null
+              }
               onDecide={decide}
+              onAnswer={answer}
             />
           ))}
           {draft && (
@@ -303,11 +336,15 @@ export function AssistantPanel({
 function TranscriptEvent({
   event,
   decision,
+  answers,
   onDecide,
+  onAnswer,
 }: {
   event: AssistantEvent;
   decision: string | null;
+  answers: Record<string, string> | null;
   onDecide: (approvalId: string, decision: "allow" | "deny") => Promise<void>;
+  onAnswer: (questionId: string, answers: Record<string, string>) => Promise<void>;
 }) {
   switch (event.type) {
     case "user_message":
@@ -354,14 +391,156 @@ function TranscriptEvent({
         </div>
       );
     }
+    case "question_request":
+      return (
+        <QuestionCard
+          questionId={String(event.questionId)}
+          questions={(event.questions ?? []) as AssistantQuestion[]}
+          answers={answers}
+          onAnswer={onAnswer}
+        />
+      );
     case "error":
       return <InlineError message={String(event.message ?? "Assistant error")} />;
     case "result":
     case "session_created":
     case "approval_decision":
+    case "question_answered":
     case "status":
       return null;
     default:
       return null;
   }
+}
+
+// The question card. Deliberately not styled like the amber approval card: an approval asks the
+// operator to authorize something the agent wants to do, a question asks them to decide something
+// the agent cannot. Making them look alike would train the operator to treat both as "click to make
+// it go away", which is exactly the reflex an approval gate must not build.
+function QuestionCard({
+  questionId,
+  questions,
+  answers,
+  onAnswer,
+}: {
+  questionId: string;
+  questions: AssistantQuestion[];
+  /** Non-null once answered: the card collapses to what was chosen. */
+  answers: Record<string, string> | null;
+  onAnswer: (questionId: string, answers: Record<string, string>) => Promise<void>;
+}) {
+  // Selections are per question text — the same keying the gateway and harness use end to end.
+  const [selected, setSelected] = useState<Record<string, string[]>>({});
+  const [other, setOther] = useState<Record<string, string>>({});
+  const [submitting, setSubmitting] = useState(false);
+
+  const toggle = (question: AssistantQuestion, label: string) => {
+    setSelected((current) => {
+      const previous = current[question.question] ?? [];
+      if (!question.multiSelect) {
+        return { ...current, [question.question]: [label] };
+      }
+      return {
+        ...current,
+        [question.question]: previous.includes(label)
+          ? previous.filter((entry) => entry !== label)
+          : [...previous, label],
+      };
+    });
+  };
+
+  // A question counts as answered when an option is picked or free text is typed. Multi-select
+  // answers are joined into one comma-separated value, which is the shape the tool contract expects.
+  const collected = useMemo(() => {
+    const result: Record<string, string> = {};
+    for (const question of questions) {
+      const picks = [...(selected[question.question] ?? [])];
+      const free = (other[question.question] ?? "").trim();
+      if (free) {
+        picks.push(free);
+      }
+      if (picks.length > 0) {
+        result[question.question] = picks.join(", ");
+      }
+    }
+    return result;
+  }, [questions, selected, other]);
+
+  const complete = questions.length > 0 && questions.every((question) => collected[question.question]);
+
+  if (answers) {
+    return (
+      <div className="space-y-1.5 rounded-lg border border-sky-500/40 bg-sky-500/5 px-3 py-2 text-sm">
+        {questions.map((question) => (
+          <div key={question.question} className="flex flex-wrap items-baseline gap-1.5">
+            <span className="text-muted-foreground text-xs">{question.question}</span>
+            <Badge variant="outline">{answers[question.question] ?? "—"}</Badge>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3 rounded-lg border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-sm">
+      {questions.map((question) => {
+        const picks = selected[question.question] ?? [];
+        return (
+          <div key={question.question} className="space-y-2">
+            <div className="flex items-center gap-1.5">
+              <HelpCircle className="h-3.5 w-3.5 shrink-0 text-sky-600" aria-hidden />
+              <span className="font-medium">{question.question}</span>
+              {question.multiSelect && (
+                <Badge variant="outline" className="font-normal">
+                  choose any
+                </Badge>
+              )}
+            </div>
+            <div className="space-y-1">
+              {question.options.map((option) => (
+                <button
+                  key={option.label}
+                  type="button"
+                  onClick={() => toggle(question, option.label)}
+                  className={cn(
+                    "w-full rounded-md border px-2 py-1.5 text-left transition-colors",
+                    picks.includes(option.label)
+                      ? "border-sky-500 bg-sky-500/20"
+                      : "border-transparent bg-background/60 hover:border-sky-500/40",
+                  )}
+                >
+                  <div className="text-sm font-medium">{option.label}</div>
+                  {option.description && (
+                    <div className="text-muted-foreground text-xs">{option.description}</div>
+                  )}
+                </button>
+              ))}
+            </div>
+            {/* "Other" is part of the tool contract, not a nicety: the model is told an Other option
+                is provided automatically, so it never lists one and the card must supply it. */}
+            <input
+              value={other[question.question] ?? ""}
+              onChange={(event) =>
+                setOther((current) => ({ ...current, [question.question]: event.target.value }))
+              }
+              placeholder="Other…"
+              className="w-full rounded-md border bg-transparent px-2 py-1 text-xs outline-none focus-visible:border-ring"
+            />
+          </div>
+        );
+      })}
+      <Button
+        type="button"
+        size="sm"
+        disabled={!complete || submitting}
+        onClick={() => {
+          setSubmitting(true);
+          void onAnswer(questionId, collected).finally(() => setSubmitting(false));
+        }}
+      >
+        {submitting ? <Loader2 className="animate-spin" /> : null}
+        Answer
+      </Button>
+    </div>
+  );
 }

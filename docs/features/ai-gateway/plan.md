@@ -1,6 +1,6 @@
 # AI Gateway — Next Iteration
 
-Status: Ready
+Status: In Progress
 Created: 2026-08-09
 Updated: 2026-08-11
 
@@ -88,22 +88,31 @@ happened.
 
 ### This iteration
 
-- [ ] Questions as a distinct resolution kind end to end: harness adapter contract, gateway event and
+- [x] Questions as a distinct resolution kind end to end: harness adapter contract, gateway event and
       event-log record, resolution route (409 on a second answer), SSE replay, cancellation.
-- [ ] `canUseTool` branch for `AskUserQuestion` that resolves with `updatedInput.answers` rather than
+- [x] `canUseTool` branch for `AskUserQuestion` that resolves with `updatedInput.answers` rather than
       a bare allow.
-- [ ] Shell question card: options with label and description, single and multi select, free-text
+- [x] Shell question card: options with label and description, single and multi select, free-text
       other, visually distinct from an approval card, rebuilt from the event log on reconnect.
-- [ ] Harness capability flags: whether the harness can ask questions, and whether it can be
+- [x] Harness capability flags: whether the harness can ask questions, and whether it can be
       reconfigured live. A harness lacking either reports that instead of hanging or silently
       ignoring a toggle, and the UI states what actually happened.
-- [ ] `ui` block in the manifest plus the settings pages in B, served from the gateway process.
-- [ ] Policy store for MCP-provider enablement: defaults to off, survives restart, prunes entries for
+- [x] `ui` block in the manifest plus the settings pages in B, served from the gateway process.
+- [x] Policy store for MCP-provider enablement: defaults to off, survives restart, prunes entries for
       uninstalled apps.
-- [ ] System-prompt storage and its append (not replace) wiring into both harnesses.
-- [ ] Umbrella execution-profile rationale revised so it no longer reads as "no mitigation needed"
+- [x] System-prompt storage and its append (not replace) wiring into both harnesses.
+- [x] Umbrella execution-profile rationale revised so it no longer reads as "no mitigation needed"
       (documentation only, no version bump) — see Accepted Risk.
-- [ ] `feature.md` updated, index regenerated.
+- [ ] **Provider discovery from Core.** The settings page renders the provider list and owns the
+      toggles, but nothing feeds it yet: no Core endpoint exposes an app's declared interfaces to
+      another app. `/api/internal/apps/{appId}/installed-apps` returns ids only and
+      `.../app-directory` returns id plus display name, deliberately — its comment says the richer
+      per-app state on `GET /api/apps` stays session-gated. The gateway holds a service token and a
+      delegated token whose audience is itself; neither reaches a session-gated route. Blocked on an
+      owner decision, since closing it means a Core change (platform version bump) and widening what
+      any app service token can read to include other apps' MCP endpoints. Until then the page says
+      no app declares an MCP interface — which is currently true: none does.
+- [x] `feature.md` updated, index regenerated.
 
 Version outcome: `apps/ai-gateway` minor, `apps/shell` minor (the question card).
 

@@ -6,6 +6,7 @@ import path from "node:path";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import { SessionStore } from "./sessions/store.js";
+import { SettingsStore } from "./settings/store.js";
 import { SessionManager } from "./sessions/manager.js";
 import { FakeHarnessAdapter } from "./harness/fake.js";
 import { createGatewayServer } from "./server.js";
@@ -49,6 +50,7 @@ async function waitFor<T>(probe: () => Promise<T | null | undefined | false>, wh
 describe("gateway", () => {
   let dataDir: string;
   let store: SessionStore;
+  let settings: SettingsStore;
   let manager: SessionManager;
   let server: Server;
   let origin: string;
@@ -58,8 +60,15 @@ describe("gateway", () => {
     process.env.HOSTY_APP_ID = "hosty.ai-gateway";
     dataDir = mkdtempSync(path.join(os.tmpdir(), "ai-gateway-test-"));
     store = new SessionStore(dataDir);
-    manager = new SessionManager(store, new FakeHarnessAdapter(), new AuditReporter(null, null, "hosty.ai-gateway"), dataDir);
-    server = createGatewayServer(manager, new FakeHarnessAdapter());
+    settings = new SettingsStore(dataDir);
+    manager = new SessionManager(
+      store,
+      new FakeHarnessAdapter(),
+      new AuditReporter(null, null, "hosty.ai-gateway"),
+      dataDir,
+      settings,
+    );
+    server = createGatewayServer(manager, new FakeHarnessAdapter(), settings);
     await new Promise<void>((resolve) => server.listen(0, resolve));
     origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   });
@@ -244,10 +253,204 @@ describe("gateway", () => {
     expect(Date.now() - started).toBeLessThan(2_500);
   });
 
+  it("asks a question and delivers the answer the harness acts on", async () => {
+    // The assertion that matters is the LAST one: the harness echoed the chosen answer back. A card
+    // that renders, closes, and delivers nothing usable is indistinguishable from a working one at
+    // the UI level — the same shape of bug that twice slipped through the Codex adapter, where only
+    // checking that *allow* performed the action revealed the gate was inert.
+    const created = await call("/api/sessions", { method: "POST", body: JSON.stringify({}) });
+    const record = (await created.json()) as { id: string };
+
+    await call(`/api/sessions/${record.id}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ text: "please ask me" }),
+    });
+
+    const asked = await waitFor(async () => {
+      const stored = await store.readEvents(record.id);
+      return stored.find((event) => event.type === "question_request") ?? null;
+    }, "question_request event");
+
+    const questions = asked.questions as Array<{ question: string; options: Array<{ label: string }> }>;
+    expect(questions[0]!.options.map((option) => option.label)).toEqual(["First", "Second"]);
+    expect(await waitFor(async () => {
+      const current = await manager.getSession(record.id);
+      return current?.status === "awaiting_question" ? current : null;
+    }, "awaiting_question status")).toBeTruthy();
+
+    const answered = await call(`/api/sessions/${record.id}/questions/${String(asked.questionId)}`, {
+      method: "POST",
+      body: JSON.stringify({ answers: { [questions[0]!.question]: "Second" } }),
+    });
+    expect(answered.status).toBe(200);
+
+    const events = await waitFor(async () => {
+      const stored = await store.readEvents(record.id);
+      return stored.some((event) => event.type === "result") ? stored : null;
+    }, "result after the answer");
+    const texts = events.filter((event) => event.type === "assistant_text").map((event) => event.text);
+    expect(texts).toContain("answered: Second");
+  });
+
+  it("refuses a second answer to the same question", async () => {
+    const created = await call("/api/sessions", { method: "POST", body: JSON.stringify({}) });
+    const record = (await created.json()) as { id: string };
+    await call(`/api/sessions/${record.id}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ text: "ask me" }),
+    });
+    const asked = await waitFor(async () => {
+      const stored = await store.readEvents(record.id);
+      return stored.find((event) => event.type === "question_request") ?? null;
+    }, "question_request event");
+    const question = (asked.questions as Array<{ question: string }>)[0]!.question;
+
+    const first = await call(`/api/sessions/${record.id}/questions/${String(asked.questionId)}`, {
+      method: "POST",
+      body: JSON.stringify({ answers: { [question]: "First" } }),
+    });
+    expect(first.status).toBe(200);
+
+    const second = await call(`/api/sessions/${record.id}/questions/${String(asked.questionId)}`, {
+      method: "POST",
+      body: JSON.stringify({ answers: { [question]: "Second" } }),
+    });
+    expect(second.status).toBe(409);
+    expect(((await second.json()) as { code: string }).code).toBe("question_not_pending");
+  });
+
+  it("replays a pending question to a reconnecting client", async () => {
+    // Closing the panel drops the stream but not the pause: a reattaching client must be able to
+    // rebuild the card, or the harness sits blocked on a question nobody can see.
+    const created = await call("/api/sessions", { method: "POST", body: JSON.stringify({}) });
+    const record = (await created.json()) as { id: string };
+    await call(`/api/sessions/${record.id}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ text: "ask me" }),
+    });
+    await waitFor(async () => {
+      const stored = await store.readEvents(record.id);
+      return stored.find((event) => event.type === "question_request") ?? null;
+    }, "question_request event");
+
+    const replayed: string[] = [];
+    const { replay, unsubscribe } = await manager.subscribe(record.id, 0, () => {});
+    for (const event of replay) {
+      replayed.push(event.type);
+    }
+    unsubscribe();
+    expect(replayed).toContain("question_request");
+  });
+
+  it("cancelling a session resolves a pending question", async () => {
+    const created = await call("/api/sessions", { method: "POST", body: JSON.stringify({}) });
+    const record = (await created.json()) as { id: string };
+    await call(`/api/sessions/${record.id}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ text: "ask me" }),
+    });
+    const asked = await waitFor(async () => {
+      const stored = await store.readEvents(record.id);
+      return stored.find((event) => event.type === "question_request") ?? null;
+    }, "question_request event");
+
+    const cancelled = await call(`/api/sessions/${record.id}/cancel`, { method: "POST" });
+    expect(cancelled.status).toBe(200);
+
+    // The pause is gone with the run, so answering it now is a 409 rather than a resurrection.
+    const late = await call(`/api/sessions/${record.id}/questions/${String(asked.questionId)}`, {
+      method: "POST",
+      body: JSON.stringify({ answers: { "Which one?": "First" } }),
+    });
+    expect(late.status).toBe(409);
+  });
+
+  it("reports harness capabilities on health", async () => {
+    const health = await fetch(`${origin}/healthz`);
+    const body = (await health.json()) as {
+      harness: { capabilities: { questions: boolean; liveReconfigure: boolean } };
+    };
+    expect(body.harness.capabilities).toEqual({ questions: true, liveReconfigure: true });
+  });
+
+  it("defaults every MCP provider to off and round-trips settings", async () => {
+    const initial = (await (await call("/api/settings")).json()) as {
+      settings: { systemPrompt: string; mcpProviders: Record<string, boolean> };
+      harness: { capabilities: { questions: boolean } };
+      limits: { systemPromptChars: number };
+    };
+    // Off by default is the security-relevant part: an app that appears in the fleet must not gain a
+    // channel into the model's context by being installed.
+    expect(initial.settings.mcpProviders).toEqual({});
+    expect(initial.settings.systemPrompt).toBe("");
+    expect(initial.harness.capabilities.questions).toBe(true);
+
+    const saved = await call("/api/settings", {
+      method: "PUT",
+      body: JSON.stringify({
+        systemPrompt: "Prefer the hosty CLI.",
+        mcpProviders: { "com.example.notes": true },
+      }),
+    });
+    expect(saved.status).toBe(200);
+
+    // Survives a restart: a fresh store over the same directory reads what was written.
+    const reread = await new SettingsStore(dataDir).read();
+    expect(reread.systemPrompt).toBe("Prefer the hosty CLI.");
+    expect(reread.mcpProviders).toEqual({ "com.example.notes": true });
+    expect(initial.limits.systemPromptChars).toBeGreaterThan(0);
+  });
+
+  it("rejects a malformed settings write instead of storing it", async () => {
+    const badPrompt = await call("/api/settings", {
+      method: "PUT",
+      body: JSON.stringify({ systemPrompt: 42 }),
+    });
+    expect(badPrompt.status).toBe(400);
+
+    const badProviders = await call("/api/settings", {
+      method: "PUT",
+      body: JSON.stringify({ mcpProviders: { "com.example.notes": "yes" } }),
+    });
+    expect(badProviders.status).toBe(400);
+
+    const oversize = await call("/api/settings", {
+      method: "PUT",
+      body: JSON.stringify({ systemPrompt: "x".repeat(20_000) }),
+    });
+    expect(oversize.status).toBe(400);
+
+    expect((await settings.read()).systemPrompt).toBe("");
+  });
+
+  it("prunes provider toggles for apps that are gone", async () => {
+    await settings.update({ mcpProviders: { "com.example.kept": true, "com.example.gone": true } });
+    const pruned = await settings.prune(["com.example.kept"]);
+    // Otherwise an uninstall/reinstall cycle would silently resurrect an enabled provider.
+    expect(pruned.mcpProviders).toEqual({ "com.example.kept": true });
+  });
+
+  it("requires a token for settings like every other /api route", async () => {
+    expect((await call("/api/settings", { method: "GET" }, null)).status).toBe(401);
+    expect((await call("/api/settings", { method: "GET" }, "host.member")).status).toBe(401);
+  });
+
+  it("serves the settings page shell without a token", async () => {
+    // The shell holds no data; everything it renders comes from the admin-gated API above. Serving
+    // it unauthenticated is what lets Shell embed it as an ordinary app UI.
+    const page = await fetch(`${origin}/settings`);
+    expect(page.status).toBe(200);
+    expect(page.headers.get("content-type")).toContain("text/html");
+    const html = await page.text();
+    expect(html).toContain("System prompt");
+    expect(html).toContain("MCP providers");
+  });
+
   it("drops a failed harness run so the next message starts a fresh one", async () => {
     let starts = 0;
     const failing: import("./harness/adapter.js").HarnessAdapter = {
       name: "failing",
+      capabilities: { questions: false, liveReconfigure: false },
       probe: async () => ({ available: true }),
       start: (options) => {
         starts += 1;
@@ -263,6 +466,7 @@ describe("gateway", () => {
               }
             }),
           resolveApproval: () => false,
+          resolveQuestion: () => false,
           interrupt: async () => {},
           stop: async () => {},
         };
