@@ -30,7 +30,12 @@ public sealed class EventStreamEndpointsTests
             context.Request, context.Response, fixture.Users, fixture.Clock, new CoreEventHub(),
             cts.Token, heartbeat: TimeSpan.FromMilliseconds(30));
 
-        await Task.Delay(200);
+        // Waits for the heartbeat rather than sleeping a fixed span: a loaded CI runner can burn
+        // 200ms of wall clock without the 30ms timer ever being scheduled, which fails the assertion
+        // while the code under test is perfectly correct. Observed on CI 2026-08-11 — the body held
+        // ": connected" and nothing else. The helper polls to a ~2s deadline and reports the body it
+        // actually saw, so a genuine regression still fails loudly.
+        await WaitForBodyAsync(context, ": ping\n\n");
         cts.Cancel();
         await stream;
 
