@@ -5,6 +5,7 @@ import { SessionStore } from "./sessions/store.js";
 import { SessionManager } from "./sessions/manager.js";
 import { createGatewayServer } from "./server.js";
 import { SettingsStore } from "./settings/store.js";
+import { ProviderDirectory } from "./settings/providers.js";
 import { ClaudeHarnessAdapter } from "./harness/claude.js";
 import { CodexHarnessAdapter } from "./harness/codex.js";
 import { FakeHarnessAdapter } from "./harness/fake.js";
@@ -43,7 +44,8 @@ const sweep = (): void => {
 sweep();
 const sweepTimer = setInterval(sweep, 24 * 60 * 60 * 1000);
 
-const server = createGatewayServer(manager, adapter, settings);
+const providers = new ProviderDirectory(config.coreOrigin, config.serviceToken, config.appId);
+const server = createGatewayServer(manager, adapter, settings, providers);
 server.listen(config.port, () => {
   console.log(
     `hosty.ai-gateway listening on :${config.port} (harness=${adapter.name}, data=${config.dataDir})`,

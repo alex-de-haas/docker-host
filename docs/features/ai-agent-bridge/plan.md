@@ -1,6 +1,6 @@
 # AI Agent Bridge
 
-Status: Draft
+Status: In Progress
 Created: 2026-06-09
 Updated: 2026-08-11
 
@@ -523,12 +523,17 @@ Future implementation should test the old features and the new agent surface tog
 
 ## Rollout / Migration Notes
 
-This is a large multi-stage feature and should be rolled out incrementally:
+This is a large multi-stage feature and should be rolled out incrementally. Each step is designed
+here and then implemented under its **own** plan, which is what carries the Ready approval; this
+document holds the shared concepts and boundaries and records which steps have landed. Its status was
+`Draft` until 2026-08-11 while steps 2, 5 and 8 had already shipped — a stale label that read as
+"nothing here is approved to build". `In Progress` is what it has actually been since the first step
+landed.
 
 1. Document the shared concept and boundaries.
 2. Build the token infrastructure — owned by [access-tokens](../access-tokens/feature.md), with remote CLI contexts as its first consumer.
 3. Add manifest interface discovery metadata design without model execution.
-4. Add one demo app MCP interface, preferably a project/task/time-tracking domain.
+4. Add one demo app MCP interface, preferably a project/task/time-tracking domain. Shipped 2026-08-11 — `apps/demo-app` serves `/api/mcp` and Core reports declared interfaces to apps: [app-mcp](../app-mcp/feature.md).
 5. Add embedded Core MCP: discovery, delegated token issuance, read-only observability tools. Shipped 2026-08-09 — the read-only discovery and observability tools plus the admin gate: [core-mcp](../core-mcp/feature.md). Delegated token issuance already shipped with [ai-gateway](../ai-gateway/feature.md) as a Core HTTP route rather than an MCP tool.
 6. Validate with stock external agent clients (Claude Code / Codex + a Hosty skill, static endpoint entries) — no gateway code.
 7. Add the `hosty mcp` connector (generic mode → namespaced re-export → `notifications/tools/list_changed` → remote login flow) and the Claude Code plugin packaging.

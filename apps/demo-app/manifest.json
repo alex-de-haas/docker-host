@@ -3,7 +3,7 @@
   "id": "com.haas.demo-app",
   "name": "Demo App",
   "description": "Hosty-aware demo runtime app for validating lifecycle, settings, storage, external mounts, identity, and app-owned role flows.",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "source": {
     "type": "git",
     "repository": "https://github.com/alex-de-haas/docker-host.git",
@@ -60,7 +60,9 @@
     },
     {
       "key": "frontend",
-      "dependsOn": ["backend"],
+      "dependsOn": [
+        "backend"
+      ],
       "runtimes": {
         "docker": {
           "type": "docker",
@@ -194,7 +196,10 @@
       "required": false
     }
   },
-  "capabilities": ["backup", "logs"],
+  "capabilities": [
+    "backup",
+    "logs"
+  ],
   "catalogMetadata": {
     "publisher": {
       "name": "Haas",
@@ -202,7 +207,11 @@
       "email": "demo@example.com"
     },
     "category": "Developer Tools",
-    "tags": ["demo", "example", "reference"],
+    "tags": [
+      "demo",
+      "example",
+      "reference"
+    ],
     "icon": "assets/icon.svg",
     "license": "AGPL-3.0-only",
     "links": {
@@ -211,5 +220,14 @@
     },
     "summary": "A reference Hosty runtime app used to demonstrate the platform and this catalog.",
     "descriptionFile": "docs/store.md"
+  },
+  "interfaces": {
+    "mcp": [
+      {
+        "key": "default",
+        "endpoint": "api",
+        "path": "/api/mcp"
+      }
+    ]
   }
 }

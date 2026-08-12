@@ -4,9 +4,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
-import type { Server } from "node:http";
+import { createServer, type Server } from "node:http";
 import { SessionStore } from "./sessions/store.js";
 import { SettingsStore } from "./settings/store.js";
+import { ProviderDirectory } from "./settings/providers.js";
 import { SessionManager } from "./sessions/manager.js";
 import { FakeHarnessAdapter } from "./harness/fake.js";
 import { createGatewayServer } from "./server.js";
@@ -444,6 +445,117 @@ describe("gateway", () => {
     const html = await page.text();
     expect(html).toContain("System prompt");
     expect(html).toContain("MCP providers");
+  });
+
+  it("discovers MCP providers from Core and prunes toggles for apps that are gone", async () => {
+    // Core is the registry; the gateway asks and keeps only the policy. Stood up as a real HTTP
+    // server so the service-token header and the response shape are both exercised.
+    let seenAuth: string | null = null;
+    const core = createServer((request, response) => {
+      seenAuth = request.headers.authorization ?? null;
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          apps: [
+            {
+              id: "com.haas.demo-app",
+              displayName: "Demo App",
+              runtimeState: "running",
+              interfaces: [{ name: "mcp", key: "default", url: "http://127.0.0.1:3101/api/mcp" }],
+            },
+            { id: "hosty.shell", displayName: "Shell", runtimeState: "running", interfaces: [] },
+          ],
+        }),
+      );
+    });
+    await new Promise<void>((resolve) => core.listen(0, resolve));
+    const coreOrigin = `http://127.0.0.1:${(core.address() as AddressInfo).port}`;
+
+    // A toggle for an app Core no longer lists must not survive: otherwise an uninstall/reinstall
+    // cycle silently resurrects a provider the operator once enabled.
+    await settings.update({ mcpProviders: { "com.example.gone": true } });
+
+    const directory = new ProviderDirectory(coreOrigin, "service-token", "hosty.ai-gateway");
+    const withProviders = createGatewayServer(manager, new FakeHarnessAdapter(), settings, directory);
+    await new Promise<void>((resolve) => withProviders.listen(0, resolve));
+    const providerOrigin = `http://127.0.0.1:${(withProviders.address() as AddressInfo).port}`;
+
+    // try/finally, not trailing closes: a failed assertion would otherwise leak a listening socket
+    // for the rest of the file, and a leaked listener is exactly how one broken test turns into an
+    // unrelated flaky one later.
+    try {
+      const response = await fetch(`${providerOrigin}/api/settings`, {
+        headers: { authorization: `Bearer ${mintToken("host.admin")}` },
+      });
+      const body = (await response.json()) as {
+        providers: Array<{ appId: string; url: string | null; running: boolean }>;
+        discovery: string;
+        settings: { mcpProviders: Record<string, boolean> };
+      };
+
+      expect(seenAuth).toBe("Bearer service-token");
+      expect(body.discovery).toBe("ok");
+      // Only the app that declares `mcp` — Shell declares none and must not appear.
+      expect(body.providers).toEqual([
+        { appId: "com.haas.demo-app", displayName: "Demo App", url: "http://127.0.0.1:3101/api/mcp", running: true },
+      ]);
+      expect(body.settings.mcpProviders).toEqual({});
+    } finally {
+      await new Promise((resolve) => withProviders.close(resolve));
+      await new Promise((resolve) => core.close(resolve));
+    }
+  });
+
+  it("reports discovery as unavailable rather than as an empty fleet", async () => {
+    // An unreachable Core and a host where genuinely no app declares MCP are different facts, and
+    // showing the first as the second would quietly tell the operator their apps vanished.
+    const directory = new ProviderDirectory("http://127.0.0.1:1", "service-token", "hosty.ai-gateway");
+    const server2 = createGatewayServer(manager, new FakeHarnessAdapter(), settings, directory);
+    await new Promise<void>((resolve) => server2.listen(0, resolve));
+    const origin2 = `http://127.0.0.1:${(server2.address() as AddressInfo).port}`;
+
+    try {
+      const response = await fetch(`${origin2}/api/settings`, {
+        headers: { authorization: `Bearer ${mintToken("host.admin")}` },
+      });
+      const body = (await response.json()) as { discovery: string; providers: unknown[] };
+      expect(body.discovery).toBe("unavailable");
+      expect(body.providers).toEqual([]);
+    } finally {
+      await new Promise((resolve) => server2.close(resolve));
+    }
+  });
+
+  it("does not wipe provider toggles when Core answers 200 with a malformed body", async () => {
+    // The dangerous path: a 200 whose body is not the expected shape would otherwise read as an
+    // empty fleet, flow into prune([]) and permanently delete every toggle the operator had set.
+    const core = createServer((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ unexpected: "shape" }));
+    });
+    await new Promise<void>((resolve) => core.listen(0, resolve));
+    const coreOrigin = `http://127.0.0.1:${(core.address() as AddressInfo).port}`;
+
+    await settings.update({ mcpProviders: { "com.example.notes": true } });
+    const directory = new ProviderDirectory(coreOrigin, "service-token", "hosty.ai-gateway");
+    const server3 = createGatewayServer(manager, new FakeHarnessAdapter(), settings, directory);
+    await new Promise<void>((resolve) => server3.listen(0, resolve));
+    const origin3 = `http://127.0.0.1:${(server3.address() as AddressInfo).port}`;
+
+    try {
+      const response = await fetch(`${origin3}/api/settings`, {
+        headers: { authorization: `Bearer ${mintToken("host.admin")}` },
+      });
+      const body = (await response.json()) as {
+        discovery: string;
+        settings: { mcpProviders: Record<string, boolean> };
+      };
+      expect(body.discovery).toBe("unavailable");
+      expect(body.settings.mcpProviders).toEqual({ "com.example.notes": true });
+    } finally {
+      await new Promise((resolve) => server3.close(resolve));
+      await new Promise((resolve) => core.close(resolve));
+    }
   });
 
   it("drops a failed harness run so the next message starts a fresh one", async () => {

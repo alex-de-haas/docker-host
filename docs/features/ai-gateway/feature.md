@@ -84,7 +84,10 @@ this feature.
   characters. It applies to the **next session**, not the running one: the prompt is a session's
   instruction set, and swapping it mid-conversation would leave a transcript whose halves ran under
   different instructions.
-- **MCP providers.** Installed apps declaring an `mcp` interface, each with a toggle. **New apps
+- **MCP providers.** Installed apps declaring an `mcp` interface, read from Core's app-directory
+  roster (see [app-mcp](../app-mcp/feature.md)) and refreshed on every settings read, each with a
+  toggle. An unreachable Core is reported as such rather than as an empty list — the two are
+  different facts, and conflating them would tell the operator their apps had vanished. **New apps
   default to off.** Tool names and descriptions are third-party text landing in the context of a
   model that holds host shell, so reaching an app is a decision, not a side effect of installing it.
   Toggles for uninstalled apps are pruned, so an uninstall/reinstall cycle cannot resurrect one.

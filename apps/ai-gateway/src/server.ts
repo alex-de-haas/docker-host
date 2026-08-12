@@ -4,6 +4,7 @@ import { SessionNotFoundError, type SessionManager } from "./sessions/manager.js
 import type { HarnessAdapter } from "./harness/adapter.js";
 import { MAX_SYSTEM_PROMPT_CHARS, type SettingsStore } from "./settings/store.js";
 import { renderSettingsPage } from "./settings/page.js";
+import type { ProviderDirectory } from "./settings/providers.js";
 
 // Plain node:http — the API is a handful of JSON routes plus one SSE stream; a framework would be
 // the largest dependency in the app for no gain.
@@ -20,9 +21,10 @@ export function createGatewayServer(
   manager: SessionManager,
   adapter: HarnessAdapter,
   settings: SettingsStore | null = null,
+  providers: ProviderDirectory | null = null,
 ): Server {
   return createServer((request, response) => {
-    void route(request, response, manager, adapter, settings).catch((error) => {
+    void route(request, response, manager, adapter, settings, providers).catch((error) => {
       if (error instanceof SessionNotFoundError) {
         sendJson(response, 404, { code: "session_not_found", message: error.message });
         return;
@@ -49,6 +51,7 @@ async function route(
   manager: SessionManager,
   adapter: HarnessAdapter,
   settings: SettingsStore | null,
+  providers: ProviderDirectory | null,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", "http://gateway.local");
   const method = request.method ?? "GET";
@@ -138,11 +141,21 @@ async function route(
       });
     }
 
+    // Discovery runs on read so the list follows the fleet without the operator reloading anything.
+    // A null result means Core could not be asked — reported as such rather than as an empty list,
+    // which would read as "no app declares MCP" and be a different statement.
+    const discovered = providers ? await providers.read() : null;
+    if (discovered) {
+      await settings.prune(discovered.installedAppIds);
+    }
+
     const current = await settings.read();
     // Capabilities ride along so the page can say what a change actually does on this harness
     // instead of one wording that is false on one of them.
     sendJson(response, 200, {
       settings: current,
+      providers: discovered?.providers ?? [],
+      discovery: discovered ? "ok" : "unavailable",
       harness: { name: adapter.name, capabilities: adapter.capabilities },
       limits: { systemPromptChars: MAX_SYSTEM_PROMPT_CHARS },
     });

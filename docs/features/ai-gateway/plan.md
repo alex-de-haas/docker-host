@@ -103,15 +103,9 @@ happened.
 - [x] System-prompt storage and its append (not replace) wiring into both harnesses.
 - [x] Umbrella execution-profile rationale revised so it no longer reads as "no mitigation needed"
       (documentation only, no version bump) — see Accepted Risk.
-- [ ] **Provider discovery from Core.** The settings page renders the provider list and owns the
-      toggles, but nothing feeds it yet: no Core endpoint exposes an app's declared interfaces to
-      another app. `/api/internal/apps/{appId}/installed-apps` returns ids only and
-      `.../app-directory` returns id plus display name, deliberately — its comment says the richer
-      per-app state on `GET /api/apps` stays session-gated. The gateway holds a service token and a
-      delegated token whose audience is itself; neither reaches a session-gated route. Blocked on an
-      owner decision, since closing it means a Core change (platform version bump) and widening what
-      any app service token can read to include other apps' MCP endpoints. Until then the page says
-      no app declares an MCP interface — which is currently true: none does.
+- [x] **Provider discovery from Core.** Closed 2026-08-11 by extending
+      `/api/internal/apps/{appId}/app-directory` with declared interfaces — see
+      [app-mcp](../app-mcp/feature.md) for the decision and its disclosure boundary.
 - [x] `feature.md` updated, index regenerated.
 
 Version outcome: `apps/ai-gateway` 0.5.2 → 0.6.0, `apps/shell` 0.54.0 → 0.55.0 (the question card).
