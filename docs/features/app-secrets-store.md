@@ -206,5 +206,5 @@ removing it.
 - [Promoted design](../ideas/app-secrets-store.md)
 - [Implementation plan](../planning/app-secrets-store.md)
 - [Core API](core-api/feature.md)
-- [App data backup retention](app-data-backup-retention.md)
+- [App data backup retention](app-data-backup-retention/feature.md)
 - [Hosty App SDK](../ideas/hosty-app-sdk.md)

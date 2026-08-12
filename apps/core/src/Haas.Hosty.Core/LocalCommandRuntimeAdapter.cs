@@ -474,6 +474,16 @@ internal sealed class LocalCommandRuntimeAdapter(
         startInfo.Environment["HOSTY_APP_DATA_DIR"] = context.AppDataPath;
         Directory.CreateDirectory(context.AppDataPath);
 
+        // Unlike data (unconditional above), the cache directory exists only for apps that declared
+        // it — no target lookup: localCommand has no container, so there is nothing to bind and the
+        // variable always carries the host path.
+        if (context.Manifest.Manifest.Cache?.Enabled == true)
+        {
+            var appCachePath = context.AppCachePath ?? Path.Combine(context.AppRoot, "cache");
+            startInfo.Environment["HOSTY_APP_CACHE_DIR"] = appCachePath;
+            Directory.CreateDirectory(appCachePath);
+        }
+
         // External mounts: localCommand has no container, so the app reads the operator host
         // paths directly (vs the container paths the docker runtime injects).
         var serviceMounts = RuntimeMountPlanner.ForService(context.Mounts, service.Key);

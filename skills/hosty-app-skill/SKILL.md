@@ -10,7 +10,7 @@ Use this skill to implement Hosty runtime apps in the shape expected by this rep
 ## Workflow
 
 1. Identify whether the user wants to create a new runtime app, wrap an existing app, update an app manifest, add Hosty identity/roles, configure data/backups, or validate an app.
-2. Treat `docs/features/hosty-runtime-app-platform.md`, `docs/features/runtime-app-manifest.md`, `docs/features/domain-model.md`, `docs/features/auth-gateway/feature.md`, `apps/core/src/Haas.Hosty.Core/RuntimeAppManifest.cs`, `apps/core/src/Haas.Hosty.Core/CoreLifecycleService.cs`, and `apps/demo-app` as source of truth when implementation details matter.
+2. Treat `docs/features/hosty-runtime-app-platform.md`, `docs/features/runtime-app-manifest.md`, `docs/features/domain-model/feature.md`, `docs/features/auth-gateway/feature.md`, `apps/core/src/Haas.Hosty.Core/RuntimeAppManifest.cs`, `apps/core/src/Haas.Hosty.Core/CoreLifecycleService.cs`, and `apps/demo-app` as source of truth when implementation details matter.
 3. Use `apps/demo-app/manifest.json` as the manifest shape and `hosty apps install apps/demo-app --runtime dev` as the local directory install pattern.
 
 ## References

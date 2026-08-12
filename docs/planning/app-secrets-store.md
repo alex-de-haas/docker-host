@@ -339,7 +339,7 @@ Manual, against a dev install (`.hosty-dev`):
 ## Links
 
 - [Promoted design](../ideas/app-secrets-store.md)
-- [App data backup retention](../features/app-data-backup-retention.md)
+- [App data backup retention](../features/app-data-backup-retention/feature.md)
 - [Core API](../features/core-api/feature.md)
 - [Hosty App SDK](../ideas/hosty-app-sdk.md)
 - [Repository and release model](../features/repository-release-model/feature.md)

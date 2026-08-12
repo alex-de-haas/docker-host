@@ -672,6 +672,25 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
             }
         }
 
+        RuntimeAppDataTarget? cacheTarget = null;
+        if (manifest.Cache?.Enabled == true && selectedProfile is not null)
+        {
+            cacheTarget = manifest.Cache.Targets.FirstOrDefault(target =>
+                string.Equals(target.Runtime, selectedProfile.Key, StringComparison.Ordinal) ||
+                string.Equals(target.Runtime, selectedProfile.Type, StringComparison.Ordinal));
+
+            if (selectedProfile.Type == "docker" && cacheTarget is null)
+            {
+                cacheTarget = new RuntimeAppDataTarget
+                {
+                    Runtime = selectedProfile.Key,
+                    Service = selectedServices.FirstOrDefault()?.Key,
+                    ContainerPath = "/app/cache",
+                    Environment = "HOSTY_APP_CACHE_DIR",
+                };
+            }
+        }
+
         if (errors.Count > 0)
         {
             throw new AppManifestException("manifest_validation_failed", "Runtime app manifest failed validation.", errors);
@@ -685,7 +704,8 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
             Services: selectedServices,
             DataTarget: dataTarget,
             ManifestJson: manifestJson ?? JsonSerializer.Serialize(manifest, CoreJsonSerializerContext.Default.RuntimeAppManifest),
-            ManifestUrl: manifestUrl);
+            ManifestUrl: manifestUrl,
+            CacheTarget: cacheTarget);
     }
 
     private async Task<AppManifestSource> ReadManifestSourceAsync(string manifestPath, CancellationToken cancellationToken)
@@ -1699,6 +1719,25 @@ internal sealed class DockerRuntimeAdapter(
                 runArgs.Add($"{context.AppDataPath}:{containerPath}");
                 runArgs.Add("-e");
                 runArgs.Add($"{environmentName}={containerPath}");
+            }
+
+            if (context.Manifest.CacheTarget is not null &&
+                (string.IsNullOrWhiteSpace(context.Manifest.CacheTarget.Service) ||
+                    string.Equals(context.Manifest.CacheTarget.Service, service.Key, StringComparison.Ordinal)))
+            {
+                var appCachePath = context.AppCachePath ?? Path.Combine(context.AppRoot, "cache");
+                var cacheContainerPath = string.IsNullOrWhiteSpace(context.Manifest.CacheTarget.ContainerPath)
+                    ? "/app/cache"
+                    : context.Manifest.CacheTarget.ContainerPath;
+                var cacheEnvironmentName = string.IsNullOrWhiteSpace(context.Manifest.CacheTarget.Environment)
+                    ? "HOSTY_APP_CACHE_DIR"
+                    : context.Manifest.CacheTarget.Environment;
+
+                Directory.CreateDirectory(appCachePath);
+                runArgs.Add("-v");
+                runArgs.Add($"{appCachePath}:{cacheContainerPath}");
+                runArgs.Add("-e");
+                runArgs.Add($"{cacheEnvironmentName}={cacheContainerPath}");
             }
 
             var serviceMounts = RuntimeMountPlanner.ForService(context.Mounts, service.Key);
@@ -2720,7 +2759,11 @@ internal sealed record RuntimeLifecycleContext(
     // Development Mode. Set for a locked (Dev Mode off) source runtime — the managed checkout pinned to
     // its commit — so execution ignores any live override. Null lets the localCommand adapter fall back
     // to its own resolution (override → managed checkout → app root), the live/default path.
-    string? SourceRoot = null);
+    string? SourceRoot = null,
+    // The app's cache directory (sibling of AppDataPath, outside backup scope). Last and defaulted
+    // so existing positional constructions (tests) stay valid; adapters fall back to
+    // `{AppRoot}/cache` when null.
+    string? AppCachePath = null);
 
 internal sealed record RuntimeAppManifestSelection(
     RuntimeAppManifest Manifest,
@@ -2730,7 +2773,10 @@ internal sealed record RuntimeAppManifestSelection(
     IReadOnlyList<RuntimeSelectedService> Services,
     RuntimeAppDataTarget? DataTarget,
     string ManifestJson,
-    string? ManifestUrl);
+    string? ManifestUrl,
+    // The resolved `cache` target, mirroring DataTarget. Last and defaulted so existing positional
+    // constructions (tests) stay valid.
+    RuntimeAppDataTarget? CacheTarget = null);
 
 internal sealed record RuntimeSelectedService(
     string Key,
@@ -2785,6 +2831,10 @@ internal sealed class RuntimeAppManifest
     public string? DefaultRuntime { get; init; }
     public IReadOnlyList<RuntimeAppServiceManifest> Services { get => field ?? []; init; } = [];
     public RuntimeAppDataManifest? Data { get; init; }
+    // Derived-data sibling of `data`: same shape (hence the shared manifest type), same lifecycle
+    // across restarts/updates/runtime switches, but never part of a backup or restore. The app must
+    // treat its content as absent-at-any-time. Additive under app.0.1.
+    public RuntimeAppDataManifest? Cache { get; init; }
     public RuntimeAppUiManifest? Ui { get; init; }
     // Optional marketplace/catalog display metadata (publisher, tags, screenshots, license, links, …).
     // Deliberately kept OUT of app.0.1 runtime validation (see runtime-app-marketplace.md, B5): a

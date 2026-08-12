@@ -1,4 +1,7 @@
-# Domain Model
+# Feature: Domain Model
+
+Created: 2026-05-13
+Updated: 2026-08-11
 
 ## Description
 
@@ -14,6 +17,7 @@ Hosty manages Core, Shell, CLI, and runtime apps. A runtime app is installed fro
 - **Service** - one process or container declared by a runtime app.
 - **Endpoint** - a service URL that Core can expose to Shell, CLI, or other apps.
 - **App data directory** - primary persistent data path for the app.
+- **App cache directory** - derived-data sibling of the data directory; persists across restarts and updates but is never backed up or restored.
 
 ## Storage Layout
 
@@ -24,6 +28,7 @@ Hosty manages Core, Shell, CLI, and runtime apps. A runtime app is installed fro
       manifest.json
       state.json
       data/
+      cache/
       logs/
   backups/
     <app-id>/
@@ -36,3 +41,9 @@ Hosty manages Core, Shell, CLI, and runtime apps. A runtime app is installed fro
 ## App Directory
 
 The app directory is a scoped list of Host users assigned to one runtime app. Runtime apps read it with `HOSTY_APP_SERVICE_TOKEN` and use stable Host user ids for app-owned roles.
+
+## Testing Expectations
+
+This document is shared vocabulary and storage layout, not behavior; it carries no tests of
+its own. The layout it draws is pinned where the behavior lives — for example
+`AppBackupServiceTests` for what `data/` includes and `cache/` excludes.
