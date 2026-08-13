@@ -2,7 +2,7 @@
 
 Status: Draft
 Created: 2026-08-11
-Updated: 2026-08-11
+Updated: 2026-08-13
 
 Make an assistant session findable and make it reach the operator when it needs them, so leaving an
 agent working while you close the tab becomes a usable feature rather than a way to lose work.

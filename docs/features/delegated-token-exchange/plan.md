@@ -2,7 +2,7 @@
 
 Status: Draft
 Created: 2026-08-11
-Updated: 2026-08-11
+Updated: 2026-08-13
 
 Give an agent session a credential for the app MCP endpoints it is allowed to reach — without Core
 entering the data path, and without any app ever holding a credential stronger than the user it acts
