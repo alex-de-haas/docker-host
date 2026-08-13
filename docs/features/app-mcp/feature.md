@@ -95,5 +95,17 @@ which are enabled; Core stays the registry.
     is a false statement about the domain rather than a report about the failure.
 - demo-app has no test suite; its MCP route is covered by `tsc`, `eslint` and `next build`, the same
   gates as the rest of that app.
-- Not yet done: no MCP client has called the demo-app endpoint. The contract is exercised by Core's
-  and the gateway's suites up to the point of the call itself.
+- Exercised live on 2026-08-11 against the installed demo-app 0.7.0, with a delegated token obtained
+  the way a real consumer obtains one (admin credential → `POST /api/apps/{appId}/delegated-token`):
+  `serverInfo` matched the manifest exactly, `get_my_app_role` showed the app turning a `host.admin`
+  Hosty identity into its own `admin` role with its own permission list, and `list_people` returned
+  the directory.
+- **The audience check was verified positively, not just by refusal.** A freshly minted, correctly
+  signed Core token whose `aud` was a different app (`hosty.marketplace`) was rejected with 401 —
+  while a token of identical shape with the right audience had worked moments earlier. Testing only
+  the refusal would not have distinguished an audience check from an endpoint that rejects
+  everything.
+- Discovery end to end: the gateway's settings API listed demo-app as a provider with the resolved
+  URL `.../api/mcp`, running, and disabled — the default the design requires.
+- Still not done: no stock MCP client has connected to the app endpoint either; the live check drove
+  the protocol directly.

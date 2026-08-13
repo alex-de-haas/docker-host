@@ -1,7 +1,7 @@
 # Core MCP
 
 Created: 2026-08-09
-Updated: 2026-08-09
+Updated: 2026-08-11
 
 An embedded Model Context Protocol endpoint on Core, giving agent clients typed tools for the things
 Core already knows — which apps exist, what state they are in, what their logs say — instead of
@@ -107,6 +107,12 @@ which presents as a build that hangs for minutes with no output.
   read a log containing no warnings at all. The script clears the Release intermediates for exactly
   that reason. With the allowlist now empty, re-checking the failing direction means introducing a
   deliberate warning rather than shrinking the list.
-- Not yet done: the endpoint has never been exercised by a stock external MCP client. That is the
-  umbrella's step 6 milestone and is blocked until a host running this Core version exists to point a
-  client at.
+- Exercised live on 2026-08-11 against Core 0.79.0 (the published native binary, not the test host):
+  handshake, `tools/list`, and every tool called with real data — `get_host_status` reported the
+  actual fleet (10 apps, 10 running), `get_app` resolved a real interface URL, `tail_app_logs`
+  clamped a 100000-line request to 500 and returned real output, and an unknown app id came back as
+  an explanation rather than a transport error. The fail-closed direction was checked on the same
+  binary: anonymous 403, forged bearer 401.
+- Still not done: no **stock MCP client** (Claude Code, Claude Desktop) has connected. The live check
+  above drove the protocol over HTTP directly, which proves the server completely and client
+  compatibility not at all — a client that negotiates differently would still be an open question.
