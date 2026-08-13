@@ -58,14 +58,22 @@ as "working". A list that does not distinguish those is close to useless.
 
 - On entering `awaiting_approval` or `awaiting_question`, the gateway publishes a user-targeted
   notification to Core with its service token — the one it already holds for audit reporting.
-  `Link` points at the session; `DedupeKey` is the session id, so one waiting session produces one
-  notification rather than a stream.
-- **Shell bell** renders the per-user inbox. This is already listed as outstanding in
-  [notifications](../notifications.md) and is not specific to the assistant; it lands here because
-  this is the first producer that makes its absence hurt.
+  `Link` points at the session.
+- **`DedupeKey` identifies the wait, not the session** — session id plus the approval or question id.
+  Keying on the session alone looked tidier and is wrong: Core suppresses a publish when an **unread**
+  record with the same recipient, source and key exists, and an operator who answers in the panel
+  never marks that record read. The next pause in the same session would then be silently swallowed,
+  which is precisely the failure the notification exists to prevent. Per-wait keying still collapses
+  duplicate publishes for the *same* wait, which is all dedupe was wanted for. Clearing the earlier
+  record instead is not an option: the purge path is core-source only and unreachable by an app.
+- **The Shell bell already exists** and needs nothing here: `notification-bell.tsx` reads
+  `GET /api/notifications`, posts `/api/notifications/read`, and is rendered by the sidebar. An
+  earlier draft of this plan listed building it, on the strength of [notifications](../notifications.md)
+  still saying the bell "remains" — the document is stale, the code is not. Correcting that status is
+  a deliverable below.
 - **`apps/shell-swift` raises the real OS banner.** `CoreEventStream.swift` already models
   `case notification` and consumes the stream, so the transport exists; what is missing is
-  `UNUserNotificationCenter` — the string appears nowhere in the project today — plus permission
+  `UNUserNotificationCenter`, which appears nowhere under `apps/shell-swift/` today, plus permission
   handling and opening the session from `Link` through the existing `ShellRouter`.
 
 ## Deliverables
@@ -77,7 +85,8 @@ as "working". A list that does not distinguish those is close to useless.
 - [ ] Gateway publishes a notification on entering a waiting status, keyed by session for dedupe,
       linking to the session; nothing is published on resolution beyond clearing the state the UI
       reads.
-- [ ] Shell notification bell over `GET /api/notifications` + `POST /api/notifications/read`.
+- [ ] Correct [notifications](../notifications.md): its status still lists the Shell bell as
+      outstanding although it shipped.
 - [ ] Swift client: notification permission, `UNUserNotificationCenter` banner on the `notification`
       event, and `Link` navigation.
 - [ ] `git mv docs/features/notifications.md docs/features/notifications/feature.md` — lazy migration,
@@ -121,7 +130,9 @@ change.
 ## Verification
 
 - Gateway (vitest): a notification is published on entering each waiting status and not republished
-  while the session stays there; the dedupe key is the session id; nothing is published when Core is
+  while the session stays there; **a second wait in the same session publishes again** even when the
+  first notification was never read — the case per-wait keying exists for, and the one a session-keyed
+  design fails silently; nothing is published when Core is
   unreachable beyond a logged failure — the assistant must keep working.
 - Shell: verified live, since it has no unit tests — reload the page mid-session and confirm the same
   session reattaches with its pending card intact; confirm the sidebar indicator appears while a

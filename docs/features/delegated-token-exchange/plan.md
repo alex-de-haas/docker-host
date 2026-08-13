@@ -61,9 +61,15 @@ browser holding a human's session.
 - **Only apps with `role: system` may exchange.** A domain app wanting to call another domain app is
   [cross-app-dependencies](../cross-app-dependencies/plan.md), a different feature with a different
   trust story. Restricting now is reversible; opening later is a decision, opening now is an accident.
-- **No chaining.** A token obtained *by* exchange may not itself be exchanged. Otherwise each hop
-  launders reach and the premise that justifies the whole mechanism — "the caller is holding proof
-  that this user is talking to it right now" — decays with every step. Marked in the claims.
+- **No chaining to a new audience.** A token obtained *by* exchange may not be exchanged for a
+  *different* audience. What chaining endangers is reach **spreading across apps** — each hop launders
+  it, and the premise that justifies the mechanism ("the caller holds proof that this user is talking
+  to it right now") decays with every step. Extending in *time* is a separate axis, bounded separately
+  by the cap below.
+  An earlier draft stated this without the audience qualifier, which contradicted the recommended
+  self-refresh: refreshing means presenting an exchanged token back to this route, so an unconditional
+  rule would have made the recommendation impossible to implement. Same-audience refresh is therefore
+  the one permitted continuation, and it is what the exchanged token's claims must allow.
 - **Nothing about the target's interfaces is checked.** Gating on "declares `mcp`" would be theatre:
   the access policy is the real gate, and an interface check would break non-MCP uses of the same
   exchange for no security gain.
@@ -71,10 +77,12 @@ browser holding a human's session.
 ## Deliverables
 
 - [ ] Route accepts a delegated token as an alternative credential, with the session path unchanged.
-- [ ] `system`-only caller bound, and the non-chaining claim plus its enforcement.
+- [ ] `system`-only caller bound, and the no-new-audience chaining claim plus its enforcement —
+      including that a same-audience refresh is accepted while a different-audience hop is refused.
 - [ ] The refresh answer chosen in Open Questions, implemented.
 - [ ] Core HTTP suite: exchange succeeds for a system caller; is refused for a non-system caller, an
-      expired token, a forged signature, an `aud` that is not installed, and a chained token; a user
+      expired token, a forged signature, an `aud` that is not installed, and a chained token aimed at
+      a *different* audience — while a same-audience refresh of that token succeeds; a user
       who may not reach the target is refused **while** the same call for a permitted user succeeds —
       the pair matters, since a route that refuses everything looks identical to a working gate.
 - [ ] Gateway consumes it: enabled providers reach the harness with a working credential, and the
@@ -91,7 +99,9 @@ Version outcome: platform minor (new Core API surface), `apps/ai-gateway` minor.
   5-minute token baked into an MCP server config expires mid-turn. Worse, the gateway only receives a
   fresh user token *when a client sends a request*; during a long turn there is nothing fresh to
   exchange, so a refresh timer has no input. Three ways out:
-  1. **Self-refresh.** Let a caller exchange for its *own* audience too, so it can keep itself alive.
+  1. **Self-refresh.** Let a caller exchange for its *own* audience too, so it can keep itself alive —
+     the same-audience exception in Bounds above exists for exactly this, and without it the option is
+     self-contradictory rather than merely risky.
      Cheap, and the revocation property survives — every issue re-runs the policy, so a downgraded
      user stops getting fresh tokens within one TTL, exactly as a browser session behaves. The cost is
      real and should be named: a compromised gateway then holds indefinite reach for every user who
@@ -140,5 +150,6 @@ Version outcome: platform minor (new Core API surface), `apps/ai-gateway` minor.
 - Live: with the gateway's own token, exchange for `com.haas.demo-app` and call its `/api/mcp` —
   the same sequence already verified by hand on 2026-08-11 with an admin credential, now with the
   gateway as the caller instead of a human.
-- Live negative: confirm a token obtained by exchange is refused when presented back to the exchange,
-  and that a non-system app is refused outright.
+- Live negative: confirm a token obtained by exchange is refused when presented back to the exchange
+  **for a different app**, that the same-audience refresh of it succeeds, and that a non-system app is
+  refused outright.
