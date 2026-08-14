@@ -45,7 +45,7 @@ export interface StorageInspection {
 
 const defaultAppId = "com.haas.demo-app";
 // Keep in step with manifest.json + package.json (enforced by scripts/check-versions.mjs).
-const defaultAppVersion = "0.7.0";
+const defaultAppVersion = "0.7.1";
 
 export function getDemoConfig(): DemoConfig {
   const appId = process.env.HOSTY_APP_ID || defaultAppId;

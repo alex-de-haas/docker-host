@@ -3,7 +3,7 @@
   "id": "hosty.marketplace",
   "name": "Hosty Marketplace",
   "description": "Catalog discovery and storefront UI for Hosty runtime apps. Marketplace has no lifecycle authority; install review and apply remain in Core.",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "role": "system",
   "source": {
     "type": "git",
@@ -31,7 +31,7 @@
           "type": "docker",
           "image": {
             "repository": "ghcr.io/alex-de-haas/hosty-marketplace",
-            "tag": "0.4.0"
+            "tag": "0.4.1"
           },
           "environment": {
             "PORT": "3000",
