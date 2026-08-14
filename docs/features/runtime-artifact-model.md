@@ -1,6 +1,6 @@
 # Runtime Artifact & Storage Model
 
-> **Status: partially implemented.** Phase 0 (the `localCommand` `setup` command), Phase 1a (the `development` flag), Phase 2 (`prebuilt` with folder delivery), and Phase 3 (the Shell Live/Locked mode badges) have shipped, followed by the 2026-07-02 operator-toggled **Development Mode** revision (see below — also shipped). The later prebuilt deliveries (git-release/URL) and per-runtime update-available state are proposed, not built; the isolated Phase 1b storage migration was dropped (see Phasing). This document is the concrete elaboration of the artifact-kind direction sketched in [Runtime app marketplace](runtime-app-marketplace/feature.md) ("Artifacts, Runtimes, and Delivery"), and it supersedes the single-source assumptions in [Runtime source workflows](runtime-source-workflows.md) as those phases land.
+> **Status: partially implemented.** Phase 0 (the `localCommand` `setup` command), Phase 1a (the `development` flag), Phase 2 (`prebuilt` with folder delivery), and Phase 3 (the Shell Live/Locked mode badges) have shipped, followed by the 2026-07-02 operator-toggled **Development Mode** revision (see below — also shipped). The later prebuilt deliveries (git-release/URL) and per-runtime update-available state are proposed, not built; the isolated Phase 1b storage migration was dropped (see Phasing). This document is the concrete elaboration of the artifact-kind direction sketched in [Runtime app marketplace](runtime-app-marketplace/feature.md) ("Artifacts, Runtimes, and Delivery"), and it supersedes the single-source assumptions in [Runtime source workflows](runtime-source-workflows/feature.md) as those phases land.
 >
 > **Design revision (2026-07-02) — shipped:** liveness is re-scoped from the *declared* `development` flag to an **operator-toggled Development Mode** whose default the flag provides (Core `POST /api/apps/{id}/development-mode` + `AppSummary.ResolveDevelopmentMode`, a switch on the Shell's Source tab; the single-development-runtime validation was retired). See "Development Mode — an operator toggle" below; earlier sections describing flag-as-gate semantics still describe the now-superseded Phase 1a state.
 
@@ -258,7 +258,7 @@ Two per-runtime declarations drive the model: the existing `artifact` field (kin
 
 > **Revised 2026-07-02 (shipped):** the Development Mode revision has landed — visibility has widened to "any `artifact: source` runtime" and the tab now carries the per-runtime Development Mode switch (see above). The narrower gating described below is the superseded Phase 1a behavior, retained here for context.
 
-The Shell lets the operator configure a development runtime's source override **without switching the app to that runtime**. The [Source settings tab](runtime-source-workflows.md) ([shipped](../../apps/shell)) is refined:
+The Shell lets the operator configure a development runtime's source override **without switching the app to that runtime**. The [Source settings tab](runtime-source-workflows/feature.md) ([shipped](../../apps/shell)) is refined:
 
 - **Visibility.** The tab shows only when `SupportsSource` is true — i.e. the app has a runtime profile with `development: true` (narrowed from "any `localCommand`"). No development runtime → no tab.
 - **Target runtime.** Because a manifest may declare **at most one** `development: true` runtime (decision 6), the tab targets that single development runtime. The picker is rendered as a dropdown for forward-compatibility but currently holds one entry; it becomes a real choice only if the single-runtime rule is relaxed (deferred to 1b).
@@ -268,7 +268,7 @@ This needs `AppRuntimeProfileSummary` to carry the `development` flag (so the cl
 
 ## Runtime switching
 
-Switching remains the reviewed [`switch-runtime-plan` / `switch-runtime`](runtime-source-workflows.md) flow. The plan's `changes` already diff runtime type, commands, ports, etc.; it gains **artifact kind**, **`development`**, and **artifact source/lock** as diffed fields. Because per-runtime storage is non-destructive, switching `dev ↔ release` does not re-clone or re-download when the other runtime is already materialized and locked to the same version.
+Switching remains the reviewed [`switch-runtime-plan` / `switch-runtime`](runtime-source-workflows/feature.md) flow. The plan's `changes` already diff runtime type, commands, ports, etc.; it gains **artifact kind**, **`development`**, and **artifact source/lock** as diffed fields. Because per-runtime storage is non-destructive, switching `dev ↔ release` does not re-clone or re-download when the other runtime is already materialized and locked to the same version.
 
 ## Migration
 
@@ -309,6 +309,6 @@ Switching remains the reviewed [`switch-runtime-plan` / `switch-runtime`](runtim
 ## Related
 
 - [Runtime app marketplace](runtime-app-marketplace/feature.md) — the artifact-kind direction this elaborates.
-- [Runtime source workflows](runtime-source-workflows.md) — current source checkout / override / switching (single-source model this evolves).
+- [Runtime source workflows](runtime-source-workflows/feature.md) — current source checkout / override / switching (single-source model this evolves).
 - [Runtime app manifest](runtime-app-manifest.md) — `artifact` field, `setup`, per-runtime service fields.
 - [Runtime app update](runtime-app-update.md) — lock + reviewed-update mechanics for compiled artifacts.

@@ -530,7 +530,13 @@ internal sealed record AppSourceState(
     // the repo root by convention (the runtime resolves each service's workingDirectory against it), so
     // Core reads the live manifest from <sourceRoot>/<ManifestSubpath>/manifest.json for a monorepo app.
     // Captured at install; additive/nullable so older records read back as null (manifest-at-root).
-    string? ManifestSubpath = null);
+    string? ManifestSubpath = null,
+    // The commit the override folder was at when it was configured — display only, and deliberately a
+    // field of its own. It used to be written to `Commit`, which made that field mean two different
+    // things (the reviewed pin, or whatever an operator folder happened to be at) and forced the pinned
+    // start path to distrust it: a reviewed update's commit was discarded on the very next start of any
+    // app that had an override. Additive/nullable; older records read back as null.
+    string? OverrideCommit = null);
 
 internal sealed record AppUiContract(
     string? Category,

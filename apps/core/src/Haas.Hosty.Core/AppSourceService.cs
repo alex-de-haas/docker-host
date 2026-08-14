@@ -70,31 +70,47 @@ internal sealed class AppSourceService(CoreDataPaths paths, AppRegistryStore app
         var checkoutPath = source.ManagedCheckoutPath ?? paths.ResolveManagedCheckoutPath(appId);
         await EnsureCheckoutAsync(source.Repository, checkoutPath, cancellationToken);
 
-        // The reviewed commit to pin to. Prefer the recorded commit, but re-resolve from the reviewed ref
-        // when a live override is configured — SetLocalOverrideAsync stamps AppSourceState.Commit from the
-        // override folder, and OFF must pin the reviewed source, not the override's commit. The managed
-        // checkout is not fetched here, so a re-resolve returns a stable commit; only a reviewed
-        // source-resolve/update fetches and advances the ref.
-        var commit = source.Commit;
-        if (string.IsNullOrWhiteSpace(commit) || !string.IsNullOrWhiteSpace(source.LocalOverridePath))
-        {
+        // The reviewed commit to pin to: the recorded one, and only a re-resolve of the reviewed ref when
+        // nothing is recorded yet. A configured override does not change this — the override folder's own
+        // commit lives in AppSourceState.OverrideCommit and never enters the pin. Re-resolving whenever an
+        // override existed was the ghost-update defect: it threw away the commit a reviewed update had just
+        // stamped and silently re-pinned the checkout to `origin/{ref}` as of its last fetch, so the app
+        // kept running the old code and the very next check re-offered the same update forever.
+        // The managed checkout is not fetched for a re-resolve, so it returns a stable commit; only a
+        // reviewed source-resolve/update fetches and advances the ref.
+        var commit = string.IsNullOrWhiteSpace(source.Commit)
             // Resolve locally; if the ref isn't known locally yet (e.g. a reviewed update just advanced it),
             // fetch once and retry so the advance succeeds.
-            commit = await WithSourceFetchRetryAsync(
+            ? await WithSourceFetchRetryAsync(
                 checkoutPath,
                 () => ResolveCommitAsync(checkoutPath, new AppSourceResolveRequest(), source.ResolvedRef ?? "HEAD", cancellationToken),
-                cancellationToken);
+                cancellationToken)
+            : source.Commit;
+
+        var pinnedCommit = commit;
+        if (!await CommitExistsAsync(checkoutPath, pinnedCommit, cancellationToken))
+        {
+            // The clone does not have the pin yet — the usual reason is a reviewed update that advanced it
+            // to a commit this checkout has never fetched. A failing fetch is a real failure and surfaces:
+            // pinning something older because the network blinked is the ghost update this lock exists to
+            // prevent.
+            _ = await RunGitAsync(checkoutPath, FetchArgs, cancellationToken);
+            if (!await CommitExistsAsync(checkoutPath, pinnedCommit, cancellationToken))
+            {
+                // The repository does not contain the recorded commit at all, and failing here would wedge
+                // every start of the app. It is reachable through no fault of the operator: a record written
+                // before OverrideCommit existed may carry an override folder's commit (another repository's
+                // object) in the pin, and a force-pushed branch can drop a commit upstream. Fall back to the
+                // reviewed ref — what the app would have pinned with no recorded commit at all — and let the
+                // record self-heal on the write below.
+                pinnedCommit = await ResolveCommitAsync(checkoutPath, new AppSourceResolveRequest(), source.ResolvedRef ?? "HEAD", cancellationToken);
+            }
         }
 
         // Force the working tree to exactly the pinned commit: discard tracked edits and remove untracked
         // files (e.g. left by a prior Dev-Mode-on live run) so OFF is an honest, reproducible lock. Ignored
-        // build outputs are kept (no `-x`) for `setup` to manage. Fetch-and-retry when the pinned commit is
-        // not present locally (a reviewed update advanced it to a not-yet-fetched commit).
-        var pinnedCommit = commit;
-        _ = await WithSourceFetchRetryAsync(
-            checkoutPath,
-            () => RunGitAsync(checkoutPath, ["checkout", "--detach", "--force", pinnedCommit], cancellationToken),
-            cancellationToken);
+        // build outputs are kept (no `-x`) for `setup` to manage.
+        _ = await RunGitAsync(checkoutPath, ["checkout", "--detach", "--force", pinnedCommit], cancellationToken);
         _ = await RunGitAsync(checkoutPath, ["clean", "-fd"], cancellationToken);
 
         // Build the new state from the current record inside the update lambda so a concurrent change to
@@ -191,6 +207,21 @@ internal sealed class AppSourceService(CoreDataPaths paths, AppRegistryStore app
             $"Source ref '{reference}' was not found in the source repository.");
     }
 
+    // Whether the checkout already has this commit as an object, without throwing — the question the pin
+    // path asks before deciding between "fetch it" and "this repository does not have it".
+    private static async Task<bool> CommitExistsAsync(string checkoutPath, string commit, CancellationToken cancellationToken)
+    {
+        try
+        {
+            _ = await RunGitAsync(checkoutPath, ["cat-file", "-e", $"{commit}^{{commit}}"], cancellationToken);
+            return true;
+        }
+        catch (AppLifecycleException)
+        {
+            return false;
+        }
+    }
+
     // Runs a git-backed operation against the managed checkout, fetching once and retrying if it fails
     // because the required object/ref isn't present locally yet. A genuine failure (e.g. the ref does not
     // exist upstream) surfaces on the retry. Cancellation propagates (never caught here).
@@ -235,13 +266,17 @@ internal sealed class AppSourceService(CoreDataPaths paths, AppRegistryStore app
             Type: existing?.Type ?? "git",
             Repository: existing?.Repository,
             ResolvedRef: existing?.ResolvedRef,
-            Commit: string.IsNullOrWhiteSpace(commit) ? existing?.Commit : commit.Trim(),
+            // The reviewed pin is untouched. Configuring an operator folder says nothing about which
+            // upstream commit was reviewed, and stamping the folder's HEAD here used to make the pinned
+            // (Development Mode off) start path treat the whole field as untrustworthy.
+            Commit: existing?.Commit,
             ManagedCheckoutPath: existing?.ManagedCheckoutPath ?? paths.ResolveManagedCheckoutPath(appId),
             LocalOverridePath: overridePath,
             UpdatedAt: clock.UtcNow,
             // Preserve the install-time manifest subpath: an override points at the same repo root, so
             // the app's manifest keeps the same in-repo offset.
-            ManifestSubpath: existing?.ManifestSubpath);
+            ManifestSubpath: existing?.ManifestSubpath,
+            OverrideCommit: string.IsNullOrWhiteSpace(commit) ? null : commit.Trim());
         await apps.UpdateAppAsync(appId, current => current with { SourceState = state }, cancellationToken);
         return new AppSourceResponse(appId, state);
     }
@@ -257,6 +292,8 @@ internal sealed class AppSourceService(CoreDataPaths paths, AppRegistryStore app
         var state = app.SourceState with
         {
             LocalOverridePath = null,
+            // The recorded commit belonged to the folder, not to the app.
+            OverrideCommit = null,
             UpdatedAt = clock.UtcNow,
         };
         await apps.UpdateAppAsync(appId, current => current with { SourceState = state }, cancellationToken);
