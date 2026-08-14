@@ -5,7 +5,7 @@ Updated: 2026-08-11
 
 The Hosty assistant: an optional, removable system app (`hosty.ai-gateway`) hosting admin-only
 operator chat sessions on a host-resident agent harness, plus the Shell surface that renders them.
-This is the operator milestone of the [AI Agent Bridge](../ai-agent-bridge/plan.md) umbrella; the
+This is the operator milestone of the [AI Agent Bridge](../ai-agent-bridge/feature.md) umbrella; the
 decisions recorded there (execution profiles, placement, token mechanics, approval policy) govern
 this feature.
 

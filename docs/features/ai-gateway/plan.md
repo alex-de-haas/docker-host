@@ -131,7 +131,7 @@ started, and this plan is not deleted while they remain.
 Recorded because deferring containment is a choice, and the reasoning must not be reconstructed from
 silence later.
 
-The umbrella ([ai-agent-bridge](../ai-agent-bridge/plan.md)) justifies the operator profile on the
+The umbrella ([ai-agent-bridge](../ai-agent-bridge/feature.md#accepted-risk)) justifies the operator profile on the
 grounds that it "grants no privilege an administrator does not already have over SSH — that
 equivalence is the justification for the profile, not a mitigation to be improved later." The
 equivalence assumes the administrator decides what runs. Operator sessions also consume live logs and

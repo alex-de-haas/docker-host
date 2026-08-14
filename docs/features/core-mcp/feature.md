@@ -6,7 +6,8 @@ Updated: 2026-08-13
 An embedded Model Context Protocol endpoint on Core, giving agent clients typed tools for the things
 Core already knows — which apps exist, what state they are in, what their logs say — instead of
 leaving them to guess at shell commands. This is step 5 of the
-[AI Agent Bridge](../ai-agent-bridge/plan.md) rollout; the umbrella's 2026-07-11 decisions govern it:
+[AI Agent Bridge](../ai-agent-bridge/plan.md) rollout; the umbrella's 2026-07-11
+[decisions](../ai-agent-bridge/feature.md#decision-log) govern it:
 Core MCP is embedded in Core rather than a separate service, and it stays control-plane only — it
 never performs or proxies work that belongs to a runtime app's own domain API.
 

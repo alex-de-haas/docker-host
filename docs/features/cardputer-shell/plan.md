@@ -102,7 +102,7 @@ The mechanism Cardputer needs — Shell-approved device-code authorization
 producing an opaque, revocable access token held as a server-side record — is
 owned by [`access-tokens`](../access-tokens/feature.md), extracted on 2026-07-31
 from the remote CLI direction in
-[`ai-agent-bridge`](../ai-agent-bridge/plan.md) because its consumers are not
+[`ai-agent-bridge`](../ai-agent-bridge/feature.md) because its consumers are not
 Cardputer-specific: remote CLI contexts, monitoring scripts, the MCP connector,
 and this device all want the same credential. Cardputer consumes it and adds
 nothing of its own.
