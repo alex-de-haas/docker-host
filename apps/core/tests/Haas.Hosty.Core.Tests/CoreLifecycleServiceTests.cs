@@ -3016,6 +3016,41 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task SetLocalOverrideAsync_RecordsTheHeadOfAFolderInsideARepository()
+    {
+        // The override commit used to be read only when the folder itself held a `.git` *directory*,
+        // which skips a linked worktree (`.git` is a file there) and any folder nested inside a
+        // repository — both of which answer `git rev-parse HEAD` perfectly well.
+        var fixture = await LifecycleFixture.CreateAsync();
+        var repository = await CreateLocalCommandGitRepositoryAsync(fixture.Root);
+        var head = await RunGitAsync(repository, ["rev-parse", "HEAD"]);
+        var nested = Path.Combine(repository, "apps", "remote-app");
+        var manifest = await fixture.WriteManifestAsync("1.0.0", sourceRepository: repository);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        var response = await fixture.Sources.SetLocalOverrideAsync("com.example.notes", new AppSourceOverrideRequest(nested));
+
+        Assert.Equal(nested, response.Source?.LocalOverridePath);
+        Assert.Equal(head, response.Source?.OverrideCommit);
+    }
+
+    [Fact]
+    public async Task SetLocalOverrideAsync_RecordsNoCommitForAFolderThatIsNotAWorkingTree()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var repository = await CreateGitRepositoryAsync(fixture.Root);
+        var plainFolder = Path.Combine(fixture.Root, "not-a-repo");
+        Directory.CreateDirectory(plainFolder);
+        var manifest = await fixture.WriteManifestAsync("1.0.0", sourceRepository: repository);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        var response = await fixture.Sources.SetLocalOverrideAsync("com.example.notes", new AppSourceOverrideRequest(plainFolder));
+
+        Assert.Equal(plainFolder, response.Source?.LocalOverridePath);
+        Assert.Null(response.Source?.OverrideCommit);
+    }
+
+    [Fact]
     public async Task EnsurePinnedCommit_ChecksOutCommitAndHoldsWhenTheBranchAdvances()
     {
         var fixture = await LifecycleFixture.CreateAsync();

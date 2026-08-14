@@ -35,7 +35,7 @@ internal sealed class AppRegistryStore(CoreDataPaths paths, CoreEventHub? events
                     continue;
                 }
 
-                apps.Add(await HydrateAppUiAsync(state.App, appDirectory, cancellationToken));
+                apps.Add(await HydrateAppUiAsync(Migrate(state), appDirectory, cancellationToken));
             }
             catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
             {
@@ -67,10 +67,10 @@ internal sealed class AppRegistryStore(CoreDataPaths paths, CoreEventHub? events
             return null;
         }
 
-        var app = (await JsonStorage.ReadAsync<AppStateDocument>(Path.Combine(appRoot, "state.json"), cancellationToken))?.App;
-        return app is null
+        var document = await JsonStorage.ReadAsync<AppStateDocument>(Path.Combine(appRoot, "state.json"), cancellationToken);
+        return document?.App is null
             ? null
-            : await HydrateAppUiAsync(app, appRoot, cancellationToken);
+            : await HydrateAppUiAsync(Migrate(document), appRoot, cancellationToken);
     }
 
     public async Task<AppStateDocument> UpdateAppAsync(
@@ -120,7 +120,7 @@ internal sealed class AppRegistryStore(CoreDataPaths paths, CoreEventHub? events
             UpdatedAt = now,
             InstalledAt = app.InstalledAt == default ? now : app.InstalledAt,
         };
-        var document = new AppStateDocument(1, normalized);
+        var document = new AppStateDocument(CurrentSchemaVersion, normalized);
         // Owner-only: this document carries setting values, including ones flagged secret.
         await JsonStorage.WriteOwnerFileAsync(GetAppStatePath(app.Id), document, cancellationToken);
         // Both public writers (UpsertAppAsync, UpdateAppAsync) funnel through here, so every commit
@@ -151,6 +151,36 @@ internal sealed class AppRegistryStore(CoreDataPaths paths, CoreEventHub? events
 
     private string GetAppStatePath(string appId)
         => Path.Combine(CoreDataPaths.ResolveContainedPath(paths.AppsRoot, appId), "state.json");
+
+    // Bumped only when a field's *meaning* changes — an additive nullable field needs no bump, since an
+    // older record simply reads it back as null. v2: AppSourceState.Commit is the reviewed pin and
+    // nothing else (see Migrate).
+    private const int CurrentSchemaVersion = 2;
+
+    // Read-side record migrations. Applied on every read and persisted by the next write (every
+    // lifecycle verb writes), so they are idempotent by construction and a read-only Core never has to
+    // rewrite the disk to stay correct.
+    private static AppRecord Migrate(AppStateDocument document)
+    {
+        var app = document.App;
+
+        // v1 -> v2. `AppSourceState.Commit` used to carry two different facts: the reviewed pin, and —
+        // once an override was configured — that folder's HEAD, which SetLocalOverrideAsync stamped into
+        // the same field. A locked start now trusts the pin, so a v1 record that had an override cannot
+        // be taken at face value: its commit may be the operator folder's, which was never reviewed.
+        // Move it to OverrideCommit and leave the pin to re-resolve from the reviewed ref — precisely
+        // what a v1 Core did for these records. Records written from v2 on are already unambiguous.
+        if (document.SchemaVersion < 2 &&
+            app.SourceState is { } source &&
+            !string.IsNullOrWhiteSpace(source.LocalOverridePath) &&
+            string.IsNullOrWhiteSpace(source.OverrideCommit) &&
+            !string.IsNullOrWhiteSpace(source.Commit))
+        {
+            app = app with { SourceState = source with { Commit = null, OverrideCommit = source.Commit } };
+        }
+
+        return app;
+    }
 
     private static async Task<AppRecord> HydrateAppUiAsync(AppRecord app, string appRoot, CancellationToken cancellationToken)
     {

@@ -28,7 +28,9 @@ Core stores source state as Host installation state, not as public manifest meta
 - the override folder's own commit, when one was recorded;
 - update timestamp.
 
-The reviewed pin and the override's commit are separate fields because they answer different questions: which upstream commit Core reviewed, and where the operator's folder happened to be. Configuring an override therefore never moves the pin, and a pinned start (Development Mode off) runs the recorded pin as-is — fetching it when the checkout does not have it yet. A recorded commit that the repository does not contain even after a fetch falls back to the reviewed ref rather than failing the start, and the record self-heals.
+The reviewed pin and the override's commit are separate fields because they answer different questions: which upstream commit Core reviewed, and where the operator's folder happened to be. Configuring an override therefore never moves the pin, and a pinned start (Development Mode off) runs the recorded pin as-is — fetching it when the checkout does not have it yet. A recorded commit that the repository does not contain even after a fetch falls back to the reviewed ref rather than failing the start, and the record self-heals. The override's commit is whatever `git rev-parse HEAD` answers in that folder, so a linked worktree or a folder nested inside a repository records one too; a folder git does not recognize records none.
+
+Installation records predate this split at schema version 1, where both facts shared the `commit` field. Core migrates such a record on read — the commit of a record that has an override moves to the override's field and the pin re-resolves from the reviewed ref, exactly as a pre-split Core behaved — and the next write stores it at version 2, after which a recorded pin is taken as reviewed.
 
 Managed checkouts are for public-readable `http`/`https` Git repositories or local filesystem repositories. Core rejects embedded credentials and SSH-style repository URLs, and git subprocesses run with interactive credential prompts disabled. Private repositories should be cloned by an administrator and connected through `source-override` until Hosty has a Core-owned credential provider.
 
@@ -87,7 +89,8 @@ Shell also exposes Hosty Shell runtime switching in the Installed Apps System Ap
 
 ## Testing Expectations
 
-- `source-override` records the folder's commit as the override's own and leaves the reviewed pin unchanged; clearing the override drops both.
+- `source-override` records the folder's commit as the override's own and leaves the reviewed pin unchanged, including for a folder nested inside a repository; clearing the override drops both.
+- A schema-version-1 record that has an override reads back with its commit moved to the override's field, once, and keeps a reviewed pin recorded afterwards.
 - A pinned start (Development Mode off) checks out the recorded pin — including one a reviewed update has just advanced to — with an override configured, and fetches when the checkout does not have that commit yet.
 - A pinned start whose recorded commit is unreachable even after a fetch falls back to the reviewed ref instead of failing.
 - A pinned start restores a dirty checkout to the pinned commit (tracked edits discarded, untracked files removed).

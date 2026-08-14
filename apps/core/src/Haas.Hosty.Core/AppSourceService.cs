@@ -207,6 +207,19 @@ internal sealed class AppSourceService(CoreDataPaths paths, AppRegistryStore app
             $"Source ref '{reference}' was not found in the source repository.");
     }
 
+    // The commit a folder is checked out at, or null when git cannot answer (not a working tree at all).
+    private static async Task<string?> TryResolveHeadAsync(string path, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await RunGitAsync(path, ["rev-parse", "HEAD"], cancellationToken);
+        }
+        catch (AppLifecycleException)
+        {
+            return null;
+        }
+    }
+
     // Whether the checkout already has this commit as an object, without throwing — the question the pin
     // path asks before deciding between "fetch it" and "this repository does not have it".
     private static async Task<bool> CommitExistsAsync(string checkoutPath, string commit, CancellationToken cancellationToken)
@@ -255,11 +268,12 @@ internal sealed class AppSourceService(CoreDataPaths paths, AppRegistryStore app
             throw new AppLifecycleException("source_override_not_found", $"Local source override path was not found: {overridePath}");
         }
 
-        var commit = request.Commit;
-        if (string.IsNullOrWhiteSpace(commit) && Directory.Exists(Path.Combine(overridePath, ".git")))
-        {
-            commit = await RunGitAsync(overridePath, ["rev-parse", "HEAD"], cancellationToken);
-        }
+        // Ask git rather than looking for a `.git` directory: that test misses a linked worktree (where
+        // `.git` is a file) and a folder nested inside a repository, both of which resolve a HEAD
+        // perfectly well. A folder git refuses simply records no commit.
+        var commit = string.IsNullOrWhiteSpace(request.Commit)
+            ? await TryResolveHeadAsync(overridePath, cancellationToken)
+            : request.Commit;
 
         var existing = app.SourceState;
         var state = new AppSourceState(
