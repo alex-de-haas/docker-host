@@ -6,6 +6,13 @@ internal sealed class AppSourceService(CoreDataPaths paths, AppRegistryStore app
 {
     private static readonly Regex CommitPattern = new("^[0-9a-fA-F]{4,64}$", RegexOptions.Compiled);
 
+    // `--force` is not optional: without it a tag that moved upstream is *rejected* ("would clobber
+    // existing tag") and `git fetch` exits non-zero, which fails the whole operation even though every
+    // branch fetched fine. Source repositories legitimately carry moving channel tags (this repo's own
+    // `cli-dev`/`cardputer-dev` are re-pointed by CI), so an unforced fetch breaks every source-backed
+    // app update the moment such a tag moves — for a reason unrelated to the app's own ref.
+    private static readonly string[] FetchArgs = ["fetch", "--all", "--tags", "--prune", "--force"];
+
     public async Task<AppSourceResponse> GetAsync(string appId, CancellationToken cancellationToken = default)
     {
         var app = await RequireAppAsync(appId, cancellationToken);
@@ -29,7 +36,7 @@ internal sealed class AppSourceService(CoreDataPaths paths, AppRegistryStore app
         await EnsureCheckoutAsync(source.Repository, checkoutPath, cancellationToken);
         if (request.Fetch)
         {
-            _ = await RunGitAsync(checkoutPath, ["fetch", "--all", "--tags", "--prune"], cancellationToken);
+            _ = await RunGitAsync(checkoutPath, FetchArgs, cancellationToken);
         }
 
         var resolvedRef = request.Commit ?? request.Tag ?? request.Branch ?? source.ResolvedRef ?? "HEAD";
@@ -195,7 +202,7 @@ internal sealed class AppSourceService(CoreDataPaths paths, AppRegistryStore app
         }
         catch (AppLifecycleException)
         {
-            _ = await RunGitAsync(checkoutPath, ["fetch", "--all", "--tags", "--prune"], cancellationToken);
+            _ = await RunGitAsync(checkoutPath, FetchArgs, cancellationToken);
             return await operation();
         }
     }

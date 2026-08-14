@@ -3132,6 +3132,37 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task ResolveManagedAsync_FetchSurvivesAChannelTagThatMovedUpstream()
+    {
+        // Source repositories carry moving channel tags (CI re-points this repo's own `cli-dev`), and an
+        // unforced `git fetch --tags` *rejects* such an update ("would clobber existing tag") and exits
+        // non-zero. That failed the whole resolve — and with it every source-backed app update — even
+        // though the app's own branch had fetched fine.
+        var fixture = await LifecycleFixture.CreateAsync();
+        var repository = await CreateGitRepositoryAsync(fixture.Root);
+        _ = await RunGitAsync(repository, ["tag", "-f", "channel-dev"]);
+        var manifest = await fixture.WriteManifestAsync("1.0.0", sourceRepository: repository);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        // The clone copies the tag at its current commit.
+        var first = await fixture.Sources.ResolveManagedAsync("com.example.notes", new AppSourceResolveRequest(Branch: "main"));
+        var checkout = Assert.IsType<string>(first.Source?.ManagedCheckoutPath);
+
+        // Upstream advances and the channel tag is re-pointed at the new commit.
+        await File.WriteAllTextAsync(Path.Combine(repository, "advance.txt"), "v2");
+        _ = await RunGitAsync(repository, ["add", "advance.txt"]);
+        _ = await RunGitAsync(repository, ["-c", "user.name=Hosty Test", "-c", "user.email=hosty@example.test", "commit", "-m", "Advance"]);
+        var commit2 = await RunGitAsync(repository, ["rev-parse", "HEAD"]);
+        _ = await RunGitAsync(repository, ["tag", "-f", "channel-dev"]);
+
+        var resolved = await fixture.Sources.ResolveManagedAsync(
+            "com.example.notes",
+            new AppSourceResolveRequest(Branch: "main", Fetch: true));
+
+        Assert.Equal(commit2, resolved.Source?.Commit);
+        Assert.Equal(commit2, await RunGitAsync(checkout, ["rev-parse", "refs/tags/channel-dev^{commit}"]));
+    }
+
+    [Fact]
     public async Task EnsurePinnedCommit_ReResolvesABranchRefFromOrigin_NotTheStaleLocalBranch()
     {
         // The re-resolve path (no recorded commit) resolves the recorded ref against the checkout,
