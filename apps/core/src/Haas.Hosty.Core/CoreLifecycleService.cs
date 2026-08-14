@@ -1667,14 +1667,14 @@ internal sealed class CoreLifecycleService(
         }
     }
 
-    // The detached apply body. Exception-total: every outcome lands on the record (and as a
-    // notification) because there is no request left to surface it to.
+    // The detached apply body. Exception-total: every outcome lands on the record, because there is
+    // no request left to surface it to. Deliberately silent in the notification inbox — an update is
+    // always something the operator just asked for, and its outcome is already on the app row.
     private async Task ExecuteBackgroundUpdateAsync(string appId, AppUpdateApplyRequest request, CancellationToken cancellationToken)
     {
         try
         {
-            var response = await ApplyUpdateAsync(appId, request, cancellationToken);
-            await NotifyUpdateAppliedAsync(response.App, cancellationToken);
+            await ApplyUpdateAsync(appId, request, cancellationToken);
             await RebuildPlanAfterApplyAsync(appId, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -1687,21 +1687,6 @@ internal sealed class CoreLifecycleService(
         {
             logger.LogError(ex, "Background update for app {AppId} failed.", appId);
             await RecordBackgroundLifecycleFailureAsync(appId, "update", ex.Message, CancellationToken.None);
-            await NotifyUpdateFailedAsync(appId, await TryGetDisplayNameAsync(appId), ex.Message, CancellationToken.None);
-        }
-    }
-
-    // Best-effort display-name lookup for a notification title; the id is an acceptable fallback —
-    // a broken read must not swallow the failure notification itself.
-    private async Task<string> TryGetDisplayNameAsync(string appId)
-    {
-        try
-        {
-            return (await apps.GetAppAsync(appId))?.DisplayName ?? appId;
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            return appId;
         }
     }
 
@@ -1786,8 +1771,8 @@ internal sealed class CoreLifecycleService(
     // Boot sweep (plan-first updates phase 3): a record still marked "updating" at startup means a
     // background apply was cut down mid-flight by a Core stop or crash — the completion write never
     // happened (a successful apply flips the record to "updated" atomically). Flip it to failed with
-    // an actionable error so the operator re-reviews, and say so in a notification. Returns the
-    // number of records recovered.
+    // an actionable error so the operator re-reviews on the app row. Returns the number of records
+    // recovered.
     public async Task<int> RecoverInterruptedUpdatesAsync(CancellationToken cancellationToken = default)
     {
         var recovered = 0;
@@ -1800,8 +1785,8 @@ internal sealed class CoreLifecycleService(
             // "updating" AND no background apply is in flight for it: a fresh enqueue registers its
             // single-flight slot before persisting the marker (also under the record lock), so a
             // legitimate in-flight update racing this sweep always has its slot visible here and is
-            // left alone. `flipped` gates the notification and the count, so a record that moved on
-            // between the list snapshot and this write is not reported as interrupted.
+            // left alone. `flipped` gates the count, so a record that moved on between the list
+            // snapshot and this write is not reported as interrupted.
             var flipped = false;
             await apps.UpdateAppAsync(
                 app.Id,
@@ -1822,65 +1807,11 @@ internal sealed class CoreLifecycleService(
                 continue;
             }
 
-            await NotifyUpdateFailedAsync(app.Id, app.DisplayName, message, cancellationToken);
             logger.LogWarning("App {AppId} was mid-update when Core stopped; marked failed for re-review.", app.Id);
             recovered++;
         }
 
         return recovered;
-    }
-
-    // Host-admin notification for a completed background update — with no request left to answer,
-    // this (plus the record flip) is how a reloaded page learns the outcome. Best-effort, never
-    // throws. Dedupe key includes the version so distinct updates each notify once.
-    private async Task NotifyUpdateAppliedAsync(AppSummary? app, CancellationToken cancellationToken)
-    {
-        if (notifications is null || app is null)
-        {
-            return;
-        }
-
-        try
-        {
-            await notifications.PublishAsync(
-                new CoreScope(), NotificationService.BroadcastTarget, NotificationService.AudienceHostAdmin,
-                "info",
-                $"'{app.DisplayName}' updated to {app.Version}",
-                $"The update was applied and '{app.DisplayName}' is now at version {app.Version}.",
-                link: null,
-                $"app-update-applied:{app.Id}:{app.Version}",
-                cancellationToken);
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            logger.LogWarning(exception, "Failed to publish update-applied notification for {AppId}.", app.Id);
-        }
-    }
-
-    // Failure twin of NotifyUpdateAppliedAsync. Dedupe key is per-app so repeated failures coalesce
-    // until one succeeds.
-    private async Task NotifyUpdateFailedAsync(string appId, string displayName, string message, CancellationToken cancellationToken)
-    {
-        if (notifications is null)
-        {
-            return;
-        }
-
-        try
-        {
-            await notifications.PublishAsync(
-                new CoreScope(), NotificationService.BroadcastTarget, NotificationService.AudienceHostAdmin,
-                "error",
-                $"'{displayName}' update failed",
-                message,
-                link: null,
-                $"app-update-failed:{appId}",
-                cancellationToken);
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            logger.LogWarning(exception, "Failed to publish update-failed notification for {AppId}.", appId);
-        }
     }
 
     // Reviewed update plans awaiting apply, keyed by app id (one pending plan per app). See the write in
