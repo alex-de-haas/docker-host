@@ -6,7 +6,9 @@ export type MarketplaceOptions = {
 // reads is important for `next build`, where Hosty-injected settings do not exist yet. The identity
 // flow (host-auth.ts) reads HOSTY_APP_ID / HOSTY_CORE_ORIGIN / HOSTY_APP_SERVICE_TOKEN from the
 // environment directly, so the only configuration this app owns is its single catalog source URL.
-export function optionsFromEnvironment(env: NodeJS.ProcessEnv = process.env): MarketplaceOptions {
+// `env` is Partial<> because next augments NodeJS.ProcessEnv with a required NODE_ENV, which this
+// function never reads; callers (and tests) should only have to supply the keys it actually uses.
+export function optionsFromEnvironment(env: Partial<NodeJS.ProcessEnv> = process.env): MarketplaceOptions {
   return {
     sourceUrl: readHttpUrl(env.HOSTY_MARKETPLACE_SOURCE_URL),
   };
