@@ -1375,13 +1375,16 @@ internal sealed class RuntimeAppSupervisorService(
 
     // Dedupe-key prefixes of advisories that are no longer published because the condition they
     // described became app state. Cross-app dependency status now rides on the app summary and is
-    // rendered beside the app, so the old start-time advisories are stale by construction — and the
-    // notification store has no revoke, so nothing else would ever remove them.
+    // rendered beside the app, and update outcomes ride on the app record (an update is always
+    // operator-initiated), so these are stale by construction — and the notification store has no
+    // revoke, so nothing else would ever remove them.
     private static readonly string[] RetiredAdvisoryDedupePrefixes =
     [
         "dependency-missing:",
         "dependency-stopped:",
         "dependency-endpoint:",
+        "app-update-applied:",
+        "app-update-failed:",
     ];
 
     // One-time cleanup of advisories retired by an upgrade. Idempotent (a second boot finds nothing)
@@ -1399,7 +1402,7 @@ internal sealed class RuntimeAppSupervisorService(
             if (purged > 0)
             {
                 logger.LogInformation(
-                    "Removed {Count} retired dependency advisory notification(s); dependency status is now shown on the app itself.",
+                    "Removed {Count} retired advisory notification(s); dependency and update status are now shown on the app itself.",
                     purged);
             }
         }

@@ -1,7 +1,7 @@
 # Runtime App Update
 
 Created: 2026-06-04
-Updated: 2026-07-31
+Updated: 2026-08-14
 
 ## Description
 
@@ -103,8 +103,9 @@ This is what makes the flow reload-safe. The request-scoped cancellation token u
 Progress and outcome live on the app record, not in a client:
 
 - `operationStatus: "updating"` is persisted for the duration — every client renders progress from it, and it survives reloads, second browsers, and the Shell restarting itself. It is the **only** in-progress marker: a successful apply of a *running* app ends at `started` (the post-update restart), not `updated`.
-- Completion flips the record (`updated`/`started`, or `failed` with `lastError`) and publishes a host-admin notification, so a reloaded page still learns the outcome. A post-apply single-app re-plan settles the app's verdict against its new base immediately instead of waiting for the next sweep.
-- A record still marked `"updating"` at startup means Core stopped mid-apply: the boot sweep flips it to `failed` with an actionable "interrupted by a Core restart" error and notifies. It runs before autostart reconciliation, and skips any app whose apply is genuinely in flight.
+- Completion flips the record (`updated`/`started`, or `failed` with `lastError`), so a reloaded page still learns the outcome. A post-apply single-app re-plan settles the app's verdict against its new base immediately instead of waiting for the next sweep.
+- A record still marked `"updating"` at startup means Core stopped mid-apply: the boot sweep flips it to `failed` with an actionable "interrupted by a Core restart" error. It runs before autostart reconciliation, and skips any app whose apply is genuinely in flight.
+- No update outcome is published to the notification inbox. An apply is always something the operator just asked for, and the record already carries the result onto the app row — a second copy in the bell was noise. Core purges any `app-update-applied:` / `app-update-failed:` advisories left by earlier versions on boot.
 
 `POST /control/v1/apps/{appId}/update` stays synchronous — the CLI's confirm-and-wait shape is the right one there.
 
