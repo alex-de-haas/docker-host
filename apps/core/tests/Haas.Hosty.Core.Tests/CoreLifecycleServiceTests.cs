@@ -3009,8 +3009,45 @@ public sealed class CoreLifecycleServiceTests
 
         Assert.Equal(overridePath, response.Source?.LocalOverridePath);
         Assert.Equal(overridePath, app?.SourceState?.LocalOverridePath);
-        Assert.Equal("abc123", app?.SourceState?.Commit);
+        // The folder's commit is recorded as the override's own, never as the reviewed pin.
+        Assert.Equal("abc123", app?.SourceState?.OverrideCommit);
+        Assert.Null(app?.SourceState?.Commit);
         Assert.Equal(repository, app?.SourceState?.Repository);
+    }
+
+    [Fact]
+    public async Task SetLocalOverrideAsync_RecordsTheHeadOfAFolderInsideARepository()
+    {
+        // The override commit used to be read only when the folder itself held a `.git` *directory*,
+        // which skips a linked worktree (`.git` is a file there) and any folder nested inside a
+        // repository — both of which answer `git rev-parse HEAD` perfectly well.
+        var fixture = await LifecycleFixture.CreateAsync();
+        var repository = await CreateLocalCommandGitRepositoryAsync(fixture.Root);
+        var head = await RunGitAsync(repository, ["rev-parse", "HEAD"]);
+        var nested = Path.Combine(repository, "apps", "remote-app");
+        var manifest = await fixture.WriteManifestAsync("1.0.0", sourceRepository: repository);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        var response = await fixture.Sources.SetLocalOverrideAsync("com.example.notes", new AppSourceOverrideRequest(nested));
+
+        Assert.Equal(nested, response.Source?.LocalOverridePath);
+        Assert.Equal(head, response.Source?.OverrideCommit);
+    }
+
+    [Fact]
+    public async Task SetLocalOverrideAsync_RecordsNoCommitForAFolderThatIsNotAWorkingTree()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var repository = await CreateGitRepositoryAsync(fixture.Root);
+        var plainFolder = Path.Combine(fixture.Root, "not-a-repo");
+        Directory.CreateDirectory(plainFolder);
+        var manifest = await fixture.WriteManifestAsync("1.0.0", sourceRepository: repository);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+
+        var response = await fixture.Sources.SetLocalOverrideAsync("com.example.notes", new AppSourceOverrideRequest(plainFolder));
+
+        Assert.Equal(plainFolder, response.Source?.LocalOverridePath);
+        Assert.Null(response.Source?.OverrideCommit);
     }
 
     [Fact]
@@ -3060,11 +3097,13 @@ public sealed class CoreLifecycleServiceTests
         await File.WriteAllTextAsync(trackedFile, "locally edited");
         await File.WriteAllTextAsync(Path.Combine(checkout, "stray.txt"), "untracked");
 
-        // The operator configures a live override, which stamps AppSourceState.Commit from that folder.
+        // The operator configures a live override, which records that folder's commit as the override's
+        // own — the reviewed pin must not move.
         var overrideRepository = await CreateGitRepositoryAsync(fixture.Root);
         await fixture.Sources.SetLocalOverrideAsync("com.example.notes", new AppSourceOverrideRequest(overrideRepository));
-        var overrideCommit = (await fixture.Apps.GetAppAsync("com.example.notes"))?.SourceState?.Commit;
-        Assert.NotEqual(reviewedCommit, overrideCommit);
+        var afterOverride = (await fixture.Apps.GetAppAsync("com.example.notes"))?.SourceState;
+        Assert.NotEqual(reviewedCommit, afterOverride?.OverrideCommit);
+        Assert.Equal(reviewedCommit, afterOverride?.Commit);
 
         // Re-pin (Dev Mode off): the reviewed commit is restored with a clean working tree, ignoring the
         // override's commit.
@@ -3073,6 +3112,61 @@ public sealed class CoreLifecycleServiceTests
         Assert.Equal(reviewedCommit, await RunGitAsync(checkout, ["rev-parse", "HEAD"]));
         Assert.Equal("remote local command app", (await File.ReadAllTextAsync(trackedFile)).Trim());
         Assert.False(File.Exists(Path.Combine(checkout, "stray.txt")));
+    }
+
+    [Fact]
+    public async Task EnsurePinnedCommit_KeepsAReviewedUpdatesCommitWhenAnOverrideIsConfigured()
+    {
+        // A configured override used to force a re-resolve of the recorded ref on every pinned start,
+        // which threw away the commit a reviewed update had just stamped and re-pinned the checkout to
+        // `origin/{ref}` as of its last fetch. The app then ran the old code while the update check kept
+        // re-offering the same update — an "update available" badge that survived its own update.
+        var fixture = await LifecycleFixture.CreateAsync();
+        var repository = await CreateLocalCommandGitRepositoryAsync(fixture.Root);
+        var manifest = await fixture.WriteManifestAsync("1.0.0", sourceRepository: repository);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        var first = await fixture.Sources.EnsurePinnedCommitAsync("com.example.notes");
+        var checkout = Assert.IsType<string>(first.Source?.ManagedCheckoutPath);
+        var overrideRepository = await CreateGitRepositoryAsync(fixture.Root);
+        await fixture.Sources.SetLocalOverrideAsync("com.example.notes", new AppSourceOverrideRequest(overrideRepository));
+
+        // Upstream advances and a reviewed update stamps the new commit (the checkout has not fetched it).
+        await File.WriteAllTextAsync(Path.Combine(repository, "advance.txt"), "v2");
+        _ = await RunGitAsync(repository, ["add", "advance.txt"]);
+        _ = await RunGitAsync(repository, ["-c", "user.name=Hosty Test", "-c", "user.email=hosty@example.test", "commit", "-m", "Advance"]);
+        var commit2 = await RunGitAsync(repository, ["rev-parse", "HEAD"]);
+        var record = await fixture.Apps.GetAppAsync("com.example.notes");
+        await fixture.Apps.UpsertAppAsync(record! with { SourceState = record.SourceState! with { Commit = commit2 } });
+
+        var repinned = await fixture.Sources.EnsurePinnedCommitAsync("com.example.notes");
+
+        Assert.Equal(commit2, repinned.Source?.Commit);
+        Assert.Equal(commit2, await RunGitAsync(checkout, ["rev-parse", "HEAD"]));
+    }
+
+    [Fact]
+    public async Task EnsurePinnedCommit_FallsBackToTheReviewedRefWhenTheRecordedCommitIsUnreachable()
+    {
+        // Records written before the override kept its own commit field carry a foreign repository's
+        // commit in the pin; a force-pushed branch can also drop one upstream. Neither may wedge every
+        // start of the app: the pin falls back to the reviewed ref and the record self-heals.
+        var fixture = await LifecycleFixture.CreateAsync();
+        var repository = await CreateLocalCommandGitRepositoryAsync(fixture.Root);
+        var manifest = await fixture.WriteManifestAsync("1.0.0", sourceRepository: repository);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
+        var first = await fixture.Sources.EnsurePinnedCommitAsync("com.example.notes");
+        var checkout = Assert.IsType<string>(first.Source?.ManagedCheckoutPath);
+        var reviewedCommit = Assert.IsType<string>(first.Source?.Commit);
+
+        var foreignRepository = await CreateGitRepositoryAsync(fixture.Root);
+        var foreignCommit = await RunGitAsync(foreignRepository, ["rev-parse", "HEAD"]);
+        var record = await fixture.Apps.GetAppAsync("com.example.notes");
+        await fixture.Apps.UpsertAppAsync(record! with { SourceState = record.SourceState! with { Commit = foreignCommit } });
+
+        var repinned = await fixture.Sources.EnsurePinnedCommitAsync("com.example.notes");
+
+        Assert.Equal(reviewedCommit, repinned.Source?.Commit);
+        Assert.Equal(reviewedCommit, await RunGitAsync(checkout, ["rev-parse", "HEAD"]));
     }
 
     [Fact]

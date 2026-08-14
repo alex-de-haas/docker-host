@@ -744,6 +744,7 @@ internal sealed partial class AppsCommand(CommandContext context)
             .Field("Commit", Markup.Escape(source.Commit ?? ""))
             .Field("Managed checkout", Markup.Escape(source.ManagedCheckoutPath ?? ""))
             .Field("Local override", Markup.Escape(source.LocalOverridePath ?? ""))
+            .Field("Override commit", Markup.Escape(source.OverrideCommit ?? ""))
             .Field("Updated", Markup.Escape(source.UpdatedAt?.ToString("u") ?? ""));
         context.Console.Write(table);
     }
@@ -1670,7 +1671,10 @@ internal sealed partial class AppsCommand(CommandContext context)
         string? Commit,
         string? ManagedCheckoutPath,
         string? LocalOverridePath,
-        DateTimeOffset? UpdatedAt);
+        DateTimeOffset? UpdatedAt,
+        // The override folder's own commit, separate from the reviewed pin above. Additive: an older
+        // Core omits it.
+        string? OverrideCommit = null);
 
     internal sealed record AppIdentityIssueRequest(string User);
 

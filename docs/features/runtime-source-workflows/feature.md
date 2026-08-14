@@ -1,5 +1,8 @@
 # Runtime Source Workflows
 
+Created: 2026-06-03
+Updated: 2026-08-14
+
 Runtime source workflows let administrators and local operators inspect and update the source state stored for an installed Hosty runtime app. This is the completed Stage 2 source/runtime model: manifests can declare app-level Git source metadata, Core stores managed checkout and local override state in the app record, local command runtimes can run from that source state, and the CLI exposes trusted control commands for day-to-day operations.
 
 ```mermaid
@@ -13,16 +16,21 @@ flowchart LR
 
 ## Source State
 
-An app manifest may declare one app-level source repository. Multi-repository runtime apps are out of scope for the first source runtime implementation; split independently-owned services into separate runtime apps. Future source extensions are tracked in [Runtime Source Extensions](../ideas/runtime-source-extensions.md).
+An app manifest may declare one app-level source repository. Multi-repository runtime apps are out of scope for the first source runtime implementation; split independently-owned services into separate runtime apps. Future source extensions are tracked in [Runtime Source Extensions](../../ideas/runtime-source-extensions.md).
 
 Core stores source state as Host installation state, not as public manifest metadata:
 
 - repository type and URL/path;
 - resolved ref;
-- immutable commit SHA;
+- immutable commit SHA — the reviewed pin, advanced only by `source-resolve` or a reviewed update;
 - managed checkout path, by default `apps/<app-id>/source/` inside the app root (pre-existing records may still point at the retired top-level `sources/<app-id>/` location);
 - optional administrator-selected local source override path;
+- the override folder's own commit, when one was recorded;
 - update timestamp.
+
+The reviewed pin and the override's commit are separate fields because they answer different questions: which upstream commit Core reviewed, and where the operator's folder happened to be. Configuring an override therefore never moves the pin, and a pinned start (Development Mode off) runs the recorded pin as-is — fetching it when the checkout does not have it yet. A recorded commit that the repository does not contain even after a fetch falls back to the reviewed ref rather than failing the start, and the record self-heals. The override's commit is whatever `git rev-parse HEAD` answers in that folder, so a linked worktree or a folder nested inside a repository records one too; a folder git does not recognize records none.
+
+Installation records predate this split at schema version 1, where both facts shared the `commit` field. Core migrates such a record on read — the commit of a record that has an override moves to the override's field and the pin re-resolves from the reviewed ref, exactly as a pre-split Core behaved — and the next write stores it at version 2, after which a recorded pin is taken as reviewed.
 
 Managed checkouts are for public-readable `http`/`https` Git repositories or local filesystem repositories. Core rejects embedded credentials and SSH-style repository URLs, and git subprocesses run with interactive credential prompts disabled. Private repositories should be cloned by an administrator and connected through `source-override` until Hosty has a Core-owned credential provider.
 
@@ -30,8 +38,8 @@ Managed checkouts are for public-readable `http`/`https` Git repositories or loc
 
 - `hosty apps source <app-id>` shows the current source state for an installed app.
 - `hosty apps source-resolve <app-id> [--branch <name>|--tag <tag>|--commit <sha>] [--fetch]` prepares or refreshes the managed checkout and records an immutable commit SHA.
-- `hosty apps source-override <app-id> --path <worktree> [--commit <sha>]` stores an administrator-selected local worktree override in installation state.
-- `hosty apps source-clear-override <app-id>` removes the local override and leaves managed source state intact.
+- `hosty apps source-override <app-id> --path <worktree> [--commit <sha>]` stores an administrator-selected local worktree override in installation state. `--commit` (or the folder's `HEAD`) is recorded as the override's commit; the reviewed pin is left alone.
+- `hosty apps source-clear-override <app-id>` removes the local override and its commit, and leaves managed source state intact.
 - `hosty apps health <app-id>` reports runtime health. For `localCommand` runtimes, Core reports each service process status, PID, exit code, log path, and working directory.
 - Add `--format json` to any source command for scripting.
 
@@ -78,3 +86,11 @@ hosty apps switch-runtime hosty.shell --runtime dev --plan-digest <digest>
 Core and combined-Host self-runtime changes are different from Shell-only changes. Core cannot complete its own replacement after it stops, so Core runtime switching still requires the trusted CLI or another outer supervisor.
 
 Shell also exposes Hosty Shell runtime switching in the Installed Apps System Apps table when Core reports multiple runtime profiles. Other system app lifecycle controls remain hidden there.
+
+## Testing Expectations
+
+- `source-override` records the folder's commit as the override's own and leaves the reviewed pin unchanged, including for a folder nested inside a repository; clearing the override drops both.
+- A schema-version-1 record that has an override reads back with its commit moved to the override's field, once, and keeps a reviewed pin recorded afterwards.
+- A pinned start (Development Mode off) checks out the recorded pin — including one a reviewed update has just advanced to — with an override configured, and fetches when the checkout does not have that commit yet.
+- A pinned start whose recorded commit is unreachable even after a fetch falls back to the reviewed ref instead of failing.
+- A pinned start restores a dirty checkout to the pinned commit (tracked edits discarded, untracked files removed).

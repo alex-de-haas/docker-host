@@ -598,6 +598,49 @@ public sealed class AppRegistryStoreTests
         Assert.Equal(50, state.Sessions.Select(session => session.Id).Distinct(StringComparer.Ordinal).Count());
     }
 
+    [Fact]
+    public async Task GetAppAsync_MovesAV1OverrideCommitOutOfTheReviewedPin()
+    {
+        // A v1 record's SourceState.Commit may be the override folder's HEAD (SetLocalOverrideAsync used
+        // to write it there), and the locked start path now trusts the pin — so the value cannot be taken
+        // at face value for a record that had an override.
+        var root = await CreateTempRootAsync();
+        var paths = CreatePaths(root);
+        var store = new AppRegistryStore(paths);
+        var appRoot = Path.Combine(paths.AppsRoot, "com.example.notes");
+        Directory.CreateDirectory(appRoot);
+        var v1 = new AppStateDocument(1, CreateApp("com.example.notes") with
+        {
+            SourceState = new AppSourceState(
+                Type: "git",
+                Repository: "https://example.test/notes.git",
+                ResolvedRef: "main",
+                Commit: "1111111111111111111111111111111111111111",
+                ManagedCheckoutPath: Path.Combine(appRoot, "source"),
+                LocalOverridePath: Path.Combine(root, "worktree"),
+                UpdatedAt: DateTimeOffset.UtcNow),
+        });
+        await File.WriteAllTextAsync(
+            Path.Combine(appRoot, "state.json"),
+            JsonSerializer.Serialize(v1, CoreJsonSerializerContext.Default.AppStateDocument));
+
+        var migrated = await store.GetAppAsync("com.example.notes");
+
+        Assert.Null(migrated?.SourceState?.Commit);
+        Assert.Equal("1111111111111111111111111111111111111111", migrated?.SourceState?.OverrideCommit);
+
+        // Once written back at the current schema version, a reviewed pin recorded later is left alone —
+        // the migration is one-shot, not a standing distrust of every override record.
+        _ = await store.UpsertAppAsync(migrated! with
+        {
+            SourceState = migrated.SourceState! with { Commit = "2222222222222222222222222222222222222222" },
+        });
+
+        var reread = await store.GetAppAsync("com.example.notes");
+        Assert.Equal("2222222222222222222222222222222222222222", reread?.SourceState?.Commit);
+        Assert.Equal("1111111111111111111111111111111111111111", reread?.SourceState?.OverrideCommit);
+    }
+
     private static AppRecord CreateApp(string id)
         => new(
             Id: id,
