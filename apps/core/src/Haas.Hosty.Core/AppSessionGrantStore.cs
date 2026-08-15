@@ -3,7 +3,7 @@ namespace Haas.Hosty.Core;
 // Server-side store of app session grants: the opaque browser app token is never persisted, only its
 // hash. This replaces the previous stateless signed JWT so app sessions gain instant server-side
 // revocation, idle + absolute expiry, and an explicit-logout cascade — while apps still hold a single
-// HttpOnly cookie. See docs/ideas/auth-session-lifecycle.md.
+// HttpOnly cookie. See docs/features/auth-session-lifecycle/feature.md.
 internal sealed class AppSessionGrantStore(CoreDataPaths paths)
 {
     // Revoked grants are kept briefly so revocation is observable in diagnostics before pruning removes

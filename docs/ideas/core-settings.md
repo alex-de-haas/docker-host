@@ -8,7 +8,7 @@ Created: 2026-07-13
 Runtime apps have an operator settings surface (the manifest `settings` block → `AppSettingSummary`
 → the `POST /api/apps/{id}/configure` form in Shell). **Core has no equivalent.** Its own behavior
 knobs — starting with the auth session/grant lifetimes added in
-[auth-session-lifecycle.md](auth-session-lifecycle.md) — were environment-variable-only, read once at
+[auth-session-lifecycle](../features/auth-session-lifecycle/feature.md) — were environment-variable-only, read once at
 startup and immutable for the process. Changing a session timeout meant editing `launch.env` and
 restarting the whole app fleet.
 
@@ -77,7 +77,7 @@ what it would display (per core-dev-target).
 
 ## Links
 
-- [Auth session lifecycle](auth-session-lifecycle.md) — where the TTLs are defined.
+- [Auth session lifecycle](../features/auth-session-lifecycle/feature.md) — where the TTLs are defined.
 - [Core Extension Model](core-extension-model.md) — why Core is the kernel, not an app.
 - [Core Launch Target](core-dev-target.md) — the platform panel that hosts this, and the rejected
   Core-as-app-card alternative.

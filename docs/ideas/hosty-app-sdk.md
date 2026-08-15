@@ -57,7 +57,7 @@ path owns "what is the auth state", so the three surfaces contradict each other.
 
 This is drift plus a missing failure-class: apps conflate *session expiry* (a user problem,
 recoverable) with *app misconfiguration* (an operator problem, terminal). The
-[auth session lifecycle](auth-session-lifecycle.md) work already called this out — "the
+[auth session lifecycle](../features/auth-session-lifecycle/feature.md) work already called this out — "the
 app-side work triples across demo-app, telemetry-ui, and marketplace (no shared package …
 independent copies)" — and the copies keep multiplying as new apps ship.
 
@@ -645,6 +645,6 @@ having precisely because the failure it names has now been observed in productio
 
 ## References
 
-- [auth-session-lifecycle.md](auth-session-lifecycle.md) — the recovery contract this SDK packages.
+- [auth-session-lifecycle](../features/auth-session-lifecycle/feature.md) — the recovery contract this SDK packages.
 - [`skills/hosty-app-skill/references/app-auth-and-users.md`](../../skills/hosty-app-skill/references/app-auth-and-users.md) — the app-author-facing contract.
 - [gateway-and-app-wrapping.md](gateway-and-app-wrapping.md) — origin separation and session-cookie boundaries.
