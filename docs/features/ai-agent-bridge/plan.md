@@ -26,8 +26,11 @@ and [agent-background-sessions](../agent-background-sessions/plan.md).
 - [x] 5. Embedded Core MCP: discovery and read-only observability. Shipped 2026-08-09 —
       [core-mcp](../core-mcp/feature.md). Delegated token issuance shipped with
       [ai-gateway](../ai-gateway/feature.md) as a Core HTTP route rather than an MCP tool.
-- [ ] 6. Validate with stock external agent clients (Claude Code / Codex plus a Hosty skill, static
-      endpoint entries) — no gateway code.
+- [x] 6. Validate with stock external agent clients — no gateway code. Done 2026-08-15 with Claude
+      Code against Core MCP: connected, and a session answered from the real fleet through
+      `mcp__hosty__list_apps`. Codex as a client, and a non-loopback origin, are still unproven; both
+      are cheap follow-ups rather than blockers, and step 7 is what removes the pasted token this
+      required.
 - [ ] 7. The `hosty mcp` connector and the Claude Code plugin packaging.
 - [x] 8. The operator milestone — the `hosty.ai-gateway` system app plus the Shell assistant surface.
       Shipped 2026-08-09 and verified live: [ai-gateway](../ai-gateway/feature.md).
