@@ -308,23 +308,39 @@ public sealed class LocalCommandRuntimeAdapterTests
             (adapter, registry, context) = CreateSetupScenario(
                 workRoot,
                 setup: null,
-                command: $"\"{scriptPath}\"",
+                // The bare file name, resolved against the working directory (workRoot). A quoted absolute
+                // path does not survive the trip: .NET escapes the inner quotes as \" when it pastes the
+                // command line, and cmd.exe reads those literally, so the launch fails with ERRORLEVEL 1
+                // before the script ever runs.
+                command: Path.GetFileName(scriptPath),
                 shim: new LocalCommandShimOptions(coreExecutable));
 
-            var started = await adapter.StartAsync(context);
+            AppRuntimeStartResult started;
+            try
+            {
+                started = await adapter.StartAsync(context);
+            }
+            catch (AppLifecycleException ex)
+            {
+                // This lane only runs on Windows CI, so a bare exception message would leave the failure
+                // undiagnosable — the service log holds what the command actually printed.
+                Assert.Fail($"{ex.Message}{Environment.NewLine}Service log:{Environment.NewLine}{ReadServiceLog(workRoot)}");
+                throw;
+            }
+
             Assert.Equal("running", started.RuntimeState);
 
-            using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+            int childPid;
+            using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15)))
             {
-                while (!File.Exists(childPidPath))
+                // File.Exists turns true the moment Set-Content creates the file, before the pid is
+                // written and while PowerShell may still hold it open, so poll for a value that parses.
+                while (!TryReadChildPid(childPidPath, out childPid))
                 {
                     await Task.Delay(50, timeout.Token);
                 }
             }
 
-            var childPid = int.Parse(
-                (await File.ReadAllTextAsync(childPidPath)).Trim(),
-                System.Globalization.CultureInfo.InvariantCulture);
             child = System.Diagnostics.Process.GetProcessById(childPid);
 
             var running = registry.Get("com.example.app", "app");
@@ -451,6 +467,38 @@ public sealed class LocalCommandRuntimeAdapterTests
             new Dictionary<string, string>(),
             []);
         return (adapter, registry, context);
+    }
+
+    // Reads a service log while the writing process may still hold it open (FileShare.ReadWrite), so a
+    // start failure can be reported with the command's own output.
+    private static string ReadServiceLog(string workRoot)
+    {
+        var logPath = Path.Combine(workRoot, "logs", "app.log");
+        try
+        {
+            using var stream = new FileStream(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var reader = new StreamReader(stream);
+            return reader.ReadToEnd();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return $"(unreadable: {logPath})";
+        }
+    }
+
+    private static bool TryReadChildPid(string path, out int pid)
+    {
+        pid = 0;
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var reader = new StreamReader(stream);
+            return int.TryParse(reader.ReadToEnd().Trim(), System.Globalization.CultureInfo.InvariantCulture, out pid);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
     }
 
     private static (LocalCommandRuntimeAdapter Adapter, LocalCommandProcessRegistry Registry, RuntimeLifecycleContext Context) CreateSetupScenario(
