@@ -1,7 +1,7 @@
 # Delegated Token Exchange
 
 Created: 2026-08-15
-Updated: 2026-08-16
+Updated: 2026-08-15
 
 A system app trades the delegated token it holds for one scoped to another app, so an agent session
 can call app MCP endpoints on behalf of the user currently talking to it — without Core entering the

@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-08-11
-Updated: 2026-08-16
+Updated: 2026-08-15
 
 Give an agent session a credential for the app MCP endpoints it is allowed to reach — without Core
 entering the data path, and without any app ever holding a credential stronger than the user it acts
@@ -97,7 +97,7 @@ browser holding a human's session.
       2026-08-15: an approval held nine minutes released a call carrying an expired token although the
       timer was refreshing correctly, because a call binds its credential when it is raised. A
       five-minute TTL and a human-speed approval gate are in tension by construction.
-      **Superseded 2026-08-16 and removed** — it was verified not to fix the case it was written for,
+      **Superseded 2026-08-15 and removed** — it was verified not to fix the case it was written for,
       and the proxy below fixes it at the right layer. Kept checked because it shipped and its finding
       is what produced the proxy; leaving dead code behind would have been the worse half of honesty.
 - [ ] **A per-session MCP proxy, so the TTL stops being visible to the harness.** Re-minting when an
