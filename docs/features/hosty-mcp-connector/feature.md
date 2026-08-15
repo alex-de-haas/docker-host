@@ -211,8 +211,13 @@ exist yet.
   - the run immediately before demo-app was updated is the fail-closed rule observed rather than
     argued: 0.7.1 declared no annotations, so both of its tools were refused and the catalog was
     empty.
-- **Still outstanding:** no stock client has connected, the plugin has not been installed into a real
-  Claude Code, and `notifications/tools/list_changed` has not been watched against an app actually
-  starting or stopping. The first two are what step 7 of
-  [ai-agent-bridge](../ai-agent-bridge/plan.md) is waiting on; the third needs a host mutation rather
-  than a read.
+  - **the fleet was changed under a live session**, which is the capability a static config cannot
+    have at all. One connector process was held open throughout while demo-app was stopped and
+    started again: `notifications/tools/list_changed` arrived on the first poll tick after each
+    transition — 27s after the stop, 10s after the start, both inside the 30-second interval — the
+    tool list emptied and refilled, and the client was never restarted.
+- **Still outstanding:** no stock client has connected, and the plugin has not been installed into a
+  real Claude Code. Every check above drove the protocol directly, which proves the server completely
+  and client compatibility not at all — the same distinction [app-mcp](../app-mcp/feature.md) drew
+  about its own endpoint. That is what step 7 of [ai-agent-bridge](../ai-agent-bridge/plan.md) is
+  waiting on.

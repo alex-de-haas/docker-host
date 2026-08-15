@@ -262,8 +262,10 @@ into Decided below, together with a fourth the plan had never recorded.
   confirm the list changes without restarting the client.
   **Done 2026-08-15 except through a stock client** — the connector was driven directly against Core
   0.81.0 and demo-app 0.7.2: tools listed with no credential in the caller's configuration, a call
-  reached the app and came back with its real domain answer. What remains is a real client and an app
-  actually starting or stopping, which the notification has not yet been watched against.
+  reached the app and came back with its real domain answer, and stopping then starting the app under
+  a held-open session produced `notifications/tools/list_changed` on each transition with the list
+  emptying and refilling. What remains is a real client, since driving the protocol directly proves
+  the server and not client compatibility.
 - The negative that matters: an app the actor may not reach must not appear in `tools/list` at all —
   verified beside a permitted actor who does see it, since a connector that exports nothing would
   satisfy the refusal alone.
