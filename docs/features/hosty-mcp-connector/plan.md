@@ -1,6 +1,6 @@
 # Hosty MCP Connector
 
-Status: Ready
+Status: In Progress
 Created: 2026-08-15
 Updated: 2026-08-15
 
@@ -55,45 +55,54 @@ the two should know which is current.
 
 ## Deliverables
 
-- [ ] **Core: a control route issuing a delegated token** for a named app on behalf of the local
+- [x] **Core: a control route issuing a delegated token** for a named app on behalf of the local
       operator, mirroring the existing `identity` control route. Gated exactly as the rest of the
       channel is, and audited like the exchange, since it is another path to a data-plane credential.
-- [ ] `hosty mcp` as a stdio MCP server: `initialize`, `tools/list`, `tools/call`, hand-rolled per
+- [x] `hosty mcp` as a stdio MCP server: `initialize`, `tools/list`, `tools/call`, hand-rolled per
       Decisions below.
-- [ ] Discovery through the existing `GET /control/v1/apps`, filtered to apps declaring `mcp` that are
+- [x] Discovery through the existing `GET /control/v1/apps`, filtered to apps declaring `mcp` that are
       running and visible to the actor; parallel `tools/list` fan-out with a per-app timeout, an
       unreachable app omitted rather than fatal.
       **No new discovery route is needed** — verified 2026-08-15: that response already carries
       `AppSummary.Interfaces` resolved to ready-to-call URLs. Only the token route below is new.
-- [ ] Namespaced re-export per the mapping in Decisions, passing schemas and annotations through
+- [x] Namespaced re-export per the mapping in Decisions, passing schemas and annotations through
       unchanged so client permission policy can key off them.
-- [ ] **The token is obtained by the connector, never by the client** — minted at call time and
+- [x] **The token is obtained by the connector, never by the client** — minted at call time and
       cached only while it is comfortably valid, re-minted otherwise, so nothing expiring is ever
       written to a client config. See "Cached, not per-call" in Decisions for why this wording
       replaced "a fresh token minted per call", which the plan asserted in three places while the
       design it borrowed from caches.
-- [ ] `notifications/tools/list_changed` on a fleet change, from a registry poll.
-- [ ] A stopped app yields a structured `app_stopped` error for that call only; the session and the
+- [x] `notifications/tools/list_changed` on a fleet change, from a registry poll.
+- [x] A stopped app yields a structured `app_stopped` error for that call only; the session and the
       other apps keep working.
-- [ ] **An enforced read-only filter, fail-closed.** External clients stay read-only until token
+- [x] **An enforced read-only filter, fail-closed.** External clients stay read-only until token
       scopes and an audit callback exist — an established boundary in
       [ai-agent-bridge](../ai-agent-bridge/feature.md). A mutating app tool must be refused by the
       connector, not merely labelled: `readOnlyHint` and `destructiveHint` are advisory client
       metadata, and a hostile or careless client ignores them.
-- [ ] **`readOnlyHint` on demo-app's MCP tools.** Not optional polish, and the reason is the
+- [x] **`readOnlyHint` on demo-app's MCP tools.** Not optional polish, and the reason is the
       fail-closed rule above: **nothing in this repository declares tool annotations today** — not
       demo-app, not Core MCP (checked 2026-08-15). A connector that treats a missing `readOnlyHint`
       as "not read-only" therefore exports *zero* app tools until this lands, so the two ship
       together or the feature demonstrates nothing. The reference implementation is copied as-is by
       app authors, which is the second reason it belongs there.
-- [ ] **Packaging**: the Claude Code plugin bundling the connector `.mcp.json`, a Hosty skill, and
-      PreToolUse hooks implementing allow-read-only / ask-writes / deny-destructive. Part of the
-      umbrella's step 7 scope, so step 7 cannot be checked off without it.
-- [ ] Tests: discovery filtering, fan-out with one app timing out, the tool-key mapping including
+- [x] **Packaging**: `packages/hosty-claude-plugin` — the connector `.mcp.json` and the
+      `hosty-mcp-connector` skill. Shipped with **no PreToolUse hook at all**, which is a correction
+      rather than a shortfall. The deliverable asked for allow-read-only / ask-writes /
+      deny-destructive; none of the three survives contact:
+      *ask-writes* and *deny-destructive* have nothing to act on, since the connector exports no
+      mutating tool and a name-keyed blacklist would read safety off a string the app chose; and
+      *allow-read-only* was built, then removed after review. The argument that killed it is right:
+      what the connector enforces is that `readOnlyHint` **is present**, not that the tool behaves,
+      so a hook resting on it would let any installed app bypass the operator's approval prompt by
+      writing one field. Auto-allowing needs read-only enforced by something the app cannot assert
+      about itself — a scoped token — which is the same missing piece recorded in
+      [ai-agent-bridge](../ai-agent-bridge/feature.md#token-mechanics).
+- [x] Tests: discovery filtering, fan-out with one app timing out, the tool-key mapping including
       every collision **and length** case named in Decisions, the read-only refusal, token reuse
       inside the margin against a re-mint outside it, and the change notification — each with the
-      succeeding half beside it.
-- [ ] Docs: `feature.md`, umbrella step 7, index.
+      succeeding half beside it. Plus the Core route's own HTTP suite.
+- [x] Docs: `feature.md`, umbrella step 7, index.
 
 ### Blocked, and unchecked on purpose
 
@@ -136,7 +145,8 @@ into Decided below, together with a fourth the plan had never recorded.
      `<escapedAppId>__<interfaceKey>`. Interface keys match `^[a-z][a-z0-9-]{0,62}$`, so they carry
      neither dots nor underscores.
   3. **If the key exceeds 32 characters, replace it with its first 23 characters, a `-`, and the
-     first 8 hex of `sha256(appId + " " + interfaceKey)`** — exactly 32. Applied per app, so a
+     first 8 hex of `sha256(appId + " " + interfaceKey)` (a literal space, which neither an app id nor an
+     interface key may contain)** — exactly 32. Applied per app, so a
      truncated key is a pure function of *that app's own* id and interface key.
   4. Exported tool name = `<key>__<toolName>`. A tool whose name would push the total past the
      configured ceiling is omitted with a logged warning, never truncated: truncating tool names

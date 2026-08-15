@@ -25,9 +25,23 @@ const errors = [];
 const rel = (p) => p.slice(repoRoot.length + 1);
 
 function header(file) {
-  const head = readFileSync(file, "utf8").split("\n").slice(0, 30).join("\n");
+  const text = readFileSync(file, "utf8");
+  checkPrintable(file, text);
+  const head = text.split("\n").slice(0, 30).join("\n");
   const get = (name) => head.match(new RegExp(`^${name}:\\s*(.+)$`, "m"))?.[1].trim();
   return { status: get("Status"), created: get("Created"), updated: get("Updated") };
+}
+
+// A NUL byte turns a document into "data" as far as the toolchain is concerned: grep goes silent on
+// it, which makes the file look empty rather than broken and hides every later check. One reached
+// main on 2026-08-15 inside a hash-separator spec, unnoticed through two reviews for exactly that
+// reason. Cheap to detect, so detect it.
+function checkPrintable(file, text) {
+  const index = text.indexOf("\u0000");
+  if (index !== -1) {
+    const line = text.slice(0, index).split("\n").length;
+    errors.push(`${rel(file)}:${line}: contains a NUL byte, which makes the file binary to grep and diff`);
+  }
 }
 
 function checkDate(file, label, value) {

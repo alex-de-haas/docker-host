@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "hosty": {
+      "command": "hosty",
+      "args": ["mcp", "--user", "${HOSTY_MCP_USER}"]
+    }
+  }
+}
