@@ -13,7 +13,7 @@ import type {
 // containing "ask" pauses on a question.
 export class FakeHarnessAdapter implements HarnessAdapter {
   readonly name = "fake";
-  readonly capabilities: HarnessCapabilities = { questions: true, liveReconfigure: true };
+  readonly capabilities: HarnessCapabilities = { questions: true, appMcp: true, liveReconfigure: true };
 
   async probe(): Promise<{ available: boolean; reason?: string }> {
     return { available: true };
@@ -110,6 +110,14 @@ class FakeRun implements HarnessRun {
       this.onEvent({ type: "assistant_text", text: `answered: ${answers[pending.question] ?? ""}` });
       this.onEvent({ type: "result", status: "success" });
     });
+    return true;
+  }
+
+  /** Records what it was handed, so a test can assert the servers the gateway actually built. */
+  lastMcpServers: Record<string, unknown> | null = null;
+
+  async setMcpServers(servers: Record<string, unknown>): Promise<boolean> {
+    this.lastMcpServers = servers;
     return true;
   }
 

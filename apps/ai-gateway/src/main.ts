@@ -5,6 +5,7 @@ import { SessionStore } from "./sessions/store.js";
 import { SessionManager } from "./sessions/manager.js";
 import { createGatewayServer } from "./server.js";
 import { SettingsStore } from "./settings/store.js";
+import { TokenExchange } from "./mcp/exchange.js";
 import { ProviderDirectory } from "./settings/providers.js";
 import { ClaudeHarnessAdapter } from "./harness/claude.js";
 import { CodexHarnessAdapter } from "./harness/codex.js";
@@ -27,7 +28,9 @@ const adapter: HarnessAdapter =
 const store = new SessionStore(config.dataDir);
 const audit = new AuditReporter(config.coreOrigin, config.serviceToken, config.appId);
 const settings = new SettingsStore(config.dataDir);
-const manager = new SessionManager(store, adapter, audit, config.workDir, settings);
+const providers = new ProviderDirectory(config.coreOrigin, config.serviceToken, config.appId);
+const exchange = new TokenExchange(config.coreOrigin, config.appId);
+const manager = new SessionManager(store, adapter, audit, config.workDir, settings, providers, exchange);
 
 // Retention: once at boot, then daily. The sweep is cheap (a directory listing), and running it
 // in-process keeps retention working without any external scheduler.
@@ -44,7 +47,6 @@ const sweep = (): void => {
 sweep();
 const sweepTimer = setInterval(sweep, 24 * 60 * 60 * 1000);
 
-const providers = new ProviderDirectory(config.coreOrigin, config.serviceToken, config.appId);
 const server = createGatewayServer(manager, adapter, settings, providers);
 server.listen(config.port, () => {
   console.log(

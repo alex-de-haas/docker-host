@@ -16,6 +16,12 @@ export interface HarnessCapabilities {
   /** The harness can ask the operator a question and receive the answer back as a tool result. */
   questions: boolean;
   /**
+   * The harness can be given app MCP servers at all. False means enabled providers reach it in no
+   * form — not that updates are deferred — so a UI must say the toggle has no effect there rather
+   * than implying a delay.
+   */
+  appMcp: boolean;
+  /**
    * Configuration changes can be applied to a running session. The Claude SDK exposes
    * setMcpServers/toggleMcpServer/reconnectMcpServer; Codex shows no equivalent, so there a toggle
    * takes effect at the next session and the settings UI must say so rather than imply immediacy.
@@ -61,6 +67,8 @@ export interface HarnessStartOptions {
   cwd: string;
   /** Operator-authored instructions, appended to the harness's own sources — never replacing them. */
   systemPrompt?: string;
+  /** Enabled app MCP providers, already carrying a token scoped to each app. */
+  mcpServers?: Record<string, unknown>;
   /** Harness-native session id to resume after a gateway restart, when the harness supports it. */
   resumeHarnessSessionId?: string;
   onEvent: (event: HarnessEvent) => void;
@@ -75,6 +83,12 @@ export interface HarnessRun {
    * the id is unknown — already answered, or never asked.
    */
   resolveQuestion(questionId: string, answers: Record<string, string>): boolean;
+  /**
+   * Replaces the MCP servers of a running session. Returns false when the harness cannot be
+   * reconfigured live (`capabilities.liveReconfigure`), in which case the change waits for the next
+   * session rather than silently doing nothing.
+   */
+  setMcpServers(servers: Record<string, unknown>): Promise<boolean>;
   interrupt(): Promise<void>;
   stop(): Promise<void>;
 }

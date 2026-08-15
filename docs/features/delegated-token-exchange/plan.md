@@ -1,6 +1,6 @@
 # Delegated Token Exchange
 
-Status: Ready
+Status: In Progress
 Created: 2026-08-11
 Updated: 2026-08-15
 
@@ -70,25 +70,46 @@ browser holding a human's session.
   self-refresh: refreshing means presenting an exchanged token back to this route, so an unconditional
   rule would have made the recommendation impossible to implement. Same-audience refresh is therefore
   the one permitted continuation, and it is what the exchanged token's claims must allow.
+- **A branched token is only refreshable when its audience is itself a system app.** Found while
+  implementing, and it is not a gap: the system-only caller rule and the refresh rule meet only there.
+  A token branched to a domain app cannot be presented at all, because its audience may not exchange —
+  so a caller keeps app credentials fresh by re-branching from its own token, never by renewing the
+  branched one. The gateway does exactly that.
 - **Nothing about the target's interfaces is checked.** Gating on "declares `mcp`" would be theatre:
   the access policy is the real gate, and an interface check would break non-MCP uses of the same
   exchange for no security gain.
 
 ## Deliverables
 
-- [ ] Route accepts a delegated token as an alternative credential, with the session path unchanged.
-- [ ] `system`-only caller bound, and the no-new-audience chaining claim plus its enforcement —
+- [x] Route accepts a delegated token as an alternative credential, with the session path unchanged.
+- [x] `system`-only caller bound, and the no-new-audience chaining claim plus its enforcement —
       including that a same-audience refresh is accepted while a different-audience hop is refused.
-- [ ] Self-refresh with the one-hour absolute cap from the chain origin.
-- [ ] Core-side audit of every exchange: actor, caller app, target app, outcome.
-- [ ] Core HTTP suite: exchange succeeds for a system caller; is refused for a non-system caller, an
+- [x] Self-refresh with the one-hour absolute cap from the chain origin.
+- [x] Core-side audit of every exchange: actor, caller app, target app, outcome.
+- [x] Core HTTP suite: exchange succeeds for a system caller; is refused for a non-system caller, an
       expired token, a forged signature, an `aud` that is not installed, and a chained token aimed at
       a *different* audience — while a same-audience refresh of that token succeeds; a user
       who may not reach the target is refused **while** the same call for a permitted user succeeds —
       the pair matters, since a route that refuses everything looks identical to a working gate.
-- [ ] Gateway consumes it: enabled providers reach the harness with a working credential, and the
+- [x] Gateway consumes it: enabled providers reach the harness with a working credential, and the
       settings toggle stops storing a decision nothing executes.
-- [ ] Docs: `feature.md`, the ai-gateway plan's toggle deliverable closed, index regenerated.
+- [x] Re-mint app credentials when an app-MCP approval is released, not only on a timer. Found live
+      2026-08-15: an approval held nine minutes released a call carrying an expired token although the
+      timer was refreshing correctly, because a call binds its credential when it is raised. A
+      five-minute TTL and a human-speed approval gate are in tension by construction.
+- [ ] **A per-session MCP proxy, so the TTL stops being visible to the harness.** Re-minting when an
+      approval is released was implemented and **verified live not to work**: a paused call is bound
+      to the connection it was prepared on, so replacing server configuration reaches the next call
+      and never that one. Until this lands, any app-MCP call an operator approves later than five
+      minutes fails — and an operator session exists precisely so a human can think.
+- [ ] **App MCP for the Codex harness.** The adapter drops `mcpServers` entirely, so enabled
+      providers give a Codex session no tools; reported as `appMcp: false` rather than silently. Needs
+      the config shape verified against a live Codex run, not inferred.
+- [ ] **Auto-allow for read-only app-MCP tools.** Every app tool currently raises an approval card,
+      which the live run confirmed. Not fixed here: deciding which app tools may run unprompted needs
+      the tool annotations (`readOnlyHint`) the connector work brings, and guessing from tool names
+      would be exactly the wrong instinct.
+- [x] Docs: `feature.md`, the ai-gateway plan's toggle deliverable closed, index regenerated.
 
 Version outcome: platform minor (new Core API surface), `apps/ai-gateway` minor.
 

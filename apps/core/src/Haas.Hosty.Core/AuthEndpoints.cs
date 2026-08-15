@@ -178,8 +178,24 @@ internal static class AuthEndpoints
             IClock clock,
             AppIdentityService identity,
             DelegatedTokenService delegatedTokens,
+            AppRegistryStore apps,
+            AuditStore audit,
             CancellationToken cancellationToken) =>
-            await CoreSessionAuthorization.RequireSessionAsync(
+        {
+            // Two credentials reach this route. A Core session is the browser path, unchanged. A
+            // delegated token is the exchange (docs/features/delegated-token-exchange/plan.md): a
+            // system app trades the token it was given for one scoped to another app, so an agent can
+            // call app MCP endpoints on behalf of the user currently talking to it. The exchange is
+            // tried first only because it is unambiguous — a bearer that parses as a Core-signed
+            // delegated token was never a session id.
+            var presented = CoreSessionAuthorization.ReadBearerToken(request);
+            if (!string.IsNullOrWhiteSpace(presented) && delegatedTokens.ReadClaims(presented) is { } claims)
+            {
+                return await ExchangeDelegatedTokenAsync(
+                    appId, claims, identity, delegatedTokens, apps, audit, clock, cancellationToken);
+            }
+
+            return await CoreSessionAuthorization.RequireSessionAsync(
                 request,
                 users,
                 clock,
@@ -189,7 +205,8 @@ internal static class AuthEndpoints
                     return CoreJson.Json(delegatedTokens.CreateToken(target.Id, actor.Id, actor.Role));
                 }),
                 requireCsrf: true,
-                cancellationToken: cancellationToken));
+                cancellationToken: cancellationToken);
+        });
 
         app.MapGet("/api/apps/{appId}/open", async (
             string appId,
@@ -229,6 +246,118 @@ internal static class AuthEndpoints
             });
         });
     }
+
+    // The exchange (docs/features/delegated-token-exchange/plan.md). Bounds, in the order a reader
+    // should think about them:
+    //
+    //   * the CALLER is the presented token's audience — not something it asserts, which is why the
+    //     claims are read without pinning an audience;
+    //   * only a SYSTEM app may exchange, because a domain app calling another is a different trust
+    //     story (cross-app-dependencies) that nobody has designed yet;
+    //   * a BRANCHED token may only be refreshed, never branched again — that is what stops reach
+    //     spreading app to app, while leaving a caller able to keep its own credential alive;
+    //   * the chain expires an hour after the human interaction it descends from, so a stolen
+    //     credential is bounded without a revocation store.
+    //
+    // Everything else is the ordinary issue path: the same access policy runs, so the result is never
+    // stronger than what the user could obtain through Shell themselves.
+    private static async Task<IResult> ExchangeDelegatedTokenAsync(
+        string targetAppId,
+        DelegatedTokenPayload claims,
+        AppIdentityService identity,
+        DelegatedTokenService delegatedTokens,
+        AppRegistryStore apps,
+        AuditStore audit,
+        IClock clock,
+        CancellationToken cancellationToken)
+    {
+        var callerAppId = claims.Aud;
+        var target = targetAppId.Trim();
+        var branching = !string.Equals(callerAppId, target, StringComparison.Ordinal);
+
+        async Task<IResult> DenyAsync(string code, string message, int status)
+        {
+            await AppendExchangeAuditAsync(audit, claims, callerAppId, target, code, clock, cancellationToken);
+            return CoreJson.Json(new ErrorResponse(code, message), statusCode: status);
+        }
+
+        var caller = await apps.GetAppAsync(callerAppId, cancellationToken);
+        if (caller is null || !caller.System)
+        {
+            return await DenyAsync(
+                "exchange_forbidden",
+                "Only an installed system app may exchange a delegated token.",
+                StatusCodes.Status403Forbidden);
+        }
+
+        if (claims.Branched == true && branching)
+        {
+            return await DenyAsync(
+                "exchange_chain_forbidden",
+                "A token obtained by exchange may be refreshed for its own audience, never exchanged for another app.",
+                StatusCodes.Status403Forbidden);
+        }
+
+        var origin = claims.ChainOriginOrIat;
+        if (clock.UtcNow.ToUnixTimeSeconds() - origin > (long)DelegatedTokenService.ChainLifetime.TotalSeconds)
+        {
+            return await DenyAsync(
+                "exchange_chain_expired",
+                "This delegation chain is older than the maximum lifetime; the user must interact again.",
+                StatusCodes.Status403Forbidden);
+        }
+
+        // The access-policy refusals — an unassigned member, a disabled user, an uninstalled target —
+        // are raised as AppIdentityException. HandleIdentityError converts them to a response WITHOUT
+        // rethrowing, so wrapping it would have produced dead code; the exception is caught here
+        // instead and mapped with the same rules. Auditing only the success path would have dropped
+        // exactly the refusals this trail exists to keep.
+        try
+        {
+            var (actor, resolved) = await identity.RequireAccessibleUserAsync(target, claims.Sub, cancellationToken);
+            var issued = delegatedTokens.CreateToken(
+                resolved.Id,
+                actor.Id,
+                actor.Role,
+                chainOrigin: origin,
+                branched: claims.Branched == true || branching);
+            await AppendExchangeAuditAsync(audit, claims, callerAppId, target, "succeeded", clock, cancellationToken);
+            return CoreJson.Json(issued);
+        }
+        catch (AppIdentityException exception)
+        {
+            await AppendExchangeAuditAsync(audit, claims, callerAppId, target, exception.Code, clock, cancellationToken);
+            return CoreJson.Json(
+                new ErrorResponse(exception.Code, exception.Message),
+                statusCode: MapIdentityErrorStatus(exception.Code));
+        }
+    }
+
+    private static Task AppendExchangeAuditAsync(
+        AuditStore audit,
+        DelegatedTokenPayload claims,
+        string callerAppId,
+        string targetAppId,
+        string outcome,
+        IClock clock,
+        CancellationToken cancellationToken)
+        // Recorded on every attempt, not only on success: this is the one place where an app acts as a
+        // user toward another app, and a refusal is the more interesting half of that record.
+        => audit.AppendAsync(
+            new AuditRecord(
+                Id: $"audit_{Guid.NewGuid():N}",
+                Action: "auth.delegated-token.exchange",
+                ResourceType: "app",
+                ResourceId: targetAppId,
+                Outcome: outcome,
+                ActorUserId: claims.Sub,
+                CreatedAt: clock.UtcNow,
+                Details: new Dictionary<string, string>
+                {
+                    ["callerAppId"] = callerAppId,
+                    ["targetAppId"] = targetAppId,
+                }),
+            cancellationToken);
 
     private static async Task<IResult> HandleIdentityError(Func<Task<IResult>> action)
     {
