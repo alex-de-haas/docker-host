@@ -21,7 +21,17 @@ internal sealed class DelegatedTokenService(DelegatedTokenSigningKey key, IClock
 
     public static readonly TimeSpan TokenLifetime = TimeSpan.FromMinutes(5);
 
-    public DelegatedTokenResponse CreateToken(string appId, string userId, string role)
+    /// <summary>How long a chain of exchanges may keep renewing itself past the human interaction
+    /// that started it. Bounds a stolen credential without a revocation store; see
+    /// docs/features/delegated-token-exchange/plan.md.</summary>
+    public static readonly TimeSpan ChainLifetime = TimeSpan.FromHours(1);
+
+    public DelegatedTokenResponse CreateToken(
+        string appId,
+        string userId,
+        string role,
+        long? chainOrigin = null,
+        bool branched = false)
     {
         var now = clock.UtcNow;
         var expiresAt = now.Add(TokenLifetime);
@@ -31,7 +41,9 @@ internal sealed class DelegatedTokenService(DelegatedTokenSigningKey key, IClock
             Aud: appId.Trim(),
             Iat: now.ToUnixTimeSeconds(),
             Exp: expiresAt.ToUnixTimeSeconds(),
-            Jti: Guid.NewGuid().ToString("N"));
+            Jti: Guid.NewGuid().ToString("N"),
+            ChainOrigin: chainOrigin,
+            Branched: branched ? true : null);
         var payloadPart = Base64UrlEncode(JsonSerializer.SerializeToUtf8Bytes(
             payload, CoreJsonSerializerContext.Default.DelegatedTokenPayload));
         var signingInput = $"{Prefix}.{Version}.{payloadPart}";
@@ -44,9 +56,17 @@ internal sealed class DelegatedTokenService(DelegatedTokenSigningKey key, IClock
             ExpiresInSeconds: (int)TokenLifetime.TotalSeconds);
     }
 
+    /// <summary>Reads the claims of a token that Core signed, checking the signature and expiry but
+    /// NOT the audience — used by the exchange, where the audience is not something the caller
+    /// asserts but the very thing that identifies it.</summary>
+    public DelegatedTokenPayload? ReadClaims(string token) => ReadClaims(token, null);
+
     // Core-side twin of the SDK validator, used by tests and available for future introspection.
     // Returns the claims when the signature, audience, and expiry all hold; null otherwise.
     public DelegatedTokenPayload? ValidateToken(string token, string expectedAppId)
+        => ReadClaims(token, expectedAppId);
+
+    private DelegatedTokenPayload? ReadClaims(string token, string? expectedAppId)
     {
         var parts = token.Split('.');
         if (parts is not [Prefix, Version, var payloadPart, var signaturePart])
@@ -71,9 +91,12 @@ internal sealed class DelegatedTokenService(DelegatedTokenSigningKey key, IClock
             return null;
         }
 
-        if (payload is null ||
-            !string.Equals(payload.Aud, expectedAppId, StringComparison.Ordinal) ||
-            payload.Exp <= clock.UtcNow.ToUnixTimeSeconds())
+        if (payload is null || payload.Exp <= clock.UtcNow.ToUnixTimeSeconds())
+        {
+            return null;
+        }
+
+        if (expectedAppId is not null && !string.Equals(payload.Aud, expectedAppId, StringComparison.Ordinal))
         {
             return null;
         }
@@ -101,7 +124,20 @@ internal sealed record DelegatedTokenPayload(
     string Aud,
     long Iat,
     long Exp,
-    string Jti);
+    string Jti,
+    // Unix seconds of the human interaction this chain descends from. Absent on a token minted from a
+    // Core session — that token IS the human interaction, so its own Iat is the origin. Carried
+    // unchanged through every exchange, which is what makes the cap absolute rather than sliding.
+    long? ChainOrigin = null,
+    // Set once a token was issued for an audience OTHER than the one presenting it. A branched token
+    // may still be refreshed, never branched again: that is what stops reach spreading app to app,
+    // while leaving a caller able to keep its own credential alive. Absent rather than false so a
+    // session-minted token's payload is unchanged from before this feature.
+    bool? Branched = null)
+{
+    /// <summary>The instant this chain started, which the absolute cap is measured from.</summary>
+    public long ChainOriginOrIat => ChainOrigin ?? Iat;
+}
 
 internal sealed record DelegatedTokenResponse(
     string Token,
