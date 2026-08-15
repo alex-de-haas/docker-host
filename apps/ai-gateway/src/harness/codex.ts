@@ -42,7 +42,7 @@ export class CodexHarnessAdapter implements HarnessAdapter {
   // inferable from binary symbols — see REQUEST_USER_INPUT_METHOD in codex-protocol.ts. No live
   // reconfiguration either: the protocol has no setMcpServers equivalent, so a settings change here
   // takes effect at the next session and the UI must say so.
-  readonly capabilities: HarnessCapabilities = { questions: false, liveReconfigure: false };
+  readonly capabilities: HarnessCapabilities = { questions: false, appMcp: false, liveReconfigure: false };
 
   constructor(private readonly auth: CodexAuthConfig) {}
 
@@ -192,8 +192,11 @@ class CodexRun implements HarnessRun {
     return false;
   }
 
-  // No setMcpServers equivalent in the app-server protocol, which is what capabilities.liveReconfigure
-  // reports; the caller applies the change at the next session instead of believing it landed.
+  // This adapter ignores HarnessStartOptions.mcpServers entirely, so enabled providers give a Codex
+  // session no app tools at all — not merely no *updates*. Configuring them means writing MCP servers
+  // into Codex's own config before the thread starts, a shape not verified against a live run, and
+  // guessing at it is what this adapter has already been caught by twice. Reported honestly through
+  // capabilities.appMcp rather than silently doing nothing.
   async setMcpServers(): Promise<boolean> {
     return false;
   }

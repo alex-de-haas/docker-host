@@ -307,7 +307,12 @@ internal static class AuthEndpoints
                 StatusCodes.Status403Forbidden);
         }
 
-        return await HandleIdentityError(async () =>
+        // The access-policy refusals — an unassigned member, a disabled user, an uninstalled target —
+        // are raised as AppIdentityException. HandleIdentityError converts them to a response WITHOUT
+        // rethrowing, so wrapping it would have produced dead code; the exception is caught here
+        // instead and mapped with the same rules. Auditing only the success path would have dropped
+        // exactly the refusals this trail exists to keep.
+        try
         {
             var (actor, resolved) = await identity.RequireAccessibleUserAsync(target, claims.Sub, cancellationToken);
             var issued = delegatedTokens.CreateToken(
@@ -318,7 +323,14 @@ internal static class AuthEndpoints
                 branched: claims.Branched == true || branching);
             await AppendExchangeAuditAsync(audit, claims, callerAppId, target, "succeeded", clock, cancellationToken);
             return CoreJson.Json(issued);
-        });
+        }
+        catch (AppIdentityException exception)
+        {
+            await AppendExchangeAuditAsync(audit, claims, callerAppId, target, exception.Code, clock, cancellationToken);
+            return CoreJson.Json(
+                new ErrorResponse(exception.Code, exception.Message),
+                statusCode: MapIdentityErrorStatus(exception.Code));
+        }
     }
 
     private static Task AppendExchangeAuditAsync(

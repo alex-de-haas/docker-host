@@ -167,6 +167,24 @@ public sealed class DelegatedTokenExchangeHttpTests
     }
 
     [Fact]
+    public async Task AuditsPolicyRefusalsAndNotOnlySuccesses()
+    {
+        // The refusals are the interesting half of a record about one app acting as a user toward
+        // another, and they are raised as exceptions — so they are the easy half to lose.
+        await using var harness = await StartAsync();
+        using var client = harness.CreateClient();
+        var auditStore = harness.Services.GetRequiredService<AuditStore>();
+
+        using var refused = await ExchangeAsync(
+            client, "hosty.shell", Mint(harness, Gateway, sub: "user_member", role: "host.member"));
+        Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
+
+        var records = await auditStore.ReadRecentAsync(50);
+        var exchange = records.Where(record => record.Action == "auth.delegated-token.exchange").ToArray();
+        Assert.Contains(exchange, record => record.Outcome == "system_app_admin_required");
+    }
+
+    [Fact]
     public async Task RefusesATargetThatIsNotInstalled()
     {
         await using var harness = await StartAsync();

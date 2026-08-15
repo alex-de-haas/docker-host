@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { TokenExchange, toMcpServerConfig } from "./exchange.js";
+import { TokenExchange, toMcpServerConfig, serverName } from "./exchange.js";
 import type { McpProvider } from "../settings/providers.js";
 
 // The gateway half of the delegated-token exchange: turning enabled providers into MCP servers the
@@ -116,11 +116,26 @@ describe("token exchange", () => {
     ]);
 
     const [name] = Object.keys(config);
-    expect(name).toBe("com-example-notes");
+    expect(name).toMatch(/^com-example-notes-[0-9a-f]{6}$/);
     expect(config[name!]).toEqual({
       type: "http",
       url: "http://notes/api/mcp",
       headers: { authorization: "Bearer t" },
     });
+  });
+
+  it("keeps two apps distinct when their ids sanitize to the same string", () => {
+    // App ids may legally carry both dots and hyphens, so `com.example.notes` and
+    // `com-example-notes` collide once dots are replaced. Silently dropping one provider is the worst
+    // failure available to a security-relevant toggle: the operator enables it and nothing says no.
+    expect(serverName("com.example.notes")).not.toBe(serverName("com-example-notes"));
+    // An already-safe id keeps its plain, readable name — the model sees this string.
+    expect(serverName("com-example-notes")).toBe("com-example-notes");
+
+    const config = toMcpServerConfig([
+      { appId: "com.example.notes", url: "http://a/api/mcp", token: "a", expiresAtMs: 0 },
+      { appId: "com-example-notes", url: "http://b/api/mcp", token: "b", expiresAtMs: 0 },
+    ]);
+    expect(Object.keys(config)).toHaveLength(2);
   });
 });

@@ -13,7 +13,7 @@ import type {
 // containing "ask" pauses on a question.
 export class FakeHarnessAdapter implements HarnessAdapter {
   readonly name = "fake";
-  readonly capabilities: HarnessCapabilities = { questions: true, liveReconfigure: true };
+  readonly capabilities: HarnessCapabilities = { questions: true, appMcp: true, liveReconfigure: true };
 
   async probe(): Promise<{ available: boolean; reason?: string }> {
     return { available: true };

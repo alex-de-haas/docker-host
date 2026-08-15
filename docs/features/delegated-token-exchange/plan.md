@@ -97,6 +97,14 @@ browser holding a human's session.
       2026-08-15: an approval held nine minutes released a call carrying an expired token although the
       timer was refreshing correctly, because a call binds its credential when it is raised. A
       five-minute TTL and a human-speed approval gate are in tension by construction.
+- [ ] **A per-session MCP proxy, so the TTL stops being visible to the harness.** Re-minting when an
+      approval is released was implemented and **verified live not to work**: a paused call is bound
+      to the connection it was prepared on, so replacing server configuration reaches the next call
+      and never that one. Until this lands, any app-MCP call an operator approves later than five
+      minutes fails — and an operator session exists precisely so a human can think.
+- [ ] **App MCP for the Codex harness.** The adapter drops `mcpServers` entirely, so enabled
+      providers give a Codex session no tools; reported as `appMcp: false` rather than silently. Needs
+      the config shape verified against a live Codex run, not inferred.
 - [ ] **Auto-allow for read-only app-MCP tools.** Every app tool currently raises an approval card,
       which the live run confirmed. Not fixed here: deciding which app tools may run unprompted needs
       the tool annotations (`readOnlyHint`) the connector work brings, and guessing from tool names

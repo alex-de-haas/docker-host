@@ -139,6 +139,10 @@ async function route(
         systemPrompt: typeof body.systemPrompt === "string" ? body.systemPrompt : undefined,
         mcpProviders: isBooleanRecord(body.mcpProviders) ? body.mcpProviders : undefined,
       });
+      if (isBooleanRecord(body.mcpProviders)) {
+        // Immediately, not at the next timer tick — the page says "applied to running sessions".
+        await manager.applyProviderPolicy();
+      }
     }
 
     // Discovery runs on read so the list follows the fleet without the operator reloading anything.

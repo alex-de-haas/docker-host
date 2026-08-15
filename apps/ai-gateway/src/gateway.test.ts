@@ -371,7 +371,7 @@ describe("gateway", () => {
     const body = (await health.json()) as {
       harness: { capabilities: { questions: boolean; liveReconfigure: boolean } };
     };
-    expect(body.harness.capabilities).toEqual({ questions: true, liveReconfigure: true });
+    expect(body.harness.capabilities).toEqual({ questions: true, appMcp: true, liveReconfigure: true });
   });
 
   it("defaults every MCP provider to off and round-trips settings", async () => {
@@ -562,7 +562,7 @@ describe("gateway", () => {
     let starts = 0;
     const failing: import("./harness/adapter.js").HarnessAdapter = {
       name: "failing",
-      capabilities: { questions: false, liveReconfigure: false },
+      capabilities: { questions: false, appMcp: false, liveReconfigure: false },
       probe: async () => ({ available: true }),
       start: (options) => {
         starts += 1;

@@ -16,6 +16,12 @@ export interface HarnessCapabilities {
   /** The harness can ask the operator a question and receive the answer back as a tool result. */
   questions: boolean;
   /**
+   * The harness can be given app MCP servers at all. False means enabled providers reach it in no
+   * form — not that updates are deferred — so a UI must say the toggle has no effect there rather
+   * than implying a delay.
+   */
+  appMcp: boolean;
+  /**
    * Configuration changes can be applied to a running session. The Claude SDK exposes
    * setMcpServers/toggleMcpServer/reconnectMcpServer; Codex shows no equivalent, so there a toggle
    * takes effect at the next session and the settings UI must say so rather than imply immediacy.

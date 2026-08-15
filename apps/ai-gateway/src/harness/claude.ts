@@ -40,7 +40,7 @@ const ASK_USER_QUESTION = "AskUserQuestion";
 
 export class ClaudeHarnessAdapter implements HarnessAdapter {
   readonly name = "claude-agent-sdk";
-  readonly capabilities: HarnessCapabilities = { questions: true, liveReconfigure: true };
+  readonly capabilities: HarnessCapabilities = { questions: true, appMcp: true, liveReconfigure: true };
 
   async probe(): Promise<HarnessAvailability> {
     if (!AUTH_ENV_KEYS.some((key) => process.env[key]?.trim())) {

@@ -11,6 +11,7 @@
 //     the gateway's own credential alive inside that hour; past it, the operator has to say something
 //     before the agent can reach apps again. That is the bound, not a bug to work around.
 
+import { createHash } from "node:crypto";
 import type { McpProvider } from "../settings/providers.js";
 
 /** Refreshed a little before the five-minute token actually expires, so no call lands on a dead one. */
@@ -110,6 +111,21 @@ export class TokenExchange {
 }
 
 /**
+ * A readable, collision-free server name. App ids may legally contain both dots and hyphens, so
+ * `com.example.notes` and `com-example-notes` sanitize to the same string — and one provider would
+ * then silently overwrite the other, which is the worst possible failure for a security-relevant
+ * toggle. A short digest of the original id is appended whenever sanitizing changed anything, so
+ * distinct apps stay distinct while an already-safe id keeps its plain name.
+ */
+export function serverName(appId: string): string {
+  const safe = appId.replace(/[^a-zA-Z0-9_-]/g, "-");
+  if (safe === appId) {
+    return safe;
+  }
+  return `${safe}-${createHash("sha256").update(appId).digest("hex").slice(0, 6)}`;
+}
+
+/**
  * The harness-facing shape: server name to HTTP config. Names are the app id with dots replaced,
  * because a client namespaces tools by server name — a stock client turns `list_apps` on a server
  * called `hosty` into `mcp__hosty__list_apps`, so the name is what the model sees and it should read
@@ -120,7 +136,7 @@ export function toMcpServerConfig(
 ): Record<string, { type: "http"; url: string; headers: Record<string, string> }> {
   const config: Record<string, { type: "http"; url: string; headers: Record<string, string> }> = {};
   for (const server of servers) {
-    config[server.appId.replace(/[^a-zA-Z0-9_-]/g, "-")] = {
+    config[serverName(server.appId)] = {
       type: "http",
       url: server.url,
       headers: { authorization: `Bearer ${server.token}` },

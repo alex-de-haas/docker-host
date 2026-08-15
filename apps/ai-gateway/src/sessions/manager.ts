@@ -93,7 +93,14 @@ export class SessionManager {
   async postMessage(id: string, text: string, credential?: string): Promise<void> {
     const session = await this.requireLive(id);
     if (credential) {
+      // A fresh credential is also the documented recovery from a lapsed chain, so an existing run
+      // gets its servers rebuilt here rather than waiting for the next timer tick — otherwise
+      // "the operator saying anything at all" restores nothing for up to three minutes.
+      const recovering = session.credential === null && session.run !== null;
       session.credential = credential;
+      if (recovering) {
+        await this.refreshMcpServers(session);
+      }
     }
     await this.append(id, { type: "user_message", text });
     await this.setStatus(id, "running");
@@ -271,6 +278,20 @@ export class SessionManager {
     await this.append(id, { type: "question_answered", questionId, answers: accepted });
     await this.setStatus(id, "running");
     return true;
+  }
+
+  /**
+   * Pushes a provider-policy change into every live session. The settings page tells the operator a
+   * toggle "applied to running sessions" when the harness supports it, and that has to be true the
+   * moment they see it: a provider just switched off must stop being callable, not linger until the
+   * refresh timer happens to come round.
+   */
+  async applyProviderPolicy(): Promise<void> {
+    await Promise.all(
+      [...this.live.values()]
+        .filter((session) => session.run && session.credential)
+        .map((session) => this.refreshMcpServers(session).catch(() => false)),
+    );
   }
 
   async cancelSession(id: string): Promise<void> {
