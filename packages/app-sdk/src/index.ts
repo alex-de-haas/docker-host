@@ -2,7 +2,7 @@
 // server.mjs). No React, no Next, no environment reads — everything is passed in.
 //
 // This is the single source of truth for the Hosty app-session contract described in
-// docker-host docs/ideas/hosty-app-sdk.md and docs/features/auth-session-lifecycle/feature.md.
+// docker-host docs/features/hosty-app-sdk/feature.md and docs/features/auth-session-lifecycle/feature.md.
 
 /**
  * The postMessage type an embedded app sends its parent to request a fresh launch code.

@@ -41,7 +41,7 @@ What remains is exactly one hardcode and one unowned decision:
 
 This document defines the model that closes both gaps. It complements
 [core-extension-model.md](core-extension-model.md) (this is a concrete instance of a multi-instance
-contract with a designated default) and [hosty-app-sdk.md](hosty-app-sdk.md) (whose embedder
+contract with a designated default) and [hosty-app-sdk](../features/hosty-app-sdk/feature.md) (whose embedder
 contract is the behavioral half of what a shell must implement).
 
 ## Current Architecture Findings
@@ -148,7 +148,7 @@ contract is the behavioral half of what a shell must implement).
 6. **The UI-client contract is small and explicit.** Claiming `provides: ["ui-client"]` commits an
    app to:
    - a public web endpoint (key `web` preferred) — the origin Core resolves;
-   - the **embedder contract** from [hosty-app-sdk.md](hosty-app-sdk.md): embedding app UIs,
+   - the **embedder contract** from [hosty-app-sdk](../features/hosty-app-sdk/feature.md#the-embedder-contract): embedding app UIs,
      handling `hosty:auth-required`, launch modes;
    - two **well-known routes**, which are the only URL shapes Core ever mints:
      - `/` — landing target for login continuation without `returnTo` and for bootstrap completion;
