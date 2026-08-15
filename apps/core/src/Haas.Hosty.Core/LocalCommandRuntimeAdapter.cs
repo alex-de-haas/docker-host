@@ -16,6 +16,9 @@ internal sealed class LocalCommandRuntimeAdapter(
     // delegated tokens locally. Optional so existing direct constructions stay valid; DI supplies it.
     DelegatedTokenSigningKey? delegatedTokenKey = null) : IAppRuntimeAdapter
 {
+    // Upper bound on how long a stop waits for a killed service's redirected output to reach EOF.
+    private static readonly TimeSpan LogDrainTimeout = TimeSpan.FromSeconds(5);
+
     public string Type => "localCommand";
 
     public async Task<AppRuntimeStartResult> StartAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
@@ -838,9 +841,22 @@ internal sealed class LocalCommandRuntimeAdapter(
                     running.Process.Kill(entireProcessTree: true);
                 }
 
-                if (!running.Process.HasExited)
+                // Awaited even when the process is already gone: WaitForExitAsync is also where the
+                // async output readers are drained, so skipping it drops the tail of the service log
+                // and lets the Dispose below race the Exited handler that closes the log writer. The
+                // drain is bounded — a pipe an unreaped orphan still holds must not stall the stop.
+                using var drain = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                drain.CancelAfter(LogDrainTimeout);
+                try
                 {
-                    await running.Process.WaitForExitAsync(cancellationToken);
+                    await running.Process.WaitForExitAsync(drain.Token);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    logger?.LogWarning(
+                        "Timed out draining the output of {AppId}/{Service}; the tail of its log may be missing.",
+                        appId,
+                        serviceKey);
                 }
             }
             catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)

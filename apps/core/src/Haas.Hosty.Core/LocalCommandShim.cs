@@ -3,11 +3,16 @@ using System.Runtime.InteropServices;
 namespace Haas.Hosty.Core;
 
 // A tiny in-process supervisor Core re-execs ITSELF into (same binary, hidden verb) so a spawned
-// localCommand root becomes a POSIX process-group leader. .NET cannot call setsid between fork and
-// exec, so the leader identity is established here, in the child, before it launches the shell.
+// localCommand root owns its descendants: a POSIX process-group leader (.NET cannot call setsid
+// between fork and exec, so the leader identity is established here, in the child, before it
+// launches the shell), or a member of Core's Windows kill-on-close job before cmd.exe can create
+// the first npm/tsx/node descendant.
 internal static class LocalCommandShim
 {
     public const string Verb = "__local-command-shim";
+
+    // How long the Windows shim keeps draining the shell's output after the shell itself has exited.
+    private static readonly TimeSpan WindowsDrainTimeout = TimeSpan.FromSeconds(2);
 
     public static async Task<int> RunAsync(string[] args)
     {
@@ -77,7 +82,15 @@ internal static class LocalCommandShim
         {
             var stdout = child.StandardOutput.BaseStream.CopyToAsync(Console.OpenStandardOutput());
             var stderr = child.StandardError.BaseStream.CopyToAsync(Console.OpenStandardError());
-            await Task.WhenAll(child.WaitForExitAsync(), stdout, stderr);
+            await child.WaitForExitAsync();
+
+            // The command is over once the shell exits, so the drain is bounded from that moment. A
+            // detached descendant that inherited these pipes never closes its write end, and waiting
+            // for EOF would keep the shim — the process Core records as the service root — alive for
+            // as long as that descendant lives: the service would read as running after its command
+            // died, and a one-shot setup command would block the whole start. Returning here leaves
+            // the descendant to the job object, which is what owns it.
+            await Task.WhenAny(Task.WhenAll(stdout, stderr), Task.Delay(WindowsDrainTimeout));
         }
         else
         {
