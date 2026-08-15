@@ -260,9 +260,15 @@ into Decided below, together with a fourth the plan had never recorded.
 - Live, and it is the point of the feature: register `hosty mcp` in a stock client, confirm the tools
   of an app appear without any token in the client config, call one, then install or stop an app and
   confirm the list changes without restarting the client.
+  **Done 2026-08-15 except through a stock client** — the connector was driven directly against Core
+  0.81.0 and demo-app 0.7.2: tools listed with no credential in the caller's configuration, a call
+  reached the app and came back with its real domain answer. What remains is a real client and an app
+  actually starting or stopping, which the notification has not yet been watched against.
 - The negative that matters: an app the actor may not reach must not appear in `tools/list` at all —
   verified beside a permitted actor who does see it, since a connector that exports nothing would
-  satisfy the refusal alone. The read-only filter needs the same treatment and has a trap of its own:
+  satisfy the refusal alone.
+  **Done 2026-08-15:** a `host.user` unassigned to demo-app saw nothing where the administrator saw
+  both tools. The read-only filter needs the same treatment and has a trap of its own:
   with fail-closed enforcement and no annotations anywhere, an empty `tools/list` is the *expected*
   output of a broken build and of a correct one alike. Verify it against demo-app **after** its tools
   declare `readOnlyHint`, with a deliberately mutating tool absent beside a read-only one present.

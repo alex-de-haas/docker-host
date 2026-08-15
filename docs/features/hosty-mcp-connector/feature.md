@@ -189,17 +189,30 @@ exist yet.
   unknown user and an unknown app stay distinguishable; both the issue and the refusal are audited.
 - Native AOT publish is clean, since the reason for hand-rolling the protocol is a property that only
   a publish can demonstrate.
-- **Driven live on 2026-08-15** against a running host (Core 0.80.0), as the published native binary:
-  the handshake answered, discovery found the real fleet, the fan-out ran, and the one app declaring
-  `mcp` degraded cleanly to no tools. What that run could *not* exercise is the token path, because
-  that Core predates the control route — it answered `404`, confirmed by probing the route directly
-  rather than inferred from the connector's own report.
-  It paid for itself anyway: the only message was "would not issue a token for this user", which reads
-  as an access problem and sends the reader to the user directory. An empty `404` is now reported as a
-  Core too old to have the route, with the ambiguous case — a `404` carrying Core's own answer about
-  the user or app — kept distinct and tested as a pair.
-- **Not yet done, and the point of the feature:** no stock client has connected. The live checks the
-  plan requires — tools appearing with no token in the client config, calling one, installing or
-  stopping an app and watching the list change without a restart, and an app the actor may not reach
-  staying absent beside a permitted actor who sees it — all need a host running Core 0.81.0, as does
-  installing the plugin into a real Claude Code.
+- **Driven live on 2026-08-15**, as the published native binary against a running host. Two runs, and
+  the first is worth keeping because of what it could not do: against Core 0.80.0 the token path was
+  unreachable — that Core predates the control route and answered `404`, confirmed by probing the
+  route directly rather than inferred from the connector's own report. It paid for itself anyway. The
+  only message was "would not issue a token for this user", which reads as an access problem and sends
+  the reader to the user directory; an empty `404` is now reported as a Core too old to have the route,
+  with the ambiguous case — a `404` carrying Core's own answer — kept distinct and tested as a pair.
+- **Against Core 0.81.0 and demo-app 0.7.2 the whole chain runs**, verified end to end:
+  - the control route issued a token, the MCP lifecycle completed against the app, and `tools/list`
+    returned both tools **with no credential anywhere in the caller's configuration** — the property
+    the feature exists for;
+  - names, descriptions and annotations arrived as designed:
+    `com_dhaas_ddemo-app__get_my_app_role`, `[Demo App] …`, and `readOnlyHint` passed through
+    untouched;
+  - `tools/call` reached demo-app, which validated the token, resolved the Hosty identity to its own
+    `admin` app role, and returned its real permission list;
+  - **the visibility negative, as the pair it has to be:** the same `tools/list` run as a `host.user`
+    who is not assigned to demo-app returned nothing, beside the administrator who saw both tools. The
+    connector applies no policy of its own here — Core refuses the token and the app drops out.
+  - the run immediately before demo-app was updated is the fail-closed rule observed rather than
+    argued: 0.7.1 declared no annotations, so both of its tools were refused and the catalog was
+    empty.
+- **Still outstanding:** no stock client has connected, the plugin has not been installed into a real
+  Claude Code, and `notifications/tools/list_changed` has not been watched against an app actually
+  starting or stopping. The first two are what step 7 of
+  [ai-agent-bridge](../ai-agent-bridge/plan.md) is waiting on; the third needs a host mutation rather
+  than a read.
