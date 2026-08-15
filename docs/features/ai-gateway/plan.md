@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-08-09
-Updated: 2026-08-11
+Updated: 2026-08-15
 
 Two changes to the shipped assistant ([feature.md](feature.md)): the operator can be **asked a
 question**, and the operator can **configure the assistant** in a UI of its own. Kept in one plan and
@@ -131,22 +131,17 @@ started, and this plan is not deleted while they remain.
 Recorded because deferring containment is a choice, and the reasoning must not be reconstructed from
 silence later.
 
-The umbrella ([ai-agent-bridge](../ai-agent-bridge/feature.md#accepted-risk)) justifies the operator profile on the
-grounds that it "grants no privilege an administrator does not already have over SSH — that
-equivalence is the justification for the profile, not a mitigation to be improved later." The
-equivalence assumes the administrator decides what runs. Operator sessions also consume live logs and
-app data, which the same document calls untrusted model input, and answers with the approval gate.
-That leaves **one boundary, and it is human attention**: the operator sees a command, not its
-consequence, and behind an approved `Bash` call the `hosty` CLI has unconditional host-operator power
-with no authentication at all.
+The residual risk is stated in the umbrella
+([ai-agent-bridge](../ai-agent-bridge/feature.md#accepted-risk)): the SSH-equivalence argument does
+not settle the matter, because operator sessions consume live logs and app data — untrusted model
+input — and the approval gate is then the one boundary left, human attention on a command rather
+than its consequence, with the `hosty` CLI's unconditional host-operator power behind any approved
+`Bash` call.
 
 Restricting the assistant to administrators — already true, enforced in `src/auth.ts` on every route
 and in Shell's surface gating — does not reduce this. The risk lives inside an admin's own session,
-and injected instructions execute with that admin's privileges.
-
-The umbrella text is therefore revised in this iteration to state the residual risk and name
-containment as the fix, so the next reader does not find an argument implying the problem is settled.
-Only the wording changes; no containment work ships here.
+and injected instructions execute with that admin's privileges. Containment — the docker-by-default
+runtime profile this plan defers — is the fix; no containment work ships here.
 
 ## Phases
 

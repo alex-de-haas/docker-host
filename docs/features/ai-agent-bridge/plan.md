@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-06-09
-Updated: 2026-08-14
+Updated: 2026-08-15
 
 The shared model, the boundaries and the decision log live in [feature.md](feature.md) and are in
 force. This document holds only what is **not built**: the rollout checklist, and the design for the
@@ -36,8 +36,8 @@ and [agent-background-sessions](../agent-background-sessions/plan.md).
 - [ ] 11. Durable delegation and job runner, plus notifications.
 - [ ] 12. Development Agent Bridge: source checkout, PR, and an approved isolated-validation workflow.
 
-Six of twelve. Backward compatibility is preserved throughout: an app without an `mcp` interface
-stays an ordinary runtime app.
+Backward compatibility is preserved throughout: an app without an `mcp` interface stays an ordinary
+runtime app.
 
 ## Step 6 — Stock client validation
 
@@ -49,6 +49,11 @@ question, and it is the cheapest step remaining.
 
 Connect Claude Code and Codex with static endpoint entries plus a Hosty skill, against both Core's
 `/api/mcp` and demo-app's `/api/mcp`, and record what the connection proved in each feature.md.
+
+One edge case is recorded for every external path, this step included: a client holding previously
+issued Core tokens keeps calling an app MCP endpoint while Core is down or unreachable, because
+delegated tokens validate locally until their TTL expires. The recorded escape hatch — an optional
+Core token introspection or revalidation endpoint for high-risk calls — is deliberately unbuilt.
 
 ## Step 7 — The `hosty mcp` connector
 
@@ -73,12 +78,15 @@ short-TTL delegated token and invoke the app directly, a stopped app yielding a 
 
 Above roughly 60–80 exported tools the connector degrades to a generic surface (`list_app_tools` /
 `call_app_tool`) to avoid flooding client context; the threshold and a per-app allowlist live in
-connector config. Build order: generic mode → namespaced re-export → `list_changed` → remote login.
+connector config. Build order: generic mode → namespaced re-export →
+`notifications/tools/list_changed` → remote login.
 
 The connector's credential authenticates to Core only; per-app delegated tokens are fetched per
 session and neither ever reaches model context. It needs discovery and token-exchange rights and
 never operator rights — which means it wants scopes, and Core has none
-([feature.md](feature.md#token-mechanics)).
+([feature.md](feature.md#token-mechanics)). The same gap holds back the other recorded scoped-token
+ideas: a read-only monitoring token for scripts, and per-tool agent scopes such as a token limited
+to `read_tasks` plus `track_time` against a single app.
 
 Topologies — the connector runs where the agent client runs:
 
@@ -125,6 +133,11 @@ app's tool schema changes after the model proposes a call; the app returns more 
 allows; the same request is retried and duplicates a side effect such as time tracking; the mapped
 app-local user has lost access to the target resource while the Hosty identity is still valid.
 
+Hosty-level durable agent memory is designed together with this profile
+([feature.md](feature.md#decision-log)). Verification when the step ships includes that a session
+exposes no shell or file tools and cannot reach endpoints outside Core and the permitted app MCP
+origins.
+
 ## Step 10 — App-to-model gateway
 
 Hosty-aware apps that need model output for app-local features (a checklist generated from a task
@@ -136,8 +149,8 @@ configuration, credentials, model profiles and adapters, and can route to local 
 providers. Apps request **capabilities or model profiles** — `fastText`, `structuredJson`,
 `longContext`, `localOnly` — never a named provider, and disable the feature cleanly when no gateway
 interface is installed rather than falling back to app-local provider config. The contract stays
-provider-neutral: result limits, timeouts, streaming where needed, audit metadata and per-app policy,
-with no provider credentials or raw provider configuration exposed to apps.
+provider-neutral: result limits, timeouts, streaming where needed, audit metadata and per-app,
+per-data-class policy, with no provider credentials or raw provider configuration exposed to apps.
 
 Ship it by replacing one real integration, so the contract is proven against a real caller.
 

@@ -188,4 +188,4 @@ Declare platform interfaces the app exposes for other components to discover wit
 }
 ```
 
-Core validates shape only (names and keys are kebab tokens, keys unique per interface, paths absolute) and surfaces the declarations on the apps API with each declaration resolved to a ready-to-call URL, so clients can gate features on an installed provider — e.g. Shell shows its assistant UI only when an installed app declares `ai-gateway`. Declaring an interface does not grant the app anything; it is discovery metadata. See `docs/features/ai-agent-bridge/plan.md` ("Manifest Interfaces And Registry").
+Core validates shape only (names and keys are kebab tokens, keys unique per interface, paths absolute) and surfaces the declarations on the apps API with each declaration resolved to a ready-to-call URL, so clients can gate features on an installed provider — e.g. Shell shows its assistant UI only when an installed app declares `ai-gateway`. Declaring an interface does not grant the app anything; it is discovery metadata. See `docs/features/ai-agent-bridge/feature.md` ("Manifest Interfaces And Registry").

@@ -2,7 +2,7 @@
 
 Status: Phase 1 (auth) shipped and adopted — second wave open (see Adoption Status)
 Created: 2026-07-15
-Updated: 2026-07-20
+Updated: 2026-08-15
 
 ## Adoption Status (2026-07-20)
 
@@ -600,8 +600,11 @@ publish for the external repos. (Done — the packages live at `packages/app-sdk
 
 - The SDK owns the auth **contract and logic**, not each app's visual design — the gate UI is
   overridable.
-- The SDK never signs or verifies tokens locally; revalidation stays online against Core, per
-  the decided token rule in [ai-agent-bridge/feature.md](../features/ai-agent-bridge/feature.md#token-mechanics).
+- The SDK never signs or verifies browser app tokens locally; their revalidation stays online
+  against Core, per the decided token rule in
+  [ai-agent-bridge/feature.md](../features/ai-agent-bridge/feature.md#token-mechanics). Delegated
+  agent-bridge tokens are that rule's other half: the SDK's `delegated.ts` verifies those locally
+  against the Core-injected public key.
 - Cookie/header names stay per-app (parameterized), not unified — no forced cookie migration.
 - The Shell embed iframe sandbox is not loosened; embedded recovery stays `postMessage`-only.
 - Not every app must adopt every layer; solitaire may take theme-only.

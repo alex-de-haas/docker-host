@@ -1,7 +1,7 @@
 # AI Agent Bridge
 
 Created: 2026-08-14
-Updated: 2026-08-14
+Updated: 2026-08-15
 
 The umbrella for Hosty's AI integration: how an authenticated user works with runtime apps and app
 source through an agent, without the model ever holding credentials, unrestricted application access,
@@ -14,9 +14,9 @@ the remaining steps live in [plan.md](plan.md).
 
 Constituent features, in the order they landed:
 [access-tokens](../access-tokens/feature.md) ·
+[ai-gateway](../ai-gateway/feature.md) ·
 [core-mcp](../core-mcp/feature.md) ·
-[app-mcp](../app-mcp/feature.md) ·
-[ai-gateway](../ai-gateway/feature.md).
+[app-mcp](../app-mcp/feature.md).
 
 ## Component Boundaries
 
@@ -43,22 +43,23 @@ flowchart LR
   AIG --> CoreMcp
   Ext --> CoreMcp
   CoreMcp --> Core
-  AIG --> PMMcp
   Ext --> PMMcp
   PMMcp --> PM
-  PM --> AIG
   AIG --> Model
 ```
 
 Arrows from Core to system apps and runtime apps are lifecycle ownership, not request orchestration.
+Two planned data paths are deliberately absent from the diagram — the gateway calling app MCP
+endpoints (blocked on [delegated-token-exchange](../delegated-token-exchange/plan.md)) and apps
+calling a gateway model API (rollout step 10) — because neither is built ([plan.md](plan.md)).
 
 Core is responsible for runtime lifecycle, manifest and app-state storage, user identity, app
 assignment and token issuance, interface discovery, read-only control-plane MCP tools, and audit and
 revocation primitives. Everything else belongs to an app.
 
 The `Ext` path is reachable today — the endpoints exist and were driven live over HTTP — but no stock
-MCP client has connected to either endpoint yet. That gap is rollout step 6, tracked in
-[plan.md](plan.md).
+MCP client has connected to either endpoint yet. That gap is rollout
+[step 6](plan.md#step-6--stock-client-validation).
 
 ## Execution Profiles
 
@@ -74,9 +75,9 @@ app MCP endpoints like any other client. Every write pauses for approval. See
 [ai-gateway](../ai-gateway/feature.md) for the harnesses, the approval mechanics and the Shell
 surface.
 
-**User profile (non-admin)** — not built. Designed in [plan.md](plan.md) as rollout step 9: an agent
-loop with no shell and no file tools, MCP-only over HTTP, every call carrying a Core-issued delegated
-token for the acting user, enforced server-side by token audience plus app-domain permission checks.
+**User profile (non-admin)** — not built. The design is rollout
+[step 9](plan.md#step-9--the-user-profile), blocked on
+[delegated-token-exchange](../delegated-token-exchange/plan.md).
 
 The first shipped assistant is admin-only because every scenario driving the feature — realtime
 diagnosis, log investigation, app fixes, update installation — is an operator scenario.
@@ -106,7 +107,7 @@ flag, and Core derives a registry from installed manifests plus runtime state.
 | --- | --- |
 | `ui` | The app has Shell-readable navigation entries and app pages. |
 | `mcp` | The app exposes an agent/action MCP endpoint. |
-| `ai-gateway` | A system app exposes an assistant and a model gateway API. |
+| `ai-gateway` | A system app exposes an assistant and its session API. |
 
 ```json
 "interfaces": { "mcp": [{ "key": "default", "endpoint": "api", "path": "/api/mcp" }] }
@@ -115,7 +116,8 @@ flag, and Core derives a registry from installed manifests plus runtime state.
 - An optional top-level `interfaces` map is a **draft extension under `app.0.1`**, formalized in the
   next manifest revision once the contract stabilizes. Validation is shape-only and mirrors
   `provides` — kebab names, keys unique within an interface ("default" when omitted), absolute paths
-  — and unknown interface names are inert and forward-compatible.
+  — and unknown interface names are inert and forward-compatible: the opening deliberately kept for
+  later platform interfaces such as `notifications`, `scheduler`, `search`, or a media index.
 - Declarations are normalized onto the app record at install/update and resolved to ready-to-call
   URLs from the app's endpoints, so consumers never assemble origins themselves. Core projects them
   onto `AppSummary` for Shell and onto the app-directory roster for apps
@@ -124,8 +126,10 @@ flag, and Core derives a registry from installed manifests plus runtime state.
   remote clients, internal origins for on-host clients. If an app is browser-reachable from a client
   machine, its MCP endpoint is too.
 - Absence is a first-class answer. If no installed app declares `ai-gateway`, Shell hides every
-  assistant surface and the platform runs with no AI at all. If an app does not declare `mcp`, agent
-  clients do not treat it as a target for domain actions and it shows no agent controls.
+  assistant surface and the platform runs with no AI at all; when one is installed, the surfaces
+  render for admin viewers only ([ai-gateway](../ai-gateway/feature.md)). If an app does not
+  declare `mcp`, agent clients do not treat it as a target for domain actions and it shows no
+  agent controls.
 - Core exposes the resolved registry to authorized clients without hardcoding module-specific
   behavior beyond validation and lifecycle state. It knows `hosty.ai-gateway` only as an installed
   system app declaring an interface, never as a special module.
@@ -160,8 +164,8 @@ refresh is simply calling again.
 
 **Core has no token scopes.** An access token carries its approver's full role, which is why Core MCP
 requires an admin credential and ships read-only tools only. Every scoped-token idea in
-[plan.md](plan.md) — discovery-only connector credentials, read-only monitoring, per-tool agent
-scopes — depends on scopes existing first.
+[plan.md](plan.md#step-7--the-hosty-mcp-connector) — discovery-only connector credentials, read-only
+monitoring, per-tool agent scopes — depends on scopes existing first.
 
 ### Core authenticates, the app authorizes
 
@@ -170,7 +174,8 @@ delegated token; the app validates it locally and then re-runs **its own** permi
 delegated actor, using the same model its HTTP routes use rather than a parallel one written for
 agents. Host app assignment says a user may reach an app; it never proves they may perform a
 particular domain action inside it. An MCP surface that skipped the second half would be an
-unauthenticated remote API wearing a protocol.
+unauthenticated remote API wearing a protocol. [app-mcp](../app-mcp/feature.md) carries the
+contract's canonical statement, with the SDK validator mechanics.
 
 The audience claim is what stops one app's token working on another, so validation always passes the
 expected app id and fails closed when the id or the key is missing.
@@ -183,8 +188,9 @@ Per-session allowlists for repeated low-risk actions are a later iteration infor
 
 Operator sessions enforce this through the harness permission callback. Client-side layers are UX;
 the hard limit for any client is app-side domain permissions plus Core-issued token audience — which
-is why external MCP clients receive no write scopes until an audit callback contract exists, and the
-external path stays read-only by scope, audited through token-issuance records and app logs.
+is why external MCP clients get no write path until scopes and an audit callback contract exist. The
+external path is read-only today because the tools it can reach are read-only, not because any scope
+enforces it; it is audited through token-issuance records and app logs.
 
 ## Access Paths
 
@@ -194,10 +200,11 @@ external path stays read-only by scope, audited through token-issuance records a
   user or token exists, and recovery, so SSH to the host keeps working when all tokens are lost or
   auth is misconfigured. It is never exposed to the network.
 - **Remote.** `hosty login --host` runs a device-code flow approved in a Shell session and stores the
-  credential in the OS keychain; `--token` is the headless fallback. Several hosts are held as named
-  contexts (`--name`, `--list`, `--use`), and remote calls go to Core's normal web API with
-  `Authorization: Bearer`. Unlike the local channel's unconditional power, the credential is bound to
-  a Host user and role.
+  credential in the macOS keychain (an owner-only file elsewhere); `--token` is the headless fallback.
+  Several hosts are held as named contexts (`--name`, `--list`, `--use`). Core's web API accepts the
+  credential as `Authorization: Bearer`, but no CLI command runs against a saved context yet
+  ([access-tokens](../access-tokens/feature.md)). Unlike the local channel's unconditional power, the
+  credential is bound to a Host user and role.
 
 ## Standing Constraints
 
@@ -217,7 +224,10 @@ These bound every step of the rollout, built or not:
   build a second authorization system to have one.
 - No app is agent-action-capable by default; the surface must be declared.
 - No platform-level multi-agent orchestration until single-agent orchestration fails concrete
-  measurable scenarios.
+  measurable scenarios; subagents inside the operator profile's harness are harness-internal, not
+  platform orchestration.
+- Hosty-aware runtime apps are the primary target. Loose coupling is desirable, but the design is
+  not optimized for fully independent standalone apps.
 
 ## Decision Log
 
@@ -239,7 +249,7 @@ wonder why.
 - **App-owned MCP is the only v1 action contract** (2026-08-08) — stronger than the original
   recommendation. An optional Hosty HTTP action contract is not designed or built until a concrete
   app asks for it.
-- **Public app MCP endpoints are legitimate** (2026-08-08). Same-origin `/mcp` with Core-issued
+- **Public app MCP endpoints are legitimate** (2026-08-08). Same-origin `/api/mcp` with Core-issued
   tokens; external MCP clients are a first-class permanent scenario, not a bootstrap phase.
 - **Apps may limit what agents can do** (2026-08-08). An app filters `tools/list` and rejects
   `tools/call` after resolving the Core-issued identity; agent clients own their own approval UX.
@@ -247,6 +257,9 @@ wonder why.
   formalized in the next manifest revision once stable.
 - **Generic interface discovery only** (2026-08-08). Core knows no module by name.
 - **Both HTTP and MCP for discovery** (2026-07-11), one registry behind them.
+- **Opaque to Core, signed to apps** (2026-07-11). Tokens presented to Core are opaque server-side
+  records with instant revocation; signed short-TTL tokens are reserved for delegated tokens the
+  receiving app verifies locally.
 - **Every write is approval-gated in v1** (2026-08-08), with allowlists deferred to a second
   iteration.
 - **External clients get no write scopes** (2026-08-08) until an audit callback/reporting contract
@@ -285,7 +298,8 @@ invariants that no single one of them owns.
 - An authorization change is never verified by refusal alone: an endpoint that rejects everything is
   indistinguishable from a working gate. Confirm that the allowed case still performs the action —
   the audience check was verified this way, with a correctly signed token for a *different* app
-  refused moments after an identically shaped one succeeded.
+  refused moments after an identically shaped one succeeded ([app-mcp](../app-mcp/feature.md)
+  records the run).
 - Read-only tools cannot mutate app state; writes pause for approval where policy requires it.
 - Audit events omit raw tokens, cookies and secrets.
 - Apps without an `mcp` interface show no agent controls anywhere.

@@ -2,7 +2,7 @@
 
 Status: Idea
 Created: 2026-07-10
-Updated: 2026-07-12
+Updated: 2026-08-15
 
 ## Motivation
 
