@@ -52,6 +52,14 @@ client config — the cache lives in the connector process and dies with it.
 route was needed. The connector keeps the apps that are running and declare an `mcp` interface with a
 resolved URL, then asks each one's own `tools/list` in parallel with a per-app timeout.
 
+Each endpoint gets the full MCP lifecycle first — `initialize`, then `notifications/initialized` —
+and any `Mcp-Session-Id` it hands back is carried on every later request. This is not ceremony: the
+protocol requires it, and an app built on a standard MCP SDK **rejects** a bare `tools/list`. An
+earlier cut skipped it and worked, because the only app exercised was demo-app's hand-rolled server,
+which does not enforce the lifecycle — so every SDK-based app would have vanished from the catalog
+with no symptom beyond being absent. A session the app stops recognising (it restarted) is dropped
+and re-established rather than retried forever.
+
 **Visibility is Core's answer, not the CLI's.** The control channel lists the whole fleet regardless
 of actor; an app this user may not reach drops out when Core refuses to issue its token. Reimplementing
 the access policy in the CLI would have meant two copies, and the CLI's would be the one nobody
@@ -107,11 +115,21 @@ sentence rather than tools that exist only to say no.
 This is why `apps/demo-app` now declares annotations on both its MCP tools. Without them a
 fail-closed connector exports nothing from it, and a reference implementation is copied as-is.
 
+**What this filter is not.** It keeps a tool the app never claimed was safe from reaching a client. It
+does not make the claim *true*: the hint is an assertion an app writes about itself, so an app that is
+buggy or hostile can label a mutating tool read-only. Nothing downstream should treat "the connector
+exported it" as proof the call is harmless — which is exactly the mistake the removed plugin hook
+made, and the reason there is no auto-approval anywhere in this feature.
+
 ## Following The Fleet
 
-The registry is polled every 30 seconds and `notifications/tools/list_changed` is sent when the set
-of exported names changes, so an app installed or stopped mid-session appears or disappears without
+The registry is polled every 30 seconds and `notifications/tools/list_changed` is sent when anything
+a client can observe changes, so an app installed or stopped mid-session appears or disappears without
 the client restarting. That is the capability a static config cannot have at all.
+
+The comparison covers the whole descriptor, not just the names: an app update that keeps a tool's name
+while changing its input schema or its annotations would otherwise leave a connected client submitting
+stale arguments, or applying permission metadata the app has since revised.
 
 ## Failures
 
@@ -136,11 +154,18 @@ while the client's only symptom is a server that "does not work".
 
 ## Packaging
 
-`packages/hosty-claude-plugin` bundles the `.mcp.json`, the `hosty-mcp-connector` skill, and a
-`PreToolUse` hook that auto-allows connector tools. The hook's justification is the server's enforced
-read-only property, never a guess about what a tool's name implies — and there is deliberately no
-name-keyed "deny destructive" rule, because reading safety off a string the app chose is the instinct
-this design avoids.
+`packages/hosty-claude-plugin` bundles the `.mcp.json` and the `hosty-mcp-connector` skill, which
+tells a client how to read the tool names, what the read-only boundary means, and what each failure
+code implies.
+
+**It ships no `PreToolUse` hook, and the reason is worth keeping.** One was built, auto-allowing
+connector tools on the grounds that the server enforces read-only. That is a misreading of the
+connector's own filter: what it enforces is that `readOnlyHint` **is present**, not that the tool
+behaves accordingly. The hint is an assertion an app makes about itself, so a hook resting on it would
+have let any installed app bypass the operator's approval prompt by writing one field into its
+manifest. Connector calls go through the client's normal permission flow. Auto-allowing them needs
+read-only enforced by something an app cannot assert for itself — a scoped token — which does not
+exist yet.
 
 ## Testing Expectations
 
@@ -162,8 +187,6 @@ this design avoids.
   positively; the control secret is required, with the permitted call asserted beside two refusals;
   the same access policy as the session path, with an admin succeeding where a member is refused; an
   unknown user and an unknown app stay distinguishable; both the issue and the refusal are audited.
-- The plugin hook: connector-shaped names are allowed and the reason names the enforced property;
-  everything else falls through to the normal permission flow.
 - Native AOT publish is clean, since the reason for hand-rolling the protocol is a property that only
   a publish can demonstrate.
 - **Driven live on 2026-08-15** against a running host (Core 0.80.0), as the published native binary:

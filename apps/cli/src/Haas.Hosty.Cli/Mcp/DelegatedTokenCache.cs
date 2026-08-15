@@ -36,12 +36,33 @@ internal sealed class DelegatedTokenCache(
 
     private readonly Dictionary<string, IssuedToken> cache = new(StringComparer.Ordinal);
 
+    // The fan-out asks for every app's token at once, so these continuations run concurrently and a
+    // plain Dictionary would be mutated from several of them. Serializing the whole method rather than
+    // guarding the two accesses buys single-flight as well: two targets of the same app — an app with
+    // more than one mcp interface — mint once between them instead of racing to mint twice. The cost
+    // is that the first fan-out issues its tokens in sequence, which against a loopback control
+    // channel is not worth a more intricate scheme.
+    private readonly SemaphoreSlim gate = new(1, 1);
+
     /// <summary>
     /// A usable token for <paramref name="appId"/>, or null when Core refuses to issue one — which
     /// means this actor may not reach that app, or the app is gone. Both are the caller's to report as
     /// the app being unavailable rather than as the session failing.
     /// </summary>
     public async Task<string?> TryGetAsync(string appId, CancellationToken cancellationToken)
+    {
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            return await IssueAsync(appId, cancellationToken);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private async Task<string?> IssueAsync(string appId, CancellationToken cancellationToken)
     {
         if (cache.TryGetValue(appId, out var cached) && cached.ExpiresAt - ReuseMargin > time.GetUtcNow())
         {

@@ -3,6 +3,7 @@ namespace Haas.Hosty.Cli.Commands;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Haas.Hosty.Cli.Mcp;
+using Spectre.Console;
 
 /// <summary>
 /// <c>hosty mcp</c> — a stdio MCP server presenting the whole Hosty fleet as one server.
@@ -41,6 +42,14 @@ internal sealed partial class McpCommand(CommandContext context)
 
     public async Task<int> ExecuteAsync(string[] args)
     {
+        // The root help tells the operator to run `hosty <command> --help`, so this has to answer it
+        // rather than reject it as an unknown argument — every other command already does.
+        if (args is ["--help"] or ["-h"] or ["help"])
+        {
+            context.Console.WriteLine(Usage);
+            return 0;
+        }
+
         var options = ParseOptions(args);
 
         // Every diagnostic goes to stderr. stdout carries the protocol, and one stray line on it
@@ -247,9 +256,23 @@ internal sealed partial class McpCommand(CommandContext context)
             }
         }
 
-        /// <summary>What the client can see, so a change is detected without comparing whole schemas.</summary>
+        /// <summary>
+        /// Everything about the catalog a client can observe, so any of it changing sends the
+        /// notification.
+        /// </summary>
+        /// <remarks>
+        /// Names alone are not enough, and the gap was real: an app update that keeps a tool's name
+        /// while changing its input schema, its annotations, or its description would have left a
+        /// connected client using the cached descriptor — submitting stale arguments, or applying
+        /// permission metadata the app has since revised. The display name is in here too, since it is
+        /// rendered into the description the model reads.
+        /// </remarks>
         private static string Signature(IReadOnlyList<ExportedTool> tools)
-            => string.Join('\n', tools.Select(tool => tool.ExportedName).Order(StringComparer.Ordinal));
+            => string.Join(
+                '\n',
+                tools
+                    .Select(tool => $"{tool.ExportedName}\u001f{tool.Target.DisplayName}\u001f{tool.Descriptor.GetRawText()}")
+                    .Order(StringComparer.Ordinal));
     }
 
     [JsonSourceGenerationOptions(

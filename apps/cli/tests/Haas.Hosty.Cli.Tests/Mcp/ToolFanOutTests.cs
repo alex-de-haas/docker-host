@@ -144,6 +144,120 @@ public class ToolFanOutTests
         Assert.Equal("Bearer the-token", seen!.Headers.Authorization?.ToString());
     }
 
+    [Fact]
+    public async Task TheLifecycleRunsBeforeAnythingElseAndTheSessionIdIsCarried()
+    {
+        // The protocol requires initialize first, and an app built on a standard MCP SDK rejects a
+        // bare tools/list. An earlier cut skipped this and looked fine, because demo-app's hand-rolled
+        // server does not enforce the lifecycle — so every SDK-based app would have silently vanished.
+        var methods = new List<string>();
+        var sessionHeaders = new List<string?>();
+        var handler = new StubHandler
+        {
+            Responses =
+            {
+                ["http://a/api/mcp"] = request =>
+                {
+                    var body = request.Content!.ReadAsStringAsync().Result;
+                    methods.Add(System.Text.Json.JsonDocument.Parse(body).RootElement
+                        .GetProperty("method").GetString()!);
+                    sessionHeaders.Add(request.Headers.TryGetValues("Mcp-Session-Id", out var v)
+                        ? v.FirstOrDefault()
+                        : null);
+                    var response = Json(Tools("list_people"));
+                    response.Headers.TryAddWithoutValidation("Mcp-Session-Id", "sess-1");
+                    return response;
+                },
+            },
+        };
+        var (catalog, _) = Build(handler);
+
+        await catalog.BuildAsync([Target("com.example.a", "http://a/api/mcp")], CancellationToken.None);
+
+        Assert.Equal(["initialize", "notifications/initialized", "tools/list"], methods);
+        // The id the app issued on initialize travels on everything after it.
+        Assert.Equal([null, "sess-1", "sess-1"], sessionHeaders);
+    }
+
+    [Fact]
+    public async Task TheHandshakeHappensOncePerEndpoint()
+    {
+        // Re-initializing on every call would triple the traffic and, on a stateful server, discard a
+        // session it is holding open.
+        var methods = new List<string>();
+        var handler = new StubHandler
+        {
+            Responses =
+            {
+                ["http://a/api/mcp"] = request =>
+                {
+                    var body = request.Content!.ReadAsStringAsync().Result;
+                    methods.Add(System.Text.Json.JsonDocument.Parse(body).RootElement
+                        .GetProperty("method").GetString()!);
+                    return Json(Tools("list_people"));
+                },
+            },
+        };
+        var (catalog, _) = Build(handler);
+        var target = Target("com.example.a", "http://a/api/mcp");
+
+        await catalog.BuildAsync([target], CancellationToken.None);
+        await catalog.BuildAsync([target], CancellationToken.None);
+
+        Assert.Equal(1, methods.Count(method => method == "initialize"));
+        Assert.Equal(2, methods.Count(method => method == "tools/list"));
+    }
+
+    [Fact]
+    public async Task ANonObjectResultIsSkippedRatherThanThrownOutOfTheFanOut()
+    {
+        // `TryGetProperty` throws on a non-object instead of returning false, so `{"result":null}`
+        // escaped the unexpected-shape branch as an exception — and Task.WhenAll would have turned one
+        // app's malformed answer into an empty catalog at session start.
+        var handler = new StubHandler
+        {
+            Responses =
+            {
+                ["http://null/api/mcp"] = _ => Json("""{"jsonrpc":"2.0","id":1,"result":null}"""),
+                ["http://scalar/api/mcp"] = _ => Json("""{"jsonrpc":"2.0","id":1,"result":42}"""),
+                ["http://good/api/mcp"] = _ => Json(Tools("list_people")),
+            },
+        };
+        var (catalog, _) = Build(handler);
+
+        var tools = await catalog.BuildAsync(
+            [
+                Target("com.example.null", "http://null/api/mcp"),
+                Target("com.example.scalar", "http://scalar/api/mcp"),
+                Target("com.example.good", "http://good/api/mcp"),
+            ],
+            CancellationToken.None);
+
+        // The healthy app still comes through, which is the property that was at risk.
+        Assert.Equal(["com_dexample_dgood__list_people"], tools.Select(tool => tool.ExportedName));
+    }
+
+    [Fact]
+    public async Task AnSseFramedAnswerIsUnderstood()
+    {
+        // A streamable-HTTP server answers a plain POST with a one-message SSE stream.
+        var handler = new StubHandler
+        {
+            Responses =
+            {
+                ["http://a/api/mcp"] = _ => Sse("event: message\ndata: " + Tools("list_people") + "\n\n"),
+            },
+        };
+        var (catalog, _) = Build(handler);
+
+        var tools = await catalog.BuildAsync([Target("com.example.a", "http://a/api/mcp")], CancellationToken.None);
+
+        Assert.Equal(["com_dexample_da__list_people"], tools.Select(tool => tool.ExportedName));
+    }
+
+    private static HttpResponseMessage Sse(string body)
+        => new(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "text/event-stream") };
+
     private static (ToolCatalog Catalog, List<string> Warnings) Build(StubHandler handler)
     {
         var warnings = new List<string>();

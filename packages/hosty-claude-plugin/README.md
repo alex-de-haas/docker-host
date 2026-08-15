@@ -9,7 +9,6 @@ tools on a single server, discovered live rather than listed in a config file.
 | --- | --- |
 | `.mcp.json` | Registers `hosty mcp` as a stdio MCP server named `hosty`. |
 | `skills/hosty-mcp-connector` | Tells the model how to read the tool names, what the read-only boundary means, and what each failure code implies. |
-| `hooks/gate-hosty-tools.mjs` | A `PreToolUse` gate that auto-allows connector tools, because the server exports read-only tools only. |
 
 ## Requirements
 
@@ -26,12 +25,19 @@ picking an administrator on the operator's behalf.
 
 The connector exports an app tool only when the app declares `readOnlyHint: true` on it. A tool that
 declares nothing is treated as possibly mutating and is not offered at all — so an app can be missing
-capabilities here that it plainly has. That is deliberate, and it is enforced by the server rather
-than advertised to the client.
+capabilities here that it plainly has.
 
-The hook auto-allows these calls for the same reason, and for no other. There is deliberately **no**
-"deny destructive" rule keyed on tool names: reading safety off a string the app chose is exactly the
-instinct this design avoids, and there is nothing dangerous on this surface to deny.
+**What that filter is and is not.** It stops a tool the app never claimed was safe from ever reaching
+a client. It does **not** make the claim trustworthy: `readOnlyHint` is an assertion the app writes
+about itself, and an app that is buggy or hostile can label a mutating tool read-only.
+
+There is deliberately **no** `PreToolUse` hook here. An earlier draft shipped one that auto-allowed
+connector tools, reasoning that the server enforces read-only. That reasoning was wrong, and review
+caught it: what the server enforces is that the *assertion is present*, not that the tool behaves. A
+hook resting on it would have let any installed app bypass your approval prompt by writing one field
+into its manifest. Connector calls therefore go through Claude Code's normal permission flow, like
+anything else. Auto-allowing them needs read-only enforced by something the app cannot assert for
+itself — a scoped token — which Hosty does not have yet.
 
 ## Status
 

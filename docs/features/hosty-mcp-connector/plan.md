@@ -86,16 +86,22 @@ the two should know which is current.
       as "not read-only" therefore exports *zero* app tools until this lands, so the two ship
       together or the feature demonstrates nothing. The reference implementation is copied as-is by
       app authors, which is the second reason it belongs there.
-- [x] **Packaging**: `packages/hosty-claude-plugin` — the connector `.mcp.json`, the
-      `hosty-mcp-connector` skill, and a `PreToolUse` gate. Built with **no** ask-writes or
-      deny-destructive rule, and that is the finding rather than a shortfall: the connector never
-      exports a write, so there is nothing to ask about, and a name-keyed destructive blacklist would
-      read safety off a string the app chose. The gate auto-allows on the server's *enforced*
-      read-only property instead. Not yet installed into a real client.
+- [x] **Packaging**: `packages/hosty-claude-plugin` — the connector `.mcp.json` and the
+      `hosty-mcp-connector` skill. Shipped with **no PreToolUse hook at all**, which is a correction
+      rather than a shortfall. The deliverable asked for allow-read-only / ask-writes /
+      deny-destructive; none of the three survives contact:
+      *ask-writes* and *deny-destructive* have nothing to act on, since the connector exports no
+      mutating tool and a name-keyed blacklist would read safety off a string the app chose; and
+      *allow-read-only* was built, then removed after review. The argument that killed it is right:
+      what the connector enforces is that `readOnlyHint` **is present**, not that the tool behaves,
+      so a hook resting on it would let any installed app bypass the operator's approval prompt by
+      writing one field. Auto-allowing needs read-only enforced by something the app cannot assert
+      about itself — a scoped token — which is the same missing piece recorded in
+      [ai-agent-bridge](../ai-agent-bridge/feature.md#token-mechanics).
 - [x] Tests: discovery filtering, fan-out with one app timing out, the tool-key mapping including
       every collision **and length** case named in Decisions, the read-only refusal, token reuse
       inside the margin against a re-mint outside it, and the change notification — each with the
-      succeeding half beside it. Plus the Core route's own HTTP suite and the plugin gate.
+      succeeding half beside it. Plus the Core route's own HTTP suite.
 - [x] Docs: `feature.md`, umbrella step 7, index.
 
 ### Blocked, and unchecked on purpose

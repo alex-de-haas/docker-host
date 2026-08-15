@@ -70,7 +70,21 @@ internal sealed class ToolCatalog(
         IReadOnlyList<AppMcpTarget> targets,
         CancellationToken cancellationToken)
     {
-        var listed = await Task.WhenAll(targets.Select(target => ListAsync(target, cancellationToken)));
+        // Every app is isolated: one that throws must cost the catalog that app, never the listing.
+        // Task.WhenAll surfaces the first exception and abandons the rest, which would have turned one
+        // malformed response into an empty tool list at session start.
+        var listed = await Task.WhenAll(targets.Select(async target =>
+        {
+            try
+            {
+                return await ListAsync(target, cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                warn($"{target.AppId}: its tools could not be read ({ex.Message}); skipping it.");
+                return [];
+            }
+        }));
 
         var exported = new List<ExportedTool>();
         var claimed = new HashSet<string>(StringComparer.Ordinal);
@@ -106,7 +120,12 @@ internal sealed class ToolCatalog(
         }
 
         using var document = result.Document!;
-        if (!document.RootElement.TryGetProperty("result", out var payload) ||
+        // Every ValueKind is checked before descending. TryGetProperty THROWS on a non-object rather
+        // than returning false, so `{"result":null}` from one app would otherwise have escaped this
+        // branch as an exception instead of being the unexpected shape it is.
+        if (document.RootElement.ValueKind != JsonValueKind.Object ||
+            !document.RootElement.TryGetProperty("result", out var payload) ||
+            payload.ValueKind != JsonValueKind.Object ||
             !payload.TryGetProperty("tools", out var tools) ||
             tools.ValueKind != JsonValueKind.Array)
         {
@@ -118,7 +137,8 @@ internal sealed class ToolCatalog(
         var exported = new List<ExportedTool>();
         foreach (var tool in tools.EnumerateArray())
         {
-            if (!tool.TryGetProperty("name", out var nameElement) ||
+            if (tool.ValueKind != JsonValueKind.Object ||
+                !tool.TryGetProperty("name", out var nameElement) ||
                 nameElement.ValueKind != JsonValueKind.String ||
                 nameElement.GetString() is not { Length: > 0 } toolName)
             {
@@ -156,7 +176,8 @@ internal sealed class ToolCatalog(
     /// exports nothing, which is the honest reading of "we do not know what this does".
     /// </remarks>
     internal static bool IsReadOnly(JsonElement tool)
-        => tool.TryGetProperty("annotations", out var annotations) &&
+        => tool.ValueKind == JsonValueKind.Object &&
+            tool.TryGetProperty("annotations", out var annotations) &&
             annotations.ValueKind == JsonValueKind.Object &&
             annotations.TryGetProperty("readOnlyHint", out var hint) &&
             hint.ValueKind == JsonValueKind.True;
