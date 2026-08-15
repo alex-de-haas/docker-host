@@ -9,7 +9,8 @@
     "apps/marketplace",
     "apps/shell",
     "apps/telemetry-ui",
-    "packages/app-sdk"
+    "packages/app-sdk",
+    "packages/hosty-claude-plugin"
   ],
   "overrides": {
     "next": {
@@ -21,7 +22,7 @@
     "check-versions": "node scripts/check-versions.mjs",
     "lint": "npm run shell:lint && npm run demo-app:lint && npm run marketplace:lint && npm run telemetry-ui:lint && npm run ai-gateway:lint",
     "build": "npm run core:build && npm run cli:build && npm run telemetry-backend:build && npm run marketplace:build && npm run telemetry-ui:build && npm run shell:build && npm run demo-app:build",
-    "test": "npm run sdk:test && npm run sdk:dotnet:test && npm run core:test && npm run cli:test && npm run telemetry-backend:test && npm run marketplace:test && npm run telemetry-ui:test && npm run shell:test && npm run ai-gateway:test && npm run cardputer:test",
+    "test": "npm run sdk:test && npm run sdk:dotnet:test && npm run core:test && npm run cli:test && npm run telemetry-backend:test && npm run marketplace:test && npm run telemetry-ui:test && npm run shell:test && npm run ai-gateway:test && npm run claude-plugin:test && npm run cardputer:test",
     "ci": "npm run lint && npm run build && npm run test",
     "core:dev": "dotnet run --project apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj --launch-profile dev",
     "core:build": "dotnet build apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj",
@@ -63,6 +64,7 @@
     "demo-app:docker:build": "docker build -f apps/demo-app/Dockerfile -t ghcr.io/alex-de-haas/demo-app:latest .",
     "demo-app:docker:build:local": "docker build -f apps/demo-app/Dockerfile -t hosty-demo-app:dev .",
     "sdk:test": "npm run test --workspace @hosty-sdk/app",
-    "sdk:dotnet:test": "dotnet test packages/app-sdk-dotnet/HostySdk.App.Tests/HostySdk.App.Tests.csproj"
+    "sdk:dotnet:test": "dotnet test packages/app-sdk-dotnet/HostySdk.App.Tests/HostySdk.App.Tests.csproj",
+    "claude-plugin:test": "npm run test --workspace @haas/hosty-claude-plugin"
   }
 }

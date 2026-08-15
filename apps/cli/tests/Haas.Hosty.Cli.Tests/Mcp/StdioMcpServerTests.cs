@@ -107,6 +107,22 @@ public class StdioMcpServerTests
     }
 
     [Fact]
+    public async Task TheChangeNotificationIsAWellFormedNotificationWithNoId()
+    {
+        // What a client acts on when the fleet moves. An `id` here would make it a request the client
+        // would try to answer, and the notification is the only thing that lets a session pick up an
+        // app installed after it started.
+        var output = new StringWriter();
+        var server = new StdioMcpServer(new StringReader(""), output, new StringWriter(), new FakeCatalog());
+
+        server.NotifyToolsChanged();
+
+        using var parsed = JsonDocument.Parse(output.ToString().Trim());
+        Assert.Equal("notifications/tools/list_changed", parsed.RootElement.GetProperty("method").GetString());
+        Assert.False(parsed.RootElement.TryGetProperty("id", out _));
+    }
+
+    [Fact]
     public async Task ANotificationIsNeverAnswered()
     {
         // Replying to a notification is a protocol violation clients surface as a stray message.

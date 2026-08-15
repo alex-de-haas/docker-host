@@ -13,7 +13,12 @@ using System.Text.Json;
 /// surface needed here is two methods, and an app's tool schemas are arbitrary JSON that is copied
 /// through rather than modelled.
 /// </remarks>
-internal sealed class AppMcpClient(HttpClient http, DelegatedTokenCache tokens)
+/// <param name="tokenFor">
+/// Yields a delegated token for an app, or null when Core will not issue one. A delegate rather than
+/// the cache itself: it is the whole dependency on Core, and taking it this way lets the fan-out and
+/// its failure modes be driven without a running host.
+/// </param>
+internal sealed class AppMcpClient(HttpClient http, Func<string, CancellationToken, Task<string?>> tokenFor)
 {
     /// <summary>
     /// Sends one JSON-RPC request and returns the parsed response, or a failure describing why not.
@@ -30,12 +35,12 @@ internal sealed class AppMcpClient(HttpClient http, DelegatedTokenCache tokens)
         TimeSpan timeout,
         CancellationToken cancellationToken)
     {
-        var token = await tokens.TryGetAsync(target.AppId, cancellationToken);
+        var token = await tokenFor(target.AppId, cancellationToken);
         if (token is null)
         {
             return AppMcpResult.Unavailable(
                 "app_unauthorized",
-                $"Hosty would not issue a token for {target.AppId} on behalf of this user.");
+                $"No Hosty credential is available for {target.AppId}; this user may not have access to it.");
         }
 
         using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);

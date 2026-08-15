@@ -86,14 +86,17 @@ the two should know which is current.
       as "not read-only" therefore exports *zero* app tools until this lands, so the two ship
       together or the feature demonstrates nothing. The reference implementation is copied as-is by
       app authors, which is the second reason it belongs there.
-- [ ] **Packaging**: the Claude Code plugin bundling the connector `.mcp.json`, a Hosty skill, and
-      PreToolUse hooks implementing allow-read-only / ask-writes / deny-destructive. Part of the
-      umbrella's step 7 scope, so step 7 cannot be checked off without it.
-- [ ] Tests: discovery filtering, fan-out with one app timing out, the tool-key mapping including
+- [x] **Packaging**: `packages/hosty-claude-plugin` — the connector `.mcp.json`, the
+      `hosty-mcp-connector` skill, and a `PreToolUse` gate. Built with **no** ask-writes or
+      deny-destructive rule, and that is the finding rather than a shortfall: the connector never
+      exports a write, so there is nothing to ask about, and a name-keyed destructive blacklist would
+      read safety off a string the app chose. The gate auto-allows on the server's *enforced*
+      read-only property instead. Not yet installed into a real client.
+- [x] Tests: discovery filtering, fan-out with one app timing out, the tool-key mapping including
       every collision **and length** case named in Decisions, the read-only refusal, token reuse
       inside the margin against a re-mint outside it, and the change notification — each with the
-      succeeding half beside it.
-- [ ] Docs: `feature.md`, umbrella step 7, index.
+      succeeding half beside it. Plus the Core route's own HTTP suite and the plugin gate.
+- [x] Docs: `feature.md`, umbrella step 7, index.
 
 ### Blocked, and unchecked on purpose
 

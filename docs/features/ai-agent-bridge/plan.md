@@ -29,7 +29,11 @@ and [agent-background-sessions](../agent-background-sessions/plan.md).
 - [ ] 6. Validate with stock external agent clients — no gateway code. Partially done: Claude Code
       against Core MCP works (2026-08-15). The rest of the matrix is unchecked below rather than
       described as follow-up.
-- [ ] 7. The `hosty mcp` connector and the Claude Code plugin packaging.
+- [ ] 7. The `hosty mcp` connector and the Claude Code plugin packaging. Built 2026-08-15 —
+      [hosty-mcp-connector](../hosty-mcp-connector/feature.md): the connector, the Core control route
+      it mints through, and `packages/hosty-claude-plugin`. **Unchecked because no stock client has
+      connected to it**, which is the same gap step 6 tracks and the one thing this step exists to
+      close. Its plan stays In Progress until that live run passes.
 - [x] 8. The operator milestone — the `hosty.ai-gateway` system app plus the Shell assistant surface.
       Shipped 2026-08-09 and verified live: [ai-gateway](../ai-gateway/feature.md).
 - [ ] 9. The user profile: MCP-only sessions with delegated user tokens and approval-gated writes.

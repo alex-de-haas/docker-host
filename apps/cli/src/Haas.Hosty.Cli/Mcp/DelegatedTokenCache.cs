@@ -16,12 +16,25 @@ using Haas.Hosty.Cli.Commands;
 /// not be carrying a credential that expires while the app is still working.
 /// </para>
 /// </remarks>
-internal sealed class DelegatedTokenCache(CoreControlClient control, string user, TimeProvider time)
+/// <param name="issue">
+/// Asks Core for a token, or yields null when it refuses. A delegate rather than the control client:
+/// the refusal and the expiry are the behaviour worth pinning, and neither needs a running host.
+/// </param>
+/// <param name="warn">
+/// Where the reason a token was refused goes. Worth a parameter rather than a swallowed null: driving
+/// the connector against a Core that predated the token route produced a bare "would not issue a
+/// token for this user", which reads as an access problem and sent the reader to the wrong place. The
+/// status line says 404 and settles it in one look.
+/// </param>
+internal sealed class DelegatedTokenCache(
+    Func<string, CancellationToken, Task<IssuedToken?>> issue,
+    TimeProvider time,
+    Action<string>? warn = null)
 {
     /// <summary>Replaced once this close to expiry, so no call departs on a token about to die.</summary>
     private static readonly TimeSpan ReuseMargin = TimeSpan.FromSeconds(60);
 
-    private readonly Dictionary<string, CachedToken> cache = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, IssuedToken> cache = new(StringComparer.Ordinal);
 
     /// <summary>
     /// A usable token for <paramref name="appId"/>, or null when Core refuses to issue one — which
@@ -35,31 +48,34 @@ internal sealed class DelegatedTokenCache(CoreControlClient control, string user
             return cached.Token;
         }
 
-        McpCommand.DelegatedTokenResponse? issued;
+        IssuedToken? issued;
         try
         {
-            issued = await control.PostAsync<McpCommand.DelegatedTokenResponse>(
-                $"apps/{Uri.EscapeDataString(appId)}/delegated-token",
-                new McpCommand.DelegatedTokenRequest(user),
-                cancellationToken);
+            issued = await issue(appId, cancellationToken);
         }
         catch (Exception ex) when (ex is CoreControlException or CoreControlTimeoutException)
         {
+            warn?.Invoke(ex is CoreControlException { StatusCode: System.Net.HttpStatusCode.NotFound } notFound &&
+                    string.IsNullOrWhiteSpace(notFound.ResponseBody)
+                // An empty 404 is the route itself missing, not a refusal about this user or app.
+                ? $"{appId}: this Hosty Core has no delegated-token control route; it predates 0.81.0 and needs updating."
+                : $"{appId}: Hosty Core refused a token — {ex.Message}");
             // A stale entry is dropped rather than kept: once Core says no, continuing to present the
             // previous token would turn a clear refusal into an authorization error from the app.
             cache.Remove(appId);
             return null;
         }
 
-        if (issued is null || string.IsNullOrWhiteSpace(issued.Token))
+        if (issued is not { } token || string.IsNullOrWhiteSpace(token.Token))
         {
             cache.Remove(appId);
             return null;
         }
 
-        cache[appId] = new CachedToken(issued.Token, issued.ExpiresAt);
-        return issued.Token;
+        cache[appId] = token;
+        return token.Token;
     }
-
-    private readonly record struct CachedToken(string Token, DateTimeOffset ExpiresAt);
 }
+
+/// <summary>A delegated token and when it stops being usable.</summary>
+internal readonly record struct IssuedToken(string Token, DateTimeOffset ExpiresAt);

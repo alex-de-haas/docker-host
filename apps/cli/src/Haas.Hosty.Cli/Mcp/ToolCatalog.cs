@@ -7,14 +7,18 @@ using System.Text.Json;
 /// <c>tools/list</c>, mapped onto client-facing names, and filtered to what an external client may
 /// call.
 /// </summary>
-internal sealed class ToolCatalog(AppMcpClient client, int maxToolNameChars, Action<string> warn)
+/// <param name="listTimeout">
+/// Per-app ceiling on the fan-out. One slow app must cost the listing a bounded wait, never the
+/// listing itself — the alternative is a connector that hangs at session start because something
+/// unrelated is wedged. Shortened by tests, which would otherwise spend the real wait proving it.
+/// </param>
+internal sealed class ToolCatalog(
+    AppMcpClient client,
+    int maxToolNameChars,
+    Action<string> warn,
+    TimeSpan? listTimeout = null)
 {
-    /// <summary>
-    /// Per-app ceiling on the fan-out. One slow app must cost the listing a bounded wait, never the
-    /// listing itself — the alternative is a connector that hangs at session start because something
-    /// unrelated is wedged.
-    /// </summary>
-    private static readonly TimeSpan ListTimeout = TimeSpan.FromSeconds(10);
+    private readonly TimeSpan listTimeout = listTimeout ?? TimeSpan.FromSeconds(10);
 
     /// <summary>
     /// Selects the apps worth asking: running, and declaring at least one <c>mcp</c> interface Core
@@ -92,7 +96,7 @@ internal sealed class ToolCatalog(AppMcpClient client, int maxToolNameChars, Act
 
     private async Task<IReadOnlyList<ExportedTool>> ListAsync(AppMcpTarget target, CancellationToken cancellationToken)
     {
-        var result = await client.SendAsync(target, "tools/list", writeParams: null, ListTimeout, cancellationToken);
+        var result = await client.SendAsync(target, "tools/list", writeParams: null, listTimeout, cancellationToken);
         if (!result.Succeeded)
         {
             // Not a warning worth shouting about: a stopped app is an ordinary state of a Hosty host,

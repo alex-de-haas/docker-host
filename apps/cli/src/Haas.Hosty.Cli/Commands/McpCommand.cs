@@ -51,8 +51,18 @@ internal sealed partial class McpCommand(CommandContext context)
             ?? throw new CoreNotRunningException();
 
         using var http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
-        var tokens = new DelegatedTokenCache(control, options.User, TimeProvider.System);
-        var client = new AppMcpClient(http, tokens);
+        var tokens = new DelegatedTokenCache(
+            async (appId, cancellationToken) =>
+            {
+                var issued = await control.PostAsync<DelegatedTokenResponse>(
+                    $"apps/{Uri.EscapeDataString(appId)}/delegated-token",
+                    new DelegatedTokenRequest(options.User),
+                    cancellationToken);
+                return issued is null ? null : new IssuedToken(issued.Token, issued.ExpiresAt);
+            },
+            TimeProvider.System,
+            message => diagnostics.WriteLine($"[hosty mcp] {message}"));
+        var client = new AppMcpClient(http, tokens.TryGetAsync);
 
         using var lifetime = new CancellationTokenSource();
         Console.CancelKeyPress += (_, eventArgs) =>
