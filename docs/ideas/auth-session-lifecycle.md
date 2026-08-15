@@ -2,7 +2,7 @@
 
 Status: Idea (agreed 2026-07-13)
 Created: 2026-07-13
-Updated: 2026-07-13
+Updated: 2026-08-15
 
 ## Motivation
 
@@ -19,7 +19,7 @@ Four root causes, all confirmed in the current implementation:
 
 - The browser app token is an HS256 JWT whose key is private to Core. Apps cannot verify it locally; every trust decision is an online `POST /api/auth/apps/revalidate` call authenticated by the app service token. The signature therefore buys nothing, while statelessness costs revocation and lifetime management.
 - Revalidation already re-checks user disabled / app assignment / role / system-app-admin on every call (`RequireAccessibleUserAsync`), so *policy* revocation is immediate today. What is missing is *per-session* revocation and idle/absolute lifetime semantics.
-- The decided platform token rule in [AI Agent Bridge](../features/ai-agent-bridge/plan.md) (2026-07-11) already says: tokens presented **to Core** are opaque values with a server-side record (instant revocation, no signing needed); signed short-TTL tokens are reserved for delegated tokens that receiving apps verify **locally**. The browser app token is presented to Core on every revalidate, so it belongs in the opaque row; its current JWT form contradicts the decided rule.
+- The decided platform token rule in [AI Agent Bridge](../features/ai-agent-bridge/feature.md#token-mechanics) (2026-07-11) already says: tokens presented **to Core** are opaque values with a server-side record (instant revocation, no signing needed); signed short-TTL tokens are reserved for delegated tokens that receiving apps verify **locally**. The browser app token is presented to Core on every revalidate, so it belongs in the opaque row; its current JWT form contradicts the decided rule.
 - Core sessions are already opaque server-side records (`AuthSessionRecord` with `RevokedAt`), so idle+absolute lifetimes are an incremental change there. Session records are appended forever and never pruned.
 - Apps already receive `HOSTY_CORE_PUBLIC_ORIGIN` (browser-reachable) alongside `HOSTY_CORE_ORIGIN` (server-reachable) in both runtime adapters — the standalone recovery redirect target needs no new wiring.
 - Shell's embed iframe sandbox is `allow-scripts allow-same-origin allow-forms allow-popups allow-downloads` — no `allow-top-navigation*` — so an embedded app cannot navigate the top window to Core. A parent `postMessage` channel is the only embedded recovery path. Shell already has a precedent for verified iframe messaging (Marketplace install-intent handling: `event.source` + exact origin checks).
@@ -120,7 +120,7 @@ Deviation from the original sketch: the sliding Core session enforces the idle w
 
 ## Boundaries
 
-- Browser app tokens are never signed for app-local verification; signed short-TTL tokens stay reserved for delegated agent-bridge tokens per the decided rule in [ai-agent-bridge/plan.md](../features/ai-agent-bridge/plan.md).
+- Browser app tokens are never signed for app-local verification; signed short-TTL tokens stay reserved for delegated agent-bridge tokens per the decided rule in [ai-agent-bridge/feature.md](../features/ai-agent-bridge/feature.md#token-mechanics).
 - Grant validity is never coupled to Core session liveness; `authorizingSessionId` drives cascade only on explicit logout or admin revoke.
 - Core session cookies keep never being forwarded to app origins or gateway targets ([gateway-and-app-wrapping.md](gateway-and-app-wrapping.md)).
 - The Shell embed iframe sandbox is not loosened (`allow-top-navigation*` stays off).

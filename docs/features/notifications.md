@@ -20,8 +20,10 @@ flowchart LR
 ```
 
 This document specifies the v1 contract. It is the concrete realization of the `notifications`
-platform interface reserved in the [AI Agent Bridge](ai-agent-bridge/plan.md) draft, and the
-delivery surface anticipated by its durable-jobs section.
+platform interface reserved in the
+[AI Agent Bridge interface registry](ai-agent-bridge/feature.md#manifest-interfaces-and-registry),
+and the delivery surface anticipated by its
+[durable-jobs step](ai-agent-bridge/plan.md#step-11--durable-jobs-and-notifications).
 
 ## Goal
 
@@ -101,7 +103,7 @@ and **user identity** (Core session):
 | **Producer** | runtime app | `HOSTY_APP_SERVICE_TOKEN` (`AppServiceTokenService.ValidateToken`) | may target only users assigned to that app (its directory); `audience` forced to `"user"` |
 | **Producer** | Core / privileged system code | in-process `NotificationService.PublishAsync(...)` | any user; may set `audience: "host-admin"` |
 | **Consumer** | Host user via Shell/browser | Core session cookie (`CoreSessionAuthorization.RequireSessionAsync`) | own inbox; `host-admin` items only when `user.Role == "host.admin"` |
-| **Consumer** | native / CLI / AI agent | Core-issued user/delegated token | same as session; **gated on the delegated-token work in [AI Agent Bridge](ai-agent-bridge/plan.md)** |
+| **Consumer** | native / CLI / AI agent | Core-issued user/delegated token | same as session; **gated on [delegated-token-exchange](delegated-token-exchange/plan.md)** |
 
 Key rule: the **unified inbox (all sources) is a user surface**. An app's service token can
 *produce*, and may optionally *read back only its own* notifications (`source.appId == appId`),
@@ -181,8 +183,8 @@ an additive upgrade, not a prerequisite. See
 
 ## MCP Mapping
 
-The consumer contract is deliberately shaped so the Core MCP facade (from
-[AI Agent Bridge](ai-agent-bridge/plan.md)) is a thin wrapper over the same `NotificationService`,
+The consumer contract is deliberately shaped so the Core MCP facade
+([core-mcp](core-mcp/feature.md)) is a thin wrapper over the same `NotificationService`,
 not a redesign:
 
 - **Resources** (reads): `hosty://notifications` (+ `?unread=true`), `hosty://notifications/unread-count`

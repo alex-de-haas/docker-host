@@ -1206,7 +1206,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
     }
 
     // Validates the top-level `interfaces` map — platform interface declarations other components
-    // discover through the registry (draft extension under app.0.1; see ai-agent-bridge/plan.md,
+    // discover through the registry (draft extension under app.0.1; see ai-agent-bridge/feature.md,
     // "Manifest Interfaces And Registry"). Mirrors `provides`: interface names are shape-checked
     // kebab tokens and unknown names are deliberately allowed, so a manifest may declare an
     // interface a newer Core understands. Declarations are shape-checked: keys must be contract
@@ -2856,7 +2856,7 @@ internal sealed class RuntimeAppManifest
     // keyed by interface name (e.g. "ai-gateway" tells UI clients an assistant service is installed).
     // Like `provides`, unknown interface names are inert and forward-compatible; declarations are
     // shape-validated only. Draft extension, additive under schemaVersion app.0.1 — see
-    // docs/features/ai-agent-bridge/plan.md, "Manifest Interfaces And Registry".
+    // docs/features/ai-agent-bridge/feature.md, "Manifest Interfaces And Registry".
     public IReadOnlyDictionary<string, IReadOnlyList<RuntimeAppInterfaceManifest>> Interfaces { get => field ??= new Dictionary<string, IReadOnlyList<RuntimeAppInterfaceManifest>>(); init; } = new Dictionary<string, IReadOnlyList<RuntimeAppInterfaceManifest>>();
     public IReadOnlyDictionary<string, RuntimeAppExternalMountManifest> ExternalMounts { get => field ??= new Dictionary<string, RuntimeAppExternalMountManifest>(); init; } = new Dictionary<string, RuntimeAppExternalMountManifest>();
     public RuntimeAppRestartPolicyManifest? RestartPolicy { get; init; }

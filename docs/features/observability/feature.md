@@ -1,7 +1,7 @@
 # Feature: Observability (telemetry collection, storage, and UI)
 
 Created: 2026-06-28
-Updated: 2026-07-25
+Updated: 2026-08-15
 
 Runtime apps export OpenTelemetry to a collector; a Hosty-native **telemetry backend** stores the
 three signals in embedded SQLite and serves a query API; a **telemetry UI** system app renders
@@ -260,7 +260,7 @@ through Core would re-seat Core on the high-volume data path — the exact thing
 and break the standard OTLP contract for no gain. Reads were briefly proxied through Core to reuse
 its admin session gate; once the UI became a system app with its own origin and Hosty identity, the
 proxy was pure indirection and was deleted. The generalized platform rule
-([ai-agent-bridge/plan.md](../ai-agent-bridge/plan.md#authorization-and-delegation)) still holds: a thin Core
+([ai-agent-bridge/feature.md](../ai-agent-bridge/feature.md#token-mechanics)) still holds: a thin Core
 proxy is right only for admin-only, low-volume, request/response reads whose surface already lives in
 Core.
 

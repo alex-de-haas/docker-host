@@ -348,7 +348,7 @@ internal sealed record AppRecord(
     // Platform interfaces this app exposes for discovery (top-level `interfaces`, keyed by interface
     // name — e.g. "ai-gateway"), normalized from the manifest at install/update and re-read on each
     // start for a live source app. Additive/nullable, so no AppStateDocument schema bump. See
-    // docs/features/ai-agent-bridge/plan.md, "Manifest Interfaces And Registry".
+    // docs/features/ai-agent-bridge/feature.md, "Manifest Interfaces And Registry".
     IReadOnlyDictionary<string, IReadOnlyList<AppInterfaceContract>>? Interfaces = null,
     // The platform version of the Core build that last ran the manifest→record projections
     // (CoreLifecycleService.ApplyManifestProjections) for this record. A record written by a different
