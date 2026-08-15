@@ -43,6 +43,57 @@ internal static class ControlIdentityEndpoints
                     return CoreJson.Json(new AppIdentityIssueResponse(appId, user.Id, token));
                 })));
 
+        // Mints a delegated token for a named app on behalf of a named host user — the credential
+        // `hosty mcp` presents to an app's MCP endpoint (docs/features/hosty-mcp-connector/plan.md).
+        //
+        // Why this exists next to /identity rather than reusing it: that route mints an *app identity*
+        // token, a different mechanism app MCP endpoints do not accept. And the session-gated
+        // POST /api/apps/{appId}/delegated-token is unreachable from here, because the CLI talks to
+        // Core over the control channel and holds no Core session.
+        //
+        // The caller must name a user, exactly as /identity does. The control secret identifies no
+        // user, yet a delegated token needs a concrete `sub` and role for the receiving app's access
+        // checks — so there is nothing to default to, and defaulting would mean impersonating whichever
+        // administrator happened to be found first. The same access policy the session path runs is
+        // applied here, so this is never a way to obtain more than that user could obtain themselves.
+        app.MapPost("/control/v1/apps/{appId}/delegated-token", async (
+            string appId,
+            HttpRequest request,
+            ControlSecret secret,
+            UserDirectoryStore users,
+            AppIdentityService identity,
+            DelegatedTokenService delegatedTokens,
+            AuditStore audit,
+            IClock clock,
+            AppIdentityIssueRequest input,
+            CancellationToken cancellationToken) =>
+            await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
+            {
+                // Audited on every attempt including refusals, like the app-to-app exchange and for the
+                // same reason: this is a path to a data-plane credential, and a refusal is the more
+                // interesting half of that record. HandleIdentityError converts the exception to a
+                // response WITHOUT rethrowing, so wrapping it would have left the refusals unaudited.
+                try
+                {
+                    var user = await ResolveUserAsync(users, input.User, cancellationToken);
+                    var (actor, target) = await identity.RequireAccessibleUserAsync(appId, user.Id, cancellationToken);
+                    var issued = delegatedTokens.CreateToken(target.Id, actor.Id, actor.Role);
+                    await AppendControlTokenAuditAsync(audit, appId, actor.Id, "succeeded", clock, cancellationToken);
+                    return CoreJson.Json(issued);
+                }
+                catch (AppIdentityException exception)
+                {
+                    // The requested identifier, not a resolved id: when resolution itself failed there
+                    // is no id, and recording what was asked for is what makes the trail readable.
+                    await AppendControlTokenAuditAsync(audit, appId, input.User, exception.Code, clock, cancellationToken);
+                    return CoreJson.Json(
+                        new ErrorResponse(exception.Code, exception.Message),
+                        statusCode: exception.Code is "user_not_found" or "app_not_found"
+                            ? StatusCodes.Status404NotFound
+                            : StatusCodes.Status403Forbidden);
+                }
+            }));
+
         app.MapPost("/control/v1/apps/{appId}/open-link", async (
             string appId,
             HttpRequest request,
@@ -136,6 +187,29 @@ internal static class ControlIdentityEndpoints
 
         return endpoint.Url;
     }
+
+    private static Task AppendControlTokenAuditAsync(
+        AuditStore audit,
+        string appId,
+        string actor,
+        string outcome,
+        IClock clock,
+        CancellationToken cancellationToken)
+        => audit.AppendAsync(
+            new AuditRecord(
+                Id: $"audit_{Guid.NewGuid():N}",
+                Action: "auth.delegated-token.control",
+                ResourceType: "app",
+                ResourceId: appId,
+                Outcome: outcome,
+                ActorUserId: actor,
+                CreatedAt: clock.UtcNow,
+                Details: new Dictionary<string, string>
+                {
+                    ["targetAppId"] = appId,
+                    ["channel"] = "control",
+                }),
+            cancellationToken);
 
     private static async Task<IResult> HandleIdentityError(Func<Task<IResult>> action)
     {

@@ -81,18 +81,24 @@ export async function POST(request: Request) {
   }
 }
 
+// `annotations` is not decoration, and a reference implementation is copied as-is — so declare it.
+// Consumers key permission policy off these hints, and `hosty mcp` goes further: it is read-only for
+// external clients and treats a *missing* readOnlyHint as "this might mutate", so a tool without one
+// is not offered at all. An app that omits them silently exports nothing.
 const TOOLS = [
   {
     name: "list_people",
     description:
       "Lists the people in this app's directory with the app role each one holds. Requires the demo.people.read permission for the calling Hosty user.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
   },
   {
     name: "get_my_app_role",
     description:
       "Returns the calling Hosty user's role inside this app, where that role came from, and the permissions it grants. Useful for explaining why another tool was refused.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
   },
 ];
 
