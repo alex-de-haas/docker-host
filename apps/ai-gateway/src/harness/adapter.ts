@@ -61,6 +61,8 @@ export interface HarnessStartOptions {
   cwd: string;
   /** Operator-authored instructions, appended to the harness's own sources — never replacing them. */
   systemPrompt?: string;
+  /** Enabled app MCP providers, already carrying a token scoped to each app. */
+  mcpServers?: Record<string, unknown>;
   /** Harness-native session id to resume after a gateway restart, when the harness supports it. */
   resumeHarnessSessionId?: string;
   onEvent: (event: HarnessEvent) => void;
@@ -75,6 +77,12 @@ export interface HarnessRun {
    * the id is unknown — already answered, or never asked.
    */
   resolveQuestion(questionId: string, answers: Record<string, string>): boolean;
+  /**
+   * Replaces the MCP servers of a running session. Returns false when the harness cannot be
+   * reconfigured live (`capabilities.liveReconfigure`), in which case the change waits for the next
+   * session rather than silently doing nothing.
+   */
+  setMcpServers(servers: Record<string, unknown>): Promise<boolean>;
   interrupt(): Promise<void>;
   stop(): Promise<void>;
 }

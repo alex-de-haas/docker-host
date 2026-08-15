@@ -192,6 +192,12 @@ class CodexRun implements HarnessRun {
     return false;
   }
 
+  // No setMcpServers equivalent in the app-server protocol, which is what capabilities.liveReconfigure
+  // reports; the caller applies the change at the next session instead of believing it landed.
+  async setMcpServers(): Promise<boolean> {
+    return false;
+  }
+
   async interrupt(): Promise<void> {
     if (this.threadId) {
       await this.request(CODEX_METHODS.turnInterrupt, { threadId: this.threadId }).catch(() => undefined);

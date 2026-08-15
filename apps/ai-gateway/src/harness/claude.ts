@@ -83,7 +83,11 @@ class ClaudeRun implements HarnessRun {
   private readonly input = new PushableStream<unknown>();
   private readonly pending = new Map<string, PendingApproval>();
   private readonly pendingQuestions = new Map<string, PendingQuestion>();
-  private query: { interrupt(): Promise<unknown>; close(): void } | null = null;
+  private query: {
+    interrupt(): Promise<unknown>;
+    close(): void;
+    setMcpServers?(servers: Record<string, unknown>): Promise<unknown>;
+  } | null = null;
   private stopped = false;
 
   constructor(private readonly options: HarnessStartOptions) {
@@ -124,6 +128,21 @@ class ClaudeRun implements HarnessRun {
     this.pendingQuestions.delete(questionId);
     pending.resolve({ behavior: "allow", updatedInput: { ...pending.input, answers } });
     return true;
+  }
+
+  // The SDK reconfigures a live session, which is why this harness reports liveReconfigure: true.
+  // Tokens expire every five minutes, so this is the ordinary path rather than an exceptional one.
+  async setMcpServers(servers: Record<string, unknown>): Promise<boolean> {
+    const query = this.query;
+    if (!query?.setMcpServers) {
+      return false;
+    }
+    try {
+      await query.setMcpServers(servers);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async interrupt(): Promise<void> {
@@ -169,6 +188,7 @@ class ClaudeRun implements HarnessRun {
           // Host operator context: the harness reads the operator's own user+project settings
           // (CLAUDE.md, skills), exactly like an admin running Claude Code by hand.
           settingSources: ["user", "project"],
+          ...(this.options.mcpServers ? { mcpServers: this.options.mcpServers } : {}),
           canUseTool: (toolName: string, input: Record<string, unknown>) =>
             this.requestApproval(toolName, input),
         },

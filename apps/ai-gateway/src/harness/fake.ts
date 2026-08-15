@@ -113,6 +113,14 @@ class FakeRun implements HarnessRun {
     return true;
   }
 
+  /** Records what it was handed, so a test can assert the servers the gateway actually built. */
+  lastMcpServers: Record<string, unknown> | null = null;
+
+  async setMcpServers(servers: Record<string, unknown>): Promise<boolean> {
+    this.lastMcpServers = servers;
+    return true;
+  }
+
   async interrupt(): Promise<void> {}
 
   async stop(): Promise<void> {

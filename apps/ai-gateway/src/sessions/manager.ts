@@ -3,6 +3,8 @@ import type { HarnessAdapter, HarnessEvent, HarnessRun } from "../harness/adapte
 import type { SessionRecord, SessionStatus, SessionStore, StoredEvent } from "./store.js";
 import type { AuditReporter } from "../audit.js";
 import type { SettingsStore } from "../settings/store.js";
+import type { ProviderDirectory } from "../settings/providers.js";
+import { TokenExchange, toMcpServerConfig, TOKEN_REFRESH_MARGIN_MS } from "../mcp/exchange.js";
 
 // Owns session lifecycle: one harness run per live session, an append-only event log with a
 // monotonic seq (the SSE reattach cursor), and status transitions driven by harness events.
@@ -20,6 +22,13 @@ interface LiveSession {
   pendingApprovals: Map<string, string>;
   /** questionId -> the question texts, which are the keys the answers must come back under. */
   pendingQuestions: Map<string, string[]>;
+  /**
+   * The gateway's own credential for this session, kept alive by self-refresh so app tokens can be
+   * re-minted mid-turn. Null once the chain's absolute lifetime has run out, at which point the
+   * session keeps working with its host tools and simply loses app MCP until the operator speaks.
+   */
+  credential: string | null;
+  refreshTimer: NodeJS.Timeout | null;
 }
 
 export class SessionManager {
@@ -31,6 +40,8 @@ export class SessionManager {
     private readonly audit: AuditReporter,
     private readonly workDir: string,
     private readonly settings: SettingsStore | null = null,
+    private readonly providers: ProviderDirectory | null = null,
+    private readonly exchange: TokenExchange | null = null,
   ) {}
 
   async createSession(input: {
@@ -57,6 +68,8 @@ export class SessionManager {
       listeners: new Set(),
       pendingApprovals: new Map(),
       pendingQuestions: new Map(),
+      credential: null,
+      refreshTimer: null,
     });
     await this.append(record.id, { type: "session_created", createdBy: input.createdBy });
     this.audit.report("ai_session_created", { sessionId: record.id, actor: input.createdBy });
@@ -71,8 +84,17 @@ export class SessionManager {
     return this.live.get(id)?.record ?? this.store.readRecord(id);
   }
 
-  async postMessage(id: string, text: string): Promise<void> {
+  /**
+   * `credential` is the delegated token the operator's client presented. It is the session's seed for
+   * reaching app MCP endpoints: the gateway self-refreshes it to stay alive through a long turn and
+   * branches off it for each enabled provider. Every message replaces it, so an active conversation
+   * always holds the freshest chain.
+   */
+  async postMessage(id: string, text: string, credential?: string): Promise<void> {
     const session = await this.requireLive(id);
+    if (credential) {
+      session.credential = credential;
+    }
     await this.append(id, { type: "user_message", text });
     await this.setStatus(id, "running");
     if (!session.run) {
@@ -80,17 +102,76 @@ export class SessionManager {
       // mid-conversation swap would leave a transcript whose halves ran under different rules. An
       // edit takes effect in the next session, which the settings UI states plainly.
       const systemPrompt = (await this.settings?.read())?.systemPrompt?.trim() || undefined;
+      const mcpServers = await this.buildMcpServers(session);
       session.run = this.adapter.start({
         sessionId: id,
         cwd: this.workDir,
         systemPrompt,
+        ...(mcpServers ? { mcpServers } : {}),
         // A gateway restart loses the process but not the record: resume the harness-native
         // session when one was captured, per the reattach/resume decision in the plan.
         resumeHarnessSessionId: session.record.harnessSessionId ?? undefined,
         onEvent: (event) => void this.onHarnessEvent(id, event),
       });
     }
+    this.scheduleMcpRefresh(id);
     session.run.send(text);
+  }
+
+  /**
+   * Mints one MCP server entry per enabled, reachable provider. Returns undefined when there is
+   * nothing to offer, so a harness without providers is started exactly as before rather than with
+   * an empty map.
+   */
+  private async buildMcpServers(session: LiveSession): Promise<Record<string, unknown> | undefined> {
+    if (!this.providers || !this.exchange?.available || !this.settings || !session.credential) {
+      return undefined;
+    }
+
+    const [discovered, policy] = await Promise.all([this.providers.read(), this.settings.read()]);
+    if (!discovered) {
+      return undefined;
+    }
+
+    const servers = await this.exchange.buildServers(
+      session.credential,
+      discovered.providers,
+      policy.mcpProviders,
+    );
+    return servers.length > 0 ? toMcpServerConfig(servers) : undefined;
+  }
+
+  /**
+   * App tokens live five minutes, so they are re-minted before they die rather than after a call has
+   * already failed. The chain itself is capped an hour past the operator's last interaction: once
+   * self-refresh is refused, the credential is dropped and the session continues without app MCP —
+   * degraded, not broken, and restored by the operator saying anything at all.
+   */
+  private scheduleMcpRefresh(id: string): void {
+    const session = this.live.get(id);
+    if (!session || !this.exchange?.available || session.refreshTimer) {
+      return;
+    }
+
+    session.refreshTimer = setInterval(() => {
+      void (async () => {
+        const live = this.live.get(id);
+        if (!live?.run || !live.credential) {
+          return;
+        }
+
+        const renewed = await this.exchange!.refreshSelf(live.credential);
+        if (!renewed) {
+          live.credential = null;
+          return;
+        }
+
+        live.credential = renewed.token;
+        const servers = await this.buildMcpServers(live);
+        await live.run.setMcpServers(servers ?? {}).catch(() => false);
+      })();
+    }, TOKEN_REFRESH_MARGIN_MS * 3);
+    session.refreshTimer.unref?.();
   }
 
   async resolveApproval(
@@ -169,6 +250,7 @@ export class SessionManager {
     }
     session.pendingApprovals.clear();
     session.pendingQuestions.clear();
+    this.clearRefresh(session);
     // Persisted with the same type the live status fan-out uses, so a transcript replay and a
     // live subscriber see one status vocabulary.
     await this.append(id, { type: "session_status", status: "cancelled" });
@@ -211,6 +293,14 @@ export class SessionManager {
         await session.run.stop().catch(() => undefined);
         session.run = null;
       }
+      this.clearRefresh(session);
+    }
+  }
+
+  private clearRefresh(session: LiveSession): void {
+    if (session.refreshTimer) {
+      clearInterval(session.refreshTimer);
+      session.refreshTimer = null;
     }
   }
 
@@ -233,6 +323,8 @@ export class SessionManager {
       listeners: new Set(),
       pendingApprovals: new Map(),
       pendingQuestions: new Map(),
+      credential: null,
+      refreshTimer: null,
     };
     this.live.set(id, session);
     return session;

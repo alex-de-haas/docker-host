@@ -208,7 +208,8 @@ async function route(
       sendJson(response, 400, { code: "text_required", message: "A non-empty text field is required." });
       return;
     }
-    await manager.postMessage(sessionId, body.text);
+    // The presented token seeds the session's delegation chain; see SessionManager.postMessage.
+    await manager.postMessage(sessionId, body.text, readBearer(request));
     sendJson(response, 202, { accepted: true });
     return;
   }
@@ -321,6 +322,11 @@ function applyCors(request: IncomingMessage, response: ServerResponse): void {
     response.setHeader("access-control-allow-headers", "authorization, content-type");
     response.setHeader("access-control-max-age", "600");
   }
+}
+
+function readBearer(request: IncomingMessage): string | undefined {
+  const header = request.headers.authorization;
+  return header?.toLowerCase().startsWith("bearer ") ? header.slice("bearer ".length).trim() : undefined;
 }
 
 async function readJson(request: IncomingMessage): Promise<Record<string, unknown>> {

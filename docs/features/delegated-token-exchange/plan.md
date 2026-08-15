@@ -1,6 +1,6 @@
 # Delegated Token Exchange
 
-Status: Ready
+Status: In Progress
 Created: 2026-08-11
 Updated: 2026-08-15
 
@@ -70,25 +70,30 @@ browser holding a human's session.
   self-refresh: refreshing means presenting an exchanged token back to this route, so an unconditional
   rule would have made the recommendation impossible to implement. Same-audience refresh is therefore
   the one permitted continuation, and it is what the exchanged token's claims must allow.
+- **A branched token is only refreshable when its audience is itself a system app.** Found while
+  implementing, and it is not a gap: the system-only caller rule and the refresh rule meet only there.
+  A token branched to a domain app cannot be presented at all, because its audience may not exchange —
+  so a caller keeps app credentials fresh by re-branching from its own token, never by renewing the
+  branched one. The gateway does exactly that.
 - **Nothing about the target's interfaces is checked.** Gating on "declares `mcp`" would be theatre:
   the access policy is the real gate, and an interface check would break non-MCP uses of the same
   exchange for no security gain.
 
 ## Deliverables
 
-- [ ] Route accepts a delegated token as an alternative credential, with the session path unchanged.
-- [ ] `system`-only caller bound, and the no-new-audience chaining claim plus its enforcement —
+- [x] Route accepts a delegated token as an alternative credential, with the session path unchanged.
+- [x] `system`-only caller bound, and the no-new-audience chaining claim plus its enforcement —
       including that a same-audience refresh is accepted while a different-audience hop is refused.
-- [ ] Self-refresh with the one-hour absolute cap from the chain origin.
-- [ ] Core-side audit of every exchange: actor, caller app, target app, outcome.
-- [ ] Core HTTP suite: exchange succeeds for a system caller; is refused for a non-system caller, an
+- [x] Self-refresh with the one-hour absolute cap from the chain origin.
+- [x] Core-side audit of every exchange: actor, caller app, target app, outcome.
+- [x] Core HTTP suite: exchange succeeds for a system caller; is refused for a non-system caller, an
       expired token, a forged signature, an `aud` that is not installed, and a chained token aimed at
       a *different* audience — while a same-audience refresh of that token succeeds; a user
       who may not reach the target is refused **while** the same call for a permitted user succeeds —
       the pair matters, since a route that refuses everything looks identical to a working gate.
-- [ ] Gateway consumes it: enabled providers reach the harness with a working credential, and the
+- [x] Gateway consumes it: enabled providers reach the harness with a working credential, and the
       settings toggle stops storing a decision nothing executes.
-- [ ] Docs: `feature.md`, the ai-gateway plan's toggle deliverable closed, index regenerated.
+- [x] Docs: `feature.md`, the ai-gateway plan's toggle deliverable closed, index regenerated.
 
 Version outcome: platform minor (new Core API surface), `apps/ai-gateway` minor.
 

@@ -579,6 +579,7 @@ describe("gateway", () => {
             }),
           resolveApproval: () => false,
           resolveQuestion: () => false,
+          setMcpServers: async () => false,
           interrupt: async () => {},
           stop: async () => {},
         };
