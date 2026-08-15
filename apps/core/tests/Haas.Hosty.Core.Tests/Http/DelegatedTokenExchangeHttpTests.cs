@@ -118,7 +118,7 @@ public sealed class DelegatedTokenExchangeHttpTests
     }
 
     [Fact]
-    public async Task RejectsAForgedOrExpiredTokenWithoutFallingBackToTheSessionPath()
+    public async Task RejectsAForgedTokenWithoutFallingBackToTheSessionPath()
     {
         await using var harness = await StartAsync();
         using var client = harness.CreateClient();
@@ -203,7 +203,7 @@ public sealed class DelegatedTokenExchangeHttpTests
         // still be branchable — otherwise Shell's tokens would be dead ends.
         await using var harness = await StartAsync();
         using var client = harness.CreateClient();
-        var session = await SeedSessionAsync(harness, "host.admin");
+        var session = await SeedSessionAsync(harness, "user_admin");
 
         using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/apps/{Gateway}/delegated-token");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", session);
@@ -271,14 +271,16 @@ public sealed class DelegatedTokenExchangeHttpTests
             []));
     }
 
-    private static async Task<string> SeedSessionAsync(CoreHttpHarness harness, string role)
+    /// <summary>Seeds a Core session for one of the users StartAsync creates, so the browser path can
+    /// be exercised. Takes the user rather than a role, because the role lives on the user record —
+    /// an unused role parameter would quietly let a test believe it seeded a non-admin.</summary>
+    private static async Task<string> SeedSessionAsync(CoreHttpHarness harness, string userId)
     {
         var users = harness.Services.GetRequiredService<UserDirectoryStore>();
         var now = harness.Services.GetRequiredService<IClock>().UtcNow;
         var state = await users.ReadAsync();
-        var session = new AuthSessionRecord("session_admin", "user_admin", now, now.AddHours(1), null, now);
+        var session = new AuthSessionRecord($"session_{userId}", userId, now, now.AddHours(1), null, now);
         await users.WriteAsync(state with { Sessions = [session] });
-        _ = role;
         return session.Id;
     }
 

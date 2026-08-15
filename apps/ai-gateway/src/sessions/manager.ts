@@ -166,7 +166,13 @@ export class SessionManager {
 
     const renewed = await this.exchange.refreshSelf(session.credential);
     if (!renewed) {
+      // Degrade cleanly rather than leaving dead tools on offer: dropping the credential without
+      // clearing the servers would keep app tools visible to the model, which would then call them
+      // and get an authorization error — worse than never having had them. The timer stops too,
+      // since nothing can revive the chain except a fresh operator message.
       session.credential = null;
+      await session.run.setMcpServers({}).catch(() => false);
+      this.clearRefresh(session);
       return false;
     }
 
@@ -178,7 +184,9 @@ export class SessionManager {
 
   private scheduleMcpRefresh(id: string): void {
     const session = this.live.get(id);
-    if (!session || !this.exchange?.available || session.refreshTimer) {
+    // No credential means nothing to refresh, so no timer: an idle interval waking every three
+    // minutes to return immediately is pure noise for a session that may never use app MCP.
+    if (!session?.credential || !this.exchange?.available || session.refreshTimer) {
       return;
     }
 

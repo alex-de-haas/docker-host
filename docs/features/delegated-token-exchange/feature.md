@@ -74,9 +74,11 @@ never by renewing the branched one, which is exactly what the gateway does.
 - A provider toggle is pushed into live sessions the moment it is saved, not at the next refresh tick,
   because the settings page tells the operator it applied. A provider switched off has to stop being
   callable then, not up to three minutes later.
-- Past the one-hour chain cap, self-refresh is refused and the credential is dropped. The session
-  keeps its host tools and loses app MCP until the operator says anything at all — degraded, not
-  broken.
+- Past the one-hour chain cap, self-refresh is refused: the credential is dropped, **the harness's MCP
+  servers are cleared**, and the refresh timer stops. Clearing matters — leaving the servers in place
+  would keep dead tools on offer, and the model would call them and get an authorization error, which
+  is worse than never having had them. The session keeps its host tools and regains app MCP the moment
+  the operator says anything.
 
 Codex reports `appMcp: false`: it gives an enabled provider **no tools at all**, not merely no live
 updates. Configuring MCP servers there means writing them into Codex's own config before the thread
