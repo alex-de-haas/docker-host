@@ -48,6 +48,9 @@ the two should know which is current.
 
 ## Deliverables
 
+- [ ] **Core: a control route issuing a delegated token** for a named app on behalf of the local
+      operator, mirroring the existing `identity` control route. Gated exactly as the rest of the
+      channel is, and audited like the exchange, since it is another path to a data-plane credential.
 - [ ] `hosty mcp` as a stdio MCP server: `initialize`, `tools/list`, `tools/call`.
 - [ ] Discovery through Core, filtered to apps declaring `mcp` that are running and visible to the
       actor; parallel `tools/list` fan-out with a per-app timeout, an unreachable app omitted rather
@@ -62,7 +65,8 @@ the two should know which is current.
       refresh, and the change notification — each with the succeeding half beside it.
 - [ ] Docs: `feature.md`, umbrella step 7, index.
 
-Version outcome: platform minor (a new CLI command).
+Version outcome: platform minor — a new CLI command **and** a new Core control route. The earlier
+"CLI only" estimate was wrong for the reason recorded in Decisions.
 
 ## Decisions
 
@@ -75,11 +79,21 @@ All four were open until 2026-08-15; none remain.
   the case that removes the plaintext token today, and shipping a remote path that cannot authenticate
   would be shipping a promise.
 
-- **The CLI mints directly; it never uses the app-to-app exchange.** The CLI acts as the *user*, not as an app, so it can use the ordinary session-authenticated
-  issue route and never needs the app-to-app exchange. That is a meaningful simplification — none of
-  the exchange's bounds apply here.
-  Decision: mint through the ordinary session-authenticated route. Routing the CLI through the
-  exchange would have imported bounds designed for a different actor, for no gain.
+- **The CLI mints through a new control route; it never uses the app-to-app exchange.**
+  The CLI acts as the *user*, not as an app, so none of the exchange's bounds apply to it — that part
+  of the earlier reasoning stands.
+  **Corrected 2026-08-15, before any code:** the rest of it did not. An earlier draft said the CLI
+  would use "the ordinary session-authenticated route", which it cannot reach — the CLI talks to Core
+  over the **control channel** (`/control/v1/...`) and holds no Core session, while
+  `POST /api/apps/{appId}/delegated-token` is session-gated. The control channel's existing
+  `/control/v1/apps/{appId}/identity` mints an *app identity* token, a different mechanism that app
+  MCP endpoints do not accept.
+  Decision (owner): add a **control route that issues a delegated token**. The channel already carries
+  unconditional host-operator power, so this adds no new axis of trust — only a new *form* of
+  credential on it. The alternative, giving the CLI a real Core session, would have cost the local
+  topology its defining property that no login is needed.
+  This is the same class of blocker the gateway hit, found the same way: by checking rather than by
+  reading the design.
 
 - **One server entry per environment.** Already decided in the umbrella — one entry per context (`hosty-local`, `hosty-prod`), so
   the environment is explicit in every tool name, client policy can differ per server, and failures
