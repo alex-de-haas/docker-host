@@ -46,7 +46,18 @@ internal sealed class StdioMcpServer(
                 continue;
             }
 
-            await DispatchAsync(line, cancellationToken);
+            try
+            {
+                await DispatchAsync(line, cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // The guards below cover the shapes that are known to arrive, but both sides of this
+                // process are untrusted input and the cost of being wrong once is the whole session:
+                // an exception escaping here ends the loop, and the client sees a server that died
+                // mid-conversation with no explanation. One bad message is worth one bad answer.
+                WriteDiagnostic($"dropping a message that could not be handled: {ex.Message}");
+            }
         }
     }
 
@@ -80,7 +91,7 @@ internal sealed class StdioMcpServer(
         using (request)
         {
             var root = request.RootElement;
-            var method = root.TryGetProperty("method", out var methodElement) ? methodElement.GetString() : null;
+            var method = ReadString(root, "method");
             // A request has an id and expects a response; a notification has none and must never be
             // answered — replying to one is a protocol violation clients report as a stray message.
             var id = root.TryGetProperty("id", out var idElement) ? idElement.Clone() : (JsonElement?)null;
@@ -175,16 +186,26 @@ internal sealed class StdioMcpServer(
             {
                 // Which app a tool belongs to is not in its own description — the app had no reason to
                 // say so — and the model needs it to choose between two apps offering similar tools.
-                writer.WriteString(
-                    "description",
-                    $"[{tool.Target.DisplayName}] {property.Value.GetString()}");
+                //
+                // Only when it IS a string. An app is untrusted input here: a description that is null,
+                // a number, or an object would otherwise throw out of the write and, since this runs
+                // inside the request loop, take the whole connector down over one malformed descriptor.
+                if (property.Value.ValueKind == JsonValueKind.String)
+                {
+                    writer.WriteString("description", $"[{tool.Target.DisplayName}] {property.Value.GetString()}");
+                }
+                else
+                {
+                    property.WriteTo(writer);
+                }
+
                 continue;
             }
 
             property.WriteTo(writer);
         }
 
-        if (tool.Descriptor.TryGetProperty("description", out _) is false)
+        if (!tool.Descriptor.TryGetProperty("description", out _))
         {
             writer.WriteString("description", $"[{tool.Target.DisplayName}] {tool.ToolName}");
         }
@@ -195,8 +216,7 @@ internal sealed class StdioMcpServer(
     private async Task CallToolAsync(JsonElement? id, JsonElement root, CancellationToken cancellationToken)
     {
         if (!root.TryGetProperty("params", out var parameters) ||
-            !parameters.TryGetProperty("name", out var nameElement) ||
-            nameElement.GetString() is not { Length: > 0 } requested)
+            ReadString(parameters, "name") is not { Length: > 0 } requested)
         {
             WriteError(id, -32602, "tools/call requires a params.name.");
             return;
@@ -236,10 +256,9 @@ internal sealed class StdioMcpServer(
         // The app answered with a JSON-RPC error. Relayed as a tool failure rather than as a protocol
         // error, because the call reached the app and was refused by it — the model should read that
         // as the tool saying no, and be able to carry on.
-        var message = document.RootElement.TryGetProperty("error", out var error) &&
-            error.TryGetProperty("message", out var errorMessage)
-                ? errorMessage.GetString()
-                : "the app refused the call without explanation";
+        var message = document.RootElement.TryGetProperty("error", out var error)
+            ? ReadString(error, "message") ?? "the app refused the call without explanation"
+            : "the app refused the call without explanation";
         WriteToolFailure(id, $"{tool.Target.AppId} refused this call: {message}");
     }
 
@@ -323,6 +342,18 @@ internal sealed class StdioMcpServer(
             output.Flush();
         }
     }
+
+    /// <summary>
+    /// A string property, or null when it is absent or is some other JSON type. Both the client and the
+    /// apps are untrusted input here, and <see cref="JsonElement.GetString"/> throws rather than
+    /// returning null when the value is a number or an object.
+    /// </summary>
+    private static string? ReadString(JsonElement element, string property)
+        => element.ValueKind == JsonValueKind.Object &&
+            element.TryGetProperty(property, out var value) &&
+            value.ValueKind == JsonValueKind.String
+                ? value.GetString()
+                : null;
 
     internal void WriteDiagnostic(string message)
         => diagnostics.WriteLine($"[hosty mcp] {message}");

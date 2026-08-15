@@ -148,6 +148,48 @@ public class StdioMcpServerTests
     }
 
     [Fact]
+    public async Task ADescriptorTheAppGotWrongDoesNotTakeDownTheServer()
+    {
+        // App descriptors are untrusted input. A non-string description used to throw out of the write
+        // and, since that runs inside the request loop, would have ended the whole session over one
+        // malformed tool — the client seeing a server that died mid-conversation with no explanation.
+        var catalog = new FakeCatalog();
+        catalog.Add("notes__odd", "com.example.notes", "Notes", "odd", """
+            {"name":"odd","description":{"not":"a string"},"annotations":{"readOnlyHint":true}}
+            """);
+
+        var (responses, _) = await RunAsync(
+            catalog,
+            """{"jsonrpc":"2.0","id":1,"method":"tools/list"}""",
+            """{"jsonrpc":"2.0","id":2,"method":"ping"}""");
+
+        // The odd value is passed through rather than mangled, and the session carries on.
+        var tool = responses[0].GetProperty("result").GetProperty("tools")[0];
+        Assert.Equal("a string", tool.GetProperty("description").GetProperty("not").GetString());
+        Assert.Equal(2, responses[1].GetProperty("id").GetInt32());
+    }
+
+    [Fact]
+    public async Task ClientFieldsOfTheWrongTypeAreRefusedRatherThanThrown()
+    {
+        // `method` and `params.name` come from the client, and JsonElement.GetString throws rather
+        // than returning null when the value is a number.
+        var catalog = new FakeCatalog();
+        catalog.Add("notes__list_people", "com.example.notes", "Notes", "list_people", """{"name":"list_people"}""");
+
+        var (responses, _) = await RunAsync(
+            catalog,
+            """{"jsonrpc":"2.0","id":1,"method":42}""",
+            """{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":7}}""",
+            """{"jsonrpc":"2.0","id":3,"method":"ping"}""");
+
+        Assert.Equal(-32601, responses[0].GetProperty("error").GetProperty("code").GetInt32());
+        Assert.Equal(-32602, responses[1].GetProperty("error").GetProperty("code").GetInt32());
+        // Paired with a request that must still work, so "answers nothing" cannot pass for "is robust".
+        Assert.Equal(3, responses[2].GetProperty("id").GetInt32());
+    }
+
+    [Fact]
     public async Task DiagnosticsNeverReachTheProtocolStream()
     {
         // One stray line on stdout corrupts the stream, and the client's only symptom is a server

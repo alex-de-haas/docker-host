@@ -73,19 +73,21 @@ internal static class ControlIdentityEndpoints
                 // same reason: this is a path to a data-plane credential, and a refusal is the more
                 // interesting half of that record. HandleIdentityError converts the exception to a
                 // response WITHOUT rethrowing, so wrapping it would have left the refusals unaudited.
+                // Carried out of the try so a refusal after the user resolved still records WHO was
+                // refused, while one that failed at resolution records nobody — see the audit helper.
+                string? actorId = null;
                 try
                 {
                     var user = await ResolveUserAsync(users, input.User, cancellationToken);
+                    actorId = user.Id;
                     var (actor, target) = await identity.RequireAccessibleUserAsync(appId, user.Id, cancellationToken);
                     var issued = delegatedTokens.CreateToken(target.Id, actor.Id, actor.Role);
-                    await AppendControlTokenAuditAsync(audit, appId, actor.Id, "succeeded", clock, cancellationToken);
+                    await AppendControlTokenAuditAsync(audit, appId, actor.Id, input.User, "succeeded", clock, cancellationToken);
                     return CoreJson.Json(issued);
                 }
                 catch (AppIdentityException exception)
                 {
-                    // The requested identifier, not a resolved id: when resolution itself failed there
-                    // is no id, and recording what was asked for is what makes the trail readable.
-                    await AppendControlTokenAuditAsync(audit, appId, input.User, exception.Code, clock, cancellationToken);
+                    await AppendControlTokenAuditAsync(audit, appId, actorId, input.User, exception.Code, clock, cancellationToken);
                     return CoreJson.Json(
                         new ErrorResponse(exception.Code, exception.Message),
                         statusCode: exception.Code is "user_not_found" or "app_not_found"
@@ -188,10 +190,21 @@ internal static class ControlIdentityEndpoints
         return endpoint.Url;
     }
 
+    /// <summary>
+    /// Records one attempt at the control-channel token route.
+    /// </summary>
+    /// <remarks>
+    /// <paramref name="actorUserId"/> is a resolved user id or null — never the caller's raw argument,
+    /// which may be an email since the route accepts either. Writing an email into
+    /// <see cref="AuditRecord.ActorUserId"/> would make that field mean two different things depending
+    /// on how far the request got, and break any consumer that joins it against the user directory.
+    /// What was asked for still needs recording, so it goes in the details under its own key.
+    /// </remarks>
     private static Task AppendControlTokenAuditAsync(
         AuditStore audit,
         string appId,
-        string actor,
+        string? actorUserId,
+        string requestedUser,
         string outcome,
         IClock clock,
         CancellationToken cancellationToken)
@@ -202,12 +215,13 @@ internal static class ControlIdentityEndpoints
                 ResourceType: "app",
                 ResourceId: appId,
                 Outcome: outcome,
-                ActorUserId: actor,
+                ActorUserId: actorUserId,
                 CreatedAt: clock.UtcNow,
                 Details: new Dictionary<string, string>
                 {
                     ["targetAppId"] = appId,
                     ["channel"] = "control",
+                    ["requestedUser"] = requestedUser,
                 }),
             cancellationToken);
 

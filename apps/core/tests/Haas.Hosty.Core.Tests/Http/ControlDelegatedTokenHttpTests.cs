@@ -148,8 +148,33 @@ public sealed class ControlDelegatedTokenHttpTests
         var mine = records.Where(record => record.Action == "auth.delegated-token.control").ToArray();
         Assert.Equal(2, mine.Length);
         Assert.Contains(mine, record => record.Outcome == "succeeded" && record.ActorUserId == "user_admin");
-        Assert.Contains(mine, record => record.Outcome == "app_access_denied");
+        Assert.Contains(mine, record => record.Outcome == "app_access_denied" && record.ActorUserId == "user_member");
         Assert.All(mine, record => Assert.Equal("com.example.notes", record.ResourceId));
+        // What the caller asked for is kept, but under its own key: the route accepts an email or an
+        // id, and ActorUserId must stay joinable against the user directory either way.
+        Assert.All(mine, record => Assert.EndsWith("@example.test", record.Details["requestedUser"], StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AnUnresolvableUserIsAuditedWithNoActorRatherThanWithTheirEmail()
+    {
+        // ActorUserId is a user id or nothing. Writing the raw argument there would make the field mean
+        // two different things depending on how far the request got, and break any consumer joining it
+        // against the directory.
+        await using var harness = await CoreHttpHarness.StartAsync();
+        await SeedAppAsync(harness, "com.example.notes", system: false);
+        await SeedUsersAsync(harness);
+        using var client = harness.CreateClient();
+
+        using (await PostAsync(harness, client, "com.example.notes", "nobody@example.test"))
+        {
+        }
+
+        var records = await harness.Services.GetRequiredService<AuditStore>().ReadRecentAsync(50, default);
+        var record = Assert.Single(records, entry => entry.Action == "auth.delegated-token.control");
+        Assert.Equal("user_not_found", record.Outcome);
+        Assert.Null(record.ActorUserId);
+        Assert.Equal("nobody@example.test", record.Details["requestedUser"]);
     }
 
     private static Task<HttpResponseMessage> PostAsync(
