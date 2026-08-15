@@ -1,8 +1,8 @@
 # Delegated Token Exchange
 
-Status: Draft
+Status: Ready
 Created: 2026-08-11
-Updated: 2026-08-13
+Updated: 2026-08-15
 
 Give an agent session a credential for the app MCP endpoints it is allowed to reach — without Core
 entering the data path, and without any app ever holding a credential stronger than the user it acts
@@ -79,7 +79,8 @@ browser holding a human's session.
 - [ ] Route accepts a delegated token as an alternative credential, with the session path unchanged.
 - [ ] `system`-only caller bound, and the no-new-audience chaining claim plus its enforcement —
       including that a same-audience refresh is accepted while a different-audience hop is refused.
-- [ ] The refresh answer chosen in Open Questions, implemented.
+- [ ] Self-refresh with the one-hour absolute cap from the chain origin.
+- [ ] Core-side audit of every exchange: actor, caller app, target app, outcome.
 - [ ] Core HTTP suite: exchange succeeds for a system caller; is refused for a non-system caller, an
       expired token, a forged signature, an `aud` that is not installed, and a chained token aimed at
       a *different* audience — while a same-audience refresh of that token succeeds; a user
@@ -91,10 +92,13 @@ browser holding a human's session.
 
 Version outcome: platform minor (new Core API surface), `apps/ai-gateway` minor.
 
-## Open Questions
+## Decisions
 
-- Question: How does the caller keep a working credential during a long agent turn?
-  Answer: This is the hard part, and the reason this needs a decision rather than an implementation.
+Recorded with their reasoning, because the reasoning is what a reader needs when the code later
+looks arbitrary. No open questions remain.
+
+- **How the caller keeps a working credential through a long turn** — decided 2026-08-15.
+  The constraint:
   `McpHttpServerConfig.headers` is a static `Record<string, string>` — no per-request callback — so a
   5-minute token baked into an MCP server config expires mid-turn. Worse, the gateway only receives a
   fresh user token *when a client sends a request*; during a long turn there is nothing fresh to
@@ -112,10 +116,12 @@ Version outcome: platform minor (new Core API surface), `apps/ai-gateway` minor.
   3. **Accept the limit.** Tokens are attached at turn start; a turn outliving the TTL loses its MCP
      servers. Cheapest and visibly broken for exactly the long diagnostic sessions this assistant is
      for.
-  Recommendation: **(1) with an absolute cap** — carry the chain's origin instant in the claims and
-  refuse to refresh beyond a fixed window (an hour, say) from the original human interaction. That
-  bounds the compromise window without a new store, and keeps (2) available later if agent sessions
-  ever need individual revocation.
+  Decision: **(1) with an absolute cap** — carry the chain's origin instant in the claims and refuse
+  to refresh beyond one hour from the original human interaction. That bounds the compromise window
+  without a new store, and keeps (2) available later if agent sessions ever need individual
+  revocation. One hour is a starting value, not a derived one: it is long enough for the diagnostic
+  runs this exists for and short enough that a stolen credential is not a standing one. Raise it only
+  against observed sessions that legitimately outlive it.
 
 - **Decided 2026-08-11:** the exchange, not Shell-minted tokens. Recorded with the reasoning because
   the rejected option is the cheaper one, and a later reader will wonder why it was passed over.
@@ -137,12 +143,12 @@ Version outcome: platform minor (new Core API surface), `apps/ai-gateway` minor.
   closed tab. This also settles the refresh question above in the exchange's favour, since Shell can no
   longer be the thing that refreshes.
 
-- Question: Should the exchange be audited?
-  Answer: Core already receives app-reported audit for the gateway's lifecycle and approvals, and
+- **The exchange is audited** — decided 2026-08-15.
+  Reasoning: Core already receives app-reported audit for the gateway's lifecycle and approvals, and
   issuance itself is Core-side, so it can record it without an app being trusted to self-report.
-  Recommendation: yes, record actor, caller app, target app, and outcome. This is the one place where
-  one app acts as a user toward another; if it is ever abused, the absence of a trail is what will
-  make it unexplainable.
+  Decision: record actor, caller app, target app, and outcome. This is the one place where one app
+  acts as a user toward another; if it is ever abused, the absence of a trail is what will make it
+  unexplainable.
 
 ## Verification
 
