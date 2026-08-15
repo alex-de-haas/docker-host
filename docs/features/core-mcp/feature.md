@@ -114,6 +114,18 @@ which presents as a build that hangs for minutes with no output.
   clamped a 100000-line request to 500 and returned real output, and an unknown app id came back as
   an explanation rather than a transport error. The fail-closed direction was checked on the same
   binary: anonymous 403, forged bearer 401.
-- Still not done: no **stock MCP client** (Claude Code, Claude Desktop) has connected. The live check
-  above drove the protocol over HTTP directly, which proves the server completely and client
-  compatibility not at all — a client that negotiates differently would still be an open question.
+- **Verified with a stock client on 2026-08-15** (Claude Code, registered as an HTTP MCP server with
+  an admin access token in an `Authorization` header): `claude mcp list` reported the server
+  connected, and a session that asked which apps are installed answered from the real fleet — ten apps
+  with their actual versions and system flags. The direct HTTP check above could not reach this half:
+  driving the protocol with `curl` proves the server and says nothing about whether a client
+  negotiates the same way.
+- Two things that showed up only through a real client, and that matter for anything wiring these
+  tools into a harness:
+  - The client namespaces tools by server, so `list_apps` arrives as `mcp__hosty__list_apps`.
+  - Tools are **deferred behind tool search** rather than loaded eagerly — the session searched for
+    the tool before calling it. A consumer that assumes every MCP tool is present in the prompt from
+    the first turn is assuming something this client does not do by default.
+- Not covered: Codex as a client, a client carrying a Hosty skill, and any client reaching Core over
+  a non-loopback origin. Tracked as unchecked items under step 6 of the
+  [AI Agent Bridge](../ai-agent-bridge/plan.md) rollout rather than as prose here.

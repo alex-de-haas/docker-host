@@ -1,6 +1,6 @@
 # Agent Background Sessions
 
-Status: Draft
+Status: Ready
 Created: 2026-08-11
 Updated: 2026-08-15
 
@@ -92,6 +92,7 @@ as "working". A list that does not distinguish those is close to useless.
 - [x] `git mv docs/features/notifications.md docs/features/notifications/feature.md` — lazy migration
       — and split its outstanding items from its shipped reality into
       [notifications/plan.md](../notifications/plan.md).
+- [ ] Stop and mark abandoned a session that has waited 24 hours, keeping its transcript.
 - [ ] Docs: `feature.md` here, cross-links updated, index regenerated.
 
 Version outcome: `apps/shell` minor, `apps/ai-gateway` minor, `apps/shell-swift` minor. No platform
@@ -109,23 +110,27 @@ change.
   renderers, so the gateway must not grow its own path to Shell. Teaching it one would leave the
   native client and the CLI unable to see the same event.
 
-## Open Questions
+## Further Decisions
 
-- Question: Should a *completed* background session notify, or only a blocked one?
-  Answer: Completion is the weaker signal — the operator asked for the work and can find it in the
+Both were open questions until 2026-08-15; no open questions remain.
+
+- **Blocked sessions notify; completed ones do not** — v1.
+  Completion is the weaker signal — the operator asked for the work and can find it in the
   list — while blocking is the one that stalls indefinitely and is invisible. But an agent that
   finishes a long job and says nothing is also a poor experience.
-  Recommendation: blocked-only in v1, with completion reconsidered once the list exists and it is
-  clear whether it already answers the question. Adding a notification later is cheap; training an
-  operator to ignore a noisy one is not.
+  Decision: blocked-only, with completion reconsidered once the list exists and it is clear whether it
+  already answers the question. Adding a notification later is cheap; training an operator to ignore a
+  noisy one is not.
 
-- Question: How long does an unattended session stay alive?
-  Answer: There is a retention sweep (`HOSTY_AI_GATEWAY_RETENTION_DAYS`, default 30) for the record,
+- **An unattended session is stopped after 24 hours waiting.**
+  There is a retention sweep (`HOSTY_AI_GATEWAY_RETENTION_DAYS`, default 30) for the record,
   but nothing bounds a *harness process* parked on an approval nobody answers. Each one holds a
   process and its context.
-  Recommendation: cap the wait — after some hours in a waiting status, stop the harness and mark the
-  session abandoned, leaving the transcript. Needs a number; it should come from watching real usage
-  rather than being guessed here.
+  Decision: after **24 hours** in a waiting status, stop the harness and mark the session abandoned,
+  leaving the transcript intact — nothing is lost but the process. 24 hours is chosen as a human
+  boundary rather than derived: it survives an operator going home for the night, and it stops parked
+  processes accumulating without limit. It is a starting value; the thing that should change it is an
+  observed session that legitimately waits longer, not a preference.
 
 ## Verification
 
