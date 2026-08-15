@@ -165,7 +165,7 @@ long-running import, branch/PR status tracking. Core owns durable delegation gra
 who approved, which app and action scopes, what resource scope, expiry or revoke condition, maximum
 run budget, audit reference — while the job runner itself is a replaceable system app or authorized
 agent client. Jobs store their delegation scope, budget, status, last observation, next check time and
-audit references. Delivery is [notifications](../notifications.md); the job model leaves room for it.
+audit references. Delivery is [notifications](../notifications/feature.md); the job model leaves room for it.
 
 A job must stop or pause when its delegation expires, when app assignment is removed, when the actor's
 role changes mid-flight, or when the action contract changes underneath it.

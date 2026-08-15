@@ -45,7 +45,7 @@ authentication.
   `ResolveAdapter`). Catalog document fetching is pluggable via `ICatalogDocumentFetcher`, and catalog
   sources are runtime-mutable.
 - A notification hub exists (Core-owned store, per-user SSE over the unified event stream — see
-  [notifications](../notifications.md)), and [core-event-bus](../core-event-bus/feature.md)
+  [notifications](../notifications/feature.md)), and [core-event-bus](../core-event-bus/feature.md)
   ships an ephemeral hint-only bus. Neither is the durable, cursor-addressable domain event log this
   model needs; lifecycle transitions remain observable only as user notifications produced inline in
   `CoreLifecycleService`.
@@ -304,7 +304,7 @@ plan is Draft.
   separate visibility/administration class; this plan moves toward one Installed Apps list with
   ownership/role badges and uniform lifecycle actions, while keeping visibility itself role-gated as
   today.
-- [notifications](../notifications.md) defers Core→app delivery to webhooks; this plan revises
+- [notifications](../notifications/feature.md) defers Core→app delivery to webhooks; this plan revises
   that direction to pull-based event subscriptions.
 - [core-event-bus](../core-event-bus/feature.md) ships an ephemeral hint-only bus that apps can neither
   read nor write. The durable, cursor-addressable log in step 3 is a different mechanism and must not be
@@ -379,7 +379,7 @@ plan is Draft.
   rules this model extends.
 - [Observability — telemetry backend](../observability/feature.md) — the de-facto first plugin; source
   of the sink contract.
-- [Notifications](../notifications.md) — the hub the first event-subscriber plugin would deliver
+- [Notifications](../notifications/feature.md) — the hub the first event-subscriber plugin would deliver
   for.
 - [Runtime app marketplace](../runtime-app-marketplace/feature.md) — the shipped zero-scope API client
   with system-app pages.

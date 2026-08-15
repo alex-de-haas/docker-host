@@ -2,13 +2,13 @@
 
 Status: Draft
 Created: 2026-08-11
-Updated: 2026-08-13
+Updated: 2026-08-15
 
 Make an assistant session findable and make it reach the operator when it needs them, so leaving an
 agent working while you close the tab becomes a usable feature rather than a way to lose work.
 
 Spans three features and belongs to none of them, so it links rather than duplicates:
-[ai-gateway](../ai-gateway/feature.md) owns sessions, [notifications](../notifications.md) owns
+[ai-gateway](../ai-gateway/feature.md) owns sessions, [notifications](../notifications/feature.md) owns
 delivery, and `apps/shell-swift` is the only client that can raise a real OS banner.
 
 **No Core change.** Everything this needs already exists there — the notification store, service,
@@ -68,9 +68,9 @@ as "working". A list that does not distinguish those is close to useless.
   record instead is not an option: the purge path is core-source only and unreachable by an app.
 - **The Shell bell already exists** and needs nothing here: `notification-bell.tsx` reads
   `GET /api/notifications`, posts `/api/notifications/read`, and is rendered by the sidebar. An
-  earlier draft of this plan listed building it, on the strength of [notifications](../notifications.md)
-  still saying the bell "remains" — the document is stale, the code is not. Correcting that status is
-  a deliverable below.
+  earlier draft of this plan listed building it, on the strength of [notifications](../notifications/feature.md)
+  still saying the bell "remains" — the document was stale, the code was not. That status has since
+  been corrected.
 - **`apps/shell-swift` raises the real OS banner.** `CoreEventStream.swift` already models
   `case notification` and consumes the stream, so the transport exists; what is missing is
   `UNUserNotificationCenter`, which appears nowhere under `apps/shell-swift/` today, plus permission
@@ -85,13 +85,13 @@ as "working". A list that does not distinguish those is close to useless.
 - [ ] Gateway publishes a notification on entering a waiting status, keyed by session for dedupe,
       linking to the session; nothing is published on resolution beyond clearing the state the UI
       reads.
-- [ ] Correct [notifications](../notifications.md): its status still lists the Shell bell as
+- [x] Correct [notifications](../notifications/feature.md): its status listed the Shell bell as
       outstanding although it shipped.
 - [ ] Swift client: notification permission, `UNUserNotificationCenter` banner on the `notification`
       event, and `Link` navigation.
-- [ ] `git mv docs/features/notifications.md docs/features/notifications/feature.md` — lazy migration,
-      since this is the work that touches it — and split its outstanding items from its shipped
-      reality.
+- [x] `git mv docs/features/notifications.md docs/features/notifications/feature.md` — lazy migration
+      — and split its outstanding items from its shipped reality into
+      [notifications/plan.md](../notifications/plan.md).
 - [ ] Docs: `feature.md` here, cross-links updated, index regenerated.
 
 Version outcome: `apps/shell` minor, `apps/ai-gateway` minor, `apps/shell-swift` minor. No platform
