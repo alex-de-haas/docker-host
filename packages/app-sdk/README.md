@@ -59,6 +59,6 @@ if (claims?.role !== "host.admin") { /* 401/403 */ }
 ```
 
 The design contract lives in the Hosty repository:
-[`docs/ideas/hosty-app-sdk.md`](https://github.com/alex-de-haas/docker-host/blob/main/docs/ideas/hosty-app-sdk.md).
+[`docs/features/hosty-app-sdk/feature.md`](https://github.com/alex-de-haas/docker-host/blob/main/docs/features/hosty-app-sdk/feature.md).
 
 License: AGPL-3.0-only.

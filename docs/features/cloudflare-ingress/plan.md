@@ -353,7 +353,7 @@ facts, not assumptions, and they still shape the design:
 - [Automatic Runtime App Ports](../automatic-runtime-app-ports/feature.md) — install-time reservations,
   the prerequisite that lets a stopped app be published; complete.
 - [Core Settings](../../ideas/core-settings.md) — the live-settings surface the provider fields use.
-- [Notifications](../notifications.md) — the stream publication outcomes would use.
+- [Notifications](../notifications/feature.md) — the stream publication outcomes would use.
 - [Cloudflare API Token Templates](https://developers.cloudflare.com/fundamentals/api/reference/template/)
 - [Cloudflare Tunnel Connections API](https://developers.cloudflare.com/api/resources/zero_trust/subresources/tunnels/subresources/cloudflared/subresources/connections/methods/get)
 - [Cloudflare DNS Record Management](https://developers.cloudflare.com/dns/manage-dns-records/how-to/create-dns-records/)

@@ -173,7 +173,7 @@ The client follows the contracts described by
 [`core-api`](../core-api/feature.md),
 [`core-event-bus`](../core-event-bus/feature.md),
 [`runtime-app-update`](../runtime-app-update/feature.md), and
-[`notifications`](../notifications.md). State semantics and update safety must
+[`notifications`](../notifications/feature.md). State semantics and update safety must
 remain aligned with [`swift-shell`](../swift-shell/feature.md) rather than
 forming a second interpretation of Core state.
 

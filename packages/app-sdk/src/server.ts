@@ -24,7 +24,7 @@ export interface HostyAppConfig {
 // call must not hold a route open indefinitely.
 const CORE_AUTH_TIMEOUT_MS = 1_500;
 
-// Decision 9 (hosty-app-sdk.md): positive revalidations may be cached for 30s, clamped to
+// Per docs/features/hosty-app-sdk/feature.md: positive revalidations may be cached for 30s, clamped to
 // the grant's expiry; negative results are never cached, so a stuck-unauthenticated state
 // is impossible. Bounded so an attacker spraying tokens cannot grow the map unboundedly.
 const REVALIDATION_CACHE_TTL_MS = 30_000;

@@ -9,7 +9,7 @@ namespace HostySdk.App;
 /// of requests carrying the same session does not hammer Core. The cache window never outlives
 /// the token's own expiry, and negative results are never cached (a token may become valid, or
 /// the failure may be transient) — so a stuck-unauthenticated state is impossible. The platform
-/// default TTL is 30 seconds (decision 9 in docs/ideas/hosty-app-sdk.md).
+/// default TTL is 30 seconds (docs/features/hosty-app-sdk/feature.md).
 /// </summary>
 public sealed class CachingIdentityValidator(
     IHostyIdentityValidator inner,

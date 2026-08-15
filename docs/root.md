@@ -39,8 +39,9 @@ flowchart LR
 - [Auth And Gateway Model](features/auth-gateway/feature.md) - current app auth, assignments, and scoped app directory.
 - [User Management](features/user-management.md) - users, invitations, roles, and app access assignment.
 - [Local Password Login](features/local-password-login.md) - Core-owned local password setup, recovery, invitations, and login.
+- [Auth session lifecycle and recovery](features/auth-session-lifecycle/feature.md) - the identity error contract (401 recoverable / 403 terminal), opaque server-side app session grants, sliding idle + absolute lifetimes for grants and Core sessions, and standalone/embedded session recovery through app-open with a login continuation.
 - [App Data Backup Retention](features/app-data-backup-retention/feature.md) - backup cleanup and retention.
-- [Notifications](features/notifications.md) - Core-owned user-targeted notification stream (v1 backend): opt-in app producers, client-agnostic consumer, SSE live delivery, and retention.
+- [Notifications](features/notifications/feature.md) - Core-owned user-targeted notification stream: opt-in app producers scoped to their directory, in-process Core producers, a client-agnostic session consumer, live delivery over the unified event stream, retention, and the Shell bell. Remaining surfaces (interface registration, the MCP facade, app read-back, delivery channels): [plan](features/notifications/plan.md).
 - [App Secrets Store](features/app-secrets-store.md) - Core-managed keychain for runtime-acquired app secrets (OAuth tokens and the like): service-token API, `apps/<id>/secrets.json` beside `state.json` and therefore outside backup scope, removal following the operator's keep-data choice, and SDK clients in both packages.
 - [Observability](features/observability/feature.md) - OpenTelemetry from runtime apps → OTel collector → telemetry backend (embedded SQLite store + query API) → telemetry UI system app (metrics, structured logs, traces); Core contributes only the host-privileged signals (`docker stats` exposition, on-demand `docker logs`). Ingest/query auth, realtime tail, and the fleet heat-map remain — see the [plan](features/observability/plan.md).
 - [Marketplace System App](features/runtime-app-marketplace/feature.md) - optional first-party storefront that owns one catalog source and hands app-owned feed URLs to Shell without lifecycle authority.
@@ -54,6 +55,7 @@ flowchart LR
 - [Demo App](features/demo-app.md) - repository-local runtime app used for validation.
 - [Local development and testing](features/local-development.md) - Core-managed local workflows.
 - [Hosty App Skill](features/hosty-app-skill.md) - repository-shipped agent skill.
+- [Hosty App SDK](features/hosty-app-sdk/feature.md) - the shared app-side Host integration published as `@hosty-sdk/app` (npmjs) and `HostySdk.App` (NuGet): session state machine with a `misconfigured` class, silent embedded recovery, standalone redirect recovery, the embedder contract for shells, launch-mode awareness, app secrets and delegated-token clients, and the no-version-sync compatibility policy. Second-wave extraction: [plan](features/hosty-app-sdk/plan.md).
 - [AI Agent Bridge](features/ai-agent-bridge/feature.md) - the umbrella model for development agents and runtime app action agents: component boundaries, execution profiles, the interface registry, token mechanics, and the decision log. Remaining rollout steps: [plan](features/ai-agent-bridge/plan.md).
 - [Final Hosty architecture boundaries](features/final-hosty-architecture.md) - Core/Shell/CLI ownership boundaries.
 
@@ -68,14 +70,11 @@ Draft, exploratory, or backlog items that are not current implementation commitm
 
 - [Runtime App Repository Feeds](ideas/runtime-app-repository-feeds.md) - promoted design that moved the feed contract from inline catalog data to app-owned `feeds.json` resolved by Core.
 - [On-Demand System App Updates](ideas/system-app-updates.md) - concept for explicit Shell/system-app update discovery, reviewed apply, self-reload, and rollback without restarting Core.
-- [Core Extension Model](ideas/core-extension-model.md) - concept for extending Core through out-of-process apps: contract-free API clients, driver/sink provider contracts with declared cardinality, pull-based event subscriptions, system app pages, "system" as an ownership label rather than a privilege tier, and additional login methods instead of replaceable auth providers.
 - [Marketplace As A System App](ideas/marketplace-system-app.md) - read-only catalog data, API, and UI in an optional first-party system app while Core retains all feed and lifecycle decisions.
 - [System App Pages](ideas/system-app-pages.md) - separate administrator-only Shell pages for UI-capable system apps using the existing app UI contract.
 - [Agent Bridge Workflow](ideas/agent-bridge-workflow.md) - concept for Shell annotation, agent request lifecycle, repository changes, branch/PR workflow, and an unresolved isolated-validation boundary.
 - [Browser account switching](ideas/account-switching.md) - retired behavior and future restoration boundary.
 - [Gateway and app wrapping ideas](ideas/gateway-and-app-wrapping.md) - future gateway, ingress, and third-party app wrapping boundaries.
-- [Auth session lifecycle and recovery](ideas/auth-session-lifecycle.md) - agreed design: split identity error contract (401/403/503), standalone and embedded session recovery through app-open + login continuation, opaque server-side app session grants replacing the browser JWT, and sliding idle+absolute Core sessions.
-- [Hosty App SDK](ideas/hosty-app-sdk.md) - agreed design: shared auth/recovery SDK for runtime apps (TypeScript on npmjs + .NET on NuGet) packaging the session state machine with a `misconfigured` class, silent embedded recovery, standalone redirect recovery, the embedder contract for shells, and the no-version-sync compatibility policy.
 - [App Secrets Store](ideas/app-secrets-store.md) - promoted design (shipped) for the Core-managed runtime-secrets keychain: ten ratified decisions, including plaintext-0600 parity with existing secret storage and the deferred platform-wide at-rest pass. Implemented behavior: [features/app-secrets-store.md](features/app-secrets-store.md).
 - [Replaceable UI Clients](ideas/replaceable-ui-clients.md) - concept for shells as ordinary apps: a `ui-client` provides slot replacing the hardcoded `hosty.shell` lookup, primary-UI selection as pure resolution (setting > sole > earliest-installed), CORS for every installed UI client, and uninstall of the last shell always allowed with the CLI as recovery path.
 - [Auth provider extensions](ideas/auth-provider-extensions.md) - future OIDC, trusted-proxy provisioning, password reset, and durable throttling directions.
@@ -92,7 +91,7 @@ _Generated by `scripts/docs-index.mjs --fix` — do not edit this block by hand.
 
 - **access-tokens** — [feature](features/access-tokens/feature.md)
 - **advertised-app-origins** — [plan](features/advertised-app-origins/plan.md): Draft, updated 2026-07-30
-- **agent-background-sessions** — [plan](features/agent-background-sessions/plan.md): Ready, updated 2026-08-15
+- **agent-background-sessions** — [plan](features/agent-background-sessions/plan.md): In Progress, updated 2026-08-15
 - **ai-agent-bridge** — [feature](features/ai-agent-bridge/feature.md) · [plan](features/ai-agent-bridge/plan.md): In Progress, updated 2026-08-15
 - **ai-gateway** — [feature](features/ai-gateway/feature.md) · [plan](features/ai-gateway/plan.md): In Progress, updated 2026-08-15
 - **app-cache-storage** — [feature](features/app-cache-storage/feature.md)
@@ -100,12 +99,14 @@ _Generated by `scripts/docs-index.mjs --fix` — do not edit this block by hand.
 - **app-lifecycle-states** — [feature](features/app-lifecycle-states/feature.md)
 - **app-mcp** — [feature](features/app-mcp/feature.md)
 - **auth-gateway** — [feature](features/auth-gateway/feature.md)
+- **auth-session-lifecycle** — [feature](features/auth-session-lifecycle/feature.md)
 - **automatic-runtime-app-ports** — [feature](features/automatic-runtime-app-ports/feature.md) · [plan](features/automatic-runtime-app-ports/plan.md): Draft, updated 2026-08-09
 - **cardputer-shell** — [plan](features/cardputer-shell/plan.md): In Progress, updated 2026-08-15
 - **cloudflare-ingress** — [feature](features/cloudflare-ingress/feature.md) · [plan](features/cloudflare-ingress/plan.md): In Progress, updated 2026-07-30
 - **core-api** — [feature](features/core-api/feature.md)
 - **core-app-shell** — [feature](features/core-app-shell/feature.md)
 - **core-event-bus** — [feature](features/core-event-bus/feature.md)
+- **core-extension-model** — [plan](features/core-extension-model/plan.md): Draft, updated 2026-08-15
 - **core-mcp** — [feature](features/core-mcp/feature.md)
 - **core-public-origin** — [plan](features/core-public-origin/plan.md): Draft, updated 2026-07-30
 - **cross-app-dependencies** — [feature](features/cross-app-dependencies/feature.md) · [plan](features/cross-app-dependencies/plan.md): Draft, updated 2026-07-28
@@ -114,9 +115,11 @@ _Generated by `scripts/docs-index.mjs --fix` — do not edit this block by hand.
 - **domain-model** — [feature](features/domain-model/feature.md)
 - **embedded-app-chrome** — [feature](features/embedded-app-chrome/feature.md)
 - **global-mounts** — [feature](features/global-mounts/feature.md)
+- **hosty-app-sdk** — [feature](features/hosty-app-sdk/feature.md) · [plan](features/hosty-app-sdk/plan.md): Draft, updated 2026-08-15
 - **internal-endpoint-exposure** — [plan](features/internal-endpoint-exposure/plan.md): Draft, updated 2026-07-24
 - **local-password-login** — [feature](features/local-password-login/feature.md)
 - **manifest-projection-backfill** — [feature](features/manifest-projection-backfill/feature.md)
+- **notifications** — [feature](features/notifications/feature.md) · [plan](features/notifications/plan.md): Draft, updated 2026-08-15
 - **observability** — [feature](features/observability/feature.md) · [plan](features/observability/plan.md): Draft, updated 2026-08-15
 - **public-origins** — [feature](features/public-origins/feature.md)
 - **removable-system-apps** — [feature](features/removable-system-apps/feature.md)
@@ -147,7 +150,6 @@ _Generated by `scripts/docs-index.mjs --fix` — do not edit this block by hand.
 - [features/local-development](features/local-development.md)
 - [features/manifest-level-app-assets](features/manifest-level-app-assets.md) — **In progress.** Design (Q1–Q13, incl. Q3/D1–D7) confirmed 2026-07-07.
 - [features/multi-service-runtime-apps](features/multi-service-runtime-apps.md)
-- [features/notifications](features/notifications.md) — v1 backend implemented (Core store/service/endpoints/SSE + retention). Shell bell UI and the MCP facade remain (the latter gated on the `ai-core` branch).
 - [features/raw-ports](features/raw-ports.md)
 - [features/runtime-app-compact-view](features/runtime-app-compact-view.md)
 - [features/runtime-app-manifest](features/runtime-app-manifest.md)
@@ -157,15 +159,12 @@ _Generated by `scripts/docs-index.mjs --fix` — do not edit this block by hand.
 - [ideas/agent-bridge-workflow](ideas/agent-bridge-workflow.md) — Idea
 - [ideas/app-secrets-store](ideas/app-secrets-store.md) — Promoted (shipped — see [features/app-secrets-store.md](../features/app-secrets-store.md))
 - [ideas/auth-provider-extensions](ideas/auth-provider-extensions.md) — Idea.
-- [ideas/auth-session-lifecycle](ideas/auth-session-lifecycle.md) — Idea (agreed 2026-07-13)
 - [ideas/backup-retention-extensions](ideas/backup-retention-extensions.md) — Idea.
 - [ideas/core-dev-target](ideas/core-dev-target.md) — Idea
-- [ideas/core-extension-model](ideas/core-extension-model.md) — Idea
 - [ideas/core-settings](ideas/core-settings.md) — Implemented (v1 — auth lifetimes; v2 — cloudflared ingress)
 - [ideas/cross-app-auth](ideas/cross-app-auth.md) — Idea (proposed 2026-07-20 — awaiting owner ratification)
 - [ideas/future-work](ideas/future-work.md) — Idea.
 - [ideas/gateway-and-app-wrapping](ideas/gateway-and-app-wrapping.md) — Idea.
-- [ideas/hosty-app-sdk](ideas/hosty-app-sdk.md) — Phase 1 (auth) shipped and adopted — second wave open (see Adoption Status)
 - [ideas/marketplace-system-app](ideas/marketplace-system-app.md) — Promoted
 - [ideas/replaceable-ui-clients](ideas/replaceable-ui-clients.md) — Idea
 - [ideas/runtime-app-repository-feeds](ideas/runtime-app-repository-feeds.md) — Promoted
