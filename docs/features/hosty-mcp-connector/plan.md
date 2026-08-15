@@ -2,7 +2,7 @@
 
 Status: Ready
 Created: 2026-08-15
-Updated: 2026-08-16
+Updated: 2026-08-15
 
 `hosty mcp`: a stdio MCP server inside the existing CLI, spawned by an agent client on the user's
 machine, that presents the whole Hosty fleet as one MCP server. Rollout step 7 of the
@@ -22,8 +22,8 @@ into `~/.claude.json`, which `claude mcp get` prints back unmasked — and app e
 since a delegated token lives five minutes, so a static header is dead almost immediately
 ([app-mcp](../app-mcp/feature.md) records that cell of step 6 as unreachable for exactly this reason).
 
-A connector fixes both by being a process rather than a file: it discovers on the fly and mints a
-fresh token per call.
+A connector fixes both by being a process rather than a file: it discovers on the fly and holds the
+credential itself, obtaining a live token for each call rather than storing one.
 
 ## What The Live Runs Changed
 
@@ -45,12 +45,13 @@ the two should know which is current.
   by a per-session proxy minting a fresh token per request — precisely what this connector does for
   external clients.
   An earlier draft of this plan concluded "build the token-injecting proxy once and host it in both
-  places". **Corrected 2026-08-16, before any code:** it cannot be. The gateway's proxy is
+  places". **Corrected 2026-08-15, before any code:** it cannot be. The gateway's proxy is
   TypeScript running in a Node app (`apps/ai-gateway/src/mcp/proxy.ts`); `hosty mcp` lives in the
-  Native-AOT C# CLI. What transfers is the design and the lessons — mint at request time, cache until
-  a margin before expiry, keep the client's credential off the wire to the app, answer a lapsed chain
-  as a readable JSON-RPC error — not a line of code. The connector's effort estimate should not have
-  been discounted for reuse that does not exist.
+  Native-AOT C# CLI. What transfers is the design and the lessons — obtain the token on the
+  connector's side of the hop, cache it until a margin before expiry, keep the client's own
+  credential off the wire to the app, answer a lapsed credential as a readable JSON-RPC error — not a
+  line of code. The connector's effort estimate should not have been discounted for reuse that does
+  not exist.
 
 ## Deliverables
 
@@ -62,11 +63,15 @@ the two should know which is current.
 - [ ] Discovery through the existing `GET /control/v1/apps`, filtered to apps declaring `mcp` that are
       running and visible to the actor; parallel `tools/list` fan-out with a per-app timeout, an
       unreachable app omitted rather than fatal.
-      **No new discovery route is needed** — verified 2026-08-16: that response already carries
+      **No new discovery route is needed** — verified 2026-08-15: that response already carries
       `AppSummary.Interfaces` resolved to ready-to-call URLs. Only the token route below is new.
 - [ ] Namespaced re-export per the mapping in Decisions, passing schemas and annotations through
       unchanged so client permission policy can key off them.
-- [ ] A fresh delegated token minted per call, so no credential is ever written to a client config.
+- [ ] **The token is obtained by the connector, never by the client** — minted at call time and
+      cached only while it is comfortably valid, re-minted otherwise, so nothing expiring is ever
+      written to a client config. See "Cached, not per-call" in Decisions for why this wording
+      replaced "a fresh token minted per call", which the plan asserted in three places while the
+      design it borrowed from caches.
 - [ ] `notifications/tools/list_changed` on a fleet change, from a registry poll.
 - [ ] A stopped app yields a structured `app_stopped` error for that call only; the session and the
       other apps keep working.
@@ -77,7 +82,7 @@ the two should know which is current.
       metadata, and a hostile or careless client ignores them.
 - [ ] **`readOnlyHint` on demo-app's MCP tools.** Not optional polish, and the reason is the
       fail-closed rule above: **nothing in this repository declares tool annotations today** — not
-      demo-app, not Core MCP (checked 2026-08-16). A connector that treats a missing `readOnlyHint`
+      demo-app, not Core MCP (checked 2026-08-15). A connector that treats a missing `readOnlyHint`
       as "not read-only" therefore exports *zero* app tools until this lands, so the two ship
       together or the feature demonstrates nothing. The reference implementation is copied as-is by
       app authors, which is the second reason it belongs there.
@@ -85,8 +90,9 @@ the two should know which is current.
       PreToolUse hooks implementing allow-read-only / ask-writes / deny-destructive. Part of the
       umbrella's step 7 scope, so step 7 cannot be checked off without it.
 - [ ] Tests: discovery filtering, fan-out with one app timing out, the tool-key mapping including
-      every collision case named in Decisions, the read-only refusal, per-call token refresh, and the
-      change notification — each with the succeeding half beside it.
+      every collision **and length** case named in Decisions, the read-only refusal, token reuse
+      inside the margin against a re-mint outside it, and the change notification — each with the
+      succeeding half beside it.
 - [ ] Docs: `feature.md`, umbrella step 7, index.
 
 ### Blocked, and unchecked on purpose
@@ -102,12 +108,12 @@ the annotations, which version independently from the platform.
 
 ## Open Questions
 
-None. The three reopened on 2026-08-15 were settled with the owner on 2026-08-16 and moved into
-Decided below, together with a fourth the plan had never recorded.
+None. The three reopened earlier on 2026-08-15 were settled with the owner the same day and moved
+into Decided below, together with a fourth the plan had never recorded.
 
 ## Decisions
 
-### Settled 2026-08-16
+### Settled 2026-08-15
 
 - **The actor is named explicitly: `hosty mcp --user <email-or-id>`**, falling back to the named
   context's stored `user` when `--context` is given, and failing with a clear error when neither is
@@ -121,28 +127,42 @@ Decided below, together with a fourth the plan had never recorded.
   found first; and binding the local channel to a designated operator identity, which would give the
   control channel an identity it has never had and change every other control route with it.
 
-- **The tool key is a reversible escape, with `default` omitted.** Precisely, so implementation has
-  no latitude:
+- **The tool key is an escape with `default` omitted, bounded in length.** Precisely, so
+  implementation has no latitude:
   1. Escape the app id: `_` → `_u`, `.` → `_d`; `a-z`, `0-9`, `-` pass through. The result contains
      only `[a-z0-9_-]`, and **cannot contain `__`**, because every `_` it produces is followed by
      `d` or `u`.
   2. Key = `<escapedAppId>` when the interface key is `default`, else
      `<escapedAppId>__<interfaceKey>`. Interface keys match `^[a-z][a-z0-9-]{0,62}$`, so they carry
      neither dots nor underscores.
-  3. Exported tool name = `<key>__<toolName>`.
-  4. **Refuse to export an app tool whose own name contains `__`**, with a logged warning rather
+  3. **If the key exceeds 32 characters, replace it with its first 23 characters, a `-`, and the
+     first 8 hex of `sha256(appId + " " + interfaceKey)`** — exactly 32. Applied per app, so a
+     truncated key is a pure function of *that app's own* id and interface key.
+  4. Exported tool name = `<key>__<toolName>`. A tool whose name would push the total past the
+     configured ceiling is omitted with a logged warning, never truncated: truncating tool names
+     collides them with each other, which is worse than not offering one.
+  5. **Refuse to export an app tool whose own name contains `__`**, with a logged warning rather
      than silently.
   Injective, and worth checking rather than asserting: escaped ids contain no `__`, so the first
-  `__` always delimits the app segment; rule 4 is what stops `X` + tool `admin__foo` colliding with
-  `X` + interface `admin` + tool `foo`.
+  `__` always delimits the app segment; rule 5 is what stops `X` + tool `admin__foo` colliding with
+  `X` + interface `admin` + tool `foo`. Rule 3 does not break this — the connector keeps its own
+  key → (appId, interfaceKey, toolName) table to route a call back, so the exported name has to be
+  *unique and stable*, not decodable, and 64 bits of app-specific digest is what carries uniqueness
+  once the readable prefix is cut.
   Reasoning for omitting `default`: client tool-name limits are real and the composed name already
-  carries the client's own `mcp__<server>__` prefix. With a server per context, an id like
-  `com.haas.project-manager` plus an always-present `default__` segment overruns a 64-character
-  budget on ordinary tool names; without it, it fits.
-  Rejected: sanitize-plus-hash-on-collision, as the gateway does for *server* names. It reads best,
-  but a tool's name would change when an *unrelated* app is installed, and client permission rules
-  keyed on names would silently stop matching. A server name is chosen once per session; a tool name
-  is what a policy is written against.
+  carries the client's own `mcp__<server>__` prefix, so every character the connector spends is one
+  the app's own tool names cannot have.
+  **Rule 3 was added 2026-08-15 after review, and the plan was wrong without it.** It claimed the
+  omission of `default` made ordinary ids "fit". That is true of ids like `com.haas.project-manager`
+  and false in general: Core accepts an app id of up to 63 characters
+  (`^[a-z0-9][a-z0-9._-]{0,62}$`), and the escape can nearly double it, so a legal app could have had
+  *every* tool silently rejected by a client. A stated budget with an unbounded mapping under it is
+  not a specification.
+  Rejected: sanitize-plus-hash-**on-collision**, as the gateway does for *server* names. It reads
+  best, but a tool's name would change when an *unrelated* app is installed, and client permission
+  rules keyed on names would silently stop matching. Note this is not what rule 3 does — hashing on
+  *length* depends only on the app itself, so it keeps the stability that rejecting the other option
+  was about.
 
 - **A tool that fails the read-only filter is hidden from `tools/list` and refused on call.**
   Both, not either: hiding gives the model no false affordance, and refusing anyway catches a client
@@ -153,6 +173,19 @@ Decided below, together with a fourth the plan had never recorded.
   alternative — the field is optional and advisory, so treating its absence as "read-only" would make
   the filter decorative. Its consequence is the demo-app deliverable above, and that consequence is
   the reason this is stated here rather than left to implementation.
+
+- **Cached, not per-call.** A token is reused while it has more than a margin left before expiry and
+  re-minted otherwise — the same rule `apps/ai-gateway/src/mcp/proxy.ts` follows, and the connector
+  should not diverge from it without a reason.
+  Recorded because the plan contradicted itself, caught in review on 2026-08-15: the goal, a
+  deliverable, and the test list all said "a fresh token minted per call" while the design note
+  imported from the gateway said "cache until a margin before expiry". Those are different amounts of
+  control-route traffic and different credential-reuse semantics, and an implementer could not have
+  satisfied both.
+  Decision: cache. What the "per call" wording was actually protecting is that **no expiring
+  credential is written into a client config** — a property caching keeps entirely, since the cache
+  lives in the connector process and dies with it. Minting per call would add a control round trip to
+  every tool call to buy a shorter reuse window on a token that is already short-lived.
 
 - **The stdio server is hand-rolled, not built on the `ModelContextProtocol` SDK.**
   Reasoning: the CLI is Native AOT (`PublishAot`) with exactly one dependency, Spectre.Console, and
@@ -170,7 +203,7 @@ Decided below, together with a fourth the plan had never recorded.
 - **Local topology first; remote is a second phase.** On the same machine the CLI has the trusted
   local control channel and needs no login. For a remote host `hosty login` contexts exist — but
   **no CLI command currently spends a saved context**, which is a known gap, so the remote topology
-  cannot work until that is closed. Re-checked 2026-08-16 and still true: `CredentialStore.Save` is
+  cannot work until that is closed. Re-checked 2026-08-15 and still true: `CredentialStore.Save` is
   written only by `LoginCommand`, and nothing reads a stored credential back except the delete path.
   Decision: ship local first, gate remote on that gap. It also keeps the first cut honest — local is
   the case that removes the plaintext token today, and shipping a remote path that cannot authenticate
@@ -209,7 +242,11 @@ Decided below, together with a fourth the plan had never recorded.
 - The mapping's collision cases specifically, since "collision-free" is a claim and not an
   observation: `com.example.notes` against `com-example-notes`; an app whose id contains `_`; the
   same app's `default` and non-`default` interfaces; and an app tool literally named `admin__foo`
-  beside an interface named `admin`, which is the pair rule 4 exists for.
+  beside an interface named `admin`, which is the pair rule 5 exists for.
+- The length bound, with a **63-character app id** — the longest Core accepts — and one whose escape
+  expands worst-case: the exported name stays inside the ceiling, two such ids differing only past
+  the truncation point still map apart, and the key for a given app does not change when another app
+  is installed or removed.
 - Live, and it is the point of the feature: register `hosty mcp` in a stock client, confirm the tools
   of an app appear without any token in the client config, call one, then install or stop an app and
   confirm the list changes without restarting the client.
