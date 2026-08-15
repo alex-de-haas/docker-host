@@ -26,11 +26,9 @@ and [agent-background-sessions](../agent-background-sessions/plan.md).
 - [x] 5. Embedded Core MCP: discovery and read-only observability. Shipped 2026-08-09 —
       [core-mcp](../core-mcp/feature.md). Delegated token issuance shipped with
       [ai-gateway](../ai-gateway/feature.md) as a Core HTTP route rather than an MCP tool.
-- [x] 6. Validate with stock external agent clients — no gateway code. Done 2026-08-15 with Claude
-      Code against Core MCP: connected, and a session answered from the real fleet through
-      `mcp__hosty__list_apps`. Codex as a client, and a non-loopback origin, are still unproven; both
-      are cheap follow-ups rather than blockers, and step 7 is what removes the pasted token this
-      required.
+- [ ] 6. Validate with stock external agent clients — no gateway code. Partially done: Claude Code
+      against Core MCP works (2026-08-15). The rest of the matrix is unchecked below rather than
+      described as follow-up.
 - [ ] 7. The `hosty mcp` connector and the Claude Code plugin packaging.
 - [x] 8. The operator milestone — the `hosty.ai-gateway` system app plus the Shell assistant surface.
       Shipped 2026-08-09 and verified live: [ai-gateway](../ai-gateway/feature.md).
@@ -45,13 +43,31 @@ runtime app.
 ## Step 6 — Stock client validation
 
 Both endpoints were driven live over HTTP on 2026-08-11, which proves the servers completely and
-client compatibility not at all. No stock MCP client has connected to either
-([core-mcp](../core-mcp/feature.md), [app-mcp](../app-mcp/feature.md) both record this). A client that
-negotiates differently — protocol revision, transport, auth header handling — is still an open
-question, and it is the cheapest step remaining.
+client compatibility not at all. One cell of the matrix is now closed; the rest are listed
+individually, because "a stock client connected" is four different claims and only one is true.
 
-Connect Claude Code and Codex with static endpoint entries plus a Hosty skill, against both Core's
-`/api/mcp` and demo-app's `/api/mcp`, and record what the connection proved in each feature.md.
+- [x] **Claude Code → Core `/api/mcp`** (2026-08-15). Registered as an HTTP server with an admin
+      access token in an `Authorization` header; `claude mcp list` reports connected and a session
+      answered from the real fleet. Recorded in [core-mcp](../core-mcp/feature.md).
+- [ ] **Claude Code → demo-app `/api/mcp`.** Not merely undone — **not reachable this way today**.
+      The app endpoint requires a delegated token, which lives five minutes, so a static header entry
+      in a client config stops working almost immediately. Nothing is wrong with the endpoint; static
+      per-app entries are simply the wrong shape for a credential that must be refreshed, which is
+      what step 7's connector and [delegated-token-exchange](../delegated-token-exchange/plan.md)
+      exist to fix. Validating this cell realistically means doing one of those first.
+- [ ] **Codex → Core `/api/mcp`.**
+- [ ] **Codex → demo-app `/api/mcp`**, subject to the same TTL obstacle.
+- [ ] **A Hosty skill** telling a client how to discover apps and which tools need confirmation.
+      Nothing was validated with one; every check so far was a bare endpoint entry.
+- [ ] **A non-loopback origin.** Everything so far was `127.0.0.1`, so nothing exercises external
+      ingress, TLS, or a proxy in the path.
+
+Record what each connection proves in the corresponding feature.md as it lands.
+
+Cost worth carrying into step 7: connecting a stock client today means a full-role admin token in
+plaintext in the client config, which `claude mcp get` prints back unmasked. Token scopes do not
+exist, so "read-only" cannot be expressed — Core MCP being read-only is a property of the endpoint,
+not of the credential.
 
 One edge case is recorded for every external path, this step included: a client holding previously
 issued Core tokens keeps calling an app MCP endpoint while Core is down or unreachable, because
