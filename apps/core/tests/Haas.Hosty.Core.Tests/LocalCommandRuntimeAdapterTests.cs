@@ -277,6 +277,118 @@ public sealed class LocalCommandRuntimeAdapterTests
     }
 
     [Fact]
+    public async Task StopAsync_OnWindowsKillsJobDescendantAfterRootExited()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var workRoot = CreateTempDirectory();
+        System.Diagnostics.Process? child = null;
+        LocalCommandRuntimeAdapter? adapter = null;
+        RuntimeLifecycleContext? context = null;
+        try
+        {
+            var childPidPath = Path.Combine(workRoot, "child.pid");
+            var escapedPidPath = childPidPath.Replace("'", "''", StringComparison.Ordinal);
+            var scriptPath = Path.Combine(workRoot, "spawn-child.cmd");
+            await File.WriteAllTextAsync(
+                scriptPath,
+                $"""
+                @echo off
+                start "" /b powershell.exe -NoProfile -NonInteractive -Command "Set-Content -LiteralPath '{escapedPidPath}' -Value $PID; Start-Sleep -Seconds 30" >nul 2>&1
+                powershell.exe -NoProfile -NonInteractive -Command "Start-Sleep -Seconds 2"
+                """);
+
+            var coreExecutable = Path.Combine(Path.GetDirectoryName(typeof(LocalCommandShim).Assembly.Location)!, "hosty-core.exe");
+            Assert.True(File.Exists(coreExecutable), $"Core apphost was not copied to the test output: {coreExecutable}");
+
+            LocalCommandProcessRegistry registry;
+            (adapter, registry, context) = CreateSetupScenario(
+                workRoot,
+                setup: null,
+                // The bare file name, resolved against the working directory (workRoot). A quoted absolute
+                // path does not survive the trip: .NET escapes the inner quotes as \" when it pastes the
+                // command line, and cmd.exe reads those literally, so the launch fails with ERRORLEVEL 1
+                // before the script ever runs.
+                command: Path.GetFileName(scriptPath),
+                shim: new LocalCommandShimOptions(coreExecutable));
+
+            AppRuntimeStartResult started;
+            try
+            {
+                started = await adapter.StartAsync(context);
+            }
+            catch (AppLifecycleException ex)
+            {
+                // This lane only runs on Windows CI, so a bare exception message would leave the failure
+                // undiagnosable — the service log holds what the command actually printed.
+                Assert.Fail($"{ex.Message}{Environment.NewLine}Service log:{Environment.NewLine}{ReadServiceLog(workRoot)}");
+                throw;
+            }
+
+            Assert.Equal("running", started.RuntimeState);
+
+            int childPid;
+            using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15)))
+            {
+                // File.Exists turns true the moment Set-Content creates the file, before the pid is
+                // written and while PowerShell may still hold it open, so poll for a value that parses.
+                while (!TryReadChildPid(childPidPath, out childPid))
+                {
+                    await Task.Delay(50, timeout.Token);
+                }
+            }
+
+            child = System.Diagnostics.Process.GetProcessById(childPid);
+
+            var running = registry.Get("com.example.app", "app");
+            Assert.NotNull(running);
+            // Poll HasExited instead of awaiting WaitForExitAsync: that also waits for the redirected
+            // output to reach EOF, and the descendant spawned above holds Core's inherited pipe handles
+            // until the job kills it. What this step is about is the recorded root being gone.
+            using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20)))
+            {
+                while (!running!.Process.HasExited)
+                {
+                    await Task.Delay(50, timeout.Token);
+                }
+            }
+
+            Assert.False(child.HasExited);
+
+            await adapter.StopAsync(context);
+
+            using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+            {
+                await child.WaitForExitAsync(timeout.Token);
+            }
+            Assert.True(child.HasExited);
+        }
+        finally
+        {
+            if (adapter is not null && context is not null)
+            {
+                try
+                {
+                    await adapter.StopAsync(context);
+                }
+                catch
+                {
+                }
+            }
+            if (child is not null && !child.HasExited)
+            {
+                child.Kill();
+            }
+
+            child?.Dispose();
+            TryDeleteDirectory(workRoot);
+        }
+    }
+
+    [Fact]
     public async Task GetLogsAsync_ReadsTailWhileServiceHoldsLogOpenForAppend()
     {
         // Not Windows-gated on purpose: the sharing violation only reproduces on Windows (CI is
@@ -363,14 +475,51 @@ public sealed class LocalCommandRuntimeAdapterTests
         return (adapter, registry, context);
     }
 
+    // Reads a service log while the writing process may still hold it open (FileShare.ReadWrite), so a
+    // start failure can be reported with the command's own output.
+    private static string ReadServiceLog(string workRoot)
+    {
+        var logPath = Path.Combine(workRoot, "logs", "app.log");
+        try
+        {
+            using var stream = new FileStream(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var reader = new StreamReader(stream);
+            return reader.ReadToEnd();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return $"(unreadable: {logPath})";
+        }
+    }
+
+    private static bool TryReadChildPid(string path, out int pid)
+    {
+        pid = 0;
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var reader = new StreamReader(stream);
+            return int.TryParse(reader.ReadToEnd().Trim(), System.Globalization.CultureInfo.InvariantCulture, out pid);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
     private static (LocalCommandRuntimeAdapter Adapter, LocalCommandProcessRegistry Registry, RuntimeLifecycleContext Context) CreateSetupScenario(
-        string workRoot, string? setup, string command, bool cacheEnabled = false)
+        string workRoot,
+        string? setup,
+        string command,
+        bool cacheEnabled = false,
+        LocalCommandShimOptions? shim = null)
     {
         var registry = new LocalCommandProcessRegistry();
         var adapter = new LocalCommandRuntimeAdapter(
             CreateConfig(corePort: 7070, listenUrl: "http://localhost:7070", corePublicOrigin: null),
             registry,
-            new AppServiceTokenService(new AppServiceSigningKey("test-control-secret"u8.ToArray())));
+            new AppServiceTokenService(new AppServiceSigningKey("test-control-secret"u8.ToArray())),
+            shim: shim);
 
         var service = new RuntimeSelectedService(
             "app",

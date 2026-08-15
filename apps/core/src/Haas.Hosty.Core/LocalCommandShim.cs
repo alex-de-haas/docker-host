@@ -3,34 +3,69 @@ using System.Runtime.InteropServices;
 namespace Haas.Hosty.Core;
 
 // A tiny in-process supervisor Core re-execs ITSELF into (same binary, hidden verb) so a spawned
-// localCommand root becomes a POSIX process-group leader. .NET cannot call setsid between fork and
-// exec, so the leader identity is established here, in the child, before it launches the shell.
+// localCommand root owns its descendants: a POSIX process-group leader (.NET cannot call setsid
+// between fork and exec, so the leader identity is established here, in the child, before it
+// launches the shell), or a member of Core's Windows kill-on-close job before cmd.exe can create
+// the first npm/tsx/node descendant.
 internal static class LocalCommandShim
 {
     public const string Verb = "__local-command-shim";
 
+    // How long the Windows shim keeps draining the shell's output after the shell itself has exited.
+    private static readonly TimeSpan WindowsDrainTimeout = TimeSpan.FromSeconds(2);
+
     public static async Task<int> RunAsync(string[] args)
     {
-        var command = args[1];
+        string command;
+        if (OperatingSystem.IsWindows())
+        {
+            if (args.Length < 3)
+            {
+                await Console.Error.WriteLineAsync("[hosty] local command shim did not receive a Windows job name and command.");
+                return 127;
+            }
 
-        // Detach into a new session/process group so this shim is the group leader; the shell and its
-        // descendants inherit the group. A later Core reclaims the whole tree via kill(-pgid). setsid
-        // fails (-1) only when we are already a leader, which is fine — the group id still equals our pid.
-        UnixProcessControl.SetSid();
+            try
+            {
+                // Join before cmd.exe exists. All of its npm/tsx/node descendants then inherit the job,
+                // so Core can terminate the tree atomically even when an intermediate parent exits.
+                WindowsProcessControl.AssignCurrentProcessToJob(args[1]);
+            }
+            catch (System.ComponentModel.Win32Exception ex)
+            {
+                await Console.Error.WriteLineAsync($"[hosty] local command shim could not join its Windows job: {ex.Message}");
+                return 127;
+            }
 
-        // No stream redirection: the shim inherits Core's stdio, which are the pipes Core attached to
-        // this process, so `/bin/sh` writes straight into Core's log-capture pipes as before. Working
-        // directory and environment are inherited from the shim (which inherited them from Core).
+            command = args[2];
+        }
+        else
+        {
+            command = args[1];
+
+            // Detach into a new session/process group so this shim is the group leader; the shell and its
+            // descendants inherit the group. A later Core reclaims the whole tree via kill(-pgid). setsid
+            // fails (-1) only when we are already a leader, which is fine — the group id still equals our pid.
+            UnixProcessControl.SetSid();
+        }
+
+        // Working directory and environment are inherited from the shim (which inherited them from
+        // Core). POSIX can pass the inherited descriptors straight through. On Windows, explicitly
+        // pump redirected child streams into the shim's standard streams: CreateProcess does not
+        // reliably re-inherit the redirected pipe handles when this second process is created.
+        var windows = OperatingSystem.IsWindows();
         using var child = new System.Diagnostics.Process
         {
             StartInfo = new System.Diagnostics.ProcessStartInfo
             {
-                FileName = "/bin/sh",
+                FileName = windows ? "cmd.exe" : "/bin/sh",
+                RedirectStandardOutput = windows,
+                RedirectStandardError = windows,
                 UseShellExecute = false,
             },
             EnableRaisingEvents = true,
         };
-        child.StartInfo.ArgumentList.Add("-c");
+        child.StartInfo.ArgumentList.Add(windows ? "/c" : "-c");
         child.StartInfo.ArgumentList.Add(command);
 
         try
@@ -43,20 +78,33 @@ internal static class LocalCommandShim
             return 127;
         }
 
-        await child.WaitForExitAsync();
+        if (windows)
+        {
+            var stdout = child.StandardOutput.BaseStream.CopyToAsync(Console.OpenStandardOutput());
+            var stderr = child.StandardError.BaseStream.CopyToAsync(Console.OpenStandardError());
+            await child.WaitForExitAsync();
+
+            // The command is over once the shell exits, so the drain is bounded from that moment. A
+            // detached descendant that inherited these pipes never closes its write end, and waiting
+            // for EOF would keep the shim — the process Core records as the service root — alive for
+            // as long as that descendant lives: the service would read as running after its command
+            // died, and a one-shot setup command would block the whole start. Returning here leaves
+            // the descendant to the job object, which is what owns it.
+            await Task.WhenAny(Task.WhenAll(stdout, stderr), Task.Delay(WindowsDrainTimeout));
+        }
+        else
+        {
+            await child.WaitForExitAsync();
+        }
+
         return child.ExitCode;
     }
 
-    // The shim path is the running binary itself. Null (adapter falls back to a direct spawn) when the
-    // verb cannot be served: on Windows, or under a dll-hosted run where ProcessPath is the `dotnet`
-    // muxer rather than a single-file Core that re-execs into RunAsync.
+    // The shim path is the running binary itself. Null (adapter falls back to a direct spawn) only under
+    // a dll-hosted run where ProcessPath is the `dotnet` muxer rather than a Core executable that can
+    // re-exec into RunAsync. Published Windows and POSIX Core artifacts both serve the hidden verb.
     public static string? ResolveShimPath()
     {
-        if (OperatingSystem.IsWindows())
-        {
-            return null;
-        }
-
         var path = Environment.ProcessPath;
         if (string.IsNullOrEmpty(path))
         {

@@ -1,8 +1,9 @@
 using System.Net.Sockets;
 using Haas.Hosty.Core;
 
-// Hidden re-exec: Core spawns localCommand roots by re-execing itself as a setsid process-group
-// leader (see LocalCommandShim) so a later Core can reclaim the whole tree by process group.
+// Hidden re-exec: Core spawns localCommand roots through itself before the platform shell. The shim
+// becomes a POSIX process-group leader or joins a Windows kill-on-close job, so Core owns the whole
+// descendant tree even when an intermediate shell/npm process exits (see LocalCommandShim).
 if (args.Length >= 2 && args[0] == LocalCommandShim.Verb)
 {
     return await LocalCommandShim.RunAsync(args);

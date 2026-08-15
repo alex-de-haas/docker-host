@@ -1,7 +1,7 @@
 # Runtime Source Workflows
 
 Created: 2026-06-03
-Updated: 2026-08-14
+Updated: 2026-08-15
 
 Runtime source workflows let administrators and local operators inspect and update the source state stored for an installed Hosty runtime app. This is the completed Stage 2 source/runtime model: manifests can declare app-level Git source metadata, Core stores managed checkout and local override state in the app record, local command runtimes can run from that source state, and the CLI exposes trusted control commands for day-to-day operations.
 
@@ -65,6 +65,8 @@ The managed checkout lives inside the app root, so removing the app with "Delete
 
 Local command runtimes are Core-supervised process runtimes. Core starts each service command from the resolved working directory, injects app data/settings/dependency/port/Core identity environment, captures stdout/stderr into app logs, and reports per-service health with process state, PID, exit code, log path, and working directory. Core fails the start when the resolved working directory does not exist; it does not create missing source directories on behalf of the app.
 
+Core places each published `localCommand` service inside an operating-system process-tree boundary before the platform shell starts: a dedicated process group on POSIX and a kill-on-close Job Object on Windows. Stop terminates that boundary rather than relying only on a snapshot of parent/child relationships. A command chain such as `cmd → npm → tsx → node` therefore cannot leave the final Node runtime holding its assigned port when an intermediate process exits during shutdown. Setup commands use the same temporary Windows boundary, and closing Core itself also closes every owned job.
+
 ## Runtime Switch Reviews
 
 `hosty apps switch-runtime-plan <app-id> --runtime <key>` returns a reviewed plan with a digest and a `changes` list. The plan compares the current and target runtime contracts, including runtime type, service images or commands, ports, service environment keys, settings, dependencies, endpoint contracts, data target compatibility, and generated Docker container names. `hosty apps switch-runtime` requires the reviewed digest, and Core includes the `changes` list in the digest seed so a stale review is rejected if the runtime contract changes before apply.
@@ -94,3 +96,4 @@ Shell also exposes Hosty Shell runtime switching in the Installed Apps System Ap
 - A pinned start (Development Mode off) checks out the recorded pin — including one a reviewed update has just advanced to — with an override configured, and fetches when the checkout does not have that commit yet.
 - A pinned start whose recorded commit is unreachable even after a fetch falls back to the reviewed ref instead of failing.
 - A pinned start restores a dirty checkout to the pinned commit (tracked edits discarded, untracked files removed).
+- On Windows, stopping a `localCommand` service terminates descendants held by its Job Object even when an intermediate command process has already exited; an immediate start can reuse the assigned port.
