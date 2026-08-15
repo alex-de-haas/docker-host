@@ -256,6 +256,43 @@ describe("per-session MCP proxy", () => {
     await reader.cancel();
   });
 
+  it("answers malformed percent-encoding with a 404 rather than an unhandled 500", async () => {
+    // This is a public HTTP surface and `decodeURIComponent` throws on an unpaired `%`, so an
+    // ordinary bad request must not arrive as an internal error.
+    register();
+
+    const response = await fetch(`${proxyOrigin}/internal/mcp/%E0%A4%A/${APP}`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${sessionKey}` },
+      body: "{}",
+    });
+
+    expect(response.status).toBe(404);
+    expect(((await response.json()) as { code: string }).code).toBe("proxy_not_found");
+  });
+
+  it("does not put a deadline on a stream that has already started", async () => {
+    // The response timeout bounds getting headers out of the app, never the body: aborting after the
+    // stream is established truncates a long tool result and drops a streamable-HTTP SSE channel on a
+    // fixed cycle. Driven with a 100 ms timeout and a chunk sent well after it, which is the same
+    // shape as a two-minute timeout and a five-minute tool call.
+    proxy = new McpProxy(async () => ({ token: "t", expiresAtMs: Date.now() + 300_000 }), 100);
+    register();
+    respond = (_request, response) => {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.write("data: opened\n\n");
+      setTimeout(() => {
+        response.write("data: late\n\n");
+        response.end();
+      }, 300);
+    };
+
+    const response = await call(`/internal/mcp/${SESSION}/${APP}`);
+    const received = await new Response(response.body).text();
+
+    expect(received).toContain("data: late");
+  });
+
   it("leaves a path that is not its own to the rest of the router", async () => {
     const response = await fetch(`${proxyOrigin}/api/sessions`);
     expect(response.status).toBe(404);

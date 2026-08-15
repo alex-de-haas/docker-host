@@ -33,8 +33,16 @@ const MAX_BODY_BYTES = 64 * 1024;
  */
 const TOKEN_REUSE_MARGIN_MS = 60_000;
 
-/** Upstream app hop. Generous: a tool call may legitimately do real work. */
-const UPSTREAM_TIMEOUT_MS = 120_000;
+/**
+ * Bounds only *getting a response* out of the app — connect plus time-to-headers. Generous, because
+ * a tool call may legitimately do real work before it answers.
+ *
+ * Deliberately not a ceiling on the response body. `AbortSignal.timeout` passed to `fetch` aborts the
+ * whole exchange including the body stream, which would truncate a long-running tool result and
+ * disconnect a streamable-HTTP SSE channel every two minutes. The timer is therefore cleared the
+ * moment the headers arrive, and an established stream lives as long as the app keeps it open.
+ */
+const UPSTREAM_RESPONSE_TIMEOUT_MS = 120_000;
 
 /** The path the harness is pointed at. */
 export const PROXY_PATH_PREFIX = "/internal/mcp/";
@@ -75,7 +83,11 @@ interface Registration {
 export class McpProxy {
   private readonly sessions = new Map<string, Registration>();
 
-  constructor(private readonly mint: TokenMinter) {}
+  constructor(
+    private readonly mint: TokenMinter,
+    /** Overridden only by tests, which cannot wait two minutes to prove the timer stops. */
+    private readonly responseTimeoutMs: number = UPSTREAM_RESPONSE_TIMEOUT_MS,
+  ) {}
 
   /**
    * Points the session at `targets` and returns the key the harness will present.
@@ -140,8 +152,15 @@ export class McpProxy {
       return true;
     }
 
-    const sessionId = decodeURIComponent(segments[0]);
-    const appId = decodeURIComponent(segments[1]);
+    // Malformed percent-encoding throws rather than returning anything, and this is a public HTTP
+    // surface: an unpaired `%` must be an ordinary 404, not an unhandled rejection surfacing as 500.
+    const decoded = decodeSegments(segments[0], segments[1]);
+    if (!decoded) {
+      sendJson(response, 404, { code: "proxy_not_found", message: "Unknown proxy route." });
+      return true;
+    }
+
+    const [sessionId, appId] = decoded;
     const registration = this.sessions.get(sessionId);
     const target = registration?.targets.get(appId);
 
@@ -209,13 +228,17 @@ export class McpProxy {
       }
     }
 
+    // Cleared as soon as the headers are back — see UPSTREAM_RESPONSE_TIMEOUT_MS. Aborting on this
+    // controller after that point would kill the body mid-stream, which is the bug this shape avoids.
+    const abort = new AbortController();
+    const responseTimeout = setTimeout(() => abort.abort(), this.responseTimeoutMs);
     let upstream: Response;
     try {
       upstream = await fetch(target.url, {
         method: request.method ?? "POST",
         headers,
         ...(body && body.length > 0 ? { body } : {}),
-        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+        signal: abort.signal,
       });
     } catch {
       // The app is unreachable or too slow. 502 rather than 500: the gateway is fine, the hop is not,
@@ -225,6 +248,8 @@ export class McpProxy {
         message: `The app ${target.appId} did not answer its MCP endpoint.`,
       });
       return;
+    } finally {
+      clearTimeout(responseTimeout);
     }
 
     const outgoing: Record<string, string> = {};
@@ -289,8 +314,21 @@ function readRequestId(body: Buffer | undefined): string | number | null | undef
   }
 }
 
+/** Both path segments decoded, or null when either is not valid percent-encoding. */
+function decodeSegments(sessionSegment: string, appSegment: string): [string, string] | null {
+  try {
+    return [decodeURIComponent(sessionSegment), decodeURIComponent(appSegment)];
+  } catch {
+    return null;
+  }
+}
+
 function keyMatches(expected: string, presented: string | undefined): boolean {
-  if (!presented) {
+  // Length is compared on the strings first: the key is fixed-size, so a mismatch here is already
+  // decisive, and it keeps an oversized Authorization header from being copied into a Buffer just to
+  // be rejected. Equal lengths still go through the constant-time path, which is the case that
+  // matters — the timing of a wrong-length guess leaks nothing about the key.
+  if (presented === undefined || presented.length !== expected.length) {
     return false;
   }
 

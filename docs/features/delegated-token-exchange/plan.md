@@ -100,12 +100,14 @@ browser holding a human's session.
       **Superseded 2026-08-16 and removed** — it was verified not to fix the case it was written for,
       and the proxy below fixes it at the right layer. Kept checked because it shipped and its finding
       is what produced the proxy; leaving dead code behind would have been the worse half of honesty.
-- [x] **A per-session MCP proxy, so the TTL stops being visible to the harness.** Re-minting when an
+- [ ] **A per-session MCP proxy, so the TTL stops being visible to the harness.** Re-minting when an
       approval is released was implemented and **verified live not to work**: a paused call is bound
       to the connection it was prepared on, so replacing server configuration reaches the next call
       and never that one. The harness now holds a per-session key against a loopback route on the
-      gateway; the app token is minted as the request goes out. Unit-covered over real sockets; **not
-      yet exercised live** against a held approval, which the Verification section still requires.
+      gateway; the app token is minted as the request goes out.
+      Code and unit coverage are in (over real sockets). **Unchecked until the live held-approval run
+      passes** — the predecessor also passed its unit tests and failed in reality, so on this
+      deliverable specifically, tests are not evidence that it works.
 - [ ] **App MCP for the Codex harness.** The adapter drops `mcpServers` entirely, so enabled
       providers give a Codex session no tools; reported as `appMcp: false` rather than silently. Needs
       the config shape verified against a live Codex run, not inferred.
