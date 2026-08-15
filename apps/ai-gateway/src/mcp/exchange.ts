@@ -13,6 +13,7 @@
 
 import { createHash } from "node:crypto";
 import type { McpProvider } from "../settings/providers.js";
+import { PROXY_PATH_PREFIX } from "./proxy.js";
 
 /** Refreshed a little before the five-minute token actually expires, so no call lands on a dead one. */
 export const TOKEN_REFRESH_MARGIN_MS = 60_000;
@@ -130,17 +131,29 @@ export function serverName(appId: string): string {
  * because a client namespaces tools by server name — a stock client turns `list_apps` on a server
  * called `hosty` into `mcp__hosty__list_apps`, so the name is what the model sees and it should read
  * as the app it belongs to.
+ *
+ * The URL is the gateway's own per-session proxy, never the app, and the header carries the session
+ * key rather than a delegated token. MCP server headers are static for the life of a connection, so
+ * a five-minute token placed here dies mid-session and cannot be replaced for a call already paused
+ * on an approval — see mcp/proxy.ts. The key outlives the session; the token is minted per request
+ * on the far side.
  */
 export function toMcpServerConfig(
   servers: readonly ExchangedServer[],
+  proxy: { baseUrl: string; sessionId: string; key: string },
 ): Record<string, { type: "http"; url: string; headers: Record<string, string> }> {
   const config: Record<string, { type: "http"; url: string; headers: Record<string, string> }> = {};
   for (const server of servers) {
     config[serverName(server.appId)] = {
       type: "http",
-      url: server.url,
-      headers: { authorization: `Bearer ${server.token}` },
+      url: proxyUrl(proxy.baseUrl, proxy.sessionId, server.appId),
+      headers: { authorization: `Bearer ${proxy.key}` },
     };
   }
   return config;
+}
+
+/** Both segments are encoded: an app id may legally contain characters a path segment may not. */
+export function proxyUrl(baseUrl: string, sessionId: string, appId: string): string {
+  return `${baseUrl.replace(/\/$/, "")}${PROXY_PATH_PREFIX}${encodeURIComponent(sessionId)}/${encodeURIComponent(appId)}`;
 }

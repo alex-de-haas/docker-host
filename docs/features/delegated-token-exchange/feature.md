@@ -1,7 +1,7 @@
 # Delegated Token Exchange
 
 Created: 2026-08-15
-Updated: 2026-08-15
+Updated: 2026-08-16
 
 A system app trades the delegated token it holds for one scoped to another app, so an agent session
 can call app MCP endpoints on behalf of the user currently talking to it — without Core entering the
@@ -61,24 +61,58 @@ never by renewing the branched one, which is exactly what the gateway does.
   a client namespaces tools by server, so the name is what the model reads.
 - A provider that is disabled, stopped, has no resolved URL, or whose exchange is refused is simply
   absent. Offering a tool that cannot work is worse than offering nothing: the failure would surface
-  mid-task as a confusing error rather than as a capability the agent never had.
-- Tokens live five minutes, so they are re-minted **before** they die rather than after a call has
-  failed. The gateway self-refreshes its own credential (which is what keeps its right to branch) and
-  rebuilds the server list through `setMcpServers`.
-- Credentials are also re-minted when an app-MCP approval is released. **This does not fix the case it
-  was written for**, and saying otherwise would be false: verified live twice on 2026-08-15, an
-  approval held past the TTL still failed with an authorization error even though the audit shows the
-  re-mint ran at the moment of release. A paused call is already bound to the connection it was
-  prepared on, so replacing the server configuration reaches the *next* call and never that one. The
-  re-mint is kept because it does keep later calls healthy, but the defect is open — see the plan.
+  mid-task as a confusing error rather than as a capability the agent never had. That start-of-session
+  exchange is an availability probe as much as a credential: the tokens it produces seed the proxy's
+  cache, so the first real call does not repeat the round trip.
+- The gateway self-refreshes its own credential on a timer, which is what keeps its right to branch.
+  It does **not** rebuild the harness's server list on that tick: since the proxy below, that list
+  holds no expiring credential, and pushing an identical config would tear down and rebuild every
+  live MCP connection for nothing.
 - A provider toggle is pushed into live sessions the moment it is saved, not at the next refresh tick,
   because the settings page tells the operator it applied. A provider switched off has to stop being
-  callable then, not up to three minutes later.
+  callable then — the rebuilt list drops it and the proxy discards the token cached for it, so neither
+  half waits for a TTL.
 - Past the one-hour chain cap, self-refresh is refused: the credential is dropped, **the harness's MCP
-  servers are cleared**, and the refresh timer stops. Clearing matters — leaving the servers in place
-  would keep dead tools on offer, and the model would call them and get an authorization error, which
-  is worse than never having had them. The session keeps its host tools and regains app MCP the moment
-  the operator says anything.
+  servers are cleared**, the proxy registration is removed, and the refresh timer stops. Clearing
+  matters — leaving the servers in place would keep dead tools on offer. The session keeps its host
+  tools and regains app MCP the moment the operator says anything.
+
+## The Per-Session Proxy
+
+The harness never holds a delegated token. Each enabled provider is an MCP server pointing at a
+loopback route on the gateway itself — `/internal/mcp/{sessionId}/{appId}` — authenticated with a
+random per-session key. The gateway mints the app token as the request goes out and forwards the
+call.
+
+This exists because **MCP server headers are static for the life of a connection**. A five-minute
+token baked into that config dies mid-session, and — the part that took a live run to learn — it
+cannot be repaired by replacing the configuration: a call paused on an approval is bound to the
+connection it was prepared on, so new configuration reaches the *next* call and never that one. An
+approval gate exists so a human can think, and thinking for six minutes made the call fail. Re-minting
+on release was implemented first and verified live not to work; the proxy replaces it, and that
+re-mint is gone rather than kept as decoration.
+
+Properties worth naming:
+
+- **The key outlives the session; the token does not.** The TTL becomes a property of the hop the
+  gateway makes, invisible to the harness. A token is reused while it has more than a minute left and
+  re-minted otherwise, so Core stays out of the steady-state path without the credential ever going
+  stale.
+- **It is a transparent forwarder, not a JSON-RPC implementation.** An app may serve plain POST
+  JSON-RPC (demo-app does) or full streamable HTTP with SSE and `Mcp-Session-Id`; the proxy has no
+  business knowing which, so it copies the protocol headers and pipes the body rather than buffering.
+- **The caller's own credential never travels onward.** The session key authorizes the hop in; what
+  reaches the app is only the Core-signed token minted for it.
+- **The 256-bit per-session key is the gate**, and the loopback check is a narrowing, not a wall.
+  Said plainly because the opposite is the easy assumption: this app's endpoint is `public: true`, and
+  Cloudflare ingress routes a public hostname straight at its port from `cloudflared` running on the
+  same host — so a tunneled request presents as loopback and passes that check. What loopback does buy
+  is the direct-network path to the published port. What refuses everything else is the key, which is
+  random per session, compared in constant time, and gone when the session ends.
+- **A lapsed chain answers as a JSON-RPC error**, not a transport failure — a sentence telling the
+  model to ask the operator to send a message, which is what actually renews it. An unreachable app is
+  a 502, keeping "this tool failed" distinct from "the assistant broke".
+- The registration dies with the session: cancelled, failed, or shut down, the route stops minting.
 
 Codex reports `appMcp: false`: it gives an enabled provider **no tools at all**, not merely no live
 updates. Configuring MCP servers there means writing them into Codex's own config before the thread
@@ -98,7 +132,17 @@ caught this code twice already. The flag says so rather than the gateway quietly
   Shell's tokens would be dead ends.
 - Gateway (vitest): one server per enabled provider each with **its own** token (the audience claim
   is the point); disabled, stopped, URL-less and refused providers all absent; self-refresh asks for
-  its own audience; an unreachable Core degrades to no providers rather than throwing.
+  its own audience; an unreachable Core degrades to no providers rather than throwing; the harness
+  config points at the proxy and contains no delegated token.
+- The proxy is driven over **real sockets against a real upstream**, because what matters is
+  transport-level: which credential the app actually receives and when it was minted. A mocked
+  `fetch` would assert the shape of a call the harness never makes. Covered: a stale cached token is
+  re-minted at request time while a live one is reused; the caller's key never reaches the app; an
+  unknown session, unknown app, and wrong key are refused identically **beside a permitted call that
+  succeeds** in the same test; an unregistered session stops serving; a switched-off provider's
+  cached token is discarded; a lapsed chain is a JSON-RPC error; an unreachable app is a 502; SSE is
+  streamed rather than buffered; the key survives a re-register, so a policy change does not drop
+  connections for providers nobody touched.
 - Verified live on 2026-08-15 against Core 0.80.0 and gateway 0.8.0 on a running host: the full chain
   (session token → gateway token → branched app token → a call to demo-app's MCP returning the real
   domain role), the bounds as pairs (a branched domain-app token refused onward, self-refresh
@@ -106,8 +150,8 @@ caught this code twice already. The flag says so rather than the gateway quietly
   A live session reached demo-app through `mcp__com-haas-demo-app__get_my_app_role`, which the model
   found via tool search — MCP tools are deferred, not loaded eagerly.
 - Two things that live run exposed and unit tests could not: an app-MCP tool raises an approval card,
-  because MCP tools are not in the harness's auto-allow list; and the expiry-under-approval defect
-  above.
-- **Open defect:** an app-MCP call approved after the five-minute TTL fails. Re-minting on release was
-  tried and verified not to fix it. The answer is a per-session local proxy that injects a fresh token
-  per request, which makes the TTL invisible to the harness — tracked in the plan, not attempted here.
+  because MCP tools are not in the harness's auto-allow list; and the expiry-under-approval defect the
+  proxy now answers.
+- **Not yet verified live:** the proxy has not been exercised against a running host — specifically an
+  approval deliberately held past five minutes and then released, which is the case it exists for.
+  Everything above it in this list was, at gateway 0.8.0, before the proxy replaced the re-mint.

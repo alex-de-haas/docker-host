@@ -8,6 +8,7 @@ import type { McpProvider } from "../settings/providers.js";
 
 const CORE = "http://core.test";
 const GATEWAY = "hosty.ai-gateway";
+const PROXY = { baseUrl: "http://gw.test", sessionId: "session-1", key: "session-key" };
 
 function provider(appId: string, overrides: Partial<McpProvider> = {}): McpProvider {
   return { appId, displayName: appId, url: `http://${appId}/api/mcp`, running: true, ...overrides };
@@ -111,17 +112,32 @@ describe("token exchange", () => {
     // A client namespaces tools by server name — `list_apps` on a server called `hosty` arrives as
     // `mcp__hosty__list_apps` — so the name is what the model reads, and it must survive the
     // sanitizing that dots would otherwise break.
-    const config = toMcpServerConfig([
-      { appId: "com.example.notes", url: "http://notes/api/mcp", token: "t", expiresAtMs: 0 },
-    ]);
+    const config = toMcpServerConfig(
+      [{ appId: "com.example.notes", url: "http://notes/api/mcp", token: "t", expiresAtMs: 0 }],
+      PROXY,
+    );
 
     const [name] = Object.keys(config);
     expect(name).toMatch(/^com-example-notes-[0-9a-f]{6}$/);
     expect(config[name!]).toEqual({
       type: "http",
-      url: "http://notes/api/mcp",
-      headers: { authorization: "Bearer t" },
+      url: "http://gw.test/internal/mcp/session-1/com.example.notes",
+      headers: { authorization: "Bearer session-key" },
     });
+  });
+
+  it("points the harness at the proxy, never at the app, and carries no delegated token", () => {
+    // The whole point of the proxy (docs/features/delegated-token-exchange/plan.md): MCP server
+    // headers are static for the life of a connection, so a five-minute token placed here is dead
+    // before a long turn ends and cannot be replaced for a call already paused on an approval.
+    const config = toMcpServerConfig(
+      [{ appId: "com.example.notes", url: "http://notes/api/mcp", token: "secret-token", expiresAtMs: 0 }],
+      PROXY,
+    );
+
+    const entry = Object.values(config)[0]!;
+    expect(entry.url).not.toContain("notes/api/mcp");
+    expect(JSON.stringify(entry)).not.toContain("secret-token");
   });
 
   it("keeps two apps distinct when their ids sanitize to the same string", () => {
@@ -132,10 +148,13 @@ describe("token exchange", () => {
     // An already-safe id keeps its plain, readable name — the model sees this string.
     expect(serverName("com-example-notes")).toBe("com-example-notes");
 
-    const config = toMcpServerConfig([
-      { appId: "com.example.notes", url: "http://a/api/mcp", token: "a", expiresAtMs: 0 },
-      { appId: "com-example-notes", url: "http://b/api/mcp", token: "b", expiresAtMs: 0 },
-    ]);
+    const config = toMcpServerConfig(
+      [
+        { appId: "com.example.notes", url: "http://a/api/mcp", token: "a", expiresAtMs: 0 },
+        { appId: "com-example-notes", url: "http://b/api/mcp", token: "b", expiresAtMs: 0 },
+      ],
+      PROXY,
+    );
     expect(Object.keys(config)).toHaveLength(2);
   });
 });

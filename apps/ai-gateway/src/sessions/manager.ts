@@ -5,6 +5,7 @@ import type { AuditReporter } from "../audit.js";
 import type { SettingsStore } from "../settings/store.js";
 import type { ProviderDirectory } from "../settings/providers.js";
 import { TokenExchange, toMcpServerConfig, TOKEN_REFRESH_MARGIN_MS } from "../mcp/exchange.js";
+import type { McpProxy, MintedToken } from "../mcp/proxy.js";
 
 // Owns session lifecycle: one harness run per live session, an append-only event log with a
 // monotonic seq (the SSE reattach cursor), and status transitions driven by harness events.
@@ -42,7 +43,28 @@ export class SessionManager {
     private readonly settings: SettingsStore | null = null,
     private readonly providers: ProviderDirectory | null = null,
     private readonly exchange: TokenExchange | null = null,
+    private readonly proxy: McpProxy | null = null,
+    /** Loopback origin the harness reaches this gateway on, for the per-session MCP proxy. */
+    private readonly proxyBaseUrl: string | null = null,
   ) {}
+
+  /**
+   * Mints an app token for a live session. This is what the proxy calls per request, which is the
+   * whole point: the token is obtained when the call goes out rather than when the harness connected,
+   * so an approval held past the five-minute TTL still releases onto a valid credential.
+   *
+   * Returns null once the chain has lapsed — the proxy turns that into a readable refusal rather
+   * than letting the app answer with an authorization error.
+   */
+  async mintAppToken(sessionId: string, appId: string): Promise<MintedToken | null> {
+    const session = this.live.get(sessionId);
+    if (!session?.credential || !this.exchange?.available) {
+      return null;
+    }
+
+    const issued = await this.exchange.exchange(session.credential, appId);
+    return issued ? { token: issued.token, expiresAtMs: new Date(issued.expiresAt).getTime() } : null;
+  }
 
   async createSession(input: {
     title?: string;
@@ -126,12 +148,23 @@ export class SessionManager {
   }
 
   /**
-   * Mints one MCP server entry per enabled, reachable provider. Returns undefined when there is
-   * nothing to offer, so a harness without providers is started exactly as before rather than with
-   * an empty map.
+   * Mints one MCP server entry per enabled, reachable provider, each pointing at this session's
+   * proxy route rather than at the app. Returns undefined when there is nothing to offer, so a
+   * harness without providers is started exactly as before rather than with an empty map.
+   *
+   * The per-provider exchange here is an availability probe, not the credential the harness will
+   * use: a provider whose exchange is refused stays absent, and the tokens it did produce seed the
+   * proxy's cache so the first call does not repeat the round trip.
    */
   private async buildMcpServers(session: LiveSession): Promise<Record<string, unknown> | undefined> {
-    if (!this.providers || !this.exchange?.available || !this.settings || !session.credential) {
+    if (
+      !this.providers ||
+      !this.exchange?.available ||
+      !this.settings ||
+      !session.credential ||
+      !this.proxy ||
+      !this.proxyBaseUrl
+    ) {
       return undefined;
     }
 
@@ -145,19 +178,28 @@ export class SessionManager {
       discovered.providers,
       policy.mcpProviders,
     );
-    return servers.length > 0 ? toMcpServerConfig(servers) : undefined;
+    if (servers.length === 0) {
+      this.proxy.unregister(session.record.id);
+      return undefined;
+    }
+
+    const key = this.proxy.register(
+      session.record.id,
+      servers.map((server) => ({ appId: server.appId, url: server.url })),
+      new Map(servers.map((server) => [server.appId, { token: server.token, expiresAtMs: server.expiresAtMs }])),
+    );
+    return toMcpServerConfig(servers, {
+      baseUrl: this.proxyBaseUrl,
+      sessionId: session.record.id,
+      key,
+    });
   }
 
   /**
-   * App tokens live five minutes, so they are re-minted before they die rather than after a call has
-   * already failed. The chain itself is capped an hour past the operator's last interaction: once
-   * self-refresh is refused, the credential is dropped and the session continues without app MCP —
-   * degraded, not broken, and restored by the operator saying anything at all.
-   */
-  /**
-   * Re-mints the gateway's credential and rebuilds the harness's MCP servers. Returns false when the
-   * chain has run out, in which case the caller leaves the session without app MCP rather than
-   * pretending it still has it.
+   * Rebuilds the harness's MCP server list — which providers are on offer, never their credential.
+   * Called when the set can genuinely have changed: a policy toggle, or an operator message reviving
+   * a lapsed chain. Returns false when the chain has run out, in which case the caller leaves the
+   * session without app MCP rather than pretending it still has it.
    */
   private async refreshMcpServers(session: LiveSession): Promise<boolean> {
     if (!session.run || !session.credential || !this.exchange?.available) {
@@ -166,14 +208,7 @@ export class SessionManager {
 
     const renewed = await this.exchange.refreshSelf(session.credential);
     if (!renewed) {
-      // Degrade cleanly rather than leaving dead tools on offer: dropping the credential without
-      // clearing the servers would keep app tools visible to the model, which would then call them
-      // and get an authorization error — worse than never having had them. The timer stops too,
-      // since nothing can revive the chain except a fresh operator message.
-      session.credential = null;
-      await session.run.setMcpServers({}).catch(() => false);
-      this.clearRefresh(session);
-      return false;
+      return this.dropAppMcp(session);
     }
 
     session.credential = renewed.token;
@@ -182,6 +217,27 @@ export class SessionManager {
     return true;
   }
 
+  /**
+   * The chain has run out. Degrade cleanly rather than leaving dead tools on offer: dropping the
+   * credential without clearing the servers would keep app tools visible to the model, which would
+   * then call them and be told the delegation expired — worse than never having had them. The proxy
+   * registration goes with it, and the timer stops, since nothing can revive the chain except a
+   * fresh operator message.
+   */
+  private async dropAppMcp(session: LiveSession): Promise<boolean> {
+    session.credential = null;
+    this.proxy?.unregister(session.record.id);
+    await session.run?.setMcpServers({}).catch(() => false);
+    this.clearRefresh(session);
+    return false;
+  }
+
+  /**
+   * Keeps the gateway's own credential alive so the proxy can keep branching off it. It does *not*
+   * touch the harness's server list: since the proxy landed, that list holds no expiring credential,
+   * and pushing an identical config every three minutes would tear down and rebuild every live MCP
+   * connection for nothing.
+   */
   private scheduleMcpRefresh(id: string): void {
     const session = this.live.get(id);
     // No credential means nothing to refresh, so no timer: an idle interval waking every three
@@ -199,13 +255,11 @@ export class SessionManager {
 
         const renewed = await this.exchange!.refreshSelf(live.credential);
         if (!renewed) {
-          live.credential = null;
+          await this.dropAppMcp(live);
           return;
         }
 
         live.credential = renewed.token;
-        const servers = await this.buildMcpServers(live);
-        await live.run.setMcpServers(servers ?? {}).catch(() => false);
       })();
     }, TOKEN_REFRESH_MARGIN_MS * 3);
     session.refreshTimer.unref?.();
@@ -223,15 +277,12 @@ export class SessionManager {
       return false;
     }
 
-    // Re-mint before releasing an approved app-MCP call. The timer alone is not enough: the call was
-    // prepared when the approval was raised, so an operator who thinks for longer than the five-minute
-    // TTL would release a call carrying a dead credential. Observed live on 2026-08-15 — an approval
-    // held nine minutes failed with an authorization error even though the refresh timer had been
-    // running correctly the whole time, because refreshing helps the NEXT call, not the paused one.
-    if (decision === "allow" && toolName.startsWith("mcp__")) {
-      await this.refreshMcpServers(session);
-    }
-
+    // Nothing to re-mint here any more. Releasing an approved app-MCP call used to be preceded by a
+    // token refresh, because a call is prepared when its approval is raised and an operator thinking
+    // for longer than the five-minute TTL would release it onto a dead credential. That fix was
+    // verified live not to work — a paused call is bound to the connection it was prepared on, so new
+    // configuration reaches the next call and never that one. The proxy solves it at the right layer:
+    // the released call carries a session key, and its token is minted as the request goes out.
     const resolved = session.run.resolveApproval(approvalId, decision, message);
     if (!resolved) {
       return false;
@@ -311,6 +362,9 @@ export class SessionManager {
     session.pendingApprovals.clear();
     session.pendingQuestions.clear();
     this.clearRefresh(session);
+    // The proxy routes die with the run that used them: a cancelled session must not leave a live
+    // path that still mints app tokens.
+    this.proxy?.unregister(id);
     // Persisted with the same type the live status fan-out uses, so a transcript replay and a
     // live subscriber see one status vocabulary.
     await this.append(id, { type: "session_status", status: "cancelled" });
@@ -354,6 +408,7 @@ export class SessionManager {
         session.run = null;
       }
       this.clearRefresh(session);
+      this.proxy?.unregister(session.record.id);
     }
   }
 
@@ -441,6 +496,9 @@ export class SessionManager {
         session.run = null;
         session.pendingApprovals.clear();
         session.pendingQuestions.clear();
+        // Only the dead harness held this session's proxy key, so the route has no legitimate user
+        // left; the next message rebuilds it along with the run.
+        this.proxy?.unregister(id);
         if (failedRun) {
           void failedRun.stop().catch(() => undefined);
         }

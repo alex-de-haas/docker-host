@@ -5,6 +5,7 @@ import type { HarnessAdapter } from "./harness/adapter.js";
 import { MAX_SYSTEM_PROMPT_CHARS, type SettingsStore } from "./settings/store.js";
 import { renderSettingsPage } from "./settings/page.js";
 import type { ProviderDirectory } from "./settings/providers.js";
+import type { McpProxy } from "./mcp/proxy.js";
 
 // Plain node:http — the API is a handful of JSON routes plus one SSE stream; a framework would be
 // the largest dependency in the app for no gain.
@@ -22,9 +23,10 @@ export function createGatewayServer(
   adapter: HarnessAdapter,
   settings: SettingsStore | null = null,
   providers: ProviderDirectory | null = null,
+  proxy: McpProxy | null = null,
 ): Server {
   return createServer((request, response) => {
-    void route(request, response, manager, adapter, settings, providers).catch((error) => {
+    void route(request, response, manager, adapter, settings, providers, proxy).catch((error) => {
       if (error instanceof SessionNotFoundError) {
         sendJson(response, 404, { code: "session_not_found", message: error.message });
         return;
@@ -52,6 +54,7 @@ async function route(
   adapter: HarnessAdapter,
   settings: SettingsStore | null,
   providers: ProviderDirectory | null,
+  proxy: McpProxy | null,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", "http://gateway.local");
   const method = request.method ?? "GET";
@@ -59,6 +62,13 @@ async function route(
 
   if (method === "OPTIONS") {
     response.writeHead(204).end();
+    return;
+  }
+
+  // Before the operator gate, and deliberately outside /api: the per-session MCP proxy authenticates
+  // with a session key held by the harness, not with an operator's delegated token, and it is bound
+  // to loopback. Its own handler enforces both (mcp/proxy.ts).
+  if (proxy && (await proxy.handle(request, response, url.pathname))) {
     return;
   }
 
