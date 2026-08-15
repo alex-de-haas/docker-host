@@ -200,8 +200,8 @@ bodies; log statements reference key names at most.
   write-through cache serves reads when Core is briefly unavailable and stays
   consistent through its own writes.
 - [x] `docs/features/` documentation describes only implemented behavior;
-  `core-api/feature.md` lists the endpoints; the `hosty-app-sdk` second-wave
-  inventory includes the clients.
+  `core-api/feature.md` lists the endpoints; `hosty-app-sdk/feature.md` documents
+  the clients.
 
 ## Deliverables
 
@@ -230,7 +230,7 @@ bodies; log statements reference key names at most.
   [repository release model](../features/repository-release-model/feature.md).
 - [x] `docs/features/app-secrets-store.md` describing implemented behavior;
   `docs/root.md` index updated (ideas entry annotated, features entry added,
-  this plan marked Implemented); `core-api/feature.md` and `hosty-app-sdk` updated.
+  this plan marked Implemented); `core-api/feature.md` and `hosty-app-sdk/feature.md` updated.
 - [x] Notify the first consumer: media-server platform request #15 flips to
   Implemented; its Trakt plan drops the fallback encryption-key design.
 - [x] One platform **minor** version bump in `Directory.Build.props`
@@ -311,7 +311,7 @@ with the feature. Ratified 2026-07-22.
 ### Phase 3: Documentation and Release
 
 - [x] Feature doc, `docs/root.md` index updates, `core-api/feature.md`,
-  `hosty-app-sdk` second-wave inventory.
+  `hosty-app-sdk/feature.md`.
 - [x] media-server request #15 status flip and Trakt-plan fallback removal
   (separate repo).
 - [x] Platform minor version bump in the shipping change.

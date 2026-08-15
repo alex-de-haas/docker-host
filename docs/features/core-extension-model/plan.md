@@ -12,8 +12,9 @@ delivery vehicle.
 
 Make platform capabilities replaceable, optional, or third-party-suppliable without growing the Core
 kernel: telemetry storage, notification delivery channels, catalog/marketplace logic, additional
-sign-in methods, backup targets. Today every such capability is either compiled into Core or wired to a
-hardcoded well-known app id.
+sign-in methods, backup targets. Today such a capability is either compiled into Core, or reached
+through the one narrow seam that exists — a `provides` slot that selects Core-side behavior (see
+Current Behavior) — and never through a contract Core calls.
 
 Core is Native AOT, so in-process plugin loading (`AssemblyLoadContext`, MEF) is impossible by
 construction. That constraint points at the better architecture anyway: extensions run out-of-process,
@@ -29,10 +30,23 @@ authentication.
 
 ## Current Behavior
 
-- System apps have no first-class model. They are identified by well-known ids
-  (`CollectorBootstrap.AppId = "hosty.telemetry"`); the `app.0.1` manifest has no `role`/`system`
-  field. The existing manifest `capabilities` field is a lifecycle-affordance list (`open`, `update`,
-  `restart`, …), not a grant or contract declaration.
+- **Ownership has a manifest field.** `app.0.1` carries a top-level `role`, validated to exactly
+  `"system"` and projected onto `AppRecord.System` at install; `shell`, `marketplace`, `telemetry`,
+  and `ai-gateway` all declare it. It governs who may see and reach the app, not whether it can be
+  uninstalled ([removable-system-apps](../removable-system-apps/feature.md)).
+- **A capability axis exists, but Core-side only.** The manifest's top-level `provides` is a list of
+  kebab slot tokens, shape-validated with unknown slots deliberately allowed so a manifest may name a
+  slot a newer Core understands. Core keys two things off a slot it knows (`PlatformCapabilities`):
+  pre-start provisioning, and autostart priority. The registry holds exactly one slot today —
+  `otlp-collector`, provisioned by `CollectorBootstrap` and started before its exporters — and
+  `apps/telemetry` is its only declarant. Because the trigger is the slot rather than an app id, a
+  third-party app declaring it gets the same treatment, which is the piece of this model that already
+  works.
+- **What `provides` is not.** It selects Core-side behavior; it never routes a call *to* the app,
+  carries no version, declares no cardinality, and passes through no operator consent of its own.
+  There is no `requires` counterpart for scope requests. The manifest `capabilities` field remains a
+  lifecycle-affordance list (`open`, `update`, `restart`, …), and `interfaces` (a draft `app.0.1`
+  extension) is discovery metadata other components resolve, not a contract Core invokes.
 - Marketplace runs as a read-only system app with **zero Core scopes**, using only generic app-token
   endpoints (installed-apps, app-directory roster). It is live proof that a real extension can need no
   contract at all — just the ordinary API surface.
@@ -107,8 +121,9 @@ flowchart LR
    — possibly none. Core does not model the app's purpose at all. Marketplace is the canonical example:
    it serves its own catalog data and reads two generic app-token endpoints; stopping it removes
    discovery and nothing else.
-2. **Driver contracts (Core calls the app, request/response).** The manifest declares
-   `provides: [{ contract, version, endpoint }]`. Core keeps a capability registry mapping contract →
+2. **Driver contracts (Core calls the app, request/response).** Manifest entries grow from today's
+   flat slot tokens into `provides: [{ contract, version, endpoint }]`. Core keeps a capability
+   registry mapping contract →
    app → endpoint; endpoints resolve live from `AppRecord.Endpoints` at call time (literal IPv4, never
    `localhost`). Candidate contracts: login method, notification delivery channel, backup target.
    Runtime adapters stay in Core: they need docker.sock-level privileges.
@@ -144,9 +159,11 @@ flowchart TB
 
 Cross-cutting rules:
 
-- **Manifest.** Two symmetric sections when needed: `provides` (contracts the app implements) and
-  `requires` (control-plane scopes the app requests). An app that only serves its own read-only API
-  declares neither. Naming must avoid the existing lifecycle `capabilities` field.
+- **Manifest.** `provides` gains structure — a contract identifier, a version, and the endpoint key
+  Core resolves to call it — while today's bare slot tokens keep working, since Core already ignores
+  slots it does not know. `requires` is new: the control-plane scopes an app asks for. An app that
+  only serves its own read-only API declares neither. Both stay distinct from the lifecycle
+  `capabilities` field, which is unrelated.
 - **Trust.** `provides`/`requires` declarations are inert until the operator explicitly confirms them at
   install review, and an update that **changes** these declarations re-enters review — a harmless app
   must not grow into a login method through a minor version bump. Catalog signing can strengthen this

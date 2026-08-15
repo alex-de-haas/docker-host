@@ -187,8 +187,10 @@ stream's semantics.
   registered in DI in `HostyCoreApplication`, and the endpoints are mapped like `AppBackupEndpoints`.
 - Retention (`NotificationRetentionScheduler`, mirroring `AppBackupRetentionScheduler`) runs after
   startup and periodically. Per recipient: **all unread records are kept**; read records are dropped
-  once read more than 30 days ago (the cutoff applies to `ReadAt`, not `CreatedAt`), and the remainder
-  is capped so the user's total stays at 100 — unread first, newest read next. A pass that pruned
+  once read more than 30 days ago (the cutoff applies to `ReadAt`, not `CreatedAt`), and the survivors
+  fill whatever is left of a 100-record budget after the unread ones are counted, newest first. The
+  budget therefore bounds *retained read* records, not the inbox: a recipient holding more than 100
+  unread records keeps every one of them and retains no read ones at all. A pass that pruned
   anything emits a `notification.retention.cleanup` audit with counts.
 - Dedupe: a publish is reported `deduplicated` and creates nothing when an **unread** record with the
   same `(source, recipientUserId, dedupeKey)` already exists.
