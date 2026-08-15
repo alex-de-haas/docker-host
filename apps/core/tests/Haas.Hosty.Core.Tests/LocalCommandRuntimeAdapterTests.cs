@@ -345,9 +345,15 @@ public sealed class LocalCommandRuntimeAdapterTests
 
             var running = registry.Get("com.example.app", "app");
             Assert.NotNull(running);
-            using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+            // Poll HasExited instead of awaiting WaitForExitAsync: that also waits for the redirected
+            // output to reach EOF, and the descendant spawned above holds Core's inherited pipe handles
+            // until the job kills it. What this step is about is the recorded root being gone.
+            using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20)))
             {
-                await running!.Process.WaitForExitAsync(timeout.Token);
+                while (!running!.Process.HasExited)
+                {
+                    await Task.Delay(50, timeout.Token);
+                }
             }
 
             Assert.False(child.HasExited);
