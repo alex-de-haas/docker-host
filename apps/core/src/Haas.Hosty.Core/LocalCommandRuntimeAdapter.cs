@@ -98,8 +98,21 @@ internal sealed class LocalCommandRuntimeAdapter(
 
                 EnsureDynamicRangePortsStillAvailable(service.Key, servicePorts[service.Key], logger);
 
-                var (startInfo, processGroup) = CreateShellStartInfo(service.Runtime.Command, workingDirectory);
-                InjectEnvironment(startInfo, context, service, endpoints, servicePorts);
+                System.Diagnostics.ProcessStartInfo startInfo;
+                bool processGroup;
+                WindowsProcessControl.WindowsKillOnCloseJob? windowsJob = null;
+                try
+                {
+                    (startInfo, processGroup, windowsJob) = CreateShellStartInfo(service.Runtime.Command, workingDirectory);
+                    InjectEnvironment(startInfo, context, service, endpoints, servicePorts);
+                }
+                catch
+                {
+                    windowsJob?.Dispose();
+                    logWriter.Dispose();
+                    throw;
+                }
+
                 var process = new System.Diagnostics.Process
                 {
                     StartInfo = startInfo,
@@ -127,14 +140,18 @@ internal sealed class LocalCommandRuntimeAdapter(
                 }
                 catch
                 {
+                    windowsJob?.Dispose();
                     logWriter.Dispose();
                     process.Dispose();
                     throw;
                 }
 
-                registry.Set(context.App.Id, service.Key, new LocalCommandProcess(process, logPath, workingDirectory, servicePorts[service.Key], processGroup));
-                await WritePidFileAsync(context, service.Key, process, processGroup, cancellationToken);
+                registry.Set(
+                    context.App.Id,
+                    service.Key,
+                    new LocalCommandProcess(process, logPath, workingDirectory, servicePorts[service.Key], processGroup, windowsJob));
                 startedServices.Add(service.Key);
+                await WritePidFileAsync(context, service.Key, process, processGroup, cancellationToken);
                 await Task.Delay(250, cancellationToken);
                 if (process.HasExited)
                 {
@@ -174,9 +191,11 @@ internal sealed class LocalCommandRuntimeAdapter(
         }
 
         logWriter.TryWriteLine($"[hosty] setup: {setup}");
-        // Setup is short-lived and killed with entireProcessTree on cancel, so it does not need the
-        // group-leader pidfile the long-running command gets; the group flag is discarded here.
-        var (startInfo, _) = CreateShellStartInfo(setup, workingDirectory);
+        // Setup is short-lived and has no pidfile. Its temporary Windows job is still important: npm
+        // may create the same fast-changing process tree as a long-running command, and disposing the
+        // job after setup prevents a background descendant from escaping setup completion/cancellation.
+        var (startInfo, _, windowsJob) = CreateShellStartInfo(setup, workingDirectory);
+        using var setupWindowsJob = windowsJob;
         // Setup sees the same environment as `command`; the endpoints list is throwaway here so the
         // real start remains the single source of truth for recorded endpoints.
         InjectEnvironment(startInfo, context, service, [], servicePorts);
@@ -230,14 +249,20 @@ internal sealed class LocalCommandRuntimeAdapter(
         }
         catch
         {
-            // Never leave the setup process orphaned on cancellation. Kill can race the process's own
-            // exit (InvalidOperationException) or be denied (Win32Exception); swallow so the original
-            // cancellation/failure exception is the one that propagates.
+            // Never leave the setup process orphaned on cancellation. The Windows job closes the
+            // traversal race; the other paths retain Process.Kill as their best-effort fallback.
             if (!process.HasExited)
             {
                 try
                 {
-                    process.Kill(entireProcessTree: true);
+                    if (setupWindowsJob is not null)
+                    {
+                        await setupWindowsJob.TerminateAndWaitAsync(CancellationToken.None);
+                    }
+                    else
+                    {
+                        process.Kill(entireProcessTree: true);
+                    }
                 }
                 catch
                 {
@@ -420,12 +445,12 @@ internal sealed class LocalCommandRuntimeAdapter(
         return new HealthProbeTarget(healthcheck.Type, "127.0.0.1", hostPort, path, timeout);
     }
 
-    // Builds the start info for a shell command and reports whether the process is a reclaimable group
-    // leader. When the setsid shim is available (non-Windows + a resolved shim path), Core re-execs
-    // itself as the group leader instead of spawning /bin/sh directly; the shim then launches the shell
-    // inheriting these same stdio pipes, so log capture is unchanged. A null shim path (dll-hosted run,
-    // Windows, or tests) falls back to the direct spawn with no group tracking.
-    private (System.Diagnostics.ProcessStartInfo StartInfo, bool ProcessGroup) CreateShellStartInfo(string command, string workingDirectory)
+    // Builds the start info plus the platform-owned process-tree boundary. Published Core re-execs its
+    // hidden shim before the platform shell: on POSIX the shim becomes a process-group leader; on
+    // Windows it joins a pre-created kill-on-close job before cmd.exe can create npm/tsx/node children.
+    // A null shim path (dll-hosted run or tests) retains the direct-spawn fallback.
+    private (System.Diagnostics.ProcessStartInfo StartInfo, bool ProcessGroup, WindowsProcessControl.WindowsKillOnCloseJob? WindowsJob)
+        CreateShellStartInfo(string command, string workingDirectory)
     {
         var startInfo = new System.Diagnostics.ProcessStartInfo
         {
@@ -437,10 +462,20 @@ internal sealed class LocalCommandRuntimeAdapter(
 
         if (OperatingSystem.IsWindows())
         {
+            if (shim?.ShimPath is { } windowsShimPath)
+            {
+                var windowsJob = WindowsProcessControl.CreateKillOnCloseJob();
+                startInfo.FileName = windowsShimPath;
+                startInfo.ArgumentList.Add(LocalCommandShim.Verb);
+                startInfo.ArgumentList.Add(windowsJob.Name);
+                startInfo.ArgumentList.Add(command);
+                return (startInfo, false, windowsJob);
+            }
+
             startInfo.FileName = "cmd.exe";
             startInfo.ArgumentList.Add("/c");
             startInfo.ArgumentList.Add(command);
-            return (startInfo, false);
+            return (startInfo, false, null);
         }
 
         if (shim?.ShimPath is { } shimPath)
@@ -448,13 +483,13 @@ internal sealed class LocalCommandRuntimeAdapter(
             startInfo.FileName = shimPath;
             startInfo.ArgumentList.Add(LocalCommandShim.Verb);
             startInfo.ArgumentList.Add(command);
-            return (startInfo, true);
+            return (startInfo, true, null);
         }
 
         startInfo.FileName = "/bin/sh";
         startInfo.ArgumentList.Add("-c");
         startInfo.ArgumentList.Add(command);
-        return (startInfo, false);
+        return (startInfo, false, null);
     }
 
     private void InjectEnvironment(
@@ -779,28 +814,45 @@ internal sealed class LocalCommandRuntimeAdapter(
     private async Task StopServiceAsync(string appId, string serviceKey, string appRoot, CancellationToken cancellationToken)
     {
         var running = registry.Remove(appId, serviceKey);
-        if (running is not null && !running.Process.HasExited)
+        if (running is not null)
         {
             try
             {
-                if (running.ProcessGroup && !OperatingSystem.IsWindows())
+                // A Windows job can still contain a live Node descendant after its recorded root has
+                // exited. Terminate it unconditionally; checking only Process.HasExited recreates the
+                // exact orphan that prevents an immediate app restart.
+                if (running.WindowsJob is not null)
+                {
+                    await running.WindowsJob.TerminateAndWaitAsync(cancellationToken);
+                    // KILL_ON_JOB_CLOSE is the fallback if explicit termination raced assignment or
+                    // was rejected. Dispose before waiting so no surviving descendant can hold the
+                    // recorded app port while StopAsync returns.
+                    running.WindowsJob.Dispose();
+                }
+                else if (!running.Process.HasExited && running.ProcessGroup && !OperatingSystem.IsWindows())
                 {
                     UnixProcessControl.TryKillProcessGroup(running.Process.Id);
                 }
-                else
+                else if (!running.Process.HasExited)
                 {
                     running.Process.Kill(entireProcessTree: true);
                 }
 
-                await running.Process.WaitForExitAsync(cancellationToken);
+                if (!running.Process.HasExited)
+                {
+                    await running.Process.WaitForExitAsync(cancellationToken);
+                }
             }
             catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
             {
                 // The process exited between the HasExited check and the kill — the outcome we wanted.
             }
+            finally
+            {
+                running.WindowsJob?.Dispose();
+                running.Process.Dispose();
+            }
         }
-
-        running?.Process.Dispose();
 
         // Always run the pidfile fallback (best-effort): it reaps a tree an earlier (crashed) Core left
         // behind that this instance never had a registry handle for, and deletes the pidfile on a clean
@@ -862,12 +914,12 @@ internal sealed record LocalCommandProcess(
     string LogPath,
     string WorkingDirectory,
     IReadOnlyDictionary<string, int> Ports,
-    bool ProcessGroup);
+    bool ProcessGroup,
+    WindowsProcessControl.WindowsKillOnCloseJob? WindowsJob);
 
-// The resolved path Core re-execs to spawn a localCommand root as a setsid group leader, or null when
-// the shim is unavailable (Windows / dll-hosted run) so the adapter falls back to a direct spawn. A
-// singleton built once at startup from LocalCommandShim.ResolveShimPath(); optional so tests (and any
-// unregistered path) get the direct-spawn default.
+// The resolved Core executable path re-execed as the localCommand shim: a setsid group leader on POSIX
+// and the first member of a kill-on-close job on Windows. Null for dll-hosted runs, where the adapter
+// falls back to a direct spawn. Optional so tests (and any unregistered path) get that fallback.
 internal sealed record LocalCommandShimOptions(string? ShimPath);
 
 internal sealed class LocalCommandLogWriter(TextWriter writer) : IDisposable

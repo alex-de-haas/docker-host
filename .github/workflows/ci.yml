@@ -350,6 +350,29 @@ jobs:
       - name: Publish Core (Native AOT)
         run: npm run core:aot
 
+  core-windows-process-control:
+    name: Core (Windows process control)
+    runs-on: windows-latest
+    needs: changes
+    if: needs.changes.outputs.core == 'true'
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      # The main Core gate runs on Linux. Keep this Windows lane narrow: it exists for the native
+      # handle/job-object behaviors that a Linux run necessarily skips, including the ai-gateway
+      # cmd -> npm -> tsx -> node shutdown regression.
+      - name: Test Windows process control
+        run: >-
+          dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj
+          --filter
+          "FullyQualifiedName~WindowsProcessControlTests|FullyQualifiedName~StopAsync_OnWindowsKillsJobDescendantAfterRootExited"
+
   cli:
     name: CLI
     runs-on: ubuntu-latest

@@ -101,8 +101,9 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<RuntimePortAllocator>();
         builder.Services.AddSingleton<CoreLifecycleService>();
         builder.Services.AddSingleton<LocalCommandProcessRegistry>();
-        // Resolve the setsid shim path once so the localCommand adapter spawns reclaimable process-group
-        // leaders. Null (Windows / dll-hosted run) makes the adapter fall back to a direct /bin/sh spawn.
+        // Resolve the re-exec shim path once. Published Core uses it to place localCommand trees inside
+        // a POSIX process group or a Windows kill-on-close job before the platform shell starts.
+        // A dll-hosted run has no re-executable Core path and retains the direct-spawn fallback.
         builder.Services.AddSingleton(new LocalCommandShimOptions(LocalCommandShim.ResolveShimPath()));
         builder.Services.AddSingleton<IHealthProbe, NetworkHealthProbe>();
         // Shared docker CLI runner so the runtime adapter and the telemetry scrape loop go through one

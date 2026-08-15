@@ -277,6 +277,96 @@ public sealed class LocalCommandRuntimeAdapterTests
     }
 
     [Fact]
+    public async Task StopAsync_OnWindowsKillsJobDescendantAfterRootExited()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var workRoot = CreateTempDirectory();
+        System.Diagnostics.Process? child = null;
+        LocalCommandRuntimeAdapter? adapter = null;
+        RuntimeLifecycleContext? context = null;
+        try
+        {
+            var childPidPath = Path.Combine(workRoot, "child.pid");
+            var escapedPidPath = childPidPath.Replace("'", "''", StringComparison.Ordinal);
+            var scriptPath = Path.Combine(workRoot, "spawn-child.cmd");
+            await File.WriteAllTextAsync(
+                scriptPath,
+                $"""
+                @echo off
+                start "" /b powershell.exe -NoProfile -NonInteractive -Command "Set-Content -LiteralPath '{escapedPidPath}' -Value $PID; Start-Sleep -Seconds 30" >nul 2>&1
+                powershell.exe -NoProfile -NonInteractive -Command "Start-Sleep -Seconds 2"
+                """);
+
+            var coreExecutable = Path.Combine(Path.GetDirectoryName(typeof(LocalCommandShim).Assembly.Location)!, "hosty-core.exe");
+            Assert.True(File.Exists(coreExecutable), $"Core apphost was not copied to the test output: {coreExecutable}");
+
+            LocalCommandProcessRegistry registry;
+            (adapter, registry, context) = CreateSetupScenario(
+                workRoot,
+                setup: null,
+                command: $"\"{scriptPath}\"",
+                shim: new LocalCommandShimOptions(coreExecutable));
+
+            var started = await adapter.StartAsync(context);
+            Assert.Equal("running", started.RuntimeState);
+
+            using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+            {
+                while (!File.Exists(childPidPath))
+                {
+                    await Task.Delay(50, timeout.Token);
+                }
+            }
+
+            var childPid = int.Parse(
+                (await File.ReadAllTextAsync(childPidPath)).Trim(),
+                System.Globalization.CultureInfo.InvariantCulture);
+            child = System.Diagnostics.Process.GetProcessById(childPid);
+
+            var running = registry.Get("com.example.app", "app");
+            Assert.NotNull(running);
+            using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+            {
+                await running!.Process.WaitForExitAsync(timeout.Token);
+            }
+
+            Assert.False(child.HasExited);
+
+            await adapter.StopAsync(context);
+
+            using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+            {
+                await child.WaitForExitAsync(timeout.Token);
+            }
+            Assert.True(child.HasExited);
+        }
+        finally
+        {
+            if (adapter is not null && context is not null)
+            {
+                try
+                {
+                    await adapter.StopAsync(context);
+                }
+                catch
+                {
+                }
+            }
+            if (child is not null && !child.HasExited)
+            {
+                child.Kill();
+            }
+
+            child?.Dispose();
+            TryDeleteDirectory(workRoot);
+        }
+    }
+
+    [Fact]
     public async Task GetLogsAsync_ReadsTailWhileServiceHoldsLogOpenForAppend()
     {
         // Not Windows-gated on purpose: the sharing violation only reproduces on Windows (CI is
@@ -364,13 +454,18 @@ public sealed class LocalCommandRuntimeAdapterTests
     }
 
     private static (LocalCommandRuntimeAdapter Adapter, LocalCommandProcessRegistry Registry, RuntimeLifecycleContext Context) CreateSetupScenario(
-        string workRoot, string? setup, string command, bool cacheEnabled = false)
+        string workRoot,
+        string? setup,
+        string command,
+        bool cacheEnabled = false,
+        LocalCommandShimOptions? shim = null)
     {
         var registry = new LocalCommandProcessRegistry();
         var adapter = new LocalCommandRuntimeAdapter(
             CreateConfig(corePort: 7070, listenUrl: "http://localhost:7070", corePublicOrigin: null),
             registry,
-            new AppServiceTokenService(new AppServiceSigningKey("test-control-secret"u8.ToArray())));
+            new AppServiceTokenService(new AppServiceSigningKey("test-control-secret"u8.ToArray())),
+            shim: shim);
 
         var service = new RuntimeSelectedService(
             "app",
