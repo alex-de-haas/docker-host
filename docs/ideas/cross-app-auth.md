@@ -76,7 +76,7 @@ three .NET.
   Core can answer "does app X declare an edge to app Y" without new state.
 - **The SDK has a decided validation pattern** to copy verbatim: online against Core,
   never local; 30s positive cache clamped, negatives never cached; classify by HTTP
-  status ([hosty-app-sdk.md](hosty-app-sdk.md), decisions 1 and 9–10).
+  status ([hosty-app-sdk](../features/hosty-app-sdk/feature.md#classification-and-caching)).
 - **Known limits of the token, stated openly:** no expiry, no per-install nonce — a
   leaked token is valid until the signing key rotates (which recreates every app; the
   #220 adopt-vs-recreate machinery already handles that), and a token for an
@@ -127,7 +127,7 @@ No new credential is minted, no new env is injected, no lifecycle changes:
 2. **SDK:** provider middleware + consumer handler in `HostySdk.App` (.NET first — every
    edge today is .NET on both sides; the TS server-slice twin waits for a TS provider to
    exist). This folds naturally into the Second Wave's Core-capability-client area
-   ([hosty-app-sdk.md](hosty-app-sdk.md)), same package, no new distribution channel.
+   ([hosty-app-sdk plan](../features/hosty-app-sdk/plan.md)), same package, no new distribution channel.
 3. **torrent-engine:** adopt the middleware. (The interim `CONTROL_API_TOKEN` was already
    removed unused in 0.5.0, torrent-engine#22 — no legacy-header window is needed, since
    nothing ever sent it.)
@@ -192,8 +192,8 @@ was resolved 2026-07-20 by deleting the token instead: torrent-engine#22.)
 
 - [cross-app-dependencies.md](../features/cross-app-dependencies/feature.md) — the ratified
   no-auth decision this note revisits, and the discovery contract it builds on.
-- [hosty-app-sdk.md](hosty-app-sdk.md) — trust model (decision 1), online-validation rule
-  and cache numbers (decisions 9–10), Second Wave packaging.
+- [hosty-app-sdk](../features/hosty-app-sdk/feature.md) — trust model, online-validation rule
+  and cache numbers; Second Wave packaging in its [plan](../features/hosty-app-sdk/plan.md).
 - [torrent-engine#22](https://github.com/alex-de-haas/torrent-engine/pull/22) — removal
   of the unused interim `CONTROL_API_TOKEN` (0.5.0); the engine's README keeps the 0.4.x
   history as the motivating precedent for this note.

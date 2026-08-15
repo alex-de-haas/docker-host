@@ -21,7 +21,7 @@ The tension is smaller than it looks, because most of the separation already shi
 
 - Bootstrap installs produce **ordinary app records** — same manifest, same lifecycle, same
   reviewed update flow. Distribution origin is provenance, not privilege ([removable-system-apps](../features/removable-system-apps/feature.md),
-  [capabilities are not lifecycle grants](core-extension-model.md)).
+  [capabilities are not lifecycle grants](../features/core-extension-model/plan.md)).
 - Core already copes with **no UI client at all**: the Shell origin resolves from the installed app
   record, and a null origin is a valid answer every caller must handle
   (`ShellPublicOriginResolver`, shipped with "Shell config belongs to Shell").
@@ -40,8 +40,8 @@ What remains is exactly one hardcode and one unowned decision:
    to pick without context (login continuation, bootstrap completion, deep links).
 
 This document defines the model that closes both gaps. It complements
-[core-extension-model.md](core-extension-model.md) (this is a concrete instance of a multi-instance
-contract with a designated default) and [hosty-app-sdk.md](hosty-app-sdk.md) (whose embedder
+[core-extension-model](../features/core-extension-model/plan.md) (this is a concrete instance of a multi-instance
+contract with a designated default) and [hosty-app-sdk](../features/hosty-app-sdk/feature.md) (whose embedder
 contract is the behavioral half of what a shell must implement).
 
 ## Current Architecture Findings
@@ -148,14 +148,14 @@ contract is the behavioral half of what a shell must implement).
 6. **The UI-client contract is small and explicit.** Claiming `provides: ["ui-client"]` commits an
    app to:
    - a public web endpoint (key `web` preferred) — the origin Core resolves;
-   - the **embedder contract** from [hosty-app-sdk.md](hosty-app-sdk.md): embedding app UIs,
+   - the **embedder contract** from [hosty-app-sdk](../features/hosty-app-sdk/feature.md#the-embedder-contract): embedding app UIs,
      handling `hosty:auth-required`, launch modes;
    - two **well-known routes**, which are the only URL shapes Core ever mints:
      - `/` — landing target for login continuation without `returnTo` and for bootstrap completion;
      - `/apps/{appId}` — the deep link Core hands to CLI/agents to open an app.
 
    Nothing else is promised. A shell's internal routing, features, and design are its own. This is
-   the `ui-client` contract in [core-extension-model.md](core-extension-model.md) terms:
+   the `ui-client` contract in [core-extension-model](../features/core-extension-model/plan.md) terms:
    multi-instance cardinality with a designated default.
 
    **The contract is not enforced by manifest validation.** `ValidateProvides` is deliberately
@@ -208,5 +208,5 @@ contract is the behavioral half of what a shell must implement).
 - **Notification links.** The notifications design will mint URLs against the primary UI via the
   same resolver; nothing extra to decide here.
 - **Capability-slot conflict UX.** What Marketplace shows when installing a second app for a
-  single-instance slot is a [core-extension-model.md](core-extension-model.md) question;
+  single-instance slot is a [core-extension-model](../features/core-extension-model/plan.md) question;
   `ui-client` is multi-instance and does not hit it.

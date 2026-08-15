@@ -11,7 +11,7 @@ External-provider provisioning and password-reset delivery are intentionally not
 ## Ideas
 
 - Add OIDC login that can provision or update external users through provider role mappings.
-- Add app-provided additional login methods (`hosty.auth.method@1`) that link an external identity (e.g. Google) to an existing local user and then offer that method at sign-in, without replacing local login or moving session/role ownership out of Core; see [Core Extension Model](core-extension-model.md).
+- Add app-provided additional login methods (`hosty.auth.method@1`) that link an external identity (e.g. Google) to an existing local user and then offer that method at sign-in, without replacing local login or moving session/role ownership out of Core; see [Core Extension Model](../features/core-extension-model/plan.md).
 - Expand trusted-proxy assertions so they can provision or update external users through trusted proxy role mappings.
 - Add password-reset invitations or another explicit reset flow for existing local users without password credentials.
 - Add password reset email delivery when Hosty has an email delivery model.

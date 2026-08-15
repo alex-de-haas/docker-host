@@ -14,7 +14,7 @@ The fix is deliberately small. Core stays a **mandatory root workload launched b
 - honest failure reporting when the dev tree does not build;
 - a small Shell surface — at the existing sidebar version block, not an app card — showing the mode, an update indicator, and switch/restart/update actions.
 
-This document records the design agreed on 2026-07-12 and the implementation plan. It complements [core-extension-model.md](core-extension-model.md): that document defines how *extensions* relate to Core; this one defines how *Core itself* is launched and managed.
+This document records the design agreed on 2026-07-12 and the implementation plan. It complements [core-extension-model](../features/core-extension-model/plan.md): that document defines how *extensions* relate to Core; this one defines how *Core itself* is launched and managed.
 
 ## Current Architecture Findings
 

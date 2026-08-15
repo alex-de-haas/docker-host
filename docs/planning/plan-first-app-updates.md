@@ -318,7 +318,7 @@ live verification run on the owner's install (below).
   `updateStatusInvalidations`.
 - PR #206 — apply consumes the cached confirmed plan (the contract this design builds on).
 - PR #183 — update-status candidate refetch for non-feed apps.
-- `docs/ideas/notifications.md` — notifications are the completion transport.
+- `docs/features/notifications/feature.md` — notifications are the completion transport.
 
 ## Notes
 

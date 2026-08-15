@@ -91,7 +91,7 @@ link one open tab holds Kestrel's graceful stop for the full shutdown budget and
 runtime-app stop sweep behind it.
 
 Shell is the only subscriber. There is no app-facing subscription or producer endpoint; apps neither
-read nor write the bus. [core-extension-model](../../ideas/core-extension-model.md) is where that
+read nor write the bus. [core-extension-model](../core-extension-model/plan.md) is where that
 possibility is tracked, and its durable-log design would attach to this hub as one more subscriber
 rather than change what exists here.
 

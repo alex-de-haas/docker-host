@@ -24,8 +24,8 @@ public static class HostyAppServiceCollectionExtensions
     /// <summary>
     /// Wires the Hosty app auth stack: the Core-backed identity validator behind the
     /// platform-decided 30s positive cache, an <c>IHttpClientFactory</c> client aimed at
-    /// Core, and the <c>Hosty</c> authentication scheme. Per the trust model (decision 1 in
-    /// docs/ideas/hosty-app-sdk.md) this exists for services with their own public
+    /// Core, and the <c>Hosty</c> authentication scheme. Per the trust model in
+    /// docs/features/hosty-app-sdk/feature.md this exists for services with their own public
     /// endpoints; private intra-app endpoints keep trusting the per-app network.
     /// </summary>
     public static AuthenticationBuilder AddHostyAppAuthentication(

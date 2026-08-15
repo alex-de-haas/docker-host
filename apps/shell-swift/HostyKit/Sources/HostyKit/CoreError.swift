@@ -9,7 +9,7 @@ public struct CoreErrorPayload: Hashable, Sendable, Codable {
 /// A failure talking to Core.
 ///
 /// The three authenticated statuses mean genuinely different things and the client must not blur them
-/// (see docs/ideas/auth-session-lifecycle.md):
+/// (see docs/features/auth-session-lifecycle/feature.md):
 ///
 /// - **401** — the session is gone, expired, or revoked. Recoverable: sign in again.
 /// - **403** — the session is fine and the answer is still no (not an administrator, disabled account, a

@@ -163,6 +163,6 @@ a missing secret as a defined reconnect-required state, not an error.
 - [Core API](../features/core-api/feature.md)
 - [Cross-app auth](cross-app-auth.md) — the precedent for "platform gap →
   per-app hand-rolled security"
-- [Hosty App SDK](hosty-app-sdk.md)
+- [Hosty App SDK](../features/hosty-app-sdk/feature.md)
 - [media-server platform request #15](https://github.com/alex-de-haas/media-server/blob/main/docs/features/hosty-platform-requests.md)
 - [media-server Trakt plan](https://github.com/alex-de-haas/media-server/blob/main/docs/planning/trakt-watched-state-sync.md)

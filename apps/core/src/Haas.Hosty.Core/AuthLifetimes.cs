@@ -9,7 +9,7 @@ namespace Haas.Hosty.Core;
 // CoreSettings.cs and docs/ideas/core-settings.md. Because every revalidation re-checks role /
 // assignment / disabled online and grants are instantly revocable server-side, the defaults are days,
 // not hours — short TTLs would recreate the daily-login problem without adding real security. System
-// apps (all host.admin) get a tighter window than regular apps. See docs/ideas/auth-session-lifecycle.md.
+// apps (all host.admin) get a tighter window than regular apps. See docs/features/auth-session-lifecycle/feature.md.
 internal sealed record AuthLifetimes(
     TimeSpan AppGrantIdle,
     TimeSpan AppGrantAbsolute,

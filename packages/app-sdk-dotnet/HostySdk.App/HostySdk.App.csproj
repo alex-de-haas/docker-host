@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <!-- Exception to the Directory.Build.props no-Version rule: that rule keeps PLATFORM
          components (Core/CLI) in lockstep, while the SDK versions independently like its npm
-         twin @hosty-sdk/app (docs/ideas/hosty-app-sdk.md, decision 13). -->
+         twin @hosty-sdk/app (docs/features/hosty-app-sdk/feature.md, Distribution And Versioning). -->
     <Version>0.3.0</Version>
     <PackageId>HostySdk.App</PackageId>
     <Description>Hosty app auth for .NET services: Core identity revalidation with caching, the Hosty authentication handler, and HOSTY_* options binding.</Description>
