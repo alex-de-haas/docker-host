@@ -1,6 +1,6 @@
 # Hosty MCP Connector
 
-Status: Ready
+Status: Draft
 Created: 2026-08-15
 Updated: 2026-08-15
 
@@ -31,9 +31,9 @@ Written down because these contradict assumptions in the umbrella's design, and 
 the two should know which is current.
 
 - **Clients namespace tools by server themselves.** A tool called `list_apps` on a server named
-  `hosty` arrives as `mcp__hosty__list_apps`. The connector's own `<appKey>__<tool>` scheme therefore
-  produces `mcp__hosty__<appKey>__<tool>` — long, and the app key is buried mid-name. Worth deciding
-  deliberately rather than inheriting.
+  `hosty` arrives as `mcp__hosty__list_apps`, so `<appKey>__<tool>` yields
+  `mcp__hosty__<appKey>__<tool>` — long, with the app key buried mid-name. The exact mapping is an
+  open question below, not a detail: it has to be collision-free.
 - **Tools are deferred behind tool search**, not loaded eagerly into the prompt. That substantially
   weakens the argument for the 60–80 tool threshold and the generic `call_app_tool` fallback: the
   flooding it guards against may not happen. The threshold should be re-derived against a real fleet
@@ -61,16 +61,56 @@ the two should know which is current.
 - [ ] `notifications/tools/list_changed` on a fleet change, from a registry poll.
 - [ ] A stopped app yields a structured `app_stopped` error for that call only; the session and the
       other apps keep working.
-- [ ] Tests: discovery filtering, fan-out with one app timing out, namespacing, per-call token
-      refresh, and the change notification — each with the succeeding half beside it.
+- [ ] **An enforced read-only filter.** External clients stay read-only until token scopes and an
+      audit callback exist — an established boundary in
+      [ai-agent-bridge](../ai-agent-bridge/feature.md). A mutating app tool must be refused by the
+      connector, not merely labelled: `readOnlyHint` and `destructiveHint` are advisory client
+      metadata, and a hostile or careless client ignores them.
+- [ ] **Packaging**: the Claude Code plugin bundling the connector `.mcp.json`, a Hosty skill, and
+      PreToolUse hooks implementing allow-read-only / ask-writes / deny-destructive. Part of the
+      umbrella's step 7 scope, so step 7 cannot be checked off without it.
+- [ ] Tests: discovery filtering, fan-out with one app timing out, namespacing collisions, the
+      read-only refusal, per-call token refresh, and the change notification — each with the
+      succeeding half beside it.
 - [ ] Docs: `feature.md`, umbrella step 7, index.
+
+### Blocked, and unchecked on purpose
+
+- [ ] **Remote-host topology.** Blocked on the prerequisite below; kept here rather than in prose so
+      the local boxes cannot be ticked and the feature reported complete while this is unbuilt.
+- [ ] **A CLI command that spends a saved context** (owned by [access-tokens](../access-tokens/feature.md)).
+      Nothing consumes `hosty login` credentials today, so remote cannot work until it does.
 
 Version outcome: platform minor — a new CLI command **and** a new Core control route. The earlier
 "CLI only" estimate was wrong for the reason recorded in Decisions.
 
-## Decisions
+## Open Questions
 
-All four were open until 2026-08-15; none remain.
+Three were reopened on 2026-08-15 after review: the plan had been set Ready while they were still
+unanswered, which is what Ready is supposed to exclude.
+
+- Question: **Which Hosty user does the control route act as?**
+  Answer: Unresolved, and it is the load-bearing one. The control secret identifies no user, yet a
+  delegated token needs a concrete `sub` and role for the receiving app's access checks — the existing
+  `/control/v1/apps/{appId}/identity` route makes the caller name a user for exactly this reason, and
+  the session route uses the signed-in actor. A non-interactive `hosty mcp` has neither.
+  Options: name the actor in CLI config per context; require `--user` on the command; or bind the
+  local channel to a designated operator identity. Picking one silently would mean the connector
+  either impersonates an arbitrary administrator, or cannot satisfy the visibility test in
+  Verification at all.
+
+- Question: **What is the exact, collision-free tool mapping?**
+  Answer: Unresolved. `ValidateInterfaces` permits multiple keyed `mcp` declarations per app, so the
+  key must cover app *and* interface key, not app alone. Naive sanitizing also collides —
+  `com.example.notes` and `com-example-notes` produce the same string, a bug already found and fixed
+  in the gateway this month. The mapping and its collision tests belong here before implementation.
+
+- Question: **How is read-only enforced, and what happens to a mutating tool?**
+  Answer: Unresolved beyond the deliverable above. Refusing at the connector is clear; what is not is
+  whether a refused tool is hidden from `tools/list` entirely or listed and refused on call. Hiding
+  gives the model no false affordance; listing explains why an obvious capability is unavailable.
+
+### Decided
 
 - **Local topology first; remote is a second phase.** On the same machine the CLI has the trusted
   local control channel and needs no login. For a remote host `hosty login` contexts exist — but
