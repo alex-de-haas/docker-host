@@ -93,6 +93,14 @@ browser holding a human's session.
       the pair matters, since a route that refuses everything looks identical to a working gate.
 - [x] Gateway consumes it: enabled providers reach the harness with a working credential, and the
       settings toggle stops storing a decision nothing executes.
+- [x] Re-mint app credentials when an app-MCP approval is released, not only on a timer. Found live
+      2026-08-15: an approval held nine minutes released a call carrying an expired token although the
+      timer was refreshing correctly, because a call binds its credential when it is raised. A
+      five-minute TTL and a human-speed approval gate are in tension by construction.
+- [ ] **Auto-allow for read-only app-MCP tools.** Every app tool currently raises an approval card,
+      which the live run confirmed. Not fixed here: deciding which app tools may run unprompted needs
+      the tool annotations (`readOnlyHint`) the connector work brings, and guessing from tool names
+      would be exactly the wrong instinct.
 - [x] Docs: `feature.md`, the ai-gateway plan's toggle deliverable closed, index regenerated.
 
 Version outcome: platform minor (new Core API surface), `apps/ai-gateway` minor.

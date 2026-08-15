@@ -147,6 +147,28 @@ export class SessionManager {
    * self-refresh is refused, the credential is dropped and the session continues without app MCP —
    * degraded, not broken, and restored by the operator saying anything at all.
    */
+  /**
+   * Re-mints the gateway's credential and rebuilds the harness's MCP servers. Returns false when the
+   * chain has run out, in which case the caller leaves the session without app MCP rather than
+   * pretending it still has it.
+   */
+  private async refreshMcpServers(session: LiveSession): Promise<boolean> {
+    if (!session.run || !session.credential || !this.exchange?.available) {
+      return false;
+    }
+
+    const renewed = await this.exchange.refreshSelf(session.credential);
+    if (!renewed) {
+      session.credential = null;
+      return false;
+    }
+
+    session.credential = renewed.token;
+    const servers = await this.buildMcpServers(session);
+    await session.run.setMcpServers(servers ?? {}).catch(() => false);
+    return true;
+  }
+
   private scheduleMcpRefresh(id: string): void {
     const session = this.live.get(id);
     if (!session || !this.exchange?.available || session.refreshTimer) {
@@ -184,6 +206,15 @@ export class SessionManager {
     const toolName = session.pendingApprovals.get(approvalId);
     if (!session.run || toolName === undefined) {
       return false;
+    }
+
+    // Re-mint before releasing an approved app-MCP call. The timer alone is not enough: the call was
+    // prepared when the approval was raised, so an operator who thinks for longer than the five-minute
+    // TTL would release a call carrying a dead credential. Observed live on 2026-08-15 — an approval
+    // held nine minutes failed with an authorization error even though the refresh timer had been
+    // running correctly the whole time, because refreshing helps the NEXT call, not the paused one.
+    if (decision === "allow" && toolName.startsWith("mcp__")) {
+      await this.refreshMcpServers(session);
     }
 
     const resolved = session.run.resolveApproval(approvalId, decision, message);

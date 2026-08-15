@@ -65,6 +65,13 @@ never by renewing the branched one, which is exactly what the gateway does.
 - Tokens live five minutes, so they are re-minted **before** they die rather than after a call has
   failed. The gateway self-refreshes its own credential (which is what keeps its right to branch) and
   rebuilds the server list through `setMcpServers`.
+- **Credentials are also re-minted at the moment an app-MCP call is approved.** The timer alone is not
+  enough, and this was found only by running it: a tool call is prepared when its approval is raised,
+  so an operator who thinks for longer than the TTL releases a call carrying a dead token. Observed on
+  2026-08-15 — an approval held for nine minutes failed with an authorization error while the refresh
+  timer had been working correctly the entire time, because refreshing helps the *next* call, not the
+  paused one. A five-minute credential and a gate that waits for a human are in tension by
+  construction; re-minting on release is what resolves it for the case that matters.
 - Past the one-hour chain cap, self-refresh is refused and the credential is dropped. The session
   keeps its host tools and loses app MCP until the operator says anything at all — degraded, not
   broken.
@@ -86,6 +93,13 @@ change waits for the next session.
 - Gateway (vitest): one server per enabled provider each with **its own** token (the audience claim
   is the point); disabled, stopped, URL-less and refused providers all absent; self-refresh asks for
   its own audience; an unreachable Core degrades to no providers rather than throwing.
-- Not yet done: no live run. The exchange has never been exercised against a running gateway with a
-  real provider enabled, and the refresh path has never been observed crossing a real five-minute
-  boundary.
+- Verified live on 2026-08-15 against Core 0.80.0 and gateway 0.8.0 on a running host: the full chain
+  (session token → gateway token → branched app token → a call to demo-app's MCP returning the real
+  domain role), the bounds as pairs (a branched domain-app token refused onward, self-refresh
+  succeeding, branching still allowed after self-refresh), and the audit trail carrying both outcomes.
+  A live session reached demo-app through `mcp__com-haas-demo-app__get_my_app_role`, which the model
+  found via tool search — MCP tools are deferred, not loaded eagerly.
+- Two things that live run exposed and unit tests could not: an app-MCP tool raises an approval card,
+  because MCP tools are not in the harness's auto-allow list; and the expiry-under-approval defect
+  above.
+- Not yet done: the re-mint-on-approval fix has itself not been re-verified live against a long wait.
