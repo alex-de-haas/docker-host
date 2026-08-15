@@ -18,7 +18,7 @@ require a restart). They belong on a Core-owned settings surface, editable from 
 
 ## Decision: emulate the settings *shape*, not app *identity*
 
-Core is the kernel, not an installed app. The [Core Extension Model](core-extension-model.md) makes
+Core is the kernel, not an installed app. The [Core Extension Model](../features/core-extension-model/plan.md) makes
 this load-bearing: sessions/authorization are explicitly *never pluggable*, and
 [core-dev-target.md](core-dev-target.md) already **rejected** giving Core an `app.0.1` manifest
 (Decision 4) or an entry in the Installed Apps list (Decision 5 — an app card drags in
@@ -78,6 +78,6 @@ what it would display (per core-dev-target).
 ## Links
 
 - [Auth session lifecycle](../features/auth-session-lifecycle/feature.md) — where the TTLs are defined.
-- [Core Extension Model](core-extension-model.md) — why Core is the kernel, not an app.
+- [Core Extension Model](../features/core-extension-model/plan.md) — why Core is the kernel, not an app.
 - [Core Launch Target](core-dev-target.md) — the platform panel that hosts this, and the rejected
   Core-as-app-card alternative.
