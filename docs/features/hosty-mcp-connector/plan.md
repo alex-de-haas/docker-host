@@ -72,9 +72,10 @@ Version outcome: platform minor — a new CLI command **and** a new Core control
 
 All four were open until 2026-08-15; none remain.
 
-- **Local topology first; remote is a second phase.** On the same machine the CLI has the trusted local control channel and needs no login. For a
-  remote host `hosty login` contexts exist — but **no CLI command currently spends a saved context**,
-  which is a known gap, so the remote topology cannot work until that is closed.
+- **Local topology first; remote is a second phase.** On the same machine the CLI has the trusted
+  local control channel and needs no login. For a remote host `hosty login` contexts exist — but
+  **no CLI command currently spends a saved context**, which is a known gap, so the remote topology
+  cannot work until that is closed.
   Decision: ship local first, gate remote on that gap. It also keeps the first cut honest — local is
   the case that removes the plaintext token today, and shipping a remote path that cannot authenticate
   would be shipping a promise.
@@ -95,12 +96,13 @@ All four were open until 2026-08-15; none remain.
   This is the same class of blocker the gateway hit, found the same way: by checking rather than by
   reading the design.
 
-- **One server entry per environment.** Already decided in the umbrella — one entry per context (`hosty-local`, `hosty-prod`), so
-  the environment is explicit in every tool name, client policy can differ per server, and failures
-  stay isolated. Restated here only because this plan is where it gets implemented.
+- **One server entry per environment.** Already decided in the umbrella — one entry per context
+  (`hosty-local`, `hosty-prod`), so the environment is explicit in every tool name, client policy can
+  differ per server, and failures stay isolated. Restated here only because this plan is where it
+  gets implemented.
 
-- **No generic-fallback surface in the first cut.** See above — deferred loading may make it unnecessary, and an unnecessary fallback surface is
-  worse than none because it splits the tool contract in two.
+- **No generic-fallback surface in the first cut.** See above — deferred loading may make the
+  tool-count threshold unnecessary.
   Decision: build without it, measure against the real fleet, and add it only if the measurement asks.
   An unnecessary fallback is worse than none: it splits the tool contract in two and every consumer
   then has to handle both shapes forever.
