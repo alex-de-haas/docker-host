@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { isAuthRequiredRedirectError } from "../core-api";
 import { useShellActions, useShellState } from "../shell-context";
 import type { CoreApp, CoreEndpoint, CoreReassignPlan, CoreReassignResult } from "../types";
-import { BusyButton, FactCard, IconButton, InlineError } from "../ui";
+import { FactCard, IconButton, InlineError } from "../ui";
 
 // Highest TCP port; the floor is per-plan (Core reports it) since it depends on what Core may bind.
 const MaxPort = 65535;
@@ -214,9 +214,10 @@ export function PortReassignControl({ app, endpoint }: { app: CoreApp; endpoint:
             <Button type="button" variant="ghost" onClick={() => setOpen(false)} disabled={applying}>
               Cancel
             </Button>
-            <BusyButton type="button" onClick={() => void apply()} busy={applying} disabled={!plan}>
+            <Button type="button" onClick={() => void apply()} disabled={!plan || applying}>
+              {applying && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
               {manual ? "Pin port" : "Reassign port"}
-            </BusyButton>
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -11,7 +11,7 @@ import { derivesPublicOrigins, publishesThroughCloudflareApi } from "../ingress"
 import { buildPublicOriginSettingKey, sanitizeSubdomainLabel } from "../public-origin";
 import { useShellActions, useShellState } from "../shell-context";
 import type { CloudflareAppPublications, CloudflareConnectionStatus, CloudflarePublicationResult, CloudflarePublicationState, CloudflarePublicationSummary, CoreApp, CoreEndpoint } from "../types";
-import { BusyButton, IconButton, InlineError } from "../ui";
+import { IconButton, InlineError } from "../ui";
 
 // What each publication state means for the operator. Core produces every one of these except
 // "not_configured", which is the absence of a publication and never reaches this branch.
@@ -295,30 +295,35 @@ export function PublicOriginControl({ app, endpoint }: { app: CoreApp; endpoint:
                       Re-publishing under the same label is that repair: it re-points the route at the
                       endpoint's current local URL and is idempotent for the hostname and DNS record. */}
                   {publication.state === "origin_drifted" && (
-                    <BusyButton type="button" busy={busy} onClick={() => void publish()}>
+                    <Button type="button" disabled={busy} onClick={() => void publish()}>
+                      {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
                       Reapply
-                    </BusyButton>
+                    </Button>
                   )}
-                  <BusyButton type="button" variant="outline" busy={busy} onClick={() => void unpublish()}>
+                  <Button type="button" variant="outline" disabled={busy} onClick={() => void unpublish()}>
+                    {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
                     Unpublish
-                  </BusyButton>
+                  </Button>
                 </>
               ) : connected ? (
                 <>
                   {conflict && (
-                    <BusyButton type="button" variant="outline" busy={busy} onClick={() => void publish(true)}>
+                    <Button type="button" variant="outline" disabled={busy} onClick={() => void publish(true)}>
+                      {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
                       Adopt and publish
-                    </BusyButton>
+                    </Button>
                   )}
-                  <BusyButton type="button" busy={busy} disabled={!value.trim()} onClick={() => void publish()}>
+                  <Button type="button" disabled={busy || !value.trim()} onClick={() => void publish()}>
+                    {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
                     Publish
-                  </BusyButton>
+                  </Button>
                 </>
               ) : null
             ) : (
-              <BusyButton type="button" busy={busy} onClick={() => void saveSetting()}>
+              <Button type="button" disabled={busy} onClick={() => void saveSetting()}>
+                {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
                 Save
-              </BusyButton>
+              </Button>
             )}
           </DialogFooter>
         </DialogContent>
