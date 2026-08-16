@@ -1,7 +1,7 @@
 "use client";
 
-import type { ReactNode } from "react";
-import { Check, CircleAlert, Copy, TriangleAlert } from "lucide-react";
+import type { ComponentProps, ReactNode } from "react";
+import { Check, CircleAlert, Copy, LoaderCircle, TriangleAlert } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -26,6 +26,26 @@ export function IconButton({ title, children, onClick, disabled, destructive }: 
   return (
     <Button type="button" variant="ghost" size="icon-sm" title={title} aria-label={title} disabled={disabled} onClick={onClick} className={cn(destructive && "text-destructive hover:text-destructive")}>
       {children}
+    </Button>
+  );
+}
+
+// An action button whose in-flight state costs no geometry. Putting the spinner in front of the label
+// grows the button by the spinner's width and swaps the Button's padding at the same time (`has-[>svg]`),
+// so pressing it shifts the label sideways — and while the two states are both on screen the label reads
+// as doubled. Here the label keeps its box and the spinner sits over it, so nothing moves.
+export function BusyButton({ busy, children, className, disabled, ...props }: ComponentProps<typeof Button> & { busy?: boolean }) {
+  return (
+    <Button {...props} aria-busy={busy} disabled={disabled || busy} className={cn("relative", className)}>
+      {busy && (
+        <span className="absolute inset-0 flex items-center justify-center" aria-hidden>
+          <LoaderCircle className="h-4 w-4 animate-spin" />
+        </span>
+      )}
+      {/* Kept in flow rather than replaced, so the button never resizes mid-action. Faded rather than
+          hidden: `invisible` would drop the label out of the accessibility tree and leave the button
+          nameless for exactly as long as it is working. */}
+      <span className={cn("inline-flex items-center gap-2", busy && "opacity-0")}>{children}</span>
     </Button>
   );
 }

@@ -94,6 +94,13 @@ describe("per-app auto-allow", () => {
     rmSync(dataDir, { recursive: true, force: true });
   });
 
+  /** The grants a live session currently holds. Reached through the private map on purpose: this is
+   * the state the predicate consults, and asserting on anything else would test a copy. */
+  function granted(sessionId: string): Set<string> {
+    return (manager as unknown as { live: Map<string, { autoAllowed: Set<string> }> })
+      .live.get(sessionId)!.autoAllowed;
+  }
+
   async function run(text: string): Promise<string[]> {
     const record = await manager.createSession({ createdBy: "user_admin" });
     await manager.postMessage(record.id, text, "seed-credential");
@@ -128,9 +135,7 @@ describe("per-app auto-allow", () => {
 
     // `delete_person` declares nothing, so it is absent from the grant even though its app is
     // trusted — trust is in the app's declarations, not a blanket pass for its whole surface.
-    const granted = (manager as unknown as { live: Map<string, { autoAllowed: Set<string> }> })
-      .live.get(record.id)!.autoAllowed;
-    expect([...granted]).toEqual([TOOL]);
+    expect([...granted(record.id)]).toEqual([TOOL]);
   });
 
   it("revoking trust takes effect on the running session, not the next one", async () => {
@@ -144,9 +149,22 @@ describe("per-app auto-allow", () => {
     await settings.update({ mcpAutoAllow: { [APP]: false } });
     await manager.applyProviderPolicy();
 
-    const granted = (manager as unknown as { live: Map<string, { autoAllowed: Set<string> }> })
-      .live.get(record.id)!.autoAllowed;
-    expect(granted.size).toBe(0);
+    expect(granted(record.id).size).toBe(0);
+  });
+
+  it("clears the grant when every provider is switched off", async () => {
+    // The path that leaves buildMcpServers with nothing to offer takes an early return, and an early
+    // return that skipped the rebuild would leave a grant outliving the policy that justified it.
+    await settings.update({ mcpProviders: { [APP]: true }, mcpAutoAllow: { [APP]: true } });
+    const record = await manager.createSession({ createdBy: "user_admin" });
+    await manager.postMessage(record.id, "apptool", "seed-credential");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(granted(record.id).size).toBe(1);
+
+    await settings.update({ mcpProviders: { [APP]: false } });
+    await manager.applyProviderPolicy();
+
+    expect(granted(record.id).size).toBe(0);
   });
 
   it("grants nothing when the app's tool list cannot be read", async () => {

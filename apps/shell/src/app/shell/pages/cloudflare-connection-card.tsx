@@ -13,7 +13,7 @@ import type {
   CloudflareSelectionRequired,
   CloudflareTokenTemplate,
 } from "../types";
-import { InlineError } from "../ui";
+import { BusyButton, InlineError } from "../ui";
 
 // Which connect-request field carries each kind of answer.
 const SELECTION_FIELDS: Record<CloudflareSelectionRequired["kind"], string> = {
@@ -159,14 +159,12 @@ export function CloudflareConnectionCard() {
                 to the addresses Hosty published?
               </p>
               <div className="flex flex-wrap gap-2">
-                <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void disconnect(false)}>
-                  {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
+                <BusyButton type="button" size="sm" variant="outline" busy={busy} onClick={() => void disconnect(false)}>
                   Keep them
-                </Button>
-                <Button type="button" size="sm" variant="destructive" disabled={busy} onClick={() => void disconnect(true)}>
-                  {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
+                </BusyButton>
+                <BusyButton type="button" size="sm" variant="destructive" busy={busy} onClick={() => void disconnect(true)}>
                   Remove them
-                </Button>
+                </BusyButton>
                 <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => setConfirmingDisconnect(false)}>
                   Cancel
                 </Button>
@@ -217,10 +215,9 @@ export function CloudflareConnectionCard() {
               onChange={(event) => setToken(event.target.value)}
               className="h-8 text-xs"
             />
-            <Button type="button" size="sm" disabled={busy || !token.trim()} onClick={() => void connect()}>
-              {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
+            <BusyButton type="button" size="sm" busy={busy} disabled={!token.trim()} onClick={() => void connect()}>
               Connect
-            </Button>
+            </BusyButton>
           </div>
           {selection && (
             <div className="space-y-1.5 rounded-md border p-3 text-xs">

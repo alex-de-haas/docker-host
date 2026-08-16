@@ -176,11 +176,16 @@ export class SessionManager {
       !this.proxy ||
       !this.proxyBaseUrl
     ) {
+      // No providers on offer means no grants, on every early return below as well. A grant left
+      // behind here would outlive the policy that justified it, which is the one thing this set must
+      // never do — so it is cleared first and only re-earned at the bottom.
+      session.autoAllowed.clear();
       return undefined;
     }
 
     const [discovered, policy] = await Promise.all([this.providers.read(), this.settings.read()]);
     if (!discovered) {
+      session.autoAllowed.clear();
       return undefined;
     }
 
@@ -190,6 +195,7 @@ export class SessionManager {
       policy.mcpProviders,
     );
     if (servers.length === 0) {
+      session.autoAllowed.clear();
       this.proxy.unregister(session.record.id);
       return undefined;
     }
@@ -206,6 +212,39 @@ export class SessionManager {
       sessionId: session.record.id,
       key,
     });
+  }
+
+  /** Re-reads the fleet and the policy, then rebuilds this session's grants from both. */
+  private async refreshAutoAllowedFromPolicy(session: LiveSession): Promise<void> {
+    if (!this.providers || !this.settings || !this.exchange?.available || !session.credential) {
+      session.autoAllowed.clear();
+      return;
+    }
+
+    // The policy is read first and cheaply, because the common case is that nobody has vouched for
+    // anything: doing the rest unconditionally would mint a token per enabled provider on every tick
+    // of every live session to discover there was nothing to grant.
+    const policy = await this.settings.read();
+    if (!Object.values(policy.mcpAutoAllow).some(Boolean)) {
+      session.autoAllowed.clear();
+      return;
+    }
+
+    const discovered = await this.providers.read();
+    if (!discovered) {
+      // An unreachable Core is not an empty policy. Keeping the previous grants would be the stale
+      // case this exists to bound, so they go — the cost is approval cards until Core answers again,
+      // which is the right way round.
+      session.autoAllowed.clear();
+      return;
+    }
+
+    const servers = await this.exchange.buildServers(
+      session.credential,
+      discovered.providers,
+      policy.mcpProviders,
+    );
+    await this.refreshAutoAllowed(session, servers, policy.mcpAutoAllow);
   }
 
   /**
@@ -304,7 +343,20 @@ export class SessionManager {
         }
 
         live.credential = renewed.token;
-      })();
+
+        // Re-earn the auto-allow grants on the same tick. The set is keyed by tool NAME, and a
+        // trusted app updated mid-session can keep a name while making it mutating — after which the
+        // stale grant would wave the new behaviour through. Rebuilding here bounds that window to one
+        // interval instead of to the length of the session. It costs one listing per *trusted* app,
+        // which is the small set by construction.
+        await this.refreshAutoAllowedFromPolicy(live);
+      })().catch((error) => {
+        // A background tick must never take the process down. This became load-bearing when the tick
+        // started reading the settings file: an unhandled rejection in a timer kills Node, and the
+        // gateway is a long-running process whose sessions would go with it. Losing one refresh is a
+        // session that keeps its current credential until the next tick.
+        console.warn(`[session ${id}] refresh tick failed`, error);
+      });
     }, TOKEN_REFRESH_MARGIN_MS * 3);
     session.refreshTimer.unref?.();
   }

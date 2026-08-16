@@ -95,6 +95,72 @@ describe("read-only discovery", () => {
     expect(await readOnlyToolNames(URL, "t")).not.toBeNull();
   });
 
+  it("follows pagination, so a later page is not silently left asking", async () => {
+    // The failure is conservative — those tools keep raising cards — but it is still the operator's
+    // setting not doing what it says on an app they explicitly vouched for.
+    const cursors: (string | undefined)[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as {
+        method: string;
+        params?: { cursor?: string };
+      };
+      if (body.method !== "tools/list") {
+        return json({ jsonrpc: "2.0", id: 1, result: {} });
+      }
+      cursors.push(body.params?.cursor);
+      return cursors.length === 1
+        ? json({
+            jsonrpc: "2.0",
+            id: 1,
+            result: {
+              tools: [{ name: "page_one", annotations: { readOnlyHint: true } }],
+              nextCursor: "c2",
+            },
+          })
+        : json({
+            jsonrpc: "2.0",
+            id: 1,
+            result: { tools: [{ name: "page_two", annotations: { readOnlyHint: true } }] },
+          });
+    });
+
+    expect([...(await readOnlyToolNames(URL, "t"))!]).toEqual(["page_one", "page_two"]);
+    expect(cursors).toEqual([undefined, "c2"]);
+  });
+
+  it("refuses rather than truncating when a later page cannot be read", async () => {
+    // A partial grant is indistinguishable from a complete one where it is consulted, so half an
+    // answer is worse than none.
+    let call = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { method: string };
+      if (body.method !== "tools/list") {
+        return json({ jsonrpc: "2.0", id: 1, result: {} });
+      }
+      call++;
+      return call === 1
+        ? json({
+            jsonrpc: "2.0",
+            id: 1,
+            result: { tools: [{ name: "a", annotations: { readOnlyHint: true } }], nextCursor: "c2" },
+          })
+        : new Response("gone", { status: 503 });
+    });
+
+    expect(await readOnlyToolNames(URL, "t")).toBeNull();
+  });
+
+  it("stops rather than spinning on an app that always returns a cursor", async () => {
+    // The cursor comes from the app, so it is not trustworthy input.
+    stub((method) =>
+      method === "tools/list"
+        ? json({ jsonrpc: "2.0", id: 1, result: { tools: [], nextCursor: "always" } })
+        : json({ jsonrpc: "2.0", id: 1, result: {} }),
+    );
+
+    expect(await readOnlyToolNames(URL, "t")).toBeNull();
+  });
+
   it("an app with nothing read-only is an empty set, not null", async () => {
     stub((method) =>
       method === "tools/list"

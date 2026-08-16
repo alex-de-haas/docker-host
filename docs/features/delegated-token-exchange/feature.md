@@ -132,11 +132,19 @@ card at all. A single global switch would have been the rejected "just trust the
 checkbox.
 
 Mechanically: for a trusted, enabled provider the gateway runs `initialize` then `tools/list` against
-the app and keeps the names declaring `readOnlyHint: true`. **An unreadable list grants nothing** —
-"we do not know" and "it offers nothing read-only" are different answers, and only the second may
-lead to skipping a card. The grant is rebuilt from scratch on every provider-policy change, so
-withdrawing trust applies to a running session at once rather than at the next one; and it is dropped
-entirely when the delegation chain lapses.
+the app, following `nextCursor` to the end, and keeps the names declaring `readOnlyHint: true`. **An
+unreadable list — or an unreadable later page — grants nothing**: "we do not know" and "it offers
+nothing read-only" are different answers, only the second may lead to skipping a card, and a partial
+grant is indistinguishable from a complete one where it is consulted.
+
+The grant is rebuilt from scratch, never merged, on every provider-policy change and on the session's
+existing refresh tick. Both matter for different reasons. The first makes withdrawing trust apply to a
+running session at once rather than at the next one. The second bounds a subtler staleness: the grant
+is keyed by tool *name*, and a trusted app updated mid-session can keep a name while making it
+mutating — rebuilding periodically caps that window at one interval instead of at the length of the
+session. It costs one listing per *trusted* app, and the tick skips the work entirely when nobody has
+vouched for anything, which is the common case. The grant is also dropped when the delegation chain
+lapses, and cleared on every path that leaves the session with no providers at all.
 
 Codex reports `appMcp: false`: it gives an enabled provider **no tools at all**, not merely no live
 updates. Configuring MCP servers there means writing them into Codex's own config before the thread
