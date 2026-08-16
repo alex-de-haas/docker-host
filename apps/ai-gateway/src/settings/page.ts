@@ -126,7 +126,23 @@ function renderProviders() {
       const next = { ...state.settings.mcpProviders, [provider.appId]: !enabled };
       await save({ mcpProviders: next });
     });
-    row.append(meta, toggle);
+
+    // The second decision, and a different one: the toggle above is whether this app may reach the
+    // assistant at all; this is whether its own word about which tools are read-only is enough to
+    // skip an approval. Only offered once the provider is on, because it means nothing otherwise.
+    const trust = document.createElement("button");
+    const trusted = state.settings.mcpAutoAllow[provider.appId] === true;
+    trust.textContent = trusted ? "Read-only tools run unprompted" : "Ask before every tool";
+    trust.title =
+      "The app declares which of its tools are read-only. Turning this on means trusting that "
+      + "declaration: a tool the app mislabels would then run without asking you.";
+    trust.disabled = !enabled;
+    trust.addEventListener("click", async () => {
+      const next = { ...state.settings.mcpAutoAllow, [provider.appId]: !trusted };
+      await save({ mcpAutoAllow: next });
+    });
+
+    row.append(meta, trust, toggle);
     host.append(row);
   }
 }
@@ -137,7 +153,8 @@ async function save(patch) {
     state.settings = body.settings;
     renderProviders();
     const live = state.harness && state.harness.capabilities && state.harness.capabilities.liveReconfigure;
-    say(patch.mcpProviders && live ? "Applied to running sessions." : "Saved — applies to the next session.");
+    const immediate = patch.mcpProviders || patch.mcpAutoAllow;
+    say(immediate && live ? "Applied to running sessions." : "Saved — applies to the next session.");
   } catch (error) {
     say(error.message, "error");
   }

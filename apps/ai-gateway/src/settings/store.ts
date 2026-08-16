@@ -25,9 +25,24 @@ export interface AssistantSettings {
    * silently gain a channel into the agent. Enabling is a decision, not a side effect of installing.
    */
   mcpProviders: Record<string, boolean>;
+  /**
+   * appId → may this app's read-only tools run without an approval card. Absent means no.
+   *
+   * Per app, and off by default, because of what the flag actually delegates. The built-in tools the
+   * harness auto-allows (Read, Grep, …) are read-only because the gateway *knows* what they are; an
+   * app tool is read-only because the **app said so** in its `readOnlyHint`. Turning this on is the
+   * operator saying "I trust this app's declarations about itself" — which is a judgement only they
+   * can make, and one they will make differently for their own app than for a third-party one.
+   *
+   * The realistic failure it guards is not a hostile app — an installed app already runs code on the
+   * host and needs no trickery — but an honest mislabelled annotation on a mutating tool, which would
+   * then run unprompted. A single global switch would have been the same mistake as trusting the hint
+   * outright.
+   */
+  mcpAutoAllow: Record<string, boolean>;
 }
 
-const DEFAULTS: AssistantSettings = { systemPrompt: "", mcpProviders: {} };
+const DEFAULTS: AssistantSettings = { systemPrompt: "", mcpProviders: {}, mcpAutoAllow: {} };
 
 /** Cap on the operator prompt. Generous for instructions, small enough not to crowd the context. */
 export const MAX_SYSTEM_PROMPT_CHARS = 8_000;
@@ -51,6 +66,7 @@ export class SettingsStore {
       this.cached = {
         systemPrompt: typeof parsed.systemPrompt === "string" ? parsed.systemPrompt : "",
         mcpProviders: isBooleanRecord(parsed.mcpProviders) ? parsed.mcpProviders : {},
+        mcpAutoAllow: isBooleanRecord(parsed.mcpAutoAllow) ? parsed.mcpAutoAllow : {},
       };
     } catch {
       // Missing or unreadable settings must not take the assistant down — an operator with a broken
@@ -66,6 +82,7 @@ export class SettingsStore {
     const next: AssistantSettings = {
       systemPrompt: (patch.systemPrompt ?? current.systemPrompt).slice(0, MAX_SYSTEM_PROMPT_CHARS),
       mcpProviders: patch.mcpProviders ?? current.mcpProviders,
+      mcpAutoAllow: patch.mcpAutoAllow ?? current.mcpAutoAllow,
     };
 
     await mkdir(this.dataDir, { recursive: true });
@@ -85,17 +102,21 @@ export class SettingsStore {
   async prune(installedAppIds: readonly string[]): Promise<AssistantSettings> {
     const current = await this.read();
     const installed = new Set(installedAppIds);
-    const kept: Record<string, boolean> = {};
-    for (const [appId, enabled] of Object.entries(current.mcpProviders)) {
-      if (installed.has(appId)) {
-        kept[appId] = enabled;
-      }
-    }
+    const keep = (source: Record<string, boolean>): Record<string, boolean> =>
+      Object.fromEntries(Object.entries(source).filter(([appId]) => installed.has(appId)));
 
-    if (Object.keys(kept).length === Object.keys(current.mcpProviders).length) {
+    const kept = keep(current.mcpProviders);
+    // Pruned together, and this half matters more: a stale auto-allow row is a standing grant to an
+    // app id. If that id were ever reinstalled by someone else, it would arrive pre-trusted.
+    const keptAutoAllow = keep(current.mcpAutoAllow);
+
+    if (
+      Object.keys(kept).length === Object.keys(current.mcpProviders).length &&
+      Object.keys(keptAutoAllow).length === Object.keys(current.mcpAutoAllow).length
+    ) {
       return current;
     }
-    return this.update({ mcpProviders: kept });
+    return this.update({ mcpProviders: kept, mcpAutoAllow: keptAutoAllow });
   }
 }
 

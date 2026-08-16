@@ -64,6 +64,52 @@ internal static class CloudflareTunnelConfigPatcher
         return clone;
     }
 
+    // Re-insert a previously captured rule verbatim, before the catch-all, unless a rule for its hostname is
+    // already there. The publish rollback puts back the rule a rename removed with this: rebuilding it through
+    // UpsertIngress would reconstruct it from hostname + service alone and silently drop everything else it
+    // carried, `originRequest` included. Returns a new document; neither input is mutated.
+    public static JsonObject RestoreIngress(JsonObject config, JsonObject rule)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        ArgumentNullException.ThrowIfNull(rule);
+        var hostname = (string?)rule["hostname"];
+        ArgumentException.ThrowIfNullOrWhiteSpace(hostname);
+        var clone = (JsonObject)config.DeepClone();
+        var ingress = GetOrCreateIngress(clone);
+        if (FindRuleIndex(ingress, hostname) >= 0)
+        {
+            return clone;
+        }
+
+        var restored = (JsonObject)rule.DeepClone();
+        var catchAll = CatchAllIndex(ingress);
+        if (catchAll < 0)
+        {
+            // Cast to JsonNode for the same AOT reason as UpsertIngress.
+            ingress.Add((JsonNode)restored);
+        }
+        else
+        {
+            ingress.Insert(catchAll, restored);
+        }
+
+        return clone;
+    }
+
+    // The rule currently serving `hostname`, or null. Returned as the live node so a caller that wants to keep
+    // it across a mutation clones it; the publish path does exactly that before removing a renamed rule.
+    public static JsonObject? FindIngress(JsonObject config, string hostname)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        if (config["ingress"] is not JsonArray ingress)
+        {
+            return null;
+        }
+
+        var index = FindRuleIndex(ingress, hostname);
+        return index >= 0 ? (JsonObject)ingress[index]! : null;
+    }
+
     // The exact host targets currently in the ingress array (excludes the hostname-less catch-all). Used by
     // the service layer for ownership/conflict checks without re-parsing.
     public static IReadOnlyList<string> IngressHostnames(JsonObject config)

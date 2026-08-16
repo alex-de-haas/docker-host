@@ -1,7 +1,7 @@
 # Feature: Cloudflare Ingress
 
 Created: 2026-06-17
-Updated: 2026-08-09
+Updated: 2026-08-16
 
 Runtime app services listen only on loopback. Ingress is the layer that accepts public traffic,
 terminates HTTPS, and routes by hostname to the right loopback port. Core never runs a reverse proxy
@@ -148,9 +148,17 @@ Shell surfaces as a warning that the address reaches a different machine.
 `POST /api/apps/{appId}/public-origins/publish` takes an endpoint key and a single DNS label; the hostname
 is `{label}.{baseDomain}`. Shell renders this as a label field with the base domain fixed beside it and a
 live `→ https://…` preview
-([cloudflare-publish-control.tsx](../../../apps/shell/src/app/shell/pages/cloudflare-publish-control.tsx)).
+([public-origin-control.tsx](../../../apps/shell/src/app/shell/pages/public-origin-control.tsx)).
 The control appears only under this provider — under any other one Core refuses with
 `cloudflare_provider_inactive` — and stays visible, explaining itself, when no token is connected yet.
+
+The same endpoint and the same field are how a publication is **renamed**. The label stays editable after
+an endpoint is published, and the dialog's one primary button follows what is in it: it reads `Reapply`,
+enabled, only when the label is unchanged *and* the route is `origin_drifted`; in every other state it
+reads `Rename`, enabled once the field holds a label that differs from the published one. There is no
+separate rename request, because a rename *is* a publish of an endpoint that already has one. Reapply is
+the single special case so that a healthy publication does not present a greyed-out repair it does not
+need, and does not hide renaming behind an operator guessing that the field is editable.
 
 **Creating a publication is gated on the provider; removing one is not.** A stored publication outlives a
 provider change, so unpublish, the uninstall and update cleanups, and disconnect-with-Remove all keep
@@ -171,8 +179,37 @@ survive because the document is carried as an opaque JSON object — load-bearin
 since a real tunnel config carries `warp-routing` beside `ingress`.
 
 After the PUT, Core reads the configuration back and compares the projection of everything it did not intend
-to touch; a mismatch fails with `cloudflare_readback_unrelated_changed`. If the DNS step then fails, only
-what this operation created is rolled back.
+to touch — on a rename that projection also excludes the old hostname, which was removed on purpose; a
+mismatch fails with `cloudflare_readback_unrelated_changed`. If the DNS step then fails, the rollback
+reverses only what this operation changed.
+
+A rename runs those same two steps for an endpoint that is already published, and that is what makes it
+gapless. The old hostname's rule is removed in the *same* PUT that inserts the new one, so no moment exists
+with both routes or with neither, and the DNS step updates the stored record id rather than creating one —
+the record is renamed and keeps its id, and an `adopted` publication stays adopted across the rename. The
+alternative an operator would otherwise be left with, unpublish then publish, is not the same operation: it
+deletes the DNS record and creates a new one, leaving a window in which the hostname resolves to nothing.
+For an adopted publication it is worse still, since unpublish deliberately leaves the adopted record in
+place while dropping the publication — republishing under a new label then meets the foreign-record path
+again, and the old record is left pointing at a tunnel that has no route for it.
+
+**A failed rename puts the old route back.** Rolling back a first publish only has to remove what it added,
+but a rename has also *taken something away* by the time DNS runs, so removing the new rule alone would
+leave the endpoint with no route at all while DNS still resolves the old hostname — worse than the state it
+started from. Core therefore captures the old rule verbatim before removing it and restores it in the same
+PUT that removes the new one, one document write for both halves so the undo cannot itself open the window
+it is closing. Verbatim matters: rebuilding the rule from hostname and service would drop a per-rule
+`originRequest` the operator had tuned, so `RestoreIngress` re-inserts the captured node.
+
+**A rename cannot adopt.** Adoption points a publication at a record Hosty did not create; on a rename the
+publication already owns one under the old hostname, so taking over a foreign record at the new hostname
+would strand the old one — the exact outcome renaming in place exists to avoid. A rename onto a hostname
+that already carries a foreign DNS record is therefore refused outright with `cloudflare_hostname_conflict`,
+before any mutation and regardless of `adopt`; the message names both hostnames and says to remove that
+record in Cloudflare or choose another label. The check is scoped to renames: re-publishing under the
+*unchanged* label never consults it, so a hand-made duplicate record at the endpoint's own hostname cannot
+turn Reapply — the repair for a drifted route — into a conflict. Shell shows this error plainly rather than
+with the adoption hint, which belongs only to a first publish where adoption is actually on offer.
 
 Ownership is keyed by hostname, never by local port, and is stored per `(app id, endpoint key)`. A hostname
 already held by another Hosty endpoint fails `cloudflare_hostname_owned` (409) and is never overwritten. A
@@ -333,6 +370,11 @@ The `hosty` CLI has no ingress or Cloudflare commands.
   hostname owned by another endpoint and a foreign pre-existing record are both refused; adoption takes over
   the existing record without creating one, survives a re-publish, and leaves the record on unpublish;
   unpublish reverses the order; a label change removes the old route and renames the DNS record.
+- A rename whose DNS update fails restores the previous route verbatim, keeping a per-rule `originRequest`,
+  and leaves the publication and the DNS record where they were; a rename onto a foreign DNS record is
+  refused before any mutation and cannot be forced with `adopt`; and a stray duplicate record at the
+  endpoint's own hostname still lets an unchanged label be re-applied.
+- The patcher restores a captured rule before the catch-all and leaves an already-present hostname alone.
 - Publish writes `HOSTY_PUBLIC_ORIGIN_*` and flags restart-required; unpublish removes route, record, and
   setting; publishing without a connection, without a local URL, or under another provider is refused.
 - Publication state reports restart-required after publishing onto a running app, active once it starts,
@@ -353,6 +395,10 @@ The `hosty` CLI has no ingress or Cloudflare commands.
   values, the local-config fields are visible only under `cloudflared`, and the Ingress tab survives a
   refresh on its own URL ([ingress.test.mjs](../../../apps/shell/test/ingress.test.mjs),
   [shell-routes.test.mjs](../../../apps/shell/test/shell-routes.test.mjs)).
+- Shell: on a published endpoint an edited label is an enabled `Rename`, an unchanged one is `Reapply` only
+  while the route is drifted and a disabled `Rename` in every other state, an emptied field presses nothing,
+  and casing or whitespace alone never reads as an edit
+  ([public-origin-control.test.mjs](../../../apps/shell/test/public-origin-control.test.mjs)).
 
 ## Links
 

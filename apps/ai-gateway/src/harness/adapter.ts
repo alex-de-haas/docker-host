@@ -69,6 +69,13 @@ export interface HarnessStartOptions {
   systemPrompt?: string;
   /** Enabled app MCP providers, already carrying a token scoped to each app. */
   mcpServers?: Record<string, unknown>;
+  /**
+   * Whether an app MCP tool may run without an approval card.
+   *
+   * A predicate rather than a set, so a provider toggle changing mid-session needs no new harness
+   * method: the session manager owns the state and this reads it live.
+   */
+  isAutoAllowed?: (toolName: string) => boolean;
   /** Harness-native session id to resume after a gateway restart, when the harness supports it. */
   resumeHarnessSessionId?: string;
   onEvent: (event: HarnessEvent) => void;

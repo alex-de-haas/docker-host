@@ -9,8 +9,9 @@ import type {
 
 // Deterministic in-process harness for tests and for running the gateway on machines without
 // harness credentials (HOSTY_AI_GATEWAY_HARNESS=fake). Behavior: echoes every message; a message
-// containing "write" first pauses on an approval exactly like a real proposed write, and one
-// containing "ask" pauses on a question.
+// containing "write" first pauses on an approval exactly like a real proposed write, one containing
+// "ask" pauses on a question, and one containing "apptool" calls an app MCP tool — which pauses or
+// not depending on whether the operator trusted that app's read-only declarations.
 export class FakeHarnessAdapter implements HarnessAdapter {
   readonly name = "fake";
   readonly capabilities: HarnessCapabilities = { questions: true, appMcp: true, liveReconfigure: true };
@@ -20,7 +21,7 @@ export class FakeHarnessAdapter implements HarnessAdapter {
   }
 
   start(options: HarnessStartOptions): HarnessRun {
-    return new FakeRun(options.onEvent, options.sessionId);
+    return new FakeRun(options.onEvent, options.sessionId, options.isAutoAllowed);
   }
 }
 
@@ -31,6 +32,7 @@ class FakeRun implements HarnessRun {
   constructor(
     private readonly onEvent: (event: HarnessEvent) => void,
     sessionId: string,
+    private readonly isAutoAllowed?: (toolName: string) => boolean,
   ) {
     // Emitted asynchronously like a real harness init message.
     queueMicrotask(() => this.onEvent({ type: "harness_session", harnessSessionId: `fake-${sessionId}` }));
@@ -57,6 +59,21 @@ class FakeRun implements HarnessRun {
             },
           ],
         });
+        return;
+      }
+
+      if (text.includes("apptool")) {
+        // The name shape a client produces for an app tool, which is what the predicate is keyed on.
+        const toolName = "mcp__com-example-notes__list_people";
+        if (this.isAutoAllowed?.(toolName) === true) {
+          this.onEvent({ type: "assistant_text", text: `called ${toolName}` });
+          this.onEvent({ type: "result", status: "success" });
+          return;
+        }
+
+        const approvalId = randomUUID();
+        this.pending.set(approvalId, { toolName });
+        this.onEvent({ type: "approval_request", approvalId, toolName, input: {} });
         return;
       }
 

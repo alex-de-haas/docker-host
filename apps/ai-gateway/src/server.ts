@@ -145,12 +145,21 @@ async function route(
         });
         return;
       }
+      if (body.mcpAutoAllow !== undefined && !isBooleanRecord(body.mcpAutoAllow)) {
+        sendJson(response, 400, {
+          code: "mcp_auto_allow_invalid",
+          message: "mcpAutoAllow must be an object of appId -> boolean.",
+        });
+        return;
+      }
       await settings.update({
         systemPrompt: typeof body.systemPrompt === "string" ? body.systemPrompt : undefined,
         mcpProviders: isBooleanRecord(body.mcpProviders) ? body.mcpProviders : undefined,
+        mcpAutoAllow: isBooleanRecord(body.mcpAutoAllow) ? body.mcpAutoAllow : undefined,
       });
-      if (isBooleanRecord(body.mcpProviders)) {
-        // Immediately, not at the next timer tick — the page says "applied to running sessions".
+      if (isBooleanRecord(body.mcpProviders) || isBooleanRecord(body.mcpAutoAllow)) {
+        // Immediately, not at the next timer tick — the page says "applied to running sessions", and
+        // for a *revoked* grant that has to be true the moment the operator sees it.
         await manager.applyProviderPolicy();
       }
     }

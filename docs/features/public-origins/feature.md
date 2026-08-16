@@ -1,7 +1,7 @@
 # Feature: Public Origins
 
 Created: 2026-08-10
-Updated: 2026-08-10
+Updated: 2026-08-16
 
 A public origin is the external HTTPS address one app endpoint answers on. It is a durable property of
 the endpoint, not of the process behind it: Core reserves the endpoint's local port at install, so the
@@ -35,6 +35,13 @@ the one whose row it was opened from.
 Reversibility is not flattened. Publishing keeps its adoption prompt for a pre-existing DNS record,
 offered explicitly and never implied, and unpublishing stays a separate action rather than a cleared
 field. A unified input must not turn "clear it and save" into a silent remote deletion.
+
+For the same reason the label of a published endpoint stays editable rather than becoming read text.
+Moving an address and removing one are different intentions, and Core implements them differently:
+a rename swaps the tunnel route in one PUT and renames the DNS record in place, while unpublishing
+deletes the record. Making rename reachable only as unpublish-then-publish would have made the
+gentler operation the one an operator cannot press.
+[cloudflare-ingress/feature.md](../cloudflare-ingress/feature.md) has what each of them does remotely.
 
 The public-origin fields in the app's settings dialog are read-only and point here. A second editable
 field could only ever express the simplest of the three shapes, and Shell rendering one rule while
@@ -110,7 +117,10 @@ the startup path and never stalls boot; the next reconcile that reaches Cloudfla
 clears the marker. Connecting Cloudflare reconciles immediately, so the reconnect the drift message
 asks for is itself the repair. A port that moved and moved back before anyone could push clears the
 marker without an API call — the route was never wrong by the time it mattered — and the dialog offers
-Reapply on a drifted publication so the state is actionable rather than only described.
+Reapply on a drifted publication so the state is actionable rather than only described. Reapply is the
+published label re-applied unchanged, which is why it shares the rename button rather than sitting beside
+one: the same POST repairs the route under the old label or moves it to a new one, and only the field
+decides which.
 
 `origin_drifted` outranks `app_stopped` (starting the app repairs nothing) and ranks below `error` (a
 broken connection must be fixed before the drift can be).
@@ -144,6 +154,9 @@ and saying to update the upstream. A standing "broken" badge would claim knowled
   surface, the subdomain sanitizer accepts only DNS-label characters, and the setting key it writes
   matches Core's normalization
   ([public-origin-control.test.mjs](../../../apps/shell/test/public-origin-control.test.mjs)).
+- On a published endpoint the primary action resolves to Reapply only for the unchanged label of a
+  drifted route, and to Rename everywhere else — enabled for an edit, disabled for an emptied field or
+  an intact route; casing and whitespace alone never read as an edit.
 
 ## Links
 
