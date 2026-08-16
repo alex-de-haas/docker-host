@@ -30,6 +30,9 @@ internal sealed class CloudflarePublicationReconciler(
     {
         var hostname = BuildHostname(label, target.BaseDomain);
         var existing = await publications.GetAsync(appId, endpointKey, cancellationToken);
+        // A rename: this endpoint is published and the label moved it to a different hostname. Re-publishing
+        // under the same label is not one, which matters below — it must keep behaving exactly as it did.
+        var oldHostname = existing is not null && !HostnameEquals(existing.Hostname, hostname) ? existing.Hostname : null;
 
         // Ownership: reject a hostname another Hosty endpoint already owns, or a pre-existing DNS record we
         // do not own (adoption is an explicit later action, not implicit here).
@@ -45,8 +48,20 @@ internal sealed class CloudflarePublicationReconciler(
         var foreignRecord = (await client.ListDnsRecordsAsync(token, target.ZoneId, hostname, cancellationToken))
             .FirstOrDefault(record => !string.Equals(record.Id, ownedRecordId, StringComparison.Ordinal));
         var adopted = false;
-        if (foreignRecord is not null && existing is null)
+        if (foreignRecord is not null && (existing is null || oldHostname is not null))
         {
+            // A rename cannot adopt, so it is refused here rather than offered a takeover. Adoption points a
+            // publication at a record someone else created; on a rename we already own one under the old
+            // hostname, and taking over the new record would strand ours exactly the way
+            // unpublish-then-publish does — which is the thing renaming in place exists to avoid. Refused
+            // before any mutation, so the tunnel and DNS are untouched when it throws.
+            if (oldHostname is not null)
+            {
+                throw new CloudflareConnectionException(
+                    "cloudflare_hostname_conflict",
+                    $"A DNS record for '{hostname}' already exists and is not managed by Hosty, so '{existing!.Hostname}' cannot be renamed onto it. Remove that record in Cloudflare, or choose another label.");
+            }
+
             if (!adopt)
             {
                 throw new CloudflareConnectionException(
@@ -64,17 +79,24 @@ internal sealed class CloudflarePublicationReconciler(
         var cfTarget = $"{target.TunnelId}.cfargotunnel.com";
         var routeAdded = false;
         string? createdDnsId = null;
+        JsonObject? removedRule = null;
         try
         {
             // 1. Tunnel route first. On a label change (rename) the old hostname's route is removed in the
             // same PUT, so a rename never leaks the previous route.
             var config = await RequireConfigAsync(token, target, cancellationToken);
-            var oldHostname = existing is not null && !HostnameEquals(existing.Hostname, hostname) ? existing.Hostname : null;
             var unrelatedBefore = UnrelatedProjection(config, hostname, oldHostname);
             var alreadyRouted = CloudflareTunnelConfigPatcher.IngressHostnames(config).Any(host => HostnameEquals(host, hostname));
             var patched = CloudflareTunnelConfigPatcher.UpsertIngress(config, hostname, serviceUrl);
             if (oldHostname is not null)
             {
+                // Capture the rule verbatim before it goes. Everything after this PUT can still fail, and the
+                // rollback has to put back what was actually there — service, originRequest and all — rather
+                // than a reconstruction. Without it a failed rename leaves the endpoint with no route at all
+                // while DNS still resolves the old hostname.
+                removedRule = CloudflareTunnelConfigPatcher.FindIngress(config, oldHostname) is { } rule
+                    ? (JsonObject)rule.DeepClone()
+                    : null;
                 patched = CloudflareTunnelConfigPatcher.RemoveIngress(patched, oldHostname);
             }
 
@@ -115,7 +137,7 @@ internal sealed class CloudflarePublicationReconciler(
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            await RollbackPublishAsync(token, target, hostname, routeAdded, createdDnsId, cancellationToken);
+            await RollbackPublishAsync(token, target, hostname, routeAdded, removedRule, createdDnsId, cancellationToken);
             throw;
         }
     }
@@ -156,10 +178,11 @@ internal sealed class CloudflarePublicationReconciler(
         await publications.RemoveAsync(appId, endpointKey, cancellationToken);
     }
 
-    private async Task RollbackPublishAsync(string token, CloudflareIngressTarget target, string hostname, bool routeAdded, string? createdDnsId, CancellationToken cancellationToken)
+    // Reverse only what this operation changed, re-reading current state so we never overwrite newer
+    // dashboard changes with a cached document. `removedRule` is the rule a rename took out and is put back
+    // here: removing the new route without restoring it would leave the endpoint with no route at all.
+    private async Task RollbackPublishAsync(string token, CloudflareIngressTarget target, string hostname, bool routeAdded, JsonObject? removedRule, string? createdDnsId, CancellationToken cancellationToken)
     {
-        // Reverse only what this operation created, re-reading current state so we never overwrite newer
-        // dashboard changes with a cached document.
         if (createdDnsId is not null)
         {
             try
@@ -172,20 +195,30 @@ internal sealed class CloudflarePublicationReconciler(
             }
         }
 
-        if (routeAdded)
+        if (!routeAdded && removedRule is null)
         {
-            try
+            return;
+        }
+
+        try
+        {
+            var config = await client.GetTunnelConfigurationAsync(token, target.AccountId, target.TunnelId, cancellationToken);
+            if (config?.Config is { } current)
             {
-                var config = await client.GetTunnelConfigurationAsync(token, target.AccountId, target.TunnelId, cancellationToken);
-                if (config?.Config is { } current)
+                // Both halves of the undo in one PUT — the rule this operation added goes, the rule it removed
+                // comes back. Two PUTs would open a window with neither, which is the state being repaired.
+                var patched = routeAdded ? CloudflareTunnelConfigPatcher.RemoveIngress(current, hostname) : current;
+                if (removedRule is not null)
                 {
-                    await client.PutTunnelConfigurationAsync(token, target.AccountId, target.TunnelId, CloudflareTunnelConfigPatcher.RemoveIngress(current, hostname), cancellationToken);
+                    patched = CloudflareTunnelConfigPatcher.RestoreIngress(patched, removedRule);
                 }
+
+                await client.PutTunnelConfigurationAsync(token, target.AccountId, target.TunnelId, patched, cancellationToken);
             }
-            catch (Exception exception) when (exception is not OperationCanceledException)
-            {
-                logger.LogWarning(exception, "Cloudflare publish rollback could not remove the tunnel route it added for '{Hostname}'.", hostname);
-            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            logger.LogWarning(exception, "Cloudflare publish rollback could not restore the tunnel routes around '{Hostname}'.", hostname);
         }
     }
 

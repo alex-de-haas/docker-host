@@ -120,4 +120,54 @@ public sealed class CloudflareTunnelConfigPatcherTests
         Assert.Equal("http_status:404", (string?)ingress[1]!["service"]); // synthesized catch-all last
         Assert.True((bool)result["warp-routing"]!["enabled"]!);
     }
+
+    [Fact]
+    public void RestoreIngress_ReinsertsTheWholeRuleBeforeTheCatchAll()
+    {
+        var config = (JsonObject)JsonNode.Parse("""
+            {"ingress":[{"hostname":"other.example.test","service":"http://localhost:1"},{"service":"http_status:404"}]}
+            """)!;
+        // The shape the publish rollback captures: not just hostname + service.
+        var captured = (JsonObject)JsonNode.Parse("""
+            {"hostname":"media.example.test","service":"http://localhost:8096","originRequest":{"connectTimeout":30}}
+            """)!;
+
+        var result = CloudflareTunnelConfigPatcher.RestoreIngress(config, captured);
+
+        var ingress = (JsonArray)result["ingress"]!;
+        Assert.Equal("media.example.test", (string?)ingress[1]!["hostname"]);
+        Assert.Equal(30, (int?)ingress[1]!["originRequest"]?["connectTimeout"]);
+        Assert.Null(ingress[2]!["hostname"]); // the catch-all is still last
+        Assert.Equal("other.example.test", (string?)ingress[0]!["hostname"]);
+        Assert.Equal(2, ((JsonArray)config["ingress"]!).Count); // the input is not mutated
+    }
+
+    [Fact]
+    public void RestoreIngress_HostnameAlreadyPresent_ChangesNothing()
+    {
+        // The rollback re-reads the live document, which may already carry the rule — restoring must not
+        // duplicate it, nor overwrite whatever is there now with the older captured copy.
+        var config = (JsonObject)JsonNode.Parse("""
+            {"ingress":[{"hostname":"media.example.test","service":"http://localhost:9000"},{"service":"http_status:404"}]}
+            """)!;
+        var captured = (JsonObject)JsonNode.Parse("""{"hostname":"media.example.test","service":"http://localhost:8096"}""")!;
+
+        var result = CloudflareTunnelConfigPatcher.RestoreIngress(config, captured);
+
+        var ingress = (JsonArray)result["ingress"]!;
+        Assert.Equal(2, ingress.Count);
+        Assert.Equal("http://localhost:9000", (string?)ingress[0]!["service"]);
+    }
+
+    [Fact]
+    public void FindIngress_MatchesCaseInsensitivelyAndNeverTheCatchAll()
+    {
+        var config = (JsonObject)JsonNode.Parse("""
+            {"ingress":[{"hostname":"Media.Example.Test","service":"http://localhost:8096"},{"service":"http_status:404"}]}
+            """)!;
+
+        Assert.Equal("http://localhost:8096", (string?)CloudflareTunnelConfigPatcher.FindIngress(config, "media.example.test")!["service"]);
+        Assert.Null(CloudflareTunnelConfigPatcher.FindIngress(config, "absent.example.test"));
+        Assert.Null(CloudflareTunnelConfigPatcher.FindIngress((JsonObject)JsonNode.Parse("""{"ingress":[{"service":"http_status:404"}]}""")!, "media.example.test"));
+    }
 }
