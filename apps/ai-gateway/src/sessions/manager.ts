@@ -4,7 +4,8 @@ import type { SessionRecord, SessionStatus, SessionStore, StoredEvent } from "./
 import type { AuditReporter } from "../audit.js";
 import type { SettingsStore } from "../settings/store.js";
 import type { ProviderDirectory } from "../settings/providers.js";
-import { TokenExchange, toMcpServerConfig, TOKEN_REFRESH_MARGIN_MS } from "../mcp/exchange.js";
+import { TokenExchange, toMcpServerConfig, serverName, TOKEN_REFRESH_MARGIN_MS } from "../mcp/exchange.js";
+import { readOnlyToolNames } from "../mcp/readonly.js";
 import type { McpProxy, MintedToken } from "../mcp/proxy.js";
 
 // Owns session lifecycle: one harness run per live session, an append-only event log with a
@@ -30,6 +31,12 @@ interface LiveSession {
    */
   credential: string | null;
   refreshTimer: NodeJS.Timeout | null;
+  /**
+   * Harness-facing names of app tools that may run without an approval card: an app the operator
+   * marked trusted, crossed with the tools that app declares read-only. Empty until proven otherwise,
+   * which is the only safe default — an unknown tool asks.
+   */
+  autoAllowed: Set<string>;
 }
 
 export class SessionManager {
@@ -92,6 +99,7 @@ export class SessionManager {
       pendingQuestions: new Map(),
       credential: null,
       refreshTimer: null,
+      autoAllowed: new Set(),
     });
     await this.append(record.id, { type: "session_created", createdBy: input.createdBy });
     this.audit.report("ai_session_created", { sessionId: record.id, actor: input.createdBy });
@@ -137,6 +145,9 @@ export class SessionManager {
         cwd: this.workDir,
         systemPrompt,
         ...(mcpServers ? { mcpServers } : {}),
+        // Read live rather than captured: a provider toggled off mid-session must stop being
+        // auto-allowed at once, not at the next run.
+        isAutoAllowed: (toolName) => session.autoAllowed.has(toolName),
         // A gateway restart loses the process but not the record: resume the harness-native
         // session when one was captured, per the reattach/resume decision in the plan.
         resumeHarnessSessionId: session.record.harnessSessionId ?? undefined,
@@ -165,11 +176,16 @@ export class SessionManager {
       !this.proxy ||
       !this.proxyBaseUrl
     ) {
+      // No providers on offer means no grants, on every early return below as well. A grant left
+      // behind here would outlive the policy that justified it, which is the one thing this set must
+      // never do — so it is cleared first and only re-earned at the bottom.
+      session.autoAllowed.clear();
       return undefined;
     }
 
     const [discovered, policy] = await Promise.all([this.providers.read(), this.settings.read()]);
     if (!discovered) {
+      session.autoAllowed.clear();
       return undefined;
     }
 
@@ -179,9 +195,12 @@ export class SessionManager {
       policy.mcpProviders,
     );
     if (servers.length === 0) {
+      session.autoAllowed.clear();
       this.proxy.unregister(session.record.id);
       return undefined;
     }
+
+    await this.refreshAutoAllowed(session, servers, policy.mcpAutoAllow);
 
     const key = this.proxy.register(
       session.record.id,
@@ -193,6 +212,69 @@ export class SessionManager {
       sessionId: session.record.id,
       key,
     });
+  }
+
+  /** Re-reads the fleet and the policy, then rebuilds this session's grants from both. */
+  private async refreshAutoAllowedFromPolicy(session: LiveSession): Promise<void> {
+    if (!this.providers || !this.settings || !this.exchange?.available || !session.credential) {
+      session.autoAllowed.clear();
+      return;
+    }
+
+    // The policy is read first and cheaply, because the common case is that nobody has vouched for
+    // anything: doing the rest unconditionally would mint a token per enabled provider on every tick
+    // of every live session to discover there was nothing to grant.
+    const policy = await this.settings.read();
+    if (!Object.values(policy.mcpAutoAllow).some(Boolean)) {
+      session.autoAllowed.clear();
+      return;
+    }
+
+    const discovered = await this.providers.read();
+    if (!discovered) {
+      // An unreachable Core is not an empty policy. Keeping the previous grants would be the stale
+      // case this exists to bound, so they go — the cost is approval cards until Core answers again,
+      // which is the right way round.
+      session.autoAllowed.clear();
+      return;
+    }
+
+    const servers = await this.exchange.buildServers(
+      session.credential,
+      discovered.providers,
+      policy.mcpProviders,
+    );
+    await this.refreshAutoAllowed(session, servers, policy.mcpAutoAllow);
+  }
+
+  /**
+   * Works out which app tools may run unprompted: the tools an app declares read-only, but only for
+   * an app the operator marked trusted.
+   *
+   * Two ways to end up asking, and both are the point. An app nobody trusted is never even asked for
+   * its tool list — the answer could not be used. And an app whose list could not be read (stopped,
+   * refused, an answer of the wrong shape) contributes nothing, because "we do not know" and "it
+   * offers nothing read-only" must not lead to the same place. The set is rebuilt from scratch each
+   * time rather than merged, so revoking trust takes effect immediately.
+   */
+  private async refreshAutoAllowed(
+    session: LiveSession,
+    servers: readonly { appId: string; url: string; token: string }[],
+    autoAllow: Readonly<Record<string, boolean>>,
+  ): Promise<void> {
+    const trusted = servers.filter((server) => autoAllow[server.appId] === true);
+    const listed = await Promise.all(
+      trusted.map(async (server) => ({
+        server,
+        readOnly: await readOnlyToolNames(server.url, server.token).catch(() => null),
+      })),
+    );
+
+    session.autoAllowed = new Set(
+      listed.flatMap(({ server, readOnly }) =>
+        [...(readOnly ?? [])].map((tool) => `mcp__${serverName(server.appId)}__${tool}`),
+      ),
+    );
   }
 
   /**
@@ -226,6 +308,7 @@ export class SessionManager {
    */
   private async dropAppMcp(session: LiveSession): Promise<boolean> {
     session.credential = null;
+    session.autoAllowed.clear();
     this.proxy?.unregister(session.record.id);
     await session.run?.setMcpServers({}).catch(() => false);
     this.clearRefresh(session);
@@ -260,7 +343,20 @@ export class SessionManager {
         }
 
         live.credential = renewed.token;
-      })();
+
+        // Re-earn the auto-allow grants on the same tick. The set is keyed by tool NAME, and a
+        // trusted app updated mid-session can keep a name while making it mutating — after which the
+        // stale grant would wave the new behaviour through. Rebuilding here bounds that window to one
+        // interval instead of to the length of the session. It costs one listing per *trusted* app,
+        // which is the small set by construction.
+        await this.refreshAutoAllowedFromPolicy(live);
+      })().catch((error) => {
+        // A background tick must never take the process down. This became load-bearing when the tick
+        // started reading the settings file: an unhandled rejection in a timer kills Node, and the
+        // gateway is a long-running process whose sessions would go with it. Losing one refresh is a
+        // session that keeps its current credential until the next tick.
+        console.warn(`[session ${id}] refresh tick failed`, error);
+      });
     }, TOKEN_REFRESH_MARGIN_MS * 3);
     session.refreshTimer.unref?.();
   }
@@ -440,6 +536,7 @@ export class SessionManager {
       pendingQuestions: new Map(),
       credential: null,
       refreshTimer: null,
+      autoAllowed: new Set(),
     };
     this.live.set(id, session);
     return session;

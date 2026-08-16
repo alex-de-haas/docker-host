@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-08-11
-Updated: 2026-08-15
+Updated: 2026-08-16
 
 Give an agent session a credential for the app MCP endpoints it is allowed to reach — without Core
 entering the data path, and without any app ever holding a credential stronger than the user it acts
@@ -111,13 +111,36 @@ browser holding a human's session.
 - [ ] **App MCP for the Codex harness.** The adapter drops `mcpServers` entirely, so enabled
       providers give a Codex session no tools; reported as `appMcp: false` rather than silently. Needs
       the config shape verified against a live Codex run, not inferred.
-- [ ] **Auto-allow for read-only app-MCP tools.** Every app tool currently raises an approval card,
-      which the live run confirmed. Not fixed here: deciding which app tools may run unprompted needs
-      the tool annotations (`readOnlyHint`) the connector work brings, and guessing from tool names
-      would be exactly the wrong instinct.
+- [x] **Auto-allow for read-only app-MCP tools**, as a **per-app operator decision** — see the
+      decision below. The old text named the blocker wrongly: it said this needed the annotations the
+      connector would bring. Annotations arrived, and they were never the blocker.
 - [x] Docs: `feature.md`, the ai-gateway plan's toggle deliverable closed, index regenerated.
 
 Version outcome: platform minor (new Core API surface), `apps/ai-gateway` minor.
+
+- **Who decides that an app tool may run unprompted** — decided 2026-08-16.
+  The harness already auto-allows `Read`, `Grep`, `WebFetch` and friends. It is tempting to add app
+  tools carrying `readOnlyHint: true` to that list, and it would be wrong: those built-ins are
+  read-only because the gateway **knows what they are**, while an app tool is read-only because the
+  **app said so**. Collapsing the two swaps "we verified this" for "someone told us" without saying
+  so anywhere.
+  The threat this guards is worth naming precisely, because the obvious one is not it. A *hostile*
+  app is not the risk — an installed app already runs code on the host with granted capabilities and
+  needs no trickery. The realistic failure is an **honest mislabelled annotation** on a mutating
+  tool, which would then run with no card. Bugs are commoner than malice.
+  Options: trust the hint outright (rejected — the reasoning above, and it is exactly the mistake
+  that got a `PreToolUse` hook removed from
+  [hosty-mcp-connector](../hosty-mcp-connector/feature.md) in review); scoped tokens, where Core
+  constrains what the token may exercise and the app's *own authorization* enforces it (strongest,
+  since enforcement moves out of metadata and into the path that already refuses unauthorized calls
+  — but token scopes do not exist); or keep asking for everything (the live run showed that makes
+  the assistant tedious for exactly the read-only diagnostic work it is for).
+  Decision: **a second per-app toggle, off by default.** The operator says whose word counts; the
+  app's annotations only select *which* of that app's tools the decision covers. It ships today
+  without scopes, and it does not become redundant once scopes exist — "do I trust this app" is a
+  question that survives its answer being better enforced.
+  Deliberately **not** a single global switch: that would be trusting every app's hint at once,
+  which is the rejected option wearing a checkbox.
 
 ## Decisions
 

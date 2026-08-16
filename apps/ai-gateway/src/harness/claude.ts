@@ -225,7 +225,11 @@ class ClaudeRun implements HarnessRun {
           });
     }
 
-    if (AUTO_ALLOWED_TOOLS.has(toolName)) {
+    // Two different grounds, kept apart on purpose. The set above is read-only because the gateway
+    // KNOWS what those tools are; an app tool reaches the branch below only when the operator has
+    // said they trust that app's own `readOnlyHint` declarations. Collapsing the two would quietly
+    // turn "we verified this" into "someone told us".
+    if (AUTO_ALLOWED_TOOLS.has(toolName) || this.options.isAutoAllowed?.(toolName) === true) {
       return Promise.resolve({ behavior: "allow", updatedInput: input });
     }
 
