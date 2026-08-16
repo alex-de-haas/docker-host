@@ -60,6 +60,25 @@ which does not enforce the lifecycle — so every SDK-based app would have vanis
 with no symptom beyond being absent. A session the app stops recognising (it restarted) is dropped
 and re-established rather than retried forever.
 
+`tools/list` is paginated, so each app's list is **walked to the end**, every page after the first
+asking with the `nextCursor` the app handed back. Reading one page left an app's later tools out of
+the catalog entirely — absent and uncallable, with no symptom beyond their not being there.
+
+Two guards bound the walk, because they catch different apps. The **per-app timeout is spent across
+the whole walk**, not refreshed per page: one that answered every page just inside a per-page ceiling
+would otherwise hold the fan-out twenty times as long, and the fan-out is what a client waits on
+before it sees any tools at all. The walk is also **capped at 20 pages**, since a cursor that never
+ends would otherwise spin against a fast app for the whole budget.
+
+A page that cannot be read **keeps the pages read before it**, which is a decision about what the walk
+produces rather than a default. Were it producing a **permission grant**, the answer would invert: a
+truncated grant is indistinguishable from a complete one at the point it is consulted, so refusing the
+whole answer would be the only safe reading. What it produces is a **catalog** — every tool in it
+passed the read-only filter on its own merits, and every call is still checked against it — so a short
+catalog costs reach rather than safety. Dropping the app instead would take away tools that work to
+punish a page that did not, and would contradict what the fan-out does one level up, where an app that
+fails costs the catalog that app and nothing else.
+
 **Visibility is Core's answer, not the CLI's.** The control channel lists the whole fleet regardless
 of actor; an app this user may not reach drops out when Core refuses to issue its token. Reimplementing
 the access policy in the CLI would have meant two copies, and the CLI's would be the one nobody
@@ -177,7 +196,10 @@ exist yet.
 - The fan-out, over a stubbed transport so the cancellation path is production's: one app timing out
   costs the others nothing; an app the actor may not reach is absent **beside** one they can; a tool
   without a read-only hint is dropped while its sibling survives; a wrong-shaped answer is skipped
-  rather than read as an empty fleet; the app receives the delegated token and not the caller's.
+  rather than read as an empty fleet; the app receives the delegated token and not the caller's;
+  pagination is followed with the app's own cursor echoed back, a cursor that never ends is capped, a
+  walk of pages each answered slowly is cut by the one budget they share, and a page that cannot be
+  read keeps what was read before it.
 - The protocol loop: `initialize` announces `listChanged` and says the surface is filtered; schemas
   and annotations pass through unchanged; a call reaches the app under its *own* name; a stopped app
   fails only its own call and the session answers the next request; a tool absent from the catalog is

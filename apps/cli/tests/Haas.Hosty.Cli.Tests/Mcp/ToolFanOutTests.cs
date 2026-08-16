@@ -9,7 +9,17 @@ using Haas.Hosty.Cli.Mcp;
 // a real HttpClient so the cancellation path under test is the one production takes.
 public class ToolFanOutTests
 {
+    /// <summary>An empty success, which is all the lifecycle needs back from a stub.</summary>
+    private const string Handshake = """{"jsonrpc":"2.0","id":1,"result":{}}""";
+
     private static readonly TimeSpan Immediate = TimeSpan.FromMilliseconds(50);
+
+    /// <summary>
+    /// For the walks that must not be cut short by the clock. One budget covers a whole page walk, so
+    /// a test about pagination has to leave room for one — otherwise it would be measuring the timeout
+    /// instead of the property it names.
+    /// </summary>
+    private static readonly TimeSpan Generous = TimeSpan.FromSeconds(20);
 
     [Fact]
     public async Task OneAppTimingOutDoesNotCostTheOthersTheirTools()
@@ -255,25 +265,194 @@ public class ToolFanOutTests
         Assert.Equal(["com_dexample_da__list_people"], tools.Select(tool => tool.ExportedName));
     }
 
+    [Fact]
+    public async Task LaterPagesOfAnAppsToolListAreFollowedWithItsOwnCursor()
+    {
+        // `tools/list` is paginated, and reading one page left everything after it out of the catalog
+        // entirely — absent and uncallable, with no symptom beyond its not being there.
+        var cursors = new List<string?>();
+        var handler = new StubHandler
+        {
+            Responses =
+            {
+                ["http://a/api/mcp"] = request =>
+                {
+                    var (method, cursor) = Rpc(request);
+                    if (method != "tools/list")
+                    {
+                        return Json(Handshake);
+                    }
+
+                    cursors.Add(cursor);
+                    return cursor switch
+                    {
+                        null => Json(Page("list_people", "page-2")),
+                        "page-2" => Json(Page("list_teams", "page-3")),
+                        _ => Json(Page("list_projects", null)),
+                    };
+                },
+            },
+        };
+        var (catalog, _) = Build(handler, Generous);
+
+        var tools = await catalog.BuildAsync([Target("com.example.a", "http://a/api/mcp")], CancellationToken.None);
+
+        Assert.Equal(
+            ["com_dexample_da__list_people", "com_dexample_da__list_teams", "com_dexample_da__list_projects"],
+            tools.Select(tool => tool.ExportedName));
+        // Each page is asked for with the previous page's cursor. An app handed none would answer with
+        // its first page again, so the walk would repeat rather than advance.
+        Assert.Equal([null, "page-2", "page-3"], cursors);
+    }
+
+    [Fact]
+    public async Task ACursorThatNeverEndsIsCappedRatherThanFollowedForever()
+    {
+        // The cursor comes from the app, so a buggy one that always hands back another must not spin
+        // the fan-out. Every page here repeats the same tool, which is what such an app returns.
+        var pages = 0;
+        var handler = new StubHandler
+        {
+            Responses =
+            {
+                ["http://a/api/mcp"] = request =>
+                {
+                    if (Rpc(request).Method != "tools/list")
+                    {
+                        return Json(Handshake);
+                    }
+
+                    pages++;
+                    return Json(Page("list_people", "always-more"));
+                },
+            },
+        };
+        var (catalog, warnings) = Build(handler, Generous);
+
+        var tools = await catalog.BuildAsync([Target("com.example.a", "http://a/api/mcp")], CancellationToken.None);
+
+        Assert.Equal(ToolCatalog.MaxPages, pages);
+        // Judged once, and by this app's own walk: a repeated page is the app's bug, so the downstream
+        // check that reads a name collision as a bug in ToolKey must not be the one reporting it.
+        Assert.Equal(["com_dexample_da__list_people"], tools.Select(tool => tool.ExportedName));
+        Assert.Contains(warnings, warning => warning.Contains("still paginating", StringComparison.Ordinal));
+        Assert.DoesNotContain(warnings, warning => warning.Contains("produced twice", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task APageThatCannotBeReadKeepsTheToolsReadBeforeIt()
+    {
+        // The claim is about what the walk produces. A truncated *grant* cannot be told from a complete
+        // one where it is consulted, so one would have to be refused outright; a truncated catalog costs
+        // reach and not safety, since every tool in it was filtered on its own merits and every call is
+        // checked against it. Dropping the app would take away tools that work to punish a page that did not.
+        var handler = new StubHandler
+        {
+            Responses =
+            {
+                ["http://a/api/mcp"] = request =>
+                {
+                    var (method, cursor) = Rpc(request);
+                    if (method != "tools/list")
+                    {
+                        return Json(Handshake);
+                    }
+
+                    return cursor is null
+                        ? Json(Page("list_people", "page-2"))
+                        : new HttpResponseMessage(HttpStatusCode.InternalServerError);
+                },
+            },
+        };
+        var (catalog, warnings) = Build(handler, Generous);
+
+        var tools = await catalog.BuildAsync([Target("com.example.a", "http://a/api/mcp")], CancellationToken.None);
+
+        Assert.Equal(["com_dexample_da__list_people"], tools.Select(tool => tool.ExportedName));
+        // Kept, but never silently: an operator looking for the rest needs to know the walk stopped.
+        Assert.Contains(warnings, warning => warning.Contains("page 2", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ThePageWalkSpendsOneBudgetRatherThanAFreshOnePerPage()
+    {
+        // A per-page ceiling bounded nothing useful once the walk existed: an app answering every page
+        // just inside it would hold the fan-out for MaxPages times as long, and BuildAsync waits on the
+        // slowest target before a client sees any tools at all.
+        var pages = 0;
+        var handler = new StubHandler
+        {
+            Responses =
+            {
+                ["http://a/api/mcp"] = request =>
+                {
+                    if (Rpc(request).Method != "tools/list")
+                    {
+                        return Json(Handshake);
+                    }
+
+                    pages++;
+                    // Answers, but slowly — the case a per-request timeout never catches, because every
+                    // page is comfortably inside it.
+                    Thread.Sleep(40);
+                    return Json(Page($"list_{pages}", "more"));
+                },
+            },
+        };
+        var (catalog, warnings) = Build(handler, TimeSpan.FromMilliseconds(400));
+
+        var tools = await catalog.BuildAsync([Target("com.example.a", "http://a/api/mcp")], CancellationToken.None);
+
+        // The budget ran out long before the page cap did, which is the property under test. It stops
+        // around ten pages here; the range is what survives a slow machine without going vacuous.
+        Assert.InRange(pages, 2, ToolCatalog.MaxPages - 1);
+        // And what it read is kept, on the same reasoning as any other page that could not be read.
+        Assert.NotEmpty(tools);
+        Assert.Contains(warnings, warning => warning.Contains("com.example.a", StringComparison.Ordinal));
+    }
+
+    /// <summary>The JSON-RPC method a stubbed request carries, and its <c>params.cursor</c> if it has one.</summary>
+    private static (string Method, string? Cursor) Rpc(HttpRequestMessage request)
+    {
+        var root = System.Text.Json.JsonDocument
+            .Parse(request.Content!.ReadAsStringAsync().Result)
+            .RootElement;
+        var cursor = root.TryGetProperty("params", out var parameters) &&
+            parameters.TryGetProperty("cursor", out var value)
+                ? value.GetString()
+                : null;
+        return (root.GetProperty("method").GetString()!, cursor);
+    }
+
     private static HttpResponseMessage Sse(string body)
         => new(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "text/event-stream") };
 
     private static (ToolCatalog Catalog, List<string> Warnings) Build(StubHandler handler)
+        => Build(handler, Immediate);
+
+    private static (ToolCatalog Catalog, List<string> Warnings) Build(StubHandler handler, TimeSpan listTimeout)
     {
         var warnings = new List<string>();
         var catalog = new ToolCatalog(
             new AppMcpClient(new HttpClient(handler), (_, _) => Task.FromResult<string?>("token")),
             ToolKey.DefaultMaxToolNameChars,
             warnings.Add,
-            Immediate);
+            listTimeout);
         return (catalog, warnings);
     }
 
     private static AppMcpTarget Target(string appId, string url) => new(appId, appId, "default", url);
 
-    private static string Tools(string name)
-        => """{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"NAME","annotations":{"readOnlyHint":true}}]}}"""
-            .Replace("NAME", name, StringComparison.Ordinal);
+    private static string Tools(string name) => Page(name, nextCursor: null);
+
+    /// <summary>One page of a tool list; a null cursor makes it the last one.</summary>
+    private static string Page(string name, string? nextCursor)
+        => """{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"NAME","annotations":{"readOnlyHint":true}}]CURSOR}}"""
+            .Replace("NAME", name, StringComparison.Ordinal)
+            .Replace(
+                "CURSOR",
+                nextCursor is null ? string.Empty : $",\"nextCursor\":\"{nextCursor}\"",
+                StringComparison.Ordinal);
 
     private static HttpResponseMessage Json(string body)
         => new(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
