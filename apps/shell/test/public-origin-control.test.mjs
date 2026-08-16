@@ -60,8 +60,10 @@ test("an unchanged label keeps Reapply's semantics, and only a drifted route has
   // Reapply is the repair the drift message asks for, and it must stay the same label: re-publishing under
   // it is idempotent for the hostname and the DNS record.
   assert.deepEqual(resolvePublishedLabelAction("media", "media", "origin_drifted"), { action: "reapply", enabled: true });
+  // A healthy publication has nothing to reapply, so the disabled button names renaming instead — offering
+  // a greyed-out repair would advertise a fix that is not needed and hide the affordance that is.
   for (const state of ["active", "app_stopped", "restart_required", "error"]) {
-    assert.deepEqual(resolvePublishedLabelAction("media", "media", state), { action: "reapply", enabled: false }, state);
+    assert.deepEqual(resolvePublishedLabelAction("media", "media", state), { action: "rename", enabled: false }, state);
   }
 });
 
@@ -69,6 +71,6 @@ test("a label that only looks different is not a rename", () => {
   // Both sides go through the DNS-label sanitizer, so casing and whitespace the operator typed cannot make
   // an unchanged label read as an edit and fire a pointless remote mutation. Core normalizes identically.
   assert.deepEqual(resolvePublishedLabelAction("media", "MEDIA", "origin_drifted"), { action: "reapply", enabled: true });
-  assert.deepEqual(resolvePublishedLabelAction("media", " media ", "active"), { action: "reapply", enabled: false });
-  assert.deepEqual(resolvePublishedLabelAction("media", "media.", "active"), { action: "reapply", enabled: false });
+  assert.deepEqual(resolvePublishedLabelAction("media", " media ", "active"), { action: "rename", enabled: false });
+  assert.deepEqual(resolvePublishedLabelAction("media", "media.", "active"), { action: "rename", enabled: false });
 });

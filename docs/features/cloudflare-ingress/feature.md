@@ -153,10 +153,12 @@ The control appears only under this provider — under any other one Core refuse
 `cloudflare_provider_inactive` — and stays visible, explaining itself, when no token is connected yet.
 
 The same endpoint and the same field are how a publication is **renamed**. The label stays editable after
-an endpoint is published, and the dialog's one primary button follows what is in it: unchanged, it reads
-`Reapply` and is pressable only for an `origin_drifted` route; edited, it reads `Rename` and posts the new
-label for the same endpoint key. There is no separate rename request, because a rename *is* a publish of
-an endpoint that already has one.
+an endpoint is published, and the dialog's one primary button follows what is in it: it reads `Reapply`,
+enabled, only when the label is unchanged *and* the route is `origin_drifted`; in every other state it
+reads `Rename`, enabled once the field holds a label that differs from the published one. There is no
+separate rename request, because a rename *is* a publish of an endpoint that already has one. Reapply is
+the single special case so that a healthy publication does not present a greyed-out repair it does not
+need, and does not hide renaming behind an operator guessing that the field is editable.
 
 **Creating a publication is gated on the provider; removing one is not.** A stored publication outlives a
 provider change, so unpublish, the uninstall and update cleanups, and disconnect-with-Remove all keep
@@ -393,9 +395,10 @@ The `hosty` CLI has no ingress or Cloudflare commands.
   values, the local-config fields are visible only under `cloudflared`, and the Ingress tab survives a
   refresh on its own URL ([ingress.test.mjs](../../../apps/shell/test/ingress.test.mjs),
   [shell-routes.test.mjs](../../../apps/shell/test/shell-routes.test.mjs)).
-- Shell: on a published endpoint an edited label is a `Rename` and an unchanged one a `Reapply` that is
-  pressable only while the route is drifted; an emptied field presses nothing; and casing or whitespace
-  alone never reads as an edit ([public-origin-control.test.mjs](../../../apps/shell/test/public-origin-control.test.mjs)).
+- Shell: on a published endpoint an edited label is an enabled `Rename`, an unchanged one is `Reapply` only
+  while the route is drifted and a disabled `Rename` in every other state, an emptied field presses nothing,
+  and casing or whitespace alone never reads as an edit
+  ([public-origin-control.test.mjs](../../../apps/shell/test/public-origin-control.test.mjs)).
 
 ## Links
 

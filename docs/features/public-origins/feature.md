@@ -40,8 +40,8 @@ For the same reason the label of a published endpoint stays editable rather than
 Moving an address and removing one are different intentions, and Core implements them differently:
 a rename swaps the tunnel route in one PUT and renames the DNS record in place, while unpublishing
 deletes the record. Making rename reachable only as unpublish-then-publish would have made the
-gentler operation the one an operator cannot press
-([cloudflare-ingress/feature.md](../cloudflare-ingress/feature.md) has what each does remotely).
+gentler operation the one an operator cannot press.
+[cloudflare-ingress/feature.md](../cloudflare-ingress/feature.md) has what each of them does remotely.
 
 The public-origin fields in the app's settings dialog are read-only and point here. A second editable
 field could only ever express the simplest of the three shapes, and Shell rendering one rule while
@@ -155,8 +155,8 @@ and saying to update the upstream. A standing "broken" badge would claim knowled
   matches Core's normalization
   ([public-origin-control.test.mjs](../../../apps/shell/test/public-origin-control.test.mjs)).
 - On a published endpoint the primary action resolves to Reapply only for the unchanged label of a
-  drifted route, to Rename for any edit, and to nothing pressable for an emptied field or an intact
-  route; casing and whitespace alone never read as an edit.
+  drifted route, and to Rename everywhere else — enabled for an edit, disabled for an emptied field or
+  an intact route; casing and whitespace alone never read as an edit.
 
 ## Links
 
