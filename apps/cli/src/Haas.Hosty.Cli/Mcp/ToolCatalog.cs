@@ -1,5 +1,6 @@
 namespace Haas.Hosty.Cli.Mcp;
 
+using System.Diagnostics;
 using System.Text.Json;
 
 /// <summary>
@@ -8,14 +9,14 @@ using System.Text.Json;
 /// call.
 /// </summary>
 /// <param name="listTimeout">
-/// Ceiling on one request in the fan-out. A slow app must cost the listing a bounded wait, never the
+/// Ceiling on reading one app's tools. A slow app must cost the listing a bounded wait, never the
 /// listing itself — the alternative is a connector that hangs at session start because something
 /// unrelated is wedged. Shortened by tests, which would otherwise spend the real wait proving it.
 /// <para>
-/// Per request rather than per app, which is what the wait is for: an app that stops answering costs
-/// exactly one of these, at the protocol step or page it stops on. An app that paginates spends one
-/// per page and is bounded overall by <see cref="MaxPages"/>, so the arithmetic worst case needs an
-/// app that answers every page slowly — which is an app that works.
+/// A page walk shares one of these rather than taking a fresh one per page, so an app that answers
+/// every page just inside the ceiling cannot hold the fan-out for <see cref="MaxPages"/> times as
+/// long. The lifecycle steps inside the first request still spend it per step, as they did before
+/// there was a walk to bound.
 /// </para>
 /// </param>
 internal sealed class ToolCatalog(
@@ -147,9 +148,21 @@ internal sealed class ToolCatalog(
         // bug in ToolKey — which a repeated page is not.
         var seen = new HashSet<string>(StringComparer.Ordinal);
         string? cursor = null;
+        var spent = Stopwatch.StartNew();
 
         for (var page = 0; page < MaxPages; page++)
         {
+            // Every page spends what is left of the app's one budget rather than taking a fresh
+            // ceiling. A per-page ceiling let an app answering each page just inside it hold the
+            // fan-out for MaxPages times as long — and the fan-out is what a client waits on before it
+            // sees any tools at all.
+            var remaining = listTimeout - spent.Elapsed;
+            if (remaining <= TimeSpan.Zero)
+            {
+                warn($"{target.AppId} did not finish its tool list within {listTimeout.TotalSeconds:0.#} seconds; keeping the {exported.Count} tools read so far.");
+                return exported;
+            }
+
             var sending = cursor;
             var result = await client.SendAsync(
                 target,
@@ -162,7 +175,7 @@ internal sealed class ToolCatalog(
                         writer.WriteString("cursor", sending);
                         writer.WriteEndObject();
                     },
-                listTimeout,
+                remaining,
                 cancellationToken);
             if (!result.Succeeded)
             {

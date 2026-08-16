@@ -14,6 +14,13 @@ public class ToolFanOutTests
 
     private static readonly TimeSpan Immediate = TimeSpan.FromMilliseconds(50);
 
+    /// <summary>
+    /// For the walks that must not be cut short by the clock. One budget covers a whole page walk, so
+    /// a test about pagination has to leave room for one — otherwise it would be measuring the timeout
+    /// instead of the property it names.
+    /// </summary>
+    private static readonly TimeSpan Generous = TimeSpan.FromSeconds(20);
+
     [Fact]
     public async Task OneAppTimingOutDoesNotCostTheOthersTheirTools()
     {
@@ -286,7 +293,7 @@ public class ToolFanOutTests
                 },
             },
         };
-        var (catalog, _) = Build(handler);
+        var (catalog, _) = Build(handler, Generous);
 
         var tools = await catalog.BuildAsync([Target("com.example.a", "http://a/api/mcp")], CancellationToken.None);
 
@@ -320,7 +327,7 @@ public class ToolFanOutTests
                 },
             },
         };
-        var (catalog, warnings) = Build(handler);
+        var (catalog, warnings) = Build(handler, Generous);
 
         var tools = await catalog.BuildAsync([Target("com.example.a", "http://a/api/mcp")], CancellationToken.None);
 
@@ -357,13 +364,51 @@ public class ToolFanOutTests
                 },
             },
         };
-        var (catalog, warnings) = Build(handler);
+        var (catalog, warnings) = Build(handler, Generous);
 
         var tools = await catalog.BuildAsync([Target("com.example.a", "http://a/api/mcp")], CancellationToken.None);
 
         Assert.Equal(["com_dexample_da__list_people"], tools.Select(tool => tool.ExportedName));
         // Kept, but never silently: an operator looking for the rest needs to know the walk stopped.
         Assert.Contains(warnings, warning => warning.Contains("page 2", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ThePageWalkSpendsOneBudgetRatherThanAFreshOnePerPage()
+    {
+        // A per-page ceiling bounded nothing useful once the walk existed: an app answering every page
+        // just inside it would hold the fan-out for MaxPages times as long, and BuildAsync waits on the
+        // slowest target before a client sees any tools at all.
+        var pages = 0;
+        var handler = new StubHandler
+        {
+            Responses =
+            {
+                ["http://a/api/mcp"] = request =>
+                {
+                    if (Rpc(request).Method != "tools/list")
+                    {
+                        return Json(Handshake);
+                    }
+
+                    pages++;
+                    // Answers, but slowly — the case a per-request timeout never catches, because every
+                    // page is comfortably inside it.
+                    Thread.Sleep(40);
+                    return Json(Page($"list_{pages}", "more"));
+                },
+            },
+        };
+        var (catalog, warnings) = Build(handler, TimeSpan.FromMilliseconds(400));
+
+        var tools = await catalog.BuildAsync([Target("com.example.a", "http://a/api/mcp")], CancellationToken.None);
+
+        // The budget ran out long before the page cap did, which is the property under test. It stops
+        // around ten pages here; the range is what survives a slow machine without going vacuous.
+        Assert.InRange(pages, 2, ToolCatalog.MaxPages - 1);
+        // And what it read is kept, on the same reasoning as any other page that could not be read.
+        Assert.NotEmpty(tools);
+        Assert.Contains(warnings, warning => warning.Contains("com.example.a", StringComparison.Ordinal));
     }
 
     /// <summary>The JSON-RPC method a stubbed request carries, and its <c>params.cursor</c> if it has one.</summary>
@@ -383,13 +428,16 @@ public class ToolFanOutTests
         => new(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "text/event-stream") };
 
     private static (ToolCatalog Catalog, List<string> Warnings) Build(StubHandler handler)
+        => Build(handler, Immediate);
+
+    private static (ToolCatalog Catalog, List<string> Warnings) Build(StubHandler handler, TimeSpan listTimeout)
     {
         var warnings = new List<string>();
         var catalog = new ToolCatalog(
             new AppMcpClient(new HttpClient(handler), (_, _) => Task.FromResult<string?>("token")),
             ToolKey.DefaultMaxToolNameChars,
             warnings.Add,
-            Immediate);
+            listTimeout);
         return (catalog, warnings);
     }
 

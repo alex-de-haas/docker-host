@@ -62,9 +62,13 @@ and re-established rather than retried forever.
 
 `tools/list` is paginated, so each app's list is **walked to the end**, every page after the first
 asking with the `nextCursor` the app handed back. Reading one page left an app's later tools out of
-the catalog entirely — absent and uncallable, with no symptom beyond their not being there. The walk
-is capped at 20 pages, because the cursor is the app's own: one that never stops issuing a cursor
-must not spin the fan-out.
+the catalog entirely — absent and uncallable, with no symptom beyond their not being there.
+
+Two guards bound the walk, because they catch different apps. The **per-app timeout is spent across
+the whole walk**, not refreshed per page: one that answered every page just inside a per-page ceiling
+would otherwise hold the fan-out twenty times as long, and the fan-out is what a client waits on
+before it sees any tools at all. The walk is also **capped at 20 pages**, since a cursor that never
+ends would otherwise spin against a fast app for the whole budget.
 
 A page that cannot be read **keeps the pages read before it**, which is a decision about what the walk
 produces rather than a default. Were it producing a **permission grant**, the answer would invert: a
@@ -193,8 +197,9 @@ exist yet.
   costs the others nothing; an app the actor may not reach is absent **beside** one they can; a tool
   without a read-only hint is dropped while its sibling survives; a wrong-shaped answer is skipped
   rather than read as an empty fleet; the app receives the delegated token and not the caller's;
-  pagination is followed with the app's own cursor echoed back, a cursor that never ends is capped,
-  and a page that cannot be read keeps what was read before it.
+  pagination is followed with the app's own cursor echoed back, a cursor that never ends is capped, a
+  walk of pages each answered slowly is cut by the one budget they share, and a page that cannot be
+  read keeps what was read before it.
 - The protocol loop: `initialize` announces `listChanged` and says the surface is filtered; schemas
   and annotations pass through unchanged; a call reaches the app under its *own* name; a stopped app
   fails only its own call and the session answers the next request; a tool absent from the catalog is

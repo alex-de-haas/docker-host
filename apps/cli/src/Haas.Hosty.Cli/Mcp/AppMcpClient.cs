@@ -221,7 +221,7 @@ internal sealed class AppMcpClient(HttpClient http, Func<string, CancellationTok
             return new AppMcpExchange(
                 AppMcpResult.Unavailable(
                     "app_stopped",
-                    $"{target.AppId} did not answer within {timeout.TotalSeconds:0} seconds; it may be stopped."),
+                    $"{target.AppId} did not answer within {timeout.TotalSeconds:0.#} seconds; it may be stopped."),
                 null,
                 Rejected: false);
         }
