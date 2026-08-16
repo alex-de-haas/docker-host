@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-08-15
-Updated: 2026-08-15
+Updated: 2026-08-16
 
 `hosty mcp`: a stdio MCP server inside the existing CLI, spawned by an agent client on the user's
 machine, that presents the whole Hosty fleet as one MCP server. Rollout step 7 of the
@@ -102,6 +102,14 @@ the two should know which is current.
       every collision **and length** case named in Decisions, the read-only refusal, token reuse
       inside the margin against a re-mint outside it, and the change notification — each with the
       succeeding half beside it. Plus the Core route's own HTTP suite.
+- [ ] **The plugin bundle exercised as a plugin.** Install `packages/hosty-claude-plugin` into a real
+      Claude Code, confirm the server appears from `.claude-plugin/plugin.json` and that the skill is
+      discovered and offered. The live run on 2026-08-16 registered the server with `claude mcp add`
+      instead, which exercises neither file — and it is also the open "A Hosty skill" cell of step 6
+      in [ai-agent-bridge](../ai-agent-bridge/plan.md), since the model read these tool names with no
+      guidance at all.
+      A checkbox rather than a line in Verification: with every other local box ticked, the checklist
+      is what says whether this feature is done, and prose under a checked item cannot do that job.
 - [x] Docs: `feature.md`, umbrella step 7, index.
 
 ### Blocked, and unchecked on purpose
@@ -260,9 +268,19 @@ into Decided below, together with a fourth the plan had never recorded.
 - Live, and it is the point of the feature: register `hosty mcp` in a stock client, confirm the tools
   of an app appear without any token in the client config, call one, then install or stop an app and
   confirm the list changes without restarting the client.
+  **Done 2026-08-15 except through a stock client** — the connector was driven directly against Core
+  0.81.0 and demo-app 0.7.2: tools listed with no credential in the caller's configuration, a call
+  reached the app and came back with its real domain answer, and stopping then starting the app under
+  a held-open session produced `notifications/tools/list_changed` on each transition with the list
+  emptying and refilling. A stock client was registered on 2026-08-16 (`claude mcp add`) and reports
+  `✔ Connected`, with **no credential of any kind in the stored entry**, and a session called
+  `get_my_app_role` and returned demo-app's own `host-admin-bootstrap` and its seven permissions —
+  values chosen because they cannot be guessed. Complete.
 - The negative that matters: an app the actor may not reach must not appear in `tools/list` at all —
   verified beside a permitted actor who does see it, since a connector that exports nothing would
-  satisfy the refusal alone. The read-only filter needs the same treatment and has a trap of its own:
+  satisfy the refusal alone.
+  **Done 2026-08-15:** a `host.user` unassigned to demo-app saw nothing where the administrator saw
+  both tools. The read-only filter needs the same treatment and has a trap of its own:
   with fail-closed enforcement and no annotations anywhere, an empty `tools/list` is the *expected*
   output of a broken build and of a correct one alike. Verify it against demo-app **after** its tools
   declare `readOnlyHint`, with a deliberately mutating tool absent beside a read-only one present.

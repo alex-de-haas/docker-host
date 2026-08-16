@@ -1,7 +1,7 @@
 # Hosty MCP Connector
 
 Created: 2026-08-15
-Updated: 2026-08-15
+Updated: 2026-08-16
 
 `hosty mcp` is a stdio MCP server inside the CLI, spawned by an agent client on the operator's own
 machine, presenting every app on one Hosty host as a single server. It is step 7 of the
@@ -189,17 +189,50 @@ exist yet.
   unknown user and an unknown app stay distinguishable; both the issue and the refusal are audited.
 - Native AOT publish is clean, since the reason for hand-rolling the protocol is a property that only
   a publish can demonstrate.
-- **Driven live on 2026-08-15** against a running host (Core 0.80.0), as the published native binary:
-  the handshake answered, discovery found the real fleet, the fan-out ran, and the one app declaring
-  `mcp` degraded cleanly to no tools. What that run could *not* exercise is the token path, because
-  that Core predates the control route — it answered `404`, confirmed by probing the route directly
-  rather than inferred from the connector's own report.
-  It paid for itself anyway: the only message was "would not issue a token for this user", which reads
-  as an access problem and sends the reader to the user directory. An empty `404` is now reported as a
-  Core too old to have the route, with the ambiguous case — a `404` carrying Core's own answer about
-  the user or app — kept distinct and tested as a pair.
-- **Not yet done, and the point of the feature:** no stock client has connected. The live checks the
-  plan requires — tools appearing with no token in the client config, calling one, installing or
-  stopping an app and watching the list change without a restart, and an app the actor may not reach
-  staying absent beside a permitted actor who sees it — all need a host running Core 0.81.0, as does
-  installing the plugin into a real Claude Code.
+- **Driven live on 2026-08-15**, as the published native binary against a running host. Two runs, and
+  the first is worth keeping because of what it could not do: against Core 0.80.0 the token path was
+  unreachable — that Core predates the control route and answered `404`, confirmed by probing the
+  route directly rather than inferred from the connector's own report. It paid for itself anyway. The
+  only message was "would not issue a token for this user", which reads as an access problem and sends
+  the reader to the user directory; an empty `404` is now reported as a Core too old to have the route,
+  with the ambiguous case — a `404` carrying Core's own answer — kept distinct and tested as a pair.
+- **Against Core 0.81.0 and demo-app 0.7.2 the whole chain runs**, verified end to end:
+  - the control route issued a token, the MCP lifecycle completed against the app, and `tools/list`
+    returned both tools **with no credential anywhere in the caller's configuration** — the property
+    the feature exists for;
+  - names, descriptions and annotations arrived as designed:
+    `com_dhaas_ddemo-app__get_my_app_role`, `[Demo App] …`, and `readOnlyHint` passed through
+    untouched;
+  - `tools/call` reached demo-app, which validated the token, resolved the Hosty identity to its own
+    `admin` app role, and returned its real permission list;
+  - **the visibility negative, as the pair it has to be:** the same `tools/list` run as a `host.user`
+    who is not assigned to demo-app returned nothing, beside the administrator who saw both tools. The
+    connector applies no policy of its own here — Core refuses the token and the app drops out.
+  - the run immediately before demo-app was updated is the fail-closed rule observed rather than
+    argued: 0.7.1 declared no annotations, so both of its tools were refused and the catalog was
+    empty.
+  - **the fleet was changed under a live session**, which is the capability a static config cannot
+    have at all. One connector process was held open throughout while demo-app was stopped and
+    started again: `notifications/tools/list_changed` arrived on the first poll tick after each
+    transition — 27s after the stop, 10s after the start, both inside the 30-second interval — the
+    tool list emptied and refilled, and the client was never restarted.
+- **A stock client connected on 2026-08-16.** Registered with `claude mcp add hosty -- hosty mcp
+  --user <email>`; `claude mcp list` spawns the server, completes the MCP handshake and reports
+  `✔ Connected`. That is the first evidence about *client compatibility* rather than about the server —
+  every check above drove the protocol with a purpose-built driver, which proves the server completely
+  and compatibility not at all, the same distinction [app-mcp](../app-mcp/feature.md) drew about its
+  own endpoint.
+  What the stored entry contains is the headline: `{"type":"stdio","command":"hosty","args":["mcp",
+  "--user","…"],"env":{}}` — **no token, no header, nothing that expires**, and `claude mcp get` prints
+  it back with nothing to redact. Set against the cost the umbrella recorded for step 6 — a full-role
+  admin token in plaintext that `claude mcp get` echoes unmasked — that is the problem this feature
+  was built to remove, measured in the same place it was found.
+- **A session called an app's tool through that client on 2026-08-16**, which is the last link and
+  the whole point. The model was asked for `get_my_app_role`'s `source` field and its permission
+  count rather than its role, deliberately: `admin` is guessable from context and would have proved
+  nothing, while `host-admin-bootstrap 7` matches demo-app's own answer exactly and cannot be
+  arrived at any other way. This closes the step 6 cell that was **not reachable at all** with a
+  static config, since the app endpoint wants a five-minute token.
+- Every check above registered the server with `claude mcp add`, so the coverage stops at the
+  connector: the plugin bundle and the skill are not part of what has been exercised. Carried as an
+  unchecked deliverable in [plan.md](plan.md), which is where unfinished work belongs.
