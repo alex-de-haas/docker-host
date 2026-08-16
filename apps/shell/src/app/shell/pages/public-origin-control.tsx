@@ -8,7 +8,7 @@ import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, Dia
 import { Input } from "@/components/ui/input";
 import { coreErrorCode, isAuthRequiredRedirectError } from "../core-api";
 import { derivesPublicOrigins, publishesThroughCloudflareApi } from "../ingress";
-import { buildPublicOriginSettingKey, sanitizeSubdomainLabel } from "../public-origin";
+import { buildPublicOriginSettingKey, resolvePublishedLabelAction, sanitizeSubdomainLabel } from "../public-origin";
 import { useShellActions, useShellState } from "../shell-context";
 import type { CloudflareAppPublications, CloudflareConnectionStatus, CloudflarePublicationResult, CloudflarePublicationState, CloudflarePublicationSummary, CoreApp, CoreEndpoint } from "../types";
 import { IconButton, InlineError } from "../ui";
@@ -65,6 +65,9 @@ export function PublicOriginControl({ app, endpoint }: { app: CoreApp; endpoint:
   const originSettingKey = buildPublicOriginSettingKey(endpoint.key);
   const currentOrigin = app.settings?.find((setting) => setting.key === originSettingKey)?.value ?? "";
   const currentSubdomain = app.settings?.find((setting) => setting.key === SUBDOMAIN_SETTING_KEY)?.value ?? "";
+  // For an existing publication the label field stays editable, so the one primary button is either the
+  // drift repair or a rename depending on what has been typed into it.
+  const publishedAction = publication ? resolvePublishedLabelAction(publication.label, value, publication.state) : null;
 
   const openDialog = async () => {
     setOpen(true);
@@ -132,7 +135,7 @@ export function PublicOriginControl({ app, endpoint }: { app: CoreApp; endpoint:
       setOpen(false);
       setConflict(false);
       await refresh();
-      toast.success(`Published ${result.publicOrigin}`, {
+      toast.success(publishedAction?.action === "rename" ? `Renamed to ${result.publicOrigin}` : `Published ${result.publicOrigin}`, {
         // A running app keeps serving the old address until it restarts, so the restart is offered right
         // here rather than described and left for the operator to go and find.
         description: result.restartRequired
@@ -226,15 +229,33 @@ export function PublicOriginControl({ app, endpoint }: { app: CoreApp; endpoint:
                   </p>
                 )
               ) : publication ? (
-                <div className="space-y-1 text-sm">
-                  <div className="text-muted-foreground">Published at</div>
-                  <div className="font-mono">{publication.publicOrigin ?? `https://${publication.hostname}`}</div>
-                  <p className="text-xs text-muted-foreground">{PUBLICATION_STATE_TEXT[publication.state] ?? ""}</p>
-                  {publication.ownershipState === "adopted" && (
-                    <p className="text-[11px] text-muted-foreground">
-                      Adopted: Hosty manages this DNS record but did not create it, so unpublishing leaves it in place.
-                    </p>
-                  )}
+                <div className="space-y-3">
+                  <div className="space-y-1 text-sm">
+                    <div className="text-muted-foreground">Published at</div>
+                    <div className="font-mono">{publication.publicOrigin ?? `https://${publication.hostname}`}</div>
+                    <p className="text-xs text-muted-foreground">{PUBLICATION_STATE_TEXT[publication.state] ?? ""}</p>
+                    {publication.ownershipState === "adopted" && (
+                      <p className="text-[11px] text-muted-foreground">
+                        Adopted: Hosty manages this DNS record but did not create it, so unpublishing leaves it in place.
+                        Renaming renames that same record rather than creating a second one.
+                      </p>
+                    )}
+                  </div>
+                  {/* The label stays editable while published, because moving an address and removing one are
+                      different intentions. Unpublish-then-publish is not the same operation: it deletes the DNS
+                      record and creates a new one, leaving a window where the hostname resolves to nothing, and
+                      for an adopted record it orphans the operator's own record pointing at a route that is gone. */}
+                  <LabelField
+                    id="public-origin-label"
+                    label="Subdomain label"
+                    value={value}
+                    suffix={suffix}
+                    onChange={(next) => { setConflict(false); setValue(next); }}
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    Renaming moves the address in place: the old route is removed in the same tunnel update and the
+                    DNS record is renamed, so nothing is deleted and re-created in between.
+                  </p>
                 </div>
               ) : (
                 <LabelField
@@ -289,17 +310,16 @@ export function PublicOriginControl({ app, endpoint }: { app: CoreApp; endpoint:
           <DialogFooter>
             <Button type="button" variant="ghost" disabled={busy} onClick={() => setOpen(false)}>Close</Button>
             {publishes ? (
-              connected && publication ? (
+              connected && publication && publishedAction ? (
                 <>
-                  {/* A drifted route says "reapply to repair it", so there has to be something to press.
-                      Re-publishing under the same label is that repair: it re-points the route at the
-                      endpoint's current local URL and is idempotent for the hostname and DNS record. */}
-                  {publication.state === "origin_drifted" && (
-                    <Button type="button" disabled={busy} onClick={() => void publish()}>
-                      {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
-                      Reapply
-                    </Button>
-                  )}
+                  {/* One button, two intentions, one request. Unchanged label: a drifted route says "reapply to
+                      repair it", so there has to be something to press — re-publishing under the same label is
+                      that repair, idempotent for the hostname and the DNS record, and there is nothing to press
+                      when the route is not drifted. Edited label: the same POST renames the publication. */}
+                  <Button type="button" disabled={busy || !publishedAction.enabled} onClick={() => void publish()}>
+                    {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
+                    {publishedAction.action === "reapply" ? "Reapply" : "Rename"}
+                  </Button>
                   <Button type="button" variant="outline" disabled={busy} onClick={() => void unpublish()}>
                     {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
                     Unpublish

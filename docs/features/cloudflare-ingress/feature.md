@@ -1,7 +1,7 @@
 # Feature: Cloudflare Ingress
 
 Created: 2026-06-17
-Updated: 2026-08-09
+Updated: 2026-08-16
 
 Runtime app services listen only on loopback. Ingress is the layer that accepts public traffic,
 terminates HTTPS, and routes by hostname to the right loopback port. Core never runs a reverse proxy
@@ -148,9 +148,15 @@ Shell surfaces as a warning that the address reaches a different machine.
 `POST /api/apps/{appId}/public-origins/publish` takes an endpoint key and a single DNS label; the hostname
 is `{label}.{baseDomain}`. Shell renders this as a label field with the base domain fixed beside it and a
 live `→ https://…` preview
-([cloudflare-publish-control.tsx](../../../apps/shell/src/app/shell/pages/cloudflare-publish-control.tsx)).
+([public-origin-control.tsx](../../../apps/shell/src/app/shell/pages/public-origin-control.tsx)).
 The control appears only under this provider — under any other one Core refuses with
 `cloudflare_provider_inactive` — and stays visible, explaining itself, when no token is connected yet.
+
+The same endpoint and the same field are how a publication is **renamed**. The label stays editable after
+an endpoint is published, and the dialog's one primary button follows what is in it: unchanged, it reads
+`Reapply` and is pressable only for an `origin_drifted` route; edited, it reads `Rename` and posts the new
+label for the same endpoint key. There is no separate rename request, because a rename *is* a publish of
+an endpoint that already has one.
 
 **Creating a publication is gated on the provider; removing one is not.** A stored publication outlives a
 provider change, so unpublish, the uninstall and update cleanups, and disconnect-with-Remove all keep
@@ -171,8 +177,19 @@ survive because the document is carried as an opaque JSON object — load-bearin
 since a real tunnel config carries `warp-routing` beside `ingress`.
 
 After the PUT, Core reads the configuration back and compares the projection of everything it did not intend
-to touch; a mismatch fails with `cloudflare_readback_unrelated_changed`. If the DNS step then fails, only
-what this operation created is rolled back.
+to touch — on a rename that projection also excludes the old hostname, which was removed on purpose; a
+mismatch fails with `cloudflare_readback_unrelated_changed`. If the DNS step then fails, only what this
+operation created is rolled back.
+
+A rename runs those same two steps for an endpoint that is already published, and that is what makes it
+gapless. The old hostname's rule is removed in the *same* PUT that inserts the new one, so no moment exists
+with both routes or with neither, and the DNS step updates the stored record id rather than creating one —
+the record is renamed and keeps its id, and an `adopted` publication stays adopted across the rename. The
+alternative an operator would otherwise be left with, unpublish then publish, is not the same operation: it
+deletes the DNS record and creates a new one, leaving a window in which the hostname resolves to nothing.
+For an adopted publication it is worse still, since unpublish deliberately leaves the adopted record in
+place while dropping the publication — republishing under a new label then meets the foreign-record path
+again, and the old record is left pointing at a tunnel that has no route for it.
 
 Ownership is keyed by hostname, never by local port, and is stored per `(app id, endpoint key)`. A hostname
 already held by another Hosty endpoint fails `cloudflare_hostname_owned` (409) and is never overwritten. A
@@ -353,6 +370,9 @@ The `hosty` CLI has no ingress or Cloudflare commands.
   values, the local-config fields are visible only under `cloudflared`, and the Ingress tab survives a
   refresh on its own URL ([ingress.test.mjs](../../../apps/shell/test/ingress.test.mjs),
   [shell-routes.test.mjs](../../../apps/shell/test/shell-routes.test.mjs)).
+- Shell: on a published endpoint an edited label is a `Rename` and an unchanged one a `Reapply` that is
+  pressable only while the route is drifted; an emptied field presses nothing; and casing or whitespace
+  alone never reads as an edit ([public-origin-control.test.mjs](../../../apps/shell/test/public-origin-control.test.mjs)).
 
 ## Links
 

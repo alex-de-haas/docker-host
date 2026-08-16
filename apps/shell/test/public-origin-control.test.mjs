@@ -8,7 +8,7 @@ import {
   INGRESS_PROVIDER_NONE,
   publishesThroughCloudflareApi,
 } from "../src/app/shell/ingress.ts";
-import { buildPublicOriginSettingKey, sanitizeSubdomainLabel } from "../src/app/shell/public-origin.ts";
+import { buildPublicOriginSettingKey, resolvePublishedLabelAction, sanitizeSubdomainLabel } from "../src/app/shell/public-origin.ts";
 
 // The control renders one of three shapes and the provider picks it. Shell has no component-test
 // harness, so what is pinned here is the extractable logic the shapes are chosen and validated by.
@@ -41,4 +41,34 @@ test("the control writes the same setting key Core reads for the endpoint", () =
   // in Core would write a setting nothing ever reads back.
   assert.equal(buildPublicOriginSettingKey("app.http"), "HOSTY_PUBLIC_ORIGIN_APP_HTTP");
   assert.equal(buildPublicOriginSettingKey("web-ui.https"), "HOSTY_PUBLIC_ORIGIN_WEB_UI_HTTPS");
+});
+
+test("an edited label on a published endpoint is a rename, not a second publish", () => {
+  // The whole point of exposing this: Core's publish removes the old route in the same tunnel PUT and
+  // renames the DNS record in place. Unpublish-then-publish, the only workaround while the field was
+  // read-only, deletes the record and creates a new one.
+  assert.deepEqual(resolvePublishedLabelAction("media", "cinema", "active"), { action: "rename", enabled: true });
+  // A rename repairs a drifted route too — it writes the route with the endpoint's current local URL.
+  assert.deepEqual(resolvePublishedLabelAction("media", "cinema", "origin_drifted"), { action: "rename", enabled: true });
+  // Nothing to publish under: the verb stays "Rename" so the button is the affordance for the empty field
+  // rather than something that appears only once a valid label is typed.
+  assert.deepEqual(resolvePublishedLabelAction("media", "", "active"), { action: "rename", enabled: false });
+  assert.deepEqual(resolvePublishedLabelAction("media", "   ", "active"), { action: "rename", enabled: false });
+});
+
+test("an unchanged label keeps Reapply's semantics, and only a drifted route has anything to press", () => {
+  // Reapply is the repair the drift message asks for, and it must stay the same label: re-publishing under
+  // it is idempotent for the hostname and the DNS record.
+  assert.deepEqual(resolvePublishedLabelAction("media", "media", "origin_drifted"), { action: "reapply", enabled: true });
+  for (const state of ["active", "app_stopped", "restart_required", "error"]) {
+    assert.deepEqual(resolvePublishedLabelAction("media", "media", state), { action: "reapply", enabled: false }, state);
+  }
+});
+
+test("a label that only looks different is not a rename", () => {
+  // Both sides go through the DNS-label sanitizer, so casing and whitespace the operator typed cannot make
+  // an unchanged label read as an edit and fire a pointless remote mutation. Core normalizes identically.
+  assert.deepEqual(resolvePublishedLabelAction("media", "MEDIA", "origin_drifted"), { action: "reapply", enabled: true });
+  assert.deepEqual(resolvePublishedLabelAction("media", " media ", "active"), { action: "reapply", enabled: false });
+  assert.deepEqual(resolvePublishedLabelAction("media", "media.", "active"), { action: "reapply", enabled: false });
 });
