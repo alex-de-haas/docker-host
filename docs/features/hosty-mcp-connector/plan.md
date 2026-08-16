@@ -264,8 +264,10 @@ into Decided below, together with a fourth the plan had never recorded.
   0.81.0 and demo-app 0.7.2: tools listed with no credential in the caller's configuration, a call
   reached the app and came back with its real domain answer, and stopping then starting the app under
   a held-open session produced `notifications/tools/list_changed` on each transition with the list
-  emptying and refilling. What remains is a real client, since driving the protocol directly proves
-  the server and not client compatibility.
+  emptying and refilling. A stock client was registered on 2026-08-16 (`claude mcp add`) and reports
+  `✔ Connected`, with **no credential of any kind in the stored entry**. What remains is a session
+  actually calling a tool through it: the headless attempt failed on the operator's expired Claude
+  credential rather than on the connector.
 - The negative that matters: an app the actor may not reach must not appear in `tools/list` at all —
   verified beside a permitted actor who does see it, since a connector that exports nothing would
   satisfy the refusal alone.

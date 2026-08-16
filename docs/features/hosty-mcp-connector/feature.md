@@ -216,8 +216,19 @@ exist yet.
     started again: `notifications/tools/list_changed` arrived on the first poll tick after each
     transition — 27s after the stop, 10s after the start, both inside the 30-second interval — the
     tool list emptied and refilled, and the client was never restarted.
-- **Still outstanding:** no stock client has connected, and the plugin has not been installed into a
-  real Claude Code. Every check above drove the protocol directly, which proves the server completely
-  and client compatibility not at all — the same distinction [app-mcp](../app-mcp/feature.md) drew
-  about its own endpoint. That is what step 7 of [ai-agent-bridge](../ai-agent-bridge/plan.md) is
+- **A stock client connected on 2026-08-16.** Registered with `claude mcp add hosty -- hosty mcp
+  --user <email>`; `claude mcp list` spawns the server, completes the MCP handshake and reports
+  `✔ Connected`. That is the first evidence about *client compatibility* rather than about the server —
+  every check above drove the protocol with a purpose-built driver, which proves the server completely
+  and compatibility not at all, the same distinction [app-mcp](../app-mcp/feature.md) drew about its
+  own endpoint.
+  What the stored entry contains is the headline: `{"type":"stdio","command":"hosty","args":["mcp",
+  "--user","…"],"env":{}}` — **no token, no header, nothing that expires**, and `claude mcp get` prints
+  it back with nothing to redact. Set against the cost the umbrella recorded for step 6 — a full-role
+  admin token in plaintext that `claude mcp get` echoes unmasked — that is the problem this feature
+  was built to remove, measured in the same place it was found.
+- **Still outstanding:** no *session* has called a tool through the client. The headless attempt
+  failed on the operator's own expired Claude credential, not on the connector, so the last link —
+  a model listing these tools and calling one — is unproven. The plugin has also not been installed
+  into a real Claude Code. Both are what step 7 of [ai-agent-bridge](../ai-agent-bridge/plan.md) is
   waiting on.
