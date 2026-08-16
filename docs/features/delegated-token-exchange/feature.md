@@ -1,7 +1,7 @@
 # Delegated Token Exchange
 
 Created: 2026-08-15
-Updated: 2026-08-15
+Updated: 2026-08-16
 
 A system app trades the delegated token it holds for one scoped to another app, so an agent session
 can call app MCP endpoints on behalf of the user currently talking to it — without Core entering the
@@ -114,6 +114,30 @@ Properties worth naming:
   a 502, keeping "this tool failed" distinct from "the assistant broke".
 - The registration dies with the session: cancelled, failed, or shut down, the route stops minting.
 
+## Which App Tools Run Without Asking
+
+The harness auto-allows a fixed set of its own read-only tools (`Read`, `Grep`, `WebFetch`, …). App
+tools are **not** in it, and the reason is the distinction the whole feature turns on: those built-ins
+are read-only because the gateway knows what they are, while an app tool is read-only because the app
+*said so* in its `readOnlyHint`.
+
+So the operator decides, per app. Each provider carries a second control beside its enable toggle,
+off by default: *run this app's read-only tools unprompted*. Turning it on is the operator vouching
+for that app's declarations about itself; the annotations then select which of its tools the decision
+covers. An app with the grant still gets a card for any tool it did not declare.
+
+What this guards is not a hostile app — an installed app already runs code on the host and needs no
+trickery — but an honest mislabelled annotation on a mutating tool, which would otherwise run with no
+card at all. A single global switch would have been the rejected "just trust the hint" wearing a
+checkbox.
+
+Mechanically: for a trusted, enabled provider the gateway runs `initialize` then `tools/list` against
+the app and keeps the names declaring `readOnlyHint: true`. **An unreadable list grants nothing** —
+"we do not know" and "it offers nothing read-only" are different answers, and only the second may
+lead to skipping a card. The grant is rebuilt from scratch on every provider-policy change, so
+withdrawing trust applies to a running session at once rather than at the next one; and it is dropped
+entirely when the delegation chain lapses.
+
 Codex reports `appMcp: false`: it gives an enabled provider **no tools at all**, not merely no live
 updates. Configuring MCP servers there means writing them into Codex's own config before the thread
 starts, a shape not verified against a live run — and guessing at that adapter's protocol is what has
@@ -130,6 +154,13 @@ caught this code twice already. The flag says so rather than the gateway quietly
   an expired one does not.
 - The session path is covered too, including that a token it mints is still branchable — otherwise
   Shell's tokens would be dead ends.
+- Auto-allow, as pairs: an enabled but unvouched-for app still raises a card, while the same call on
+  the same tool runs unprompted once the operator vouches — the only difference being their decision;
+  a tool the app declared nothing about stays out of the grant even for a trusted app; revoking trust
+  empties the grant on the running session; and an app whose tool list cannot be read grants nothing.
+  The read-only discovery is covered on its own too: only a literal `true` counts, the MCP lifecycle
+  runs before the listing with the session id carried, an SSE-framed answer is understood, and an
+  unreachable or wrong-shaped answer returns null rather than an empty set.
 - Gateway (vitest): one server per enabled provider each with **its own** token (the audience claim
   is the point); disabled, stopped, URL-less and refused providers all absent; self-refresh asks for
   its own audience; an unreachable Core degrades to no providers rather than throwing; the harness
