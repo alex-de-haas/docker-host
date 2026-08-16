@@ -1,7 +1,7 @@
 # Hosty MCP Connector
 
 Created: 2026-08-15
-Updated: 2026-08-15
+Updated: 2026-08-16
 
 `hosty mcp` is a stdio MCP server inside the CLI, spawned by an agent client on the operator's own
 machine, presenting every app on one Hosty host as a single server. It is step 7 of the
@@ -227,8 +227,13 @@ exist yet.
   it back with nothing to redact. Set against the cost the umbrella recorded for step 6 — a full-role
   admin token in plaintext that `claude mcp get` echoes unmasked — that is the problem this feature
   was built to remove, measured in the same place it was found.
-- **Still outstanding:** no *session* has called a tool through the client. The headless attempt
-  failed on the operator's own expired Claude credential, not on the connector, so the last link —
-  a model listing these tools and calling one — is unproven. The plugin has also not been installed
-  into a real Claude Code. Both are what step 7 of [ai-agent-bridge](../ai-agent-bridge/plan.md) is
-  waiting on.
+- **A session called an app's tool through that client on 2026-08-16**, which is the last link and
+  the whole point. The model was asked for `get_my_app_role`'s `source` field and its permission
+  count rather than its role, deliberately: `admin` is guessable from context and would have proved
+  nothing, while `host-admin-bootstrap 7` matches demo-app's own answer exactly and cannot be
+  arrived at any other way. This closes the step 6 cell that was **not reachable at all** with a
+  static config, since the app endpoint wants a five-minute token.
+- **Still outstanding:** the plugin *bundle* has not been installed as a plugin — the equivalent
+  registration was done with `claude mcp add`, so `.claude-plugin/plugin.json` and the skill's
+  discovery by a client are unexercised. Nothing has been validated with the skill loaded either, so
+  the model read these tool names with no guidance at all.

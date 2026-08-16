@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-08-15
-Updated: 2026-08-15
+Updated: 2026-08-16
 
 `hosty mcp`: a stdio MCP server inside the existing CLI, spawned by an agent client on the user's
 machine, that presents the whole Hosty fleet as one MCP server. Rollout step 7 of the
@@ -98,6 +98,9 @@ the two should know which is current.
       writing one field. Auto-allowing needs read-only enforced by something the app cannot assert
       about itself — a scoped token — which is the same missing piece recorded in
       [ai-agent-bridge](../ai-agent-bridge/feature.md#token-mechanics).
+      The bundle itself is **unverified as a plugin**: the live run registered the server with
+      `claude mcp add` instead, so `.claude-plugin/plugin.json` and the skill reaching a client are
+      untested — see Verification.
 - [x] Tests: discovery filtering, fan-out with one app timing out, the tool-key mapping including
       every collision **and length** case named in Decisions, the read-only refusal, token reuse
       inside the margin against a re-mint outside it, and the change notification — each with the
@@ -249,6 +252,9 @@ into Decided below, together with a fourth the plan had never recorded.
 ## Verification
 
 - Unit and integration tests as above.
+- Install `packages/hosty-claude-plugin` into a real Claude Code and confirm the server appears and
+  the skill is offered. Not covered by the `claude mcp add` run, which exercises neither the plugin
+  manifest nor skill discovery.
 - The mapping's collision cases specifically, since "collision-free" is a claim and not an
   observation: `com.example.notes` against `com-example-notes`; an app whose id contains `_`; the
   same app's `default` and non-`default` interfaces; and an app tool literally named `admin__foo`
@@ -265,9 +271,9 @@ into Decided below, together with a fourth the plan had never recorded.
   reached the app and came back with its real domain answer, and stopping then starting the app under
   a held-open session produced `notifications/tools/list_changed` on each transition with the list
   emptying and refilling. A stock client was registered on 2026-08-16 (`claude mcp add`) and reports
-  `✔ Connected`, with **no credential of any kind in the stored entry**. What remains is a session
-  actually calling a tool through it: the headless attempt failed on the operator's expired Claude
-  credential rather than on the connector.
+  `✔ Connected`, with **no credential of any kind in the stored entry**, and a session called
+  `get_my_app_role` and returned demo-app's own `host-admin-bootstrap` and its seven permissions —
+  values chosen because they cannot be guessed. Complete.
 - The negative that matters: an app the actor may not reach must not appear in `tools/list` at all —
   verified beside a permitted actor who does see it, since a connector that exports nothing would
   satisfy the refusal alone.

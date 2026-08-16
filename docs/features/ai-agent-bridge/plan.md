@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-06-09
-Updated: 2026-08-15
+Updated: 2026-08-16
 
 The shared model, the boundaries and the decision log live in [feature.md](feature.md) and are in
 force. This document holds only what is **not built**: the rollout checklist, and the design for the
@@ -29,11 +29,13 @@ and [agent-background-sessions](../agent-background-sessions/plan.md).
 - [ ] 6. Validate with stock external agent clients — no gateway code. Partially done: Claude Code
       against Core MCP works (2026-08-15). The rest of the matrix is unchecked below rather than
       described as follow-up.
-- [ ] 7. The `hosty mcp` connector and the Claude Code plugin packaging. Built 2026-08-15 —
-      [hosty-mcp-connector](../hosty-mcp-connector/feature.md): the connector, the Core control route
-      it mints through, and `packages/hosty-claude-plugin`. **Unchecked because no stock client has
-      connected to it**, which is the same gap step 6 tracks and the one thing this step exists to
-      close. Its plan stays In Progress until that live run passes.
+- [x] 7. The `hosty mcp` connector and the Claude Code plugin packaging. Shipped 2026-08-15 and
+      verified live on 2026-08-16 — [hosty-mcp-connector](../hosty-mcp-connector/feature.md): the
+      connector, the Core control route it mints through, and `packages/hosty-claude-plugin`. Claude
+      Code connects, and a session called an app's tool with no credential in its config. The
+      plugin *bundle* has still not been installed as a plugin — the equivalent registration was
+      done with `claude mcp add` — which is tracked in that feature's Verification, along with the
+      remote topology its own plan keeps unchecked and blocked.
 - [x] 8. The operator milestone — the `hosty.ai-gateway` system app plus the Shell assistant surface.
       Shipped 2026-08-09 and verified live: [ai-gateway](../ai-gateway/feature.md).
 - [ ] 9. The user profile: MCP-only sessions with delegated user tokens and approval-gated writes.
@@ -53,16 +55,18 @@ individually, because "a stock client connected" is four different claims and on
 - [x] **Claude Code → Core `/api/mcp`** (2026-08-15). Registered as an HTTP server with an admin
       access token in an `Authorization` header; `claude mcp list` reports connected and a session
       answered from the real fleet. Recorded in [core-mcp](../core-mcp/feature.md).
-- [ ] **Claude Code → demo-app `/api/mcp`.** Not merely undone — **not reachable this way today**.
-      The app endpoint requires a delegated token, which lives five minutes, so a static header entry
-      in a client config stops working almost immediately. Nothing is wrong with the endpoint; static
-      per-app entries are simply the wrong shape for a credential that must be refreshed, which is
-      what step 7's connector and [delegated-token-exchange](../delegated-token-exchange/plan.md)
-      exist to fix. Validating this cell realistically means doing one of those first.
+- [x] **Claude Code → demo-app `/api/mcp`** (2026-08-16), **through the connector, which is the only
+      way it was ever going to work**. A static header entry was not merely undone but unreachable:
+      the app endpoint wants a delegated token, which lives five minutes. `hosty mcp` holds the
+      credential instead, so the client config carries none at all. A session called
+      `get_my_app_role` and came back with demo-app's own `host-admin-bootstrap` and its seven
+      permissions — values that cannot be guessed, which is why they were the ones asked for.
+      Recorded in [hosty-mcp-connector](../hosty-mcp-connector/feature.md).
 - [ ] **Codex → Core `/api/mcp`.**
 - [ ] **Codex → demo-app `/api/mcp`**, subject to the same TTL obstacle.
 - [ ] **A Hosty skill** telling a client how to discover apps and which tools need confirmation.
-      Nothing was validated with one; every check so far was a bare endpoint entry.
+      One now exists — `packages/hosty-claude-plugin/skills/hosty-mcp-connector` — but the connection
+      above was a bare `claude mcp add`, so nothing has yet been validated *with the skill loaded*.
 - [ ] **A non-loopback origin.** Everything so far was `127.0.0.1`, so nothing exercises external
       ingress, TLS, or a proxy in the path.
 
@@ -72,6 +76,13 @@ Cost worth carrying into step 7: connecting a stock client today means a full-ro
 plaintext in the client config, which `claude mcp get` prints back unmasked. Token scopes do not
 exist, so "read-only" cannot be expressed — Core MCP being read-only is a property of the endpoint,
 not of the credential.
+
+**Paid off for the app path on 2026-08-16, and only there.** The connector's entry is
+`{"command":"hosty","args":["mcp","--user","…"],"env":{}}` — `claude mcp get` prints it back with
+nothing to redact. The two Core MCP entries above still carry admin tokens in plaintext, because
+Core MCP is reached as an HTTP server rather than through the connector. Removing that would mean
+either exporting Core's own tools through `hosty mcp` or having token scopes, neither of which is
+built.
 
 One edge case is recorded for every external path, this step included: a client holding previously
 issued Core tokens keeps calling an app MCP endpoint while Core is down or unreachable, because
