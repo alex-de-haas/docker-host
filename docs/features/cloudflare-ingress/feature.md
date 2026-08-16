@@ -178,8 +178,8 @@ since a real tunnel config carries `warp-routing` beside `ingress`.
 
 After the PUT, Core reads the configuration back and compares the projection of everything it did not intend
 to touch — on a rename that projection also excludes the old hostname, which was removed on purpose; a
-mismatch fails with `cloudflare_readback_unrelated_changed`. If the DNS step then fails, only what this
-operation created is rolled back.
+mismatch fails with `cloudflare_readback_unrelated_changed`. If the DNS step then fails, the rollback
+reverses only what this operation changed.
 
 A rename runs those same two steps for an endpoint that is already published, and that is what makes it
 gapless. The old hostname's rule is removed in the *same* PUT that inserts the new one, so no moment exists
@@ -190,6 +190,24 @@ deletes the DNS record and creates a new one, leaving a window in which the host
 For an adopted publication it is worse still, since unpublish deliberately leaves the adopted record in
 place while dropping the publication — republishing under a new label then meets the foreign-record path
 again, and the old record is left pointing at a tunnel that has no route for it.
+
+**A failed rename puts the old route back.** Rolling back a first publish only has to remove what it added,
+but a rename has also *taken something away* by the time DNS runs, so removing the new rule alone would
+leave the endpoint with no route at all while DNS still resolves the old hostname — worse than the state it
+started from. Core therefore captures the old rule verbatim before removing it and restores it in the same
+PUT that removes the new one, one document write for both halves so the undo cannot itself open the window
+it is closing. Verbatim matters: rebuilding the rule from hostname and service would drop a per-rule
+`originRequest` the operator had tuned, so `RestoreIngress` re-inserts the captured node.
+
+**A rename cannot adopt.** Adoption points a publication at a record Hosty did not create; on a rename the
+publication already owns one under the old hostname, so taking over a foreign record at the new hostname
+would strand the old one — the exact outcome renaming in place exists to avoid. A rename onto a hostname
+that already carries a foreign DNS record is therefore refused outright with `cloudflare_hostname_conflict`,
+before any mutation and regardless of `adopt`; the message names both hostnames and says to remove that
+record in Cloudflare or choose another label. The check is scoped to renames: re-publishing under the
+*unchanged* label never consults it, so a hand-made duplicate record at the endpoint's own hostname cannot
+turn Reapply — the repair for a drifted route — into a conflict. Shell shows this error plainly rather than
+with the adoption hint, which belongs only to a first publish where adoption is actually on offer.
 
 Ownership is keyed by hostname, never by local port, and is stored per `(app id, endpoint key)`. A hostname
 already held by another Hosty endpoint fails `cloudflare_hostname_owned` (409) and is never overwritten. A
@@ -350,6 +368,11 @@ The `hosty` CLI has no ingress or Cloudflare commands.
   hostname owned by another endpoint and a foreign pre-existing record are both refused; adoption takes over
   the existing record without creating one, survives a re-publish, and leaves the record on unpublish;
   unpublish reverses the order; a label change removes the old route and renames the DNS record.
+- A rename whose DNS update fails restores the previous route verbatim, keeping a per-rule `originRequest`,
+  and leaves the publication and the DNS record where they were; a rename onto a foreign DNS record is
+  refused before any mutation and cannot be forced with `adopt`; and a stray duplicate record at the
+  endpoint's own hostname still lets an unchanged label be re-applied.
+- The patcher restores a captured rule before the catch-all and leaves an already-present hostname alone.
 - Publish writes `HOSTY_PUBLIC_ORIGIN_*` and flags restart-required; unpublish removes route, record, and
   setting; publishing without a connection, without a local URL, or under another provider is refused.
 - Publication state reports restart-required after publishing onto a running app, active once it starts,

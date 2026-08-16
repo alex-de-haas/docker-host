@@ -152,7 +152,10 @@ export function PublicOriginControl({ app, endpoint }: { app: CoreApp; endpoint:
       }
     } catch (publishError) {
       if (!isAuthRequiredRedirectError(publishError)) {
-        setConflict(coreErrorCode(publishError) === "cloudflare_hostname_conflict");
+        // Core answers the same code when a rename lands on a foreign record, but a rename cannot adopt —
+        // it already owns a record under the old hostname. Offering the adoption hint there would explain a
+        // button that is not on screen, so the conflict state stays tied to the first publish.
+        setConflict(!publication && coreErrorCode(publishError) === "cloudflare_hostname_conflict");
         setError(publishError instanceof Error ? publishError.message : "Publishing the public origin failed.");
       }
     } finally {

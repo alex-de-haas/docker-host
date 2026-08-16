@@ -172,6 +172,76 @@ public sealed class CloudflarePublicationReconcilerTests : IDisposable
     }
 
     [Fact]
+    public async Task PublishAsync_WhenRenameDnsUpdateFails_RestoresThePreviousRoute()
+    {
+        var api = new StatefulApi(SampleConfig());
+        var (reconciler, publications) = Create(api);
+        await reconciler.PublishAsync("t", Target, "app", "web.http", "media", "http://127.0.0.1:8096");
+        // Give the published rule an originRequest, the way an operator tuning timeouts in the dashboard would.
+        api.SetIngressProperty("media.example.test", "originRequest", new JsonObject { ["connectTimeout"] = 30 });
+        api.FailDnsUpdate = true;
+
+        await Assert.ThrowsAsync<CloudflareApiException>(() =>
+            reconciler.PublishAsync("t", Target, "app", "web.http", "media-new", "http://127.0.0.1:8096"));
+
+        // The endpoint is still served: the half-applied rename was undone, not left with neither route.
+        var hostnames = CloudflareTunnelConfigPatcher.IngressHostnames(api.Config);
+        Assert.Contains("media.example.test", hostnames);
+        Assert.DoesNotContain("media-new.example.test", hostnames);
+        Assert.Contains("core.example.test", hostnames);
+        // Restored verbatim rather than rebuilt from hostname + service.
+        var restored = CloudflareTunnelConfigPatcher.FindIngress(api.Config, "media.example.test");
+        Assert.Equal("http://127.0.0.1:8096", (string?)restored!["service"]);
+        Assert.Equal(30, (int?)restored["originRequest"]?["connectTimeout"]);
+        // DNS still answers for the old hostname, and the publication was not moved.
+        var dns = Assert.Single(api.Dns);
+        Assert.Equal("media.example.test", dns.Name);
+        Assert.Equal("media.example.test", (await publications.GetAsync("app", "web.http"))!.Hostname);
+    }
+
+    [Fact]
+    public async Task PublishAsync_RenameOntoForeignRecord_IsRefusedBeforeAnyMutation()
+    {
+        var api = new StatefulApi(SampleConfig());
+        var (reconciler, publications) = Create(api);
+        await reconciler.PublishAsync("t", Target, "app", "web.http", "media", "http://127.0.0.1:8096");
+        // Somebody else's record already answers for the label the operator is renaming onto.
+        api.Dns.Add(new CloudflareDnsRecord("foreign-1", "CNAME", "media-new.example.test", "elsewhere.example", true, 1));
+        api.Ops.Clear();
+
+        var error = await Assert.ThrowsAsync<CloudflareConnectionException>(() =>
+            reconciler.PublishAsync("t", Target, "app", "web.http", "media-new", "http://127.0.0.1:8096"));
+
+        Assert.Equal("cloudflare_hostname_conflict", error.Code);
+        // Refused as a preflight: nothing was written, so there is nothing to roll back.
+        Assert.DoesNotContain("put-config", api.Ops);
+        Assert.Contains("media.example.test", CloudflareTunnelConfigPatcher.IngressHostnames(api.Config));
+        Assert.DoesNotContain("media-new.example.test", CloudflareTunnelConfigPatcher.IngressHostnames(api.Config));
+        Assert.Equal("media.example.test", (await publications.GetAsync("app", "web.http"))!.Hostname);
+        // The foreign record is untouched — a rename never adopts, even when asked to.
+        Assert.Contains(api.Dns, record => record.Id == "foreign-1" && record.Content == "elsewhere.example");
+        var adoptAttempt = await Assert.ThrowsAsync<CloudflareConnectionException>(() =>
+            reconciler.PublishAsync("t", Target, "app", "web.http", "media-new", "http://127.0.0.1:8096", adopt: true));
+        Assert.Equal("cloudflare_hostname_conflict", adoptAttempt.Code);
+    }
+
+    [Fact]
+    public async Task PublishAsync_SameLabelWithAStrayDuplicateRecord_StillReapplies()
+    {
+        var api = new StatefulApi(SampleConfig());
+        var (reconciler, _) = Create(api);
+        await reconciler.PublishAsync("t", Target, "app", "web.http", "media", "http://127.0.0.1:8096");
+        // A hand-made duplicate at our own hostname must not turn Reapply — the repair for a drifted route —
+        // into a conflict. Only a rename onto a foreign record is refused.
+        api.Dns.Add(new CloudflareDnsRecord("stray-1", "CNAME", "media.example.test", "elsewhere.example", true, 1));
+
+        var publication = await reconciler.PublishAsync("t", Target, "app", "web.http", "media", "http://127.0.0.1:9000");
+
+        Assert.Equal("media.example.test", publication.Hostname);
+        Assert.Equal("http://127.0.0.1:9000", publication.ServiceUrl);
+    }
+
+    [Fact]
     public async Task UnpublishAsync_ToleratesAlreadyDeletedDnsRecord()
     {
         var api = new StatefulApi(SampleConfig());
@@ -227,7 +297,13 @@ public sealed class CloudflarePublicationReconcilerTests : IDisposable
         public List<string> Ops { get; } = [];
         public bool FailDnsCreate { get; init; }
         public bool FailDnsDeleteWith404 { get; set; }
+        public bool FailDnsUpdate { get; set; }
         private int nextId = 1;
+
+        // Attach a property to an existing ingress rule, standing in for whatever an operator tuned in the
+        // dashboard and which a rollback must not quietly discard.
+        public void SetIngressProperty(string hostname, string property, JsonNode value)
+            => CloudflareTunnelConfigPatcher.FindIngress(Config, hostname)![property] = value;
 
         public Task<CloudflareTunnelConfigResult?> GetTunnelConfigurationAsync(string token, string accountId, string tunnelId, CancellationToken cancellationToken = default)
         {
@@ -261,6 +337,11 @@ public sealed class CloudflarePublicationReconcilerTests : IDisposable
         public Task<CloudflareDnsRecord?> UpdateCnameAsync(string token, string zoneId, string recordId, string name, string content, bool proxied, CancellationToken cancellationToken = default)
         {
             Ops.Add("dns-update");
+            if (FailDnsUpdate)
+            {
+                throw new CloudflareApiException(400, ["DNS update failed"]);
+            }
+
             var record = new CloudflareDnsRecord(recordId, "CNAME", name, content, proxied, 1);
             Dns.RemoveAll(existing => string.Equals(existing.Id, recordId, StringComparison.Ordinal));
             Dns.Add(record);
