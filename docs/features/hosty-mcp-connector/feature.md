@@ -66,14 +66,14 @@ the catalog entirely — absent and uncallable, with no symptom beyond their not
 is capped at 20 pages, because the cursor is the app's own: one that never stops issuing a cursor
 must not spin the fan-out.
 
-A page that cannot be read **keeps the pages read before it**, which is the opposite of the call the
-ai-gateway's read-only discovery makes on the same question, and deliberately so. There the answer is
-a permission grant, where a truncated set is indistinguishable from a complete one at the point it is
-consulted, so refusing the whole answer is the only safe reading. Here the answer is a catalog: every
-tool in it passed the read-only filter on its own merits, and every call is still checked against it,
-so a short catalog costs reach rather than safety. Dropping the app instead would take away tools that
-work to punish a page that did not — and would contradict what the fan-out does one level up, where an
-app that fails costs the catalog that app and nothing else.
+A page that cannot be read **keeps the pages read before it**, which is a decision about what the walk
+produces rather than a default. Were it producing a **permission grant**, the answer would invert: a
+truncated grant is indistinguishable from a complete one at the point it is consulted, so refusing the
+whole answer would be the only safe reading. What it produces is a **catalog** — every tool in it
+passed the read-only filter on its own merits, and every call is still checked against it — so a short
+catalog costs reach rather than safety. Dropping the app instead would take away tools that work to
+punish a page that did not, and would contradict what the fan-out does one level up, where an app that
+fails costs the catalog that app and nothing else.
 
 **Visibility is Core's answer, not the CLI's.** The control channel lists the whole fleet regardless
 of actor; an app this user may not reach drops out when Core refuses to issue its token. Reimplementing

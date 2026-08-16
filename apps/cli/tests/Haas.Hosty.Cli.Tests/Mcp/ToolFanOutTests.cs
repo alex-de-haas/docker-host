@@ -335,10 +335,10 @@ public class ToolFanOutTests
     [Fact]
     public async Task APageThatCannotBeReadKeepsTheToolsReadBeforeIt()
     {
-        // Deliberately unlike apps/ai-gateway's read-only discovery, which refuses a truncated answer
-        // outright: a partial *grant* cannot be told from a complete one where it is consulted, while a
-        // partial catalog costs reach and not safety — every tool in it was filtered on its own merits.
-        // Dropping the app would take away tools that work to punish a page that did not.
+        // The claim is about what the walk produces. A truncated *grant* cannot be told from a complete
+        // one where it is consulted, so one would have to be refused outright; a truncated catalog costs
+        // reach and not safety, since every tool in it was filtered on its own merits and every call is
+        // checked against it. Dropping the app would take away tools that work to punish a page that did not.
         var handler = new StubHandler
         {
             Responses =

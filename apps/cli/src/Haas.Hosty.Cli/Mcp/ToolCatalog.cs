@@ -8,14 +8,14 @@ using System.Text.Json;
 /// call.
 /// </summary>
 /// <param name="listTimeout">
-/// Per-app ceiling on the fan-out. One slow app must cost the listing a bounded wait, never the
+/// Ceiling on one request in the fan-out. A slow app must cost the listing a bounded wait, never the
 /// listing itself — the alternative is a connector that hangs at session start because something
 /// unrelated is wedged. Shortened by tests, which would otherwise spend the real wait proving it.
 /// <para>
-/// It bounds each request, not the whole app: an app that paginates is held to this per page and to
-/// <see cref="MaxPages"/> overall. That is the useful reading — the wait exists to catch an app that
-/// stops answering, and such an app costs exactly one of these at the page it stops on, while the
-/// arithmetic worst case needs an app that answers every page slowly, which is an app that works.
+/// Per request rather than per app, which is what the wait is for: an app that stops answering costs
+/// exactly one of these, at the protocol step or page it stops on. An app that paginates spends one
+/// per page and is bounded overall by <see cref="MaxPages"/>, so the arithmetic worst case needs an
+/// app that answers every page slowly — which is an app that works.
 /// </para>
 /// </param>
 internal sealed class ToolCatalog(
@@ -128,14 +128,14 @@ internal sealed class ToolCatalog(
     /// Paginated because the method is: reading one page left an app's later tools out of the catalog
     /// entirely — absent and uncallable, with no symptom beyond their not being there.
     /// <para>
-    /// A page that cannot be read keeps the pages already read, which is deliberately the opposite of
-    /// what <c>apps/ai-gateway</c>'s read-only discovery chose facing the same question. There the
-    /// answer is a permission grant, and a truncated grant is indistinguishable from a complete one
-    /// where it is consulted, so refusing outright is the only safe reading. Here the answer is a
-    /// catalog: every tool in it passed the read-only filter on its own, and every call is checked
-    /// against it, so a short catalog costs reach rather than safety. Dropping the app instead would
-    /// take away tools that work to punish a page that did not — the opposite of what the fan-out
-    /// above already does, where one app failing costs the catalog that app and nothing else.
+    /// A page that cannot be read keeps the pages already read, and the choice was weighed rather than
+    /// assumed. Read the same walk as a **permission grant** and the answer inverts: a truncated grant
+    /// cannot be told from a complete one where it is consulted, so refusing the whole answer is the
+    /// only safe reading. What comes back here is a **catalog** — every tool in it passed the read-only
+    /// filter on its own, and every call is checked against it — so a short catalog costs reach rather
+    /// than safety. Dropping the app instead would take away tools that work to punish a page that did
+    /// not, and would contradict the fan-out above, where one app failing costs the catalog that app
+    /// and nothing else.
     /// </para>
     /// </remarks>
     private async Task<IReadOnlyList<ExportedTool>> ListAsync(AppMcpTarget target, CancellationToken cancellationToken)
@@ -170,7 +170,7 @@ internal sealed class ToolCatalog(
                 // host, and this runs again on every poll.
                 warn(page == 0
                     ? $"{target.AppId}: {result.Message}"
-                    : $"{target.AppId}: {result.Message} (page {page + 1} of its tools); keeping the {exported.Count} read before it.");
+                    : $"{target.AppId}: {result.Message} (page {page + 1} of its tool list); keeping the {exported.Count} tools read before it.");
                 return exported;
             }
 
@@ -230,7 +230,7 @@ internal sealed class ToolCatalog(
             cursor = nextCursor;
         }
 
-        warn($"{target.AppId} is still paginating its tools after {MaxPages} pages; keeping the {exported.Count} read so far.");
+        warn($"{target.AppId} is still paginating its tool list after {MaxPages} pages; keeping the {exported.Count} tools read so far.");
         return exported;
     }
 
