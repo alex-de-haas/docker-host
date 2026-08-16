@@ -233,7 +233,6 @@ exist yet.
   nothing, while `host-admin-bootstrap 7` matches demo-app's own answer exactly and cannot be
   arrived at any other way. This closes the step 6 cell that was **not reachable at all** with a
   static config, since the app endpoint wants a five-minute token.
-- **Still outstanding:** the plugin *bundle* has not been installed as a plugin — the equivalent
-  registration was done with `claude mcp add`, so `.claude-plugin/plugin.json` and the skill's
-  discovery by a client are unexercised. Nothing has been validated with the skill loaded either, so
-  the model read these tool names with no guidance at all.
+- Every check above registered the server with `claude mcp add`, so the coverage stops at the
+  connector: the plugin bundle and the skill are not part of what has been exercised. Carried as an
+  unchecked deliverable in [plan.md](plan.md), which is where unfinished work belongs.

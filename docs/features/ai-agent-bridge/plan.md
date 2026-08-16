@@ -34,8 +34,10 @@ and [agent-background-sessions](../agent-background-sessions/plan.md).
       connector, the Core control route it mints through, and `packages/hosty-claude-plugin`. Claude
       Code connects, and a session called an app's tool with no credential in its config. The
       plugin *bundle* has still not been installed as a plugin — the equivalent registration was
-      done with `claude mcp add` — which is tracked in that feature's Verification, along with the
-      remote topology its own plan keeps unchecked and blocked.
+      done with `claude mcp add` — which is an unchecked deliverable on that feature's own plan,
+      alongside the remote topology it keeps blocked. Checked here regardless, because this step is
+      the local connector and its packaging, both of which exist and are verified end to end; it was
+      never gated on the remote topology.
 - [x] 8. The operator milestone — the `hosty.ai-gateway` system app plus the Shell assistant surface.
       Shipped 2026-08-09 and verified live: [ai-gateway](../ai-gateway/feature.md).
 - [ ] 9. The user profile: MCP-only sessions with delegated user tokens and approval-gated writes.
