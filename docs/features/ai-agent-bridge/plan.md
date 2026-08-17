@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-06-09
-Updated: 2026-08-16
+Updated: 2026-08-17
 
 The shared model, the boundaries and the decision log live in [feature.md](feature.md) and are in
 force. This document holds only what is **not built**: the rollout checklist, and the design for the
@@ -16,8 +16,9 @@ and [agent-background-sessions](../agent-background-sessions/plan.md).
 ## Deliverables
 
 - [x] 1. Document the shared concept and boundaries — [feature.md](feature.md).
-- [x] 2. Token infrastructure, with remote CLI contexts as its first consumer —
-      [access-tokens](../access-tokens/feature.md).
+- [x] 2. Token infrastructure — [access-tokens](../access-tokens/feature.md). Its first consumer was
+      `hosty login`, removed 2026-08-17 when the CLI was made local-only; the Swift Shell is the
+      consumer now, and the credential itself is unchanged.
 - [x] 3. Manifest interface discovery metadata, no model execution. Shipped 2026-08-11 alongside step
       4: `interfaces` validated as a draft `app.0.1` extension, normalized onto the app record and
       resolved to URLs on `AppSummary` and the app-directory roster.
@@ -127,8 +128,9 @@ to `read_tasks` plus `track_time` against a single app.
 Topologies — the connector runs where the agent client runs:
 
 1. Everything on one machine: stdio plus the trusted local control channel, no login.
-2. Agent client on a user machine, Core on a server (the primary remote case): `hosty login --host`
-   once; needs discovery to return external origins and TLS on token-carrying endpoints.
+2. ~~Agent client on a user machine, Core on a server, authenticating with a saved CLI credential.~~
+   **Dropped 2026-08-17**: the CLI is local-only, `hosty login` is gone, and this case is served by
+   topology 3 below rather than by a second transport under every command.
 3. CLI only on the server: `"command": "ssh", "args": ["user@server", "hosty", "mcp"]` — stdio over
    SSH, zero new code.
 4. No CLI at all (web or mobile clients): needs a remote HTTP MCP endpoint with OAuth, a future

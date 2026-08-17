@@ -120,12 +120,14 @@ internal sealed partial class McpCommand(CommandContext context)
 
                     break;
                 case "--context":
-                    // Accepted only to say why it does nothing. A remote host needs a CLI command that
-                    // spends a saved login credential, and none exists — recorded as a blocked
-                    // deliverable in docs/features/hosty-mcp-connector/plan.md. Silently ignoring the
-                    // flag would let someone believe they were talking to a remote host.
+                    // Recognised only to answer it plainly. The CLI is local-only by decision, not by
+                    // omission (docs/features/access-tokens/feature.md), so this is not a feature
+                    // pending arrival. Someone reaching for the flag is pointing at the wrong host and
+                    // deserves the alternative rather than a bare "unknown argument".
                     throw new CommandUsageException(
-                        "hosty mcp runs against the local host only; remote contexts are not supported yet.",
+                        "hosty is local-only: it serves the host it runs on. To reach a remote fleet, "
+                        + "run the connector there over SSH — "
+                        + "\"command\": \"ssh\", \"args\": [\"user@host\", \"hosty\", \"mcp\", \"--user\", \"...\"].",
                         Usage);
                 default:
                     throw new CommandUsageException($"Unknown mcp argument '{args[index]}'.", Usage);

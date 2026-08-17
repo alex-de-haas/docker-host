@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-08-15
-Updated: 2026-08-16
+Updated: 2026-08-17
 
 `hosty mcp`: a stdio MCP server inside the existing CLI, spawned by an agent client on the user's
 machine, that presents the whole Hosty fleet as one MCP server. Rollout step 7 of the
@@ -112,12 +112,17 @@ the two should know which is current.
       is what says whether this feature is done, and prose under a checked item cannot do that job.
 - [x] Docs: `feature.md`, umbrella step 7, index.
 
-### Blocked, and unchecked on purpose
+### Remote topology — closed by decision
 
-- [ ] **Remote-host topology.** Blocked on the prerequisite below; kept here rather than in prose so
-      the local boxes cannot be ticked and the feature reported complete while this is unbuilt.
-- [ ] **A CLI command that spends a saved context** (owned by [access-tokens](../access-tokens/feature.md)).
-      Nothing consumes `hosty login` credentials today, so remote cannot work until it does.
+**Closed 2026-08-17, by deciding not to build it.** This pair was blocked on the CLI learning to spend
+a saved credential. The owner removed `hosty login` instead and made the CLI local-only
+([access-tokens](../access-tokens/feature.md)), so there is no prerequisite left to wait for and no
+remote topology to deliver here.
+
+A remote fleet is reached by running the connector *on that host* over SSH — topology 3 in
+[ai-agent-bridge](../ai-agent-bridge/plan.md), which needs no new code. `hosty mcp --context` says so
+rather than failing as an unknown argument. If a token-authenticated remote CLI is ever wanted, it is
+a feature to design in its own right, not a corner of this one.
 
 Version outcome: platform minor — a new CLI command **and** a new Core control route. The earlier
 "CLI only" estimate was wrong for the reason recorded in Decisions. Plus `apps/demo-app` patch for
@@ -218,14 +223,13 @@ into Decided below, together with a fourth the plan had never recorded.
 
 ### Decided earlier
 
-- **Local topology first; remote is a second phase.** On the same machine the CLI has the trusted
-  local control channel and needs no login. For a remote host `hosty login` contexts exist — but
-  **no CLI command currently spends a saved context**, which is a known gap, so the remote topology
-  cannot work until that is closed. Re-checked 2026-08-15 and still true: `CredentialStore.Save` is
-  written only by `LoginCommand`, and nothing reads a stored credential back except the delete path.
-  Decision: ship local first, gate remote on that gap. It also keeps the first cut honest — local is
-  the case that removes the plaintext token today, and shipping a remote path that cannot authenticate
-  would be shipping a promise.
+- **Local topology only.** On the same machine the CLI has the trusted local control channel and needs
+  no login. Remote was to be a second phase gated on the CLI spending a saved credential — a gap
+  re-checked twice and real: `CredentialStore.Save` was written only by `LoginCommand`, and nothing
+  read a stored credential back except the delete path.
+  **Superseded 2026-08-17 (owner):** rather than close that gap, `hosty login` was removed and the CLI
+  is local-only. Remote agent access is SSH, which the umbrella already recorded as needing zero new
+  code. That makes "local first" the whole design rather than its first phase.
 
 - **The CLI mints through a new control route; it never uses the app-to-app exchange.**
   The CLI acts as the *user*, not as an app, so none of the exchange's bounds apply to it — that part

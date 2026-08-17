@@ -32,6 +32,14 @@ public static class CommandLine
         var settingsStore = new LaunchSettingsStore(environment);
         var commandContext = new CommandContext(console, environment, settingsStore, error);
 
+        // One-shot, and silent on every machine that never signed in. `hosty login` is gone, and with
+        // it the only way to remove what it saved — so the credential is cleaned up here rather than
+        // left on disk with no supported way to get rid of it.
+        if (LegacyCredentialPurge.Run(environment.ConfigDirectory) is { } purged)
+        {
+            error.MarkupLine($"[yellow]{Markup.Escape(purged)}[/]");
+        }
+
         try
         {
             return args[0] switch
@@ -53,8 +61,6 @@ public static class CommandLine
                 "storage" => await new StorageCommand(commandContext).ExecuteAsync(args[1..]),
                 "users" => await new UsersCommand(commandContext).ExecuteAsync(args[1..]),
                 "auth" => await new AuthCommand(commandContext).ExecuteAsync(args[1..]),
-                "login" => await new LoginCommand(commandContext).ExecuteAsync(args[1..]),
-                "logout" => new LoginCommand(commandContext).Logout(args[1..]),
                 _ => UnknownCommand(error, args[0]),
             };
         }
@@ -171,8 +177,6 @@ public static class CommandLine
             ("storage", "Manage shared host-path mounts"),
             ("users", "List app users"),
             ("auth", "Create setup and recovery tokens"),
-            ("login", "Sign in to a remote Hosty host"),
-            ("logout", "Forget a remote host's credential"),
             ("open", "Open Hosty Shell in the browser"),
         ]);
 

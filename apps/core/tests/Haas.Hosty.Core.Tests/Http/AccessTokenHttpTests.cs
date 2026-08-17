@@ -63,7 +63,7 @@ public sealed class AccessTokenHttpTests
         var owner = await SeedUserAsync(harness, "host.admin");
         using var client = harness.CreateClient();
 
-        // Direct creation is the only source for `hosty login --token`.
+        // Direct creation is the path for a client that cannot run the device flow.
         using var created = await SendAsync(client, HttpMethod.Post, "/api/auth/credentials", owner, new { label = "backup script" });
         Assert.Equal(HttpStatusCode.OK, created.StatusCode);
         var payload = await ReadJsonAsync(created);
