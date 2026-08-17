@@ -2,7 +2,7 @@
 
 Status: Draft
 Created: 2026-07-03
-Updated: 2026-08-15
+Updated: 2026-08-17
 
 ## Goal
 
@@ -33,7 +33,10 @@ A diff against [feature.md](feature.md):
 
 ## Deliverables
 
-- [ ] **Ingest + query auth.** Core mints a shared credential for the telemetry app and injects it
+- [ ] **Ingest + query auth** — **owned by [telemetry-mcp](../telemetry-mcp/plan.md) since
+      2026-08-17**, which cannot ship its tools over an unauthenticated data path and so absorbed
+      this rather than duplicating it. Open question 1 below is answered there: per-app tokens.
+      Original wording: Core mints a shared credential for the telemetry app and injects it
       the same way it injects the OTLP endpoint; the backend requires it on the query port, and OTLP
       ingest requires it per app so `hosty.app.id` can no longer be spoofed. Remove the
       "known-open" `SECURITY` note in `apps/telemetry-backend/src/Haas.Hosty.TelemetryBackend/Program.cs`
