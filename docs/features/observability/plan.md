@@ -33,8 +33,8 @@ A diff against [feature.md](feature.md):
 
 ## Deliverables
 
-- [ ] **Ingest + query auth** — **owned by [telemetry-mcp](../telemetry-mcp/plan.md) since
-      2026-08-17**, which cannot ship its tools over an unauthenticated data path and so absorbed
+- [ ] **Ingest + query auth** — **shipped 2026-08-17 by [telemetry-mcp](../telemetry-mcp/feature.md)** for the query
+      side; ingest confinement moved on to [cross-app-dependencies](../cross-app-dependencies/plan.md), which cannot ship its tools over an unauthenticated data path and so absorbed
       this rather than duplicating it. Open question 1 below is answered there: per-app tokens.
       Original wording: Core mints a shared credential for the telemetry app and injects it
       the same way it injects the OTLP endpoint; the backend requires it on the query port, and OTLP

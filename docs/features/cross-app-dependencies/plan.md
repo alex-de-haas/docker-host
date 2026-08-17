@@ -2,7 +2,7 @@
 
 Status: Draft
 Created: 2026-07-28
-Updated: 2026-07-28
+Updated: 2026-08-17
 
 ## Goal
 
@@ -55,6 +55,18 @@ defence-in-depth improvement, not a hole being closed — worth doing carefully,
 - [ ] URL resolution and injection updated for the new path, both runtimes.
 - [ ] Uninstall/runtime-switch cleanup, so a removed app leaves no networks behind.
 - [ ] `feature.md` connectivity caveat rewritten to describe what actually ships.
+- [ ] **Confine telemetry ingest**, handed here on 2026-08-17 from
+      [telemetry-mcp](../telemetry-mcp/feature.md) because it needs this network and nothing less.
+      Today `apps/telemetry`'s OTLP port carries `"expose": "host"`, so Core publishes it on
+      `0.0.0.0` and anything on the LAN can inject spans attributed to any `hosty.app.id`. That is not
+      an oversight: a container reaches the collector through `host.docker.internal`, a bridge-gateway
+      address that cannot reach a loopback bind, so **removing the exposure without a shared network
+      silently stops ingest from every containerised app** — which was verified before the work was
+      handed over rather than after.
+      With this network in place the fix is small: bind the port to `127.0.0.1` (enough for
+      `localCommand` producers, which run as host processes) and let containers reach the collector
+      over the network by alias. Then "any installed app may write, and nothing off-host can" is what
+      the configuration does rather than what its documentation claims.
 
 ## Verification
 

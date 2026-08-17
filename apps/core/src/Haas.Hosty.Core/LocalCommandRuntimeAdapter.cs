@@ -14,7 +14,10 @@ internal sealed class LocalCommandRuntimeAdapter(
     ILogger<LocalCommandRuntimeAdapter>? logger = null,
     // Public half of the delegated-token key, injected into app environments so apps can validate
     // delegated tokens locally. Optional so existing direct constructions stay valid; DI supplies it.
-    DelegatedTokenSigningKey? delegatedTokenKey = null) : IAppRuntimeAdapter
+    DelegatedTokenSigningKey? delegatedTokenKey = null,
+    // Mints the app's own identity token, so a sibling app can verify who is calling it with the
+    // public key above. Optional for the same reason as that key; DI supplies it.
+    AppIdentityTokenService? appIdentityTokens = null) : IAppRuntimeAdapter
 {
     // Upper bound on how long a stop waits for a killed service's redirected output to reach EOF.
     private static readonly TimeSpan LogDrainTimeout = TimeSpan.FromSeconds(5);
@@ -548,6 +551,11 @@ internal sealed class LocalCommandRuntimeAdapter(
         if (delegatedTokenKey is not null)
         {
             startInfo.Environment["HOSTY_DELEGATED_TOKEN_PUBLIC_KEY"] = delegatedTokenKey.PublicKeySpkiBase64;
+        }
+
+        if (appIdentityTokens is not null)
+        {
+            startInfo.Environment["HOSTY_APP_IDENTITY_TOKEN"] = appIdentityTokens.CreateToken(context.App.Id);
         }
 
         foreach (var dependency in context.DependencyUrls)

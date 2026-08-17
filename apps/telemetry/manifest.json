@@ -3,9 +3,11 @@
   "id": "hosty.telemetry",
   "name": "Hosty Telemetry",
   "description": "OpenTelemetry collector + telemetry backend + UI: receives OTLP from Hosty runtime apps, stores metrics/logs/traces in an embedded SQLite store, and serves the Metrics/Structured logs/Traces pages that read the backend directly.",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "role": "system",
-  "provides": ["otlp-collector"],
+  "provides": [
+    "otlp-collector"
+  ],
   "runtimeProfiles": [
     {
       "key": "docker",
@@ -43,13 +45,15 @@
     },
     {
       "key": "backend",
-      "dependsOn": ["collector"],
+      "dependsOn": [
+        "collector"
+      ],
       "runtimes": {
         "docker": {
           "type": "docker",
           "image": {
             "repository": "ghcr.io/alex-de-haas/hosty-telemetry-backend",
-            "tag": "0.5.1"
+            "tag": "0.6.0"
           },
           "environment": {
             "HOSTY_TELEMETRY_LOGS_FILE": "/etc/otelcol-contrib/otlp-logs/logs.jsonl",
@@ -70,13 +74,15 @@
     },
     {
       "key": "ui",
-      "dependsOn": ["backend"],
+      "dependsOn": [
+        "backend"
+      ],
       "runtimes": {
         "docker": {
           "type": "docker",
           "image": {
             "repository": "ghcr.io/alex-de-haas/hosty-telemetry-ui",
-            "tag": "0.5.1"
+            "tag": "0.6.0"
           },
           "environment": {
             "PORT": "3000",
@@ -116,7 +122,8 @@
       "key": "otlp-http",
       "service": "collector",
       "port": "otlp-http",
-      "protocol": "http"
+      "protocol": "http",
+      "expose": "host"
     },
     {
       "key": "metrics",
@@ -144,12 +151,29 @@
       "path": "/metrics"
     },
     "navigation": [
-      { "label": "Metrics", "endpoint": "http", "path": "/metrics", "iconAsset": "assets/nav/metrics.svg" },
-      { "label": "Structured logs", "endpoint": "http", "path": "/logs", "iconAsset": "assets/nav/logs.svg" },
-      { "label": "Traces", "endpoint": "http", "path": "/traces", "iconAsset": "assets/nav/traces.svg" }
+      {
+        "label": "Metrics",
+        "endpoint": "http",
+        "path": "/metrics",
+        "iconAsset": "assets/nav/metrics.svg"
+      },
+      {
+        "label": "Structured logs",
+        "endpoint": "http",
+        "path": "/logs",
+        "iconAsset": "assets/nav/logs.svg"
+      },
+      {
+        "label": "Traces",
+        "endpoint": "http",
+        "path": "/traces",
+        "iconAsset": "assets/nav/traces.svg"
+      }
     ]
   },
-  "capabilities": ["logs"],
+  "capabilities": [
+    "logs"
+  ],
   "catalogMetadata": {
     "publisher": {
       "name": "Haas",
@@ -157,7 +181,14 @@
       "email": "a.zayats@outlook.com"
     },
     "category": "Developer Tools",
-    "tags": ["observability", "opentelemetry", "metrics", "logs", "traces", "first-party"],
+    "tags": [
+      "observability",
+      "opentelemetry",
+      "metrics",
+      "logs",
+      "traces",
+      "first-party"
+    ],
     "icon": "assets/icon.svg",
     "license": "AGPL-3.0-only",
     "links": {
@@ -166,5 +197,14 @@
     },
     "summary": "OpenTelemetry collector, storage backend, and UI: metrics, structured logs, and traces from every app on this host.",
     "descriptionFile": "docs/store.md"
+  },
+  "interfaces": {
+    "mcp": [
+      {
+        "key": "default",
+        "endpoint": "query",
+        "path": "/api/mcp"
+      }
+    ]
   }
 }

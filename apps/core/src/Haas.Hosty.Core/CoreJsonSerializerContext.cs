@@ -81,6 +81,7 @@ internal static class CoreJson
 // Delegated tokens: the signed claims payload and the issue-endpoint response.
 [JsonSerializable(typeof(DelegatedTokenPayload))]
 [JsonSerializable(typeof(DelegatedTokenResponse))]
+[JsonSerializable(typeof(AppIdentityTokenPayload))]
 // Core MCP tool payloads. Serialized to strings and embedded in MCP tool results, so they take the
 // same source-generated path as every HTTP response.
 [JsonSerializable(typeof(McpAppList))]

@@ -1506,7 +1506,10 @@ internal sealed class DockerRuntimeAdapter(
     IRegistryDigestResolver? registryDigestResolver = null,
     // Public half of the delegated-token key, injected into app environments so apps can validate
     // delegated tokens locally. Optional so existing direct constructions stay valid; DI supplies it.
-    DelegatedTokenSigningKey? delegatedTokenKey = null) : IAppRuntimeAdapter, IImageDigestResolver, IRunningContainerProbe
+    DelegatedTokenSigningKey? delegatedTokenKey = null,
+    // Mints the app's own identity token, so a sibling app can verify who is calling it with the
+    // public key above. Optional for the same reason as that key; DI supplies it.
+    AppIdentityTokenService? appIdentityTokens = null) : IAppRuntimeAdapter, IImageDigestResolver, IRunningContainerProbe
 {
     // App ids already advised about WSL2 P2P throttling, so the warning is logged once per app
     // per Core process rather than on every (health-driven) restart. Instance field on the DI
@@ -1667,6 +1670,13 @@ internal sealed class DockerRuntimeAdapter(
                 runArgs.Add("-e");
                 runArgs.Add("HOSTY_DELEGATED_TOKEN_PUBLIC_KEY");
                 containerEnvironment["HOSTY_DELEGATED_TOKEN_PUBLIC_KEY"] = delegatedTokenKey.PublicKeySpkiBase64;
+            }
+
+            if (appIdentityTokens is not null)
+            {
+                runArgs.Add("-e");
+                runArgs.Add("HOSTY_APP_IDENTITY_TOKEN");
+                containerEnvironment["HOSTY_APP_IDENTITY_TOKEN"] = appIdentityTokens.CreateToken(context.App.Id);
             }
 
             foreach (var telemetry in BuildTelemetryEnvironment(context, service.Key))
