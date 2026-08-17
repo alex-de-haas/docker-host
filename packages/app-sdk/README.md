@@ -10,10 +10,10 @@ npm install @hosty-sdk/app
 
 | Entry | Runtime | Contents |
 | --- | --- | --- |
-| `@hosty-sdk/app` | anywhere | status taxonomy, recovery decision, `hosty:auth-required` schema, URL/env helpers |
+| `@hosty-sdk/app` | anywhere | status taxonomy, recovery decision, `hosty:auth-required` and `hosty:request-delegated-token` schemas, URL/env helpers |
 | `@hosty-sdk/app/server` | server only | Core revalidation with caching, cookie helpers, the app-code route factory, the app secrets client |
 | `@hosty-sdk/app/react` | client | `<AppIdentityBridge />` — probe, silent recovery, fallback cards |
-| `@hosty-sdk/app/embedder` | client | verified `hosty:auth-required` responder for anything that embeds Hosty apps |
+| `@hosty-sdk/app/embedder` | client | verified responders — launch-code recovery and delegated tokens — for anything that embeds Hosty apps |
 
 Minimal Next.js wiring:
 
@@ -56,6 +56,25 @@ import { validateDelegatedToken } from "@hosty-sdk/app/server";
 // null for anything invalid (bad signature, wrong audience, expired) — treat like a missing token.
 const claims = validateDelegatedToken(bearerToken);
 if (claims?.role !== "host.admin") { /* 401/403 */ }
+```
+
+An embedded page cannot mint a delegated token itself — that needs the user's Core session in a
+first-party context — so it asks whoever embeds it:
+
+```ts
+import { DELEGATED_TOKEN_REQUEST_TYPE, DELEGATED_TOKEN_TYPE } from "@hosty-sdk/app";
+import { parseActiveFrameDelegatedTokenRequest } from "@hosty-sdk/app/embedder";
+
+// In the embedder, per app frame. A verified request says who asked, never whether to answer: the
+// token is user-scoped, so grant it only to apps you decided to grant it to, and post it to that
+// frame's own origin — never "*". Attach the listener before the frame can run (apps ask as soon as
+// their document does, and they re-ask until answered), and honour `refresh`: it means the token the
+// app holds was refused, so a cached mint must not be handed back.
+const intent = parseActiveFrameDelegatedTokenRequest(event, frame.contentWindow, frame.src);
+if (intent) {
+  const { token, expiresAt } = await mintDelegatedTokenFromCore(appId, { force: intent.refresh });
+  frame.contentWindow.postMessage({ type: DELEGATED_TOKEN_TYPE, token, expiresAt }, frameOrigin);
+}
 ```
 
 The design contract lives in the Hosty repository:

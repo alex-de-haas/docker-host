@@ -1,7 +1,7 @@
 # AI Gateway
 
 Created: 2026-08-09
-Updated: 2026-08-15
+Updated: 2026-08-17
 
 The Hosty assistant: an optional, removable system app (`hosty.ai-gateway`) hosting admin-only
 operator chat sessions on a host-resident agent harness, plus the Shell surface that renders them.
@@ -80,6 +80,20 @@ this feature.
 - The page shell is served unauthenticated because it holds no data: everything it renders comes
   from `/api/settings`, admin-gated like every other `/api` route, reached with a delegated token
   the embedder supplies. That is the same posture the chat panel already has.
+- **How the token reaches the page.** The page posts `hosty:request-delegated-token` to its parent
+  and the embedder answers with `hosty:delegated-token` — the handshake in `@hosty-sdk/app`'s
+  embedder slice, alongside launch-code recovery, and for the same irreducible reason: minting needs
+  the user's Core session in a first-party context, which only the embedder has. Shell answers for
+  the app declaring `ai-gateway` and no other frame; it already mints these tokens to run the chat
+  panel, so the settings page gains no reach the app did not already have, while a generic responder
+  would hand a user-scoped credential to whatever an operator installed. The page repeats the request
+  until it is answered — it runs the moment its document does, and an embedder attaching a listener a
+  beat later would otherwise leave it dead for the whole timeout — while Shell attaches its own in a
+  layout effect, closing the same race from the other side. The token is cached on both sides until
+  nearly spent, so a save is not a fresh trip to Core; a 401 drops the page's copy **and** marks the
+  next request as a refresh, since Shell's cached mint would otherwise replay the credential the API
+  just refused. Standalone there is no embedder and therefore no token: the page says so at once
+  rather than rendering an empty form that looks configurable.
 - **System prompt.** Operator text appended to the harness's own instruction sources, capped at 8000
   characters. It applies to the **next session**, not the running one: the prompt is a session's
   instruction set, and swapping it mid-conversation would leave a transcript whose halves ran under
@@ -237,6 +251,13 @@ gateway restart.
 - Settings: defaults (empty prompt, every provider off), round trip surviving a restart, rejection
   of malformed writes without storing them, pruning of toggles for uninstalled apps, the admin gate,
   and the unauthenticated page shell.
+- The settings page's inline script is compiled (not run) by the gateway suite, because it lives in
+  a template string that no build step type-checks: a syntax error there ships as a page that
+  renders and then does nothing. The token handshake itself is verified in a browser against a stub
+  embedder built to be hostile in the two ways a real one can be: it attaches its listener late (only
+  the page's retry recovers) and it caches its mint while the API rotates the accepted token (only a
+  request carrying `refresh` recovers). Shell's own cache — reuse window, forced re-mint, and
+  invalidation when the signed-in user changes — is unit-tested apart from the component.
 - Codex adapter (vitest, against `test/fake-codex-server.mjs`): handshake, resume, streaming,
   approval allow and deny, suppression of a refused item's tool-use, process death, missing binary,
   harness selection, and binary resolution. The fake fails the suite on a protocol violation —

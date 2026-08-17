@@ -1,12 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ExternalLink, ShieldAlert } from "lucide-react";
+import { DELEGATED_TOKEN_TYPE } from "@hosty-sdk/app";
+import { parseActiveFrameDelegatedTokenRequest } from "@hosty-sdk/app/embedder";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { EmbeddedWorkspace, HostyResolvedTheme, HostyThemePreference } from "../types";
 import { parseActiveFrameInstallFeedIntent, type InstallFeedIntent } from "./install-intent";
 import { parseActiveFrameAuthRequired } from "./auth-intent";
+import type { DelegatedTokenGrant } from "./delegated-token-intent";
 import { getEmbedOrigin, isInsecureEmbedBlocked, isLoopbackEmbedHost } from "./insecure-embed";
 
 export function EmbeddedWorkspacePanel({
@@ -15,6 +18,7 @@ export function EmbeddedWorkspacePanel({
   themePreference,
   onInstallFeedIntent,
   onAuthRequired,
+  onDelegatedTokenRequest,
 }: {
   workspace: EmbeddedWorkspace;
   theme: HostyResolvedTheme;
@@ -25,6 +29,12 @@ export function EmbeddedWorkspacePanel({
   // Called when the embedded app reports its Hosty session expired and asks for a fresh launch code.
   // Available to every app (recovery is universal); the panel verifies the sender before invoking it.
   onAuthRequired?: (appId: string) => void;
+  // Mints a delegated token for this app. Undefined for every app but the assistant gateway, so no
+  // listener is attached and a frame that asks is never answered — a delegated token is a
+  // user-scoped credential, and handing one to whatever the operator installed is a different
+  // decision from embedding it. `refresh` means the app's current token was refused, so a cached
+  // mint must not be handed back.
+  onDelegatedTokenRequest?: (refresh: boolean) => Promise<DelegatedTokenGrant>;
 }) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -99,6 +109,52 @@ export function EmbeddedWorkspacePanel({
       window.removeEventListener("message", handleMessage);
     };
   }, [onAuthRequired, workspace.src, workspace.appId]);
+
+  // A layout effect, unlike every other listener here: the embedded page asks for its token from an
+  // inline script, so the request can arrive as soon as the frame's document runs. Passive effects
+  // flush after paint, which leaves a window where the only request would be dropped; layout effects
+  // run in the same task as the DOM mutation that inserts the iframe, so the listener is attached
+  // before the browser can dispatch anything from it. (The app half retries as well — an embedder
+  // that attaches late is not something the app can verify.) The panel never renders on the server,
+  // so there is no isomorphic-layout-effect problem to route around.
+  useLayoutEffect(() => {
+    if (!onDelegatedTokenRequest) {
+      return;
+    }
+
+    const handleMessage = (event: MessageEvent) => {
+      const frameWindow = iframeRef.current?.contentWindow;
+      const intent = parseActiveFrameDelegatedTokenRequest(event, frameWindow, workspace.src);
+      if (!intent) {
+        return;
+      }
+
+      void (async () => {
+        try {
+          const grant = await onDelegatedTokenRequest(intent.refresh);
+          // The token is a credential, so it goes to the frame's own origin — never "*" — and only
+          // if that frame is still the one that asked: a mint is a round trip to Core, and the
+          // panel may have navigated to another app in the meantime.
+          if (iframeRef.current?.contentWindow !== frameWindow) {
+            return;
+          }
+          frameWindow?.postMessage(
+            { type: DELEGATED_TOKEN_TYPE, token: grant.token, expiresAt: grant.expiresAt },
+            getPostMessageTargetOrigin(workspace.src),
+          );
+        } catch {
+          // Staying silent is the honest answer: Shell has no surface here, and every reason a mint
+          // fails (Core unreachable, the operator is not an administrator) is one the page states
+          // better itself when its own request times out.
+        }
+      })();
+    };
+
+    window.addEventListener("message", handleMessage);
+    return () => {
+      window.removeEventListener("message", handleMessage);
+    };
+  }, [onDelegatedTokenRequest, workspace.src]);
 
   const handleLoad = useCallback(() => {
     setLoaded(true);
