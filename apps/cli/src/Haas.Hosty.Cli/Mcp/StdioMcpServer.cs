@@ -9,7 +9,7 @@ using System.Text.Json;
 /// </summary>
 /// <remarks>
 /// Three methods and one notification, hand-rolled — see the decision in
-/// docs/features/hosty-mcp-connector/plan.md. Nothing here writes to stdout except protocol messages;
+/// docs/features/hosty-mcp-connector/feature.md. Nothing here writes to stdout except protocol messages;
 /// diagnostics go to stderr, because a stray line on stdout corrupts the stream and the client's only
 /// symptom is a server that "does not work".
 /// </remarks>

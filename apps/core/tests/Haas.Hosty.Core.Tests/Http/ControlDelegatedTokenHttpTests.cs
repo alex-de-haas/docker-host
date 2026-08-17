@@ -6,7 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Haas.Hosty.Core.Tests.Http;
 
 // The control-channel delegated-token route: the credential `hosty mcp` presents to an app's MCP
-// endpoint (docs/features/hosty-mcp-connector/plan.md).
+// endpoint (docs/features/hosty-mcp-connector/feature.md).
 //
 // Every refusal is asserted beside the acceptance it must be distinguishable from. A route that
 // refused everything would satisfy each negative on its own and be completely broken — a failure mode

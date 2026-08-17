@@ -2,7 +2,7 @@ namespace Haas.Hosty.Cli.Tests.Mcp;
 
 using Haas.Hosty.Cli.Mcp;
 
-// The mapping settled in docs/features/hosty-mcp-connector/plan.md. "Collision-free" is a claim, so
+// The mapping settled in docs/features/hosty-mcp-connector/feature.md. "Collision-free" is a claim, so
 // the cases that would break it are asserted rather than reasoned about — and each refusal is
 // asserted beside the name that must still come through, since a mapping that refused everything
 // would satisfy the negatives alone.

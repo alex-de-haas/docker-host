@@ -8,7 +8,7 @@ using System.Text.Json;
 /// </summary>
 /// <remarks>
 /// Hand-rolled against <see cref="Utf8JsonWriter"/> and <see cref="JsonDocument"/> rather than built on
-/// the MCP SDK — the decision and its reasoning are in docs/features/hosty-mcp-connector/plan.md. The
+/// the MCP SDK — the decision and its reasoning are in docs/features/hosty-mcp-connector/feature.md. The
 /// short version: this CLI publishes as Native AOT with one dependency and no trim warnings, the
 /// surface needed here is two methods, and an app's tool schemas are arbitrary JSON that is copied
 /// through rather than modelled.

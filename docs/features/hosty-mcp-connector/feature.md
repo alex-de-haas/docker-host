@@ -179,7 +179,21 @@ while the client's only symptom is a server that "does not work".
 
 `packages/hosty-claude-plugin` bundles the `.mcp.json` and the `hosty-mcp-connector` skill, which
 tells a client how to read the tool names, what the read-only boundary means, and what each failure
-code implies.
+code implies. The repository root carries `.claude-plugin/marketplace.json`, because a plugin is
+installed *from a marketplace* — without it the bundle could be written but not installed, which is
+what a real install attempt found on 2026-08-17.
+
+Installing it registers one skill and one MCP server, both discovered from the bundle. Two things
+about that server are worth knowing before it bites:
+
+- **`HOSTY_MCP_USER` must be set in the client's environment.** The `.mcp.json` passes it through, and
+  a client whose variable is unset passes the literal `${HOSTY_MCP_USER}` on. The connector refuses to
+  start on that rather than accepting it as a user name — which is what it used to do, answering
+  `initialize` without ever calling Core, showing a green **Connected**, and exporting nothing at all
+  because every token request was for a user who does not exist.
+- **A server registered by hand under the same name shadows the plugin's**, silently: with a manual
+  `hosty` from `claude mcp add` present, the plugin's entry simply vanishes from `claude mcp list`
+  with nothing to say it was hidden.
 
 **It ships no `PreToolUse` hook, and the reason is worth keeping.** One was built, auto-allowing
 connector tools on the grounds that the server enforces read-only. That is a misreading of the
@@ -259,6 +273,11 @@ exist yet.
   nothing, while `host-admin-bootstrap 7` matches demo-app's own answer exactly and cannot be
   arrived at any other way. This closes the step 6 cell that was **not reachable at all** with a
   static config, since the app endpoint wants a five-minute token.
-- Every check above registered the server with `claude mcp add`, so the coverage stops at the
-  connector: the plugin bundle and the skill are not part of what has been exercised. Carried as an
-  unchecked deliverable in [plan.md](plan.md), which is where unfinished work belongs.
+- **The plugin bundle was installed as a plugin on 2026-08-17**, which the earlier checks had not
+  covered — they registered the server with `claude mcp add`, exercising neither the manifest nor
+  skill discovery. `claude plugin details hosty@hosty` reports one skill and one MCP server, both
+  discovered from the bundle.
+  Doing it for real found three things reading the files could not: the bundle **could not be
+  installed at all** without a marketplace manifest; an unset `HOSTY_MCP_USER` produced a green
+  **Connected** and an empty catalog; and a hand-registered server of the same name shadows the
+  plugin's without a word. All three are described above and fixed.

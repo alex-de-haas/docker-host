@@ -5,7 +5,7 @@ using System.Text;
 
 /// <summary>
 /// Maps an app's tool onto the name an MCP client will show the model, per the mapping settled in
-/// docs/features/hosty-mcp-connector/plan.md.
+/// docs/features/hosty-mcp-connector/feature.md.
 /// </summary>
 /// <remarks>
 /// The exported name has to be <b>unique and stable</b> — not decodable. The connector keeps its own

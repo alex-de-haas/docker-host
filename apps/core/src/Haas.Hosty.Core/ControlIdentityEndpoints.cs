@@ -44,7 +44,7 @@ internal static class ControlIdentityEndpoints
                 })));
 
         // Mints a delegated token for a named app on behalf of a named host user — the credential
-        // `hosty mcp` presents to an app's MCP endpoint (docs/features/hosty-mcp-connector/plan.md).
+        // `hosty mcp` presents to an app's MCP endpoint (docs/features/hosty-mcp-connector/feature.md).
         //
         // Why this exists next to /identity rather than reusing it: that route mints an *app identity*
         // token, a different mechanism app MCP endpoints do not accept. And the session-gated

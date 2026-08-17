@@ -4,7 +4,7 @@ using System.Net;
 using Haas.Hosty.Cli.Commands;
 using Haas.Hosty.Cli.Mcp;
 
-// Caching was a decision, not an optimisation (docs/features/hosty-mcp-connector/plan.md): the plan
+// Caching was a decision, not an optimisation (docs/features/hosty-mcp-connector/feature.md): the plan
 // said "a fresh token per call" in three places while the design it borrowed from caches. These pin
 // the behaviour that was chosen, including the margin, which is the part that is easy to get subtly
 // wrong and impossible to notice until a call fails mid-flight.

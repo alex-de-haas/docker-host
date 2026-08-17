@@ -6,7 +6,7 @@ using Haas.Hosty.Cli.Commands;
 /// Obtains and holds the short-TTL delegated tokens the connector presents to app MCP endpoints.
 /// </summary>
 /// <remarks>
-/// Cached rather than minted per call — settled in docs/features/hosty-mcp-connector/plan.md. What the
+/// Cached rather than minted per call — settled in docs/features/hosty-mcp-connector/feature.md. What the
 /// earlier "fresh token per call" wording was protecting is that <b>no expiring credential is written
 /// into a client config</b>, and that holds either way: this cache lives in the connector process and
 /// dies with it. Minting per call would add a control round trip to every tool call to shorten the
