@@ -36,6 +36,12 @@ import { EmptyState } from "./shell/ui";
 import { EmbeddedWorkspacePanel } from "./shell/workspace/embedded-workspace-panel";
 import { EmbeddedWorkspacePendingPanel } from "./shell/workspace/embedded-workspace-pending-panel";
 import { appMayRequestFeedInstall, type InstallFeedIntent } from "./shell/workspace/install-intent";
+import {
+  appMayReceiveDelegatedToken,
+  createDelegatedTokenCache,
+  type DelegatedTokenCache,
+  type DelegatedTokenGrant,
+} from "./shell/workspace/delegated-token-intent";
 import type {
   ActivePanel,
   AppAction,
@@ -357,6 +363,50 @@ export function ShellClient({
     },
     [coreOrigin, loadCsrfToken],
   );
+
+  const mintDelegatedToken = useCallback(
+    async (appId: string): Promise<DelegatedTokenGrant> => {
+      // sendCsrfJson already throws on non-2xx; this guards the shape so a drifted Core response
+      // can never seed the cache with undefined fields.
+      const response = await sendCsrfJson(`${coreOrigin}/api/apps/${encodeURIComponent(appId)}/delegated-token`);
+      const issued = (await response.json().catch(() => null)) as {
+        token?: unknown;
+        expiresAt?: unknown;
+      } | null;
+      if (typeof issued?.token !== "string" || typeof issued.expiresAt !== "string") {
+        throw new Error("Core returned an unexpected delegated-token response.");
+      }
+
+      return { token: issued.token, expiresAt: issued.expiresAt };
+    },
+    [coreOrigin, sendCsrfJson],
+  );
+
+  // Delegated tokens Shell mints for an embedded app. The reuse window, the forced re-mint after a
+  // 401, and the session-change invalidation live in the cache rather than here: they are decisions
+  // about handing over a credential, and they are covered by their own tests. Built once and reached
+  // through a ref so a rebuilt mint callback is what actually runs.
+  const mintDelegatedTokenRef = useRef(mintDelegatedToken);
+  useEffect(() => {
+    mintDelegatedTokenRef.current = mintDelegatedToken;
+  }, [mintDelegatedToken]);
+  const delegatedTokens = useRef<DelegatedTokenCache | null>(null);
+  if (!delegatedTokens.current) {
+    delegatedTokens.current = createDelegatedTokenCache((appId) => mintDelegatedTokenRef.current(appId));
+  }
+
+  const issueDelegatedToken = useCallback(
+    (appId: string, refresh = false): Promise<DelegatedTokenGrant> =>
+      delegatedTokens.current!.issue(appId, refresh),
+    [],
+  );
+
+  // A token names the user it was minted for, so a session change must not leave one reusable —
+  // including a mint that is still in flight and would otherwise resolve into the cleared cache.
+  const activeUserId = activeUser?.id ?? null;
+  useEffect(() => {
+    delegatedTokens.current?.invalidateAll();
+  }, [activeUserId]);
 
   // Best-effort Core update-available probe (admin-only endpoint). A failure clears the badge rather
   // than leaving a stale "Update available" showing (auth expiry, Core mid-restart, transient error),
@@ -1781,6 +1831,19 @@ export function ShellClient({
     [workspace, state.apps, sendCsrfJson, appEndpoint],
   );
 
+  // Which embedded frame Shell will answer with a delegated token: the assistant gateway's own
+  // pages, and nothing else. Shell already mints tokens for that app whenever the chat panel is
+  // open, so its settings page gains no reach it did not have — whereas answering every frame would
+  // hand a user-scoped credential to whatever the operator happened to install.
+  const handleDelegatedTokenRequest = useMemo(() => {
+    const gatewayAppId = assistantGateway?.appId;
+    if (!gatewayAppId || !appMayReceiveDelegatedToken(workspace?.appId, gatewayAppId)) {
+      return undefined;
+    }
+
+    return (refresh: boolean) => issueDelegatedToken(gatewayAppId, refresh);
+  }, [assistantGateway?.appId, workspace?.appId, issueDelegatedToken]);
+
   const closeInstallDialog = useCallback(() => {
     installRequestRef.current += 1;
     setInstallOpen(false);
@@ -1909,6 +1972,7 @@ export function ShellClient({
                 // app gets no handler, so its messages are never listened for.
                 onInstallFeedIntent={appMayRequestFeedInstall(workspace.appId) ? openFeedInstallDialog : undefined}
                 onAuthRequired={handleAuthRequired}
+                onDelegatedTokenRequest={handleDelegatedTokenRequest}
               />
             ) : activeWorkspaceRoute ? (
               <EmbeddedWorkspacePendingPanel

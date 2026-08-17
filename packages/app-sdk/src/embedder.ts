@@ -1,19 +1,28 @@
-// Embedder slice: the shell half of the recovery contract, for anything that embeds Hosty
-// apps in iframes (Hosty Shell or a third-party UI client). Pure functions plus a small
-// rate limiter — the embedder wires them to its own DOM and its own "open this app" flow.
+// Embedder slice: the shell half of the contracts an embedded app cannot serve itself, for
+// anything that embeds Hosty apps in iframes (Hosty Shell or a third-party UI client). Pure
+// functions plus a small rate limiter — the embedder wires them to its own DOM, its own "open
+// this app" flow, and its own Core session.
 //
-// The contract in one sentence: on a VERIFIED `hosty:auth-required` from an app you embed,
+// Recovery, in one sentence: on a VERIFIED `hosty:auth-required` from an app you embed,
 // re-run your normal open flow for that app (which mints a fresh launch code), rate-limited.
 // The re-open must take the full launch-code path — an "already open → reuse the URL
 // without a code" optimization must not short-circuit recovery.
+//
+// Delegated tokens, in one sentence: on a VERIFIED `hosty:request-delegated-token` from an app
+// you have decided to grant one, mint a token from Core with your own session and post it back
+// to that frame's origin. Both requests are unauthenticated by design; what makes them safe is
+// that the embedder answers from facts about its own DOM rather than from what the frame claims.
 
-import { AUTH_REQUIRED_INTENT_TYPE } from "./index";
+import { AUTH_REQUIRED_INTENT_TYPE, DELEGATED_TOKEN_REQUEST_TYPE } from "./index";
 
-export interface AuthRequiredMessage {
+/** The three fields of a `message` event these parsers read. */
+export interface EmbedderMessage {
   data: unknown;
   origin: string;
   source: unknown;
 }
+
+export type AuthRequiredMessage = EmbedderMessage;
 
 /**
  * Verifies that a `message` event is a genuine auth-required intent from the active app
@@ -30,6 +39,63 @@ export function parseActiveFrameAuthRequired(
   activeFrameUrl: string,
   expectedAppId: string,
 ): boolean {
+  if (!isActiveFrameMessage(event, activeFrameWindow, activeFrameUrl)) {
+    return false;
+  }
+
+  const candidate = event.data as { type?: unknown; appId?: unknown };
+  return (
+    candidate.type === AUTH_REQUIRED_INTENT_TYPE &&
+    typeof candidate.appId === "string" &&
+    candidate.appId === expectedAppId
+  );
+}
+
+/** A verified request, and the one thing its payload carries. */
+export interface DelegatedTokenRequestIntent {
+  /** The app says the token it holds was refused, so a cached mint must not be replayed. */
+  refresh: boolean;
+}
+
+/**
+ * Verifies that a `message` event is a delegated-token request from the active app frame, using
+ * the same sender checks as `parseActiveFrameAuthRequired`. There is nothing app-specific in the
+ * payload to check — and nothing to gain from one, since a frame's claim about which app it is
+ * would be the weakest fact in the room next to the embedder's own DOM.
+ *
+ * A non-null result says only *who asked*, never *whether to answer*. Answering hands the frame a
+ * user-scoped credential, so the embedder decides per app which ones it grants — Hosty Shell
+ * answers for the assistant gateway alone, the app it already mints delegated tokens for, so the
+ * handshake gives that app nothing it did not already hold. Wiring this responder to every frame
+ * would silently widen the delegated-token trust story to whatever an operator installed.
+ *
+ * An app may repeat the request (the first one can land before a listener is attached, and nothing
+ * makes an embedder attach one early), so answering must be idempotent — which minting from Core
+ * is.
+ */
+export function parseActiveFrameDelegatedTokenRequest(
+  event: EmbedderMessage,
+  activeFrameWindow: unknown,
+  activeFrameUrl: string,
+): DelegatedTokenRequestIntent | null {
+  if (!isActiveFrameMessage(event, activeFrameWindow, activeFrameUrl)) {
+    return null;
+  }
+
+  const candidate = event.data as { type?: unknown; refresh?: unknown };
+  if (candidate.type !== DELEGATED_TOKEN_REQUEST_TYPE) {
+    return null;
+  }
+
+  return { refresh: candidate.refresh === true };
+}
+
+/** The sender half both parsers share: right frame, right origin, object payload. */
+function isActiveFrameMessage(
+  event: EmbedderMessage,
+  activeFrameWindow: unknown,
+  activeFrameUrl: string,
+): boolean {
   if (!activeFrameWindow || event.source !== activeFrameWindow) {
     return false;
   }
@@ -42,16 +108,7 @@ export function parseActiveFrameAuthRequired(
     return false;
   }
 
-  if (!event.data || typeof event.data !== "object" || Array.isArray(event.data)) {
-    return false;
-  }
-
-  const candidate = event.data as { type?: unknown; appId?: unknown };
-  return (
-    candidate.type === AUTH_REQUIRED_INTENT_TYPE &&
-    typeof candidate.appId === "string" &&
-    candidate.appId === expectedAppId
-  );
+  return Boolean(event.data) && typeof event.data === "object" && !Array.isArray(event.data);
 }
 
 /**

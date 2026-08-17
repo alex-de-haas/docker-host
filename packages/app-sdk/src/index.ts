@@ -22,6 +22,44 @@ export function createAuthRequiredIntent(appId: string): AuthRequiredIntent {
 }
 
 /**
+ * The postMessage types of the delegated-token handshake: an embedded app page asks its embedder
+ * for a short-TTL token scoped to itself, and the embedder answers with one it minted from Core.
+ * Same shape of contract as the launch-code recovery above — the app cannot self-serve, because
+ * minting needs the user's Core session in a first-party context, which only the embedder has.
+ *
+ * The request carries no secret, so it is safe to broadcast; the answer does, so an embedder must
+ * post it to the frame's own origin and never to `*`. Answering is a decision, not a reflex: the
+ * token is a user-scoped credential, so an embedder answers only for apps it deliberately grants
+ * one (Hosty Shell: the assistant gateway, which it already mints tokens for).
+ */
+export const DELEGATED_TOKEN_REQUEST_TYPE = "hosty:request-delegated-token";
+export const DELEGATED_TOKEN_TYPE = "hosty:delegated-token";
+
+export interface DelegatedTokenRequest {
+  type: typeof DELEGATED_TOKEN_REQUEST_TYPE;
+  /**
+   * Set when the app is asking because the token it holds was refused. Only the app learns that —
+   * it is the one calling the API — so without this flag an embedder that caches its mints would
+   * keep answering with the very token that just came back 401, and the app could not recover until
+   * the embedder's own copy aged out. Absent rather than false on an ordinary request.
+   */
+  refresh?: true;
+}
+
+export interface DelegatedTokenGrant {
+  type: typeof DELEGATED_TOKEN_TYPE;
+  token: string;
+  /** ISO-8601 expiry, so the page can reuse the token instead of asking once per request. */
+  expiresAt: string;
+}
+
+export function createDelegatedTokenRequest(options: { refresh?: boolean } = {}): DelegatedTokenRequest {
+  return options.refresh
+    ? { type: DELEGATED_TOKEN_REQUEST_TYPE, refresh: true }
+    : { type: DELEGATED_TOKEN_REQUEST_TYPE };
+}
+
+/**
  * Recovery classification of an app session, per the platform identity error contract:
  * - `not-present`: no token at all (recoverable — same handling as `expired`).
  * - `active`: token revalidated OK.
