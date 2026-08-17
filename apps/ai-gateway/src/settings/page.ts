@@ -57,8 +57,10 @@ const STYLES = `
 // app because it already mints these tokens to run the chat panel.
 //
 // The token is cached until it is nearly spent: it is good for minutes, and asking per request
-// would send the embedder to Core on every save. Without an embedder there is no way to get one at
-// all, which the page says outright rather than rendering an empty form.
+// would send the embedder to Core on every save. A 401 drops it and marks the next request as a
+// refresh, since an embedder that caches its own mints would otherwise keep answering with the
+// token this API just refused. Without an embedder there is no way to get one at all, which the
+// page says outright rather than rendering an empty form.
 const SCRIPT = `
 const state = { settings: null, harness: null, providers: [], discovery: "ok" };
 
@@ -69,6 +71,9 @@ const NO_TOKEN =
   "No token from the embedder. Open this page from Hosty Shell, signed in as a host administrator.";
 
 let grant = null;
+// Set after a 401: the embedder may be caching a mint of its own, and only this page knows the
+// token it was given came back refused.
+let refused = false;
 
 function token() {
   if (grant && grant.expiresAtMs - Date.now() > 30000) {
@@ -82,6 +87,9 @@ function token() {
 
   return new Promise((resolve, reject) => {
     const wanted = "hosty:delegated-token";
+    const request = refused
+      ? { type: "hosty:request-delegated-token", refresh: true }
+      : { type: "hosty:request-delegated-token" };
     function handler(event) {
       // Only the embedder is answering this: any other document sharing the postMessage party line
       // would be handing the page a token of its choosing.
@@ -92,11 +100,13 @@ function token() {
         done();
         const expiresAtMs = Date.parse(event.data.expiresAt);
         grant = { value: event.data.token, expiresAtMs: Number.isFinite(expiresAtMs) ? expiresAtMs : 0 };
+        refused = false;
         resolve(grant.value);
       }
     }
     function done() {
       clearTimeout(timer);
+      clearInterval(retry);
       window.removeEventListener("message", handler);
     }
     const timer = setTimeout(() => {
@@ -104,7 +114,12 @@ function token() {
       reject(new Error(NO_TOKEN));
     }, 8000);
     window.addEventListener("message", handler);
-    window.parent.postMessage({ type: "hosty:request-delegated-token" }, "*");
+    window.parent.postMessage(request, "*");
+    // Asked again until answered, because this page runs the moment its document does and an
+    // embedder is under no obligation to have a listener attached by then — a single request lost
+    // to that race would leave the page dead for the whole timeout. Answering is idempotent (the
+    // embedder mints or reuses), so repeating costs nothing.
+    const retry = setInterval(() => window.parent.postMessage(request, "*"), 500);
   });
 }
 
@@ -115,9 +130,11 @@ async function api(path, init) {
   });
   if (!response.ok) {
     if (response.status === 401) {
-      // The cached token is spent or was never good enough; drop it so the next attempt asks the
-      // embedder again instead of replaying a credential this route has already refused.
+      // The cached token is spent or was never good enough; drop it and tell the embedder its own
+      // copy is refused too, so the next attempt gets a fresh mint rather than the same credential
+      // this route just rejected — the two clocks need not agree on "expired".
       grant = null;
+      refused = true;
     }
     const body = await response.json().catch(() => null);
     throw new Error((body && body.message) || ("Request failed (" + response.status + ")."));

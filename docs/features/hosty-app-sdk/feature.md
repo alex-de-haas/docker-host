@@ -167,6 +167,15 @@ delegated-token bounds:
   the embedder's policy, because a delegated token is user-scoped and a system app may branch it to
   other apps. Hosty Shell answers for the app declaring `ai-gateway` and no other frame — it already
   mints that app tokens to run the chat panel, so the handshake widens nothing.
+- Answering is **idempotent**, because asking is repeated. The app's request can be posted the moment
+  its document runs, and nothing obliges an embedder to have a listener attached by then; an app that
+  asked once and lost the race would sit dead until its timeout. So the app re-asks until answered,
+  and Hosty Shell additionally attaches its listener in a layout effect — the same task that inserts
+  the iframe, before the browser can dispatch anything from it.
+- The request carries `refresh` when the app's current token was **refused**. Only the app learns
+  that, and an embedder caching its mints would otherwise keep answering with the token the API just
+  rejected — the two clocks need not agree on when a token expired. An embedder that caches must
+  treat the flag as "discard yours too".
 
 A frame that is never answered is a page that renders and reports no access, which is why the app
 half states the "open me from your shell" case itself rather than waiting out a timeout.
@@ -234,7 +243,8 @@ The remaining adoption debts and the second-wave extraction inventory are in [pl
   `appId`, and its rate limiter holds under repeated intents.
 - The two responders are covered against each other, not only against forged senders: a
   delegated-token request must not satisfy the auth-required parser or the reverse, since one
-  reissues a code and the other hands over a credential.
+  reissues a code and the other hands over a credential. The `refresh` flag is read as a strict
+  boolean, so a truthy-but-not-`true` payload cannot force a re-mint.
 - Delegated-token validation rejects an expired token, a wrong audience, and a forged signature while
   accepting a well-formed one.
 - The secrets clients survive a briefly unavailable Core through their write-through cache, and a read

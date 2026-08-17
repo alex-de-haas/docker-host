@@ -3,6 +3,7 @@ import {
   AUTH_REQUIRED_INTENT_TYPE,
   buildCoreOpenUrl,
   classifyRevalidationHttpStatus,
+  createDelegatedTokenRequest,
   decideRecoveryAction,
   DELEGATED_TOKEN_REQUEST_TYPE,
   detectLaunchMode,
@@ -432,14 +433,31 @@ describe("embedder", () => {
     const request = (overrides: Partial<{ data: unknown; origin: string; source: unknown }> = {}) =>
       message({ data: { type: DELEGATED_TOKEN_REQUEST_TYPE }, ...overrides });
 
-    expect(parseActiveFrameDelegatedTokenRequest(request(), frameWindow, "http://app.local:3000/settings")).toBe(true);
-    expect(parseActiveFrameDelegatedTokenRequest(request({ source: {} }), frameWindow, "http://app.local:3000/")).toBe(false);
-    expect(parseActiveFrameDelegatedTokenRequest(request({ origin: "http://evil.local" }), frameWindow, "http://app.local:3000/")).toBe(false);
-    expect(parseActiveFrameDelegatedTokenRequest(request(), null, "http://app.local:3000/")).toBe(false);
+    expect(parseActiveFrameDelegatedTokenRequest(request(), frameWindow, "http://app.local:3000/settings")).toEqual({
+      refresh: false,
+    });
+    expect(parseActiveFrameDelegatedTokenRequest(request({ source: {} }), frameWindow, "http://app.local:3000/")).toBe(null);
+    expect(parseActiveFrameDelegatedTokenRequest(request({ origin: "http://evil.local" }), frameWindow, "http://app.local:3000/")).toBe(null);
+    expect(parseActiveFrameDelegatedTokenRequest(request(), null, "http://app.local:3000/")).toBe(null);
     // A request is not an auth-required intent and vice versa: the two responders do different
     // things, and one message must never trigger the other's handler.
-    expect(parseActiveFrameDelegatedTokenRequest(message(), frameWindow, "http://app.local:3000/")).toBe(false);
+    expect(parseActiveFrameDelegatedTokenRequest(message(), frameWindow, "http://app.local:3000/")).toBe(null);
     expect(parseActiveFrameAuthRequired(request(), frameWindow, "http://app.local:3000/", "a.b")).toBe(false);
+  });
+
+  it("carries the refresh flag through, and only when the app actually set it", () => {
+    // The flag is how an app says the token it holds was refused. Read as a strict boolean, so a
+    // truthy-but-not-true value cannot turn an ordinary request into a forced re-mint.
+    const withRefresh = createDelegatedTokenRequest({ refresh: true });
+    expect(withRefresh).toEqual({ type: DELEGATED_TOKEN_REQUEST_TYPE, refresh: true });
+    // An ordinary request is byte-identical to one from before the flag existed.
+    expect(createDelegatedTokenRequest()).toEqual({ type: DELEGATED_TOKEN_REQUEST_TYPE });
+
+    const parse = (data: unknown) =>
+      parseActiveFrameDelegatedTokenRequest(message({ data }), frameWindow, "http://app.local:3000/");
+    expect(parse(withRefresh)).toEqual({ refresh: true });
+    expect(parse(createDelegatedTokenRequest())).toEqual({ refresh: false });
+    expect(parse({ type: DELEGATED_TOKEN_REQUEST_TYPE, refresh: "yes" })).toEqual({ refresh: false });
   });
 
   it("rate-limits reissues per app", () => {

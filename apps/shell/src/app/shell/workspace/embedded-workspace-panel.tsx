@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ExternalLink, ShieldAlert } from "lucide-react";
 import { DELEGATED_TOKEN_TYPE } from "@hosty-sdk/app";
 import { parseActiveFrameDelegatedTokenRequest } from "@hosty-sdk/app/embedder";
@@ -32,8 +32,9 @@ export function EmbeddedWorkspacePanel({
   // Mints a delegated token for this app. Undefined for every app but the assistant gateway, so no
   // listener is attached and a frame that asks is never answered — a delegated token is a
   // user-scoped credential, and handing one to whatever the operator installed is a different
-  // decision from embedding it.
-  onDelegatedTokenRequest?: () => Promise<DelegatedTokenGrant>;
+  // decision from embedding it. `refresh` means the app's current token was refused, so a cached
+  // mint must not be handed back.
+  onDelegatedTokenRequest?: (refresh: boolean) => Promise<DelegatedTokenGrant>;
 }) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -109,20 +110,28 @@ export function EmbeddedWorkspacePanel({
     };
   }, [onAuthRequired, workspace.src, workspace.appId]);
 
-  useEffect(() => {
+  // A layout effect, unlike every other listener here: the embedded page asks for its token from an
+  // inline script, so the request can arrive as soon as the frame's document runs. Passive effects
+  // flush after paint, which leaves a window where the only request would be dropped; layout effects
+  // run in the same task as the DOM mutation that inserts the iframe, so the listener is attached
+  // before the browser can dispatch anything from it. (The app half retries as well — an embedder
+  // that attaches late is not something the app can verify.) The panel never renders on the server,
+  // so there is no isomorphic-layout-effect problem to route around.
+  useLayoutEffect(() => {
     if (!onDelegatedTokenRequest) {
       return;
     }
 
     const handleMessage = (event: MessageEvent) => {
       const frameWindow = iframeRef.current?.contentWindow;
-      if (!parseActiveFrameDelegatedTokenRequest(event, frameWindow, workspace.src)) {
+      const intent = parseActiveFrameDelegatedTokenRequest(event, frameWindow, workspace.src);
+      if (!intent) {
         return;
       }
 
       void (async () => {
         try {
-          const grant = await onDelegatedTokenRequest();
+          const grant = await onDelegatedTokenRequest(intent.refresh);
           // The token is a credential, so it goes to the frame's own origin — never "*" — and only
           // if that frame is still the one that asked: a mint is a round trip to Core, and the
           // panel may have navigated to another app in the meantime.

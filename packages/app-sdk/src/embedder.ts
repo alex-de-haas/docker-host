@@ -51,28 +51,43 @@ export function parseActiveFrameAuthRequired(
   );
 }
 
+/** A verified request, and the one thing its payload carries. */
+export interface DelegatedTokenRequestIntent {
+  /** The app says the token it holds was refused, so a cached mint must not be replayed. */
+  refresh: boolean;
+}
+
 /**
  * Verifies that a `message` event is a delegated-token request from the active app frame, using
  * the same sender checks as `parseActiveFrameAuthRequired`. There is nothing app-specific in the
  * payload to check — and nothing to gain from one, since a frame's claim about which app it is
  * would be the weakest fact in the room next to the embedder's own DOM.
  *
- * A true result says only *who asked*, never *whether to answer*. Answering hands the frame a
+ * A non-null result says only *who asked*, never *whether to answer*. Answering hands the frame a
  * user-scoped credential, so the embedder decides per app which ones it grants — Hosty Shell
  * answers for the assistant gateway alone, the app it already mints delegated tokens for, so the
  * handshake gives that app nothing it did not already hold. Wiring this responder to every frame
  * would silently widen the delegated-token trust story to whatever an operator installed.
+ *
+ * An app may repeat the request (the first one can land before a listener is attached, and nothing
+ * makes an embedder attach one early), so answering must be idempotent — which minting from Core
+ * is.
  */
 export function parseActiveFrameDelegatedTokenRequest(
   event: EmbedderMessage,
   activeFrameWindow: unknown,
   activeFrameUrl: string,
-): boolean {
+): DelegatedTokenRequestIntent | null {
   if (!isActiveFrameMessage(event, activeFrameWindow, activeFrameUrl)) {
-    return false;
+    return null;
   }
 
-  return (event.data as { type?: unknown }).type === DELEGATED_TOKEN_REQUEST_TYPE;
+  const candidate = event.data as { type?: unknown; refresh?: unknown };
+  if (candidate.type !== DELEGATED_TOKEN_REQUEST_TYPE) {
+    return null;
+  }
+
+  return { refresh: candidate.refresh === true };
 }
 
 /** The sender half both parsers share: right frame, right origin, object payload. */

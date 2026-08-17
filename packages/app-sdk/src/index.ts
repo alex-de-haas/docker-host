@@ -37,6 +37,13 @@ export const DELEGATED_TOKEN_TYPE = "hosty:delegated-token";
 
 export interface DelegatedTokenRequest {
   type: typeof DELEGATED_TOKEN_REQUEST_TYPE;
+  /**
+   * Set when the app is asking because the token it holds was refused. Only the app learns that —
+   * it is the one calling the API — so without this flag an embedder that caches its mints would
+   * keep answering with the very token that just came back 401, and the app could not recover until
+   * the embedder's own copy aged out. Absent rather than false on an ordinary request.
+   */
+  refresh?: true;
 }
 
 export interface DelegatedTokenGrant {
@@ -46,8 +53,10 @@ export interface DelegatedTokenGrant {
   expiresAt: string;
 }
 
-export function createDelegatedTokenRequest(): DelegatedTokenRequest {
-  return { type: DELEGATED_TOKEN_REQUEST_TYPE };
+export function createDelegatedTokenRequest(options: { refresh?: boolean } = {}): DelegatedTokenRequest {
+  return options.refresh
+    ? { type: DELEGATED_TOKEN_REQUEST_TYPE, refresh: true }
+    : { type: DELEGATED_TOKEN_REQUEST_TYPE };
 }
 
 /**

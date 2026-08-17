@@ -65,11 +65,14 @@ first-party context — so it asks whoever embeds it:
 import { DELEGATED_TOKEN_REQUEST_TYPE, DELEGATED_TOKEN_TYPE } from "@hosty-sdk/app";
 import { parseActiveFrameDelegatedTokenRequest } from "@hosty-sdk/app/embedder";
 
-// In the embedder, per app frame. A true result says who asked, never whether to answer: the token
-// is user-scoped, so grant it only to apps you decided to grant it to, and post it to that frame's
-// own origin — never "*".
-if (parseActiveFrameDelegatedTokenRequest(event, frame.contentWindow, frame.src)) {
-  const { token, expiresAt } = await mintDelegatedTokenFromCore(appId);
+// In the embedder, per app frame. A verified request says who asked, never whether to answer: the
+// token is user-scoped, so grant it only to apps you decided to grant it to, and post it to that
+// frame's own origin — never "*". Attach the listener before the frame can run (apps ask as soon as
+// their document does, and they re-ask until answered), and honour `refresh`: it means the token the
+// app holds was refused, so a cached mint must not be handed back.
+const intent = parseActiveFrameDelegatedTokenRequest(event, frame.contentWindow, frame.src);
+if (intent) {
+  const { token, expiresAt } = await mintDelegatedTokenFromCore(appId, { force: intent.refresh });
   frame.contentWindow.postMessage({ type: DELEGATED_TOKEN_TYPE, token, expiresAt }, frameOrigin);
 }
 ```
