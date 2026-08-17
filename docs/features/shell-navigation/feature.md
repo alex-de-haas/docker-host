@@ -1,7 +1,7 @@
 # Shell Navigation
 
 Created: 2026-07-30
-Updated: 2026-07-30
+Updated: 2026-08-17
 
 The browser Shell has three top-level destinations: **Dashboard**, the host you manage; **Settings**,
 the host you configure; and **Apps**, the apps you use. This document owns the route table and the
@@ -97,8 +97,8 @@ under it would be worse than either number alone. Apps mid-verb are counted in n
 the attention bucket — calling them "not running" reads as a shortfall during a boot that is going
 fine, and calling them a problem is worse.
 
-The Core update action is deliberately in two places: the footer button is reachable from every route,
-and the Dashboard copy is where an administrator is already reading the host's version.
+The Core update action lives here and nowhere else: this is where an administrator is already reading
+the host's version, and a fact that cannot be acted on beside itself is an odd place to stop.
 
 ## Settings
 
