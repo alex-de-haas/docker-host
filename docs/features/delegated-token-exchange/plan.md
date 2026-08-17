@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-08-11
-Updated: 2026-08-16
+Updated: 2026-08-17
 
 Give an agent session a credential for the app MCP endpoints it is allowed to reach — without Core
 entering the data path, and without any app ever holding a credential stronger than the user it acts
@@ -100,14 +100,14 @@ browser holding a human's session.
       **Superseded 2026-08-15 and removed** — it was verified not to fix the case it was written for,
       and the proxy below fixes it at the right layer. Kept checked because it shipped and its finding
       is what produced the proxy; leaving dead code behind would have been the worse half of honesty.
-- [ ] **A per-session MCP proxy, so the TTL stops being visible to the harness.** Re-minting when an
+- [x] **A per-session MCP proxy, so the TTL stops being visible to the harness.** Re-minting when an
       approval is released was implemented and **verified live not to work**: a paused call is bound
       to the connection it was prepared on, so replacing server configuration reaches the next call
       and never that one. The harness now holds a per-session key against a loopback route on the
       gateway; the app token is minted as the request goes out.
-      Code and unit coverage are in (over real sockets). **Unchecked until the live held-approval run
-      passes** — the predecessor also passed its unit tests and failed in reality, so on this
-      deliverable specifically, tests are not evidence that it works.
+      **Verified live 2026-08-17** — the wall-clock run this deliverable was held open for: an
+      approval raised at 5s, released at 396s (96 seconds past the 300-second TTL), answered with
+      demo-app's own `host-admin-bootstrap 7`. The predecessor passed its unit tests and failed here.
 - [ ] **App MCP for the Codex harness.** The adapter drops `mcpServers` entirely, so enabled
       providers give a Codex session no tools; reported as `appMcp: false` rather than silently. Needs
       the config shape verified against a live Codex run, not inferred.
@@ -209,7 +209,6 @@ looks arbitrary. No open questions remain.
 - Live negative: confirm a token obtained by exchange is refused when presented back to the exchange
   **for a different app**, that the same-audience refresh of it succeeds, and that a non-system app is
   refused outright.
-- Live, for the proxy specifically and still outstanding: raise an app-MCP approval, **leave it for
-  more than five minutes**, then release it and confirm the call succeeds. That is the exact case the
-  previous fix passed in unit tests and failed in reality, so nothing short of the wall-clock wait
-  settles it.
+- Live, for the proxy specifically — **done 2026-08-17**: an app-MCP approval raised at 5s, held to
+  396s, released, and answered correctly. Nothing short of the wall-clock wait would have settled it,
+  since the previous fix passed its unit tests and failed in reality on this exact case.

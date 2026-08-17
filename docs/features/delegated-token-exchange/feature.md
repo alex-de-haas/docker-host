@@ -1,7 +1,7 @@
 # Delegated Token Exchange
 
 Created: 2026-08-15
-Updated: 2026-08-16
+Updated: 2026-08-17
 
 A system app trades the delegated token it holds for one scoped to another app, so an agent session
 can call app MCP endpoints on behalf of the user currently talking to it — without Core entering the
@@ -191,6 +191,14 @@ caught this code twice already. The flag says so rather than the gateway quietly
 - Two things that live run exposed and unit tests could not: an app-MCP tool raises an approval card,
   because MCP tools are not in the harness's auto-allow list; and the expiry-under-approval defect the
   proxy now answers.
-- **Not yet verified live:** the proxy has not been exercised against a running host — specifically an
-  approval deliberately held past five minutes and then released, which is the case it exists for.
-  Everything above it in this list was, at gateway 0.8.0, before the proxy replaced the re-mint.
+- **The proxy was verified live on 2026-08-17**, on the case it exists for and nothing less. Against
+  gateway 0.9.0 on a running host: the assistant called demo-app's `get_my_app_role`, the approval
+  card was raised at 5s, held for 390 seconds — **96 seconds past the five-minute TTL the call would
+  once have been bound to** — then released. It came back with `host-admin-bootstrap 7`, demo-app's
+  own answer, and the session went idle on success.
+  The value asked for was deliberately `source` plus a permission count rather than the role:
+  `admin` is guessable from context and would have proved only that the model answered, not that the
+  call reached the app.
+  The driver reconnected its own event stream mid-hold, because the operator token authenticating it
+  also lives five minutes — which is what a real client does, and skipping it would have tested a
+  gentler scenario than the real one.
