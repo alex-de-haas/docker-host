@@ -1,17 +1,17 @@
 # Access Tokens — Credentials For Clients Without A Browser
 
 Created: 2026-07-31
-Updated: 2026-08-04
+Updated: 2026-08-17
 
 Core accepts a session as `Authorization: Bearer <session id>`, but a session could once only be created
 by posting Core's HTML login form — which is why the Swift Shell used to sign in through a `WKWebView`
 on `/login`. A client with no browser engine had no way in at all.
 
 Two ways in now exist. A device shows a short code and someone approves it in Shell; or a credential is
-created in Shell directly and its value shown once. Both produce the same thing. `hosty login` was the
-first consumer, and the Swift Shell is the second — it signs in this way rather than in a web view,
-because an embedded web view is where a saved password cannot be reached
-([swift-shell](../swift-shell/feature.md)).
+created in Shell directly and its value shown once. Both produce the same thing. The Swift Shell is
+the consumer — it signs in this way rather than in a web view, because an embedded web view is where a
+saved password cannot be reached ([swift-shell](../swift-shell/feature.md)). `hosty login` was the
+first, and was removed on 2026-08-17; see below.
 
 ## One credential type, marked by kind
 
@@ -29,7 +29,7 @@ Two kinds exist, differing only in where they came from
 | Kind | Origin |
 | --- | --- |
 | `device` | Approved through the device authorization flow. |
-| `manual` | Created in Shell, value shown once. The only source for `hosty login --token`. |
+| `manual` | Created in Shell, value shown once. For a client that cannot run the device flow. |
 
 ## The credential carries its approver's full role
 
@@ -37,10 +37,9 @@ Core has two roles and **no scopes**, so an access token can do everything the u
 do — including installing apps, reading app secrets and managing users when that user is a
 `host.admin`.
 
-This is stated wherever it matters rather than left to be discovered: the Shell surface says it, and
-`hosty login` warns when the credential belongs to a non-administrator. A client that presents itself as
-narrower than its credential is narrower only in its own interface, which is not an authorization
-boundary. Narrowing it for real needs scopes, which do not exist yet.
+This is stated wherever it matters rather than left to be discovered: the Shell surface says it, and a
+client that presents itself as narrower than its credential is narrower only in its own interface,
+which is not an authorization boundary. Narrowing it for real needs scopes, which do not exist yet.
 
 `GET /api/auth/session` returns the record's `Kind` alongside the user, so a client can see what it
 holds and warn its operator.
@@ -118,34 +117,30 @@ grants it authorized, and **closes the event stream the credential currently hol
 revoked device would keep receiving notifications over an already-established connection for as long as
 it stayed connected — which is exactly the window a lost device is revoked to close.
 
-## CLI
+## The CLI does not use this
 
-```text
-hosty login --host https://hosty.example                    # device flow
-hosty login --host https://hosty.example --token <value>    # a credential created in Shell
-hosty login --list
-hosty login --use <context>
-hosty logout [--name <context>]
-```
+`hosty login` and `hosty logout` existed and were **removed on 2026-08-17**, together with the context
+store and the credential store.
 
-The credential is proved against `/api/auth/session` before anything is stored, so a typo fails at login
-rather than on the next command. Contexts — name, origin, user, and which is current — live in
-`~/.hosty/config/contexts.json`; the credential never does.
+They were removed rather than finished. `hosty login` completed a device flow, stored a credential,
+printed "Signed in to <origin>", and warned when the credential belonged to a non-administrator that
+"host administration will be denied" — a warning about a capability that did not exist, since no
+command could administer anything remotely. `CredentialStore.Load` was written and called by nothing;
+the only reader of a saved credential was the delete path. A login that logs into nothing is worse
+than no login, because the warning invites the reader to conclude the opposite.
 
-**No CLI command runs against a saved context yet.** `hosty apps`, `hosty users` and the rest still open
-the local control channel, which only works on the host itself; there is no global `--context` flag.
-Signing in stores a working credential — usable by the Cardputer console, a script, or `curl` — but the
-CLI cannot yet spend it on the user's behalf. Wiring the existing commands onto a bearer-authenticated
-remote transport means mapping each one from its `/control/v1` path to its `/api` web twin at more than
-ten call sites, which is its own piece of work rather than a corner of this one.
+Finishing it was the alternative and was weighed: nearly every `/control/v1` route already has an
+`/api` twin, so it needed no Core work — but it meant a second transport under every command, and a
+new way to act on the wrong host by accident. Decision (owner, 2026-08-17): **the CLI is local-only.**
+It serves the host it runs on. A remote fleet is reached by running the CLI *there*, over SSH, which
+the agent bridge already records as a topology needing zero new code. Remote CLI operation becomes a
+feature to design properly if a real need appears, not a half-built one carried indefinitely.
 
-Where the credential goes depends on the platform
-([CredentialStore.cs](../../../apps/cli/src/Haas.Hosty.Cli/Configuration/CredentialStore.cs)): the macOS
-login keychain via `security`, and an owner-only file under the Hosty config directory everywhere else.
-The file is weaker and is stated plainly rather than dressed up — on Linux the alternative is a Secret
-Service session a headless box often lacks, and on Windows DPAPI would mean a package reference this AOT
-binary does not otherwise need. It matches how the CLI already stores its other local secrets, and the
-credential is revocable from Shell the moment it is suspect.
+Nothing on the Core side changed. The device flow, manual credentials, `Kind`, revocation and the
+logout cascade are all untouched and all in use — Shell approves device requests, and the Swift Shell
+signs in this way rather than in a web view
+([DeviceLogin.swift](../../../apps/shell-swift/HostyKit/Sources/HostyKit/DeviceLogin.swift)). An
+access token remains usable by the Cardputer console, a script, or `curl`.
 
 The CLI's trusted local control channel is untouched. It remains the bootstrap path before any user
 exists and the recovery path when every credential is lost.

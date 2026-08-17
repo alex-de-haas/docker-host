@@ -1,7 +1,7 @@
 # AI Agent Bridge
 
 Created: 2026-08-14
-Updated: 2026-08-15
+Updated: 2026-08-17
 
 The umbrella for Hosty's AI integration: how an authenticated user works with runtime apps and app
 source through an agent, without the model ever holding credentials, unrestricted application access,
@@ -199,12 +199,13 @@ enforces it; it is audited through token-issuance records and app logs.
   authorization) is unchanged and has two permanent roles: bootstrap, for managing Core before any
   user or token exists, and recovery, so SSH to the host keeps working when all tokens are lost or
   auth is misconfigured. It is never exposed to the network.
-- **Remote.** `hosty login --host` runs a device-code flow approved in a Shell session and stores the
-  credential in the macOS keychain (an owner-only file elsewhere); `--token` is the headless fallback.
-  Several hosts are held as named contexts (`--name`, `--list`, `--use`). Core's web API accepts the
-  credential as `Authorization: Bearer`, but no CLI command runs against a saved context yet
-  ([access-tokens](../access-tokens/feature.md)). Unlike the local channel's unconditional power, the
-  credential is bound to a Host user and role.
+- **Remote — not through the CLI.** `hosty login` once held named contexts and a saved credential, and
+  was removed on 2026-08-17: no command ever spent it, and a login that logs into nothing is worse
+  than none ([access-tokens](../access-tokens/feature.md)). The CLI is local-only, and a remote fleet
+  is reached by running the CLI *on that host* over SSH.
+  Core's web API still accepts an access token as `Authorization: Bearer`, and other clients use it —
+  the Swift Shell signs in this way. Unlike the local channel's unconditional power, such a credential
+  is bound to a Host user and role.
 
 ## Standing Constraints
 

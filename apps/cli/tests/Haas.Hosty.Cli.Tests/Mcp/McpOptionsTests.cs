@@ -38,14 +38,16 @@ public class McpOptionsTests
     }
 
     [Fact]
-    public void ARemoteContextIsRefusedRatherThanQuietlyIgnored()
+    public void ARemoteContextIsRefusedAndPointedAtTheAlternative()
     {
-        // Accepting the flag and talking to the local host anyway would let someone believe they were
-        // reaching a remote one.
+        // The CLI is local-only by decision, not by omission, so this is not a feature pending
+        // arrival. Accepting the flag and talking to the local host anyway would let someone believe
+        // they were reaching a remote one; refusing without naming SSH would leave them stuck.
         var error = Assert.Throws<CommandUsageException>(
             () => McpCommand.ParseOptions(["--user", "a@b.test", "--context", "prod"]));
 
-        Assert.Contains("local host only", error.Message, StringComparison.Ordinal);
+        Assert.Contains("local-only", error.Message, StringComparison.Ordinal);
+        Assert.Contains("ssh", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
