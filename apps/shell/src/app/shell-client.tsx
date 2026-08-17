@@ -19,7 +19,6 @@ import { ShellSidebar } from "./shell/sidebar/shell-sidebar";
 import { ShellActionsContext, ShellStateContext } from "./shell/shell-context";
 import {
   getAuthorizedShellView,
-  getSettingsHref,
   getShellViewHref,
   getWorkspaceHref,
   getWorkspaceRouteKey,
@@ -1878,11 +1877,6 @@ export function ShellClient({
             activeView={effectiveView}
             workspace={workspace}
             coreOrigin={coreOrigin}
-            coreOnline={state.status !== null}
-            coreVersion={state.status?.version ?? null}
-            coreUpdateAvailable={Boolean(canManageApps && coreUpdate?.updateAvailable)}
-            coreUpdating={coreUpdating}
-            onUpdateCore={canManageApps ? updateCore : undefined}
             activeUser={activeUser}
             canManageApps={Boolean(canManageApps)}
             uiApps={uiApps}
@@ -1900,11 +1894,6 @@ export function ShellClient({
             }}
             onLaunchApp={launchAppPage}
             getStandaloneHref={getStandaloneAppHref}
-            onOpenCoreSettings={canManageApps ? () => {
-              setWorkspace(null);
-              setOptimisticWorkspaceRoute(null);
-              router.push(getSettingsHref("core"));
-            } : undefined}
             onOpenAssistant={assistantAvailable ? () => openAssistant(null) : undefined}
           />
         </aside>

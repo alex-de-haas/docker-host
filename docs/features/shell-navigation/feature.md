@@ -70,8 +70,9 @@ Collapsed, the sidebar renders no headings, so the rail carries an equivalent co
 icon — deliberately not the one app rows fall back to, which an icon-less app would be
 indistinguishable from.
 
-The footer keeps the account block, the version, and the Core Update button; the version block links
-to `/settings?tab=core` for an administrator and is plain text for everyone else.
+The footer carries the account block only. Core's version, the shortcut into `/settings?tab=core`,
+and the Core update action are not repeated there: the Dashboard's Core row already states the
+version and carries the update button, and Settings is a row in the Host group above.
 
 ## Dashboard
 
