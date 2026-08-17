@@ -61,6 +61,10 @@ itself — a scoped token — which Hosty does not have yet.
 
 ## Status
 
-Built and unit-tested; **not yet installed into a client end to end**. Until that happens, treat the
-plugin manifest and hook wiring as unverified against a real Claude Code installation — the connector
-itself is exercised by the CLI's own suite.
+Installed and exercised end to end in Claude Code on 2026-08-17: the marketplace entry resolves, the
+plugin installs, and `claude plugin details hosty@hosty` lists one skill and one MCP server from this
+bundle. The connector behind it is covered by the CLI's own suite and was driven live against a
+running host.
+
+What has **not** been exercised is a session demonstrably *using the skill* — it is discovered and
+offered, but nothing here proves a model read it before choosing a tool.

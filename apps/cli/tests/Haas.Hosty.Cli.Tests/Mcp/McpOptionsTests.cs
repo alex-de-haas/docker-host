@@ -62,6 +62,12 @@ public class McpOptionsTests
         Assert.Contains("not set", error.Message, StringComparison.Ordinal);
         Assert.Contains("HOSTY_MCP_USER", error.Message, StringComparison.Ordinal);
 
+        // Whitespace must not be a way past it. The guard used to read the raw value and the method
+        // returned the trimmed one, so a single trailing space slipped through and was then trimmed
+        // back into the literal being guarded against.
+        Assert.Throws<CommandUsageException>(() => McpCommand.ParseOptions(["--user", "${HOSTY_MCP_USER} "]));
+        Assert.Throws<CommandUsageException>(() => McpCommand.ParseOptions(["--user", " ${HOSTY_MCP_USER}"]));
+
         // A real address that merely contains a brace is not a placeholder, and must still work.
         Assert.Equal("a{b}@c.test", McpCommand.ParseOptions(["--user", "a{b}@c.test"]).User);
     }

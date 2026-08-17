@@ -273,6 +273,11 @@ exist yet.
   nothing, while `host-admin-bootstrap 7` matches demo-app's own answer exactly and cannot be
   arrived at any other way. This closes the step 6 cell that was **not reachable at all** with a
   static config, since the app endpoint wants a five-minute token.
-- Every check above registered the server with `claude mcp add`, so the coverage stops at the
-  connector: the plugin bundle and the skill are not part of what has been exercised. Carried as an
-  unchecked deliverable in [plan.md](plan.md), which is where unfinished work belongs.
+- **The plugin bundle was installed as a plugin on 2026-08-17**, which the earlier checks had not
+  covered — they registered the server with `claude mcp add`, exercising neither the manifest nor
+  skill discovery. `claude plugin details hosty@hosty` reports one skill and one MCP server, both
+  discovered from the bundle.
+  Doing it for real found three things reading the files could not: the bundle **could not be
+  installed at all** without a marketplace manifest; an unset `HOSTY_MCP_USER` produced a green
+  **Connected** and an empty catalog; and a hand-registered server of the same name shadows the
+  plugin's without a word. All three are described above and fixed.
