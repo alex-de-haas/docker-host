@@ -136,6 +136,18 @@ It serves the host it runs on. A remote fleet is reached by running the CLI *the
 the agent bridge already records as a topology needing zero new code. Remote CLI operation becomes a
 feature to design properly if a real need appears, not a half-built one carried indefinitely.
 
+**Removing the command was not enough on its own.** Anyone who had signed in still had a bearer token
+on their machine — in the macOS keychain, or in an owner-only file under the config directory — and
+`hosty logout` went out in the same change, so there was no supported way left to remove it. Any
+command now purges those once
+([LegacyCredentialPurge.cs](../../../apps/cli/src/Haas.Hosty.Cli/Configuration/LegacyCredentialPurge.cs)),
+silently on a machine that never signed in. The keychain entries are keyed by context name and the
+only record of those names is the index file, so they are read *before* it is deleted; the other
+order would strand every entry permanently.
+
+The notice it prints says what it did not do: deleting the local copy does **not** revoke the
+credential, which stays valid on the host until it is revoked in Shell.
+
 Nothing on the Core side changed. The device flow, manual credentials, `Kind`, revocation and the
 logout cascade are all untouched and all in use — Shell approves device requests, and the Swift Shell
 signs in this way rather than in a web view

@@ -112,7 +112,7 @@ the two should know which is current.
       is what says whether this feature is done, and prose under a checked item cannot do that job.
 - [x] Docs: `feature.md`, umbrella step 7, index.
 
-### Blocked, and unchecked on purpose
+### Remote topology — closed by decision
 
 **Closed 2026-08-17, by deciding not to build it.** This pair was blocked on the CLI learning to spend
 a saved credential. The owner removed `hosty login` instead and made the CLI local-only

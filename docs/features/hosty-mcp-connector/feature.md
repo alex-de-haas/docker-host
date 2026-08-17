@@ -1,7 +1,7 @@
 # Hosty MCP Connector
 
 Created: 2026-08-15
-Updated: 2026-08-16
+Updated: 2026-08-17
 
 `hosty mcp` is a stdio MCP server inside the CLI, spawned by an agent client on the operator's own
 machine, presenting every app on one Hosty host as a single server. It is step 7 of the
@@ -27,9 +27,13 @@ The argument lives in the client's config, so a non-interactive server never has
 { "mcpServers": { "hosty": { "command": "hosty", "args": ["mcp", "--user", "you@example.com"] } } }
 ```
 
-`--context` is rejected with a message rather than ignored. A remote host needs a CLI command that
-spends a saved login credential and none exists, so silently accepting the flag would let someone
-believe they were talking to a remote host.
+`--context` is rejected with a message rather than ignored, and the message names the alternative.
+**The CLI is local-only by decision** (2026-08-17): `hosty login` was removed rather than finished,
+so this is not a prerequisite waiting to arrive
+([access-tokens](../access-tokens/feature.md)). A remote fleet is reached by running the connector
+*on that host* over SSH — `"command": "ssh", "args": ["user@host", "hosty", "mcp", "--user", "…"]` —
+which needs no code at all. Silently accepting the flag would let someone believe they were talking
+to a remote host; refusing without naming SSH would leave them stuck.
 
 ## Credentials
 

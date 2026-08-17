@@ -11,7 +11,7 @@ import { redirectToCoreLoginIfAuthRequired } from "../core-api";
 import type { AccessTokenView, DeviceAuthorizationRequestView } from "../types";
 import { EmptyState, IconButton, InlineError } from "../ui";
 
-// Credentials for clients that have no browser: a device console, the CLI on another machine, a
+// Credentials for clients that have no browser: a device console, a native client, a
 // script. Two ways in — a device approves itself here after showing a code, or a credential is created
 // here and its value shown once — and one list to revoke what exists.
 //
@@ -107,7 +107,7 @@ export function SettingsTokensSection({
       <div>
         <h3 className="text-sm font-medium">Access tokens</h3>
         <p className="text-xs text-muted-foreground">
-          Credentials for clients that cannot open a browser — the CLI on another machine, a script, a device
+          Credentials for clients that cannot open a browser — a native client, a script, a device
           console. A credential carries the full role of whoever approves it, so approving one from an
           administrator account grants administrator access to this host until it is revoked.
         </p>
@@ -171,7 +171,7 @@ export function SettingsTokensSection({
           </Button>
         </div>
         <p className="text-xs text-muted-foreground">
-          For a client that cannot run the device flow. Pass the value to <code>hosty login --token</code>.
+          For a client that cannot run the device flow. Pass the value as an <code>Authorization: Bearer</code> header.
         </p>
       </form>
 

@@ -32,6 +32,14 @@ public static class CommandLine
         var settingsStore = new LaunchSettingsStore(environment);
         var commandContext = new CommandContext(console, environment, settingsStore, error);
 
+        // One-shot, and silent on every machine that never signed in. `hosty login` is gone, and with
+        // it the only way to remove what it saved — so the credential is cleaned up here rather than
+        // left on disk with no supported way to get rid of it.
+        if (LegacyCredentialPurge.Run(environment.ConfigDirectory) is { } purged)
+        {
+            error.MarkupLine($"[yellow]{Markup.Escape(purged)}[/]");
+        }
+
         try
         {
             return args[0] switch
