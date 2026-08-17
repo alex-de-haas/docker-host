@@ -134,6 +134,20 @@ internal sealed partial class McpCommand(CommandContext context)
             }
         }
 
+        // An unexpanded shell placeholder, which is what a client passes when the variable behind it
+        // is unset. Caught here because the alternative is the worst kind of working: the connector
+        // would accept "${HOSTY_MCP_USER}" as a user name, answer `initialize` happily — it needs no
+        // Core call to do that — and then export nothing at all, because every token request is for a
+        // user who does not exist. The client shows a green "Connected" and the reason sits on stderr
+        // where nobody looks. Observed 2026-08-17 with the Claude Code plugin.
+        if (user is not null && user.StartsWith("${", StringComparison.Ordinal) && user.EndsWith('}'))
+        {
+            throw new CommandUsageException(
+                $"--user was given the literal '{user}', which means the variable behind it is not set. "
+                + "Set it in the environment your agent client runs in, or pass the address directly.",
+                Usage);
+        }
+
         if (string.IsNullOrWhiteSpace(user))
         {
             throw new CommandUsageException(

@@ -51,6 +51,22 @@ public class McpOptionsTests
     }
 
     [Fact]
+    public void AnUnexpandedPlaceholderIsRefusedRatherThanServedUselessly()
+    {
+        // What a client passes when the variable behind it is unset. Accepting it is the worst kind of
+        // working: `initialize` needs no Core call, so the client shows "Connected" while every token
+        // request is for a user who does not exist and the catalog is silently empty.
+        var error = Assert.Throws<CommandUsageException>(
+            () => McpCommand.ParseOptions(["--user", "${HOSTY_MCP_USER}"]));
+
+        Assert.Contains("not set", error.Message, StringComparison.Ordinal);
+        Assert.Contains("HOSTY_MCP_USER", error.Message, StringComparison.Ordinal);
+
+        // A real address that merely contains a brace is not a placeholder, and must still work.
+        Assert.Equal("a{b}@c.test", McpCommand.ParseOptions(["--user", "a{b}@c.test"]).User);
+    }
+
+    [Fact]
     public void TheNameCeilingIsParsedAndBounded()
     {
         Assert.Equal(40, McpCommand.ParseOptions(["--user", "a@b.test", "--max-tool-name", "40"]).MaxToolNameChars);

@@ -10,6 +10,26 @@ tools on a single server, discovered live rather than listed in a config file.
 | `.mcp.json` | Registers `hosty mcp` as a stdio MCP server named `hosty`. |
 | `skills/hosty-mcp-connector` | Tells the model how to read the tool names, what the read-only boundary means, and what each failure code implies. |
 
+## Installing
+
+The repository root is a plugin marketplace, so the plugin is installed from it:
+
+```bash
+claude plugin marketplace add alex-de-haas/docker-host   # or ./path to a local clone
+claude plugin install hosty@hosty
+```
+
+`claude plugin details hosty@hosty` should then list one skill and one MCP server.
+
+**Set `HOSTY_MCP_USER` in the environment your client runs in, before starting a session.** Without it
+the client passes the literal `${HOSTY_MCP_USER}` through, and the connector now refuses to start
+rather than connecting and exporting nothing — which is what it used to do, green tick and all.
+
+**If you already registered the server by hand** with `claude mcp add hosty`, remove it
+(`claude mcp remove hosty -s local`). Two servers of the same name collide, and the manual one wins
+silently: the plugin's entry simply vanishes from `claude mcp list` with nothing to say it was
+shadowed.
+
 ## Requirements
 
 - The `hosty` CLI on `PATH`, version 0.81.0 or later.

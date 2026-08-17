@@ -1,0 +1,14 @@
+{
+  "name": "hosty",
+  "owner": {
+    "name": "Alex de Haas",
+    "url": "https://github.com/alex-de-haas/docker-host"
+  },
+  "plugins": [
+    {
+      "name": "hosty",
+      "source": "./packages/hosty-claude-plugin",
+      "description": "Connects Claude Code to a Hosty host: every app's read-only MCP tools as one server, plus how to read them."
+    }
+  ]
+}
