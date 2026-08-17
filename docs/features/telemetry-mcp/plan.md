@@ -1,6 +1,6 @@
 # Telemetry Over MCP
 
-Status: Draft
+Status: Ready
 Created: 2026-08-17
 Updated: 2026-08-17
 
