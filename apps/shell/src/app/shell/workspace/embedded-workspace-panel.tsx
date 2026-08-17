@@ -2,11 +2,14 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ExternalLink, ShieldAlert } from "lucide-react";
+import { DELEGATED_TOKEN_TYPE } from "@hosty-sdk/app";
+import { parseActiveFrameDelegatedTokenRequest } from "@hosty-sdk/app/embedder";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { EmbeddedWorkspace, HostyResolvedTheme, HostyThemePreference } from "../types";
 import { parseActiveFrameInstallFeedIntent, type InstallFeedIntent } from "./install-intent";
 import { parseActiveFrameAuthRequired } from "./auth-intent";
+import type { DelegatedTokenGrant } from "./delegated-token-intent";
 import { getEmbedOrigin, isInsecureEmbedBlocked, isLoopbackEmbedHost } from "./insecure-embed";
 
 export function EmbeddedWorkspacePanel({
@@ -15,6 +18,7 @@ export function EmbeddedWorkspacePanel({
   themePreference,
   onInstallFeedIntent,
   onAuthRequired,
+  onDelegatedTokenRequest,
 }: {
   workspace: EmbeddedWorkspace;
   theme: HostyResolvedTheme;
@@ -25,6 +29,11 @@ export function EmbeddedWorkspacePanel({
   // Called when the embedded app reports its Hosty session expired and asks for a fresh launch code.
   // Available to every app (recovery is universal); the panel verifies the sender before invoking it.
   onAuthRequired?: (appId: string) => void;
+  // Mints a delegated token for this app. Undefined for every app but the assistant gateway, so no
+  // listener is attached and a frame that asks is never answered — a delegated token is a
+  // user-scoped credential, and handing one to whatever the operator installed is a different
+  // decision from embedding it.
+  onDelegatedTokenRequest?: () => Promise<DelegatedTokenGrant>;
 }) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -99,6 +108,44 @@ export function EmbeddedWorkspacePanel({
       window.removeEventListener("message", handleMessage);
     };
   }, [onAuthRequired, workspace.src, workspace.appId]);
+
+  useEffect(() => {
+    if (!onDelegatedTokenRequest) {
+      return;
+    }
+
+    const handleMessage = (event: MessageEvent) => {
+      const frameWindow = iframeRef.current?.contentWindow;
+      if (!parseActiveFrameDelegatedTokenRequest(event, frameWindow, workspace.src)) {
+        return;
+      }
+
+      void (async () => {
+        try {
+          const grant = await onDelegatedTokenRequest();
+          // The token is a credential, so it goes to the frame's own origin — never "*" — and only
+          // if that frame is still the one that asked: a mint is a round trip to Core, and the
+          // panel may have navigated to another app in the meantime.
+          if (iframeRef.current?.contentWindow !== frameWindow) {
+            return;
+          }
+          frameWindow?.postMessage(
+            { type: DELEGATED_TOKEN_TYPE, token: grant.token, expiresAt: grant.expiresAt },
+            getPostMessageTargetOrigin(workspace.src),
+          );
+        } catch {
+          // Staying silent is the honest answer: Shell has no surface here, and every reason a mint
+          // fails (Core unreachable, the operator is not an administrator) is one the page states
+          // better itself when its own request times out.
+        }
+      })();
+    };
+
+    window.addEventListener("message", handleMessage);
+    return () => {
+      window.removeEventListener("message", handleMessage);
+    };
+  }, [onDelegatedTokenRequest, workspace.src]);
 
   const handleLoad = useCallback(() => {
     setLoaded(true);

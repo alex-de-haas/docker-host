@@ -36,6 +36,10 @@ import { EmptyState } from "./shell/ui";
 import { EmbeddedWorkspacePanel } from "./shell/workspace/embedded-workspace-panel";
 import { EmbeddedWorkspacePendingPanel } from "./shell/workspace/embedded-workspace-pending-panel";
 import { appMayRequestFeedInstall, type InstallFeedIntent } from "./shell/workspace/install-intent";
+import {
+  appMayReceiveDelegatedToken,
+  type DelegatedTokenGrant,
+} from "./shell/workspace/delegated-token-intent";
 import type {
   ActivePanel,
   AppAction,
@@ -74,6 +78,11 @@ import type {
 // Minimum spacing between launch-code reissues for one app, a loop guard against a frame that keeps
 // re-posting hosty:auth-required. Enforced by the SDK's per-app rate limiter.
 const AUTH_REISSUE_MIN_INTERVAL_MS = 3_000;
+
+// A minted delegated token is reused while this much of its lifetime is left. The margin covers the
+// hop to the frame and the frame's own request, so a token Shell hands over is never one that
+// expires on the way.
+const DELEGATED_TOKEN_MIN_REMAINING_MS = 30_000;
 
 // Polls this page's own document URL until the restarted Shell answers again. Used after a Shell
 // self-update: the already-loaded bundle keeps working against Core while the Shell container
@@ -357,6 +366,59 @@ export function ShellClient({
     },
     [coreOrigin, loadCsrfToken],
   );
+
+  // Delegated tokens Shell has minted for an app, reused until nearly spent, plus the mints still in
+  // flight. Both exist because an embedded page asks per request: without them a settings page that
+  // reads and then saves would send Shell to Core twice for a credential it is already holding a
+  // fresh copy of, and two parallel requests would race into two mints.
+  const delegatedTokens = useRef(new Map<string, { grant: DelegatedTokenGrant; expiresAtMs: number }>());
+  const delegatedTokenMints = useRef(new Map<string, Promise<DelegatedTokenGrant>>());
+
+  const issueDelegatedToken = useCallback(
+    async (appId: string): Promise<DelegatedTokenGrant> => {
+      const cached = delegatedTokens.current.get(appId);
+      if (cached && cached.expiresAtMs - Date.now() > DELEGATED_TOKEN_MIN_REMAINING_MS) {
+        return cached.grant;
+      }
+
+      const inFlight = delegatedTokenMints.current.get(appId);
+      if (inFlight) {
+        return inFlight;
+      }
+
+      const mint = (async () => {
+        // sendCsrfJson already throws on non-2xx; this guards the shape so a drifted Core response
+        // can never seed the cache with undefined fields.
+        const response = await sendCsrfJson(`${coreOrigin}/api/apps/${encodeURIComponent(appId)}/delegated-token`);
+        const issued = (await response.json().catch(() => null)) as {
+          token?: unknown;
+          expiresAt?: unknown;
+        } | null;
+        if (typeof issued?.token !== "string" || typeof issued.expiresAt !== "string") {
+          throw new Error("Core returned an unexpected delegated-token response.");
+        }
+
+        const grant = { token: issued.token, expiresAt: issued.expiresAt };
+        const expiresAtMs = Date.parse(grant.expiresAt);
+        // An unparseable expiry caches as already-spent rather than as forever: the token is still
+        // handed over (Core minted it), the next request just mints again instead of trusting it.
+        delegatedTokens.current.set(appId, { grant, expiresAtMs: Number.isFinite(expiresAtMs) ? expiresAtMs : 0 });
+        return grant;
+      })().finally(() => {
+        delegatedTokenMints.current.delete(appId);
+      });
+
+      delegatedTokenMints.current.set(appId, mint);
+      return mint;
+    },
+    [coreOrigin, sendCsrfJson],
+  );
+
+  // A token names the user it was minted for, so a session change must not leave one reusable.
+  const activeUserId = activeUser?.id ?? null;
+  useEffect(() => {
+    delegatedTokens.current.clear();
+  }, [activeUserId]);
 
   // Best-effort Core update-available probe (admin-only endpoint). A failure clears the badge rather
   // than leaving a stale "Update available" showing (auth expiry, Core mid-restart, transient error),
@@ -1781,6 +1843,19 @@ export function ShellClient({
     [workspace, state.apps, sendCsrfJson, appEndpoint],
   );
 
+  // Which embedded frame Shell will answer with a delegated token: the assistant gateway's own
+  // pages, and nothing else. Shell already mints tokens for that app whenever the chat panel is
+  // open, so its settings page gains no reach it did not have — whereas answering every frame would
+  // hand a user-scoped credential to whatever the operator happened to install.
+  const handleDelegatedTokenRequest = useMemo(() => {
+    const gatewayAppId = assistantGateway?.appId;
+    if (!gatewayAppId || !appMayReceiveDelegatedToken(workspace?.appId, gatewayAppId)) {
+      return undefined;
+    }
+
+    return () => issueDelegatedToken(gatewayAppId);
+  }, [assistantGateway?.appId, workspace?.appId, issueDelegatedToken]);
+
   const closeInstallDialog = useCallback(() => {
     installRequestRef.current += 1;
     setInstallOpen(false);
@@ -1909,6 +1984,7 @@ export function ShellClient({
                 // app gets no handler, so its messages are never listened for.
                 onInstallFeedIntent={appMayRequestFeedInstall(workspace.appId) ? openFeedInstallDialog : undefined}
                 onAuthRequired={handleAuthRequired}
+                onDelegatedTokenRequest={handleDelegatedTokenRequest}
               />
             ) : activeWorkspaceRoute ? (
               <EmbeddedWorkspacePendingPanel

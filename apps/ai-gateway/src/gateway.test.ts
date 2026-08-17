@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
 import { createServer, type Server } from "node:http";
+import { Script } from "node:vm";
 import { SessionStore } from "./sessions/store.js";
 import { SettingsStore } from "./settings/store.js";
 import { ProviderDirectory } from "./settings/providers.js";
@@ -445,6 +446,18 @@ describe("gateway", () => {
     const html = await page.text();
     expect(html).toContain("System prompt");
     expect(html).toContain("MCP providers");
+  });
+
+  it("ships a settings script that parses and asks its embedder for a token", async () => {
+    // The page is hand-written JavaScript inside a template string, so nothing else in the build
+    // would catch a syntax error in it — the operator would meet it as a page that renders and then
+    // does nothing. Compiling without running is the whole check.
+    const html = await (await fetch(`${origin}/settings`)).text();
+    const script = html.slice(html.lastIndexOf("<script>") + "<script>".length, html.lastIndexOf("</script>"));
+    expect(script.length).toBeGreaterThan(0);
+    expect(() => new Script(script)).not.toThrow();
+    // The page holds no credential of its own: it gets one from whoever embeds it.
+    expect(script).toContain("hosty:request-delegated-token");
   });
 
   it("discovers MCP providers from Core and prunes toggles for apps that are gone", async () => {

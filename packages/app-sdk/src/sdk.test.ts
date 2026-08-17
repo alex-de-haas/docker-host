@@ -4,6 +4,7 @@ import {
   buildCoreOpenUrl,
   classifyRevalidationHttpStatus,
   decideRecoveryAction,
+  DELEGATED_TOKEN_REQUEST_TYPE,
   detectLaunchMode,
   hidesAppChrome,
   isLoopbackHost,
@@ -13,7 +14,11 @@ import {
   resolveLaunchMode,
   LAUNCH_MODE_ATTRIBUTE,
 } from "./index";
-import { createReissueRateLimiter, parseActiveFrameAuthRequired } from "./embedder";
+import {
+  createReissueRateLimiter,
+  parseActiveFrameAuthRequired,
+  parseActiveFrameDelegatedTokenRequest,
+} from "./embedder";
 import {
   clearAppSecretsCache,
   clearRevalidationCache,
@@ -421,6 +426,20 @@ describe("embedder", () => {
     expect(parseActiveFrameAuthRequired(message(), frameWindow, "http://app.local:3000/", "other.app")).toBe(false);
     expect(parseActiveFrameAuthRequired(message({ data: { type: "other" } }), frameWindow, "http://app.local:3000/", "a.b")).toBe(false);
     expect(parseActiveFrameAuthRequired(message(), null, "http://app.local:3000/", "a.b")).toBe(false);
+  });
+
+  it("accepts only the active frame's own delegated-token request", () => {
+    const request = (overrides: Partial<{ data: unknown; origin: string; source: unknown }> = {}) =>
+      message({ data: { type: DELEGATED_TOKEN_REQUEST_TYPE }, ...overrides });
+
+    expect(parseActiveFrameDelegatedTokenRequest(request(), frameWindow, "http://app.local:3000/settings")).toBe(true);
+    expect(parseActiveFrameDelegatedTokenRequest(request({ source: {} }), frameWindow, "http://app.local:3000/")).toBe(false);
+    expect(parseActiveFrameDelegatedTokenRequest(request({ origin: "http://evil.local" }), frameWindow, "http://app.local:3000/")).toBe(false);
+    expect(parseActiveFrameDelegatedTokenRequest(request(), null, "http://app.local:3000/")).toBe(false);
+    // A request is not an auth-required intent and vice versa: the two responders do different
+    // things, and one message must never trigger the other's handler.
+    expect(parseActiveFrameDelegatedTokenRequest(message(), frameWindow, "http://app.local:3000/")).toBe(false);
+    expect(parseActiveFrameAuthRequired(request(), frameWindow, "http://app.local:3000/", "a.b")).toBe(false);
   });
 
   it("rate-limits reissues per app", () => {

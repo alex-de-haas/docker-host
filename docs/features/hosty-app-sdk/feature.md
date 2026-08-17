@@ -1,10 +1,10 @@
 # Hosty App SDK
 
 Created: 2026-07-15
-Updated: 2026-08-15
+Updated: 2026-08-17
 
 Shared Host integration for runtime apps, in two published packages: **`@hosty-sdk/app`** on npmjs
-(TypeScript, 0.6.0) and **`HostySdk.App`** on NuGet (.NET, 0.3.0). They own the app half of the
+(TypeScript, 0.7.0) and **`HostySdk.App`** on NuGet (.NET, 0.3.0). They own the app half of the
 [auth session lifecycle](../auth-session-lifecycle/feature.md) contract — session classification,
 recovery, Core revalidation, launch-mode awareness — plus the app secrets client and delegated-token
 validation.
@@ -25,7 +25,7 @@ is what the `misconfigured` state exists to prevent.
 @hosty-sdk/app/server          # import "server-only": Core revalidation, code exchange, app secrets
 @hosty-sdk/app/delegated       # local ECDSA validation of Core-issued delegated tokens
 @hosty-sdk/app/react           # 'use client': AppIdentityBridge, HostLaunchBridge, useLaunchMode
-@hosty-sdk/app/embedder        # 'use client': the verified auth-required responder for shells
+@hosty-sdk/app/embedder        # 'use client': the verified responders a shell owes its frames
 
 HostySdk.App                   # NuGet — Hosty auth scheme, cached Core revalidation,
                                # HOSTY_* options binding, HostySecretsClient
@@ -47,14 +47,16 @@ What each slice holds:
 - **Root:** `AppSessionStatus` and `classifyRevalidationHttpStatus`, the recovery decision
   (`decideRecoveryAction`), Core `/open` URL construction with the loopback guard, launch-mode
   detection and its bootstrap script (`hosty_launch`, `data-hosty-launch`,
-  `hosty-shell-chrome`), and the `hosty:auth-required` intent schema.
+  `hosty-shell-chrome`), and the `hosty:auth-required` / `hosty:request-delegated-token` message
+  schemas.
 - **`server`:** `resolveAppSession` and `classifyAppSessionFromCookie` (online revalidation against
   Core), `exchangeAppCode`, `createAppCodeRouteHandler`, identity-token reading, cookie attribute
   building, and the app secrets client (`getAppSecret` / `setAppSecret` / `deleteAppSecret` /
   `listAppSecretKeys`).
 - **`react`:** `AppIdentityBridge` (renders the state machine and drives recovery), `HostLaunchBridge`,
   `useLaunchMode`, and `readProbedSessionStatus`.
-- **`embedder`:** `parseActiveFrameAuthRequired` and `createReissueRateLimiter`.
+- **`embedder`:** `parseActiveFrameAuthRequired`, `parseActiveFrameDelegatedTokenRequest`, and
+  `createReissueRateLimiter`.
 - **`HostySdk.App`:** `HostyAuthenticationHandler` (identity token from bearer, cookie, or inbound
   header), `CoreIdentityValidator` behind `CachingIdentityValidator`, `HostyAppOptions` binding of the
   `HOSTY_*` environment, `HostySession`, and `HostySecretsClient` (`AddHostySecrets`).
@@ -152,6 +154,23 @@ endpoint origins — so a code minted for app X can only be delivered to X's ori
 the `x-docker-host-identity` header, which survived the docker-host → hosty rename. An unprefixed name
 like `auth:required` was rejected because `postMessage` is a party line every embedded document shares.
 
+The second thing only an embedder can do is mint a **delegated token** — same reason, the user's Core
+session in a first-party context. A page that calls its own app's admin-gated API from the browser
+therefore posts `hosty:request-delegated-token` and the embedder answers `hosty:delegated-token`
+carrying the token and its expiry, verified by the same sender checks
+(`parseActiveFrameDelegatedTokenRequest`). Two rules keep the reply from being a hole in the
+delegated-token bounds:
+
+- The reply goes to the frame's own origin, never `*`. Unlike a launch code, what crosses here is the
+  credential itself.
+- Answering is a per-app decision, not a reflex. The parser reports who asked; who is granted stays
+  the embedder's policy, because a delegated token is user-scoped and a system app may branch it to
+  other apps. Hosty Shell answers for the app declaring `ai-gateway` and no other frame — it already
+  mints that app tokens to run the chat panel, so the handshake widens nothing.
+
+A frame that is never answered is a page that renders and reports no access, which is why the app
+half states the "open me from your shell" case itself rather than waiting out a timeout.
+
 ## Distribution And Versioning
 
 - **Public registries: npmjs for TypeScript, NuGet for .NET.** GitHub Packages token-gates even public
@@ -213,6 +232,9 @@ The remaining adoption debts and the second-wave extraction inventory are in [pl
   the page host is not.
 - The embedder responder rejects a foreign `event.source`, a mismatched origin, and a mismatched
   `appId`, and its rate limiter holds under repeated intents.
+- The two responders are covered against each other, not only against forged senders: a
+  delegated-token request must not satisfy the auth-required parser or the reverse, since one
+  reissues a code and the other hands over a credential.
 - Delegated-token validation rejects an expired token, a wrong audience, and a forged signature while
   accepting a well-formed one.
 - The secrets clients survive a briefly unavailable Core through their write-through cache, and a read
