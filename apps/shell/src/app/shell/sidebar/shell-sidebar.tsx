@@ -3,7 +3,6 @@
 import type { ReactNode } from "react";
 import { useState } from "react";
 import {
-  ArrowUpCircle,
   Boxes,
   ChevronDown,
   ChevronRight,
@@ -47,11 +46,6 @@ export function ShellSidebar({
   activeView,
   workspace,
   coreOrigin,
-  coreOnline,
-  coreVersion,
-  coreUpdateAvailable,
-  coreUpdating,
-  onUpdateCore,
   activeUser,
   canManageApps,
   uiApps,
@@ -61,18 +55,12 @@ export function ShellSidebar({
   onOpenApps,
   onLaunchApp,
   getStandaloneHref,
-  onOpenCoreSettings,
   onOpenAssistant,
 }: {
   compact: boolean;
   activeView: ShellView;
   workspace: EmbeddedWorkspace | null;
   coreOrigin: string;
-  coreOnline: boolean;
-  coreVersion: string | null;
-  coreUpdateAvailable: boolean;
-  coreUpdating: boolean;
-  onUpdateCore?: () => void;
   activeUser: SessionResponse["user"] | null;
   canManageApps: boolean;
   // Every UI-capable app this session may see, ordinary and system alike, minus the Shell itself.
@@ -86,9 +74,6 @@ export function ShellSidebar({
   onOpenApps: () => void;
   onLaunchApp: (app: CoreApp, page: AppPageLink, target?: AppOpenTarget) => Promise<void>;
   getStandaloneHref: (app: CoreApp, page: AppPageLink) => string;
-  // Navigates to the Core settings tab. Undefined for non-admins, which leaves the version block as
-  // plain text.
-  onOpenCoreSettings?: () => void;
   // Opens the assistant chat panel. Undefined when no running app declares the ai-gateway interface
   // or the viewer is not an admin — the launcher then simply does not exist.
   onOpenAssistant?: () => void;
@@ -175,114 +160,7 @@ export function ShellSidebar({
 
       <div className={cn("shrink-0 border-t", compact ? "space-y-2 px-2 py-3" : "space-y-3 p-3")}>
         <SidebarFooterAccount compact={compact} coreOrigin={coreOrigin} activeUser={activeUser} />
-        <SidebarVersionInfo
-          compact={compact}
-          coreOnline={coreOnline}
-          coreVersion={coreVersion}
-          coreUpdateAvailable={coreUpdateAvailable}
-          coreUpdating={coreUpdating}
-          onUpdateCore={onUpdateCore}
-          onOpenCoreSettings={onOpenCoreSettings}
-        />
       </div>
-    </div>
-  );
-}
-
-function SidebarVersionInfo({
-  compact,
-  coreOnline,
-  coreVersion,
-  coreUpdateAvailable,
-  coreUpdating,
-  onUpdateCore,
-  onOpenCoreSettings,
-}: {
-  compact: boolean;
-  coreOnline: boolean;
-  coreVersion: string | null;
-  coreUpdateAvailable: boolean;
-  coreUpdating: boolean;
-  onUpdateCore?: () => void;
-  onOpenCoreSettings?: () => void;
-}) {
-  // A reachable Core that predates the version field reports no version, so only call it
-  // "offline" when Core is genuinely unreachable; otherwise the version is just unknown.
-  const platformLabel = coreVersion
-    ? `Core/CLI v${coreVersion}`
-    : coreOnline
-      ? "Core/CLI version unknown"
-      : "Core/CLI offline";
-
-  // The tooltip lives on the outermost element only, so the button variant's richer title is
-  // never shadowed by an inner one.
-  const body = compact ? (
-    <p className="text-center text-[10px] leading-tight">{coreVersion ? `v${coreVersion}` : "—"}</p>
-  ) : (
-    <div className="text-[11px] leading-tight">
-      <p className="truncate">{platformLabel}</p>
-    </div>
-  );
-
-  // For an admin the version block is a link into the Core settings tab; everyone else keeps the
-  // plain read-only text. It used to open a dialog, which made configuration reachable only from
-  // something that did not look like navigation.
-  const versionBlock = !onOpenCoreSettings ? (
-    <div className={cn("text-muted-foreground", compact ? "" : "px-2")} title={platformLabel}>
-      {body}
-    </div>
-  ) : (
-    <button
-      type="button"
-      className={cn(
-        "block w-full rounded-md text-left text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-ring/50 focus-visible:ring-[3px]",
-        compact ? "px-0 py-1 text-center" : "px-2 py-1",
-      )}
-      onClick={onOpenCoreSettings}
-      title={`${platformLabel} — open Core settings`}
-      aria-label="Open Core settings"
-    >
-      {body}
-    </button>
-  );
-
-  // A small Update affordance next to the version when a newer Core is available (admins only). While
-  // the update runs, it shows a spinner and disables — Core restarts and the probe re-clears the badge.
-  const showUpdate = Boolean(onUpdateCore) && (coreUpdateAvailable || coreUpdating);
-  if (!showUpdate) {
-    return versionBlock;
-  }
-
-  const updateButton = (
-    <button
-      type="button"
-      disabled={coreUpdating}
-      onClick={onUpdateCore}
-      title={coreUpdating ? "Updating Core…" : "A new Core version is available — click to update"}
-      aria-label={coreUpdating ? "Updating Core" : "Update Core"}
-      className={cn(
-        "flex shrink-0 items-center gap-1 rounded-md border border-primary/40 bg-primary/10 font-medium text-primary transition-colors hover:bg-primary/20 focus-visible:ring-ring/50 focus-visible:ring-[3px] disabled:opacity-60",
-        compact ? "mt-1 justify-center p-1" : "px-1.5 py-0.5 text-[10px]",
-      )}
-    >
-      {coreUpdating ? (
-        <LoaderCircle className="h-3 w-3 animate-spin" />
-      ) : (
-        <ArrowUpCircle className="h-3 w-3" />
-      )}
-      {!compact && <span>{coreUpdating ? "Updating…" : "Update"}</span>}
-    </button>
-  );
-
-  return compact ? (
-    <div className="flex flex-col items-center">
-      {versionBlock}
-      {updateButton}
-    </div>
-  ) : (
-    <div className="flex items-center gap-1">
-      <div className="min-w-0 flex-1">{versionBlock}</div>
-      {updateButton}
     </div>
   );
 }

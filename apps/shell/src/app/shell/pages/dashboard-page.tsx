@@ -397,9 +397,9 @@ function AppCounts({ apps }: { apps: CoreApp[] }) {
   );
 }
 
-// Facts about Core, beside the table they describe. The update action is deliberately here as well as
-// in the sidebar footer: this is where an administrator is already reading the host's version, and a
-// fact that cannot be acted on beside itself is an odd place to stop.
+// Facts about Core, beside the table they describe. This is the only place the Core update can be
+// started from: it is where an administrator is already reading the host's version, and a fact that
+// cannot be acted on beside itself is an odd place to stop.
 function CoreSection({
   status,
   coreUpdate,
@@ -467,7 +467,7 @@ function CoreSection({
           {showUpdate && (
             <Button variant="outline" size="sm" disabled={coreUpdating} onClick={onUpdateCore}>
               {coreUpdating ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ArrowUpCircle className="h-4 w-4" />}
-              {coreUpdating ? "Updating…" : `Update${coreUpdate?.releaseTag ? ` to ${coreUpdate.releaseTag}` : ""}`}
+              {coreUpdating ? "Updating…" : "Update Core"}
             </Button>
           )}
         </div>
