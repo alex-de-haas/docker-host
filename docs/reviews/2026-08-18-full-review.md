@@ -3,7 +3,7 @@
 - **Date:** 2026-08-18
 - **Baseline:** `main` @ `50e9175c` (merge of PR #376, platform 0.83.0).
 - **Scope:** changes landed since the last full review (`2026-07-05`) — roughly 670 commits across `apps/core`, `apps/cli`, `apps/ai-gateway`, `apps/shell`, `apps/telemetry-backend`, `apps/telemetry-ui`, `apps/demo-app`, `apps/marketplace`, and `packages/`. Hot areas: the `hosty mcp` connector, the CLI local-only pivot (`hosty login` removal), the Windows localCommand job object, telemetry read-auth + telemetry-over-MCP, the ai-gateway approval model, Cloudflare publication rename, and the delegated-token / app-identity flows.
-- **Method:** eight independent finder passes (three correctness angles — line-by-line, removed-behavior, cross-file tracer — plus reuse, simplification, efficiency, altitude, and CLAUDE.md/AGENTS.md conventions), producing 47 candidates, each then re-verified finding by finding against the source. Verdicts: **44 confirmed, 2 plausible, 1 refuted.** No source was changed and no exploit was run. The two repository checkers (`node scripts/docs-index.mjs --check`, `node scripts/check-versions.mjs`) both pass.
+- **Method:** eight independent finder passes (three correctness angles — line-by-line, removed-behavior, cross-file tracer — plus reuse, simplification, efficiency, altitude, and CLAUDE.md/AGENTS.md conventions), producing 47 candidates, each then re-verified finding by finding against the source. Verdicts: **44 confirmed, 2 plausible, 1 refuted.** The 46 survivors are written up below as **42 numbered findings**: three pairs/triples sharing one root cause were consolidated into a single entry each (L13 covers two duplicated telemetry-MCP helpers, L20 covers three instances of the same documentation rule), and one candidate — the `docs/reviews/` layout gap — is closed by this change rather than reported (see the note under *Documentation & conventions*). No source was changed and no exploit was run. The two repository checkers (`node scripts/docs-index.mjs --check`, `node scripts/check-versions.mjs`) both pass.
 - **Excluded:** third-party dependency CVE research, deployment-specific infrastructure, `apps/shell-swift` and `apps/shell-cardputer` native clients, and an exhaustive re-review of items already tracked in the `2026-07-10` Core review.
 
 ## Severity model
@@ -14,7 +14,7 @@ Severity measures impact, not external exploitability — several High items are
 - **Medium** — meaningful availability, integrity, information-disclosure, or correctness defect with a realistic trigger and a narrower blast radius.
 - **Low** — defense-in-depth, hardening, performance, or maintainability without a demonstrated high-impact path by itself.
 
-**Totals:** 7 High / 13 Medium / 26 Low (2 of the High are `plausible`, pending SDK-internal confirmation). 1 candidate refuted.
+**Totals:** 7 High / 13 Medium / 22 Low — 42 numbered findings covering 46 verified survivors (2 of the High are `plausible`, pending SDK-internal confirmation). 1 candidate refuted.
 
 ## Executive summary
 
@@ -234,7 +234,7 @@ The version checkers and the docs index both pass; these are rule violations the
 - **L20 — unfinished work parked as prose, not as a plan deliverable.** AGENTS.md: *"Unfinished work exists only as unchecked deliverables — never hidden in notes, 'future work' sections, or follow-up remarks."* Violated by [telemetry-mcp/feature.md:143](../../docs/features/telemetry-mcp/feature.md#L143) ("Not yet verified live" — two outstanding checks in `## Testing Expectations`, no `plan.md`), [core-app-shell/feature.md:142](../../docs/features/core-app-shell/feature.md#L142) (future-work pointer into `docs/ideas/`), and [access-tokens/feature.md:176](../../docs/features/access-tokens/feature.md#L176) ("It was planned… would first require…").
 - **L21 — a feature.md uses `## Testing Plan`, not `## Testing Expectations`.** AGENTS.md requires the latter section; [shell-access-and-system-apps/feature.md:92](../../docs/features/shell-access-and-system-apps/feature.md#L92) is the only feature.md missing it, and the docs-index script does not validate section names, so `--check` passes it.
 - **L22 — a legacy flat doc carries a free-text status.** [manifest-level-app-assets.md:3](../../docs/features/manifest-level-app-assets.md#L3) has `Status: **In progress.**` (outside the permitted plan.md vocabulary and forbidden on a reality doc) plus a "Only follow-up left…" remark carrying two deliverables and no `plan.md`. `docs/root.md` mirrors the free-text status into the generated index.
-- **L23 — `docs/reviews/` is outside the documented layout.** AGENTS.md: *"There are no other documentation folders,"* and the lazy-migration exemption lists only `docs/features/*.md`, `docs/ideas/`, `docs/planning/`. This folder (and this review) is ungoverned by the docs workflow and never appears in the generated index — a known, accepted gap worth either legitimizing in AGENTS.md or moving under a feature.
+**Closed by this change, not reported:** the review pass also found that `docs/reviews/` itself sat outside the documented layout — AGENTS.md said *"There are no other documentation folders,"* and its lazy-migration exemption named only `docs/features/*.md`, `docs/ideas/`, and `docs/planning/`, so this folder and its two prior reviews were ungoverned. Rather than file it, this change updates AGENTS.md to name `docs/reviews/` as a dated archive that deliberately stays outside the status workflow and the generated index, which is what the folder has been used for since 2026-07-05.
 
 ---
 
@@ -245,6 +245,8 @@ The version checkers and the docs index both pass; these are rule violations the
 ---
 
 ## Recommended remediation order
+
+These are proposals, not accepted work, and this ordering does not itself track anything: nothing below is a commitment until the owner triages it into the relevant feature's `plan.md` as an unchecked deliverable, which is the only place unfinished work is tracked. The order is by cost against return, so triage can start at the top.
 
 1. **The ai-gateway approval boundary (H1, H2).** Confirm the SDK's sub-agent and permission-rule semantics against 0.3.232, then close whichever holes are real and fix the "read-only" mislabel regardless. Highest security return, small code.
 2. **localCommand setup (H4, H5) and the log-tail (M1).** One focused pass on `LocalCommandRuntimeAdapter`: bound the setup wait, route setup teardown through the group/job kill, give it a pidfile, and move the log-writer dispose after EOF. Retires an availability class and a diagnostics class together.
