@@ -38,16 +38,24 @@ Development is document-driven: every non-trivial change starts and ends in `doc
 ```text
 docs/
 ├── root.md              — prose overview + generated status index
-└── features/
-    └── <feature-name>/  — kebab-case; the feature's stable, permanent home
-        ├── feature.md   — current reality only
-        └── plan.md      — remaining work only
+├── features/
+│   └── <feature-name>/  — kebab-case; the feature's stable, permanent home
+│       ├── feature.md   — current reality only
+│       └── plan.md      — remaining work only
+└── reviews/             — dated review archives, outside the status workflow
 ```
 
-- There are no other documentation folders. A large or cross-cutting feature is
-  an ordinary feature whose docs cross-link the features it spans; its `plan.md`
-  never duplicates their deliverables — it links to them and keeps only the work
-  that belongs to the umbrella itself.
+- `docs/reviews/` holds point-in-time review reports, named
+  `YYYY-MM-DD-<name>.md`. A review is an archive, not tracked work: it records
+  what was true at its stated baseline commit, is never edited afterwards to
+  follow the code, and stays outside the status workflow and the generated
+  index. A finding becomes tracked work only once it is triaged into the
+  relevant feature's `plan.md` as a deliverable — the review itself never
+  carries status.
+- Beyond that there are no other documentation folders. A large or cross-cutting
+  feature is an ordinary feature whose docs cross-link the features it spans;
+  its `plan.md` never duplicates their deliverables — it links to them and keeps
+  only the work that belongs to the umbrella itself.
 - Migration is lazy: legacy flat docs (`docs/features/*.md`, `docs/ideas/`,
   `docs/planning/`) move into feature folders with `git mv` whenever work
   touches them; never in bulk.
