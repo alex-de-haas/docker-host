@@ -49,6 +49,11 @@ dashboard tiles — stay a recorded future axis and are not built.
   the assistant about it at the same time. Today's assistant is a Dialog overlay pinned to the right
   edge, and having to close it to see the page underneath is the root cause of the lost-draft
   report in [agent-background-sessions](../agent-background-sessions/plan.md).
+- **A thin top strip completes the chrome** (owner, 2026-08-18): toggles for both rails at its ends,
+  and between them — the name of the app whose page fills the content area, the notifications bell,
+  and a theme switch. The bell is a relocation, not an invention: `notification-bell.tsx` already
+  exists and is [notifications](../notifications/feature.md)' surface — only its home is decided
+  here. The strip is Shell chrome; apps contribute nothing to it.
 - Shell's Settings page renders one tab per installed app that declares `ui.settings`, hosting the
   app's page in an iframe from the app's own origin. **The delegated-token handshake gets one shared
   answerer used by every Shell embedding context** — the workspace today, Settings tabs and the
@@ -90,6 +95,9 @@ Shell.
       exactly as navigation entries are resolved.
 - [ ] Shell: the right panel — tab strip on every page, collapsible, absent while nothing declares a
       panel surface, one iframe tab per declaring app.
+- [ ] Shell: the top strip — rail toggles, the current app's name, the existing notification bell
+      relocated, and a theme switch. The mock demonstrates all four; the bell's behaviour stays
+      notifications' scope.
 - [ ] Shell: a tab per app on the Settings page, iframe from the app origin, **the delegated-token
       handshake answered on the Settings page** — the workspace-only gap is a known trap that has
       bitten once already. Admin gating comes free with the Settings page.
@@ -131,8 +139,9 @@ Version outcome: platform minor (manifest contract + projection), `apps/shell` m
   settings form would be the heaviest possible reading of that goal. `next build` output served by
   the process that already exists keeps one runtime and gains the standard components. If the page
   ever grows real weight, the manifest already supports promoting it to a service.
-- **The two-rail concept** (owner, 2026-08-18): left rail navigates, right rail holds tool panels,
-  content stays visible beside both. The consequence worth recording: a panel surface is how an app
+- **The two-rail concept, capped by a top strip** (owner, 2026-08-18): left rail navigates, right
+  rail holds tool panels, content stays visible beside both, and the strip above owns what belongs to
+  neither rail — the toggles, the bell, the theme, and whose page is on screen. The consequence worth recording: a panel surface is how an app
   ships an always-at-hand tool without Shell owning that tool's UI.
 - **Widgets are deferred, deliberately.** The axis is recorded so fields stay per-kind
   (`ui.settings`, `ui.panel` — not one `ui.surface`) with room beside them, and nothing more.
