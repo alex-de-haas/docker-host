@@ -21,8 +21,9 @@ Two asks from the owner (2026-08-18), one mechanism short of possible today:
 
 ## Current Behavior
 
-- Sidebar button (Sparkles, "Assistant") opens `AssistantPanel`; present on every page, styled as a
-  page link. Hidden when no running app declares the `ai-gateway` interface.
+- Sidebar button (Sparkles, "Assistant") opens `AssistantPanel` — a **Dialog overlay** pinned to the
+  right edge (`assistant-panel.tsx`), so the page under it is unreachable while it is open. Present on
+  every page, styled as a page link. Hidden when no running app declares the `ai-gateway` interface.
 - `openAssistant(context)` exists in `shell-client.tsx`; a non-null context **starts a new session**
   and the panel sends the context as a seed. The app-details dialog is its only structured caller.
 - No keyboard shortcut, no attention state on the trigger (the indicator is an unchecked deliverable
@@ -31,12 +32,23 @@ Two asks from the owner (2026-08-18), one mechanism short of possible today:
 
 ## Target Behavior
 
-- **A fixed affordance in Shell's chrome**, visible on every page including Settings, with the
-  attention dot from agent-background-sessions rendered on it, plus a keyboard shortcut. Hidden as
-  today for non-admins and when no gateway runs.
+- **The assistant is a tab on Shell's right panel** — the `ui.panel` surface from
+  [app-ui-surfaces](../app-ui-surfaces/plan.md), declared by the gateway. The tab strip is on every
+  page, so the trigger is permanently in view; the attention dot renders on the tab; a keyboard
+  shortcut toggles it. Hidden as today for non-admins and when no gateway runs.
+- **Docked beside the content, never over it.** The overlay is the root cause of the lost-draft
+  report: the operator closed the assistant to copy an error under it. Docked, the error and the
+  conversation are visible at once and the close-to-look move disappears — draft persistence then
+  covers reloads, not routine reading.
+- **The panel's content is gateway-served.** The sessions list and the chat move out of Shell into a
+  page the gateway serves, embedded like any other panel surface — the same movement that took
+  observability's pages out of Shell into telemetry-ui. Shell keeps a minimal gateway client for
+  exactly one job: the badge.
 - **A new embedder message, `hosty:ask-assistant { text }`**, origin-verified exactly like the two
-  existing messages, plus an SDK helper. On receipt Shell opens the panel and **inserts the text into
-  the draft**, prefixed with provenance ("From hosty.telemetry:"), and stops there.
+  existing messages, plus an SDK helper. Shell **forwards it into the assistant panel's iframe**,
+  revealing the panel if collapsed; the panel page inserts the text into the draft, prefixed with
+  provenance ("From hosty.telemetry:"), and stops there. Shell's own app-details "Ask Assistant"
+  becomes the same forwarded message as everyone else's.
 - **The operator sends; the app never does.** This is the load-bearing rule, not a UX nicety — see
   Decisions.
 - First consumer: telemetry-ui error rows get an "Ask Assistant" button composing the record into
@@ -44,14 +56,17 @@ Two asks from the owner (2026-08-18), one mechanism short of possible today:
 
 ## Deliverables
 
-- [ ] Shell: the persistent trigger — placement per open question 1 — with the attention dot wired to
-      the same state the sidebar indicator deliverable uses (one source, two renderings, never a
-      second poll), and a keyboard shortcut.
+- [ ] Gateway: the panel page — the sessions list and chat, with everything the Shell-native panel
+      does today (approvals, questions, context seeding) moved over. Depends on app-ui-surfaces'
+      panel surface; the largest deliverable here and the price of Shell not holding provider UI.
+- [ ] Shell: the assistant tab's badge, wired to the same state the agent-background-sessions
+      indicator uses (one source, never a second poll), and the keyboard shortcut.
 - [ ] SDK: `hosty:ask-assistant` in `embedder.ts` — message shape, origin verification identical to
       the existing pair, and an `askAssistant(text)` helper. SDK minor bump.
-- [ ] Shell: the handler — open panel, insert into the draft with provenance, cap the accepted length,
-      and drop (with a console warning) messages from origins that fail verification, exactly as the
-      token handshake does.
+- [ ] Shell: the routing — a verified `hosty:ask-assistant` reveals the panel and is forwarded into
+      its iframe with the source app id attached; length capped; messages from origins that fail
+      verification dropped with a console warning, exactly as the token handshake does. The panel
+      page owns the draft insertion and the provenance line.
 - [ ] Telemetry UI: "Ask Assistant" on an error row, composing app id, timestamp, severity and body
       into the text. `apps/telemetry` minor bump.
 - [ ] Tests: the message verified and inserted beside one from a wrong origin dropped; the draft
@@ -63,15 +78,10 @@ change, no gateway change — the draft is client-side and the panel is Shell's.
 
 ## Open Questions
 
-1. **Where exactly does the trigger live?** Top bar next to the host status, or a pinned slot at the
-   sidebar's bottom that survives compact mode. Same "decide at Ready with a mock" shape as
-   app-ui-surfaces' question 2, and the two should be answered together so Shell's chrome is designed
-   once.
-2. **Does an app-invoked ask start a new session or land in the current one?** The existing
-   app-details path forces a new session. For "ask about this error" a fresh session is usually
-   right, but an operator mid-conversation may want the error appended to what they have. Options: always
-   new (predictable), always current (context-preserving), or insert into the current draft and let
-   the operator decide — the draft-only design makes the third nearly free.
+None open. Both were answered by the owner on 2026-08-18: the trigger is a tab on the right panel —
+the VS Code two-rail concept — and an app-invoked ask lands in the **current** session's draft, where
+the operator decides to send or to start fresh; the panel's own new-session affordance makes the
+choice cheap. What remains before Ready is a layout mock ("нужно поиграться"), not a decision.
 
 ## Decisions
 
@@ -87,6 +97,12 @@ change, no gateway change — the draft is client-side and the panel is Shell's.
 - **Reuse the draft as the vehicle.** Depends on the draft-persistence deliverable in
   agent-background-sessions, and composes with it: an inserted error that the operator navigates away
   from is still there when they come back.
+- **The assistant UI leaves Shell** (owner, 2026-08-18 — direction decided, layout mocked before
+  Ready). The panel surface is what makes it possible without Shell learning the gateway's UI, and
+  the docking is what makes it worth doing: content and conversation visible at once. Recorded with
+  its consequences so the neighbouring plans stay honest — the session-list and draft deliverables in
+  agent-background-sessions keep their behaviour but their pixels land in the gateway-served page if
+  that plan ships second, and Shell's app-details button loses its private path.
 
 ## Verification
 

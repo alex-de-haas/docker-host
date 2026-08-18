@@ -100,6 +100,11 @@ as "working". A list that does not distinguish those is close to useless.
 - [ ] Stop and mark abandoned a session that has waited 24 hours, keeping its transcript.
 - [ ] Docs: `feature.md` here, cross-links updated, index regenerated.
 
+Interaction recorded 2026-08-18: [assistant-entry-points](../assistant-entry-points/plan.md) moves
+the panel's pixels into a gateway-served page on Shell's right rail. Whichever plan ships second
+inherits the other's reality — the behaviours above do not change with where the panel is served, and
+the draft stays client-side wherever the composer lives.
+
 Version outcome: `apps/shell` minor, `apps/ai-gateway` minor, `apps/shell-swift` minor. No platform
 change.
 

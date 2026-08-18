@@ -16,8 +16,11 @@ gateway's sidebar entry **is** its settings page (`navigation: [{label: "Assista
 "/settings"}]`) — an admin-only configuration form presented as if it were an app the operator works
 in.
 
-The owner named a third kind, **widgets** — small panels for a dashboard — which this plan records as
-a deliberate future axis and does not build.
+The owner named two more kinds. **Panels** (2026-08-18): tabs on a right-side rail — the VS Code
+two-rail concept, navigation on the left, tool panels on the right, and the content visible beside
+both. In scope here, because the assistant is its first consumer and the concept resolves where the
+assistant lives ([assistant-entry-points](../assistant-entry-points/plan.md)). **Widgets** — small
+dashboard tiles — stay a recorded future axis and are not built.
 
 ## Current Behavior
 
@@ -38,9 +41,19 @@ a deliberate future axis and does not build.
   untouched, no `schemaVersion` bump (it tracks the contract format, not additions).
 - Core's app projection carries the new field, so Shell discovers settings surfaces the same way it
   discovers navigation — without reading manifests.
+- The manifest also gains an optional `ui.panel: { endpoint, path, label }` — a tab on Shell's
+  **right panel**. The panel is chrome: a tab strip present on every page, collapsible, absent
+  entirely while no installed app declares a panel surface; its content is an iframe from the app's
+  origin, exactly like a settings tab. The property that motivated it is **docking**: panel content
+  sits beside the workspace rather than over it, so an operator reads an app's error and talks to
+  the assistant about it at the same time. Today's assistant is a Dialog overlay pinned to the right
+  edge, and having to close it to see the page underneath is the root cause of the lost-draft
+  report in [agent-background-sessions](../agent-background-sessions/plan.md).
 - Shell's Settings page renders one tab per installed app that declares `ui.settings`, hosting the
-  app's page in an iframe from the app's own origin, and **answers the delegated-token handshake
-  there**. Shell remains ignorant of every app's settings schema — the original objection to putting
+  app's page in an iframe from the app's own origin. **The delegated-token handshake gets one shared
+  answerer used by every Shell embedding context** — the workspace today, Settings tabs and the
+  panel now — rather than a copy per context, because the copy nobody remembers is how the
+  workspace-only gap happened. Shell remains ignorant of every app's settings schema — the original objection to putting
   the gateway's settings in Shell was schema knowledge, not hosting, and this design keeps it
   honoured.
 - A surface declaration is placement metadata, not access control: the page stays reachable
@@ -70,10 +83,13 @@ Shell.
 
 ## Deliverables
 
-- [ ] Manifest: optional `ui.settings`, validated (endpoint must exist, path must be absolute), and
-      documented in `skills/hosty-app-skill/references/app-manifest.md`.
-- [ ] Core: the app projection and app-directory summaries carry `ui.settings` resolved to a URL,
+- [ ] Manifest: optional `ui.settings` and `ui.panel`, validated (endpoint must exist, path must be
+      absolute, panel label required), documented in
+      `skills/hosty-app-skill/references/app-manifest.md`.
+- [ ] Core: the app projection and app-directory summaries carry both surfaces resolved to URLs,
       exactly as navigation entries are resolved.
+- [ ] Shell: the right panel — tab strip on every page, collapsible, absent while nothing declares a
+      panel surface, one iframe tab per declaring app.
 - [ ] Shell: a tab per app on the Settings page, iframe from the app origin, **the delegated-token
       handshake answered on the Settings page** — the workspace-only gap is a known trap that has
       bitten once already. Admin gating comes free with the Settings page.
@@ -115,8 +131,11 @@ Version outcome: platform minor (manifest contract + projection), `apps/shell` m
   settings form would be the heaviest possible reading of that goal. `next build` output served by
   the process that already exists keeps one runtime and gains the standard components. If the page
   ever grows real weight, the manifest already supports promoting it to a service.
-- **Widgets are deferred, deliberately.** The axis is recorded so the manifest field is named
-  (`ui.settings`, not `ui.surface`) with room beside it, and nothing more.
+- **The two-rail concept** (owner, 2026-08-18): left rail navigates, right rail holds tool panels,
+  content stays visible beside both. The consequence worth recording: a panel surface is how an app
+  ships an always-at-hand tool without Shell owning that tool's UI.
+- **Widgets are deferred, deliberately.** The axis is recorded so fields stay per-kind
+  (`ui.settings`, `ui.panel` — not one `ui.surface`) with room beside them, and nothing more.
 - **Sequencing: this plan supersedes any standalone rewrite of the gateway page.** Rebuilding it on
   the standard stack happens *as part of the move* — one piece of work instead of a rewrite followed
   by a relocation.
