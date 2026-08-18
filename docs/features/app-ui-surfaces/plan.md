@@ -1,6 +1,6 @@
 # App UI Surfaces
 
-Status: Draft
+Status: Ready
 Created: 2026-08-18
 Updated: 2026-08-18
 
@@ -119,12 +119,14 @@ Version outcome: platform minor (manifest contract + projection), `apps/shell` m
 
 ## Open Questions
 
-1. **What does a declaring app's tab show while the app is stopped?** A greyed tab with a plain
-   sentence and a start affordance, or no tab at all? Showing nothing hides the existence of
-   settings; showing a dead iframe is worse than either.
-2. **Do per-app tabs sit beside Shell's own sections at the top level, or under one "Apps" area?**
-   With two first-party apps declaring surfaces it is cosmetic; with ten it is not. Can be decided at
-   Ready with a mock, and changed later without touching the contract.
+None open. Both were answered by the mock and approved by the owner on 2026-08-18:
+
+1. **A stopped app keeps its tab, greyed**, with a plain sentence naming the state — settings stay
+   discoverable, and nothing renders a dead iframe. A start affordance may join it during
+   implementation.
+2. **Per-app tabs sit at the top level beside Host.** Chosen looking at three tabs; if the count ever
+   makes it crowded, regrouping under an "Apps" area changes no contract — the manifest field and the
+   embedding are untouched by it.
 
 ## Decisions
 

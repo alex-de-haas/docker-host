@@ -1,6 +1,6 @@
 # Assistant Entry Points
 
-Status: Draft
+Status: Ready
 Created: 2026-08-18
 Updated: 2026-08-18
 
@@ -81,7 +81,7 @@ change, no gateway change — the draft is client-side and the panel is Shell's.
 None open. Both were answered by the owner on 2026-08-18: the trigger is a tab on the right panel —
 the VS Code two-rail concept — and an app-invoked ask lands in the **current** session's draft, where
 the operator decides to send or to start fresh; the panel's own new-session affordance makes the
-choice cheap. What remains before Ready is a layout mock ("нужно поиграться"), not a decision.
+choice cheap. The layout mock was built the same day, iterated once (the top strip), and approved.
 
 ## Decisions
 
