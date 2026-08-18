@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-08-11
-Updated: 2026-08-15
+Updated: 2026-08-18
 
 Make an assistant session findable and make it reach the operator when it needs them, so leaving an
 agent working while you close the tab becomes a usable feature rather than a way to lose work.
@@ -79,6 +79,11 @@ as "working". A list that does not distinguish those is close to useless.
 ## Deliverables
 
 - [ ] Shell persists the active session id across reloads.
+- [ ] **Unsent draft input survives closing the panel and reloading the page.** Kept per session in
+      the browser's local storage, restored on reopen, cleared on send. Reported 2026-08-18: text
+      typed, panel closed to go copy an error message, text gone. The transcript half of that report
+      needs no new work — events are already persisted and reattach replays them — but the draft is
+      the one thing the gateway never sees, so only the client can keep it.
 - [ ] Shell session list backed by the gateway's existing `GET /api/sessions`, ordered with
       operator-blocked sessions first, with reattach on open.
 - [ ] Attention indicator in the list and on the sidebar Assistant entry.
@@ -94,6 +99,11 @@ as "working". A list that does not distinguish those is close to useless.
       [notifications/plan.md](../notifications/plan.md).
 - [ ] Stop and mark abandoned a session that has waited 24 hours, keeping its transcript.
 - [ ] Docs: `feature.md` here, cross-links updated, index regenerated.
+
+Interaction recorded 2026-08-18: [assistant-entry-points](../assistant-entry-points/plan.md) moves
+the panel's pixels into a gateway-served page on Shell's right rail. Whichever plan ships second
+inherits the other's reality — the behaviours above do not change with where the panel is served, and
+the draft stays client-side wherever the composer lives.
 
 Version outcome: `apps/shell` minor, `apps/ai-gateway` minor, `apps/shell-swift` minor. No platform
 change.
