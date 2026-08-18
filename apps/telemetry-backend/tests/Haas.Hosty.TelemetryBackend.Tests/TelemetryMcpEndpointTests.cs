@@ -127,6 +127,37 @@ public class TelemetryMcpEndpointTests
         Assert.False(window["limitClamped"]!.GetValue<bool>());
     }
 
+    [Fact]
+    public void AValueClampedUpFromBelowIsReportedToo()
+    {
+        // The schemas publish no minimum, so `range_seconds: 0` is a plausible model-generated input
+        // that the store clamps to 1. Reporting that as honoured is the same lie as hiding a cap, just
+        // at the other end — and the first cut only looked at the maximum.
+        using var fixture = new StoreFixture();
+
+        var window = Window(Call(fixture.Query, limit: 0, rangeSeconds: 0));
+
+        Assert.Equal(1, window["rangeSeconds"]!.GetValue<int>());
+        Assert.True(window["rangeClamped"]!.GetValue<bool>());
+        Assert.Equal(1, window["limit"]!.GetValue<int>());
+        Assert.True(window["limitClamped"]!.GetValue<bool>());
+    }
+
+    [Fact]
+    public void TheReportedTraceDefaultIsTheOneTheStoreActuallyUses()
+    {
+        // It was 100 here against a store default of 50, so a full page of 50 reported limit:100 and
+        // truncated:false — the silent truncation this contract exists to prevent, inside the contract.
+        using var fixture = new StoreFixture();
+
+        var result = Handle(
+            @"{""jsonrpc"":""2.0"",""id"":8,""method"":""tools/call"",""params"":{""name"":""list_traces"",""arguments"":{}}}",
+            fixture.Query);
+        var window = JsonNode.Parse(result["result"]!["content"]![0]!["text"]!.GetValue<string>())!["window"]!;
+
+        Assert.Equal(50, window["limit"]!.GetValue<int>());
+    }
+
     private static JsonNode Call(TelemetryQueryService query, int limit, int rangeSeconds = 300)
         => Handle(
             @"{""jsonrpc"":""2.0"",""id"":9,""method"":""tools/call"",""params"":{""name"":""search_logs"","

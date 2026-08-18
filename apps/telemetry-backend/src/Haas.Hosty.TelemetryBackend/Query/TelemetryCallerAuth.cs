@@ -105,7 +105,20 @@ internal sealed class TelemetryCallerAuth
     private TelemetryCaller? ReadAppCaller(string payloadPart)
     {
         var payload = Read<AppIdentityClaims>(payloadPart);
-        return string.IsNullOrWhiteSpace(payload?.App) ? null : new TelemetryCaller(payload.App, IsApp: true);
+        if (string.IsNullOrWhiteSpace(payload?.App))
+        {
+            return null;
+        }
+
+        // Only THIS app's own identity. Core injects an identity token into every app, so accepting any
+        // correctly-signed one would let any installed app read the whole fleet's telemetry — with no
+        // administrator anywhere in the story, which is the opposite of what this gate is for. The
+        // legitimate app caller is the telemetry UI, and it is a sibling *service* of this same app, so
+        // its token names this app id. Anything else belongs to the delegated path, where a user and a
+        // role are checked.
+        return string.Equals(payload.App, appId, StringComparison.Ordinal)
+            ? new TelemetryCaller(payload.App, IsApp: true)
+            : null;
     }
 
     private TelemetryCaller? ReadUserCaller(string payloadPart)

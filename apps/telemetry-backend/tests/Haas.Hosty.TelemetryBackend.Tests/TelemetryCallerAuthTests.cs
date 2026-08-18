@@ -19,13 +19,26 @@ public class TelemetryCallerAuthTests
         => new(publicKey ?? PublicKey, appId);
 
     [Fact]
-    public void AcceptsAnAppIdentityAndNamesTheApp()
+    public void AcceptsThisAppsOwnIdentity()
     {
-        var caller = Auth().Authenticate(Request(AppIdentity("hosty.telemetry-ui")));
+        // The telemetry UI is a sibling *service* of this same app, and Core mints identity per app —
+        // so the legitimate app caller presents this app's id.
+        var caller = Auth().Authenticate(Request(AppIdentity(AppId)));
 
         Assert.NotNull(caller);
         Assert.True(caller.IsApp);
-        Assert.Equal("hosty.telemetry-ui", caller.Id);
+        Assert.Equal(AppId, caller.Id);
+    }
+
+    [Fact]
+    public void RefusesAnotherAppsIdentityEvenThoughCoreSignedIt()
+    {
+        // Core injects an identity token into every app, so "correctly signed" is nowhere near enough:
+        // accepting any would let any installed app read the whole fleet's telemetry with no
+        // administrator anywhere in the story. Asserted beside the one that must still work, since the
+        // two differ only in which app they name.
+        Assert.Null(Auth().Authenticate(Request(AppIdentity("com.haas.demo-app"))));
+        Assert.NotNull(Auth().Authenticate(Request(AppIdentity(AppId))));
     }
 
     [Fact]
@@ -63,7 +76,7 @@ public class TelemetryCallerAuthTests
         var forged = Sign(impostor, "hosty_app_identity", new { app = "hosty.telemetry-ui", iat = 1 });
 
         Assert.Null(Auth().Authenticate(Request(forged)));
-        Assert.NotNull(Auth().Authenticate(Request(AppIdentity("hosty.telemetry-ui"))));
+        Assert.NotNull(Auth().Authenticate(Request(AppIdentity(AppId))));
     }
 
     [Fact]
@@ -73,7 +86,7 @@ public class TelemetryCallerAuthTests
         Assert.Null(Auth().Authenticate(Request("")));
         Assert.Null(Auth().Authenticate(Request("not-a-bearer")));
         Assert.Null(Auth().Authenticate(Request("hosty_app_identity.1.only-three-parts")));
-        Assert.NotNull(Auth().Authenticate(Request(AppIdentity("hosty.telemetry-ui"))));
+        Assert.NotNull(Auth().Authenticate(Request(AppIdentity(AppId))));
     }
 
     [Fact]
@@ -85,7 +98,7 @@ public class TelemetryCallerAuthTests
         var unconfigured = Auth(publicKey: "");
 
         Assert.False(unconfigured.Configured);
-        Assert.Null(unconfigured.Authenticate(Request(AppIdentity("hosty.telemetry-ui"))));
+        Assert.Null(unconfigured.Authenticate(Request(AppIdentity(AppId))));
     }
 
     [Fact]

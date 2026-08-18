@@ -1,7 +1,7 @@
 # Telemetry Over MCP
 
 Created: 2026-08-17
-Updated: 2026-08-17
+Updated: 2026-08-18
 
 The fleet's **stored** telemetry — searchable logs and traces — is an MCP interface an agent can call,
 behind a credential the query API did not have before this shipped.
@@ -20,8 +20,14 @@ Two shapes of caller, one verification key:
 
 | Caller | Presents | Checked |
 | --- | --- | --- |
-| An app (the telemetry UI) | `hosty_app_identity`, minted at start | signature, and which app it names |
+| An app (the telemetry UI) | `hosty_app_identity`, minted at start | signature, **and that it names this very app** |
 | A user, through MCP | `hosty_delegated`, short-TTL | signature, audience is this app, not expired |
+
+**An app identity is only ever this app's own.** Core injects one into every app, so "correctly
+signed" is nowhere near sufficient: accepting any would let any installed app read the whole fleet's
+telemetry with no administrator anywhere in the story. The legitimate app caller is the telemetry UI,
+and it is a sibling *service* of this same app — Core mints identity per app — so its token names this
+app id. Everything else goes down the delegated path, where a user and a role are checked.
 
 The key is the **public half of Core's existing delegated-token pair**, which Core already injected
 into every app as `HOSTY_DELEGATED_TOKEN_PUBLIC_KEY`. Verification is local: Core is not in the read
@@ -89,6 +95,12 @@ false statement about the host rather than a report about the query. `truncated`
 full page, and is deliberately "there may be more" rather than a count: the store gives no other
 signal, and overstating it would send an agent hunting for data that is not there.
 
+Two ways this contract can lie about itself, both closed and both tested. The reported default has to
+be the one the store actually uses — it was 100 against a real default of 50, so a full page of 50
+announced itself as unclamped. And clamping is "the value that ran is not the value asked for", which
+catches the low end too: the schemas publish no minimum, so `range_seconds: 0` is a plausible input
+the store raises to 1, and calling that honoured is the same lie at the other end.
+
 ## What This Does Not Do
 
 **Ingest is unchanged and remains open.** Any process that can reach the collector's OTLP port may
@@ -115,13 +127,16 @@ the connector then exports these tools like any other app's.
 - **Auth, as pairs.** Every refusal is asserted beside an acceptance, since a gate that refuses
   everything satisfies each negative alone: an app identity accepted and named; a delegated token
   accepted for this audience and refused for another; an expired one refused and a live one accepted;
-  a token signed by another key refused beside the genuine one; malformed headers refused beside a
-  good one; and the unconfigured backend refusing rather than allowing.
+  a token signed by another key refused beside the genuine one; **another app's identity refused
+  beside this app's own, though Core signed both**; malformed headers refused beside a good one; and
+  the unconfigured backend refusing rather than allowing.
 - **Cross-type replay** in both directions — a delegated token relabelled as an app identity, and the
   Core-side twin of that check.
-- **The truncation contract in both directions.** A full page reports `truncated`, a partial page does
-  not, and an over-large request reports `rangeClamped`/`limitClamped` while an ordinary one reports
-  neither. A flag that is always true says nothing.
+- **The truncation contract in every direction.** A full page reports `truncated`, a partial page does
+  not; an over-large request reports `rangeClamped`/`limitClamped`, an ordinary one reports neither,
+  and a request *below* the minimum reports them too. A flag that is always true says nothing. The
+  reported trace default is asserted against the store's own, since a mismatch there hides truncation
+  inside the very contract that exists to reveal it.
 - **Tool metadata**: every tool declares `readOnlyHint`, the names are the three above, and
   `search_logs` says when to prefer it over a console tail — the model has to be able to tell this
   interface from Core's.

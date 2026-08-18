@@ -5,7 +5,7 @@ using Haas.Hosty.TelemetryBackend.Query;
 // scrape + file sinks on the shared volume) into an embedded SQLite store and serves a query API that
 // mirrors the shapes Core used to serve (appId-keyed; Core's read proxy adds display names).
 //
-// SECURITY (docs/features/telemetry-mcp/plan.md). Reading is authenticated: every route below
+// SECURITY (docs/features/telemetry-mcp/feature.md). Reading is authenticated: every route below
 // requires a token Core signed — an app's own identity, or a user's delegated token addressed to this
 // app — verified locally with the public key Core injects. The administrator requirement is inherited
 // rather than re-checked here: telemetry is a system app, so Core will not mint a delegated token for

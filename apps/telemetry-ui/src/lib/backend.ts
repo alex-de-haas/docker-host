@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 // service of the same hosty.telemetry app; Core injects its intra-app URL as HOSTY_SERVICE_BACKEND_URL
 // (from the ui service's `dependsOn: [backend]`).
 //
-// The query API is authenticated as of docs/features/telemetry-mcp/plan.md, so every call carries this
+// The query API is authenticated as of docs/features/telemetry-mcp/feature.md, so every call carries this
 // app's own identity token — the one Core mints at start and injects as HOSTY_APP_IDENTITY_TOKEN. The
 // backend verifies it with Core's public key, which means neither side needs Core in the request path.
 // Being on the app's internal network is no longer the argument for reaching it; the credential is.

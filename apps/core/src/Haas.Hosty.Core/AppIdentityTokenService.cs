@@ -5,7 +5,7 @@ namespace Haas.Hosty.Core;
 
 /// <summary>
 /// Mints the token an app presents to <b>another app</b> to prove which app it is
-/// (docs/features/telemetry-mcp/plan.md).
+/// (docs/features/telemetry-mcp/feature.md).
 /// </summary>
 /// <remarks>
 /// <para>

@@ -4,7 +4,7 @@ using System.Text.Json.Nodes;
 namespace Haas.Hosty.TelemetryBackend.Query;
 
 /// <summary>
-/// The app-owned MCP interface over stored telemetry (docs/features/telemetry-mcp/plan.md).
+/// The app-owned MCP interface over stored telemetry (docs/features/telemetry-mcp/feature.md).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -152,7 +152,10 @@ internal static class TelemetryMcpEndpoint
             });
         }
 
-        return WithWindow(new JsonObject { ["traces"] = rows }, rows.Count, requestedRange, requestedLimit, 3600, 200, 100);
+        // 50, matching TelemetryQueryService.DefaultTracesLimit. It was 100 here, so a full page of
+        // 50 reported limit:100 and truncated:false — recreating the silent truncation this
+        // contract exists to prevent, inside the contract itself.
+        return WithWindow(new JsonObject { ["traces"] = rows }, rows.Count, requestedRange, requestedLimit, 3600, 200, 50);
     }
 
     private static JsonObject GetTrace(JsonNode? arguments, TelemetryQueryService query)
@@ -195,9 +198,12 @@ internal static class TelemetryMcpEndpoint
         payload["window"] = new JsonObject
         {
             ["rangeSeconds"] = effectiveRange,
-            ["rangeClamped"] = requestedRange is int r && r > maxRange,
+            // "the value I asked for is not the value that ran", which catches the low end too. The
+            // schemas publish no minimum, so `range_seconds: 0` is a model-generated input the store
+            // clamps to 1 — and reporting that as honoured would be the same lie as hiding a cap.
+            ["rangeClamped"] = requestedRange is int r && r != effectiveRange,
             ["limit"] = effectiveLimit,
-            ["limitClamped"] = requestedLimit is int l && l > maxLimit,
+            ["limitClamped"] = requestedLimit is int l && l != effectiveLimit,
             ["returned"] = returned,
             // Equality is the only signal the store gives: a full page means there may be more behind
             // it. Reported as "may be", because it is genuinely unknown, and overstating it would send
