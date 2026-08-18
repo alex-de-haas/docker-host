@@ -2,8 +2,12 @@ import { NextResponse } from "next/server";
 
 // Server-side client for the sibling telemetry backend's query API. The backend runs as the `backend`
 // service of the same hosty.telemetry app; Core injects its intra-app URL as HOSTY_SERVICE_BACKEND_URL
-// (from the ui service's `dependsOn: [backend]`). The query API carries no auth of its own — it is
-// reachable only over the app's internal network, and every UI route in front of it is admin-gated.
+// (from the ui service's `dependsOn: [backend]`).
+//
+// The query API is authenticated as of docs/features/telemetry-mcp/feature.md, so every call carries this
+// app's own identity token — the one Core mints at start and injects as HOSTY_APP_IDENTITY_TOKEN. The
+// backend verifies it with Core's public key, which means neither side needs Core in the request path.
+// Being on the app's internal network is no longer the argument for reaching it; the credential is.
 const backendTimeoutMs = 8_000;
 
 export class BackendUnavailableError extends Error {
@@ -25,8 +29,21 @@ export async function backendGet(path: string): Promise<Response> {
   if (!base) {
     throw new BackendUnavailableError("HOSTY_SERVICE_BACKEND_URL is not configured.");
   }
+
+  const identity = process.env.HOSTY_APP_IDENTITY_TOKEN?.trim();
+  if (!identity) {
+    // Named as its own failure rather than left to surface as a 401 from the backend. A missing token
+    // means Core did not inject one — an old Core, or the app started outside it — and "restart it
+    // through Core" is a different instruction from anything an authorization error would suggest.
+    throw new BackendUnavailableError(
+      "This telemetry UI has no identity token from Hosty Core, so the backend will not answer it. "
+        + "Restart the app through Core.",
+    );
+  }
+
   return fetch(`${base}${path}`, {
     cache: "no-store",
+    headers: { authorization: `Bearer ${identity}` },
     signal: AbortSignal.timeout(backendTimeoutMs),
   });
 }
