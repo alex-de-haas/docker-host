@@ -26,7 +26,7 @@ export type SettingsResponse = {
  * `credentials: "include"` because the Hosty app session is a cookie the gateway set: the page
  * authenticates as the operator who opened it, exactly as every other embedded Hosty page does.
  */
-async function call(path: string, init?: RequestInit): Promise<Response> {
+export async function call(path: string, init?: RequestInit): Promise<Response> {
   const response = await fetch(`/api${path}`, {
     ...init,
     credentials: "include",

@@ -13,7 +13,6 @@ import { createReissueRateLimiter } from "@hosty-sdk/app/embedder";
 import { CoreEventNames, subscribeToCoreEvents } from "./shell/events/core-event-stream";
 import { AppDetailsDialog } from "./shell/dialogs/app-details-dialog";
 import { InstallReviewDialog } from "./shell/dialogs/install-review-dialog";
-import { AssistantPanel } from "./shell/assistant/assistant-panel";
 import { findAssistantGateway } from "./shell/assistant/assistant-client";
 import { ShellSidebar } from "./shell/sidebar/shell-sidebar";
 import { ShellTopStrip } from "./shell/chrome/shell-top-strip";
@@ -174,12 +173,9 @@ export function ShellClient({
   const [activePanelKey, setActivePanelKey] = useState<string | null>(null);
   // Bumped when a placed surface reports its session expired; the shared hook re-mints on the change.
   const [surfaceAuthNonce, setSurfaceAuthNonce] = useState(0);
-  const [assistantOpen, setAssistantOpen] = useState(false);
-  // Structured page context ("app", "page") the contextual entry points seed a session with.
-  const [assistantContext, setAssistantContext] = useState<Record<string, string> | null>(null);
-  // Survives panel close so reopening reattaches to the still-running session instead of
-  // orphaning it; a contextual entry always starts fresh (its context belongs to a new session).
-  const [assistantSessionId, setAssistantSessionId] = useState<string | null>(null);
+  // What Shell last asked the assistant panel, as a message for its frame. The nonce is the ask:
+  // the same text twice is two asks, and the panel must see both.
+  const [assistantAsk, setAssistantAsk] = useState<{ message: unknown; nonce: number } | null>(null);
   const activeWorkspaceRoute = shellRoute.workspace ?? optimisticWorkspaceRoute;
   const workspaceRouteKey = getWorkspaceRouteKey(activeWorkspaceRoute);
   const pendingWorkspaceRoute = useRef<string | null>(null);
@@ -199,13 +195,6 @@ export function ShellClient({
   // ai-gateway interface (docs/features/ai-gateway/plan.md): no provider ⇒ no launcher, no panel.
   const assistantGateway = useMemo(() => findAssistantGateway(state.apps), [state.apps]);
   const assistantAvailable = Boolean(canManageApps && assistantGateway);
-  const openAssistant = useCallback((context: Record<string, string> | null = null) => {
-    setAssistantContext(context);
-    if (context) {
-      setAssistantSessionId(null);
-    }
-    setAssistantOpen(true);
-  }, []);
 
   useEffect(() => {
     setSidebarCompact(window.localStorage.getItem(SIDEBAR_COMPACT_STORAGE_KEY) === "true");
@@ -1896,6 +1885,28 @@ export function ShellClient({
   const appSettingsTabs = useMemo(() => getAppSettingsTabs(state.apps), [state.apps]);
   const appPanelTabs = useMemo(() => getAppPanelTabs(state.apps), [state.apps]);
 
+  /**
+   * Reveals the assistant panel and hands it text to put in the operator's draft.
+   *
+   * Shell no longer renders the assistant — the gateway serves it — so this is a message into that
+   * page's frame rather than a call into a component. The panel fills the draft and stops there:
+   * only the operator sends, which is the rule the whole entry-point design rests on.
+   */
+  const askAssistant = useCallback((text: string, sourceAppId: string) => {
+    setPanelOpen(true);
+    // Selecting the tab is part of the ask, not a nicety: the message is handed only to the
+    // assistant's own frame, so revealing the rail while another app's panel stayed selected would
+    // deliver the draft nowhere and look like the button did nothing.
+    const assistantTab = appPanelTabs.find((tab) => tab.appId === assistantGateway?.appId);
+    if (assistantTab) {
+      setActivePanelKey(assistantTab.key);
+    }
+    setAssistantAsk((current) => ({
+      message: { type: "hosty:ask-assistant", text, sourceAppId },
+      nonce: (current?.nonce ?? 0) + 1,
+    }));
+  }, [appPanelTabs, assistantGateway?.appId]);
+
   // The rail exists only while something declares a panel; opening it is then the operator's choice.
   // An app's settings page fills the content column the way a workspace app does, so the column
   // takes the same surface. An embedded page paints its own background, and leaving the column
@@ -2062,6 +2073,11 @@ export function ShellClient({
           rightRailExpanded={appPanelTabs.length > 0 ? rightPanelOpen : null}
           onToggleRightRail={() => setPanelOpen(!rightPanelOpen)}
           showNotifications={Boolean(activeUser)}
+          onBrandClick={() => {
+            setWorkspace(null);
+            setOptimisticWorkspaceRoute(null);
+            router.push(getShellViewHref(canManageApps ? "dashboard" : "available-apps"));
+          }}
         />
 
       <div
@@ -2098,7 +2114,6 @@ export function ShellClient({
             }}
             onLaunchApp={launchAppPage}
             getStandaloneHref={getStandaloneAppHref}
-            onOpenAssistant={assistantAvailable ? () => openAssistant(null) : undefined}
           />
         </aside>
 
@@ -2158,7 +2173,6 @@ export function ShellClient({
             theme={shellResolvedTheme}
             themePreference={shellThemePreference}
             onSelectTab={setActivePanelKey}
-            onCollapse={() => setPanelOpen(false)}
             onAuthRequired={handleSurfaceAuthRequired}
             resolveDelegatedTokenRequest={requestDelegatedTokenFor}
             onOpenSurfaceFrame={openSurfaceFrame}
@@ -2166,6 +2180,9 @@ export function ShellClient({
             // host.user, so offering them the button would promise something guaranteed to fail.
             onStartApp={canManageApps ? startAppById : undefined}
             reloadKey={surfaceAuthNonce}
+            // Only the assistant's own tab is handed Shell's ask; another app's panel must not
+            // receive a message addressed to the gateway.
+            outbound={activePanelTab?.appId === assistantGateway?.appId ? assistantAsk : null}
           />
         )}
       </div>
@@ -2212,22 +2229,11 @@ export function ShellClient({
             onLoadRemovalImpact={loadRemovalImpact}
             onRevealSetting={revealAppSetting}
             onAskAssistant={assistantAvailable
-              ? () => openAssistant({ app: selectedApp.id, page: activePanel.view })
+              ? () => askAssistant(`About the ${selectedApp.displayName || selectedApp.id} app (${activePanel.view} page): `, shellAppId)
               : undefined}
           />
         )}
 
-        {assistantOpen && assistantAvailable && assistantGateway && (
-          <AssistantPanel
-            gateway={assistantGateway}
-            coreOrigin={coreOrigin}
-            context={assistantContext}
-            sessionId={assistantSessionId}
-            onSessionId={setAssistantSessionId}
-            onClose={() => setAssistantOpen(false)}
-            sendCsrfJson={sendCsrfJson}
-          />
-        )}
 
       </div>
       </ShellStateContext.Provider>

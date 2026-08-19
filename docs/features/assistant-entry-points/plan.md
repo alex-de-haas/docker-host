@@ -1,8 +1,8 @@
 # Assistant Entry Points
 
-Status: Ready
+Status: In Progress
 Created: 2026-08-18
-Updated: 2026-08-18
+Updated: 2026-08-19
 
 Make the assistant reachable from anywhere in Shell, and let an app hand it context — without letting
 an app *drive* it.
@@ -56,9 +56,16 @@ Two asks from the owner (2026-08-18), one mechanism short of possible today:
 
 ## Deliverables
 
-- [ ] Gateway: the panel page — the sessions list and chat, with everything the Shell-native panel
+- [x] Gateway: the panel page — the sessions list and chat, with everything the Shell-native panel
       does today (approvals, questions, context seeding) moved over. Depends on app-ui-surfaces'
       panel surface; the largest deliverable here and the price of Shell not holding provider UI.
+      **The panel still presents the operator's delegated token**, which this plan did not foresee:
+      the gateway keeps the presented token as the session's delegation seed for app MCP
+      (`SessionManager.postMessage` reads it from the bearer header), so a panel authenticating only
+      with its app-session cookie would leave `session.credential` null and the agent would silently
+      have no app tools. The credential stays the operator's, obtained through the existing
+      `hosty:request-delegated-token` handshake — the alternative, a gateway minting user-scoped
+      tokens for itself, is the "token, not proxy" rule the bridge is built on.
 - [ ] Shell: the assistant tab's badge, wired to the same state the agent-background-sessions
       indicator uses (one source, never a second poll), and the keyboard shortcut.
 - [ ] SDK: `hosty:ask-assistant` in `embedder.ts` — message shape, origin verification identical to
@@ -67,14 +74,25 @@ Two asks from the owner (2026-08-18), one mechanism short of possible today:
       its iframe with the source app id attached; length capped; messages from origins that fail
       verification dropped with a console warning, exactly as the token handshake does. The panel
       page owns the draft insertion and the provenance line.
+      **Includes the panel page verifying its embedder's origin on the inbound message.** Raised in
+      review of the panel move and deliberately left here: the page has no trustworthy source for
+      that origin yet — Core does not inject Shell's origin into apps, and a referrer can be absent,
+      so a gate built on it fails *silently*, dropping asks with no trace. It belongs with the public
+      message it protects, where the tests for it live. Until then the only sender is Shell posting
+      into its own frame, and the rule the design rests on is unaffected: the draft is filled, never
+      sent.
 - [ ] Telemetry UI: "Ask Assistant" on an error row, composing app id, timestamp, severity and body
       into the text. `apps/telemetry` minor bump.
 - [ ] Tests: the message verified and inserted beside one from a wrong origin dropped; the draft
       carries provenance; nothing auto-sends — asserted, since it is the rule the design stands on.
 - [ ] Docs: `feature.md`, embedder-contract reference in hosty-app-skill, index.
 
-Version outcome: `apps/shell` minor, `packages/app-sdk` minor, `apps/telemetry` minor. No platform
-change, no gateway change — the draft is client-side and the panel is Shell's.
+Version outcome: `apps/shell` minor, `apps/ai-gateway` minor, `packages/app-sdk` minor,
+`apps/telemetry` minor. No platform change.
+
+(An earlier revision of this line said "no gateway change — the panel is Shell's", which contradicted
+this plan's own target behaviour and first deliverable. Moving the panel *is* a gateway change, and
+the largest one here.)
 
 ## Open Questions
 

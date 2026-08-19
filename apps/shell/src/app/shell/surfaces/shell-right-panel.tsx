@@ -1,6 +1,6 @@
 "use client";
 
-import { Play, PanelRightClose } from "lucide-react";
+import { Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { HostyResolvedTheme, HostyThemePreference } from "../types";
@@ -25,19 +25,18 @@ export function ShellRightPanel({
   theme,
   themePreference,
   onSelectTab,
-  onCollapse,
   onAuthRequired,
   resolveDelegatedTokenRequest,
   onOpenSurfaceFrame,
   onStartApp,
   reloadKey,
+  outbound,
 }: {
   tabs: AppSurfaceTab[];
   activeTab: AppSurfaceTab | null;
   theme: HostyResolvedTheme;
   themePreference: HostyThemePreference;
   onSelectTab: (key: string) => void;
-  onCollapse: () => void;
   /** Re-mints this panel's own launch code; a panel is not tied to the workspace and cannot borrow its recovery. */
   onAuthRequired?: (appId: string) => void;
   /**
@@ -52,13 +51,15 @@ export function ShellRightPanel({
   /** Undefined for a user who cannot start apps — Core refuses them, so the button would only fail. */
   onStartApp?: (appId: string) => void;
   reloadKey?: number;
+  /** Handed to the active tab's frame; see EmbeddedAppFrame's `outbound`. */
+  outbound?: { message: unknown; nonce: number } | null;
 }) {
   const { src, error } = useAppSurfaceSrc(activeTab, onOpenSurfaceFrame, "Could not open this panel.", reloadKey);
 
   return (
     <aside className="flex h-full min-h-0 min-w-0 flex-col border-l bg-sidebar text-sidebar-foreground">
-      <div className="flex items-center gap-1 border-b px-2 py-1.5">
-        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto" role="tablist" aria-label="Panels">
+      <div className="flex items-center border-b px-2">
+        <div className="flex min-w-0 flex-1 items-center gap-3 overflow-x-auto" role="tablist" aria-label="Panels">
           {tabs.map((tab) => (
             <button
               key={tab.key}
@@ -67,10 +68,12 @@ export function ShellRightPanel({
               aria-selected={tab.key === activeTab?.key}
               onClick={() => onSelectTab(tab.key)}
               className={cn(
-                "shrink-0 rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+                // The same underline treatment as the Settings page's tabs: one shape for "these are
+                // tabs" across Shell, rather than a second invention in the rail.
+                "-mb-px shrink-0 border-b-2 py-2 text-xs transition-colors",
                 tab.key === activeTab?.key
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:bg-background/60 hover:text-foreground",
+                  ? "border-foreground font-medium text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground",
                 // A stopped app keeps its tab rather than vanishing — dimmed, so the strip shows the
                 // tool exists and is merely not running.
                 !tab.running && "opacity-60",
@@ -81,9 +84,6 @@ export function ShellRightPanel({
             </button>
           ))}
         </div>
-        <Button type="button" variant="ghost" size="icon-sm" onClick={onCollapse} title="Hide panel" aria-label="Hide panel">
-          <PanelRightClose className="h-4 w-4" />
-        </Button>
       </div>
 
       <div className="min-h-0 flex-1 bg-background">
@@ -96,6 +96,7 @@ export function ShellRightPanel({
           onAuthRequired={onAuthRequired}
           resolveDelegatedTokenRequest={resolveDelegatedTokenRequest}
           onStartApp={onStartApp}
+          outbound={outbound}
         />
       </div>
     </aside>
@@ -111,6 +112,7 @@ function RightPanelBody({
   onAuthRequired,
   resolveDelegatedTokenRequest,
   onStartApp,
+  outbound,
 }: {
   activeTab: AppSurfaceTab | null;
   src: string | null;
@@ -120,6 +122,7 @@ function RightPanelBody({
   onAuthRequired?: (appId: string) => void;
   resolveDelegatedTokenRequest?: (appId: string) => ((refresh: boolean) => Promise<DelegatedTokenGrant>) | undefined;
   onStartApp?: (appId: string) => void;
+  outbound?: { message: unknown; nonce: number } | null;
 }) {
   if (!activeTab) {
     return null;
@@ -155,6 +158,7 @@ function RightPanelBody({
       themePreference={themePreference}
       onAuthRequired={onAuthRequired}
       onDelegatedTokenRequest={resolveDelegatedTokenRequest?.(activeTab.appId)}
+      outbound={outbound}
     />
   );
 }

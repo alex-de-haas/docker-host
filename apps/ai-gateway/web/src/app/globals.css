@@ -133,3 +133,11 @@ html[data-hosty-launch="native"] .hosty-shell-chrome {
 html[data-hosty-launch="embedded"] .hosty-page-padding {
   padding: 0;
 }
+
+/* Chrome a shell already renders — this app's own name — is hidden while a shell embeds the page.
+   The rule is the SDK's `hosty-shell-chrome` contract; contextual controls never carry the class. */
+html[data-hosty-launch="embedded"] .hosty-shell-chrome,
+html[data-hosty-launch="native"] .hosty-shell-chrome {
+  display: none;
+}
+

@@ -3,6 +3,7 @@
 import { PanelLeft, PanelRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { BrandMark } from "./brand-mark";
 import { NotificationBell } from "../notifications/notification-bell";
 import { ThemeMenuButton } from "./theme-menu-button";
 
@@ -19,6 +20,7 @@ export function ShellTopStrip({
   rightRailExpanded,
   onToggleRightRail,
   showNotifications,
+  onBrandClick,
 }: {
   title: string;
   subtitle?: string | null;
@@ -28,22 +30,29 @@ export function ShellTopStrip({
   rightRailExpanded: boolean | null;
   onToggleRightRail: () => void;
   showNotifications: boolean;
+  /** The mark doubles as the way home, which is what it did in the sidebar header it came from. */
+  onBrandClick: () => void;
 }) {
   return (
-    <header className="flex h-10 shrink-0 items-center gap-2 border-b bg-sidebar px-2 text-sidebar-foreground">
-      <Button
+    <header className="relative flex h-10 shrink-0 items-center gap-2 border-b bg-sidebar px-2 text-sidebar-foreground">
+      <button
         type="button"
-        variant="ghost"
-        size="icon-sm"
-        onClick={onToggleLeftRail}
-        title={leftRailExpanded ? "Collapse the sidebar" : "Expand the sidebar"}
-        aria-label={leftRailExpanded ? "Collapse the sidebar" : "Expand the sidebar"}
-        aria-pressed={leftRailExpanded}
+        onClick={onBrandClick}
+        title="Hosty"
+        aria-label="Hosty"
+        className="flex shrink-0 items-center gap-2 rounded-md outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
       >
-        <PanelLeft className="h-4 w-4" />
-      </Button>
+        <BrandMark />
+        <span className="text-sm font-semibold uppercase">Hosty</span>
+      </button>
 
-      <div className="flex min-w-0 flex-1 items-baseline gap-2">
+      <div className="flex-1" />
+
+      {/* Centred against the window rather than inside the space left over: the brand and the
+          control group are different widths, so centring between them would sit visibly off. Capped
+          and truncating so a long app name cannot run under either of them, and click-through so the
+          label never swallows a press meant for what is behind it. */}
+      <div className="pointer-events-none absolute left-1/2 flex max-w-[45%] -translate-x-1/2 items-baseline gap-2">
         <span className="truncate text-sm font-medium">{title}</span>
         {subtitle && <span className="truncate text-xs text-muted-foreground">{subtitle}</span>}
       </div>
@@ -51,6 +60,21 @@ export function ShellTopStrip({
       <div className="flex items-center gap-1">
         {showNotifications && <NotificationBell />}
         <ThemeMenuButton />
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          onClick={onToggleLeftRail}
+          title={leftRailExpanded ? "Collapse the sidebar" : "Expand the sidebar"}
+          aria-label={leftRailExpanded ? "Collapse the sidebar" : "Expand the sidebar"}
+          aria-pressed={leftRailExpanded}
+          // Both rail toggles show their on-state the same way: sitting side by side, one that lit
+          // up and one that did not would read as a bug rather than as two different rails.
+          className={cn(leftRailExpanded && "bg-background text-foreground")}
+        >
+          <PanelLeft className="h-4 w-4" />
+        </Button>
+
         {rightRailExpanded !== null && (
           <Button
             type="button"
