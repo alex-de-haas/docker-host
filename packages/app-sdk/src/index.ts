@@ -74,7 +74,12 @@ export function askAssistant(text: string): boolean {
 
   // Broadcast: the message carries no secret, and the embedder verifies the sender against its own
   // DOM rather than trusting anything claimed here.
-  window.parent.postMessage({ type: ASK_ASSISTANT_TYPE, text: trimmed } satisfies AskAssistantMessage, "*");
+  //
+  // Capped on the way out too. The parser remains where the contract is enforced — an app is not
+  // trusted to have done this — but there is no reason to structure-clone a megabyte across the
+  // boundary just to have the embedder discard it.
+  const capped = trimmed.slice(0, ASK_ASSISTANT_MAX_CHARS);
+  window.parent.postMessage({ type: ASK_ASSISTANT_TYPE, text: capped } satisfies AskAssistantMessage, "*");
   return true;
 }
 

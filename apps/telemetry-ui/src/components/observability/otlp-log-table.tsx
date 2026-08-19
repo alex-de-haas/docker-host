@@ -161,7 +161,11 @@ function AskAssistantButton({ record }: { record: OtlpLogRow }) {
       }}
     >
       <Sparkles className="h-3 w-3" aria-hidden />
-      {asked ? "Sent to draft" : "Ask Assistant"}
+      {/* "Asked", not "Sent": this app knows it posted the message and nothing more. Whether an
+          embedder offers an assistant, and whether the operator does anything with the draft, are
+          deliberately not answerable from here — and a label that claimed delivery would be the one
+          part of this feature asserting something it cannot check. */}
+      {asked ? "Asked" : "Ask Assistant"}
     </Button>
   );
 }
