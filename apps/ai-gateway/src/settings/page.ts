@@ -211,17 +211,23 @@ function renderProviders() {
     const enabled = state.settings.mcpProviders[provider.appId] === true;
     const toggle = document.createElement("label");
     toggle.className = "switch";
-    toggle.title = enabled ? "This app may reach the assistant." : "This app cannot reach the assistant.";
+    toggle.title = enabled
+      ? "The assistant can call this app's MCP tools."
+      : "The assistant cannot call this app's tools.";
     const toggleInput = document.createElement("input");
     toggleInput.type = "checkbox";
     toggleInput.checked = enabled;
-    toggleInput.setAttribute("aria-label", "Let " + (provider.displayName || provider.appId) + " reach the assistant");
+    toggleInput.setAttribute("aria-label", "Let the assistant use " + (provider.displayName || provider.appId) + "'s tools");
     const thumb = document.createElement("span");
     thumb.className = "thumb";
     toggle.append(toggleInput, thumb);
     toggleInput.addEventListener("change", async () => {
-      const next = { ...state.settings.mcpProviders, [provider.appId]: toggleInput.checked };
-      await save({ mcpProviders: next });
+      // Both controls freeze until the save answers. The select's meaning depends on the switch's
+      // value, so leaving it interactive mid-save lets the operator edit approval for a provider
+      // that is in the middle of being turned off — a contradiction the re-render then races.
+      toggleInput.disabled = true;
+      trust.disabled = true;
+      await save({ mcpProviders: { ...state.settings.mcpProviders, [provider.appId]: toggleInput.checked } });
     });
 
     // The second decision, and a different one: the switch above is whether this app may reach the
@@ -248,8 +254,9 @@ function renderProviders() {
     trust.disabled = !enabled;
     trust.setAttribute("aria-label", "Approval for " + (provider.displayName || provider.appId));
     trust.addEventListener("change", async () => {
-      const next = { ...state.settings.mcpAutoAllow, [provider.appId]: trust.value === "auto" };
-      await save({ mcpAutoAllow: next });
+      toggleInput.disabled = true;
+      trust.disabled = true;
+      await save({ mcpAutoAllow: { ...state.settings.mcpAutoAllow, [provider.appId]: trust.value === "auto" } });
     });
 
     row.append(meta, trust, toggle);
@@ -261,12 +268,18 @@ async function save(patch) {
   try {
     const body = await api("/api/settings", { method: "PUT", body: JSON.stringify(patch) });
     state.settings = body.settings;
-    renderProviders();
     const live = state.harness && state.harness.capabilities && state.harness.capabilities.liveReconfigure;
     const immediate = patch.mcpProviders || patch.mcpAutoAllow;
     say(immediate && live ? "Applied to running sessions." : "Saved — applies to the next session.");
   } catch (error) {
     say(error.message, "error");
+  } finally {
+    // Re-rendered from confirmed state on EVERY outcome. The browser mutates a control the moment it
+    // is used, so a failed save would otherwise leave the new value on screen while the persisted
+    // policy still holds the old one — a select showing "Ask before every tool" over a policy that
+    // still auto-allows is the worst lie this page could tell. On failure state.settings was never
+    // updated, so this render is what puts the control back.
+    renderProviders();
   }
 }
 
