@@ -40,9 +40,10 @@ export function ShellTopStrip({
         onClick={onBrandClick}
         title="Hosty"
         aria-label="Hosty"
-        className="flex shrink-0 items-center rounded-md outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        className="flex shrink-0 items-center gap-2 rounded-md outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
       >
         <BrandMark />
+        <span className="text-sm font-semibold uppercase">Hosty</span>
       </button>
 
       <Button
