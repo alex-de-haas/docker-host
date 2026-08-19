@@ -158,6 +158,84 @@ public sealed class AppManifestServiceTests
     }
 
     [Fact]
+    public async Task LoadAsync_SystemUi_AcceptsDeclaredSurfaces()
+    {
+        // The acceptance the refusals below are measured against: a system app may declare both
+        // surfaces, and a validator that rejected everything would pass each negative on its own.
+        var manifestPath = await WriteSystemUiManifestAsync(
+            role: "system",
+            ui: """
+                , "ui": {
+                    "entrypoint": { "endpoint": "web", "path": "/" },
+                    "settings": { "endpoint": "web", "path": "/settings" },
+                    "panel": { "endpoint": "web", "path": "/panel", "label": "Assistant" }
+                  }
+                """);
+
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+
+        Assert.Equal("/settings", selection.Manifest.Ui!.Settings!.Path);
+        Assert.Equal("Assistant", selection.Manifest.Ui.Panel!.Label);
+    }
+
+    [Fact]
+    public async Task LoadAsync_SystemUi_RejectsSurfaceEndpointThatDoesNotExist()
+    {
+        var manifestPath = await WriteSystemUiManifestAsync(
+            role: "system",
+            ui: """
+                , "ui": {
+                    "entrypoint": { "endpoint": "web", "path": "/" },
+                    "settings": { "endpoint": "missing", "path": "/settings" }
+                  }
+                """);
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+
+        Assert.Contains(error.Errors, candidate => candidate.Code == "app_manifest_system_ui_endpoint_unknown");
+    }
+
+    [Fact]
+    public async Task LoadAsync_SystemUi_RejectsASurfaceWithNoEndpointAtAll()
+    {
+        // A system app's pages are administrator surfaces, so the runtime's endpoint fallback is not
+        // allowed here — the same rule the entrypoint already follows.
+        var manifestPath = await WriteSystemUiManifestAsync(
+            role: "system",
+            ui: """
+                , "ui": {
+                    "entrypoint": { "endpoint": "web", "path": "/" },
+                    "panel": { "path": "/panel", "label": "Tool" }
+                  }
+                """);
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+
+        Assert.Contains(error.Errors, candidate => candidate.Code == "app_manifest_system_ui_endpoint_required");
+    }
+
+    [Fact]
+    public async Task LoadAsync_SystemUi_RequiresAPanelLabelButNotASettingsOne()
+    {
+        // A panel tab sits beside other apps' tabs, so it names itself; a settings tab is named for
+        // its app and needs nothing. The pair is the test — one manifest, two surfaces, one error.
+        var manifestPath = await WriteSystemUiManifestAsync(
+            role: "system",
+            ui: """
+                , "ui": {
+                    "entrypoint": { "endpoint": "web", "path": "/" },
+                    "settings": { "endpoint": "web", "path": "/settings" },
+                    "panel": { "endpoint": "web", "path": "/panel" }
+                  }
+                """);
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+
+        Assert.Contains(error.Errors, candidate => candidate.Code == "app_manifest_system_ui_label_required");
+        Assert.DoesNotContain(error.Errors, candidate => candidate.Path == "$.ui.settings.label");
+    }
+
+    [Fact]
     public async Task LoadAsync_SystemUi_RejectsUnknownNavigationPortKeyWhenEndpointIsBlank()
     {
         var manifestPath = await WriteSystemUiManifestAsync(

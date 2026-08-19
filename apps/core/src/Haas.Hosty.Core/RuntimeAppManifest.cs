@@ -1031,6 +1031,52 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
                     "$.ui.navigation[].path"));
             }
         }
+
+        ValidateSystemUiSurface(manifest, ui.Settings, "$.ui.settings", labelRequired: false, errors);
+        // A panel tab is labelled by its own text, not by the app's name — several apps' tools share
+        // one strip, so "Notes" beats a second copy of the app name. Required for that reason.
+        ValidateSystemUiSurface(manifest, ui.Panel, "$.ui.panel", labelRequired: true, errors);
+    }
+
+    private static void ValidateSystemUiSurface(
+        RuntimeAppManifest manifest,
+        RuntimeAppUiSurfaceManifest? surface,
+        string jsonPath,
+        bool labelRequired,
+        List<AppManifestValidationError> errors)
+    {
+        if (surface is null)
+        {
+            return;
+        }
+
+        // Same first-non-blank resolution the contract performs, so a blank endpoint cannot hide a
+        // portKey that validation never saw.
+        var endpointKey = string.IsNullOrWhiteSpace(surface.Endpoint) ? surface.PortKey : surface.Endpoint;
+        if (string.IsNullOrWhiteSpace(endpointKey))
+        {
+            errors.Add(new(
+                "app_manifest_system_ui_endpoint_required",
+                $"A system app UI surface must declare an explicit endpoint; the runtime fallback is not allowed for system apps.",
+                $"{jsonPath}.endpoint"));
+        }
+        else
+        {
+            ValidateSystemUiEndpointReference(manifest, endpointKey.Trim(), $"{jsonPath}.endpoint", errors);
+        }
+
+        if (!string.IsNullOrWhiteSpace(surface.Path))
+        {
+            ValidateSystemUiPath(surface.Path.Trim(), $"{jsonPath}.path", errors);
+        }
+
+        if (labelRequired && string.IsNullOrWhiteSpace(surface.Label))
+        {
+            errors.Add(new(
+                "app_manifest_system_ui_label_required",
+                "A panel surface must declare a label: it names a tab that sits beside other apps' tabs.",
+                $"{jsonPath}.label"));
+        }
     }
 
     private static void ValidateSystemUiEndpointReference(RuntimeAppManifest manifest, string endpointKey, string path, List<AppManifestValidationError> errors)
@@ -3169,6 +3215,28 @@ internal sealed class RuntimeAppUiManifest
     public string? Path { get; init; }
     public string? PortKey { get; init; }
     public IReadOnlyList<RuntimeAppUiNavigationItemManifest> Navigation { get => field ?? []; init; } = [];
+    // Operator configuration: a tab on Shell's Settings page rather than a sidebar entry
+    // (docs/features/app-ui-surfaces/plan.md).
+    public RuntimeAppUiSurfaceManifest? Settings { get; init; }
+    // An always-at-hand tool: a tab on Shell's right rail, docked beside the content rather than
+    // over it. `Label` is required here and ignored for settings, whose tab is named for the app.
+    public RuntimeAppUiSurfaceManifest? Panel { get; init; }
+}
+
+/// <summary>
+/// One placed UI surface: which endpoint serves it, at what path, under what label.
+/// </summary>
+/// <remarks>
+/// Kept as separate <c>ui.settings</c> / <c>ui.panel</c> fields rather than one <c>ui.surface</c>
+/// with a kind, so a third kind (widgets are the recorded next axis) is an addition rather than a
+/// change to what the existing two mean.
+/// </remarks>
+internal sealed class RuntimeAppUiSurfaceManifest
+{
+    public string? Endpoint { get; init; }
+    public string? PortKey { get; init; }
+    public string? Path { get; init; }
+    public string? Label { get; init; }
 }
 
 internal sealed class RuntimeAppUiNavigationItemManifest
