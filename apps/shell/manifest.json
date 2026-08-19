@@ -3,7 +3,7 @@
   "id": "hosty.shell",
   "name": "Hosty Shell",
   "description": "Hosty browser management shell.",
-  "version": "0.57.0",
+  "version": "0.58.0",
   "role": "system",
   "source": {
     "type": "git",
@@ -77,7 +77,9 @@
       "public": true
     }
   ],
-  "capabilities": ["logs"],
+  "capabilities": [
+    "logs"
+  ],
   "catalogMetadata": {
     "publisher": {
       "name": "Haas",
@@ -85,7 +87,12 @@
       "email": "a.zayats@outlook.com"
     },
     "category": "Utilities",
-    "tags": ["shell", "web-ui", "management", "first-party"],
+    "tags": [
+      "shell",
+      "web-ui",
+      "management",
+      "first-party"
+    ],
     "icon": "assets/icon.svg",
     "license": "AGPL-3.0-only",
     "links": {

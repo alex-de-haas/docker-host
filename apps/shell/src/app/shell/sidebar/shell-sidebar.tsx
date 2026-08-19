@@ -13,16 +13,10 @@ import {
   LoaderCircle,
   LogIn,
   LogOut,
-  Monitor,
-  Moon,
-  PanelLeftClose,
-  PanelLeftOpen,
   SlidersHorizontal,
   Sparkles,
-  Sun,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useTheme } from "next-themes";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -30,15 +24,12 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { getAccountInitials, getAppPageLinks, resolveAssetSrc } from "../app-helpers";
 import { AppIcon } from "../app-icon";
-import { NotificationBell } from "../notifications/notification-bell";
 import type { AppOpenTarget, AppPageLink, CoreApp, EmbeddedWorkspace, SessionResponse, ShellView } from "../types";
 
 export function ShellSidebar({
@@ -50,7 +41,6 @@ export function ShellSidebar({
   canManageApps,
   uiApps,
   busyAction,
-  onCompactChange,
   onNavigate,
   onOpenApps,
   onLaunchApp,
@@ -69,7 +59,6 @@ export function ShellSidebar({
   // app to anyone but an administrator, so a second split here would copy an authorization decision.
   uiApps: CoreApp[];
   busyAction: string | null;
-  onCompactChange: (compact: boolean) => void;
   onNavigate: (view: ShellView) => void;
   onOpenApps: () => void;
   onLaunchApp: (app: CoreApp, page: AppPageLink, target?: AppOpenTarget) => Promise<void>;
@@ -92,17 +81,6 @@ export function ShellSidebar({
             <span className="block truncate text-sm font-semibold uppercase">Hosty</span>
           )}
         </button>
-        <Button
-          type="button"
-          variant="outline"
-          size="icon-sm"
-          className="absolute right-0 top-1/2 z-20 size-7 -translate-y-1/2 translate-x-1/2 rounded-full bg-background shadow-sm"
-          aria-label={compact ? "Expand sidebar" : "Collapse sidebar"}
-          title={compact ? "Expand sidebar" : "Collapse sidebar"}
-          onClick={() => onCompactChange(!compact)}
-        >
-          {compact ? <PanelLeftOpen className="h-3.5 w-3.5" /> : <PanelLeftClose className="h-3.5 w-3.5" />}
-        </Button>
       </div>
 
       <nav className={cn("min-h-0 flex-1 overflow-y-auto py-4", compact ? "px-2" : "px-3")} aria-label="Host navigation">
@@ -438,7 +416,6 @@ function SidebarFooterAccount({
   if (!activeUser) {
     return (
       <div className="space-y-2">
-        <ThemeMenuButton compact={compact} />
         <Button asChild variant={compact ? "ghost" : "outline"} size={compact ? "icon-lg" : "default"} className={cn(!compact && "w-full justify-start")}>
           <a href={`${coreOrigin}/login`} title="Login">
             <LogIn className="h-4 w-4" />
@@ -451,8 +428,6 @@ function SidebarFooterAccount({
 
   return (
     <div className="space-y-2">
-      <NotificationBell compact={compact} />
-      <ThemeMenuButton compact={compact} />
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
@@ -498,45 +473,5 @@ function SidebarFooterAccount({
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
-  );
-}
-
-function ThemeMenuButton({ compact }: { compact: boolean }) {
-  const { theme, setTheme } = useTheme();
-  const selectedTheme = theme || "system";
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          type="button"
-          variant={compact ? "ghost" : "outline"}
-          size={compact ? "icon-lg" : "default"}
-          className={cn(compact ? "mx-auto flex size-11" : "w-full justify-start")}
-          title="Theme"
-        >
-          <Monitor className="h-4 w-4" />
-          {!compact && <span>Theme</span>}
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent side="top" align="start" sideOffset={8} className="w-44">
-        <DropdownMenuLabel>Theme</DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        <DropdownMenuRadioGroup value={selectedTheme} onValueChange={setTheme}>
-          <DropdownMenuRadioItem value="light">
-            <Sun className="h-4 w-4" />
-            Light
-          </DropdownMenuRadioItem>
-          <DropdownMenuRadioItem value="dark">
-            <Moon className="h-4 w-4" />
-            Dark
-          </DropdownMenuRadioItem>
-          <DropdownMenuRadioItem value="system">
-            <Monitor className="h-4 w-4" />
-            System
-          </DropdownMenuRadioItem>
-        </DropdownMenuRadioGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
   );
 }

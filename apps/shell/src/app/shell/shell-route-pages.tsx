@@ -73,7 +73,8 @@ export function ShellSettingsRoute() {
           themePreference: shell.shellThemePreference,
           onAuthRequired: shellActions.onEmbeddedAuthRequired,
           resolveDelegatedTokenRequest: shellActions.requestDelegatedTokenFor,
-          onOpenSettingsFrame: shellActions.openSettingsFrame,
+          onOpenSurfaceFrame: shellActions.openSurfaceFrame,
+          reloadKey: shellActions.surfaceAuthNonce,
           onStartApp: shellActions.startAppById,
         }}
         coreOrigin={shellActions.coreOrigin}

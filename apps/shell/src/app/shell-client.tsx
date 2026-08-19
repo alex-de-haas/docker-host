@@ -16,6 +16,9 @@ import { InstallReviewDialog } from "./shell/dialogs/install-review-dialog";
 import { AssistantPanel } from "./shell/assistant/assistant-panel";
 import { findAssistantGateway } from "./shell/assistant/assistant-client";
 import { ShellSidebar } from "./shell/sidebar/shell-sidebar";
+import { ShellTopStrip } from "./shell/chrome/shell-top-strip";
+import { ShellRightPanel } from "./shell/surfaces/shell-right-panel";
+import { getAppPanelTabs, getAppSettingsTabs, resolveActiveSurfaceTab } from "./shell/surfaces/app-surface-tabs";
 import { ShellActionsContext, ShellStateContext } from "./shell/shell-context";
 import {
   getAuthorizedShellView,
@@ -27,6 +30,8 @@ import {
   readCanonicalRedirect,
   readShellRoute,
   SIDEBAR_COMPACT_STORAGE_KEY,
+  RIGHT_PANEL_OPEN_STORAGE_KEY,
+  SHELL_VIEW_LABELS,
   shellViewRequiresAdmin,
 } from "./shell/shell-routes";
 import { emptyDetailPanelState, emptyInstallPanelState } from "./shell/state";
@@ -163,6 +168,12 @@ export function ShellClient({
   const [workspace, setWorkspace] = useState<EmbeddedWorkspace | null>(null);
   const [optimisticWorkspaceRoute, setOptimisticWorkspaceRoute] = useState<WorkspaceRoute | null>(null);
   const [sidebarCompact, setSidebarCompact] = useState(false);
+  const [rightPanelOpen, setRightPanelOpen] = useState(false);
+  // Which panel tab was last chosen. A key rather than an index: an app being stopped or removed
+  // reorders the strip, and an index would then point at somebody else's tool.
+  const [activePanelKey, setActivePanelKey] = useState<string | null>(null);
+  // Bumped when a placed surface reports its session expired; the shared hook re-mints on the change.
+  const [surfaceAuthNonce, setSurfaceAuthNonce] = useState(0);
   const [assistantOpen, setAssistantOpen] = useState(false);
   // Structured page context ("app", "page") the contextual entry points seed a session with.
   const [assistantContext, setAssistantContext] = useState<Record<string, string> | null>(null);
@@ -198,6 +209,7 @@ export function ShellClient({
 
   useEffect(() => {
     setSidebarCompact(window.localStorage.getItem(SIDEBAR_COMPACT_STORAGE_KEY) === "true");
+    setRightPanelOpen(window.localStorage.getItem(RIGHT_PANEL_OPEN_STORAGE_KEY) === "true");
   }, []);
 
   const refresh = useCallback(async () => {
@@ -1759,6 +1771,11 @@ export function ShellClient({
     window.localStorage.setItem(SIDEBAR_COMPACT_STORAGE_KEY, String(compact));
   }
 
+  function setPanelOpen(open: boolean) {
+    setRightPanelOpen(open);
+    window.localStorage.setItem(RIGHT_PANEL_OPEN_STORAGE_KEY, String(open));
+  }
+
   const openInstallDialog = useCallback((manifestPath?: string) => {
     installRequestRef.current += 1;
     setInstallFeedIntent(null);
@@ -1831,6 +1848,31 @@ export function ShellClient({
     [workspace, state.apps, sendCsrfJson, appEndpoint],
   );
 
+  // Recovery for a **placed** surface — a panel tab or a Settings tab.
+  //
+  // `handleAuthRequired` above cannot serve them: it returns unless the centre workspace belongs to
+  // the same app, so a panel docked beside a Shell page, or beside a different app, could never
+  // recover and would sit unauthenticated until it was remounted. A placed surface re-mints its own
+  // code instead; bumping this nonce is what asks the shared hook to do it.
+  //
+  // The same per-app limiter guards it, for the same reason: a frame that never accepts the new code
+  // must not drive an unbounded reissue storm.
+  const handleSurfaceAuthRequired = useCallback(
+    (appId: string) => {
+      const app = state.apps.find((candidate) => candidate.id === appId);
+      if (!app || app.runtimeState !== "running") {
+        return;
+      }
+
+      if (!authReissueLimiter.current.tryAcquire(appId)) {
+        return;
+      }
+
+      setSurfaceAuthNonce((nonce) => nonce + 1);
+    },
+    [state.apps],
+  );
+
   // Which embedded frame Shell will answer with a delegated token: the assistant gateway's own
   // pages, and nothing else. Shell already mints tokens for that app whenever the chat panel is
   // open, so its settings page gains no reach it did not have — whereas answering every frame would
@@ -1851,19 +1893,19 @@ export function ShellClient({
 
   // Apps that declared a settings surface, as Settings tabs. Core resolved the URL, so a stopped
   // app arrives with none — the tab still exists and says so.
-  const appSettingsTabs = useMemo(
-    () =>
-      state.apps
-        .filter((app) => app.settingsSurface)
-        .map((app) => ({
-          appId: app.id,
-          label: app.settingsSurface?.label || app.displayName || app.id,
-          path: app.settingsSurface?.path ?? "/",
-          embeddedUrl: app.settingsSurface?.embeddedUrl ?? null,
-          running: app.runtimeState === "running",
-        })),
-    [state.apps],
+  const appSettingsTabs = useMemo(() => getAppSettingsTabs(state.apps), [state.apps]);
+  const appPanelTabs = useMemo(() => getAppPanelTabs(state.apps), [state.apps]);
+
+  // The rail exists only while something declares a panel; opening it is then the operator's choice.
+  const rightPanelVisible = appPanelTabs.length > 0 && rightPanelOpen;
+  const activePanelTab = useMemo(
+    () => resolveActiveSurfaceTab(appPanelTabs, activePanelKey),
+    [appPanelTabs, activePanelKey],
   );
+
+  // What the strip names: the app whose page fills the content area, or the Shell page itself.
+  const stripTitle = workspace?.title ?? SHELL_VIEW_LABELS[effectiveView] ?? "Hosty";
+  const stripSubtitle = workspace?.pageLabel ?? null;
 
   // Passes through the existing rule rather than restating it: only an app that already qualifies is
   // answered, in this context as in the workspace.
@@ -1875,22 +1917,21 @@ export function ShellClient({
     [assistantGateway?.appId, issueDelegatedToken],
   );
 
-  // Mints a launch code for an app's settings page and returns the URL to embed, so the frame lands
-  // with a real Hosty app session rather than as an anonymous visitor to the app's origin.
-  const openSettingsFrame = useCallback(
-    async (appId: string, path: string) => {
+  // Mints a launch code for a placed surface and returns the URL to embed, so the frame lands with a
+  // real Hosty app session rather than as an anonymous visitor to the app's origin.
+  //
+  // Takes the resolved surface URL rather than a surface kind: Core already resolved it, and a
+  // function that branched on "settings or panel" would have to be edited for every surface added
+  // later. One opener serves every placed surface.
+  const openSurfaceFrame = useCallback(
+    async (appId: string, embeddedUrl: string) => {
       const app = state.apps.find((candidate) => candidate.id === appId);
       if (!app) {
         throw new Error("This app is no longer installed.");
       }
 
-      const surfaceUrl = app.settingsSurface?.embeddedUrl;
-      if (!surfaceUrl) {
-        throw new Error("This app is not running, so its settings are not being served.");
-      }
-
       const redirectUri = appendHostyLaunchParam(
-        appendHostyThemeParams(surfaceUrl, shellResolvedTheme, shellThemePreference),
+        appendHostyThemeParams(embeddedUrl, shellResolvedTheme, shellThemePreference),
       );
       const response = await sendCsrfJson(appEndpoint(app, "/launch-code"), { redirectUri });
       const launch = (await response.json()) as AppLaunchResponse;
@@ -1952,9 +1993,10 @@ export function ShellClient({
       shellAppId,
       refresh,
       sendCsrfJson,
-      onEmbeddedAuthRequired: handleAuthRequired,
+      onEmbeddedAuthRequired: handleSurfaceAuthRequired,
+      surfaceAuthNonce,
       requestDelegatedTokenFor,
-      openSettingsFrame,
+      openSurfaceFrame,
       startAppById,
       launchAppPage,
       getStandaloneAppHref,
@@ -1973,9 +2015,10 @@ export function ShellClient({
       updateCore,
     }),
     [
-      handleAuthRequired,
+      handleSurfaceAuthRequired,
+      surfaceAuthNonce,
       requestDelegatedTokenFor,
-      openSettingsFrame,
+      openSurfaceFrame,
       startAppById,
       updateCore,
       applyUpdateFromRow,
@@ -2002,13 +2045,32 @@ export function ShellClient({
   return (
     <ShellActionsContext.Provider value={shellActionsContextValue}>
       <ShellStateContext.Provider value={shellStateContextValue}>
+      <div className="flex h-dvh flex-col bg-muted/30">
+        <ShellTopStrip
+          title={stripTitle}
+          subtitle={stripSubtitle}
+          leftRailExpanded={!sidebarCompact}
+          onToggleLeftRail={() => setCompact(!sidebarCompact)}
+          // Null while no installed app declares a panel surface: there is no rail to toggle, and a
+          // control for chrome that does not exist is worse than no control.
+          rightRailExpanded={appPanelTabs.length > 0 ? rightPanelOpen : null}
+          onToggleRightRail={() => setPanelOpen(!rightPanelOpen)}
+          showNotifications={Boolean(activeUser)}
+        />
+
       <div
         className={cn(
-          "grid min-h-dvh bg-muted/30 transition-[grid-template-columns] duration-200",
-          sidebarCompact ? "grid-cols-[72px_minmax(0,1fr)]" : "grid-cols-[280px_minmax(0,1fr)]",
+          "grid min-h-0 flex-1 transition-[grid-template-columns] duration-200",
+          rightPanelVisible
+            ? sidebarCompact
+              ? "grid-cols-[72px_minmax(0,1fr)_360px]"
+              : "grid-cols-[280px_minmax(0,1fr)_360px]"
+            : sidebarCompact
+              ? "grid-cols-[72px_minmax(0,1fr)]"
+              : "grid-cols-[280px_minmax(0,1fr)]",
         )}
       >
-        <aside className="sticky top-0 z-30 h-dvh overflow-visible border-r bg-sidebar text-sidebar-foreground">
+        <aside className="z-30 h-full overflow-visible border-r bg-sidebar text-sidebar-foreground">
           <ShellSidebar
             compact={sidebarCompact}
             activeView={effectiveView}
@@ -2018,7 +2080,6 @@ export function ShellClient({
             canManageApps={Boolean(canManageApps)}
             uiApps={uiApps}
             busyAction={busyAction}
-            onCompactChange={setCompact}
             onNavigate={(view) => {
               setWorkspace(null);
               setOptimisticWorkspaceRoute(null);
@@ -2035,7 +2096,7 @@ export function ShellClient({
           />
         </aside>
 
-        <div className={cn("h-dvh min-w-0", workspaceSurfaceActive ? "overflow-hidden bg-background" : "overflow-y-auto")}>
+        <div className={cn("h-full min-w-0", workspaceSurfaceActive ? "overflow-hidden bg-background" : "overflow-y-auto")}>
           <main className={cn("w-full", workspaceSurfaceActive ? "h-full" : "mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8")}>
             {workspace ? (
               <EmbeddedWorkspacePanel
@@ -2077,6 +2138,25 @@ export function ShellClient({
             )}
           </main>
         </div>
+
+        {rightPanelVisible && (
+          <ShellRightPanel
+            tabs={appPanelTabs}
+            activeTab={activePanelTab}
+            theme={shellResolvedTheme}
+            themePreference={shellThemePreference}
+            onSelectTab={setActivePanelKey}
+            onCollapse={() => setPanelOpen(false)}
+            onAuthRequired={handleSurfaceAuthRequired}
+            resolveDelegatedTokenRequest={requestDelegatedTokenFor}
+            onOpenSurfaceFrame={openSurfaceFrame}
+            // Panels are deliberately not administrator-only, but starting an app is: Core refuses a
+            // host.user, so offering them the button would promise something guaranteed to fail.
+            onStartApp={canManageApps ? startAppById : undefined}
+            reloadKey={surfaceAuthNonce}
+          />
+        )}
+      </div>
 
         <InstallReviewDialog
           key={`${installNonce}:${installInitialManifest ?? installFeedIntent?.feedsUrl ?? "manual"}`}

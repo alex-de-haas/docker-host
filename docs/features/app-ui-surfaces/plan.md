@@ -96,12 +96,13 @@ Shell.
       app).
 - [x] Core: the app projection carries both surfaces resolved to URLs, exactly as navigation entries
       are resolved.
-- [ ] `skills/hosty-app-skill/references/app-manifest.md` documents both surfaces.
-- [ ] Shell: the right panel — tab strip on every page, collapsible, absent while nothing declares a
+- [x] `skills/hosty-app-skill/references/app-manifest.md` documents both surfaces.
+- [x] Shell: the right panel — tab strip on every page, collapsible, absent while nothing declares a
       panel surface, one iframe tab per declaring app.
-- [ ] Shell: the top strip — rail toggles, the current app's name, the existing notification bell
+- [x] Shell: the top strip — rail toggles, the current app's name, the existing notification bell
       relocated, and a theme switch. The mock demonstrates all four; the bell's behaviour stays
-      notifications' scope.
+      notifications' scope. The sidebar's own edge toggle went with it: seeing both live, two controls
+      for one action carrying near-identical accessible names is a duplicate, not a shortcut.
 - [x] Shell: **one shared embedder** (`EmbeddedAppFrame`) for every context — the workspace now uses
       it, and Settings tabs and panel tabs use the same component rather than a copy each.
 - [x] Shell: a tab per app on the Settings page, iframe from the app origin. Admin gating comes free
@@ -115,10 +116,18 @@ Shell.
       its own session.
 - [x] SDK: `embedder.ts` needed nothing new — confirmed by the Settings tab embedding through the
       same helpers the workspace uses.
-- [ ] Tests: manifest validation both ways; Shell renders a tab for a declaring app and none for a
-      non-declaring one; the handshake answered on Settings (the pair: a page that loads there,
-      beside the workspace still working); the gateway page standalone and embedded.
-- [ ] Docs: `feature.md`, hosty-app-skill reference, index.
+- [x] Tests (automated): manifest validation both ways (Core); Shell derives a tab for a declaring
+      app and none for a non-declaring one, several panels from one app keep order and distinct keys,
+      the label fallback, a stopped app keeping its tab, and the active-tab fallback.
+- [ ] **Verified live against a running host**, which needs an authenticated session and demo-app
+      0.8.0 installed: the panel with a real tab beside the workspace, the Settings tab handshake
+      (the pair: a page that loads there, beside the workspace still working), and the gateway page
+      standalone and embedded. Unauthenticated chrome is verified — the strip renders, its toggle
+      collapses the sidebar, the theme control works from its new home, and both the bell and the
+      right-rail toggle are correctly absent (no session, and nothing declaring a panel).
+- [x] Docs: `feature.md`, hosty-app-skill reference, index.
+- [x] Demo App declares a `Session` panel — the contract's worked example, so `ui.panels` is not a
+      field nobody has exercised.
 
 ### Sequencing (owner, 2026-08-19)
 
