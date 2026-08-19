@@ -2,11 +2,16 @@
 
 Status: Draft
 Created: 2026-07-10
-Updated: 2026-08-15
+Updated: 2026-08-19
 
 Exploratory. This plan authorizes no implementation and changes no current system-app behavior; it
 formalizes a pattern the platform already uses ad hoc so the next capability does not invent a second
 delivery vehicle.
+
+**Graduation criterion** (from the [platform vision](../hosty-platform-vision/plan.md), 2026-08-19):
+this plan stops being exploratory the day a platform capability ships as a swappable app through a
+*named* contribution point rather than a bespoke integration. Retiring the label is that decision,
+not drift.
 
 ## Goal
 

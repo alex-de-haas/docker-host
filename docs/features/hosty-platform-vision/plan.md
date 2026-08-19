@@ -155,9 +155,11 @@ the manifest contract. Two standing consequences:
 ## Deliverables
 
 - [x] `docs/root.md`'s prose overview names the direction and links here (this PR).
-- [ ] [core-extension-model](../core-extension-model/plan.md) records its graduation criterion with
-      a link here, retiring "exploratory" by decision rather than by drift.
-- [ ] Open question 1 is answered in a plan before the first regular-user AI feature ships.
+
+Nothing else. The work this document names is tracked where it belongs, per the umbrella rule:
+[core-extension-model](../core-extension-model/plan.md) carries its own graduation criterion, and
+[ai-agent-bridge](../ai-agent-bridge/plan.md) step 10 carries the regular-user authorization gate.
+An umbrella that owned those checklists would duplicate them.
 
 Version outcome: documentation-only, here and for every change this umbrella ever makes itself.
 
