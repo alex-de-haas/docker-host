@@ -218,6 +218,11 @@ it looks like settings:
 Litmus tests: *would a `host.user` ever legitimately open it?* → `navigation` or `panels`. *Does it
 change the app's behaviour rather than produce or consume content?* → `settings`.
 
+**A sidebar row comes from `ui.navigation` and nothing else.** An app that declares `ui.entrypoint`
+but no navigation gets no pages in a shell — no sidebar row, no entry on the Apps page. The
+entrypoint still says where `hosty apps open` and an explicit deep link land; it does not buy a
+place in the navigation. Declare navigation for every page you want offered.
+
 Both fields are additive under `app.0.1` and need no `schemaVersion` bump. `endpoint` is optional and
 defaults to the entrypoint's; `path` is absolute on that origin. A panel's `label` names its tab —
 several apps' tools share one strip, so the app's own name is a poor label, and a system app must

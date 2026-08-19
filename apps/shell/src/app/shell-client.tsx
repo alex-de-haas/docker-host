@@ -1897,6 +1897,12 @@ export function ShellClient({
   const appPanelTabs = useMemo(() => getAppPanelTabs(state.apps), [state.apps]);
 
   // The rail exists only while something declares a panel; opening it is then the operator's choice.
+  // An app's settings page fills the content column the way a workspace app does, so the column
+  // takes the same surface. An embedded page paints its own background, and leaving the column
+  // muted around it drew a seam under the tab strip that no other tab has.
+  const appSettingsSurfaceActive =
+    effectiveView === "settings" && appSettingsTabs.some((tab) => tab.appId === shellRoute.settingsTab);
+
   const rightPanelVisible = appPanelTabs.length > 0 && rightPanelOpen;
   const activePanelTab = useMemo(
     () => resolveActiveSurfaceTab(appPanelTabs, activePanelKey),
@@ -2096,7 +2102,13 @@ export function ShellClient({
           />
         </aside>
 
-        <div className={cn("h-full min-w-0", workspaceSurfaceActive ? "overflow-hidden bg-background" : "overflow-y-auto")}>
+        <div
+          className={cn(
+            "h-full min-w-0",
+            workspaceSurfaceActive ? "overflow-hidden bg-background" : "overflow-y-auto",
+            appSettingsSurfaceActive && "bg-background",
+          )}
+        >
           <main className={cn("w-full", workspaceSurfaceActive ? "h-full" : "mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8")}>
             {workspace ? (
               <EmbeddedWorkspacePanel

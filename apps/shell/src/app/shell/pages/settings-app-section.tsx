@@ -67,11 +67,15 @@ export function AppSettingsTabPanel({
   }
 
   if (!src) {
-    return <div className="min-h-64 rounded-lg border bg-card" aria-busy="true" />;
+    return <div className="min-h-64" aria-busy="true" />;
   }
 
   return (
-    <div className="relative h-[calc(100vh-16rem)] min-h-96 overflow-hidden rounded-lg border bg-background">
+    // No frame of its own: the tab strip above already bounds this region, and a border here drew a
+    // second box around a page that is itself full of cards.
+    // Sized against the strip and the page header above it, so the app's page gets the rest of the
+    // window rather than a short box with the tab's background showing under it.
+    <div className="relative h-[calc(100dvh-11.5rem)] min-h-96 overflow-hidden bg-background">
       <EmbeddedAppFrame
         src={src}
         title={`${tab.label} settings`}

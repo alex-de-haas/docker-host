@@ -264,11 +264,19 @@ export function getAppPageLinks(app: CoreApp): AppPageLink[] {
       .filter((item): item is AppPageLink => item !== null);
   }
 
-  // A "Home" page is only derived from the app's declared UI entry URL. Headless apps (no
-  // `ui` section in the manifest) expose endpoints for other apps to consume, not a browser
-  // UI, so they must not surface an openable page — in the sidebar or anywhere else.
-  const home = app.embeddedUrl;
-  return home ? [{ label: "Home", path: "/", redirectUri: home }] : [];
+  // No navigation, no pages. An app's place in a shell comes from `ui.navigation` and nothing else,
+  // which is what the manifest reference has always asked for ("UI apps define ui.entrypoint and
+  // navigation").
+  //
+  // Deriving a "Home" row from the entrypoint instead used to paper over that, and placed surfaces
+  // made the cost visible: the gateway declares only `ui.settings`, yet an entrypoint it must keep
+  // (a system app's ui block requires one) put it back in the sidebar, on a row that opened the very
+  // page its Settings tab already hosts. Declaring UI and having a browsable page are different
+  // claims, and only navigation makes the second one.
+  //
+  // A deep link is unaffected: `findAppPageLink` still resolves an explicit path against the
+  // entrypoint, because asking for a page by name is not the same as being offered one.
+  return [];
 }
 
 export function findAppPageLink(app: CoreApp, path: string) {

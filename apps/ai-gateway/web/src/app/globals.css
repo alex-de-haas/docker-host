@@ -122,3 +122,14 @@ html[data-hosty-launch="embedded"] .hosty-shell-chrome,
 html[data-hosty-launch="native"] .hosty-shell-chrome {
   display: none;
 }
+
+/* The page's outer padding, dropped while a shell embeds this page: the shell has already applied
+   its own, and a second copy both doubles the gap and pushes the content out of the shell's grid.
+   Keyed on the launch attribute the embedder sets, so a standalone visit is unaffected. */
+.hosty-page-padding {
+  padding: 1.5rem;
+}
+
+html[data-hosty-launch="embedded"] .hosty-page-padding {
+  padding: 0;
+}

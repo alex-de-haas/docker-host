@@ -131,7 +131,15 @@ export function SettingsPage({
         ))}
       </div>
 
-      {activeAppTab && <AppSettingsTabPanel tab={activeAppTab} {...appTabProps} />}
+      {activeAppTab && (
+        // Only the bottom breaks out, so the frame reaches the window edge. The sides keep the
+        // page's own padding, and the embedded page drops its own: the padding is responsive, and
+        // an iframe cannot match it from inside — its breakpoints measure the frame's width, not
+        // the window's. One side has to own it, and the shell is the side that knows the grid.
+        <div className="-mb-6">
+          <AppSettingsTabPanel tab={activeAppTab} {...appTabProps} />
+        </div>
+      )}
 
       {resolvedTab === "tokens" && (
         <SettingsTokensSection coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} />
