@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { resolveAdminActor } from "./auth.js";
+import { isSameOriginRequest, resolveAdminActor } from "./auth.js";
 import { exchangeLaunchCode } from "./app-session.js";
 import { serveStaticSite } from "./settings/static-site.js";
 
@@ -93,6 +93,17 @@ async function route(
   // necessity — establishing the session is what it does — and safe because the code itself is the
   // credential: Core minted it for one user and one app, and refuses a stale or foreign one.
   if (method === "POST" && url.pathname === "/api/app-code") {
+    if (!isSameOriginRequest(request)) {
+      // The page calls this with a relative URL, so a legitimate exchange is always same-origin.
+      // Refusing anything else closes login CSRF: a cross-site post of *its own* valid code would
+      // otherwise hand this browser a session belonging to whoever minted it.
+      sendJson(response, 403, {
+        code: "cross_site_request_blocked",
+        message: "This endpoint only accepts requests from the gateway's own pages.",
+      });
+      return;
+    }
+
     const body = await readJson(request);
     const code = typeof body.code === "string" ? body.code.trim() : "";
     if (!code) {
@@ -132,6 +143,21 @@ async function route(
     sendJson(response, 401, {
       code: "unauthorized",
       message: "A Host administrator session or delegated token is required.",
+    });
+    return;
+  }
+
+  // An app session travels as a cookie the browser attaches on its own, so a state-changing call
+  // made with one has to prove where it came from; a delegated token is carried deliberately and
+  // needs no such proof. Reads are left alone — a cross-site caller can cause them but cannot read
+  // the reply, since no response here grants credentialed CORS access.
+  //
+  // Checked here as a group rather than per route: the failure mode of the per-route style is the
+  // route someone adds later and forgets.
+  if (actor.via === "app-session" && method !== "GET" && method !== "HEAD" && !isSameOriginRequest(request)) {
+    sendJson(response, 403, {
+      code: "cross_site_request_blocked",
+      message: "A session cookie may only change state from the gateway's own pages.",
     });
     return;
   }

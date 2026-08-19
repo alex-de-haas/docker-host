@@ -28,7 +28,14 @@ export function readIdentityCookie(request: IncomingMessage): string | null {
   for (const part of header.split(";")) {
     const separator = part.indexOf("=");
     if (separator > 0 && part.slice(0, separator).trim() === identityCookieName) {
-      return decodeURIComponent(part.slice(separator + 1).trim()) || null;
+      try {
+        return decodeURIComponent(part.slice(separator + 1).trim()) || null;
+      } catch {
+        // A Cookie header is untrusted input, and `decodeURIComponent` throws on malformed
+        // percent-encoding. A value this app could not have written is no credential, so it reads
+        // as absent rather than crashing the request.
+        return null;
+      }
     }
   }
 
@@ -65,17 +72,21 @@ export async function resolveAppSession(token: string | null): Promise<AppSessio
     return { status: classifyRevalidationStatus(response.status) };
   }
 
+  // Core's shape, flattened — `AppSessionValidationResult` in AppIdentityService.cs, serialized with
+  // `JsonSerializerDefaults.Web`. `active` is checked rather than assumed from the 2xx: it is the
+  // field that carries the answer, and reading only the identity would let a future negative result
+  // pass as a session.
   const payload = (await response.json().catch(() => null)) as
-    | { user?: { id?: unknown; role?: unknown } }
+    | { active?: unknown; userId?: unknown; hostRole?: unknown }
     | null;
-  const userId = payload?.user?.id;
-  if (typeof userId !== "string" || !userId) {
+  const userId = typeof payload?.userId === "string" ? payload.userId : "";
+  if (payload?.active !== true || !userId) {
     return { status: "unavailable" };
   }
 
   return {
     status: "active",
-    identity: { userId, hostRole: typeof payload?.user?.role === "string" ? payload.user.role : null },
+    identity: { userId, hostRole: typeof payload.hostRole === "string" ? payload.hostRole : null },
   };
 }
 

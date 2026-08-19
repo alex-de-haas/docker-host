@@ -1,5 +1,6 @@
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
+import { pipeline } from "node:stream/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ServerResponse } from "node:http";
@@ -52,6 +53,15 @@ export async function serveStaticSite(pathname: string, response: ServerResponse
     // page the previous version served.
     "cache-control": pathname.startsWith("/_next/static/") ? "public, max-age=31536000, immutable" : "no-store",
   });
-  createReadStream(target).pipe(response);
+  try {
+    await pipeline(createReadStream(target), response);
+  } catch {
+    // The status line is already on the wire, so this cannot become a 500. Two things go wrong
+    // without handling: an `error` on the read stream (the file vanished between `stat` and the
+    // read) reaches no listener and takes the process down, and a client that disconnects mid-body
+    // leaves the read stream open, because `pipe` does not tear down its source. `pipeline` cleans
+    // up both ends; destroying the response is what tells the client the body is incomplete.
+    response.destroy();
+  }
   return true;
 }

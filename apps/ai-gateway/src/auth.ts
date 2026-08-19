@@ -43,6 +43,48 @@ export async function resolveAdminActor(request: IncomingMessage): Promise<Admin
     : null;
 }
 
+/**
+ * Whether the browser says this request came from this app's own origin.
+ *
+ * Needed because an app session is an **ambient** credential: the browser attaches the cookie to
+ * every request to this origin, including one a page on another site caused. The cookie is
+ * deliberately `SameSite=None` — an embedded page is cross-site to Shell whenever Hosty is served
+ * over https, and a lax cookie would simply not arrive — so the browser's own filter is not in
+ * play here. CORS does not close the gap either: a plain HTML form post needs no permission to be
+ * *sent*, and a caller who only wants the side effect never has to read the reply. A delegated
+ * token is not ambient; it has to be read and attached, which a cross-site page cannot do.
+ *
+ * Either signal is enough, and accepting either is not a weakening: a cross-site caller can forge
+ * neither. `Sec-Fetch-Site` is the browser's own comparison and survives a proxy that rewrote
+ * `Host`; the `Origin`/`Host` match covers a browser too old to send it. Absent both, the answer is
+ * no — a request carrying an ambient credential with no provenance at all is exactly the shape
+ * being refused.
+ */
+export function isSameOriginRequest(request: IncomingMessage): boolean {
+  const site = readHeader(request, "sec-fetch-site");
+  if (site === "same-origin") {
+    return true;
+  }
+
+  const origin = readHeader(request, "origin");
+  const host = readHeader(request, "host");
+  if (!origin || !host) {
+    return false;
+  }
+
+  try {
+    return new URL(origin).host === host;
+  } catch {
+    return false;
+  }
+}
+
+function readHeader(request: IncomingMessage, name: string): string | null {
+  const value = request.headers[name];
+  const first = Array.isArray(value) ? value[0] : value;
+  return typeof first === "string" && first ? first.trim() : null;
+}
+
 export type AdminActor = {
   userId: string;
   /**
