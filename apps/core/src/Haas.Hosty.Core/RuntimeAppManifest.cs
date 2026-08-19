@@ -3244,7 +3244,7 @@ internal sealed class RuntimeAppUiManifest
 /// One placed UI surface: which endpoint serves it, at what path, under what label.
 /// </summary>
 /// <remarks>
-/// Kept as separate <c>ui.settings</c> / <c>ui.panel</c> fields rather than one <c>ui.surface</c>
+/// Kept as separate <c>ui.settings</c> / <c>ui.panels</c> fields rather than one <c>ui.surface</c>
 /// with a kind, so a third kind (widgets are the recorded next axis) is an addition rather than a
 /// change to what the existing two mean.
 /// </remarks>
