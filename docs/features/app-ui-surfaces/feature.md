@@ -134,6 +134,11 @@ always asked for. Nothing becomes unreachable by it: `hosty apps open` and an ex
 still resolve a path against the entrypoint, because asking for a page by name is not the same as
 being offered one.
 
+An embedded settings page is given the **whole content column**, background included. An app paints
+its own page background, so a muted column around a white frame drew a seam under the tab strip that
+no other tab has — and padding around the frame turned the app into a box floating on the page. Shell
+already does exactly this for a workspace app; a settings tab is the same claim on the same column.
+
 Shell never learns any app's settings schema. That was the objection that moved the gateway's page
 out of Shell in the first place, and hosting an iframe honours it.
 
@@ -159,3 +164,8 @@ out of Shell in the first place, and hosting an iframe honours it.
     API that answers 401 without a credential, so a page that merely painted would not show it.
   - The strip renders on every page, its toggle collapses the sidebar, the theme control works from
     its new home, and the right-rail toggle is absent until an app declares a panel.
+  - The gateway is gone from the sidebar, and — the pair that matters, since the page-link rule is
+    shared — an ordinary app page still embeds in the workspace, its frame carrying the launch code,
+    `hosty_launch=embedded` and the theme parameters.
+  - Measured rather than eyeballed: the content column and the embedded frame resolve to the same
+    colour, and a non-app settings tab keeps the page's own surface.
