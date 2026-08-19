@@ -35,12 +35,12 @@ export function EmbeddedWorkspacePanel({
         return;
       }
 
-      const intent = parseActiveFrameInstallFeedIntent(event, frameWindow, workspace.src, workspace.appId);
+      const intent = parseActiveFrameInstallFeedIntent(event, frameWindow, workspace.src);
       if (intent) {
         onInstallFeedIntent(intent);
       }
     },
-    [onInstallFeedIntent, workspace.src, workspace.appId],
+    [onInstallFeedIntent, workspace.src],
   );
 
   return (
