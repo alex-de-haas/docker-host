@@ -189,3 +189,50 @@ Declare platform interfaces the app exposes for other components to discover wit
 ```
 
 Core validates shape only (names and keys are kebab tokens, keys unique per interface, paths absolute) and surfaces the declarations on the apps API with each declaration resolved to a ready-to-call URL, so clients can gate features on an installed provider — e.g. Shell shows its assistant UI only when an installed app declares `ai-gateway`. Declaring an interface does not grant the app anything; it is discovery metadata. See `docs/features/ai-agent-bridge/feature.md` ("Manifest Interfaces And Registry").
+
+## UI Surfaces
+
+`ui.entrypoint` and `ui.navigation` place an app's pages in a shell's sidebar. Two optional sibling
+fields place pages elsewhere, chosen by **who the page is for and what it changes** — not by whether
+it looks like settings:
+
+```jsonc
+"ui": {
+  "entrypoint": { "endpoint": "http", "path": "/" },
+  "navigation": [ { "label": "People", "path": "/people" } ],
+
+  // At most one. Lands on Shell's Settings page, which is administrator-only.
+  "settings": { "endpoint": "http", "path": "/settings" },
+
+  // Any number. Tabs on Shell's right panel, docked beside the content.
+  "panels": [ { "label": "Session", "endpoint": "http", "path": "/panel" } ]
+}
+```
+
+| Field | How many | Audience | Where it lands |
+| --- | --- | --- | --- |
+| `ui.navigation` | any | users | the shell's sidebar |
+| `ui.settings` | at most one | administrators | a tab on Shell's Settings page |
+| `ui.panels` | any | users | tabs on Shell's right panel |
+
+Litmus tests: *would a `host.user` ever legitimately open it?* → `navigation` or `panels`. *Does it
+change the app's behaviour rather than produce or consume content?* → `settings`.
+
+Both fields are additive under `app.0.1` and need no `schemaVersion` bump. `endpoint` is optional and
+defaults to the entrypoint's; `path` is absolute on that origin. A panel's `label` names its tab —
+several apps' tools share one strip, so the app's own name is a poor label, and a system app must
+declare one. Two panels of one app may not share a label.
+
+**A surface declaration is placement metadata, not access control.** The page stays reachable
+standalone (`hosty apps open`) and Shell's embedding grants it nothing, so the app keeps enforcing
+its own authorization on every request regardless of where it is embedded. For a `role: system` app
+Core does refuse a non-administrator a session at all — `RequireAccessibleUserAsync` runs on every
+identity flow including revalidation — but an ordinary app gets no such rule and must check for
+itself.
+
+Embedded surfaces authenticate exactly like a sidebar page: Shell mints a launch code and the frame
+lands with a real Hosty app session (see `app-auth-and-users.md`). A surface that only works with a
+delegated token is an app authenticating differently from every other, not a supported shape.
+
+While the app is stopped its tabs remain, dimmed and saying so, rather than disappearing — a surface
+that vanished with its app would read as uninstalled.

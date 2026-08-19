@@ -7,11 +7,21 @@ import type {
 } from "./types";
 
 export const SIDEBAR_COMPACT_STORAGE_KEY = "hosty.shell.sidebar.compact";
+// The right rail's collapsed state, remembered like the left rail's: an operator who docked a tool
+// beside their work expects it still docked after a reload.
+export const RIGHT_PANEL_OPEN_STORAGE_KEY = "hosty.shell.panel.open";
 
 const SHELL_VIEW_HREFS: Record<ShellView, string> = {
   dashboard: "/dashboard",
   "available-apps": "/apps",
   settings: "/settings",
+};
+
+/** What the top strip calls each Shell page, when no app's page fills the content area. */
+export const SHELL_VIEW_LABELS: Record<ShellView, string> = {
+  dashboard: "Dashboard",
+  "available-apps": "Apps",
+  settings: "Settings",
 };
 
 const ADMIN_SHELL_VIEWS = new Set<ShellView>(["dashboard", "settings"]);

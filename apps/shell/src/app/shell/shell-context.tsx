@@ -15,7 +15,7 @@ import type {
   OpenAppPanel,
   SessionResponse,
 } from "./types";
-import type { AppSettingsTab } from "./pages/settings-app-section";
+import type { AppSurfaceTab } from "./surfaces/app-surface-tabs";
 import type { DelegatedTokenGrant } from "./workspace/delegated-token-intent";
 
 export type ShellContextValue = {
@@ -35,7 +35,7 @@ export type ShellContextValue = {
   // fills the tab (docs/features/app-ui-surfaces/feature.md).
   settingsTab: string;
   // Installed apps declaring `ui.settings`, already resolved to an embeddable URL by Core.
-  appSettingsTabs: AppSettingsTab[];
+  appSettingsTabs: AppSurfaceTab[];
   shellTheme: HostyResolvedTheme;
   shellThemePreference: HostyThemePreference;
   coreSettings: CoreSettingsState | null;
@@ -53,7 +53,7 @@ export type ShellActionsContextValue = {
   // that grant by existing.
   onEmbeddedAuthRequired: (appId: string) => void;
   requestDelegatedTokenFor: (appId: string) => ((refresh: boolean) => Promise<DelegatedTokenGrant>) | undefined;
-  openSettingsFrame: (appId: string, path: string) => Promise<string>;
+  openSurfaceFrame: (appId: string, embeddedUrl: string) => Promise<string>;
   startAppById: (appId: string) => void;
   shellAppId: string;
   refresh: () => Promise<void>;

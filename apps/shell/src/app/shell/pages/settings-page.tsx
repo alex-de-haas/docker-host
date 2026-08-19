@@ -14,7 +14,8 @@ import type {
   HostSettingsTab,
   SessionResponse,
 } from "../types";
-import { AppSettingsTabPanel, type AppSettingsTab } from "./settings-app-section";
+import { AppSettingsTabPanel } from "./settings-app-section";
+import type { AppSurfaceTab } from "../surfaces/app-surface-tabs";
 import { PageHeader } from "../ui";
 import { SettingsCoreSection } from "./settings-core-section";
 import { SettingsIngressSection } from "./settings-ingress-section";
@@ -57,7 +58,7 @@ export function SettingsPage({
   activeTab: string;
   // Apps declaring `ui.settings`, in install order. Empty for a non-admin: their tab list is their
   // own access tokens and nothing else.
-  appTabs: AppSettingsTab[];
+  appTabs: AppSurfaceTab[];
   appTabProps: Omit<React.ComponentProps<typeof AppSettingsTabPanel>, "tab">;
   coreOrigin: string;
   activeUser: SessionResponse["user"] | null;
