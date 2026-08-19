@@ -75,8 +75,16 @@ this feature.
   split because its backend is .NET).
 - Why here and not in Shell: the assistant is optional, removable and replaceable, so a settings
   page baked into Shell would make Shell know one provider's configuration schema. Observability was
-  moved out of Shell into its own app for the same reason. The page is hand-written HTML — it is two
-  controls and a list, and a build step would be the largest thing in a headless Node app.
+  moved out of Shell into its own app for the same reason. The page itself is a Next app in
+  `apps/ai-gateway/web`, built as a static export (`output: "export"`, `distDir: out-build`) that the
+  gateway's own process serves — the standard component stack without a second runtime.
+- **The build runs at every start, from a clean cache.** The app is `localCommand`, so its manifest
+  `setup` step installs both workspaces and runs `build:web` before the service command. A `prebuild`
+  script deletes `web/.next` first, because Turbopack's persistent cache there survives a failed
+  build and keeps replaying its resolution failures: once a build failed for genuinely missing
+  packages, installing them did not fix it, and the app stayed broken through every restart. `.next`
+  holds only intermediate state for this app — the served bytes are in `out-build` — so discarding
+  it costs a cold build of about a second and removes the whole class of poisoned-cache failures.
 - The page shell is served unauthenticated because it holds no data: everything it renders comes
   from `/api/settings`, admin-gated like every other `/api` route, reached with a delegated token
   the embedder supplies. That is the same posture the chat panel already has.
@@ -261,12 +269,12 @@ gateway restart.
 - Settings: defaults (empty prompt, every provider off), round trip surviving a restart, rejection
   of malformed writes without storing them, pruning of toggles for uninstalled apps, the admin gate,
   and the unauthenticated page shell.
-- The settings page's inline script is compiled (not run) by the gateway suite, because it lives in
-  a template string that no build step type-checks: a syntax error there ships as a page that
-  renders and then does nothing. The token handshake itself is verified in a browser against a stub
-  embedder built to be hostile in the two ways a real one can be: it attaches its listener late (only
-  the page's retry recovers) and it caches its mint while the API rotates the accepted token (only a
-  request carrying `refresh` recovers). Shell's own cache — reuse window, forced re-mint, and
+- The settings page is type-checked and linted by its own workspace (`ai-gateway:lint` runs `eslint`
+  and `tsc --noEmit` over `web`), and `next build` gates it the way it gates Shell. The token
+  handshake itself is verified in a browser against a stub embedder built to be hostile in the two
+  ways a real one can be: it attaches its listener late (only the page's retry recovers) and it
+  caches its mint while the API rotates the accepted token (only a request carrying `refresh`
+  recovers). Shell's own cache — reuse window, forced re-mint, and
   invalidation when the signed-in user changes — is unit-tested apart from the component.
 - Codex adapter (vitest, against `test/fake-codex-server.mjs`): handshake, resume, streaming,
   approval allow and deny, suppression of a refused item's tool-use, process death, missing binary,
