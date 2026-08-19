@@ -34,7 +34,7 @@ export function ShellTopStrip({
   onBrandClick: () => void;
 }) {
   return (
-    <header className="flex h-10 shrink-0 items-center gap-2 border-b bg-sidebar px-2 text-sidebar-foreground">
+    <header className="relative flex h-10 shrink-0 items-center gap-2 border-b bg-sidebar px-2 text-sidebar-foreground">
       <button
         type="button"
         onClick={onBrandClick}
@@ -46,7 +46,13 @@ export function ShellTopStrip({
         <span className="text-sm font-semibold uppercase">Hosty</span>
       </button>
 
-      <div className="flex min-w-0 flex-1 items-baseline gap-2">
+      <div className="flex-1" />
+
+      {/* Centred against the window rather than inside the space left over: the brand and the
+          control group are different widths, so centring between them would sit visibly off. Capped
+          and truncating so a long app name cannot run under either of them, and click-through so the
+          label never swallows a press meant for what is behind it. */}
+      <div className="pointer-events-none absolute left-1/2 flex max-w-[45%] -translate-x-1/2 items-baseline gap-2">
         <span className="truncate text-sm font-medium">{title}</span>
         {subtitle && <span className="truncate text-xs text-muted-foreground">{subtitle}</span>}
       </div>
