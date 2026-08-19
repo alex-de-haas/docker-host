@@ -573,7 +573,11 @@ internal sealed record AppUiContract(
     string? Icon,
     string? EndpointKey,
     string EntryPath,
-    IReadOnlyList<AppNavigationContract> Navigation)
+    IReadOnlyList<AppNavigationContract> Navigation,
+    // Placed surfaces beyond the sidebar. Additive and nullable, so records written before
+    // app-ui-surfaces read back as "declares neither" rather than failing to load.
+    AppSurfaceContract? Settings = null,
+    IReadOnlyList<AppSurfaceContract>? Panels = null)
 {
     public static AppUiContract? FromManifest(RuntimeAppUiManifest? ui)
     {
@@ -598,8 +602,22 @@ internal sealed record AppUiContract(
             Icon: NullIfBlank(ui.Icon),
             EndpointKey: entry.EndpointKey,
             EntryPath: entry.Path,
-            Navigation: navigation);
+            Navigation: navigation,
+            Settings: ReadSurface(ui.Settings, entry),
+            Panels: ui.Panels.Select(panel => ReadSurface(panel, entry)!).ToArray());
     }
+
+    /// <summary>
+    /// Normalizes one declared surface, falling back to the entrypoint's endpoint the same way a
+    /// navigation item does — an app serving everything from one endpoint says so once.
+    /// </summary>
+    private static AppSurfaceContract? ReadSurface(RuntimeAppUiSurfaceManifest? surface, UiEntrypoint entry)
+        => surface is null
+            ? null
+            : new AppSurfaceContract(
+                Path: NormalizePath(surface.Path),
+                EndpointKey: FirstNonBlank(surface.Endpoint, surface.PortKey, entry.EndpointKey),
+                Label: NullIfBlank(surface.Label));
 
     // Raw declared entrypoint (endpoint key + un-normalized path) shared with the strict system-app
     // manifest validation, which must see exactly what the author wrote before any normalization.
@@ -655,6 +673,9 @@ internal sealed record AppUiContract(
 }
 
 internal sealed record AppNavigationContract(string Label, string Path, string? EndpointKey, string? IconAsset = null);
+
+/// <summary>A settings or panel surface as declared, before its endpoint is resolved to a URL.</summary>
+internal sealed record AppSurfaceContract(string Path, string? EndpointKey, string? Label);
 
 // Normalized platform-interface declarations (top-level `interfaces`), denormalized onto the app
 // record and projected onto the summary so clients discover interface providers from the registry
@@ -850,6 +871,11 @@ internal sealed record AppSummary(
     string? EntryPath,
     string? EmbeddedUrl,
     IReadOnlyList<AppNavigationSummary> Navigation,
+    // Placed surfaces, resolved to embeddable URLs exactly as navigation entries are. Null when the
+    // app declares none — Shell renders a Settings tab or a panel tab for precisely the apps that
+    // asked for one, and discovers that here rather than by reading manifests.
+    AppSurfaceSummary? SettingsSurface,
+    IReadOnlyList<AppSurfaceSummary> PanelSurfaces,
     IReadOnlyList<AppMountSummary> Mounts,
     // Compiled-artifact run-locks per service (the running/locked image digest) and the effective
     // pull/lock policy (always "pinned"), for version legibility and lock badges on clients.
@@ -961,6 +987,21 @@ internal sealed record AppSummary(
                 IconUrl: ResolveAssetUrl(item.IconAsset, app.Id, assetVersion)))
             .ToArray() ?? [];
 
+        // A surface with no reachable endpoint yields no URL, which is how a stopped app's tab knows
+        // to say so instead of embedding nothing.
+        AppSurfaceSummary? Surface(AppSurfaceContract? surface, string? fallbackLabel)
+            => surface is null
+                ? null
+                : new AppSurfaceSummary(
+                    Label: surface.Label ?? fallbackLabel,
+                    Path: surface.Path,
+                    EmbeddedUrl: BuildUiUrl(ResolveEndpointUrl(endpoints, surface.EndpointKey ?? ui!.EndpointKey), surface.Path));
+
+        var settingsSurface = Surface(ui?.Settings, app.DisplayName);
+        var panelSurfaces = (ui?.Panels ?? [])
+            .Select(panel => Surface(panel, app.DisplayName)!)
+            .ToArray();
+
         // Source-capable when it declares any source (localCommand) runtime, regardless of install
         // channel. Under the Development Mode operator toggle, the operator may point any source runtime
         // at a local folder and flip it live — so the Source tab appears whenever a source runtime exists,
@@ -988,6 +1029,8 @@ internal sealed record AppSummary(
             ui?.EntryPath,
             entryUrl,
             navigation,
+            settingsSurface,
+            panelSurfaces,
             BuildMountSummaries(app.MountSlots, app.Mounts),
             DockerRuntimeAdapter.ResolveUpdatePolicy(app.UpdatePolicy),
             app.ArtifactLocks,
@@ -1220,6 +1263,9 @@ internal sealed record AppSummary(
 internal sealed record AppSettingSummary(string Key, string Type, string? Value, bool Secret, bool Required = false, string? Label = null, string? Description = null, bool HasValue = false);
 
 internal sealed record AppNavigationSummary(string Label, string Path, string? EntryPath, string? EmbeddedUrl, string? IconUrl = null);
+
+/// <summary>A placed surface as a client consumes it: what to call the tab, and what to embed.</summary>
+internal sealed record AppSurfaceSummary(string? Label, string Path, string? EmbeddedUrl);
 
 internal sealed record AppMountSummary(
     string Key,

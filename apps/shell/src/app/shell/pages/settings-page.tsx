@@ -2,8 +2,19 @@
 
 import Link from "next/link";
 import { cn } from "@/lib/utils";
-import { getSettingsHref, isNonAdminHostSettingsTab } from "../shell-routes";
-import type { CoreGlobalMount, CoreSettingsState, HostSettingsTab, SessionResponse } from "../types";
+import {
+  DEFAULT_HOST_SETTINGS_TAB,
+  getAppSettingsHref,
+  getSettingsHref,
+  isNonAdminHostSettingsTab,
+} from "../shell-routes";
+import type {
+  CoreGlobalMount,
+  CoreSettingsState,
+  HostSettingsTab,
+  SessionResponse,
+} from "../types";
+import { AppSettingsTabPanel, type AppSettingsTab } from "./settings-app-section";
 import { PageHeader } from "../ui";
 import { SettingsCoreSection } from "./settings-core-section";
 import { SettingsIngressSection } from "./settings-ingress-section";
@@ -29,6 +40,8 @@ const TABS: { id: HostSettingsTab; label: string }[] = [
 // not.
 export function SettingsPage({
   activeTab,
+  appTabs,
+  appTabProps,
   coreOrigin,
   activeUser,
   sendCsrfJson,
@@ -40,7 +53,12 @@ export function SettingsPage({
   onSaveMount,
   onDeleteMount,
 }: {
-  activeTab: HostSettingsTab;
+  // A host tab id, or the id of an installed app whose settings page fills the tab.
+  activeTab: string;
+  // Apps declaring `ui.settings`, in install order. Empty for a non-admin: their tab list is their
+  // own access tokens and nothing else.
+  appTabs: AppSettingsTab[];
+  appTabProps: Omit<React.ComponentProps<typeof AppSettingsTabPanel>, "tab">;
   coreOrigin: string;
   activeUser: SessionResponse["user"] | null;
   sendCsrfJson: (url: string, body: unknown, method?: string) => Promise<Response>;
@@ -55,6 +73,15 @@ export function SettingsPage({
   // An ordinary user reaches this page for exactly one tab — their own access tokens — so the rest,
   // which administer the host, are not offered to them.
   const visibleTabs = canManageApps ? TABS : TABS.filter((tab) => isNonAdminHostSettingsTab(tab.id));
+  // App tabs sit at the top level beside the host ones rather than nested under an "Apps" area —
+  // decided on the mock at three tabs. Regrouping later changes no contract, only this list.
+  const visibleAppTabs = canManageApps ? appTabs : [];
+  const activeAppTab = visibleAppTabs.find((tab) => tab.appId === activeTab);
+  // The URL may name a tab that is neither a host one nor an installed app — a stale link, or an app
+  // since removed. Resolution lives here rather than in the parser, which has no app list to check
+  // against; without the fallback such a link renders a page with no section at all.
+  const resolvedTab =
+    activeAppTab || visibleTabs.some((tab) => tab.id === activeTab) ? activeTab : DEFAULT_HOST_SETTINGS_TAB;
 
   return (
     <div className="space-y-6">
@@ -72,10 +99,10 @@ export function SettingsPage({
           <Link
             key={tab.id}
             href={getSettingsHref(tab.id)}
-            aria-current={activeTab === tab.id ? "page" : undefined}
+            aria-current={resolvedTab === tab.id ? "page" : undefined}
             className={cn(
               "-mb-px border-b-2 px-3 py-2 text-sm transition-colors",
-              activeTab === tab.id
+              resolvedTab === tab.id
                 ? "border-foreground font-medium text-foreground"
                 : "border-transparent text-muted-foreground hover:text-foreground",
             )}
@@ -83,19 +110,39 @@ export function SettingsPage({
             {tab.label}
           </Link>
         ))}
+        {visibleAppTabs.map((tab) => (
+          <Link
+            key={tab.appId}
+            href={getAppSettingsHref(tab.appId)}
+            aria-current={activeTab === tab.appId ? "page" : undefined}
+            className={cn(
+              "-mb-px border-b-2 px-3 py-2 text-sm transition-colors",
+              activeTab === tab.appId
+                ? "border-foreground font-medium text-foreground"
+                : "border-transparent text-muted-foreground hover:text-foreground",
+              // A stopped app keeps its tab: hiding it would hide that the settings exist at all.
+              // Dimmed rather than removed, and the panel says why.
+              tab.embeddedUrl ? "" : "opacity-60",
+            )}
+          >
+            {tab.label}
+          </Link>
+        ))}
       </div>
 
-      {activeTab === "tokens" && (
+      {activeAppTab && <AppSettingsTabPanel tab={activeAppTab} {...appTabProps} />}
+
+      {resolvedTab === "tokens" && (
         <SettingsTokensSection coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} />
       )}
 
       {/* Every remaining tab administers the host. Gating them here as well as in the tab strip keeps
           a hand-typed ?tab= from rendering an admin surface for an ordinary user. */}
-      {canManageApps && activeTab === "users" && (
+      {canManageApps && resolvedTab === "users" && (
         <UserManagementPanel coreOrigin={coreOrigin} activeUser={activeUser} sendCsrfJson={sendCsrfJson} />
       )}
 
-      {canManageApps && activeTab === "core" && (
+      {canManageApps && resolvedTab === "core" && (
         <SettingsCoreSection
           settings={coreSettings}
           settingsError={coreSettingsError}
@@ -103,7 +150,7 @@ export function SettingsPage({
         />
       )}
 
-      {canManageApps && activeTab === "ingress" && (
+      {canManageApps && resolvedTab === "ingress" && (
         <SettingsIngressSection
           settings={coreSettings}
           settingsError={coreSettingsError}
@@ -111,7 +158,7 @@ export function SettingsPage({
         />
       )}
 
-      {canManageApps && activeTab === "mounts" && (
+      {canManageApps && resolvedTab === "mounts" && (
         <SettingsMountsSection
           globalMounts={globalMounts}
           canManageApps={canManageApps}

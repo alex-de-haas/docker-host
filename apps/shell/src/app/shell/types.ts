@@ -187,6 +187,15 @@ export type CoreReassignResult = {
   restartRequiredAppIds: string[];
 };
 
+/** A settings or panel surface as Core resolved it: what to call the tab, and what to embed. */
+export type CoreAppSurface = {
+  label?: string | null;
+  path: string;
+  // Null while the app is stopped or its endpoint has no URL yet — the tab exists, and says so
+  // instead of embedding nothing.
+  embeddedUrl?: string | null;
+};
+
 export type CoreNavigationItem = {
   label: string;
   path: string;
@@ -216,6 +225,14 @@ export type CoreApp = {
   endpoints?: CoreEndpoint[];
   runtimeProfiles?: CoreRuntimeProfile[];
   navigation?: CoreNavigationItem[];
+  // Placed UI surfaces beyond the sidebar (docs/features/app-ui-surfaces/feature.md). Absent when
+  // the app declares none, and absent from older Core builds — a missing surface is "this app has
+  // no tab", which is the same thing either way.
+  // At most one settings surface, administrator-only: it lands on the Settings page, which is.
+  settingsSurface?: CoreAppSurface | null;
+  // Any number of panel surfaces — one app may ship several distinct tools — and not
+  // administrator-only: a panel is a tool an ordinary user may hold.
+  panelSurfaces?: CoreAppSurface[];
   entryPath?: string | null;
   embeddedUrl?: string | null;
   // Core-origin-relative URLs for the app's manifest-declared display assets (manifest-level app
@@ -697,7 +714,9 @@ export type ShellRouteState = {
   workspace: WorkspaceRoute | null;
   // Always resolved, so no consumer has to repeat the default. Only read while `view` is
   // "settings"; carried on every route so a link into Settings can name its tab from anywhere.
-  settingsTab: HostSettingsTab;
+  // A host tab id, or the id of an app whose settings page fills the tab. Raw, because the two are
+  // told apart against the installed apps rather than by parsing.
+  settingsTab: string;
 };
 export type ShellSearchParams = {
   get(name: string): string | null;

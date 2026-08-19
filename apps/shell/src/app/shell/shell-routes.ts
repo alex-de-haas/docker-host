@@ -48,14 +48,16 @@ export function shellViewRequiresAdmin(view: ShellView) {
 export function getAuthorizedShellView(
   view: ShellView,
   canManageApps: boolean,
-  settingsTab?: HostSettingsTab,
+  // Raw, because the value may be an app id. An app-settings tab is administrator-only like the
+  // rest of the page, so only the known non-admin host tabs pass the check below.
+  settingsTab?: string,
 ): ShellView {
   if (canManageApps || !shellViewRequiresAdmin(view)) {
     return view;
   }
 
   // Settings is admin-only as a page, not as a whole: one tab on it belongs to every user.
-  return view === "settings" && settingsTab && isNonAdminHostSettingsTab(settingsTab)
+  return view === "settings" && settingsTab && isHostSettingsTab(settingsTab) && isNonAdminHostSettingsTab(settingsTab)
     ? view
     : "available-apps";
 }
@@ -101,7 +103,10 @@ export function readLegacySystemAppId(pathname: string): string | null {
 
 export function readShellRoute(pathname: string, searchParams: ShellSearchParams): ShellRouteState {
   const path = normalizeShellPath(pathname);
-  const settingsTab = readHostSettingsTab(searchParams.get("tab"));
+  // The raw value, not readHostSettingsTab: an app-settings tab carries the app id here, and
+  // collapsing anything unknown to the default made every app tab land on Users — the surface was
+  // rendered and unreachable.
+  const settingsTab = readSettingsTabParam(searchParams.get("tab"));
   const appPath = normalizeAppPath(searchParams.get("path"));
 
   if (path === "/workspace") {
@@ -190,6 +195,28 @@ export function getSettingsHref(tab: HostSettingsTab) {
   const params = new URLSearchParams();
   params.set("tab", tab);
   return `/settings?${params.toString()}`;
+}
+
+/**
+ * The Settings tab that hosts one app's own configuration page.
+ *
+ * An app id is carried in the same `tab` parameter as the host tabs rather than a parameter of its
+ * own: an app id can never collide with a host tab name (ids are reverse-DNS and contain dots), and
+ * one parameter keeps "which tab is open" a single question with a single answer in the URL.
+ */
+export function getAppSettingsHref(appId: string) {
+  const params = new URLSearchParams();
+  params.set("tab", appId);
+  return `/settings?${params.toString()}`;
+}
+
+/** The raw tab value, before it is resolved against host tabs or the installed apps. */
+export function readSettingsTabParam(value: string | null | undefined): string {
+  return value?.trim() || DEFAULT_HOST_SETTINGS_TAB;
+}
+
+export function isHostSettingsTab(value: string): value is HostSettingsTab {
+  return HOST_SETTINGS_TABS.has(value);
 }
 
 export function getWorkspaceHref(appId: string, appPath: string) {

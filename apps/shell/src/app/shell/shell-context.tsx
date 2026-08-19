@@ -9,11 +9,14 @@ import type {
   CoreGlobalMount,
   CoreSettingsState,
   CoreUpdateStatus,
-  HostSettingsTab,
+  HostyResolvedTheme,
+  HostyThemePreference,
   LoadState,
   OpenAppPanel,
   SessionResponse,
 } from "./types";
+import type { AppSettingsTab } from "./pages/settings-app-section";
+import type { DelegatedTokenGrant } from "./workspace/delegated-token-intent";
 
 export type ShellContextValue = {
   state: LoadState;
@@ -28,7 +31,13 @@ export type ShellContextValue = {
   // re-probe the affected app so the row Update icon does not linger after the update lands.
   updateStatusInvalidations: Record<string, number>;
   // Host settings: which tab the URL selected, plus the data the Core and Shared mounts tabs render.
-  settingsTab: HostSettingsTab;
+  // A raw string, because the value is either a host tab or the id of an app whose settings page
+  // fills the tab (docs/features/app-ui-surfaces/feature.md).
+  settingsTab: string;
+  // Installed apps declaring `ui.settings`, already resolved to an embeddable URL by Core.
+  appSettingsTabs: AppSettingsTab[];
+  shellTheme: HostyResolvedTheme;
+  shellThemePreference: HostyThemePreference;
   coreSettings: CoreSettingsState | null;
   coreSettingsError: string | null;
   globalMounts: CoreGlobalMount[];
@@ -39,6 +48,13 @@ export type ShellContextValue = {
 
 export type ShellActionsContextValue = {
   coreOrigin: string;
+  // Embedding callbacks the Settings tabs hand to the shared app frame. The delegated-token one is
+  // undefined for every app that does not already qualify, so a new embedding context cannot widen
+  // that grant by existing.
+  onEmbeddedAuthRequired: (appId: string) => void;
+  requestDelegatedTokenFor: (appId: string) => ((refresh: boolean) => Promise<DelegatedTokenGrant>) | undefined;
+  openSettingsFrame: (appId: string, path: string) => Promise<string>;
+  startAppById: (appId: string) => void;
   shellAppId: string;
   refresh: () => Promise<void>;
   sendCsrfJson: (endpoint: string, body?: unknown, method?: string) => Promise<Response>;

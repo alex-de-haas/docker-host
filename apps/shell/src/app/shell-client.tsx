@@ -1849,6 +1849,66 @@ export function ShellClient({
     setInstallOpen(false);
   }, []);
 
+  // Apps that declared a settings surface, as Settings tabs. Core resolved the URL, so a stopped
+  // app arrives with none — the tab still exists and says so.
+  const appSettingsTabs = useMemo(
+    () =>
+      state.apps
+        .filter((app) => app.settingsSurface)
+        .map((app) => ({
+          appId: app.id,
+          label: app.settingsSurface?.label || app.displayName || app.id,
+          path: app.settingsSurface?.path ?? "/",
+          embeddedUrl: app.settingsSurface?.embeddedUrl ?? null,
+          running: app.runtimeState === "running",
+        })),
+    [state.apps],
+  );
+
+  // Passes through the existing rule rather than restating it: only an app that already qualifies is
+  // answered, in this context as in the workspace.
+  const requestDelegatedTokenFor = useCallback(
+    (appId: string) =>
+      appMayReceiveDelegatedToken(appId, assistantGateway?.appId)
+        ? (refresh: boolean) => issueDelegatedToken(appId, refresh)
+        : undefined,
+    [assistantGateway?.appId, issueDelegatedToken],
+  );
+
+  // Mints a launch code for an app's settings page and returns the URL to embed, so the frame lands
+  // with a real Hosty app session rather than as an anonymous visitor to the app's origin.
+  const openSettingsFrame = useCallback(
+    async (appId: string, path: string) => {
+      const app = state.apps.find((candidate) => candidate.id === appId);
+      if (!app) {
+        throw new Error("This app is no longer installed.");
+      }
+
+      const surfaceUrl = app.settingsSurface?.embeddedUrl;
+      if (!surfaceUrl) {
+        throw new Error("This app is not running, so its settings are not being served.");
+      }
+
+      const redirectUri = appendHostyLaunchParam(
+        appendHostyThemeParams(surfaceUrl, shellResolvedTheme, shellThemePreference),
+      );
+      const response = await sendCsrfJson(appEndpoint(app, "/launch-code"), { redirectUri });
+      const launch = (await response.json()) as AppLaunchResponse;
+      return launch.redirectUri;
+    },
+    [appEndpoint, sendCsrfJson, shellResolvedTheme, shellThemePreference, state.apps],
+  );
+
+  const startAppById = useCallback(
+    (appId: string) => {
+      const app = state.apps.find((candidate) => candidate.id === appId);
+      if (app) {
+        void runAppAction(app, "start");
+      }
+    },
+    [state.apps, runAppAction],
+  );
+
   const shellStateContextValue = useMemo(
     () => ({
       state,
@@ -1858,6 +1918,9 @@ export function ShellClient({
       busyAction,
       updateStatusInvalidations,
       settingsTab: shellRoute.settingsTab,
+      appSettingsTabs,
+      shellTheme: shellResolvedTheme,
+      shellThemePreference,
       coreSettings,
       coreSettingsError,
       globalMounts,
@@ -1866,8 +1929,11 @@ export function ShellClient({
     }),
     [
       activeUser,
+      appSettingsTabs,
       busyAction,
       canManageApps,
+      shellResolvedTheme,
+      shellThemePreference,
       coreSettings,
       coreSettingsError,
       coreUpdate,
@@ -1886,6 +1952,10 @@ export function ShellClient({
       shellAppId,
       refresh,
       sendCsrfJson,
+      onEmbeddedAuthRequired: handleAuthRequired,
+      requestDelegatedTokenFor,
+      openSettingsFrame,
+      startAppById,
       launchAppPage,
       getStandaloneAppHref,
       openInstallDialog,
@@ -1903,6 +1973,10 @@ export function ShellClient({
       updateCore,
     }),
     [
+      handleAuthRequired,
+      requestDelegatedTokenFor,
+      openSettingsFrame,
+      startAppById,
       updateCore,
       applyUpdateFromRow,
       configureAppDevelopmentMode,
