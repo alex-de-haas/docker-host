@@ -17,6 +17,8 @@
 # next.js
 /.next/
 **/.next/
+# The gateway settings page's static export: build output, rebuilt by its app setup step.
+**/out-build/
 /out/
 **/out/
 

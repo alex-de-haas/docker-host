@@ -81,6 +81,10 @@ describe("gateway", () => {
     rmSync(dataDir, { recursive: true, force: true });
     delete process.env.HOSTY_DELEGATED_TOKEN_PUBLIC_KEY;
     delete process.env.HOSTY_APP_ID;
+    // The session tests point these at a stub Core they then close. Left set, the next test would
+    // resolve sessions against a dead port — a leak that surfaces as an unrelated flaky test.
+    delete process.env.HOSTY_CORE_ORIGIN;
+    delete process.env.HOSTY_APP_SERVICE_TOKEN;
   });
 
   function call(pathName: string, init: RequestInit = {}, role: string | null = "host.admin"): Promise<Response> {
@@ -439,25 +443,191 @@ describe("gateway", () => {
 
   it("serves the settings page shell without a token", async () => {
     // The shell holds no data; everything it renders comes from the admin-gated API above. Serving
-    // it unauthenticated is what lets Shell embed it as an ordinary app UI.
+    // it unauthenticated is what lets Shell embed it as an ordinary app UI — and is safe precisely
+    // because it is a bundle, not a rendering of anything.
     const page = await fetch(`${origin}/settings`);
     expect(page.status).toBe(200);
     expect(page.headers.get("content-type")).toContain("text/html");
     const html = await page.text();
-    expect(html).toContain("System prompt");
-    expect(html).toContain("MCP providers");
+    // The built export, not the old hand-written template: its script tags are what the page needs
+    // to become anything at all, so their absence is the failure worth catching.
+    expect(html).toContain("<script");
+    expect(html).toContain("/_next/static/");
   });
 
-  it("ships a settings script that parses and asks its embedder for a token", async () => {
-    // The page is hand-written JavaScript inside a template string, so nothing else in the build
-    // would catch a syntax error in it — the operator would meet it as a page that renders and then
-    // does nothing. Compiling without running is the whole check.
-    const html = await (await fetch(`${origin}/settings`)).text();
-    const script = html.slice(html.lastIndexOf("<script>") + "<script>".length, html.lastIndexOf("</script>"));
-    expect(script.length).toBeGreaterThan(0);
-    expect(() => new Script(script)).not.toThrow();
-    // The page holds no credential of its own: it gets one from whoever embeds it.
-    expect(script).toContain("hosty:request-delegated-token");
+  it("serves the page's own assets, and nothing outside the export", async () => {
+    // A request path is untrusted input. Escaping the export directory would turn a settings page
+    // into a file server for the host.
+    const escape = await fetch(`${origin}/../package.json`, { redirect: "manual" });
+    expect(escape.status === 404 || escape.status === 400 || escape.status === 301).toBe(true);
+
+    const missing = await fetch(`${origin}/_next/static/does-not-exist.js`);
+    expect(missing.status).toBe(404);
+  });
+
+  it("exchanges a launch code for a session, and refuses a request without one", async () => {
+    // Establishing the session is what this route is for, so it is the one /api route that answers
+    // without a credential — the code itself is the credential, and Core refuses a stale or foreign
+    // one. A request carrying no code must still be refused rather than treated as anonymous.
+    const empty = await fetch(`${origin}/api/app-code`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin },
+      body: JSON.stringify({}),
+    });
+    expect(empty.status).toBe(422);
+    expect(((await empty.json()) as { code?: string }).code).toBe("app_auth_code_required");
+
+    // Unauthenticated is not the same as unprotected. The page calls this with a relative URL, so
+    // a real exchange always carries its own origin; a cross-site post of a code the caller owns
+    // would otherwise hand this browser someone else's session.
+    const foreign = await fetch(`${origin}/api/app-code`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: "https://evil.example" },
+      body: JSON.stringify({ code: "stolen" }),
+    });
+    expect(foreign.status).toBe(403);
+    expect(((await foreign.json()) as { code?: string }).code).toBe("cross_site_request_blocked");
+  });
+
+  it("accepts the settings page's own session, in the shape Core actually sends", async () => {
+    // The acceptance side of the cookie path, and the test whose absence let a real defect ship: a
+    // suite that only asserts refusals passes just as well against a parser that understands
+    // nothing, because every refusal is satisfied by refusing everything.
+    //
+    // The stub answers with Core's own field names — `AppSessionValidationResult` in
+    // AppIdentityService.cs, serialized under `JsonSerializerDefaults.Web`. Inventing a friendlier
+    // shape here would make this test agree with the app about something Core never said.
+    let seenBody: string | null = null;
+    const core = createServer(async (request, response) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) {
+        chunks.push(chunk as Buffer);
+      }
+      seenBody = Buffer.concat(chunks).toString("utf8");
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          active: true,
+          appId: "hosty.ai-gateway",
+          userId: "user_admin",
+          email: "admin@example.test",
+          displayName: "Admin",
+          hostRole: "host.admin",
+          expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+        }),
+      );
+    });
+    await new Promise<void>((resolve) => core.listen(0, resolve));
+    process.env.HOSTY_CORE_ORIGIN = `http://127.0.0.1:${(core.address() as AddressInfo).port}`;
+    process.env.HOSTY_APP_SERVICE_TOKEN = "service-token";
+
+    try {
+      const response = await fetch(`${origin}/api/settings`, {
+        headers: { cookie: "hosty_ai_gateway_identity=session-token" },
+      });
+      expect(response.status).toBe(200);
+      // Core is asked about the token the browser presented, not about something reconstructed.
+      expect(JSON.parse(seenBody ?? "{}")).toEqual({ accessToken: "session-token" });
+    } finally {
+      await new Promise((resolve) => core.close(resolve));
+    }
+  });
+
+  it("refuses a session whose host role is not administrator", async () => {
+    // Paired with the acceptance above: same valid session, one field different. Without this the
+    // previous test is also satisfied by an app that never looks at the role at all.
+    const core = createServer((request, response) => {
+      request.resume();
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({ active: true, appId: "hosty.ai-gateway", userId: "user_plain", hostRole: "host.user" }),
+      );
+    });
+    await new Promise<void>((resolve) => core.listen(0, resolve));
+    process.env.HOSTY_CORE_ORIGIN = `http://127.0.0.1:${(core.address() as AddressInfo).port}`;
+    process.env.HOSTY_APP_SERVICE_TOKEN = "service-token";
+
+    try {
+      const response = await fetch(`${origin}/api/settings`, {
+        headers: { cookie: "hosty_ai_gateway_identity=session-token" },
+      });
+      expect(response.status).toBe(401);
+    } finally {
+      await new Promise((resolve) => core.close(resolve));
+    }
+  });
+
+  it("lets a cookie change state only from this app's own pages", async () => {
+    // The cookie is SameSite=None by necessity, so the browser will attach it to a request another
+    // site caused, and a plain form post needs no CORS permission to arrive. Asserted as a pair:
+    // the same request differing only in provenance must go both ways, or a gateway that refuses
+    // every write would pass the negative alone.
+    const core = createServer((request, response) => {
+      request.resume();
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({ active: true, appId: "hosty.ai-gateway", userId: "user_admin", hostRole: "host.admin" }),
+      );
+    });
+    await new Promise<void>((resolve) => core.listen(0, resolve));
+    process.env.HOSTY_CORE_ORIGIN = `http://127.0.0.1:${(core.address() as AddressInfo).port}`;
+    process.env.HOSTY_APP_SERVICE_TOKEN = "service-token";
+
+    try {
+      const foreign = await fetch(`${origin}/api/settings`, {
+        method: "PUT",
+        headers: {
+          cookie: "hosty_ai_gateway_identity=session-token",
+          origin: "https://evil.example",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ systemPrompt: "owned" }),
+      });
+      expect(foreign.status).toBe(403);
+      expect(((await foreign.json()) as { code?: string }).code).toBe("cross_site_request_blocked");
+
+      const own = await fetch(`${origin}/api/settings`, {
+        method: "PUT",
+        headers: {
+          cookie: "hosty_ai_gateway_identity=session-token",
+          origin,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ systemPrompt: "set by the page" }),
+      });
+      expect(own.status).toBe(200);
+      expect((await settings.read()).systemPrompt).toBe("set by the page");
+
+      // The refused write must have changed nothing — a 403 that still applied the body would be
+      // the same defect wearing a status code.
+      expect((await settings.read()).systemPrompt).not.toBe("owned");
+    } finally {
+      await new Promise((resolve) => core.close(resolve));
+    }
+  });
+
+  it("does not require provenance from a delegated token", async () => {
+    // The token is carried deliberately rather than attached by the browser, so a cross-site page
+    // cannot present one. Requiring an Origin here would break the Shell panel, which is the whole
+    // reason the check is scoped to the cookie.
+    const response = await fetch(`${origin}/api/settings`, {
+      method: "PUT",
+      headers: {
+        authorization: `Bearer ${mintToken("host.admin")}`,
+        origin: "https://shell.example",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ systemPrompt: "from the panel" }),
+    });
+    expect(response.status).toBe(200);
+  });
+
+  it("refuses the API to a caller with neither credential shape", async () => {
+    // Two clients, two shapes — the Shell panel's delegated token and the settings page's own
+    // session — and neither present means refused, not anonymous.
+    const response = await fetch(`${origin}/api/settings`);
+    expect(response.status).toBe(401);
+    expect(((await response.json()) as { code?: string }).code).toBe("unauthorized");
   });
 
   it("discovers MCP providers from Core and prunes toggles for apps that are gone", async () => {

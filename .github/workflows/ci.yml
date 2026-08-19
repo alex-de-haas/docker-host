@@ -466,6 +466,11 @@ jobs:
       - name: Lint AI Gateway
         run: npm run ai-gateway:lint
 
+      # The settings page is a static export the gateway serves; its tests fetch it, so it must
+      # exist before they run.
+      - name: Build AI Gateway settings page
+        run: npm run ai-gateway:build-web
+
       - name: Test AI Gateway
         run: npm run ai-gateway:test
 

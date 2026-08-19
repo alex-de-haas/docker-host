@@ -107,10 +107,12 @@ Shell.
 - [x] Shell: a tab per app on the Settings page, iframe from the app origin. Admin gating comes free
       with the Settings page.
 - [x] Shell: a stopped app keeps its tab, dimmed, saying why, with a start action.
-- [ ] Gateway: drop `ui.navigation`, declare `ui.settings`; rebuild the page as a Next.js static
-      export (Tailwind + shadcn) served by the existing process. **Relative fetches only** — the
-      telemetry UI has already shipped the bug where `next build` baked a localhost origin into
-      static layouts.
+- [x] Gateway: drop `ui.navigation`, declare `ui.settings` (PR 1); rebuild the page as a Next.js
+      static export served by the existing process, with relative fetches only (PR 2).
+- [x] Gateway: authenticate the settings page with the ordinary Hosty app session, so this app stops
+      being the one that authenticates differently. The API accepts **both** shapes, because there
+      are two clients: the Shell assistant panel keeps its delegated token, the settings page uses
+      its own session.
 - [x] SDK: `embedder.ts` needed nothing new — confirmed by the Settings tab embedding through the
       same helpers the workspace uses.
 - [ ] Tests: manifest validation both ways; Shell renders a tab for a declaring app and none for a
@@ -125,7 +127,7 @@ remaining two became clear:
 
 1. **The contract and Settings tabs** (this one): manifest, projection, validation, the shared
    embedder, Settings tabs, and the gateway's move out of the sidebar.
-2. **The gateway's page on the standard stack**: Next.js static export + Tailwind + shadcn, and with
+2. **The gateway's page on the standard stack** (done): Next.js static export + Tailwind, and with
    it the switch to the ordinary app-session auth every other embedded page uses.
 3. **The Shell chrome**: the right panel, the top strip, and the bell's relocation.
 
