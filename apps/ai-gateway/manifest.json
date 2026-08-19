@@ -133,12 +133,9 @@
       "endpoint": "http",
       "path": "/settings"
     },
-    "navigation": [
-      {
-        "label": "Assistant",
-        "endpoint": "http",
-        "path": "/settings"
-      }
-    ]
+    "settings": {
+      "endpoint": "http",
+      "path": "/settings"
+    }
   }
 }

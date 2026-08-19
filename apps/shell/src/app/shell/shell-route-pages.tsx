@@ -67,6 +67,14 @@ export function ShellSettingsRoute() {
     <AdminShellRoute>
       <SettingsPage
         activeTab={shell.settingsTab}
+        appTabs={shell.appSettingsTabs}
+        appTabProps={{
+          theme: shell.shellTheme,
+          themePreference: shell.shellThemePreference,
+          onAuthRequired: shellActions.onEmbeddedAuthRequired,
+          resolveDelegatedTokenRequest: shellActions.requestDelegatedTokenFor,
+          onStartApp: shellActions.startAppById,
+        }}
         coreOrigin={shellActions.coreOrigin}
         activeUser={shell.activeUser}
         sendCsrfJson={shellActions.sendCsrfJson}

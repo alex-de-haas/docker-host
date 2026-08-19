@@ -187,6 +187,15 @@ export type CoreReassignResult = {
   restartRequiredAppIds: string[];
 };
 
+/** A settings or panel surface as Core resolved it: what to call the tab, and what to embed. */
+export type CoreAppSurface = {
+  label?: string | null;
+  path: string;
+  // Null while the app is stopped or its endpoint has no URL yet — the tab exists, and says so
+  // instead of embedding nothing.
+  embeddedUrl?: string | null;
+};
+
 export type CoreNavigationItem = {
   label: string;
   path: string;
@@ -216,6 +225,11 @@ export type CoreApp = {
   endpoints?: CoreEndpoint[];
   runtimeProfiles?: CoreRuntimeProfile[];
   navigation?: CoreNavigationItem[];
+  // Placed UI surfaces beyond the sidebar (docs/features/app-ui-surfaces/feature.md). Absent when
+  // the app declares none, and absent from older Core builds — a missing surface is "this app has
+  // no tab", which is the same thing either way.
+  settingsSurface?: CoreAppSurface | null;
+  panelSurface?: CoreAppSurface | null;
   entryPath?: string | null;
   embeddedUrl?: string | null;
   // Core-origin-relative URLs for the app's manifest-declared display assets (manifest-level app

@@ -1849,6 +1849,41 @@ export function ShellClient({
     setInstallOpen(false);
   }, []);
 
+  // Apps that declared a settings surface, as Settings tabs. Core resolved the URL, so a stopped
+  // app arrives with none — the tab still exists and says so.
+  const appSettingsTabs = useMemo(
+    () =>
+      state.apps
+        .filter((app) => app.settingsSurface)
+        .map((app) => ({
+          appId: app.id,
+          label: app.settingsSurface?.label || app.displayName || app.id,
+          embeddedUrl: app.settingsSurface?.embeddedUrl ?? null,
+          running: app.runtimeState === "running",
+        })),
+    [state.apps],
+  );
+
+  // Passes through the existing rule rather than restating it: only an app that already qualifies is
+  // answered, in this context as in the workspace.
+  const requestDelegatedTokenFor = useCallback(
+    (appId: string) =>
+      appMayReceiveDelegatedToken(appId, assistantGateway?.appId)
+        ? (refresh: boolean) => issueDelegatedToken(appId, refresh)
+        : undefined,
+    [assistantGateway?.appId, issueDelegatedToken],
+  );
+
+  const startAppById = useCallback(
+    (appId: string) => {
+      const app = state.apps.find((candidate) => candidate.id === appId);
+      if (app) {
+        void runAppAction(app, "start");
+      }
+    },
+    [state.apps, runAppAction],
+  );
+
   const shellStateContextValue = useMemo(
     () => ({
       state,
@@ -1858,6 +1893,9 @@ export function ShellClient({
       busyAction,
       updateStatusInvalidations,
       settingsTab: shellRoute.settingsTab,
+      appSettingsTabs,
+      shellTheme: shellResolvedTheme,
+      shellThemePreference,
       coreSettings,
       coreSettingsError,
       globalMounts,
@@ -1866,8 +1904,11 @@ export function ShellClient({
     }),
     [
       activeUser,
+      appSettingsTabs,
       busyAction,
       canManageApps,
+      shellResolvedTheme,
+      shellThemePreference,
       coreSettings,
       coreSettingsError,
       coreUpdate,
@@ -1886,6 +1927,9 @@ export function ShellClient({
       shellAppId,
       refresh,
       sendCsrfJson,
+      onEmbeddedAuthRequired: handleAuthRequired,
+      requestDelegatedTokenFor,
+      startAppById,
       launchAppPage,
       getStandaloneAppHref,
       openInstallDialog,
@@ -1903,6 +1947,9 @@ export function ShellClient({
       updateCore,
     }),
     [
+      handleAuthRequired,
+      requestDelegatedTokenFor,
+      startAppById,
       updateCore,
       applyUpdateFromRow,
       configureAppDevelopmentMode,

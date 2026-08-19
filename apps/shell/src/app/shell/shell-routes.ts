@@ -192,6 +192,28 @@ export function getSettingsHref(tab: HostSettingsTab) {
   return `/settings?${params.toString()}`;
 }
 
+/**
+ * The Settings tab that hosts one app's own configuration page.
+ *
+ * An app id is carried in the same `tab` parameter as the host tabs rather than a parameter of its
+ * own: an app id can never collide with a host tab name (ids are reverse-DNS and contain dots), and
+ * one parameter keeps "which tab is open" a single question with a single answer in the URL.
+ */
+export function getAppSettingsHref(appId: string) {
+  const params = new URLSearchParams();
+  params.set("tab", appId);
+  return `/settings?${params.toString()}`;
+}
+
+/** The raw tab value, before it is resolved against host tabs or the installed apps. */
+export function readSettingsTabParam(value: string | null | undefined): string {
+  return value?.trim() || DEFAULT_HOST_SETTINGS_TAB;
+}
+
+export function isHostSettingsTab(value: string): value is HostSettingsTab {
+  return HOST_SETTINGS_TABS.has(value);
+}
+
 export function getWorkspaceHref(appId: string, appPath: string) {
   const params = new URLSearchParams();
   params.set("app", appId);
