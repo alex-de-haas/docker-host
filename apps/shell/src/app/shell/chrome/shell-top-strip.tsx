@@ -46,18 +46,6 @@ export function ShellTopStrip({
         <span className="text-sm font-semibold uppercase">Hosty</span>
       </button>
 
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-sm"
-        onClick={onToggleLeftRail}
-        title={leftRailExpanded ? "Collapse the sidebar" : "Expand the sidebar"}
-        aria-label={leftRailExpanded ? "Collapse the sidebar" : "Expand the sidebar"}
-        aria-pressed={leftRailExpanded}
-      >
-        <PanelLeft className="h-4 w-4" />
-      </Button>
-
       <div className="flex min-w-0 flex-1 items-baseline gap-2">
         <span className="truncate text-sm font-medium">{title}</span>
         {subtitle && <span className="truncate text-xs text-muted-foreground">{subtitle}</span>}
@@ -66,6 +54,21 @@ export function ShellTopStrip({
       <div className="flex items-center gap-1">
         {showNotifications && <NotificationBell />}
         <ThemeMenuButton />
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          onClick={onToggleLeftRail}
+          title={leftRailExpanded ? "Collapse the sidebar" : "Expand the sidebar"}
+          aria-label={leftRailExpanded ? "Collapse the sidebar" : "Expand the sidebar"}
+          aria-pressed={leftRailExpanded}
+          // Both rail toggles show their on-state the same way: sitting side by side, one that lit
+          // up and one that did not would read as a bug rather than as two different rails.
+          className={cn(leftRailExpanded && "bg-background text-foreground")}
+        >
+          <PanelLeft className="h-4 w-4" />
+        </Button>
+
         {rightRailExpanded !== null && (
           <Button
             type="button"
