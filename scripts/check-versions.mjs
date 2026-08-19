@@ -84,8 +84,17 @@ expectEqual("shell version", {
 // carry the lockfile.
 const lockfile = json("package-lock.json");
 for (const workspace of json("package.json").workspaces ?? []) {
+  const manifest = json(`${workspace}/package.json`);
+  // A private workspace that declares no version is deliberately unversioned — it ships inside
+  // another app's artifact rather than as one of its own (apps/ai-gateway/web is the settings page's
+  // build, served by the gateway process). Asserting a version it never claims would fail forever
+  // and say nothing; a versioned workspace is still checked, private or not.
+  if (manifest.version === undefined && manifest.private === true) {
+    continue;
+  }
+
   expectEqual(`${workspace} lockfile version`, {
-    packageJson: json(`${workspace}/package.json`).version,
+    packageJson: manifest.version,
     lockfile: lockfile.packages?.[workspace]?.version,
   });
 }

@@ -5,6 +5,7 @@
   "license": "AGPL-3.0-only",
   "workspaces": [
     "apps/ai-gateway",
+    "apps/ai-gateway/web",
     "apps/demo-app",
     "apps/marketplace",
     "apps/shell",
@@ -33,7 +34,7 @@
     "telemetry-backend:build": "dotnet build apps/telemetry-backend/src/Haas.Hosty.TelemetryBackend/Haas.Hosty.TelemetryBackend.csproj",
     "telemetry-backend:test": "dotnet test apps/telemetry-backend/tests/Haas.Hosty.TelemetryBackend.Tests/Haas.Hosty.TelemetryBackend.Tests.csproj",
     "telemetry-backend:docker:build": "docker build -f apps/telemetry-backend/Dockerfile -t ghcr.io/alex-de-haas/hosty-telemetry-backend:latest .",
-    "ai-gateway:lint": "npm run lint --workspace @haas/hosty-ai-gateway",
+    "ai-gateway:lint": "npm run lint --workspace @haas/hosty-ai-gateway && npm run lint --workspace @haas/hosty-ai-gateway-web",
     "ai-gateway:test": "npm run test --workspace @haas/hosty-ai-gateway",
     "marketplace:dev": "npm run dev --workspace @haas/hosty-marketplace",
     "marketplace:build": "npm run build --workspace @haas/hosty-marketplace",
@@ -63,6 +64,7 @@
     "demo-app:docker:build": "docker build -f apps/demo-app/Dockerfile -t ghcr.io/alex-de-haas/demo-app:latest .",
     "demo-app:docker:build:local": "docker build -f apps/demo-app/Dockerfile -t hosty-demo-app:dev .",
     "sdk:test": "npm run test --workspace @hosty-sdk/app",
-    "sdk:dotnet:test": "dotnet test packages/app-sdk-dotnet/HostySdk.App.Tests/HostySdk.App.Tests.csproj"
+    "sdk:dotnet:test": "dotnet test packages/app-sdk-dotnet/HostySdk.App.Tests/HostySdk.App.Tests.csproj",
+    "ai-gateway:build-web": "npm run build --workspace @haas/hosty-ai-gateway-web"
   }
 }

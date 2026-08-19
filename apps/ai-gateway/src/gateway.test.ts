@@ -439,25 +439,47 @@ describe("gateway", () => {
 
   it("serves the settings page shell without a token", async () => {
     // The shell holds no data; everything it renders comes from the admin-gated API above. Serving
-    // it unauthenticated is what lets Shell embed it as an ordinary app UI.
+    // it unauthenticated is what lets Shell embed it as an ordinary app UI — and is safe precisely
+    // because it is a bundle, not a rendering of anything.
     const page = await fetch(`${origin}/settings`);
     expect(page.status).toBe(200);
     expect(page.headers.get("content-type")).toContain("text/html");
     const html = await page.text();
-    expect(html).toContain("System prompt");
-    expect(html).toContain("MCP providers");
+    // The built export, not the old hand-written template: its script tags are what the page needs
+    // to become anything at all, so their absence is the failure worth catching.
+    expect(html).toContain("<script");
+    expect(html).toContain("/_next/static/");
   });
 
-  it("ships a settings script that parses and asks its embedder for a token", async () => {
-    // The page is hand-written JavaScript inside a template string, so nothing else in the build
-    // would catch a syntax error in it — the operator would meet it as a page that renders and then
-    // does nothing. Compiling without running is the whole check.
-    const html = await (await fetch(`${origin}/settings`)).text();
-    const script = html.slice(html.lastIndexOf("<script>") + "<script>".length, html.lastIndexOf("</script>"));
-    expect(script.length).toBeGreaterThan(0);
-    expect(() => new Script(script)).not.toThrow();
-    // The page holds no credential of its own: it gets one from whoever embeds it.
-    expect(script).toContain("hosty:request-delegated-token");
+  it("serves the page's own assets, and nothing outside the export", async () => {
+    // A request path is untrusted input. Escaping the export directory would turn a settings page
+    // into a file server for the host.
+    const escape = await fetch(`${origin}/../package.json`, { redirect: "manual" });
+    expect(escape.status === 404 || escape.status === 400 || escape.status === 301).toBe(true);
+
+    const missing = await fetch(`${origin}/_next/static/does-not-exist.js`);
+    expect(missing.status).toBe(404);
+  });
+
+  it("exchanges a launch code for a session, and refuses a request without one", async () => {
+    // Establishing the session is what this route is for, so it is the one /api route that answers
+    // without a credential — the code itself is the credential, and Core refuses a stale or foreign
+    // one. A request carrying no code must still be refused rather than treated as anonymous.
+    const empty = await fetch(`${origin}/api/app-code`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(empty.status).toBe(422);
+    expect(((await empty.json()) as { code?: string }).code).toBe("app_auth_code_required");
+  });
+
+  it("refuses the API to a caller with neither credential shape", async () => {
+    // Two clients, two shapes — the Shell panel's delegated token and the settings page's own
+    // session — and neither present means refused, not anonymous.
+    const response = await fetch(`${origin}/api/settings`);
+    expect(response.status).toBe(401);
+    expect(((await response.json()) as { code?: string }).code).toBe("unauthorized");
   });
 
   it("discovers MCP providers from Core and prunes toggles for apps that are gone", async () => {

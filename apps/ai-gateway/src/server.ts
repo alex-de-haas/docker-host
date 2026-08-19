@@ -1,9 +1,14 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { resolveAdmin } from "./auth.js";
+import { resolveAdminActor } from "./auth.js";
+import { exchangeLaunchCode } from "./app-session.js";
+import { serveStaticSite } from "./settings/static-site.js";
+
+// Upper bound for an event stream opened with an app session rather than a delegated token: the
+// cookie is re-validated per request, but a stream is one request, so it gets an explicit ceiling.
+const APP_SESSION_STREAM_SECONDS = 3600;
 import { SessionNotFoundError, type SessionManager } from "./sessions/manager.js";
 import type { HarnessAdapter } from "./harness/adapter.js";
 import { MAX_SYSTEM_PROMPT_CHARS, type SettingsStore } from "./settings/store.js";
-import { renderSettingsPage } from "./settings/page.js";
 import type { ProviderDirectory } from "./settings/providers.js";
 import type { McpProxy } from "./mcp/proxy.js";
 
@@ -84,27 +89,49 @@ async function route(
   // The settings page itself is a static shell — it holds no data and fetches everything through
   // the admin-gated /api routes below with a delegated token, exactly as the chat panel does. Serving
   // the shell without a token is what lets Shell embed it as an ordinary app UI.
-  if (method === "GET" && (url.pathname === "/" || url.pathname === "/settings")) {
-    const html = renderSettingsPage();
-    response.writeHead(200, {
-      "content-type": "text/html; charset=utf-8",
-      "content-length": Buffer.byteLength(html),
-    });
-    response.end(html);
+  // The launch code Shell puts on the URL becomes this app's session cookie. Unauthenticated by
+  // necessity — establishing the session is what it does — and safe because the code itself is the
+  // credential: Core minted it for one user and one app, and refuses a stale or foreign one.
+  if (method === "POST" && url.pathname === "/api/app-code") {
+    const body = await readJson(request);
+    const code = typeof body.code === "string" ? body.code.trim() : "";
+    if (!code) {
+      sendJson(response, 422, { code: "app_auth_code_required", message: "A Hosty app authorization code is required." });
+      return;
+    }
+
+    const forwardedProto = request.headers["x-forwarded-proto"];
+    const proto = Array.isArray(forwardedProto) ? forwardedProto[0] : forwardedProto;
+    const exchange = await exchangeLaunchCode(code, (proto ?? "").split(",")[0]?.trim() === "https");
+    if (!exchange.ok) {
+      sendJson(response, exchange.status, { code: exchange.code, message: exchange.message });
+      return;
+    }
+
+    response.writeHead(204, { "set-cookie": exchange.setCookie });
+    response.end();
     return;
   }
 
+  // Everything that is not the API is the settings page's static export. Served without a
+  // credential on purpose: the bundle carries no data, and its first act is to authenticate.
   if (!url.pathname.startsWith("/api/")) {
+    if (method === "GET" && (await serveStaticSite(url.pathname, response))) {
+      return;
+    }
+
     sendJson(response, 404, { code: "not_found", message: "Unknown route." });
     return;
   }
 
-  // Everything under /api is operator surface: admin-only by decision, no anonymous reads.
-  const actor = resolveAdmin(request);
+  // Everything under /api is operator surface: admin-only by decision, no anonymous reads. Two
+  // credential shapes, because there are two clients — the Shell assistant panel presents a
+  // delegated token, the settings page its own Hosty session. Both must resolve to an administrator.
+  const actor = await resolveAdminActor(request);
   if (!actor) {
     sendJson(response, 401, {
       code: "unauthorized",
-      message: "A delegated token for a Host administrator is required.",
+      message: "A Host administrator session or delegated token is required.",
     });
     return;
   }
@@ -190,7 +217,7 @@ async function route(
     const record = await manager.createSession({
       title: typeof body.title === "string" ? body.title : undefined,
       context: isStringRecord(body.context) ? body.context : undefined,
-      createdBy: actor.sub,
+      createdBy: actor.userId,
     });
     sendJson(response, 200, record);
     return;
@@ -221,7 +248,11 @@ async function route(
   }
 
   if (rest === "/events" && method === "GET") {
-    await streamEvents(request, response, manager, sessionId, url, actor.exp);
+    // An app-session caller carries no token expiry, so the stream is bounded by the session
+    // cookie's own maximum instead of running unbounded — the delegated-token panel keeps its exact
+    // bound, which is the case this parameter was written for.
+    const streamExpiry = actor.expiresAtSeconds ?? Math.floor(Date.now() / 1000) + APP_SESSION_STREAM_SECONDS;
+    await streamEvents(request, response, manager, sessionId, url, streamExpiry);
     return;
   }
 
