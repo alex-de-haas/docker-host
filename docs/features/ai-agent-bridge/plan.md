@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-06-09
-Updated: 2026-08-17
+Updated: 2026-08-19
 
 The shared model, the boundaries and the decision log live in [feature.md](feature.md) and are in
 force. This document holds only what is **not built**: the rollout checklist, and the design for the
@@ -42,7 +42,12 @@ and [agent-background-sessions](../agent-background-sessions/plan.md).
 - [x] 8. The operator milestone — the `hosty.ai-gateway` system app plus the Shell assistant surface.
       Shipped 2026-08-09 and verified live: [ai-gateway](../ai-gateway/feature.md).
 - [ ] 9. The user profile: MCP-only sessions with delegated user tokens and approval-gated writes.
-- [ ] 10. Replace one app-local model integration with a discovered `/api/ai/generate`.
+- [ ] 10. Replace one app-local model integration with a discovered `/api/ai/generate`. **Gated on
+      an authorization decision** recorded as open question 1 of the
+      [platform vision](../hosty-platform-vision/plan.md): the gateway is a system app, so Core
+      refuses non-admin delegated tokens for it — a regular user's app-mediated AI call has no
+      credential path until it is decided (direction: the app calls the gateway as the app, and the
+      user never holds an AI credential).
 - [ ] 11. Durable delegation and job runner, plus notifications.
 - [ ] 12. Development Agent Bridge: source checkout, PR, and an approved isolated-validation workflow.
 
