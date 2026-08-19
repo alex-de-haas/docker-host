@@ -73,7 +73,9 @@ export function AppSettingsTabPanel({
   return (
     // No frame of its own: the tab strip above already bounds this region, and a border here drew a
     // second box around a page that is itself full of cards.
-    <div className="relative h-[calc(100vh-16rem)] min-h-96 overflow-hidden bg-background">
+    // Sized against the strip and the page header above it, so the app's page gets the rest of the
+    // window rather than a short box with the tab's background showing under it.
+    <div className="relative h-[calc(100dvh-13rem)] min-h-96 overflow-hidden bg-background">
       <EmbeddedAppFrame
         src={src}
         title={`${tab.label} settings`}
