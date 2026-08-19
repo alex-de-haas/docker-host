@@ -33,6 +33,7 @@ const SESSION_STORAGE_KEY = "hosty.assistant.session";
 /** An ask is a prompt fragment, not a payload: anything longer is a page dumping itself into the draft. */
 const MAX_ASK_CHARS = 4_000;
 
+
 export default function AssistantPage() {
   const [health, setHealth] = useState<HarnessHealth | null>(null);
   const [sessions, setSessions] = useState<AssistantSession[]>([]);
@@ -116,12 +117,31 @@ export default function AssistantPage() {
         }
 
         // Reattach first: the stream replays from seq 0, which rebuilds unresolved approval cards.
-        const stored = window.localStorage.getItem(SESSION_STORAGE_KEY);
+        let stored: string | null = null;
+        try {
+          stored = window.localStorage.getItem(SESSION_STORAGE_KEY);
+        } catch {
+          // Private-mode storage can refuse reads as well as writes; that costs reattachment, and
+          // must not take the whole page down with it.
+        }
         const previous = stored ? await getSession(stored).catch(() => null) : null;
         if (cancelled) {
           return;
         }
-        attach(previous ?? (await createSession({})));
+
+        if (previous) {
+          attach(previous);
+          return;
+        }
+
+        // Created because nothing was stored — and added to the list, or "Recent sessions" would
+        // say there are none while one is open, and switching away would strand it.
+        const created = await createSession({});
+        if (cancelled) {
+          return;
+        }
+        setSessions((current) => [created, ...current]);
+        attach(created);
       } catch (cause) {
         if (!cancelled) {
           setError(cause instanceof Error ? cause.message : String(cause));
@@ -154,6 +174,10 @@ export default function AssistantPage() {
    */
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
+      // Sender verification against the embedder's origin lands with the *public* message in the
+      // routing deliverable, which is where its tests live. Today the only sender is Shell posting
+      // into its own panel frame; the rule that actually holds the design up — the operator sends,
+      // never the app — is enforced below by filling the draft and stopping.
       if (event.source !== window.parent) {
         return;
       }

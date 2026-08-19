@@ -195,20 +195,6 @@ export function ShellClient({
   // ai-gateway interface (docs/features/ai-gateway/plan.md): no provider ⇒ no launcher, no panel.
   const assistantGateway = useMemo(() => findAssistantGateway(state.apps), [state.apps]);
   const assistantAvailable = Boolean(canManageApps && assistantGateway);
-  /**
-   * Reveals the assistant panel and hands it text to put in the operator's draft.
-   *
-   * Shell no longer renders the assistant — the gateway serves it — so this is a message into that
-   * page's frame rather than a call into a component. The panel fills the draft and stops there:
-   * only the operator sends, which is the rule the whole entry-point design rests on.
-   */
-  const askAssistant = useCallback((text: string, sourceAppId: string) => {
-    setPanelOpen(true);
-    setAssistantAsk((current) => ({
-      message: { type: "hosty:ask-assistant", text, sourceAppId },
-      nonce: (current?.nonce ?? 0) + 1,
-    }));
-  }, []);
 
   useEffect(() => {
     setSidebarCompact(window.localStorage.getItem(SIDEBAR_COMPACT_STORAGE_KEY) === "true");
@@ -1898,6 +1884,28 @@ export function ShellClient({
   // app arrives with none — the tab still exists and says so.
   const appSettingsTabs = useMemo(() => getAppSettingsTabs(state.apps), [state.apps]);
   const appPanelTabs = useMemo(() => getAppPanelTabs(state.apps), [state.apps]);
+
+  /**
+   * Reveals the assistant panel and hands it text to put in the operator's draft.
+   *
+   * Shell no longer renders the assistant — the gateway serves it — so this is a message into that
+   * page's frame rather than a call into a component. The panel fills the draft and stops there:
+   * only the operator sends, which is the rule the whole entry-point design rests on.
+   */
+  const askAssistant = useCallback((text: string, sourceAppId: string) => {
+    setPanelOpen(true);
+    // Selecting the tab is part of the ask, not a nicety: the message is handed only to the
+    // assistant's own frame, so revealing the rail while another app's panel stayed selected would
+    // deliver the draft nowhere and look like the button did nothing.
+    const assistantTab = appPanelTabs.find((tab) => tab.appId === assistantGateway?.appId);
+    if (assistantTab) {
+      setActivePanelKey(assistantTab.key);
+    }
+    setAssistantAsk((current) => ({
+      message: { type: "hosty:ask-assistant", text, sourceAppId },
+      nonce: (current?.nonce ?? 0) + 1,
+    }));
+  }, [appPanelTabs, assistantGateway?.appId]);
 
   // The rail exists only while something declares a panel; opening it is then the operator's choice.
   // An app's settings page fills the content column the way a workspace app does, so the column

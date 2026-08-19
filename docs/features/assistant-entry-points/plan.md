@@ -74,6 +74,13 @@ Two asks from the owner (2026-08-18), one mechanism short of possible today:
       its iframe with the source app id attached; length capped; messages from origins that fail
       verification dropped with a console warning, exactly as the token handshake does. The panel
       page owns the draft insertion and the provenance line.
+      **Includes the panel page verifying its embedder's origin on the inbound message.** Raised in
+      review of the panel move and deliberately left here: the page has no trustworthy source for
+      that origin yet — Core does not inject Shell's origin into apps, and a referrer can be absent,
+      so a gate built on it fails *silently*, dropping asks with no trace. It belongs with the public
+      message it protects, where the tests for it live. Until then the only sender is Shell posting
+      into its own frame, and the rule the design rests on is unaffected: the draft is filled, never
+      sent.
 - [ ] Telemetry UI: "Ask Assistant" on an error row, composing app id, timestamp, severity and body
       into the text. `apps/telemetry` minor bump.
 - [ ] Tests: the message verified and inserted beside one from a wrong origin dropped; the draft
