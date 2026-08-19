@@ -79,9 +79,12 @@ export function EmbeddedAppFrame({
     }
   }, [src, theme, themePreference]);
 
+  // `loaded` is a real dependency, not noise: a slow frame is still on its initial document when
+  // the first post fires, and the app has not installed its listener yet, so that message is
+  // discarded. Reposting on load is what actually delivers the theme.
   useEffect(() => {
     postTheme();
-  }, [postTheme]);
+  }, [postTheme, loaded]);
 
   useEffect(() => {
     if (!onAuthRequired) {

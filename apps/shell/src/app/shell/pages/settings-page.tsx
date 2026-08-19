@@ -2,7 +2,12 @@
 
 import Link from "next/link";
 import { cn } from "@/lib/utils";
-import { getAppSettingsHref, getSettingsHref, isNonAdminHostSettingsTab } from "../shell-routes";
+import {
+  DEFAULT_HOST_SETTINGS_TAB,
+  getAppSettingsHref,
+  getSettingsHref,
+  isNonAdminHostSettingsTab,
+} from "../shell-routes";
 import type {
   CoreGlobalMount,
   CoreSettingsState,
@@ -72,6 +77,11 @@ export function SettingsPage({
   // decided on the mock at three tabs. Regrouping later changes no contract, only this list.
   const visibleAppTabs = canManageApps ? appTabs : [];
   const activeAppTab = visibleAppTabs.find((tab) => tab.appId === activeTab);
+  // The URL may name a tab that is neither a host one nor an installed app — a stale link, or an app
+  // since removed. Resolution lives here rather than in the parser, which has no app list to check
+  // against; without the fallback such a link renders a page with no section at all.
+  const resolvedTab =
+    activeAppTab || visibleTabs.some((tab) => tab.id === activeTab) ? activeTab : DEFAULT_HOST_SETTINGS_TAB;
 
   return (
     <div className="space-y-6">
@@ -89,10 +99,10 @@ export function SettingsPage({
           <Link
             key={tab.id}
             href={getSettingsHref(tab.id)}
-            aria-current={activeTab === tab.id ? "page" : undefined}
+            aria-current={resolvedTab === tab.id ? "page" : undefined}
             className={cn(
               "-mb-px border-b-2 px-3 py-2 text-sm transition-colors",
-              activeTab === tab.id
+              resolvedTab === tab.id
                 ? "border-foreground font-medium text-foreground"
                 : "border-transparent text-muted-foreground hover:text-foreground",
             )}
@@ -122,17 +132,17 @@ export function SettingsPage({
 
       {activeAppTab && <AppSettingsTabPanel tab={activeAppTab} {...appTabProps} />}
 
-      {activeTab === "tokens" && (
+      {resolvedTab === "tokens" && (
         <SettingsTokensSection coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} />
       )}
 
       {/* Every remaining tab administers the host. Gating them here as well as in the tab strip keeps
           a hand-typed ?tab= from rendering an admin surface for an ordinary user. */}
-      {canManageApps && activeTab === "users" && (
+      {canManageApps && resolvedTab === "users" && (
         <UserManagementPanel coreOrigin={coreOrigin} activeUser={activeUser} sendCsrfJson={sendCsrfJson} />
       )}
 
-      {canManageApps && activeTab === "core" && (
+      {canManageApps && resolvedTab === "core" && (
         <SettingsCoreSection
           settings={coreSettings}
           settingsError={coreSettingsError}
@@ -140,7 +150,7 @@ export function SettingsPage({
         />
       )}
 
-      {canManageApps && activeTab === "ingress" && (
+      {canManageApps && resolvedTab === "ingress" && (
         <SettingsIngressSection
           settings={coreSettings}
           settingsError={coreSettingsError}
@@ -148,7 +158,7 @@ export function SettingsPage({
         />
       )}
 
-      {canManageApps && activeTab === "mounts" && (
+      {canManageApps && resolvedTab === "mounts" && (
         <SettingsMountsSection
           globalMounts={globalMounts}
           canManageApps={canManageApps}

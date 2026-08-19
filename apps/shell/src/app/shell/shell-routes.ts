@@ -48,14 +48,16 @@ export function shellViewRequiresAdmin(view: ShellView) {
 export function getAuthorizedShellView(
   view: ShellView,
   canManageApps: boolean,
-  settingsTab?: HostSettingsTab,
+  // Raw, because the value may be an app id. An app-settings tab is administrator-only like the
+  // rest of the page, so only the known non-admin host tabs pass the check below.
+  settingsTab?: string,
 ): ShellView {
   if (canManageApps || !shellViewRequiresAdmin(view)) {
     return view;
   }
 
   // Settings is admin-only as a page, not as a whole: one tab on it belongs to every user.
-  return view === "settings" && settingsTab && isNonAdminHostSettingsTab(settingsTab)
+  return view === "settings" && settingsTab && isHostSettingsTab(settingsTab) && isNonAdminHostSettingsTab(settingsTab)
     ? view
     : "available-apps";
 }
@@ -101,7 +103,10 @@ export function readLegacySystemAppId(pathname: string): string | null {
 
 export function readShellRoute(pathname: string, searchParams: ShellSearchParams): ShellRouteState {
   const path = normalizeShellPath(pathname);
-  const settingsTab = readHostSettingsTab(searchParams.get("tab"));
+  // The raw value, not readHostSettingsTab: an app-settings tab carries the app id here, and
+  // collapsing anything unknown to the default made every app tab land on Users — the surface was
+  // rendered and unreachable.
+  const settingsTab = readSettingsTabParam(searchParams.get("tab"));
   const appPath = normalizeAppPath(searchParams.get("path"));
 
   if (path === "/workspace") {

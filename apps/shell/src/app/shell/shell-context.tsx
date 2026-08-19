@@ -53,6 +53,7 @@ export type ShellActionsContextValue = {
   // that grant by existing.
   onEmbeddedAuthRequired: (appId: string) => void;
   requestDelegatedTokenFor: (appId: string) => ((refresh: boolean) => Promise<DelegatedTokenGrant>) | undefined;
+  openSettingsFrame: (appId: string, path: string) => Promise<string>;
   startAppById: (appId: string) => void;
   shellAppId: string;
   refresh: () => Promise<void>;

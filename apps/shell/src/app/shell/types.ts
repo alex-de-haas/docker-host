@@ -714,7 +714,9 @@ export type ShellRouteState = {
   workspace: WorkspaceRoute | null;
   // Always resolved, so no consumer has to repeat the default. Only read while `view` is
   // "settings"; carried on every route so a link into Settings can name its tab from anywhere.
-  settingsTab: HostSettingsTab;
+  // A host tab id, or the id of an app whose settings page fills the tab. Raw, because the two are
+  // told apart against the installed apps rather than by parsing.
+  settingsTab: string;
 };
 export type ShellSearchParams = {
   get(name: string): string | null;

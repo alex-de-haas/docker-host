@@ -6,6 +6,7 @@ import {
   getShellViewHref,
   getWorkspaceHref,
   readCanonicalRedirect,
+  isHostSettingsTab,
   readHostSettingsTab,
   readShellRoute,
   shellViewRequiresAdmin,
@@ -39,7 +40,7 @@ test("only Dashboard and Settings are administrator-only", () => {
   assert.equal(shellViewRequiresAdmin("available-apps"), false);
 });
 
-test("an unknown or missing settings tab resolves to Users", () => {
+test("readHostSettingsTab still collapses anything unknown to Users", () => {
   assert.equal(readHostSettingsTab("core"), "core");
   assert.equal(readHostSettingsTab("ingress"), "ingress");
   assert.equal(readHostSettingsTab("mounts"), "mounts");
@@ -47,10 +48,18 @@ test("an unknown or missing settings tab resolves to Users", () => {
   for (const value of ["nonsense", "", "   ", null, undefined]) {
     assert.equal(readHostSettingsTab(value), "users", `readHostSettingsTab(${value})`);
   }
+});
 
+test("the route keeps a settings tab raw, because it may be an app id", () => {
+  // An app-settings tab carries the app id in this parameter. Collapsing anything unfamiliar to the
+  // default here would send every app tab to Users — the surface rendered and unreachable. Which of
+  // the two a value is gets decided against the installed apps, at render, where that list exists.
   assert.equal(readShellRoute("/settings", params("tab=core")).settingsTab, "core");
-  assert.equal(readShellRoute("/settings", params("tab=nonsense")).settingsTab, "users");
+  assert.equal(readShellRoute("/settings", params("tab=com.haas.demo-app")).settingsTab, "com.haas.demo-app");
   assert.equal(readShellRoute("/settings", params()).settingsTab, "users");
+  assert.equal(readShellRoute("/settings", params("tab=   ")).settingsTab, "users");
+  assert.equal(isHostSettingsTab("core"), true);
+  assert.equal(isHostSettingsTab("com.haas.demo-app"), false);
 });
 
 test("a workspace route carries the app id and path", () => {

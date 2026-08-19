@@ -1858,6 +1858,7 @@ export function ShellClient({
         .map((app) => ({
           appId: app.id,
           label: app.settingsSurface?.label || app.displayName || app.id,
+          path: app.settingsSurface?.path ?? "/",
           embeddedUrl: app.settingsSurface?.embeddedUrl ?? null,
           running: app.runtimeState === "running",
         })),
@@ -1872,6 +1873,30 @@ export function ShellClient({
         ? (refresh: boolean) => issueDelegatedToken(appId, refresh)
         : undefined,
     [assistantGateway?.appId, issueDelegatedToken],
+  );
+
+  // Mints a launch code for an app's settings page and returns the URL to embed, so the frame lands
+  // with a real Hosty app session rather than as an anonymous visitor to the app's origin.
+  const openSettingsFrame = useCallback(
+    async (appId: string, path: string) => {
+      const app = state.apps.find((candidate) => candidate.id === appId);
+      if (!app) {
+        throw new Error("This app is no longer installed.");
+      }
+
+      const surfaceUrl = app.settingsSurface?.embeddedUrl;
+      if (!surfaceUrl) {
+        throw new Error("This app is not running, so its settings are not being served.");
+      }
+
+      const redirectUri = appendHostyLaunchParam(
+        appendHostyThemeParams(surfaceUrl, shellResolvedTheme, shellThemePreference),
+      );
+      const response = await sendCsrfJson(appEndpoint(app, "/launch-code"), { redirectUri });
+      const launch = (await response.json()) as AppLaunchResponse;
+      return launch.redirectUri;
+    },
+    [appEndpoint, sendCsrfJson, shellResolvedTheme, shellThemePreference, state.apps],
   );
 
   const startAppById = useCallback(
@@ -1929,6 +1954,7 @@ export function ShellClient({
       sendCsrfJson,
       onEmbeddedAuthRequired: handleAuthRequired,
       requestDelegatedTokenFor,
+      openSettingsFrame,
       startAppById,
       launchAppPage,
       getStandaloneAppHref,
@@ -1949,6 +1975,7 @@ export function ShellClient({
     [
       handleAuthRequired,
       requestDelegatedTokenFor,
+      openSettingsFrame,
       startAppById,
       updateCore,
       applyUpdateFromRow,
