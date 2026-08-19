@@ -68,6 +68,14 @@ So the mechanism is shared rather than copied, at two levels:
 A copy per context is how the gap this replaced happened: only the workspace answered the
 delegated-token handshake, so a settings page embedded elsewhere never loaded at all.
 
+**Recovery is the placed surface's own.** When a frame reports `hosty:auth-required`, the workspace's
+recovery re-mints against the workspace's URL and does nothing unless the centre pane belongs to that
+same app — so a panel docked beside a Shell page, or beside a *different* app, could never recover
+and would sit unauthenticated until it was remounted. A placed surface re-mints its own code instead,
+behind the same per-app rate limiter, since a frame that never accepts the new code must not drive an
+unbounded reissue storm. The previous answer stays on screen until the new one lands, so recovery
+does not blank the tool being used.
+
 The gateway used to be the one app that authenticated differently — a delegated token where every
 other app used a session. It now uses a session for its settings page and keeps the delegated token
 only for the Shell assistant panel, which is a genuinely different client rather than an exception.
@@ -84,7 +92,9 @@ at the same time.
 
 Tabs are keyed rather than indexed, because stopping or removing an app reorders the strip and an
 index would then point at somebody else's tool. A stopped app **keeps** its tab, dimmed and saying
-why, with a start action: a surface that vanished with its app would read as uninstalled, and the
+why, with a start action offered only to a user who can actually start apps — panels are deliberately
+not administrator-only, but Core's start route is, so offering everyone the button would promise
+something guaranteed to fail: a surface that vanished with its app would read as uninstalled, and the
 operator would go looking for the app rather than starting it. If the chosen tab's app disappears,
 the strip falls back to the first rather than rendering blank.
 

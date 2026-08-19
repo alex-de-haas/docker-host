@@ -18,16 +18,28 @@ export function useAppSurfaceSrc(
   tab: AppSurfaceTab | null,
   openSurfaceFrame: (appId: string, embeddedUrl: string) => Promise<string>,
   couldNotOpenMessage: string,
+  /**
+   * Bumped to mint a fresh launch code for the surface already on screen — the recovery path for a
+   * frame whose session expired. The previous answer stays until the new one lands, so recovery
+   * does not blank the tool the operator is using.
+   */
+  reloadKey = 0,
 ): { src: string | null; error: string | null } {
   // Tagged with the surface it answers, so the answer can be *derived* rather than cleared. Clearing
   // it synchronously when the tab changes would work, but it makes the effect cascade a render, and
   // the tag is what actually states the rule: an answer belongs to one surface and to no other.
-  const [resolved, setResolved] = useState<{ url: string; src: string | null; error: string | null } | null>(null);
+  //
+  // Tagged by the tab's **key**, not by its URL. Two surfaces may legitimately resolve to the same
+  // URL — one app declaring two panels on one path, or a settings and a panel surface that coincide
+  // — and a URL tag would then let one tab's answer be read as the other's, which is the very
+  // confusion the tag exists to prevent.
+  const [resolved, setResolved] = useState<{ key: string; src: string | null; error: string | null } | null>(null);
   const embeddedUrl = tab?.embeddedUrl ?? null;
   const appId = tab?.appId ?? null;
+  const key = tab?.key ?? null;
 
   useEffect(() => {
-    if (!appId || !embeddedUrl) {
+    if (!appId || !embeddedUrl || !key) {
       return;
     }
 
@@ -37,13 +49,13 @@ export function useAppSurfaceSrc(
     void openSurfaceFrame(appId, embeddedUrl)
       .then((launched) => {
         if (active) {
-          setResolved({ url: embeddedUrl, src: launched, error: null });
+          setResolved({ key, src: launched, error: null });
         }
       })
       .catch((reason: unknown) => {
         if (active) {
           setResolved({
-            url: embeddedUrl,
+            key,
             src: null,
             error: reason instanceof Error ? reason.message : couldNotOpenMessage,
           });
@@ -53,8 +65,8 @@ export function useAppSurfaceSrc(
     return () => {
       active = false;
     };
-  }, [appId, couldNotOpenMessage, embeddedUrl, openSurfaceFrame]);
+  }, [appId, couldNotOpenMessage, embeddedUrl, key, openSurfaceFrame, reloadKey]);
 
-  const current = resolved && resolved.url === embeddedUrl ? resolved : null;
+  const current = resolved && resolved.key === key ? resolved : null;
   return { src: current?.src ?? null, error: current?.error ?? null };
 }

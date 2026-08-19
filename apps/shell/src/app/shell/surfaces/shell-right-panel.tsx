@@ -30,6 +30,7 @@ export function ShellRightPanel({
   resolveDelegatedTokenRequest,
   onOpenSurfaceFrame,
   onStartApp,
+  reloadKey,
 }: {
   tabs: AppSurfaceTab[];
   activeTab: AppSurfaceTab | null;
@@ -37,6 +38,7 @@ export function ShellRightPanel({
   themePreference: HostyThemePreference;
   onSelectTab: (key: string) => void;
   onCollapse: () => void;
+  /** Re-mints this panel's own launch code; a panel is not tied to the workspace and cannot borrow its recovery. */
   onAuthRequired?: (appId: string) => void;
   /**
    * Undefined for every app but the one that already qualifies.
@@ -47,12 +49,14 @@ export function ShellRightPanel({
    */
   resolveDelegatedTokenRequest?: (appId: string) => ((refresh: boolean) => Promise<DelegatedTokenGrant>) | undefined;
   onOpenSurfaceFrame: (appId: string, embeddedUrl: string) => Promise<string>;
+  /** Undefined for a user who cannot start apps — Core refuses them, so the button would only fail. */
   onStartApp?: (appId: string) => void;
+  reloadKey?: number;
 }) {
-  const { src, error } = useAppSurfaceSrc(activeTab, onOpenSurfaceFrame, "Could not open this panel.");
+  const { src, error } = useAppSurfaceSrc(activeTab, onOpenSurfaceFrame, "Could not open this panel.", reloadKey);
 
   return (
-    <aside className="flex h-dvh min-w-0 flex-col border-l bg-sidebar text-sidebar-foreground">
+    <aside className="flex h-full min-h-0 min-w-0 flex-col border-l bg-sidebar text-sidebar-foreground">
       <div className="flex items-center gap-1 border-b px-2 py-1.5">
         <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto" role="tablist" aria-label="Panels">
           {tabs.map((tab) => (

@@ -12,11 +12,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { cn } from "@/lib/utils";
 
 // The theme control, moved out of the sidebar footer into the top strip: it belongs to neither rail,
 // which is exactly what the strip is for. The menu opens downward from its new home.
-export function ThemeMenuButton({ compact }: { compact: boolean }) {
+export function ThemeMenuButton() {
   const { theme, setTheme } = useTheme();
   const selectedTheme = theme || "system";
 
@@ -25,13 +24,12 @@ export function ThemeMenuButton({ compact }: { compact: boolean }) {
       <DropdownMenuTrigger asChild>
         <Button
           type="button"
-          variant={compact ? "ghost" : "outline"}
-          size={compact ? "icon-lg" : "default"}
-          className={cn(compact ? "mx-auto flex size-11" : "w-full justify-start")}
+          variant="ghost"
+          size="icon-sm"
           title="Theme"
+          aria-label="Theme"
         >
           <Monitor className="h-4 w-4" />
-          {!compact && <span>Theme</span>}
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent side="bottom" align="end" sideOffset={8} className="w-44">

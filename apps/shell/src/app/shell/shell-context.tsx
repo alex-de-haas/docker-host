@@ -52,6 +52,8 @@ export type ShellActionsContextValue = {
   // undefined for every app that does not already qualify, so a new embedding context cannot widen
   // that grant by existing.
   onEmbeddedAuthRequired: (appId: string) => void;
+  /** Bumped when a placed surface's session expired; asks the shared hook to re-mint. */
+  surfaceAuthNonce: number;
   requestDelegatedTokenFor: (appId: string) => ((refresh: boolean) => Promise<DelegatedTokenGrant>) | undefined;
   openSurfaceFrame: (appId: string, embeddedUrl: string) => Promise<string>;
   startAppById: (appId: string) => void;

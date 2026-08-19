@@ -22,6 +22,7 @@ export function AppSettingsTabPanel({
   resolveDelegatedTokenRequest,
   onOpenSurfaceFrame,
   onStartApp,
+  reloadKey,
 }: {
   tab: AppSurfaceTab;
   theme: HostyResolvedTheme;
@@ -37,8 +38,9 @@ export function AppSettingsTabPanel({
   resolveDelegatedTokenRequest?: (appId: string) => ((refresh: boolean) => Promise<DelegatedTokenGrant>) | undefined;
   onOpenSurfaceFrame: (appId: string, embeddedUrl: string) => Promise<string>;
   onStartApp?: (appId: string) => void;
+  reloadKey?: number;
 }) {
-  const { src, error } = useAppSurfaceSrc(tab, onOpenSurfaceFrame, "Could not open this app's settings.");
+  const { src, error } = useAppSurfaceSrc(tab, onOpenSurfaceFrame, "Could not open this app's settings.", reloadKey);
 
   if (!tab.embeddedUrl) {
     return (

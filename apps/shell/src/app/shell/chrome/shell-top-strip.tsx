@@ -49,8 +49,8 @@ export function ShellTopStrip({
       </div>
 
       <div className="flex items-center gap-1">
-        {showNotifications && <NotificationBell compact />}
-        <ThemeMenuButton compact />
+        {showNotifications && <NotificationBell />}
+        <ThemeMenuButton />
         {rightRailExpanded !== null && (
           <Button
             type="button"

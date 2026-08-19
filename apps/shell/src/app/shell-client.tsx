@@ -172,6 +172,8 @@ export function ShellClient({
   // Which panel tab was last chosen. A key rather than an index: an app being stopped or removed
   // reorders the strip, and an index would then point at somebody else's tool.
   const [activePanelKey, setActivePanelKey] = useState<string | null>(null);
+  // Bumped when a placed surface reports its session expired; the shared hook re-mints on the change.
+  const [surfaceAuthNonce, setSurfaceAuthNonce] = useState(0);
   const [assistantOpen, setAssistantOpen] = useState(false);
   // Structured page context ("app", "page") the contextual entry points seed a session with.
   const [assistantContext, setAssistantContext] = useState<Record<string, string> | null>(null);
@@ -1846,6 +1848,31 @@ export function ShellClient({
     [workspace, state.apps, sendCsrfJson, appEndpoint],
   );
 
+  // Recovery for a **placed** surface — a panel tab or a Settings tab.
+  //
+  // `handleAuthRequired` above cannot serve them: it returns unless the centre workspace belongs to
+  // the same app, so a panel docked beside a Shell page, or beside a different app, could never
+  // recover and would sit unauthenticated until it was remounted. A placed surface re-mints its own
+  // code instead; bumping this nonce is what asks the shared hook to do it.
+  //
+  // The same per-app limiter guards it, for the same reason: a frame that never accepts the new code
+  // must not drive an unbounded reissue storm.
+  const handleSurfaceAuthRequired = useCallback(
+    (appId: string) => {
+      const app = state.apps.find((candidate) => candidate.id === appId);
+      if (!app || app.runtimeState !== "running") {
+        return;
+      }
+
+      if (!authReissueLimiter.current.tryAcquire(appId)) {
+        return;
+      }
+
+      setSurfaceAuthNonce((nonce) => nonce + 1);
+    },
+    [state.apps],
+  );
+
   // Which embedded frame Shell will answer with a delegated token: the assistant gateway's own
   // pages, and nothing else. Shell already mints tokens for that app whenever the chat panel is
   // open, so its settings page gains no reach it did not have — whereas answering every frame would
@@ -1966,7 +1993,8 @@ export function ShellClient({
       shellAppId,
       refresh,
       sendCsrfJson,
-      onEmbeddedAuthRequired: handleAuthRequired,
+      onEmbeddedAuthRequired: handleSurfaceAuthRequired,
+      surfaceAuthNonce,
       requestDelegatedTokenFor,
       openSurfaceFrame,
       startAppById,
@@ -1987,7 +2015,8 @@ export function ShellClient({
       updateCore,
     }),
     [
-      handleAuthRequired,
+      handleSurfaceAuthRequired,
+      surfaceAuthNonce,
       requestDelegatedTokenFor,
       openSurfaceFrame,
       startAppById,
@@ -2118,10 +2147,13 @@ export function ShellClient({
             themePreference={shellThemePreference}
             onSelectTab={setActivePanelKey}
             onCollapse={() => setPanelOpen(false)}
-            onAuthRequired={handleAuthRequired}
+            onAuthRequired={handleSurfaceAuthRequired}
             resolveDelegatedTokenRequest={requestDelegatedTokenFor}
             onOpenSurfaceFrame={openSurfaceFrame}
-            onStartApp={startAppById}
+            // Panels are deliberately not administrator-only, but starting an app is: Core refuses a
+            // host.user, so offering them the button would promise something guaranteed to fail.
+            onStartApp={canManageApps ? startAppById : undefined}
+            reloadKey={surfaceAuthNonce}
           />
         )}
       </div>

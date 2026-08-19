@@ -23,7 +23,9 @@ import type {
 const LIST_LIMIT = 20;
 const POLL_INTERVAL_MS = 30_000;
 
-export function NotificationBell({ compact }: { compact: boolean }) {
+// Rendered only in Shell's top strip since app-ui-surfaces moved it there, so it is sized and placed
+// for a header rather than carrying a second set of sidebar-footer styles nothing uses.
+export function NotificationBell() {
   const { coreOrigin, sendCsrfJson } = useShellActions();
   const [items, setItems] = useState<ShellNotification[]>([]);
   const [unread, setUnread] = useState(0);
@@ -166,29 +168,23 @@ export function NotificationBell({ compact }: { compact: boolean }) {
       <DropdownMenuTrigger asChild>
         <Button
           type="button"
-          variant={compact ? "ghost" : "outline"}
-          size={compact ? "icon-lg" : "default"}
-          className={cn("relative", compact ? "mx-auto flex size-11" : "w-full justify-start")}
+          variant="ghost"
+          size="icon-sm"
+          className="relative"
           title="Notifications"
           aria-label={unread > 0 ? `Notifications, ${unread} unread` : "Notifications"}
         >
           <Bell className="h-4 w-4" />
-          {!compact && <span>Notifications</span>}
           {unread > 0 && (
-            <span
-              className={cn(
-                "absolute flex min-w-4 items-center justify-center rounded-full bg-rose-600 px-1 text-[10px] font-semibold leading-4 text-white",
-                compact ? "right-1 top-1" : "right-2 top-1/2 -translate-y-1/2",
-              )}
-            >
+            <span className="absolute right-0 top-0 flex min-w-3.5 items-center justify-center rounded-full bg-rose-600 px-0.5 text-[9px] font-semibold leading-3.5 text-white">
               {unread > 99 ? "99+" : unread}
             </span>
           )}
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
-        side={compact ? "right" : "top"}
-        align={compact ? "end" : "start"}
+        side="bottom"
+        align="end"
         sideOffset={8}
         className="w-80 p-0"
       >
