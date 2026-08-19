@@ -31,6 +31,7 @@ export function EmbeddedAppFrame({
   onAuthRequired,
   onDelegatedTokenRequest,
   onMessage,
+  outbound,
 }: {
   src: string;
   title: string;
@@ -52,6 +53,15 @@ export function EmbeddedAppFrame({
   onDelegatedTokenRequest?: (refresh: boolean) => Promise<DelegatedTokenGrant>;
   /** Extra verified-sender message handling for one context (the Marketplace's install intents). */
   onMessage?: (event: MessageEvent, frameWindow: Window | null) => void;
+  /**
+   * A message to hand the embedded page, delivered when `nonce` changes.
+   *
+   * Posting is done here rather than by the caller because the *target origin* is the part that must
+   * not be got wrong: a message posted to `*` is readable by whatever document happens to occupy the
+   * frame. The embedder already resolves the frame's own origin for the token handshake, so this
+   * reuses it. The nonce is what makes a repeat explicit — the same text asked twice is two asks.
+   */
+  outbound?: { message: unknown; nonce: number } | null;
 }) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -153,6 +163,18 @@ export function EmbeddedAppFrame({
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
   }, [onDelegatedTokenRequest, src]);
+
+  // Delivered once the frame has loaded: a page that has not run yet has no listener attached, and a
+  // message posted into it is dropped with no trace. Keyed on the nonce so nothing is re-sent when
+  // the component re-renders for an unrelated reason.
+  const outboundNonce = outbound?.nonce ?? 0;
+  const outboundMessage = outbound?.message;
+  useEffect(() => {
+    if (!outboundNonce || !loaded || outboundMessage === undefined) {
+      return;
+    }
+    iframeRef.current?.contentWindow?.postMessage(outboundMessage, getPostMessageTargetOrigin(src));
+  }, [loaded, outboundMessage, outboundNonce, src]);
 
   const handleLoad = useCallback(() => setLoaded(true), []);
   const currentFrameLoaded = loaded && loadedSrc === src;

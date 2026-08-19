@@ -31,6 +31,7 @@ export function ShellRightPanel({
   onOpenSurfaceFrame,
   onStartApp,
   reloadKey,
+  outbound,
 }: {
   tabs: AppSurfaceTab[];
   activeTab: AppSurfaceTab | null;
@@ -52,6 +53,8 @@ export function ShellRightPanel({
   /** Undefined for a user who cannot start apps — Core refuses them, so the button would only fail. */
   onStartApp?: (appId: string) => void;
   reloadKey?: number;
+  /** Handed to the active tab's frame; see EmbeddedAppFrame's `outbound`. */
+  outbound?: { message: unknown; nonce: number } | null;
 }) {
   const { src, error } = useAppSurfaceSrc(activeTab, onOpenSurfaceFrame, "Could not open this panel.", reloadKey);
 
@@ -96,6 +99,7 @@ export function ShellRightPanel({
           onAuthRequired={onAuthRequired}
           resolveDelegatedTokenRequest={resolveDelegatedTokenRequest}
           onStartApp={onStartApp}
+          outbound={outbound}
         />
       </div>
     </aside>
@@ -111,6 +115,7 @@ function RightPanelBody({
   onAuthRequired,
   resolveDelegatedTokenRequest,
   onStartApp,
+  outbound,
 }: {
   activeTab: AppSurfaceTab | null;
   src: string | null;
@@ -120,6 +125,7 @@ function RightPanelBody({
   onAuthRequired?: (appId: string) => void;
   resolveDelegatedTokenRequest?: (appId: string) => ((refresh: boolean) => Promise<DelegatedTokenGrant>) | undefined;
   onStartApp?: (appId: string) => void;
+  outbound?: { message: unknown; nonce: number } | null;
 }) {
   if (!activeTab) {
     return null;
@@ -155,6 +161,7 @@ function RightPanelBody({
       themePreference={themePreference}
       onAuthRequired={onAuthRequired}
       onDelegatedTokenRequest={resolveDelegatedTokenRequest?.(activeTab.appId)}
+      outbound={outbound}
     />
   );
 }
