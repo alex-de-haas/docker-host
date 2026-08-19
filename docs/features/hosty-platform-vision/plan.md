@@ -74,6 +74,47 @@ Any future feature that weakens one of these must say so in its plan, in those w
    runtime kind for **micro apps that consume nothing until a request arrives** is the expected
    answer to "ten small extensions must not cost ten containers" — a direction, not a design.
 
+5. **Hard at the perimeter, sovereign inside, legible between — and the administrator owns the
+   install decision.** Three rings, because "security" means a different thing at each distance:
+   - **The perimeter is hard and not negotiable.** External clients, the network, anything not on
+     this host: authenticated, fail-closed, no functionality argument overrides it. This is the
+     protection "извне" — and it is aimed at exactly the era the owner names, where agents find
+     holes cheaply.
+   - **Inside its own boundary an app is sovereign.** Protection mechanisms must not subtract
+     capability; where a guard would block a function, the platform informs the administrator and
+     lets them decide. The precedent already shipped: the remote-`localCommand` hard block became an
+     amber install warning by owner decision — the dialog says *"Install it only from a source you
+     trust — you do so at your own risk"*, which is this principle in one sentence. Do not
+     reintroduce hard blocks where a warning does the job.
+   - **Between apps, the platform owes attribution and containment — not policing.** "The admin owns
+     what they installed" is only a fair model when installing app A grants A's *declared* reach and
+     nothing more; one bad install must not silently become fleet-wide reach. This is not caution
+     layered on top of the model — it is what makes the model coherent, and it is bought by the
+     identity machinery, not by limiting what an app may do in its own ring.
+   One boundary survives this decision untouched: **the guards on third-party text steering the
+   agent** (draft-only ask-assistant, providers off by default). Those do not protect the system
+   from a bad app — they protect the administrator's own agency from being subverted, and consent
+   given at install time cannot cover a mechanism that works by deceiving the consenting party.
+
+## Expectations And Later Directions
+
+- **Apps ship with source.** The default is open source; a company's internal apps are closed by
+  their own choice and on their own responsibility. This expectation is load-bearing twice over: the
+  develop-in-place story only works on apps whose source is present, and the analysis direction
+  below is only meaningful against source.
+- **Agent-performed app review.** A future capability, not a design: at install time the harness
+  reads the manifest, the declared surfaces, and the source, and reports what the app can reach and
+  whether anything looks malicious. The attachment point already exists — the install plan/review
+  dialog is where the amber warnings live today. Advisory by definition: a model that misses a
+  backdoor does not make the backdoor absent, so this sharpens the administrator's decision and
+  never substitutes for the perimeter.
+- **The gateway's name.** "AI Gateway" undersells what the app became; **Hosty Harness** says it
+  right, and the code already agrees — `HarnessAdapter` and `HarnessRun` are its own interface
+  names, and the app's job is precisely to host and broker harnesses. Recorded as an intent, not a
+  task: renaming a system app has a known trap (a persisted manifest URL keeps the old id pinned;
+  the telemetry rename needed three coordinated hardcoded-id changes plus a config fix on live
+  hosts), so it is its own small planned change with a migration note, never a drive-by.
+
 ## Contribution Points, Named
 
 Today's points exist but were each invented ad hoc: `ui.entrypoint`/`ui.navigation`, then
