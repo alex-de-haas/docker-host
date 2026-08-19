@@ -13,7 +13,12 @@
 // to that frame's origin. Both requests are unauthenticated by design; what makes them safe is
 // that the embedder answers from facts about its own DOM rather than from what the frame claims.
 
-import { AUTH_REQUIRED_INTENT_TYPE, DELEGATED_TOKEN_REQUEST_TYPE } from "./index";
+import {
+  ASK_ASSISTANT_MAX_CHARS,
+  ASK_ASSISTANT_TYPE,
+  AUTH_REQUIRED_INTENT_TYPE,
+  DELEGATED_TOKEN_REQUEST_TYPE,
+} from "./index";
 
 /** The three fields of a `message` event these parsers read. */
 export interface EmbedderMessage {
@@ -88,6 +93,39 @@ export function parseActiveFrameDelegatedTokenRequest(
   }
 
   return { refresh: candidate.refresh === true };
+}
+
+/** A verified ask, and the one thing its payload carries. */
+export interface AskAssistantIntent {
+  /** Trimmed and capped here, so no embedder has to remember to do it. */
+  text: string;
+}
+
+/**
+ * Verifies that a `message` event is an ask-the-assistant intent from the active app frame, using
+ * the same sender checks as the pair above.
+ *
+ * The text is capped in the parser rather than by the caller: a cap is part of the contract, and an
+ * embedder that forgot it would let one app's page paste itself into the operator's draft. What the
+ * embedder must still decide is *where* the text goes — this function says an app asked, never that
+ * the assistant should send anything. Nothing here may be auto-sent.
+ */
+export function parseActiveFrameAskAssistant(
+  event: EmbedderMessage,
+  activeFrameWindow: unknown,
+  activeFrameUrl: string,
+): AskAssistantIntent | null {
+  if (!isActiveFrameMessage(event, activeFrameWindow, activeFrameUrl)) {
+    return null;
+  }
+
+  const candidate = event.data as { type?: unknown; text?: unknown };
+  if (candidate.type !== ASK_ASSISTANT_TYPE || typeof candidate.text !== "string") {
+    return null;
+  }
+
+  const text = candidate.text.trim().slice(0, ASK_ASSISTANT_MAX_CHARS);
+  return text ? { text } : null;
 }
 
 /** The sender half both parsers share: right frame, right origin, object payload. */

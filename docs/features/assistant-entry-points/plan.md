@@ -66,26 +66,27 @@ Two asks from the owner (2026-08-18), one mechanism short of possible today:
       have no app tools. The credential stays the operator's, obtained through the existing
       `hosty:request-delegated-token` handshake — the alternative, a gateway minting user-scoped
       tokens for itself, is the "token, not proxy" rule the bridge is built on.
-- [ ] Shell: the assistant tab's badge, wired to the same state the agent-background-sessions
-      indicator uses (one source, never a second poll), and the keyboard shortcut.
-- [ ] SDK: `hosty:ask-assistant` in `embedder.ts` — message shape, origin verification identical to
+- [x] Shell: the keyboard shortcut (`Ctrl`/`Cmd`+`Shift`+`A`), which toggles rather than only opens.
+- [ ] **Blocked** — Shell: the assistant tab's badge. It must read the same state as
+      agent-background-sessions' attention indicator ("one source, never a second poll"), and that
+      indicator is still an unchecked deliverable there, so nothing publishes the state to read.
+      Building it here would mean inventing exactly the second poll this plan forbids. Unblocks when
+      that plan ships its attention signal — which also needs updating there, since it names "the
+      sidebar Assistant entry" and that entry no longer exists.
+- [x] SDK: `hosty:ask-assistant` in `embedder.ts` — message shape, origin verification identical to
       the existing pair, and an `askAssistant(text)` helper. SDK minor bump.
-- [ ] Shell: the routing — a verified `hosty:ask-assistant` reveals the panel and is forwarded into
+- [x] Shell: the routing — a verified `hosty:ask-assistant` reveals the panel and is forwarded into
       its iframe with the source app id attached; length capped; messages from origins that fail
       verification dropped with a console warning, exactly as the token handshake does. The panel
       page owns the draft insertion and the provenance line.
-      **Includes the panel page verifying its embedder's origin on the inbound message.** Raised in
-      review of the panel move and deliberately left here: the page has no trustworthy source for
-      that origin yet — Core does not inject Shell's origin into apps, and a referrer can be absent,
-      so a gate built on it fails *silently*, dropping asks with no trace. It belongs with the public
-      message it protects, where the tests for it live. Until then the only sender is Shell posting
-      into its own frame, and the rule the design rests on is unaffected: the draft is filled, never
-      sent.
-- [ ] Telemetry UI: "Ask Assistant" on an error row, composing app id, timestamp, severity and body
+      The app→Shell hop — where an app's text actually enters — is verified and tested. The
+      Shell→panel hop is **not**, and stays open below as its own item: it needs a platform change,
+      not a decision.
+- [x] Telemetry UI: "Ask Assistant" on an error row, composing app id, timestamp, severity and body
       into the text. `apps/telemetry` minor bump.
-- [ ] Tests: the message verified and inserted beside one from a wrong origin dropped; the draft
+- [x] Tests: the message verified and inserted beside one from a wrong origin dropped; the draft
       carries provenance; nothing auto-sends — asserted, since it is the rule the design stands on.
-- [ ] Docs: `feature.md`, embedder-contract reference in hosty-app-skill, index.
+- [x] Docs: `feature.md`, embedder-contract reference in hosty-app-skill, index.
 
 Version outcome: `apps/shell` minor, `apps/ai-gateway` minor, `packages/app-sdk` minor,
 `apps/telemetry` minor. No platform change.
@@ -93,6 +94,16 @@ Version outcome: `apps/shell` minor, `apps/ai-gateway` minor, `packages/app-sdk`
 (An earlier revision of this line said "no gateway change — the panel is Shell's", which contradicted
 this plan's own target behaviour and first deliverable. Moving the panel *is* a gateway change, and
 the largest one here.)
+
+### Open, and needing a platform change
+
+- [ ] The panel page verifying its embedder's origin on the inbound ask. Confirmed while shipping the
+      routing: `HOSTY_SHELL_ORIGIN` does not exist and Core injects no embedder origin into apps, so
+      the page's only candidate is the referrer — which can be absent under a stricter policy, making
+      a gate on it fail *silently*, dropping asks with no trace. An unverifiable check that quietly
+      kills a feature is worse than the residual risk, which is bounded: the draft is filled, never
+      sent, and carries visible provenance. Closing it means deciding what Core should tell an app
+      about its embedder.
 
 ## Open Questions
 

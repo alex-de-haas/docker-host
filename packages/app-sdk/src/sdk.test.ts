@@ -14,11 +14,14 @@ import {
   readRecoveryParams,
   resolveLaunchMode,
   LAUNCH_MODE_ATTRIBUTE,
+  ASK_ASSISTANT_TYPE,
+  ASK_ASSISTANT_MAX_CHARS,
 } from "./index";
 import {
   createReissueRateLimiter,
   parseActiveFrameAuthRequired,
   parseActiveFrameDelegatedTokenRequest,
+  parseActiveFrameAskAssistant,
 } from "./embedder";
 import {
   clearAppSecretsCache,
@@ -458,6 +461,42 @@ describe("embedder", () => {
     expect(parse(withRefresh)).toEqual({ refresh: true });
     expect(parse(createDelegatedTokenRequest())).toEqual({ refresh: false });
     expect(parse({ type: DELEGATED_TOKEN_REQUEST_TYPE, refresh: "yes" })).toEqual({ refresh: false });
+  });
+
+  it("accepts only the active frame's own ask, and drops one from a wrong origin beside it", () => {
+    const ask = (overrides: Partial<{ data: unknown; origin: string; source: unknown }> = {}) =>
+      message({ data: { type: ASK_ASSISTANT_TYPE, text: "  disk is full  " }, ...overrides });
+
+    // Accepted and trimmed.
+    expect(parseActiveFrameAskAssistant(ask(), frameWindow, "http://app.local:3000/logs")).toEqual({
+      text: "disk is full",
+    });
+    // The pair that matters: the same payload from somewhere else is not an ask at all.
+    expect(parseActiveFrameAskAssistant(ask({ origin: "http://evil.local" }), frameWindow, "http://app.local:3000/")).toBe(null);
+    expect(parseActiveFrameAskAssistant(ask({ source: {} }), frameWindow, "http://app.local:3000/")).toBe(null);
+    expect(parseActiveFrameAskAssistant(ask(), null, "http://app.local:3000/")).toBe(null);
+
+    // Nothing without text, and nothing that is only whitespace: an empty draft insertion would be
+    // an app poking the operator for no reason.
+    expect(parseActiveFrameAskAssistant(message({ data: { type: ASK_ASSISTANT_TYPE } }), frameWindow, "http://app.local:3000/")).toBe(null);
+    expect(parseActiveFrameAskAssistant(message({ data: { type: ASK_ASSISTANT_TYPE, text: "   " } }), frameWindow, "http://app.local:3000/")).toBe(null);
+
+    // The three intents stay distinct: one message must never trigger another's handler.
+    expect(parseActiveFrameAskAssistant(message(), frameWindow, "http://app.local:3000/")).toBe(null);
+    expect(parseActiveFrameAuthRequired(ask(), frameWindow, "http://app.local:3000/", "a.b")).toBe(false);
+    expect(parseActiveFrameDelegatedTokenRequest(ask(), frameWindow, "http://app.local:3000/")).toBe(null);
+  });
+
+  it("caps an ask in the parser, so no embedder has to remember to", () => {
+    // A cap the caller applies is a cap one caller forgets. Asserted at the boundary rather than
+    // approximately: the point is that a page cannot paste itself into the operator's draft.
+    const long = "x".repeat(ASK_ASSISTANT_MAX_CHARS + 500);
+    const parsed = parseActiveFrameAskAssistant(
+      message({ data: { type: ASK_ASSISTANT_TYPE, text: long } }),
+      frameWindow,
+      "http://app.local:3000/",
+    );
+    expect(parsed?.text.length).toBe(ASK_ASSISTANT_MAX_CHARS);
   });
 
   it("rate-limits reissues per app", () => {

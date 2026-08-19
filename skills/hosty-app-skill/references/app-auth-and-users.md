@@ -71,3 +71,32 @@ Authorization: Bearer <HOSTY_APP_SERVICE_TOKEN>
 ```
 
 The directory is scoped to enabled users explicitly assigned to the app, plus enabled Host admins (who have implicit access to every app and are never stored as explicit assignments).
+
+## Asking The Assistant
+
+An embedded app can hand text to the operator's assistant with `askAssistant(text)` from
+`@hosty-sdk/app`, which posts `hosty:ask-assistant` to the embedder:
+
+```ts
+import { askAssistant } from "@hosty-sdk/app";
+
+askAssistant(`${appName} logged ERROR at ${when}:\n\n${message}`);
+```
+
+**It fills the operator's draft. It does not send.** That is the contract, not a limitation of the
+current version: app-provided text entering a model that holds host shell is the same trust boundary
+that keeps MCP providers off by default, and an error message is exactly the shape a prompt injection
+arrives in. The operator reads it, sees which app it came from, and decides.
+
+- **Plain text only.** No structured payload beyond the text: shape the operator cannot read at a
+  glance is shape they cannot check.
+- **No reply.** The call answers whether the message could be *posted*, never whether anyone acted on
+  it — that is the operator's business.
+- **Safe to call unconditionally.** Standalone there is no embedder to hear it; an embedder with no
+  assistant ignores it.
+- **The embedder caps the length** (4000 characters) and verifies the sender against its own DOM, so
+  a message that is not from the mounted app frame's own origin is dropped with a console warning.
+  Do not pre-truncate; do not expect a message from another origin to arrive.
+
+Shell reveals the assistant panel, selects its tab, and forwards the text with the app id it mounted
+— never one the frame claims.

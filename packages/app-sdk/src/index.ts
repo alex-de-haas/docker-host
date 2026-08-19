@@ -32,6 +32,52 @@ export function createAuthRequiredIntent(appId: string): AuthRequiredIntent {
  * token is a user-scoped credential, so an embedder answers only for apps it deliberately grants
  * one (Hosty Shell: the assistant gateway, which it already mints tokens for).
  */
+/**
+ * An embedded app asking its embedder to put text in the assistant's draft.
+ *
+ * The embedder reveals its assistant surface and forwards the text there; the assistant fills the
+ * **draft** and stops. Nothing is sent. That is the contract, not a UX choice: app-provided text
+ * entering a model that holds host shell is the same trust boundary that keeps MCP providers off by
+ * default, and an error message is exactly the shape a prompt injection arrives in. The operator
+ * reads it, with its source shown, and decides.
+ *
+ * Plain text only, and no reply. A structured payload would invite apps to smuggle shape the
+ * operator cannot read at a glance, and an answer would turn a hand-off into a channel.
+ */
+export const ASK_ASSISTANT_TYPE = "hosty:ask-assistant";
+
+/** Longer than a prompt fragment is a page dumping itself into someone's draft. */
+export const ASK_ASSISTANT_MAX_CHARS = 4000;
+
+export interface AskAssistantMessage {
+  type: typeof ASK_ASSISTANT_TYPE;
+  /** Trimmed and capped by the embedder's parser; the app need not pre-truncate. */
+  text: string;
+}
+
+/**
+ * Asks the embedder to put `text` in the operator's assistant draft.
+ *
+ * Safe to call unconditionally: standalone there is no embedder to hear it, and an embedder that
+ * does not offer an assistant simply ignores it. Returns whether the message could be posted at
+ * all — never whether anyone acted on it, which is the operator's business and not the app's.
+ */
+export function askAssistant(text: string): boolean {
+  if (typeof window === "undefined" || window.parent === window) {
+    return false;
+  }
+
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  // Broadcast: the message carries no secret, and the embedder verifies the sender against its own
+  // DOM rather than trusting anything claimed here.
+  window.parent.postMessage({ type: ASK_ASSISTANT_TYPE, text: trimmed } satisfies AskAssistantMessage, "*");
+  return true;
+}
+
 export const DELEGATED_TOKEN_REQUEST_TYPE = "hosty:request-delegated-token";
 export const DELEGATED_TOKEN_TYPE = "hosty:delegated-token";
 
