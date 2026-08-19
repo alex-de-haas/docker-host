@@ -66,19 +66,6 @@ export function ShellSidebar({
 }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className={cn("relative flex h-18 shrink-0 items-center border-b px-3", compact ? "justify-center" : "gap-2")}>
-        <button
-          type="button"
-          className={cn("flex min-w-0 items-center gap-3 rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]", compact && "justify-center")}
-          onClick={() => onNavigate(canManageApps ? "dashboard" : "available-apps")}
-          title="Hosty"
-        >
-          <BrandMark />
-          {!compact && (
-            <span className="block truncate text-sm font-semibold uppercase">Hosty</span>
-          )}
-        </button>
-      </div>
 
       <nav className={cn("min-h-0 flex-1 overflow-y-auto py-4", compact ? "px-2" : "px-3")} aria-label="Host navigation">
         <div className={cn(compact ? "space-y-4" : "space-y-6")}>
@@ -137,29 +124,6 @@ export function ShellSidebar({
   );
 }
 
-function BrandMark() {
-  return (
-    <span className="flex size-10 shrink-0 items-center justify-center text-sidebar-foreground">
-      <svg
-        viewBox="0 0 100 100"
-        aria-hidden
-        className="size-9"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={6}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <path d="M25 36 V64 M75 36 V64 M25 50 H39 M61 50 H75" />
-        <rect x="17" y="17" width="16" height="16" rx="4.5" />
-        <rect x="67" y="17" width="16" height="16" rx="4.5" />
-        <rect x="17" y="67" width="16" height="16" rx="4.5" />
-        <rect x="67" y="67" width="16" height="16" rx="4.5" />
-        <rect x="42" y="42" width="16" height="16" rx="4.5" />
-      </svg>
-    </span>
-  );
-}
 
 function NavigationSection({
   title,

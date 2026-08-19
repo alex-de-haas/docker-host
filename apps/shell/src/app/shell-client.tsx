@@ -2065,6 +2065,11 @@ export function ShellClient({
           rightRailExpanded={appPanelTabs.length > 0 ? rightPanelOpen : null}
           onToggleRightRail={() => setPanelOpen(!rightPanelOpen)}
           showNotifications={Boolean(activeUser)}
+          onBrandClick={() => {
+            setWorkspace(null);
+            setOptimisticWorkspaceRoute(null);
+            router.push(getShellViewHref(canManageApps ? "dashboard" : "available-apps"));
+          }}
         />
 
       <div
@@ -2160,7 +2165,6 @@ export function ShellClient({
             theme={shellResolvedTheme}
             themePreference={shellThemePreference}
             onSelectTab={setActivePanelKey}
-            onCollapse={() => setPanelOpen(false)}
             onAuthRequired={handleSurfaceAuthRequired}
             resolveDelegatedTokenRequest={requestDelegatedTokenFor}
             onOpenSurfaceFrame={openSurfaceFrame}

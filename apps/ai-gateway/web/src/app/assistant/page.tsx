@@ -244,8 +244,8 @@ export default function AssistantPage() {
   return (
     <div className="flex h-dvh min-h-0 flex-col">
       <header className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
-        <Sparkles className="h-4 w-4 shrink-0" aria-hidden />
-        <span className="text-sm font-medium">Assistant</span>
+        <Sparkles className="hosty-shell-chrome h-4 w-4 shrink-0" aria-hidden />
+        <span className="hosty-shell-chrome text-sm font-medium">Assistant</span>
         <StatusBadge value={status} />
         <div className="ml-auto flex items-center gap-1">
           <Button

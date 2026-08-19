@@ -3,6 +3,7 @@
 import { PanelLeft, PanelRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { BrandMark } from "./brand-mark";
 import { NotificationBell } from "../notifications/notification-bell";
 import { ThemeMenuButton } from "./theme-menu-button";
 
@@ -19,6 +20,7 @@ export function ShellTopStrip({
   rightRailExpanded,
   onToggleRightRail,
   showNotifications,
+  onBrandClick,
 }: {
   title: string;
   subtitle?: string | null;
@@ -28,9 +30,21 @@ export function ShellTopStrip({
   rightRailExpanded: boolean | null;
   onToggleRightRail: () => void;
   showNotifications: boolean;
+  /** The mark doubles as the way home, which is what it did in the sidebar header it came from. */
+  onBrandClick: () => void;
 }) {
   return (
     <header className="flex h-10 shrink-0 items-center gap-2 border-b bg-sidebar px-2 text-sidebar-foreground">
+      <button
+        type="button"
+        onClick={onBrandClick}
+        title="Hosty"
+        aria-label="Hosty"
+        className="flex shrink-0 items-center rounded-md outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+      >
+        <BrandMark />
+      </button>
+
       <Button
         type="button"
         variant="ghost"
