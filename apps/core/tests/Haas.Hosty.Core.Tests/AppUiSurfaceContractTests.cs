@@ -14,7 +14,7 @@ public class AppUiSurfaceContractTests
 
         Assert.NotNull(ui);
         Assert.Null(ui.Settings);
-        Assert.Null(ui.Panel);
+        Assert.Empty(ui.Panels!);
     }
 
     [Fact]
@@ -39,11 +39,11 @@ public class AppUiSurfaceContractTests
         var ui = AppUiContract.FromManifest(new RuntimeAppUiManifest
         {
             PortKey = "http",
-            Panel = new RuntimeAppUiSurfaceManifest { Endpoint = "panel", Path = "/tool", Label = "Notes" },
+            Panels = [new RuntimeAppUiSurfaceManifest { Endpoint = "panel", Path = "/tool", Label = "Notes" }],
         });
 
-        Assert.Equal("panel", ui!.Panel!.EndpointKey);
-        Assert.Equal("Notes", ui.Panel.Label);
+        Assert.Equal("panel", ui!.Panels![0].EndpointKey);
+        Assert.Equal("Notes", ui.Panels[0].Label);
     }
 
     [Theory]
@@ -73,12 +73,33 @@ public class AppUiSurfaceContractTests
         });
         var panelOnly = AppUiContract.FromManifest(new RuntimeAppUiManifest
         {
-            Panel = new RuntimeAppUiSurfaceManifest { Endpoint = "http", Path = "/panel", Label = "Tool" },
+            Panels = [new RuntimeAppUiSurfaceManifest { Endpoint = "http", Path = "/panel", Label = "Tool" }],
         });
 
         Assert.NotNull(settingsOnly!.Settings);
-        Assert.Null(settingsOnly.Panel);
-        Assert.NotNull(panelOnly!.Panel);
+        Assert.Empty(settingsOnly.Panels!);
+        Assert.Single(panelOnly!.Panels!);
         Assert.Null(panelOnly.Settings);
+    }
+
+    [Fact]
+    public void AnAppMayShipSeveralPanelsAndTheyKeepTheirOrderAndLabels()
+    {
+        // One app, several distinct tools — the reason panels are a list where settings is a single
+        // field. Order is the manifest's, since the strip renders them in it.
+        var ui = AppUiContract.FromManifest(new RuntimeAppUiManifest
+        {
+            PortKey = "http",
+            Panels =
+            [
+                new RuntimeAppUiSurfaceManifest { Path = "/chat", Label = "Assistant" },
+                new RuntimeAppUiSurfaceManifest { Path = "/notes", Label = "Notes" },
+            ],
+        });
+
+        Assert.Equal(["Assistant", "Notes"], ui!.Panels!.Select(panel => panel.Label));
+        Assert.Equal(["/chat", "/notes"], ui.Panels.Select(panel => panel.Path));
+        // Both inherit the entrypoint endpoint, like any other surface that names none.
+        Assert.All(ui.Panels, panel => Assert.Equal("http", panel.EndpointKey));
     }
 }

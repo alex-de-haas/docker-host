@@ -228,8 +228,11 @@ export type CoreApp = {
   // Placed UI surfaces beyond the sidebar (docs/features/app-ui-surfaces/feature.md). Absent when
   // the app declares none, and absent from older Core builds — a missing surface is "this app has
   // no tab", which is the same thing either way.
+  // At most one settings surface, administrator-only: it lands on the Settings page, which is.
   settingsSurface?: CoreAppSurface | null;
-  panelSurface?: CoreAppSurface | null;
+  // Any number of panel surfaces — one app may ship several distinct tools — and not
+  // administrator-only: a panel is a tool an ordinary user may hold.
+  panelSurfaces?: CoreAppSurface[];
   entryPath?: string | null;
   embeddedUrl?: string | null;
   // Core-origin-relative URLs for the app's manifest-declared display assets (manifest-level app

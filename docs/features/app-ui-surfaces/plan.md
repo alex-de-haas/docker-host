@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-08-18
-Updated: 2026-08-18
+Updated: 2026-08-19
 
 Give an app's UI a declared *kind*, so operator configuration stops living in the sidebar as if it
 were a domain page.
@@ -37,12 +37,15 @@ dashboard tiles — stay a recorded future axis and are not built.
 
 ## Target Behavior
 
-- The manifest gains an optional `ui.settings: { endpoint, path }`. Additive: `ui.navigation` is
+- The manifest gains an optional `ui.settings: { endpoint, path }` — **at most one, and
+  administrator-only**, because the Settings page it lands on is. Additive: `ui.navigation` is
   untouched, no `schemaVersion` bump (it tracks the contract format, not additions).
 - Core's app projection carries the new field, so Shell discovers settings surfaces the same way it
   discovers navigation — without reading manifests.
-- The manifest also gains an optional `ui.panel: { endpoint, path, label }` — a tab on Shell's
-  **right panel**. The panel is chrome: a tab strip present on every page, collapsible, absent
+- The manifest also gains an optional **`ui.panels: [{ endpoint, path, label }]`** — tabs on Shell's
+  **right panel**. A list, and named in the plural, because one app may ship several distinct tools
+  (owner, 2026-08-19); and unlike settings, **not administrator-only** — a panel is a tool an
+  ordinary user may hold, authorized by the app as its pages always have been. The panel is chrome: a tab strip present on every page, collapsible, absent
   entirely while no installed app declares a panel surface; its content is an iframe from the app's
   origin, exactly like a settings tab. The property that motivated it is **docking**: panel content
   sits beside the workspace rather than over it, so an operator reads an app's error and talks to
@@ -88,31 +91,43 @@ Shell.
 
 ## Deliverables
 
-- [ ] Manifest: optional `ui.settings` and `ui.panel`, validated (endpoint must exist, path must be
-      absolute, panel label required), documented in
-      `skills/hosty-app-skill/references/app-manifest.md`.
-- [ ] Core: the app projection and app-directory summaries carry both surfaces resolved to URLs,
-      exactly as navigation entries are resolved.
+- [x] Manifest: optional `ui.settings` and `ui.panels`, validated (endpoint must exist and be
+      explicit for a system app, path absolute, every panel labelled, panel labels unique within an
+      app).
+- [x] Core: the app projection carries both surfaces resolved to URLs, exactly as navigation entries
+      are resolved.
+- [ ] `skills/hosty-app-skill/references/app-manifest.md` documents both surfaces.
 - [ ] Shell: the right panel — tab strip on every page, collapsible, absent while nothing declares a
       panel surface, one iframe tab per declaring app.
 - [ ] Shell: the top strip — rail toggles, the current app's name, the existing notification bell
       relocated, and a theme switch. The mock demonstrates all four; the bell's behaviour stays
       notifications' scope.
-- [ ] Shell: a tab per app on the Settings page, iframe from the app origin, **the delegated-token
-      handshake answered on the Settings page** — the workspace-only gap is a known trap that has
-      bitten once already. Admin gating comes free with the Settings page.
-- [ ] Shell: a stopped or unreachable app's tab states that plainly instead of rendering a dead
-      iframe (subject to open question 1).
+- [x] Shell: **one shared embedder** (`EmbeddedAppFrame`) for every context — the workspace now uses
+      it, and Settings tabs and panel tabs use the same component rather than a copy each.
+- [x] Shell: a tab per app on the Settings page, iframe from the app origin. Admin gating comes free
+      with the Settings page.
+- [x] Shell: a stopped app keeps its tab, dimmed, saying why, with a start action.
 - [ ] Gateway: drop `ui.navigation`, declare `ui.settings`; rebuild the page as a Next.js static
       export (Tailwind + shadcn) served by the existing process. **Relative fetches only** — the
       telemetry UI has already shipped the bug where `next build` baked a localhost origin into
       static layouts.
-- [ ] SDK: confirm `embedder.ts` needs nothing new for the Settings placement; extend it only if the
-      confirmation fails.
+- [x] SDK: `embedder.ts` needed nothing new — confirmed by the Settings tab embedding through the
+      same helpers the workspace uses.
 - [ ] Tests: manifest validation both ways; Shell renders a tab for a declaring app and none for a
       non-declaring one; the handshake answered on Settings (the pair: a page that loads there,
       beside the workspace still working); the gateway page standalone and embedded.
 - [ ] Docs: `feature.md`, hosty-app-skill reference, index.
+
+### Sequencing (owner, 2026-08-19)
+
+The feature ships in **three PRs**, not one — decided after the contract landed and the size of the
+remaining two became clear:
+
+1. **The contract and Settings tabs** (this one): manifest, projection, validation, the shared
+   embedder, Settings tabs, and the gateway's move out of the sidebar.
+2. **The gateway's page on the standard stack**: Next.js static export + Tailwind + shadcn, and with
+   it the switch to the ordinary app-session auth every other embedded page uses.
+3. **The Shell chrome**: the right panel, the top strip, and the bell's relocation.
 
 Version outcome: platform minor (manifest contract + projection), `apps/shell` minor,
 `apps/ai-gateway` minor.
@@ -132,6 +147,18 @@ None open. Both were answered by the mock and approved by the owner on 2026-08-1
 
 - **The split rule above** — recommended 2026-08-18 in chat and uncontested; recorded here so Ready
   review confirms it explicitly rather than inheriting it silently.
+- **Settings surfaces authenticate like every other embedded page** (owner, 2026-08-19): the app's
+  own Hosty session, not a delegated token. Nothing about the delegated-token grant widens, and the
+  Shell code passes through the existing `appMayReceiveDelegatedToken` rule rather than restating it,
+  so a new embedding context cannot widen that grant by existing. The gateway is the one app that
+  authenticates differently today; it is fixed in PR 2 rather than being made an exception.
+  The direct-link question this raised has a better answer than expected, established by reading
+  Core: for a **system** app, `RequireAccessibleUserAsync` runs on every identity flow *including
+  revalidation*, so Core refuses a non-admin a session for it — the app does not have to remember to
+  check, and a downgraded admin loses access at the next revalidation rather than the next login. For
+  a non-system app there is no such rule and its own authorization decides, which is the app's
+  responsibility.
+
 - **Iframe, not native rendering of app settings in Shell.** Preserves the recorded objection that
   moved the gateway's page out of Shell in the first place: Shell must not know any app's settings
   schema. Declarative Shell-rendered settings can be added later for simple cases without breaking

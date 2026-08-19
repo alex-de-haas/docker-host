@@ -1034,8 +1034,22 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
 
         ValidateSystemUiSurface(manifest, ui.Settings, "$.ui.settings", labelRequired: false, errors);
         // A panel tab is labelled by its own text, not by the app's name — several apps' tools share
-        // one strip, so "Notes" beats a second copy of the app name. Required for that reason.
-        ValidateSystemUiSurface(manifest, ui.Panel, "$.ui.panel", labelRequired: true, errors);
+        // one strip, and one app may contribute several, so "Notes" beats a second copy of the app
+        // name. Required for that reason.
+        var seenPanelLabels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var panel in ui.Panels)
+        {
+            ValidateSystemUiSurface(manifest, panel, "$.ui.panels[]", labelRequired: true, errors);
+            // Two tabs of one app under the same name are indistinguishable on the strip, which is
+            // the only place they appear.
+            if (!string.IsNullOrWhiteSpace(panel.Label) && !seenPanelLabels.Add(panel.Label.Trim()))
+            {
+                errors.Add(new(
+                    "app_manifest_system_ui_panel_label_duplicate",
+                    $"System app UI declares panel label '{panel.Label.Trim()}' more than once.",
+                    "$.ui.panels[].label"));
+            }
+        }
     }
 
     private static void ValidateSystemUiSurface(
@@ -3216,11 +3230,14 @@ internal sealed class RuntimeAppUiManifest
     public string? PortKey { get; init; }
     public IReadOnlyList<RuntimeAppUiNavigationItemManifest> Navigation { get => field ?? []; init; } = [];
     // Operator configuration: a tab on Shell's Settings page rather than a sidebar entry
-    // (docs/features/app-ui-surfaces/plan.md).
+    // (docs/features/app-ui-surfaces/plan.md). At most one, and administrator-only — the Settings
+    // page it lands on is.
     public RuntimeAppUiSurfaceManifest? Settings { get; init; }
-    // An always-at-hand tool: a tab on Shell's right rail, docked beside the content rather than
-    // over it. `Label` is required here and ignored for settings, whose tab is named for the app.
-    public RuntimeAppUiSurfaceManifest? Panel { get; init; }
+    // Always-at-hand tools: tabs on Shell's right rail, docked beside the content rather than over
+    // it. A list, because one app may ship several distinct tools; plural in the manifest for the
+    // same reason `navigation` is. Unlike settings these are not administrator-only — a panel is a
+    // tool an ordinary user may hold, and the app authorizes its own page as it always has.
+    public IReadOnlyList<RuntimeAppUiSurfaceManifest> Panels { get => field ?? []; init; } = [];
 }
 
 /// <summary>
@@ -3236,6 +3253,8 @@ internal sealed class RuntimeAppUiSurfaceManifest
     public string? Endpoint { get; init; }
     public string? PortKey { get; init; }
     public string? Path { get; init; }
+    // Required for a panel, whose tab sits beside other apps' tabs and must name itself; ignored for
+    // settings, whose tab is named for the app.
     public string? Label { get; init; }
 }
 

@@ -577,7 +577,7 @@ internal sealed record AppUiContract(
     // Placed surfaces beyond the sidebar. Additive and nullable, so records written before
     // app-ui-surfaces read back as "declares neither" rather than failing to load.
     AppSurfaceContract? Settings = null,
-    AppSurfaceContract? Panel = null)
+    IReadOnlyList<AppSurfaceContract>? Panels = null)
 {
     public static AppUiContract? FromManifest(RuntimeAppUiManifest? ui)
     {
@@ -604,7 +604,7 @@ internal sealed record AppUiContract(
             EntryPath: entry.Path,
             Navigation: navigation,
             Settings: ReadSurface(ui.Settings, entry),
-            Panel: ReadSurface(ui.Panel, entry));
+            Panels: ui.Panels.Select(panel => ReadSurface(panel, entry)!).ToArray());
     }
 
     /// <summary>
@@ -875,7 +875,7 @@ internal sealed record AppSummary(
     // app declares none — Shell renders a Settings tab or a panel tab for precisely the apps that
     // asked for one, and discovers that here rather than by reading manifests.
     AppSurfaceSummary? SettingsSurface,
-    AppSurfaceSummary? PanelSurface,
+    IReadOnlyList<AppSurfaceSummary> PanelSurfaces,
     IReadOnlyList<AppMountSummary> Mounts,
     // Compiled-artifact run-locks per service (the running/locked image digest) and the effective
     // pull/lock policy (always "pinned"), for version legibility and lock badges on clients.
@@ -998,7 +998,9 @@ internal sealed record AppSummary(
                     EmbeddedUrl: BuildUiUrl(ResolveEndpointUrl(endpoints, surface.EndpointKey ?? ui!.EndpointKey), surface.Path));
 
         var settingsSurface = Surface(ui?.Settings, app.DisplayName);
-        var panelSurface = Surface(ui?.Panel, app.DisplayName);
+        var panelSurfaces = (ui?.Panels ?? [])
+            .Select(panel => Surface(panel, app.DisplayName)!)
+            .ToArray();
 
         // Source-capable when it declares any source (localCommand) runtime, regardless of install
         // channel. Under the Development Mode operator toggle, the operator may point any source runtime
@@ -1028,7 +1030,7 @@ internal sealed record AppSummary(
             entryUrl,
             navigation,
             settingsSurface,
-            panelSurface,
+            panelSurfaces,
             BuildMountSummaries(app.MountSlots, app.Mounts),
             DockerRuntimeAdapter.ResolveUpdatePolicy(app.UpdatePolicy),
             app.ArtifactLocks,

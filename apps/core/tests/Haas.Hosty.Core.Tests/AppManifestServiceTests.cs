@@ -168,14 +168,14 @@ public sealed class AppManifestServiceTests
                 , "ui": {
                     "entrypoint": { "endpoint": "web", "path": "/" },
                     "settings": { "endpoint": "web", "path": "/settings" },
-                    "panel": { "endpoint": "web", "path": "/panel", "label": "Assistant" }
+                    "panels": [{ "endpoint": "web", "path": "/panel", "label": "Assistant" }]
                   }
                 """);
 
         var selection = await new AppManifestService().LoadAsync(manifestPath);
 
         Assert.Equal("/settings", selection.Manifest.Ui!.Settings!.Path);
-        Assert.Equal("Assistant", selection.Manifest.Ui.Panel!.Label);
+        Assert.Equal("Assistant", selection.Manifest.Ui.Panels[0].Label);
     }
 
     [Fact]
@@ -205,7 +205,7 @@ public sealed class AppManifestServiceTests
             ui: """
                 , "ui": {
                     "entrypoint": { "endpoint": "web", "path": "/" },
-                    "panel": { "path": "/panel", "label": "Tool" }
+                    "panels": [{ "path": "/panel", "label": "Tool" }]
                   }
                 """);
 
@@ -225,7 +225,7 @@ public sealed class AppManifestServiceTests
                 , "ui": {
                     "entrypoint": { "endpoint": "web", "path": "/" },
                     "settings": { "endpoint": "web", "path": "/settings" },
-                    "panel": { "endpoint": "web", "path": "/panel" }
+                    "panels": [{ "endpoint": "web", "path": "/panel" }]
                   }
                 """);
 
