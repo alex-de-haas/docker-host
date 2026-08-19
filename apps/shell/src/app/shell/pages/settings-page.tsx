@@ -132,11 +132,11 @@ export function SettingsPage({
       </div>
 
       {activeAppTab && (
-        // Breaks out of the page's own padding. An embedded app paints its own page background, so
-        // any gap left around the frame shows the settings page's surface behind it and the app
-        // reads as a white box floating on grey rather than as this tab's content. Flush, the only
-        // boundary left is the line under the tab strip, which is the one that belongs there.
-        <div className="-mx-4 -mb-6 sm:-mx-6 lg:-mx-8">
+        // Only the bottom breaks out, so the frame reaches the window edge. The sides keep the
+        // page's own padding, and the embedded page drops its own: the padding is responsive, and
+        // an iframe cannot match it from inside — its breakpoints measure the frame's width, not
+        // the window's. One side has to own it, and the shell is the side that knows the grid.
+        <div className="-mb-6">
           <AppSettingsTabPanel tab={activeAppTab} {...appTabProps} />
         </div>
       )}

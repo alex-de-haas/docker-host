@@ -51,20 +51,20 @@ export default function SettingsPage() {
 
   if (error && !data) {
     return (
-      <main className="p-6">
+      <main className="hosty-page-padding">
         <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">{error}</p>
       </main>
     );
   }
 
   if (!data) {
-    return <main className="p-6 text-sm text-muted-foreground">Loading…</main>;
+    return <main className="hosty-page-padding text-sm text-muted-foreground">Loading…</main>;
   }
 
   const { settings, providers, discovery } = data;
 
   return (
-    <main className="grid gap-7 p-6">
+    <main className="hosty-page-padding grid gap-7">
       <section>
         <h2 className="text-[15px] font-semibold">System prompt</h2>
         <p className="mb-3 text-[13px] text-muted-foreground">
