@@ -178,7 +178,12 @@ None open. Both were answered by the mock and approved by the owner on 2026-08-1
   overridden by the owner's one-stack goal (2026-08-18), but a telemetry-style second runtime for a
   settings form would be the heaviest possible reading of that goal. `next build` output served by
   the process that already exists keeps one runtime and gains the standard components. If the page
-  ever grows real weight, the manifest already supports promoting it to a service.
+  ever grows real weight, the manifest already supports promoting it to a service. What the decision
+  costs is paid at install, and it bit on a real host (2026-08-19): `npm install` run from
+  `apps/ai-gateway` scopes itself to *that* workspace, so `next build` ran against dependencies npm
+  was never asked to fetch. It passed on a developer machine only because sibling workspaces had
+  hoisted the same packages to the repo root. The `setup` command now names both workspaces, and the
+  page declares every package it imports rather than borrowing a hoisted one.
 - **The two-rail concept, capped by a top strip** (owner, 2026-08-18): left rail navigates, right
   rail holds tool panels, content stays visible beside both, and the strip above owns what belongs to
   neither rail — the toggles, the bell, the theme, and whose page is on screen. The consequence worth recording: a panel surface is how an app

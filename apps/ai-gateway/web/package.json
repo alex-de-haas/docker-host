@@ -3,11 +3,13 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "prebuild": "node -e \"require('node:fs').rmSync('.next', { recursive: true, force: true })\"",
     "build": "next build",
     "dev": "next dev -p 3400",
     "lint": "eslint && tsc --noEmit"
   },
   "dependencies": {
+    "@radix-ui/react-slot": "^1.3.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^0.545.0",
