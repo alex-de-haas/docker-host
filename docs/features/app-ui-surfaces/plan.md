@@ -119,13 +119,18 @@ Shell.
 - [x] Tests (automated): manifest validation both ways (Core); Shell derives a tab for a declaring
       app and none for a non-declaring one, several panels from one app keep order and distinct keys,
       the label fallback, a stopped app keeping its tab, and the active-tab fallback.
-- [ ] **Verified live against a running host**, which needs an authenticated session and demo-app
-      0.8.0 installed: the panel with a real tab beside the workspace, the Settings tab handshake
-      (the pair: a page that loads there, beside the workspace still working), and the gateway page
-      standalone and embedded. Unauthenticated chrome is verified — the strip renders, its toggle
-      collapses the sidebar, the theme control works from its new home, and both the bell and the
-      right-rail toggle are correctly absent (no session, and nothing declaring a panel).
+- [x] **Verified live against a running host** (2026-08-19, demo-app 0.8.0, gateway 0.12.2, Core
+      0.84.0): the panel's `Session` tab reports `active` and **`tokenSource: cookie`**, so the frame
+      landed with a real app session; the Settings tab renders the gateway's page *with its data*
+      (the MCP provider list comes from an API that answers 401 without a credential); the assistant
+      panel still works, which is the pair that proves the delegated shape survived; the gateway page
+      serves standalone; and the strip, its toggle and the theme control all work.
+- [ ] Confirm the gateway is gone from the sidebar after removing the entrypoint-derived page, and
+      that the workspace still embeds an ordinary app page beside it.
 - [x] Docs: `feature.md`, hosty-app-skill reference, index.
+- [x] Shell: a sidebar row comes from `ui.navigation` alone. The derived "Home" row put the gateway
+      back in the sidebar on a row opening the page its Settings tab already hosts — declaring UI and
+      having a browsable page are different claims (owner, 2026-08-19).
 - [x] Demo App declares a `Session` panel — the contract's worked example, so `ui.panels` is not a
       field nobody has exercised.
 

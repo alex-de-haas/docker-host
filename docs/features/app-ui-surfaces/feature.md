@@ -107,13 +107,32 @@ would be writing outside its frame.
 ## Current Placements
 
 - **The gateway** declares `ui.settings` and no sidebar entry: its whole page is operator
-  configuration.
+  configuration. It still declares `ui.entrypoint`, because a system app's `ui` block requires one —
+  but an entrypoint no longer buys a place in the sidebar (below).
 - **Telemetry** keeps Metrics/Traces/Logs in the sidebar — routine use, possibly by non-admins.
 - **Demo App** declares a `Session` panel, which is the platform's worked example of the contract:
   narrow, chrome-free, and showing the session itself, since a panel reporting no session is exactly
   what a broken embedding looks like.
 - Core-injected manifest `settings` stay native in Shell — platform-owned state, uniform by
   construction.
+
+### A Sidebar Row Comes From `ui.navigation`, And Nothing Else
+
+An app with no `ui.navigation` has no pages in Shell — no sidebar row, and no entry on the Apps page.
+Shell used to derive a "Home" row from `ui.entrypoint` when navigation was absent, and placed
+surfaces made the cost of that visible: the gateway declares only `ui.settings`, yet the entrypoint
+it is obliged to keep put it back in the sidebar on a row that opened the very page its Settings tab
+already hosts.
+
+Declaring UI and having a browsable page are different claims, and only navigation makes the second.
+The derived row also had Shell inventing the label "Home" for someone else's app, which is the
+opposite of an app saying where its pages belong.
+
+The consequence for app authors is worth stating plainly: **an app that declared only an entrypoint
+and relied on the derived row now has to declare navigation** — which the manifest reference has
+always asked for. Nothing becomes unreachable by it: `hosty apps open` and an explicit deep link both
+still resolve a path against the entrypoint, because asking for a page by name is not the same as
+being offered one.
 
 Shell never learns any app's settings schema. That was the objection that moved the gateway's page
 out of Shell in the first place, and hosting an iframe honours it.
@@ -130,6 +149,13 @@ out of Shell in the first place, and hosting an iframe honours it.
 - **The active tab survives what it can and falls back rather than pointing at nothing.**
 - **Manifest validation both ways** (Core): a surface inherits the entrypoint endpoint or keeps its
   own, paths normalise like every other UI path, declaring one surface says nothing about the other.
-- **Not verified live**: no browser has loaded the right panel or the relocated strip against a
-  running host, and the gateway's settings page has not been opened through Shell since it moved to
-  the standard stack. Both are ordinary checks that need a host running these versions.
+- **Verified live** on a host running these versions (2026-08-19), because the property that matters
+  most here is not unit-testable: a placed surface must land with a real Hosty app session rather
+  than as an anonymous visitor to the app's origin.
+  - The panel's `Session` tab reports `status: active`, the operator's own user and `host.admin`,
+    and — the part that proves the mechanism — **`tokenSource: cookie`**. An anonymous frame or one
+    leaning on a delegated token would say something else.
+  - The Settings tab renders the gateway's page *with its data*: the MCP provider list comes from an
+    API that answers 401 without a credential, so a page that merely painted would not show it.
+  - The strip renders on every page, its toggle collapses the sidebar, the theme control works from
+    its new home, and the right-rail toggle is absent until an app declares a panel.
