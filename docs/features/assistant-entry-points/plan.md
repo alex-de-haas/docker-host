@@ -84,8 +84,17 @@ Two asks from the owner (2026-08-18), one mechanism short of possible today:
       not a decision.
 - [x] Telemetry UI: "Ask Assistant" on an error row, composing app id, timestamp, severity and body
       into the text. `apps/telemetry` minor bump.
-- [x] Tests: the message verified and inserted beside one from a wrong origin dropped; the draft
-      carries provenance; nothing auto-sends — asserted, since it is the rule the design stands on.
+- [x] Tests (contract): the message verified beside one from a wrong origin, wrong source window and
+      no active frame dropped; the three intents kept distinct; the cap asserted at its boundary.
+- [x] Tests (draft safety): provenance is prefixed, the operator's own text is appended to rather
+      than replaced, a run of accepted asks is bounded, and the rule is a pure function returning a
+      draft — there is no path from an app's text to a sent message, which is the guarantee rather
+      than a discipline.
+- [ ] Tests (Shell wiring): that a verified ask actually reaches the panel, rate-limited. Not covered
+      — the forwarding lives in a React component and Shell's suite is pure-logic `.mjs` with no
+      component harness. The pieces either side are tested (the SDK parser, the SDK limiter, the
+      draft rule); what is untested is that they are connected, and no test here would have caught
+      that. Needs either a component harness for Shell or live verification.
 - [x] Docs: `feature.md`, embedder-contract reference in hosty-app-skill, index.
 
 Version outcome: `apps/shell` minor, `apps/ai-gateway` minor, `packages/app-sdk` minor,

@@ -7,6 +7,7 @@ import { Alert, InlineError, StatusBadge } from "@/components/status";
 import { TranscriptEvent } from "@/components/transcript";
 import { cn } from "@/lib/utils";
 import { establishSession } from "@/lib/api";
+import { composeAskDraft } from "@/lib/ask-draft";
 import { startThemeSync } from "@/lib/shell-theme";
 import {
   createSession,
@@ -187,10 +188,8 @@ export default function AssistantPage() {
       }
 
       const text = data.text.slice(0, MAX_ASK_CHARS);
-      const from = typeof data.sourceAppId === "string" && data.sourceAppId ? `From ${data.sourceAppId}: ` : "";
-      // Appended, never replacing: the operator may already be part-way through a message, and
-      // dropping their words to make room for an app's would be its own kind of theft.
-      setInput((current) => (current ? `${current}\n\n${from}${text}` : `${from}${text}`));
+      const sourceAppId = typeof data.sourceAppId === "string" ? data.sourceAppId : "";
+      setInput((current) => composeAskDraft(current, text, sourceAppId));
       composerRef.current?.focus();
     };
 

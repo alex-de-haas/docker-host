@@ -89,5 +89,11 @@ recorded as such.
 - **The cap is asserted at the boundary**, since the point is that a page cannot paste itself into a
   draft; empty and whitespace-only asks yield nothing.
 - **Nothing auto-sends.** The rule the design rests on is that the panel fills the draft and stops.
+- **Repeated asks are rate-limited per app**, because an ask is cheap for the app and expensive for
+  the operator: it reveals the rail, switches the tab and moves focus. A mounted app looping on it
+  would make Shell unusable while looking like a supported use of the contract.
+- **The wiring itself is not covered.** The parser, the limiter and the draft rule are each tested;
+  that Shell connects them is not, because the forwarding lives in a React component and Shell's
+  suite is pure-logic. No test here would catch a disconnected wire.
 - **Not verified live**: no app has yet posted an ask against a running host, and the telemetry button
   has not been pressed there.
