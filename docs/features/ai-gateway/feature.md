@@ -1,7 +1,7 @@
 # AI Gateway
 
 Created: 2026-08-09
-Updated: 2026-08-17
+Updated: 2026-08-19
 
 The Hosty assistant: an optional, removable system app (`hosty.ai-gateway`) hosting admin-only
 operator chat sessions on a host-resident agent harness, plus the Shell surface that renders them.
@@ -105,6 +105,16 @@ this feature.
   default to off.** Tool names and descriptions are third-party text landing in the context of a
   model that holds host shell, so reaching an app is a decision, not a side effect of installing it.
   Toggles for uninstalled apps are pruned, so an uninstall/reinstall cycle cannot resurrect one.
+  Each provider carries two controls, shaped so neither can be read two ways: a **switch** for
+  enable/disable — its position is the state, after a button labelled "Disabled" proved equally
+  readable as "this is off" and "click to disable" — and a **select** for the approval mode ("Ask
+  before every tool" / "Run read-only tools unprompted"), disabled while the provider is off, since
+  the choice means nothing then. Both controls freeze while a save is in flight and are re-rendered
+  from confirmed state on every outcome: the browser mutates a control the moment it is used, so a
+  failed save would otherwise display a value the persisted policy does not hold — a select showing
+  "Ask before every tool" over a policy that still auto-allows being the case that matters. The
+  switch's label describes the true direction: enabling lets the **assistant call the app's tools**;
+  it grants the app nothing toward the assistant.
 - **Where state lives:** Core stays the registry (which apps exist, which declare `mcp`, at what
   URL); the gateway owns the policy (which are enabled). Toggles never go into Core. Settings live
   in `{data}/settings.json`, written temp-then-rename so a crash mid-write cannot leave a truncated
