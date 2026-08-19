@@ -131,7 +131,15 @@ export function SettingsPage({
         ))}
       </div>
 
-      {activeAppTab && <AppSettingsTabPanel tab={activeAppTab} {...appTabProps} />}
+      {activeAppTab && (
+        // Breaks out of the page's own padding. An embedded app paints its own page background, so
+        // any gap left around the frame shows the settings page's surface behind it and the app
+        // reads as a white box floating on grey rather than as this tab's content. Flush, the only
+        // boundary left is the line under the tab strip, which is the one that belongs there.
+        <div className="-mx-4 -mb-6 sm:-mx-6 lg:-mx-8">
+          <AppSettingsTabPanel tab={activeAppTab} {...appTabProps} />
+        </div>
+      )}
 
       {resolvedTab === "tokens" && (
         <SettingsTokensSection coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} />
