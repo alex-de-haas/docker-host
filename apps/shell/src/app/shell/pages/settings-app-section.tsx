@@ -23,6 +23,7 @@ export function AppSettingsTabPanel({
   onOpenSurfaceFrame,
   onStartApp,
   reloadKey,
+  onAskAssistant,
 }: {
   tab: AppSurfaceTab;
   theme: HostyResolvedTheme;
@@ -39,6 +40,7 @@ export function AppSettingsTabPanel({
   onOpenSurfaceFrame: (appId: string, embeddedUrl: string) => Promise<string>;
   onStartApp?: (appId: string) => void;
   reloadKey?: number;
+  onAskAssistant?: (text: string, sourceAppId: string) => void;
 }) {
   const { src, error } = useAppSurfaceSrc(tab, onOpenSurfaceFrame, "Could not open this app's settings.", reloadKey);
 
@@ -84,6 +86,7 @@ export function AppSettingsTabPanel({
         themePreference={themePreference}
         onAuthRequired={onAuthRequired}
         onDelegatedTokenRequest={resolveDelegatedTokenRequest?.(tab.appId)}
+        onAskAssistant={onAskAssistant}
       />
     </div>
   );

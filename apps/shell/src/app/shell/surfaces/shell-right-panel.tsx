@@ -31,6 +31,7 @@ export function ShellRightPanel({
   onStartApp,
   reloadKey,
   outbound,
+  onAskAssistant,
 }: {
   tabs: AppSurfaceTab[];
   activeTab: AppSurfaceTab | null;
@@ -53,6 +54,7 @@ export function ShellRightPanel({
   reloadKey?: number;
   /** Handed to the active tab's frame; see EmbeddedAppFrame's `outbound`. */
   outbound?: { message: unknown; nonce: number } | null;
+  onAskAssistant?: (text: string, sourceAppId: string) => void;
 }) {
   const { src, error } = useAppSurfaceSrc(activeTab, onOpenSurfaceFrame, "Could not open this panel.", reloadKey);
 
@@ -97,6 +99,7 @@ export function ShellRightPanel({
           resolveDelegatedTokenRequest={resolveDelegatedTokenRequest}
           onStartApp={onStartApp}
           outbound={outbound}
+          onAskAssistant={onAskAssistant}
         />
       </div>
     </aside>
@@ -113,6 +116,7 @@ function RightPanelBody({
   resolveDelegatedTokenRequest,
   onStartApp,
   outbound,
+  onAskAssistant,
 }: {
   activeTab: AppSurfaceTab | null;
   src: string | null;
@@ -123,6 +127,7 @@ function RightPanelBody({
   resolveDelegatedTokenRequest?: (appId: string) => ((refresh: boolean) => Promise<DelegatedTokenGrant>) | undefined;
   onStartApp?: (appId: string) => void;
   outbound?: { message: unknown; nonce: number } | null;
+  onAskAssistant?: (text: string, sourceAppId: string) => void;
 }) {
   if (!activeTab) {
     return null;
@@ -159,6 +164,7 @@ function RightPanelBody({
       onAuthRequired={onAuthRequired}
       onDelegatedTokenRequest={resolveDelegatedTokenRequest?.(activeTab.appId)}
       outbound={outbound}
+      onAskAssistant={onAskAssistant}
     />
   );
 }

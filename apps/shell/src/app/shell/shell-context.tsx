@@ -54,6 +54,8 @@ export type ShellActionsContextValue = {
   onEmbeddedAuthRequired: (appId: string) => void;
   /** Bumped when a placed surface's session expired; asks the shared hook to re-mint. */
   surfaceAuthNonce: number;
+  /** Undefined when no assistant is available; an app's ask is then simply never answered. */
+  askAssistant?: (text: string, sourceAppId: string) => void;
   requestDelegatedTokenFor: (appId: string) => ((refresh: boolean) => Promise<DelegatedTokenGrant>) | undefined;
   openSurfaceFrame: (appId: string, embeddedUrl: string) => Promise<string>;
   startAppById: (appId: string) => void;

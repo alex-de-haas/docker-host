@@ -84,6 +84,8 @@ import type {
 // Minimum spacing between launch-code reissues for one app, a loop guard against a frame that keeps
 // re-posting hosty:auth-required. Enforced by the SDK's per-app rate limiter.
 const AUTH_REISSUE_MIN_INTERVAL_MS = 3_000;
+/** Per app. A human clicking rows never reaches this; a loop is stopped by it. */
+const ASK_MIN_INTERVAL_MS = 1_000;
 
 // Polls this page's own document URL until the restarted Shell answers again. Used after a Shell
 // self-update: the already-loaded bundle keeps working against Core while the Shell container
@@ -185,6 +187,11 @@ export function ShellClient({
   const installRequestRef = useRef(0);
   // Last launch-code reissue per app id, so a chatty frame cannot storm Core with reissues.
   const authReissueLimiter = useRef(createReissueRateLimiter(AUTH_REISSUE_MIN_INTERVAL_MS));
+  // An ask is cheap for the app and expensive for the operator: it reveals the rail, switches the
+  // tab and moves focus. A mounted app looping on it would make Shell unusable while looking like a
+  // supported use of the contract, so it is rate-limited per app exactly as reissues are. One a
+  // second is far more than a human clicking rows produces, and far less than a loop needs.
+  const askLimiter = useRef(createReissueRateLimiter(ASK_MIN_INTERVAL_MS));
   // Core CSRF is a cookie/header pair, so token refresh + mutation must stay ordered.
   const csrfOperationQueue = useRef<Promise<void>>(Promise.resolve());
   const shellThemePreference = normalizeThemePreference(theme);
@@ -1893,6 +1900,10 @@ export function ShellClient({
    * only the operator sends, which is the rule the whole entry-point design rests on.
    */
   const askAssistant = useCallback((text: string, sourceAppId: string) => {
+    if (!askLimiter.current.tryAcquire(sourceAppId)) {
+      return;
+    }
+
     setPanelOpen(true);
     // Selecting the tab is part of the ask, not a nicety: the message is handed only to the
     // assistant's own frame, so revealing the rail while another app's panel stayed selected would
@@ -1906,6 +1917,37 @@ export function ShellClient({
       nonce: (current?.nonce ?? 0) + 1,
     }));
   }, [appPanelTabs, assistantGateway?.appId]);
+
+  // The assistant is meant to be at hand, so it gets a key. Toggles rather than only opening: a
+  // shortcut that could not put the panel away would make the rail a trap on a small screen.
+  useEffect(() => {
+    if (!assistantAvailable) {
+      return;
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || !event.shiftKey || event.key.toLowerCase() !== "a") {
+        return;
+      }
+
+      const assistantTab = appPanelTabs.find((tab) => tab.appId === assistantGateway?.appId);
+      if (!assistantTab) {
+        return;
+      }
+
+      event.preventDefault();
+      // Already looking at it means "put it away"; anything else means "bring it here", including
+      // an open rail showing somebody else's panel.
+      const showing = rightPanelOpen && activePanelKey === assistantTab.key;
+      setPanelOpen(!showing);
+      if (!showing) {
+        setActivePanelKey(assistantTab.key);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [activePanelKey, appPanelTabs, assistantAvailable, assistantGateway?.appId, rightPanelOpen]);
 
   // The rail exists only while something declares a panel; opening it is then the operator's choice.
   // An app's settings page fills the content column the way a workspace app does, so the column
@@ -2012,6 +2054,7 @@ export function ShellClient({
       sendCsrfJson,
       onEmbeddedAuthRequired: handleSurfaceAuthRequired,
       surfaceAuthNonce,
+      askAssistant: assistantAvailable ? askAssistant : undefined,
       requestDelegatedTokenFor,
       openSurfaceFrame,
       startAppById,
@@ -2034,6 +2077,8 @@ export function ShellClient({
     [
       handleSurfaceAuthRequired,
       surfaceAuthNonce,
+      askAssistant,
+      assistantAvailable,
       requestDelegatedTokenFor,
       openSurfaceFrame,
       startAppById,
@@ -2135,6 +2180,7 @@ export function ShellClient({
                 onInstallFeedIntent={appMayRequestFeedInstall(workspace.appId) ? openFeedInstallDialog : undefined}
                 onAuthRequired={handleAuthRequired}
                 onDelegatedTokenRequest={handleDelegatedTokenRequest}
+                onAskAssistant={assistantAvailable ? askAssistant : undefined}
               />
             ) : activeWorkspaceRoute ? (
               <EmbeddedWorkspacePendingPanel
@@ -2176,6 +2222,7 @@ export function ShellClient({
             onAuthRequired={handleSurfaceAuthRequired}
             resolveDelegatedTokenRequest={requestDelegatedTokenFor}
             onOpenSurfaceFrame={openSurfaceFrame}
+            onAskAssistant={assistantAvailable ? askAssistant : undefined}
             // Panels are deliberately not administrator-only, but starting an app is: Core refuses a
             // host.user, so offering them the button would promise something guaranteed to fail.
             onStartApp={canManageApps ? startAppById : undefined}

@@ -3,7 +3,7 @@
   "id": "hosty.telemetry",
   "name": "Hosty Telemetry",
   "description": "OpenTelemetry collector + telemetry backend + UI: receives OTLP from Hosty runtime apps, stores metrics/logs/traces in an embedded SQLite store, and serves the Metrics/Structured logs/Traces pages that read the backend directly.",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "role": "system",
   "provides": [
     "otlp-collector"
@@ -53,7 +53,7 @@
           "type": "docker",
           "image": {
             "repository": "ghcr.io/alex-de-haas/hosty-telemetry-backend",
-            "tag": "0.6.0"
+            "tag": "0.7.0"
           },
           "environment": {
             "HOSTY_TELEMETRY_LOGS_FILE": "/etc/otelcol-contrib/otlp-logs/logs.jsonl",
@@ -82,7 +82,7 @@
           "type": "docker",
           "image": {
             "repository": "ghcr.io/alex-de-haas/hosty-telemetry-ui",
-            "tag": "0.6.0"
+            "tag": "0.7.0"
           },
           "environment": {
             "PORT": "3000",

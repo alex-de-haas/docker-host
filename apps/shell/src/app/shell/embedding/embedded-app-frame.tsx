@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ExternalLink, ShieldAlert } from "lucide-react";
-import { DELEGATED_TOKEN_TYPE } from "@hosty-sdk/app";
-import { parseActiveFrameDelegatedTokenRequest } from "@hosty-sdk/app/embedder";
+import { ASK_ASSISTANT_TYPE, DELEGATED_TOKEN_TYPE } from "@hosty-sdk/app";
+import { parseActiveFrameAskAssistant, parseActiveFrameDelegatedTokenRequest } from "@hosty-sdk/app/embedder";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { HostyResolvedTheme, HostyThemePreference } from "../types";
@@ -31,6 +31,7 @@ export function EmbeddedAppFrame({
   onAuthRequired,
   onDelegatedTokenRequest,
   onMessage,
+  onAskAssistant,
   outbound,
 }: {
   src: string;
@@ -53,6 +54,13 @@ export function EmbeddedAppFrame({
   onDelegatedTokenRequest?: (refresh: boolean) => Promise<DelegatedTokenGrant>;
   /** Extra verified-sender message handling for one context (the Marketplace's install intents). */
   onMessage?: (event: MessageEvent, frameWindow: Window | null) => void;
+  /**
+   * The app asked for its text to be put in the operator's assistant draft.
+   *
+   * Wired for every embedded app, unlike the delegated-token responder: this hands the app nothing
+   * — it costs the operator a glance, and the operator is the one who decides whether to send.
+   */
+  onAskAssistant?: (text: string, sourceAppId: string) => void;
   /**
    * A message to hand the embedded page, delivered when `nonce` changes.
    *
@@ -110,6 +118,31 @@ export function EmbeddedAppFrame({
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
   }, [onAuthRequired, src, appId]);
+
+  useEffect(() => {
+    if (!onAskAssistant) {
+      return;
+    }
+
+    const handleMessage = (event: MessageEvent) => {
+      const intent = parseActiveFrameAskAssistant(event, iframeRef.current?.contentWindow, src);
+      if (intent) {
+        onAskAssistant(intent.text, appId);
+        return;
+      }
+
+      // Named and dropped, the way the token handshake does: a message that looks like an ask but
+      // fails the sender checks is the interesting case, and silence would leave an app author
+      // debugging a button that does nothing.
+      const data = event.data as { type?: unknown } | null;
+      if (data?.type === ASK_ASSISTANT_TYPE && event.source === iframeRef.current?.contentWindow) {
+        console.warn(`Ignored a ${ASK_ASSISTANT_TYPE} from an unexpected origin: ${event.origin}`);
+      }
+    };
+
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [onAskAssistant, src, appId]);
 
   useEffect(() => {
     if (!onMessage) {

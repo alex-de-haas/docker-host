@@ -1,8 +1,10 @@
 "use client";
 
 import { Fragment, useMemo, useState } from "react";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Sparkles } from "lucide-react";
+import { askAssistant } from "@hosty-sdk/app";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { buildServiceAccents, SERVICE_ACCENTS } from "./service-accents";
 import type { OtlpLogRecord } from "@/lib/types";
@@ -124,6 +126,50 @@ export function OtlpLogTable({ records, showSource = false }: { records: OtlpLog
   );
 }
 
+/**
+ * Hands an error to the operator's assistant — as a **draft**, never a sent message.
+ *
+ * This app fills in what the operator would otherwise retype: which app, when, how severe, and the
+ * message itself. It cannot send, and that is the contract rather than a limitation: text from a log
+ * line entering a model that holds host shell is precisely the shape a prompt injection takes, so a
+ * human reads it, sees where it came from, and decides.
+ *
+ * Rendered only for errors: an "ask about this" on every info line would be noise, and the button
+ * exists for the moment an operator is already stuck.
+ */
+function AskAssistantButton({ record }: { record: OtlpLogRow }) {
+  const [asked, setAsked] = useState(false);
+
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      className="h-6 shrink-0 px-2 text-[11px]"
+      onClick={() => {
+        const source = record.appName || record.appId || "unknown app";
+        // Plain text, and everything the operator can see: a structured payload would let this app
+        // smuggle shape past the glance the design depends on.
+        setAsked(
+          askAssistant(
+            [
+              `${source} logged ${record.severityText || "an error"} at ${new Date(record.timestampUnixMs).toLocaleString()}:`,
+              record.body || "(no message)",
+            ].join("\n\n"),
+          ),
+        );
+      }}
+    >
+      <Sparkles className="h-3 w-3" aria-hidden />
+      {/* "Asked", not "Sent": this app knows it posted the message and nothing more. Whether an
+          embedder offers an assistant, and whether the operator does anything with the draft, are
+          deliberately not answerable from here — and a label that claimed delivery would be the one
+          part of this feature asserting something it cannot check. */}
+      {asked ? "Asked" : "Ask Assistant"}
+    </Button>
+  );
+}
+
 // Full-width detail panel for an expanded log entry: the full body, then correlation/severity facts,
 // then the raw attribute bag as an aligned key/value list — mirroring the span-details panel.
 function LogDetails({ record }: { record: OtlpLogRow }) {
@@ -132,7 +178,10 @@ function LogDetails({ record }: { record: OtlpLogRow }) {
   return (
     <div className="space-y-3 rounded-md border bg-card/60 p-3">
       <div className="space-y-1">
-        <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Message</div>
+        <div className="flex items-start gap-2">
+          <div className="flex-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Message</div>
+          {record.severityNumber >= 17 && <AskAssistantButton record={record} />}
+        </div>
         <div className="whitespace-pre-wrap break-words font-mono text-xs">{record.body || "—"}</div>
       </div>
       <dl className="grid grid-cols-2 gap-x-4 gap-y-2.5 sm:grid-cols-3">

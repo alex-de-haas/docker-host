@@ -16,6 +16,7 @@ export function EmbeddedWorkspacePanel({
   themePreference,
   onInstallFeedIntent,
   onAuthRequired,
+  onAskAssistant,
   onDelegatedTokenRequest,
 }: {
   workspace: EmbeddedWorkspace;
@@ -26,6 +27,7 @@ export function EmbeddedWorkspacePanel({
   onInstallFeedIntent?: (intent: InstallFeedIntent) => void;
   // Called when the embedded app reports its Hosty session expired and asks for a fresh launch code.
   onAuthRequired?: (appId: string) => void;
+  onAskAssistant?: (text: string, sourceAppId: string) => void;
   // Mints a delegated token for this app. Undefined for every app but the assistant gateway.
   onDelegatedTokenRequest?: (refresh: boolean) => Promise<DelegatedTokenGrant>;
 }) {
@@ -53,6 +55,7 @@ export function EmbeddedWorkspacePanel({
         theme={theme}
         themePreference={themePreference}
         onAuthRequired={onAuthRequired}
+        onAskAssistant={onAskAssistant}
         onDelegatedTokenRequest={onDelegatedTokenRequest}
         onMessage={onInstallFeedIntent ? handleMessage : undefined}
       />
