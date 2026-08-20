@@ -83,9 +83,15 @@ individually, because "a stock client connected" is four different claims and on
       `~/.codex/config.toml` untouched — called `com_dhaas_ddemo-app__get_my_app_role` and returned
       role `admin` with its seven permissions, matching what Shell's demo-app panel shows. Values
       that cannot be guessed, which is the standard the Claude cell set.
-- [ ] **A Hosty skill** telling a client how to discover apps and which tools need confirmation.
-      One now exists — `packages/hosty-claude-plugin/skills/hosty-mcp-connector` — but the connection
-      above was a bare `claude mcp add`, so nothing has yet been validated *with the skill loaded*.
+- [x] **A Hosty skill** telling a client how to discover apps and which tools need confirmation
+      (2026-08-20). `packages/hosty-claude-plugin/skills/hosty-mcp-connector`, installed as a
+      user-scoped plugin, demonstrably reaches the client: asked why a running app's tool is missing
+      from the connector, a headless `claude -p` answered with the connector's own fail-closed rule —
+      only `readOnlyHint: true` is exported, anything else is treated as potentially mutating. Run
+      **outside the repository and told not to read files**, so the source could not be the answer;
+      the rule is a Hosty design choice, not general MCP knowledge. What this proves is that a loaded
+      skill supplies facts the model otherwise lacks — the assumption
+      [app-provided-skills](../app-provided-skills/plan.md) rests on.
 - [ ] **A non-loopback origin.** Everything so far was `127.0.0.1`, so nothing exercises external
       ingress, TLS, or a proxy in the path.
 
