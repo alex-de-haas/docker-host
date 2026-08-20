@@ -1303,7 +1303,69 @@ public sealed class AppManifestServiceTests
         return path;
     }
 
-    private static async Task<string> WriteManifestAsync(string appId, string? externalMounts = null, string? ports = null, string? runtimeNetwork = null, string? dependencies = null, string? runtimeArtifact = null, string? restartPolicy = null, string? healthcheck = null, string? telemetry = null, string? catalogMetadata = null, string? role = null)
+    [Theory]
+    // Every shape that would put an agent's instructions outside the app's own folder, plus the
+    // shapes the asset machinery already refuses for display assets. A skill is validated where the
+    // operator is looking at an install, not resolved to nothing much later.
+    [InlineData("../outside.md")]
+    [InlineData("docs/../../outside.md")]
+    [InlineData("/etc/passwd.md")]
+    [InlineData("https://example.com/skill.md")]
+    // Escaped for JSON: the value the validator sees is `docs\windows.md`, a Windows separator the
+    // asset machinery refuses. Written unescaped, the manifest simply fails to parse and the test
+    // would pass while proving nothing.
+    [InlineData("docs\\\\windows.md")]
+    public async Task LoadAsync_RejectsASkillOutsideTheManifestFolder(string skillFile)
+    {
+        var manifestPath = await WriteManifestAsync(
+            "com.example.notes",
+            agent: $$"""", "agent": { "skillFile": "{{skillFile}}" } """");
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+
+        Assert.Contains(error.Errors, candidate => candidate.Code == "app_manifest_agent_skill_file_outside_app");
+    }
+
+    [Fact]
+    public async Task LoadAsync_AcceptsASkillInsideTheManifestFolder()
+    {
+        // The acceptance beside the refusals above: a validator that rejected everything would
+        // satisfy each negative on its own and be completely broken.
+        var manifestPath = await WriteManifestAsync(
+            "com.example.notes",
+            agent: """", "agent": { "skillFile": "docs/agent.md" } """");
+
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+
+        Assert.Equal("docs/agent.md", selection.Manifest.Agent?.SkillFile);
+    }
+
+    [Fact]
+    public async Task LoadAsync_RejectsASkillThatIsNotMarkdown()
+    {
+        // The file is handed to a model as prose; the one thing worse than no skill is a binary read
+        // as instructions.
+        var manifestPath = await WriteManifestAsync(
+            "com.example.notes",
+            agent: """", "agent": { "skillFile": "docs/agent.pdf" } """");
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+
+        Assert.Contains(error.Errors, candidate => candidate.Code == "app_manifest_agent_skill_file_not_markdown");
+    }
+
+    [Fact]
+    public async Task LoadAsync_AcceptsAManifestDeclaringNoAgentBlock()
+    {
+        // Additive: the overwhelming majority of manifests declare nothing here and must be unaffected.
+        var manifestPath = await WriteManifestAsync("com.example.notes");
+
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+
+        Assert.Null(selection.Manifest.Agent?.SkillFile);
+    }
+
+    private static async Task<string> WriteManifestAsync(string appId, string? externalMounts = null, string? ports = null, string? runtimeNetwork = null, string? dependencies = null, string? runtimeArtifact = null, string? restartPolicy = null, string? healthcheck = null, string? telemetry = null, string? catalogMetadata = null, string? role = null, string? agent = null)
     {
         var root = Path.Combine(Path.GetTempPath(), $"hosty-core-manifest-tests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
@@ -1323,7 +1385,7 @@ public sealed class AppManifestServiceTests
                     "image": "ghcr.io/example/notes:1.0.0"{{runtimeArtifact ?? ""}}{{runtimeNetwork ?? ""}}{{ports ?? ""}}{{healthcheck ?? ""}}
                   }
                 }
-              }]{{externalMounts ?? ""}}{{dependencies ?? ""}}{{restartPolicy ?? ""}}{{telemetry ?? ""}}{{catalogMetadata ?? ""}}{{role ?? ""}}
+              }]{{externalMounts ?? ""}}{{dependencies ?? ""}}{{restartPolicy ?? ""}}{{telemetry ?? ""}}{{catalogMetadata ?? ""}}{{role ?? ""}}{{agent ?? ""}}
             }
             """);
         return path;

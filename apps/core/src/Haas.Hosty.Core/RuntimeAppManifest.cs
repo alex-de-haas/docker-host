@@ -110,11 +110,14 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
         CancellationToken cancellationToken = default)
     {
         var meta = selection.Manifest.CatalogMetadata;
+        var agentSkillFile = selection.Manifest.Agent?.SkillFile;
         var navIconAssets = (selection.Manifest.Ui?.Navigation ?? [])
             .Select(item => item.IconAsset)
             .Where(icon => !string.IsNullOrWhiteSpace(icon))
             .ToArray();
-        if (meta is null && navIconAssets.Length == 0)
+        // An app may declare a skill and nothing else — no catalog metadata, no page icons — and
+        // returning early on the old condition would have vendored nothing for it.
+        if (meta is null && navIconAssets.Length == 0 && string.IsNullOrWhiteSpace(agentSkillFile))
         {
             return;
         }
@@ -193,6 +196,20 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
                         await VendorAsync(imageRef, descriptionDir, ImageMaxBytes, imageOnly: true);
                     }
                 }
+            }
+        }
+
+        // The agent skill, carried exactly like the markdown description above and sharing its byte
+        // budget — the plan's "reuse rather than add a second one". Its path was already validated at
+        // install, so a declaration that got here is contained and is markdown; this only has to
+        // survive the file being absent, which is an app packaging mistake rather than a manifest one.
+        var skillRootRel = CoreDataPaths.NormalizeRelativeAssetPath("", agentSkillFile);
+        if (skillRootRel is not null)
+        {
+            var skill = await read(skillRootRel, DescriptionMaxBytes);
+            if (skill is not null && budget.TryAdd(skill.Length))
+            {
+                WriteVendoredAsset(appRoot, skillRootRel, skill);
             }
         }
 
@@ -386,6 +403,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
 
         ValidateProvides(manifest.Provides, errors);
         ValidateInterfaces(manifest.Interfaces, errors);
+        ValidateAgent(manifest.Agent, errors);
 
         // System-app UI is validated strictly and fail-closed (docs/ideas/system-app-pages.md):
         // its pages are rendered as administrator Shell surfaces, so a system app must not rely on
@@ -1271,6 +1289,49 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
     // kebab tokens and unknown names are deliberately allowed, so a manifest may declare an
     // interface a newer Core understands. Declarations are shape-checked: keys must be contract
     // keys unique within their interface ("default" when omitted), paths must be absolute.
+    // A skill is prose an agent acts on, so its path is validated at install rather than resolved at
+    // read time. The display assets beside it are not — they are display-only, and a missing icon is
+    // a cosmetic disappointment. A declaration that escapes the app folder must be refused where the
+    // operator is looking at an install, not silently resolve to nothing much later.
+    private static void ValidateAgent(RuntimeAppAgentManifest? agent, List<AppManifestValidationError> errors)
+    {
+        if (agent?.SkillFile is not { } skillFile)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(skillFile))
+        {
+            errors.Add(new(
+                "app_manifest_agent_skill_file_empty",
+                "agent.skillFile is declared but empty; omit it instead.",
+                "$.agent.skillFile"));
+            return;
+        }
+
+        // Containment, absolute paths, backslashes and URLs are all one question, and the asset
+        // machinery already answers it — reusing it keeps the two from drifting apart.
+        var normalized = CoreDataPaths.NormalizeRelativeAssetPath("", skillFile);
+        if (normalized is null)
+        {
+            errors.Add(new(
+                "app_manifest_agent_skill_file_outside_app",
+                $"agent.skillFile '{skillFile}' must be a relative path inside the manifest folder.",
+                "$.agent.skillFile"));
+            return;
+        }
+
+        // Markdown specifically: the file is handed to a model as prose, and the one thing worse than
+        // no skill is a binary read as instructions.
+        if (!string.Equals(Path.GetExtension(normalized), ".md", StringComparison.OrdinalIgnoreCase))
+        {
+            errors.Add(new(
+                "app_manifest_agent_skill_file_not_markdown",
+                $"agent.skillFile '{skillFile}' must be a .md file.",
+                "$.agent.skillFile"));
+        }
+    }
+
     private static void ValidateInterfaces(
         IReadOnlyDictionary<string, IReadOnlyList<RuntimeAppInterfaceManifest>> interfaces,
         List<AppManifestValidationError> errors)
@@ -2929,8 +2990,27 @@ internal sealed class RuntimeAppManifest
     // docs/features/ai-agent-bridge/feature.md, "Manifest Interfaces And Registry".
     public IReadOnlyDictionary<string, IReadOnlyList<RuntimeAppInterfaceManifest>> Interfaces { get => field ??= new Dictionary<string, IReadOnlyList<RuntimeAppInterfaceManifest>>(); init; } = new Dictionary<string, IReadOnlyList<RuntimeAppInterfaceManifest>>();
     public IReadOnlyDictionary<string, RuntimeAppExternalMountManifest> ExternalMounts { get => field ??= new Dictionary<string, RuntimeAppExternalMountManifest>(); init; } = new Dictionary<string, RuntimeAppExternalMountManifest>();
+    // What this app offers an *agent* beyond its callable surface. A sibling of `interfaces` rather
+    // than a member of `catalogMetadata`, deliberately: that block is display-only and documented as
+    // outside runtime validation, and a skill is neither — it is prose that reaches a model's
+    // context. See docs/features/app-provided-skills/plan.md, Decisions.
+    public RuntimeAppAgentManifest? Agent { get; init; }
     public RuntimeAppRestartPolicyManifest? RestartPolicy { get; init; }
     public RuntimeAppTelemetryManifest? Telemetry { get; init; }
+}
+
+// The app's agent-facing prose (top-level `agent`).
+//
+// One skill per app, not one per interface: that is how a human documents an app, and an app with
+// two interfaces still has one story about how it is worked. Division, if ever needed, is sections
+// in the file rather than a new axis here.
+internal sealed record RuntimeAppAgentManifest
+{
+    // Manifest-relative path to a markdown file. Carried by the same asset machinery as
+    // catalogMetadata.descriptionFile — vendored under the shared byte budget, served from the
+    // per-app asset endpoint — but unlike that one it is validated, because what it contains is
+    // acted on rather than displayed.
+    public string? SkillFile { get; init; }
 }
 
 // One declared endpoint of a platform interface (top-level `interfaces`). `key` names the

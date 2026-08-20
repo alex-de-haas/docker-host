@@ -3298,6 +3298,7 @@ internal sealed class CoreLifecycleService(
             Dependencies = manifest.Dependencies.Select(ToDependencyContract).ToArray(),
             Ui = AppUiContract.FromManifest(manifest.Ui),
             CatalogMetadata = AppCatalogMetadataContract.FromManifest(manifest.CatalogMetadata),
+            AgentSkillFile = string.IsNullOrWhiteSpace(manifest.Agent?.SkillFile) ? null : manifest.Agent!.SkillFile!.Trim(),
             Interfaces = AppInterfaceContract.FromManifest(manifest.Interfaces),
             RuntimeProfiles = BuildRuntimeProfileSummaries(manifest),
             MountSlots = BuildMountSlots(manifest),
