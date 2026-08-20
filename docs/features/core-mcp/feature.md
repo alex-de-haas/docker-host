@@ -1,7 +1,7 @@
 # Core MCP
 
 Created: 2026-08-09
-Updated: 2026-08-15
+Updated: 2026-08-20
 
 An embedded Model Context Protocol endpoint on Core, giving agent clients typed tools for the things
 Core already knows — which apps exist, what state they are in, what their logs say — instead of
@@ -38,8 +38,15 @@ never performs or proxies work that belongs to a runtime app's own domain API.
 
 ## Tools
 
-All four are read-only. Results are shaped for a model rather than a UI: small, flat, and naming apps
-by their reverse-DNS id so a follow-up call needs no disambiguation.
+All four are read-only, and each **says so on the wire**: every tool advertises
+`annotations.readOnlyHint: true`. Being read-only by design is not something a client can see, and an
+agent client with an approval gate must assume an unannotated tool may mutate — which, run
+unattended, means it refuses to call it at all. Hosty already holds *apps* to this bar (`hosty mcp`
+will not export a tool that does not declare it), so Core declaring nothing was Core exempting itself
+from its own contract.
+
+Results are shaped for a model rather than a UI: small, flat, and naming apps by their reverse-DNS id
+so a follow-up call needs no disambiguation.
 
 | Tool | Returns |
 | --- | --- |
@@ -96,6 +103,9 @@ which presents as a build that hangs for minutes with no output.
   tool. Listing alone is not enough — attribute-declared tools are discovered by reflection, so the
   failure worth catching is a server that initializes cleanly and then advertises nothing, or
   advertises a tool that throws when invoked.
+- **Every tool advertises `readOnlyHint: true`, asserted on the wire** rather than on the attribute:
+  what a client acts on is the `tools/list` payload, and an attribute that stopped mapping to it
+  would leave the tools uncallable by any gated client while every other test stayed green.
 - The auth gate in all three shapes it can be reached: anonymous, invalid bearer, valid non-admin.
 - The log-line clamp asserted at both ends of the range through the budget the tool reports back.
 - Route visibility in the live `EndpointDataSource`, so the platform-wide anonymous-caller sweep
