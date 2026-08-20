@@ -108,9 +108,13 @@ browser holding a human's session.
       **Verified live 2026-08-17** — the wall-clock run this deliverable was held open for: an
       approval raised at 5s, released at 396s (96 seconds past the 300-second TTL), answered with
       demo-app's own `host-admin-bootstrap 7`. The predecessor passed its unit tests and failed here.
-- [ ] **App MCP for the Codex harness.** The adapter drops `mcpServers` entirely, so enabled
-      providers give a Codex session no tools; reported as `appMcp: false` rather than silently. Needs
-      the config shape verified against a live Codex run, not inferred.
+- [x] **App MCP for the Codex harness.** Shipped 2026-08-19. The config shape was not inferred: it
+      was read back out of 0.147.0 by letting `codex mcp add --url … --bearer-token-env-var …` write
+      its own `config.toml`, then passed as `-c` overrides so the operator's `~/.codex` is never
+      touched. Verified end to end against a live `codex app-server` thread — the server reached
+      `ready`, and a probe recorded `initialize`, `notifications/initialized` and `tools/list`, each
+      carrying the bearer from the environment. `appMcp: true`; `liveReconfigure` stays false,
+      because Codex reads MCP configuration at startup and offers no way to change it mid-thread.
 - [x] **Auto-allow for read-only app-MCP tools**, as a **per-app operator decision** — see the
       decision below. The old text named the blocker wrongly: it said this needed the annotations the
       connector would bring. Annotations arrived, and they were never the blocker.
