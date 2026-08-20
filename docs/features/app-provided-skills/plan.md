@@ -120,10 +120,11 @@ later reader sees why rather than only what.
   design exists to prevent.
 - A skill declaration pointing outside the app folder is refused at install, not at read time.
 
-## Prerequisite
+## Prerequisite — met
 
-The matrix cell in [ai-agent-bridge](../ai-agent-bridge/plan.md) — *"a Hosty skill … validated with
-the skill loaded"* — is still open: both validated connections were made with a bare `mcp add`, so
-**nothing has yet demonstrated that a loaded skill changes an agent's behaviour at all**. Building
-app-provided skills on top of that assumption would be building on an unverified base. Close it
-first; it is one Claude Code run with the plugin installed.
+The matrix cell in [ai-agent-bridge](../ai-agent-bridge/plan.md) is closed as of 2026-08-20: a
+headless `claude -p`, run outside the repository and told not to read files, answered a
+connector-specific question with the skill's own fail-closed rule. A loaded skill demonstrably
+supplies facts the model otherwise lacks, which is the assumption this feature rests on. It was
+checked before implementation rather than after, because a negative would have invalidated the
+design rather than the code.
