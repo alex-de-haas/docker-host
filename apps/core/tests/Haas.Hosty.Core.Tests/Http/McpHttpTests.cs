@@ -54,6 +54,34 @@ public sealed class McpHttpTests
     }
 
     [Fact]
+    public async Task EveryToolDeclaresItselfReadOnlyOnTheWire()
+    {
+        // Core MCP is read-only by design, but a client cannot know that from the design — it reads
+        // `annotations.readOnlyHint`. Without it an agent client with an approval gate treats these
+        // tools as possibly-mutating: observed 2026-08-20 with `codex exec`, where every call came
+        // back "user cancelled MCP tool call" because nothing could approve it unattended.
+        //
+        // Hosty already holds *apps* to this bar — `hosty mcp` refuses to export a tool that does not
+        // declare it — so Core failing to declare it was Core exempting itself from its own contract.
+        await using var harness = await CoreHttpHarness.StartAsync();
+        var admin = await SeedSessionAsync(harness, "host.admin");
+        using var client = harness.CreateClient();
+        await InitializeAsync(client, admin);
+
+        var tools = await CallAsync(client, admin, "tools/list", new { });
+        foreach (var tool in tools.GetProperty("tools").EnumerateArray())
+        {
+            var name = tool.GetProperty("name").GetString();
+            Assert.True(
+                tool.TryGetProperty("annotations", out var annotations),
+                $"{name} declares no annotations, so a client must assume it may mutate.");
+            Assert.True(
+                annotations.TryGetProperty("readOnlyHint", out var readOnly) && readOnly.GetBoolean(),
+                $"{name} does not declare readOnlyHint: true.");
+        }
+    }
+
+    [Fact]
     public async Task AnUnknownAppIdIsAnAnsweredError_NotAProtocolFailure()
     {
         // A model recovers from a tool result that explains itself; it cannot recover from a transport
