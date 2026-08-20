@@ -370,7 +370,9 @@ class CodexRun implements HarnessRun {
           : typeof params?.error === "string" && params.error
             ? params.error
             : status;
-        this.emit({ type: "error", message: `MCP server "${name}" did not start (${reason}). Its tools are unavailable for this session.` });
+        // A notice, not an error: this provider is optional, and the session keeps whatever else
+        // started. Reporting it as an error would drop the run and fail the session over one app.
+        this.emit({ type: "notice", message: `MCP server "${name}" did not start (${reason}). Its tools are unavailable for this session.` });
       }
       return;
     }

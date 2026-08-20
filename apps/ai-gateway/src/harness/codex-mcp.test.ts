@@ -26,6 +26,16 @@ describe("toCodexMcpConfig", () => {
     expect(args.join(" ")).not.toContain("proxy-key");
   });
 
+  it("skips a credential Codex cannot express, rather than passing it through", () => {
+    // Codex always sends `Authorization: Bearer <value>`, so forwarding a Basic credential as the
+    // value registers a server that fails on its first call — which looks like the app being broken.
+    const { args, env } = toCodexMcpConfig({
+      basic: { type: "http", url: "http://x/mcp", headers: { authorization: "Basic dXNlcjpwdw==" } },
+    });
+    expect(args).toEqual([]);
+    expect(env).toEqual({});
+  });
+
   it("skips a server it could only configure half of", () => {
     // Registering a server that fails on its first call is worse than not registering it: the model
     // sees a tool, tries it, and the failure looks like the app being broken.

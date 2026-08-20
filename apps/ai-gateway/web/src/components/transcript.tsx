@@ -78,6 +78,14 @@ export function TranscriptEvent({
           onAnswer={onAnswer}
         />
       );
+    case "notice":
+      // Something degraded while the session stayed usable, so it reads as information rather than
+      // as the failure styling — which would say the run is over when it is not.
+      return (
+        <div className="rounded-md border border-muted-foreground/30 bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+          {String(event.message ?? "")}
+        </div>
+      );
     case "error":
       return <InlineError message={String(event.message ?? "Assistant error")} />;
     default:

@@ -70,8 +70,15 @@ export function toCodexMcpConfig(servers: Record<string, unknown> | undefined): 
 
     // The gateway's own entries always carry one; a hand-written provider might not, and an
     // unauthenticated call to the proxy is refused rather than anonymous.
+    //
+    // The scheme has to *be* Bearer, not merely be stripped if present. Codex sends the value it is
+    // given as `Authorization: Bearer <value>`, so a `Basic …` header passed through would register
+    // a server that fails on its first call — the half-configured state this function exists to
+    // avoid. Anything else is not expressible here, so it is skipped.
     const authorization = readHeader(server?.headers, "authorization");
-    const bearer = authorization?.replace(/^Bearer\s+/i, "").trim();
+    const bearer = /^Bearer\s+/i.test(authorization ?? "")
+      ? authorization!.replace(/^Bearer\s+/i, "").trim()
+      : null;
     if (!bearer) {
       continue;
     }

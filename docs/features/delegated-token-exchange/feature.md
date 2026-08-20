@@ -146,10 +146,26 @@ session. It costs one listing per *trusted* app, and the tick skips the work ent
 vouched for anything, which is the common case. The grant is also dropped when the delegation chain
 lapses, and cleared on every path that leaves the session with no providers at all.
 
-Codex reports `appMcp: false`: it gives an enabled provider **no tools at all**, not merely no live
-updates. Configuring MCP servers there means writing them into Codex's own config before the thread
-starts, a shape not verified against a live run — and guessing at that adapter's protocol is what has
-caught this code twice already. The flag says so rather than the gateway quietly doing nothing.
+Codex reports `appMcp: true` and `liveReconfigure: false`, and the difference is real: it takes its
+MCP servers from configuration read at **startup** and offers no way to change them mid-thread, so a
+provider toggled during a session takes effect in the next one.
+
+The configuration is passed as `-c` overrides at spawn, never written to a file, because these
+servers belong to one session of one gateway rather than to the machine — the operator's own
+`~/.codex/config.toml` is untouched. The shape was not inferred from documentation: `codex mcp add`
+was allowed to write its own config on 0.147.0, producing `[mcp_servers.<name>]` with `url` and
+`bearer_token_env_var`. Guessing at this adapter's protocol is what has caught this code twice.
+
+The bearer travels in the **environment**, which is the only place Codex reads one from — there is no
+arbitrary-header option as the Claude side has, and it keeps a per-session proxy key out of config
+files and out of `codex mcp list`. Each variable's name carries a digest when sanitizing changes the
+server name, because `a-b` and `a_b` are both legal names that would otherwise share one variable:
+the token is precisely what scopes a call to one app, so one app's silently becoming another's is
+the worst failure available here.
+
+A server that fails to start is reported to the operator as a **notice, not an error**. An error
+means the harness is dead — the manager drops the run, unregisters the proxy routes and fails the
+session — and one optional provider must not do that to a session that still has its other tools.
 
 ## Testing Expectations
 
