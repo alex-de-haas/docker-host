@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-06-09
-Updated: 2026-08-19
+Updated: 2026-08-20
 
 The shared model, the boundaries and the decision log live in [feature.md](feature.md) and are in
 force. This document holds only what is **not built**: the rollout checklist, and the design for the
@@ -70,8 +70,19 @@ individually, because "a stock client connected" is four different claims and on
       `get_my_app_role` and came back with demo-app's own `host-admin-bootstrap` and its seven
       permissions — values that cannot be guessed, which is why they were the ones asked for.
       Recorded in [hosty-mcp-connector](../hosty-mcp-connector/feature.md).
-- [ ] **Codex → Core `/api/mcp`.**
-- [ ] **Codex → demo-app `/api/mcp`**, subject to the same TTL obstacle.
+- [ ] **Codex → Core `/api/mcp`.** Connects, but every call is refused. `codex exec` discovered the
+      tool names — so `initialize` and `tools/list` succeed over HTTP with an access token — and then
+      answered each call with "user cancelled MCP tool call": non-interactively there is nobody to
+      approve, and Core declared **no `readOnlyHint`** on any tool, so a client must assume they
+      mutate. Fixed in Core (`ReadOnly = true`, asserted on the wire), but this host runs a built
+      binary, so the cell stays open until a Core carrying that fix is deployed — one `codex exec`
+      then closes it. That the annotation was the *only* cause is likely but unproven: the isolating
+      experiment did not converge and was abandoned rather than reported as evidence.
+- [x] **Codex → demo-app `/api/mcp`** (2026-08-20), through the connector, exactly as Claude reached
+      it. A stock `codex exec` with `-c` overrides — no gateway code, and the operator's own
+      `~/.codex/config.toml` untouched — called `com_dhaas_ddemo-app__get_my_app_role` and returned
+      role `admin` with its seven permissions, matching what Shell's demo-app panel shows. Values
+      that cannot be guessed, which is the standard the Claude cell set.
 - [ ] **A Hosty skill** telling a client how to discover apps and which tools need confirmation.
       One now exists — `packages/hosty-claude-plugin/skills/hosty-mcp-connector` — but the connection
       above was a bare `claude mcp add`, so nothing has yet been validated *with the skill loaded*.

@@ -58,7 +58,7 @@ internal sealed class HostyCoreTools
 {
     // A fleet can be large and a model's context cannot. The list tool projects only what an agent
     // needs to pick a target; everything else is one get_app away.
-    [McpServerTool(Name = "list_apps")]
+    [McpServerTool(Name = "list_apps", ReadOnly = true)]
     [Description("Lists the runtime apps installed on this Hosty host: id, display name, version, runtime state, and whether it is a system app. Start here to resolve an app the user named informally (\"Solitaire\") to its id.")]
     public static async Task<string> ListAppsAsync(
         CoreLifecycleService lifecycle,
@@ -78,7 +78,7 @@ internal sealed class HostyCoreTools
         return CoreJson.Text(payload);
     }
 
-    [McpServerTool(Name = "get_app")]
+    [McpServerTool(Name = "get_app", ReadOnly = true)]
     [Description("Returns one app's detail: runtime state, selected runtime profile, endpoint URLs, declared platform interfaces, and the last error if it has one. Use the id from list_apps.")]
     public static async Task<string> GetAppAsync(
         [Description("Reverse-DNS app id, e.g. com.haas.solitaire.")] string appId,
@@ -113,7 +113,7 @@ internal sealed class HostyCoreTools
             interfaces));
     }
 
-    [McpServerTool(Name = "get_host_status")]
+    [McpServerTool(Name = "get_host_status", ReadOnly = true)]
     [Description("Returns the host's overall state: Core version and how many apps are running, stopped, or reporting an error. Answers \"is anything wrong here\" in one call.")]
     public static async Task<string> GetHostStatusAsync(
         CoreLifecycleService lifecycle,
@@ -132,7 +132,7 @@ internal sealed class HostyCoreTools
 
     // Deliberately named "tail": Core's logs are an on-demand read of the process/container output,
     // not a searchable store. Structured, queryable logs belong to the telemetry app.
-    [McpServerTool(Name = "tail_app_logs")]
+    [McpServerTool(Name = "tail_app_logs", ReadOnly = true)]
     [Description("Returns the tail of one app's console output. This is a live tail, not a searchable log store — ask for more lines rather than expecting to filter.")]
     public static async Task<string> TailAppLogsAsync(
         [Description("Reverse-DNS app id, e.g. com.haas.solitaire.")] string appId,
