@@ -1,6 +1,6 @@
 # App-Provided Skills
 
-Status: Draft
+Status: Ready
 Created: 2026-08-20
 Updated: 2026-08-20
 
@@ -78,22 +78,39 @@ about Hosty, not about any app, and it cannot grow to cover apps Hosty does not 
 2. **The decision**: per-app enablement, Shell surface, defaults.
 3. **The delivery**: the connector hands an enabled skill to a client, and Demo App ships one.
 
-## Open Questions
+## Decisions
 
-1. **Where does the declaration live?** `metadata` holds the display assets and is documented as
-   outside runtime validation — a skill is not display-only, so putting it there weakens a boundary
-   that currently means something. The alternative is beside the agent-facing surface the app already
-   declares (`interfaces.mcp`), which reads as "this is for agents" rather than "this is for humans
-   browsing a catalog".
-2. **Does the skill reach Hosty's own assistant, or only external clients?** The gateway runs on the
-   host with shell access, so it is the highest-consequence reader; it is also the one Hosty fully
-   controls, so it is the easiest to gate. Both arguments point in opposite directions.
-3. **What happens when an update changes the skill?** Re-asking the operator on every change is the
-   safe reading and the annoying one; not asking means an update silently rewrites instructions an
-   operator once approved. A middle option — re-ask only when the file's digest changes — is
-   implementable because the asset is already vendored and versioned.
-4. **One skill per app, or one per MCP interface?** An app may declare several `interfaces.mcp`
-   entries. One skill is simpler and matches how a human would document an app.
+Recommended in chat and approved by the owner on 2026-08-20. Recorded with their reasoning, so a
+later reader sees why rather than only what.
+
+- **The declaration sits beside the agent-facing surface, not in `metadata`** — `agent.skillFile`, a
+  sibling of `interfaces`. `metadata` is documented in Core's own source as "display-only, outside
+  runtime validation", and a skill is neither. Putting it there would mean either weakening that
+  boundary or shipping a field that behaves unlike its neighbours. The placement also documents
+  intent: an author reading `interfaces` sees "this is for agents"; one reading `metadata` sees
+  "this is for the catalog".
+
+- **The skill reaches Hosty's own assistant, under the same gate.** The assistant runs on the host
+  with shell access and is the highest-consequence reader — but that argues for the gate, which
+  exists, not for exclusion. The decisive point is consistency: the assistant **already** receives
+  app-authored text, namely the names and descriptions of every enabled provider's tools, through
+  this very toggle. Excluding skills would draw a line drawn nowhere else, and on a host where the
+  assistant is how people work it would make the feature nearly pointless.
+
+- **A changed skill is withheld until reviewed.** The asset is already vendored and versioned, so a
+  digest change is cheap to detect; on change the skill stops being delivered until the operator
+  looks at the new text. Delivering the previous version instead is worse — it is text the installed
+  app no longer contains.
+
+  **This is stricter than the platform is today**, and deliberately: an app update currently changes
+  its tool *descriptions* silently while the provider stays enabled. That is a gap on that side
+  rather than a reason to open one here, and it is recorded so the inconsistency is a known debt
+  instead of a discovery.
+
+- **One skill per app**, not one per `interfaces.mcp` entry. That is how a human documents an app,
+  and an app with two interfaces still has one story about how it is worked. If it ever needs
+  division, that is sections in the file rather than a new axis in the manifest — and this answer is
+  what makes a sibling of `interfaces` the right shape above rather than something nested.
 
 ## Verification
 
