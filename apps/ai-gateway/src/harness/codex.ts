@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { toCodexMcpConfig } from "./codex-mcp.js";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type {
@@ -42,7 +43,7 @@ export class CodexHarnessAdapter implements HarnessAdapter {
   // inferable from binary symbols — see REQUEST_USER_INPUT_METHOD in codex-protocol.ts. No live
   // reconfiguration either: the protocol has no setMcpServers equivalent, so a settings change here
   // takes effect at the next session and the UI must say so.
-  readonly capabilities: HarnessCapabilities = { questions: false, appMcp: false, liveReconfigure: false };
+  readonly capabilities: HarnessCapabilities = { questions: false, appMcp: true, liveReconfigure: false };
 
   constructor(private readonly auth: CodexAuthConfig) {}
 
@@ -123,11 +124,16 @@ class CodexRun implements HarnessRun {
       : auth.codexHome?.trim()
         ? { CODEX_HOME: auth.codexHome.trim() }
         : {};
-    const target = spawnTarget(["app-server"]);
+    // App MCP is configured at spawn time because that is the only door Codex offers: `-c`
+    // overrides layered on top of whatever config it would otherwise load, with the bearer read from
+    // the environment. Nothing is written to the operator's ~/.codex — these servers belong to one
+    // session of one gateway, not to the machine.
+    const mcp = toCodexMcpConfig(options.mcpServers);
+    const target = spawnTarget(["app-server", ...mcp.args]);
     this.child = spawn(target.command, target.args, {
       stdio: ["pipe", "pipe", "pipe"],
       cwd: options.cwd,
-      env: { ...process.env, ...env },
+      env: { ...process.env, ...env, ...mcp.env },
     });
     this.child.stdout.on("data", (chunk: Buffer) => this.onStdout(chunk));
     this.child.stderr.on("data", (chunk: Buffer) => {
@@ -192,11 +198,10 @@ class CodexRun implements HarnessRun {
     return false;
   }
 
-  // This adapter ignores HarnessStartOptions.mcpServers entirely, so enabled providers give a Codex
-  // session no app tools at all — not merely no *updates*. Configuring them means writing MCP servers
-  // into Codex's own config before the thread starts, a shape not verified against a live run, and
-  // guessing at it is what this adapter has already been caught by twice. Reported honestly through
-  // capabilities.appMcp rather than silently doing nothing.
+  // Providers reach a Codex session at spawn time, not while it runs: Codex takes its MCP servers
+  // from configuration read at startup and exposes no method to change them afterwards. So this
+  // returns false and `capabilities.liveReconfigure` stays false — a toggle takes effect in the next
+  // session, and the settings UI says so rather than implying immediacy.
   async setMcpServers(): Promise<boolean> {
     return false;
   }
@@ -347,6 +352,31 @@ class CodexRun implements HarnessRun {
     }
 
     const params = message.params ?? {};
+    // Codex reports each configured MCP server's startup, which is the only signal that a provider
+    // the operator enabled did not actually come up. Verified on 0.147.0 (2026-08-19): `starting`
+    // then `ready` for a reachable server.
+    //
+    // Anything that is neither is treated as a failure rather than matching a specific status name —
+    // the failure names are not part of any contract this adapter can see, and guessing at Codex's
+    // vocabulary is what has bitten it before. Reporting one status too many is a visible message;
+    // missing the real one leaves an app silently toolless.
+    if (message.method === "mcpServer/startupStatus/updated") {
+      const params = message.params as { name?: unknown; status?: unknown; error?: unknown; failureReason?: unknown } | undefined;
+      const status = typeof params?.status === "string" ? params.status : "";
+      if (status && status !== "starting" && status !== "ready") {
+        const name = typeof params?.name === "string" ? params.name : "an app";
+        const reason = typeof params?.failureReason === "string" && params.failureReason
+          ? params.failureReason
+          : typeof params?.error === "string" && params.error
+            ? params.error
+            : status;
+        // A notice, not an error: this provider is optional, and the session keeps whatever else
+        // started. Reporting it as an error would drop the run and fail the session over one app.
+        this.emit({ type: "notice", message: `MCP server "${name}" did not start (${reason}). Its tools are unavailable for this session.` });
+      }
+      return;
+    }
+
     if (message.method === "item/agentMessage/delta") {
       this.emit({ type: "assistant_delta", text: String(params.delta ?? "") });
       return;

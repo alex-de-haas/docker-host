@@ -60,6 +60,14 @@ export type HarnessEvent =
       costUsd?: number;
       usage?: { inputTokens?: number; outputTokens?: number };
     }
+  /**
+   * Something degraded that the operator should see, with the run still alive.
+   *
+   * Separate from `error` because the manager treats an error as a dead harness: it drops the run,
+   * unregisters the session's proxy routes and marks the session failed. One optional MCP provider
+   * failing to start must not do that to an otherwise healthy session and its remaining tools.
+   */
+  | { type: "notice"; message: string }
   | { type: "error"; message: string };
 
 export interface HarnessStartOptions {
