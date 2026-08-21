@@ -1,6 +1,6 @@
 # App-Provided Skills
 
-Status: Ready
+Status: In Progress
 Created: 2026-08-20
 Updated: 2026-08-20
 
@@ -54,29 +54,28 @@ about Hosty, not about any app, and it cannot grow to cover apps Hosty does not 
 
 ## Deliverables
 
-- [ ] Manifest: an optional skill declaration, validated like the other asset paths (relative,
+- [x] Manifest: an optional skill declaration, validated like the other asset paths (relative,
       contained, `.md`, size-capped) and **rejected when it names anything outside the manifest
       folder**.
-- [ ] Core: vendoring and serving through the existing asset endpoint, reusing the byte budget rather
+- [x] Core: vendoring and serving through the existing asset endpoint, reusing the byte budget rather
       than adding a second one.
-- [ ] Core: the per-app enablement, stored beside the MCP provider policy it mirrors, defaulting to
-      off, and exposed on the app projection so a client can tell enabled from merely declared.
-- [ ] Shell: the operator's decision surfaced where the MCP provider toggle already is, saying what
-      enabling means in the same plain terms that section already uses.
+- [ ] Gateway: an enabled provider's skill reaches the session; a disabled one's does not. **No new
+      toggle and no new state** — the decision already exists and is already made in that page.
 - [ ] `hosty mcp`: the connector serves an enabled app's skill to the client it is connected to,
       by whatever mechanism that client supports — the deliverable that turns a stored file into a
       thing an agent reads.
 - [ ] Demo App: a skill worth reading, as the worked example — procedure, not a tool list.
 - [ ] Tests: a declaration outside the manifest folder refused beside a legitimate one accepted; a
-      declared-but-disabled skill absent from what a client receives beside an enabled one present;
-      the byte budget enforced.
+      declared skill absent from a session whose provider is off beside present when it is on; the
+      byte budget enforced.
 - [ ] Docs: `feature.md`, the manifest reference in `skills/hosty-app-skill`, index.
 
 ## Phases
 
 1. **The contract**: manifest field, validation, vendoring, projection. Nothing reaches an agent yet.
-2. **The decision**: per-app enablement, Shell surface, defaults.
-3. **The delivery**: the connector hands an enabled skill to a client, and Demo App ships one.
+2. **The decision**: none of its own — the skill follows the provider toggle that already exists.
+3. **The delivery**: the gateway and the connector hand a skill to their client, and Demo App
+   ships one.
 
 ## Decisions
 
@@ -90,7 +89,21 @@ later reader sees why rather than only what.
   intent: an author reading `interfaces` sees "this is for agents"; one reading `metadata` sees
   "this is for the catalog".
 
-- **The skill reaches Hosty's own assistant, under the same gate.** The assistant runs on the host
+- **The skill follows the MCP provider toggle; there is no separate switch.** Corrected on
+  2026-08-20, during implementation, after the owner asked what a second flag would decide. It would
+  ask the same question twice: enabling a provider already accepts that this app's text enters the
+  model's context, because a tool arrives with its name and description and there is no version of it
+  that does not. An operator who cannot explain the difference between two toggles on one page is
+  looking at a design error, not at a choice.
+
+  Two things I had recorded here were wrong and are withdrawn. There is no platform-level provider
+  policy for this to sit beside — `mcpProviders` belongs to the **gateway**, one app among others,
+  which can be uninstalled. And the connector's lack of an operator toggle is not a gap: the CLI
+  reaches Core over the local control channel, which the repository already documents as
+  "unconditional host-operator power". A gate there would protect against someone who can already
+  remove the app.
+
+- **The skill reaches Hosty's own assistant, under that same decision.** The assistant runs on the host
   with shell access and is the highest-consequence reader — but that argues for the gate, which
   exists, not for exclusion. The decisive point is consistency: the assistant **already** receives
   app-authored text, namely the names and descriptions of every enabled provider's tools, through
