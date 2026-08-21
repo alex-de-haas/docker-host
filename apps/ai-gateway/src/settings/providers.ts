@@ -7,6 +7,8 @@
 //
 // The service token is the gateway's own app→Core credential, the same one the audit reporter uses.
 
+import { readAppSkill, type AppSkill } from "../mcp/skills.js";
+
 export const MCP_INTERFACE = "mcp";
 
 export interface McpProvider {
@@ -30,6 +32,24 @@ export class ProviderDirectory {
     private readonly serviceToken: string | null,
     private readonly appId: string,
   ) {}
+
+  /**
+   * One app's agent skill, read as this app.
+   *
+   * Lives here because the credentials do: the alternative was a second copy of the Core origin,
+   * service token and app id in the session manager, and a second copy is what goes stale.
+   *
+   * Null covers every way there is nothing to hand a model — the app declares no skill, declared one
+   * that was never packaged, or Core is briefly unreachable. A session must still start; an agent
+   * that knows less is a smaller cost than an assistant that will not open because one app is
+   * mid-update.
+   */
+  async readSkill(targetAppId: string): Promise<AppSkill | null> {
+    if (!this.coreOrigin || !this.serviceToken) {
+      return null;
+    }
+    return readAppSkill(this.coreOrigin, this.serviceToken, this.appId, targetAppId);
+  }
 
   /**
    * Every installed app declaring an `mcp` interface, plus the full installed roster so stale

@@ -32,6 +32,9 @@ describe("per-app auto-allow", () => {
       providers: [{ appId: APP, displayName: "Notes", url: `http://${APP}/api/mcp`, running: true }],
       installedAppIds: [APP],
     }),
+    // Declares no skill: these tests are about the approval gate, and a skill would only add prose to
+    // a system prompt none of them read.
+    readSkill: async () => null,
   } as unknown as ProviderDirectory;
 
   /** Core issues tokens; the app lists one read-only tool and one that declares nothing. */

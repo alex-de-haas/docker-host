@@ -1,3 +1,4 @@
+import { composeSystemPrompt, type AppSkill } from "../mcp/skills.js";
 import { randomUUID } from "node:crypto";
 import type { HarnessAdapter, HarnessEvent, HarnessRun } from "../harness/adapter.js";
 import type { SessionRecord, SessionStatus, SessionStore, StoredEvent } from "./store.js";
@@ -20,6 +21,12 @@ interface LiveSession {
   record: SessionRecord;
   run: HarnessRun | null;
   listeners: Set<SessionListener>;
+  /**
+   * The apps whose MCP servers this session was actually given, in the order they were offered.
+   * Skills follow this rather than the policy: instructions for tools a session does not have read
+   * as a capability rather than as an absence.
+   */
+  mcpAppIds: string[];
   /** approvalId -> toolName, so approval decisions can be audited with what they approved. */
   pendingApprovals: Map<string, string>;
   /** questionId -> the question texts, which are the keys the answers must come back under. */
@@ -95,6 +102,7 @@ export class SessionManager {
       record,
       run: null,
       listeners: new Set(),
+      mcpAppIds: [],
       pendingApprovals: new Map(),
       pendingQuestions: new Map(),
       credential: null,
@@ -138,8 +146,11 @@ export class SessionManager {
       // Read at start, not at every turn: the system prompt is the session's instruction set, so a
       // mid-conversation swap would leave a transcript whose halves ran under different rules. An
       // edit takes effect in the next session, which the settings UI states plainly.
-      const systemPrompt = (await this.settings?.read())?.systemPrompt?.trim() || undefined;
+      const operatorPrompt = (await this.settings?.read())?.systemPrompt?.trim() || undefined;
       const mcpServers = await this.buildMcpServers(session);
+      // After the servers, deliberately: the set of enabled providers is what decides whose skill is
+      // read, and buildMcpServers is where that set is resolved. Asking first would use a stale one.
+      const systemPrompt = composeSystemPrompt(operatorPrompt, await this.readEnabledSkills(session));
       session.run = this.adapter.start({
         sessionId: id,
         cwd: this.workDir,
@@ -180,12 +191,14 @@ export class SessionManager {
       // behind here would outlive the policy that justified it, which is the one thing this set must
       // never do — so it is cleared first and only re-earned at the bottom.
       session.autoAllowed.clear();
+      session.mcpAppIds = [];
       return undefined;
     }
 
     const [discovered, policy] = await Promise.all([this.providers.read(), this.settings.read()]);
     if (!discovered) {
       session.autoAllowed.clear();
+      session.mcpAppIds = [];
       return undefined;
     }
 
@@ -196,6 +209,7 @@ export class SessionManager {
     );
     if (servers.length === 0) {
       session.autoAllowed.clear();
+      session.mcpAppIds = [];
       this.proxy.unregister(session.record.id);
       return undefined;
     }
@@ -207,11 +221,28 @@ export class SessionManager {
       servers.map((server) => ({ appId: server.appId, url: server.url })),
       new Map(servers.map((server) => [server.appId, { token: server.token, expiresAtMs: server.expiresAtMs }])),
     );
+    session.mcpAppIds = servers.map((server) => server.appId);
     return toMcpServerConfig(servers, {
       baseUrl: this.proxyBaseUrl,
       sessionId: session.record.id,
       key,
     });
+  }
+
+  /**
+   * The skills of the providers this session actually got, in the order they were offered.
+   *
+   * Keyed off `session.mcpAppIds` rather than the policy, so a provider that is enabled but
+   * unreachable contributes no skill: handing a model instructions for tools it does not have would
+   * be worse than silence, because it reads as a capability rather than as an absence.
+   */
+  private async readEnabledSkills(session: LiveSession): Promise<AppSkill[]> {
+    if (!this.providers || session.mcpAppIds.length === 0) {
+      return [];
+    }
+
+    const skills = await Promise.all(session.mcpAppIds.map((appId) => this.providers!.readSkill(appId)));
+    return skills.filter((skill): skill is AppSkill => skill !== null);
   }
 
   /** Re-reads the fleet and the policy, then rebuilds this session's grants from both. */
@@ -532,6 +563,7 @@ export class SessionManager {
       record,
       run: null,
       listeners: new Set(),
+      mcpAppIds: [],
       pendingApprovals: new Map(),
       pendingQuestions: new Map(),
       credential: null,
