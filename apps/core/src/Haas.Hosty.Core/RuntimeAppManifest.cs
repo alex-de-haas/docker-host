@@ -110,7 +110,9 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
         CancellationToken cancellationToken = default)
     {
         var meta = selection.Manifest.CatalogMetadata;
-        var agentSkillFile = selection.Manifest.Agent?.SkillFile;
+        // Trimmed here as well as at projection: a padded path validated, projected trimmed, and then
+        // vendored untrimmed would leave the record pointing at a file nobody wrote.
+        var agentSkillFile = selection.Manifest.Agent?.SkillFile?.Trim();
         var navIconAssets = (selection.Manifest.Ui?.Navigation ?? [])
             .Select(item => item.IconAsset)
             .Where(icon => !string.IsNullOrWhiteSpace(icon))
@@ -210,6 +212,14 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
             if (skill is not null && budget.TryAdd(skill.Length))
             {
                 WriteVendoredAsset(appRoot, skillRootRel, skill);
+            }
+            else
+            {
+                // An update that keeps the path but drops, oversizes, or fails to fetch the file must
+                // not leave the previous copy in place: both delivery routes resolve whatever is on
+                // disk, so an agent would keep receiving instructions the installed app no longer
+                // contains. Absence is the honest answer, and it is the one both routes document.
+                DeleteVendoredAsset(appRoot, skillRootRel);
             }
         }
 
@@ -333,6 +343,36 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
             // Best-effort: an HTTP error, socket drop, disposed stream, or fetch timeout leaves the asset
             // absent instead of failing the install; only genuine caller cancellation propagates.
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Removes a previously vendored asset, with the same containment the writer applies.
+    /// </summary>
+    /// <remarks>
+    /// The reserved-namespace check matters as much on the way out as on the way in: without it a
+    /// manifest declaring `data/config.json` and then failing to package it would have Core delete
+    /// the app's own runtime data.
+    /// </remarks>
+    private static void DeleteVendoredAsset(string appRoot, string rootRel)
+    {
+        if (CoreDataPaths.IsReservedAppRootPath(rootRel) ||
+            !CoreDataPaths.TryResolveContainedRelativePath(appRoot, rootRel, out var target))
+        {
+            return;
+        }
+
+        try
+        {
+            File.Delete(target);
+        }
+        catch (IOException)
+        {
+            // A file that will not delete is not worth failing an install over; the read path still
+            // answers from whatever is there, and the next update tries again.
+        }
+        catch (UnauthorizedAccessException)
+        {
         }
     }
 
@@ -1297,6 +1337,15 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
     {
         if (agent?.SkillFile is not { } skillFile)
         {
+            return;
+        }
+
+        if (skillFile.Length != skillFile.Trim().Length)
+        {
+            errors.Add(new(
+                "app_manifest_agent_skill_file_padded",
+                $"agent.skillFile '{skillFile}' has leading or trailing whitespace; write the path exactly.",
+                "$.agent.skillFile"));
             return;
         }
 

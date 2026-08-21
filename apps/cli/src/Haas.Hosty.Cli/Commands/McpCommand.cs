@@ -283,6 +283,12 @@ internal sealed partial class McpCommand(CommandContext context)
                         found.Add(skill);
                     }
                 }
+                catch (CoreControlException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+                {
+                    // Declaring no skill is the ordinary case, and this runs on every poll: logging it
+                    // would put a line per app per refresh into the operator's diagnostics, which is
+                    // how a useful stream becomes one nobody reads.
+                }
                 catch (Exception ex) when (ex is CoreControlException or CoreControlTimeoutException)
                 {
                     diagnostics.WriteLine($"[hosty mcp] {appId}: agent skill could not be read ({ex.Message}); continuing without it.");

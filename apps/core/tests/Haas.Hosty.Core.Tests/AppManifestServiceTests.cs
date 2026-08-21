@@ -1341,6 +1341,21 @@ public sealed class AppManifestServiceTests
     }
 
     [Fact]
+    public async Task LoadAsync_RejectsAPaddedSkillPath()
+    {
+        // Validation, projection and vendoring must agree on one string. A padded path that validated,
+        // projected trimmed and vendored untrimmed would leave the record pointing at a file nobody
+        // wrote — an app whose skill silently never arrives.
+        var manifestPath = await WriteManifestAsync(
+            "com.example.notes",
+            agent: """", "agent": { "skillFile": " docs/agent.md" } """");
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+
+        Assert.Contains(error.Errors, candidate => candidate.Code == "app_manifest_agent_skill_file_padded");
+    }
+
+    [Fact]
     public async Task LoadAsync_RejectsASkillThatIsNotMarkdown()
     {
         // The file is handed to a model as prose; the one thing worse than no skill is a binary read

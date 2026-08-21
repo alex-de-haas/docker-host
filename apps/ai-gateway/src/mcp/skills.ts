@@ -62,6 +62,24 @@ export const MAX_SKILL_CHARS = 8_000;
  * what it is — documentation supplied by an app, describing that app's own tools — so a skill that
  * tries to issue orders about anything else reads as out of place rather than as authority.
  */
+/**
+ * Stops an app writing its way out of its own section.
+ *
+ * The fence and the attribution *are* this feature's contract, and both are made of text the app
+ * controls: a display name carrying a quote forges an attribute, and a body carrying the closing tag
+ * ends its own section and opens whatever follows as if the host had written it. Neither is exotic —
+ * a skill legitimately describing this very format would contain the second by accident.
+ */
+function escapeAttribute(value: string): string {
+  return value.replace(/[<>"&]/g, (char) =>
+    char === "<" ? "&lt;" : char === ">" ? "&gt;" : char === '"' ? "&quot;" : "&amp;");
+}
+
+/** The closing tag, defanged so it reads as text rather than ending the section. */
+function neutralizeFence(body: string): string {
+  return body.replace(/<\/app-skill>/gi, "&lt;/app-skill&gt;");
+}
+
 export function composeSystemPrompt(operatorPrompt: string | undefined, skills: readonly AppSkill[]): string | undefined {
   const own = operatorPrompt?.trim() ?? "";
   if (skills.length === 0) {
@@ -69,9 +87,9 @@ export function composeSystemPrompt(operatorPrompt: string | undefined, skills: 
   }
 
   const sections = skills.map((skill) => {
-    const body = skill.markdown.trim().slice(0, MAX_SKILL_CHARS);
+    const body = neutralizeFence(skill.markdown.trim().slice(0, MAX_SKILL_CHARS));
     return [
-      `<app-skill app="${skill.appId}" name="${skill.displayName}">`,
+      `<app-skill app="${escapeAttribute(skill.appId)}" name="${escapeAttribute(skill.displayName)}">`,
       body,
       "</app-skill>",
     ].join("\n");

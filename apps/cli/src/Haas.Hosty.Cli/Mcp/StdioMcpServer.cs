@@ -21,7 +21,6 @@ internal sealed class StdioMcpServer(
 {
     private const string ProtocolVersion = "2025-06-18";
 
-    /// <summary>Written into <c>initialize</c>, where a client shows it to the model.</summary>
     /// <summary>
     /// The connector's own instructions, then each app's, fenced and attributed.
     /// </summary>
@@ -49,8 +48,9 @@ internal sealed class StdioMcpServer(
                 body = body[..MaxSkillChars];
             }
 
-            builder.Append("\n\n<app-skill app=\"").Append(skill.AppId).Append("\" name=\"").Append(skill.DisplayName).Append("\">\n");
-            builder.Append(body);
+            builder.Append("\n\n<app-skill app=\"").Append(EscapeAttribute(skill.AppId));
+            builder.Append("\" name=\"").Append(EscapeAttribute(skill.DisplayName)).Append("\">\n");
+            builder.Append(NeutralizeFence(body));
             builder.Append("\n</app-skill>");
         }
 
@@ -60,6 +60,23 @@ internal sealed class StdioMcpServer(
     /// <summary>Longer than this and one app's prose would crowd out the connector's own.</summary>
     private const int MaxSkillChars = 8_000;
 
+    /// <summary>
+    /// Stops an app writing its way out of its own section. The fence and the attribution are the
+    /// contract, and both are made of text the app controls: a display name carrying a quote forges
+    /// an attribute, and a body carrying the closing tag ends its section and opens whatever follows
+    /// as if the host had written it — which a skill describing this very format would do by accident.
+    /// </summary>
+    private static string EscapeAttribute(string value)
+        => value.Replace("&", "&amp;", StringComparison.Ordinal)
+            .Replace("<", "&lt;", StringComparison.Ordinal)
+            .Replace(">", "&gt;", StringComparison.Ordinal)
+            .Replace("\"", "&quot;", StringComparison.Ordinal);
+
+    /// <summary>The closing tag, defanged so it reads as text rather than ending the section.</summary>
+    private static string NeutralizeFence(string body)
+        => body.Replace("</app-skill>", "&lt;/app-skill&gt;", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Written into <c>initialize</c>, where a client shows it to the model.</summary>
     private const string Instructions =
         "Tools from every Hosty app on this host that exposes an MCP interface, named " +
         "<app>__<tool>. This connector is read-only: an app tool that does not declare itself " +
