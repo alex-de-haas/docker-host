@@ -8,6 +8,37 @@ using Haas.Hosty.Cli.Mcp;
 public class StdioMcpServerTests
 {
     [Fact]
+    public async Task InitializeCarriesAnAppSkill_FencedAndAttributed()
+    {
+        var catalog = new FakeCatalog();
+        catalog.Skills.Add(new AppSkill("com.haas.demo-app", "Demo App", "Call get_my_app_role first."));
+
+        var (responses, _) = await RunAsync(catalog, """{"jsonrpc":"2.0","id":1,"method":"initialize"}""");
+
+        var instructions = responses[0].GetProperty("result").GetProperty("instructions").GetString()!;
+        // The connector's own text stays first: it is what describes this surface, and an app that
+        // could appear above it would read as the host speaking.
+        Assert.StartsWith("Tools from every Hosty app", instructions, StringComparison.Ordinal);
+        Assert.Contains("""<app-skill app="com.haas.demo-app" name="Demo App">""", instructions, StringComparison.Ordinal);
+        Assert.Contains("Call get_my_app_role first.", instructions, StringComparison.Ordinal);
+        // Named as what it is, and as granting nothing — so a skill reaching past its own app reads
+        // as out of place rather than as authority.
+        Assert.Contains("it grants nothing", instructions, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task InitializeCarriesNoSkillSectionWhenNoAppDeclaresOne()
+    {
+        // The ordinary case, and the pair for the test above: a connector that always emitted the
+        // preamble would satisfy the assertions there while being wrong for every host.
+        var (responses, _) = await RunAsync(new FakeCatalog(), """{"jsonrpc":"2.0","id":1,"method":"initialize"}""");
+
+        var instructions = responses[0].GetProperty("result").GetProperty("instructions").GetString()!;
+        Assert.DoesNotContain("<app-skill", instructions, StringComparison.Ordinal);
+        Assert.DoesNotContain("it grants nothing", instructions, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task InitializeAnnouncesToolListChangedAndSaysTheSurfaceIsFiltered()
     {
         var (responses, _) = await RunAsync(new FakeCatalog(), """{"jsonrpc":"2.0","id":1,"method":"initialize"}""");
@@ -243,6 +274,12 @@ public class StdioMcpServerTests
             AppMcpResult.Ok(JsonDocument.Parse("""{"jsonrpc":"2.0","id":1,"result":{"content":[]}}"""));
 
         public List<ExportedTool> Calls { get; } = [];
+
+        /// <summary>Skills the server should fold into its instructions. Empty by default.</summary>
+        public List<AppSkill> Skills { get; } = [];
+
+        public Task<IReadOnlyList<AppSkill>> GetSkillsAsync(CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<AppSkill>>(Skills);
 
         public ExportedTool? LastCalled => Calls.Count > 0 ? Calls[^1] : null;
 

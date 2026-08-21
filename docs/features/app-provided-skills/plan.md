@@ -59,16 +59,21 @@ about Hosty, not about any app, and it cannot grow to cover apps Hosty does not 
       folder**.
 - [x] Core: vendoring and serving through the existing asset endpoint, reusing the byte budget rather
       than adding a second one.
-- [ ] Gateway: an enabled provider's skill reaches the session; a disabled one's does not. **No new
+- [x] Gateway: an enabled provider's skill reaches the session; a disabled one's does not. **No new
       toggle and no new state** — the decision already exists and is already made in that page.
-- [ ] `hosty mcp`: the connector serves an enabled app's skill to the client it is connected to,
+- [x] `hosty mcp`: the connector serves an enabled app's skill to the client it is connected to,
       by whatever mechanism that client supports — the deliverable that turns a stored file into a
       thing an agent reads.
-- [ ] Demo App: a skill worth reading, as the worked example — procedure, not a tool list.
-- [ ] Tests: a declaration outside the manifest folder refused beside a legitimate one accepted; a
-      declared skill absent from a session whose provider is off beside present when it is on; the
-      byte budget enforced.
-- [ ] Docs: `feature.md`, the manifest reference in `skills/hosty-app-skill`, index.
+- [x] Demo App: a skill worth reading, as the worked example — procedure, not a tool list.
+- [x] Tests: the manifest pairs (escaping refused beside legitimate accepted, non-markdown refused,
+      no `agent` block unaffected); the cross-app gate as a pair, with the interface check verified to
+      be what refuses; anonymous and foreign-token callers; a declared-but-unpackaged skill as an
+      absence; composition for both readers beside their no-skill cases; and the session pair — a
+      skill present when the provider is on, absent when it is off.
+- [ ] Tests: the **vendoring** byte budget. The delivery cap (8,000 characters per app) is asserted;
+      that the shared install-time budget refuses an oversized skill is not, because the vendoring
+      path has no test harness of its own and adding one is larger than this feature.
+- [x] Docs: `feature.md`, the manifest reference in `skills/hosty-app-skill`, index.
 
 ## Phases
 

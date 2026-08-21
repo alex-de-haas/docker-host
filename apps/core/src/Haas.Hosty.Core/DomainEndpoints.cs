@@ -37,6 +37,44 @@ internal static class DomainEndpoints
             await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
                 CoreJson.Json(new AppsResponse(await lifecycle.ListAppsAsync(cancellationToken)))));
 
+        // The same skill, read over the control channel instead.
+        //
+        // The connector is the CLI, and the CLI already holds unconditional host-operator power here
+        // — it is the channel that installs and removes apps. So this needs no gate of its own: one
+        // that refused would refuse a caller who can already do more, which is theatre rather than
+        // security. The app-to-app route above is the one that had to earn its authorization.
+        app.MapGet("/control/v1/apps/{appId}/agent-skill", async (
+            string appId,
+            HttpRequest request,
+            ControlSecret secret,
+            AppRegistryStore apps,
+            CoreDataPaths paths,
+            CancellationToken cancellationToken) =>
+            await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
+            {
+                var app = await apps.GetAppAsync(appId, cancellationToken);
+                if (app?.AgentSkillFile is not { } skillFile)
+                {
+                    return CoreJson.Json(
+                        new ErrorResponse("agent_skill_not_found", "That app declares no agent skill."),
+                        statusCode: StatusCodes.Status404NotFound);
+                }
+
+                var relative = CoreDataPaths.NormalizeRelativeAssetPath("", skillFile);
+                if (relative is null ||
+                    !AppAssetEndpoints.TryResolveAsset(paths.AppsRoot, appId, relative, out var absolute, out _))
+                {
+                    return CoreJson.Json(
+                        new ErrorResponse("agent_skill_not_found", "That app declares an agent skill that was not packaged."),
+                        statusCode: StatusCodes.Status404NotFound);
+                }
+
+                return CoreJson.Json(new AgentSkillResponse(
+                    app.Id,
+                    app.DisplayName,
+                    await File.ReadAllTextAsync(absolute, cancellationToken)));
+            }));
+
         // App-authenticated read of installed app ids. An app (e.g. Marketplace) calls this with its
         // own service token to learn which apps are already installed — enough to flag catalog entries
         // as installed — without holding a Core session. Returns ids only; the richer per-app state

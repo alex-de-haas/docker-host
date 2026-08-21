@@ -241,3 +241,51 @@ delegated token is an app authenticating differently from every other, not a sup
 
 While the app is stopped its tabs remain, dimmed and saying so, rather than disappearing — a surface
 that vanished with its app would read as uninstalled.
+
+## Agent Skill
+
+An app may ship the prose an agent needs to use it well, as a sibling of `interfaces`:
+
+```jsonc
+"agent": {
+  "skillFile": "docs/agent.md"   // manifest-relative markdown, inside the app's own folder
+}
+```
+
+Deliberately **not** in `catalogMetadata` beside `descriptionFile`. That block is display-only and
+outside runtime validation; this is prose a model acts on, so its path is validated at install —
+relative, contained in the manifest folder, `.md` — and a declaration that escapes is refused there
+rather than resolving to nothing later. Core vendors the file with the other assets, under the same
+byte budget.
+
+**One per app.** An app with several `interfaces.mcp` entries still has one story about how it is
+worked; division is sections in the file, not another axis here.
+
+### Who reads it
+
+| Reader | When |
+| --- | --- |
+| The Hosty assistant | the app's MCP provider is enabled, and the session actually got its tools |
+| `hosty mcp` | the app contributed tools to the connector's catalog |
+
+There is **no separate switch**. Enabling an app's MCP provider already accepts that its text enters
+the model's context — a tool arrives with its description and there is no version of it that does
+not — so a second toggle would ask the operator the same question twice.
+
+Wherever it lands, the skill is fenced and attributed, under a preamble naming it as documentation an
+app wrote about its own tools, which speaks for nobody else and grants nothing. Write it accordingly:
+guidance for calling *this* app.
+
+### What belongs in it
+
+Procedure, not inventory. Restating tool descriptions duplicates what MCP already carries and goes
+stale separately. Worth writing:
+
+- which tool to call first, and what its answer decides;
+- what the app's domain words mean, especially where they collide with Hosty's (an app role is not a
+  host role);
+- what a refusal means and whether retrying can fix it;
+- what the app does **not** know, so an agent stops guessing.
+
+Capped when delivered (8,000 characters), so one app cannot crowd out the operator's own instructions
+or another app's.

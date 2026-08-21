@@ -270,6 +270,9 @@ internal sealed class ToolCatalog(
 /// it outlives the response it came from and copied through unchanged apart from the name — schemas
 /// and annotations included, since client permission policy keys off them.
 /// </summary>
+/// <summary>One app's agent skill, as Core hands it over the control channel.</summary>
+internal sealed record AppSkill(string AppId, string DisplayName, string Markdown);
+
 internal sealed record ExportedTool(
     string ExportedName,
     AppMcpTarget Target,
