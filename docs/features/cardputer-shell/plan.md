@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-07-31
-Updated: 2026-08-20
+Updated: 2026-08-15
 
 ## Goal
 
@@ -680,33 +680,18 @@ own PR under the platform version, never inside the firmware PR.
   path.
 - [x] Add a host-side render harness so the four views can be developed and
   reviewed without hardware in the loop.
-- [x] Implement bounded configuration storage, Wi-Fi provisioning, SNTP time
+- [ ] Implement bounded configuration storage, Wi-Fi provisioning, SNTP time
   with the build-timestamp floor and the clock-unset state, time zone, endpoint
   validation, authorization, transport, state synchronization,
-  minimum-Core-version handling, and diagnostics — `settings_store.cpp`,
-  `wifi_manager.cpp`, SNTP in `firmware_app.cpp`, and the `endpoint`, `auth`,
-  `sse` and `state` units of `hosty_core`, each with host tests.
-  `kMinimumCoreVersion` is `0.73.0`, checked on both the staged and the full
-  sync path. Diagnostics are the blocking failure overlays this plan reserves
-  them for: thirty `show_error`/`show_overlay` sites carry the endpoint,
-  authorization, operation and OTA failures in plain words.
-- [x] Implement the keyboard-first Dashboard, Apps, Updates, and Device views
-  with unknown/stale/busy/error states — `View` covers all four, and the states
-  are `ConnectionState::Stale`, `RuntimeState`/`OperationState::Unknown` and
-  `is_busy()`, rendered by `render.cpp` under `test_render`.
+  minimum-Core-version handling, and diagnostics.
+- [ ] Implement the keyboard-first Dashboard, Apps, Updates, and Device views
+  with unknown/stale/busy/error states.
 - [x] Replace discoverability-dependent hotkeys with cyclic left/right view
   navigation, connection-aware header, contextual footer/action menus, and a
   selectable persisted Amber/Ocean/Violet theme.
-- [x] Implement lifecycle, autostart, Core operation, and routine
+- [ ] Implement lifecycle, autostart, Core operation, and routine
   update flows with confirmation and idempotency behavior aligned to Core, and
-  surface review-required updates as read-only with their reason —
-  `HostyClient` carries `app_lifecycle`, `set_autostart`, `start_update_check`,
-  `apply_routine_update`, `restart_core` and `update_core`; every mutation goes
-  through `begin_confirmation` behind `OverlayMode::Confirmation` and a
-  `command_in_flight_` guard. A review-required update is parsed from
-  `requiresReview`, labelled "Shell review" beside an `R` marker, and excluded
-  from all four apply paths. Not covered by host tests, which reach the parsing
-  and rendering either side of these calls but not the calls themselves.
+  surface review-required updates as read-only with their reason.
 
 ### Power, Alerts, And Recovery
 
@@ -719,19 +704,8 @@ own PR under the platform version, never inside the firmware PR.
   sound rate limiting, and screen-wake policy.
 - [x] Implement battery guards for mutation and OTA operations and expose
   understandable degraded-power states.
-- [x] Implement A/B firmware OTA from the compiled-in origin over validated
-  HTTPS, with health confirmation and downgrade policy — `firmware_ota.cpp`
-  streams through `esp_https_ota` against the certificate bundle, refuses a
-  candidate that is not newer than the running image, and confirms health with
-  `esp_ota_mark_app_valid_cancel_rollback` on the first boot that reports
-  `ESP_OTA_IMG_PENDING_VERIFY`. Clock and battery are preconditions rather than
-  advice: OTA is refused with an unset clock, and below 50% off USB-C.
-- [ ] Rollback tests. Split out of the OTA deliverable on 2026-08-20 because the
-  implementation shipped without them: `host/test_main.cpp` has twelve cases and
-  none reach `firmware_ota`, so the downgrade refusal and the pending-verify
-  transition are asserted nowhere. The rollback itself is the one path that only
-  runs when something has already gone wrong, which is the argument for testing
-  it rather than observing it.
+- [ ] Implement A/B firmware OTA from the compiled-in origin over validated
+  HTTPS, with health confirmation, downgrade policy, and rollback tests.
 - [x] Publish the heap, flash and latency evidence against the Phase 0 budgets;
   the runtime half is withdrawn with the target it measured against.
 
