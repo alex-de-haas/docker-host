@@ -265,6 +265,10 @@ internal sealed class ToolCatalog(
             hint.ValueKind == JsonValueKind.True;
 }
 
+
+/// <summary>One app's agent skill, as Core hands it over the control channel.</summary>
+internal sealed record AppSkill(string AppId, string DisplayName, string Markdown);
+
 /// <summary>
 /// One tool as the client will see it. <paramref name="Descriptor"/> is the app's own entry, cloned so
 /// it outlives the response it came from and copied through unchanged apart from the name — schemas

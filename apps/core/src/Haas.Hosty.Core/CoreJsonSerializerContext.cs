@@ -192,6 +192,7 @@ internal static class CoreJson
 [JsonSerializable(typeof(AppsResponse))]
 [JsonSerializable(typeof(InstalledAppsResponse))]
 [JsonSerializable(typeof(AppDirectoryResponse))]
+[JsonSerializable(typeof(AgentSkillResponse))]
 [JsonSerializable(typeof(AppDirectoryInterface))]
 [JsonSerializable(typeof(AppUpdateAvailabilityResponse))]
 [JsonSerializable(typeof(UsersResponse))]

@@ -16,11 +16,15 @@ export class FakeHarnessAdapter implements HarnessAdapter {
   readonly name = "fake";
   readonly capabilities: HarnessCapabilities = { questions: true, appMcp: true, liveReconfigure: true };
 
+  /** The options of the most recent start, so a suite can assert what a session was actually given. */
+  lastStart: HarnessStartOptions | null = null;
+
   async probe(): Promise<{ available: boolean; reason?: string }> {
     return { available: true };
   }
 
   start(options: HarnessStartOptions): HarnessRun {
+    this.lastStart = options;
     return new FakeRun(options.onEvent, options.sessionId, options.isAutoAllowed);
   }
 }
