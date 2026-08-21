@@ -73,6 +73,81 @@ internal static class DomainEndpoints
         // logs / traces) with human-readable names — the display-name enrichment the removed telemetry
         // read proxy used to do. Any valid app service token is accepted; returns id + display name only,
         // so the richer per-app state on GET /api/apps stays session-gated.
+        // One app's agent skill, read by another app.
+        //
+        // Every other `/api/internal/apps/{appId}/…` route answers about the caller itself: the
+        // service token is validated against the very id in the path, which is what stops an app
+        // asking Core about its neighbours. This route deliberately crosses that line, so it carries
+        // its own authorization rather than inheriting the pattern's.
+        //
+        // Only an app that declares the `ai-gateway` interface may cross it. A skill is prose an app
+        // wrote for an agent, and the apps that hand prose to agents are assistants; nothing else has
+        // a reason to read a neighbour's instructions, and "cheap to allow" is how a torrent client
+        // ends up reading the media server's. The narrower alternative — folding skills into the
+        // fleet listing every app already reads — would have granted this to all of them silently.
+        app.MapGet("/api/internal/apps/{appId}/agent-skills/{targetAppId}", async (
+            string appId,
+            string targetAppId,
+            HttpRequest request,
+            AppServiceTokenService serviceTokens,
+            AppRegistryStore apps,
+            CoreDataPaths paths,
+            CancellationToken cancellationToken) =>
+        {
+            var token = CoreSessionAuthorization.ReadBearerToken(request);
+            if (string.IsNullOrWhiteSpace(token) || !serviceTokens.ValidateToken(appId, token))
+            {
+                return CoreJson.Json(
+                    new ErrorResponse("agent_skill_unauthorized", "App service token is missing or invalid."),
+                    statusCode: StatusCodes.Status401Unauthorized);
+            }
+
+            var caller = await apps.GetAppAsync(appId, cancellationToken);
+            if (caller is null)
+            {
+                return CoreJson.Json(
+                    new ErrorResponse("app_not_found", "Runtime app was not found."),
+                    statusCode: StatusCodes.Status404NotFound);
+            }
+
+            if (caller.Interfaces is null || !caller.Interfaces.ContainsKey("ai-gateway"))
+            {
+                return CoreJson.Json(
+                    new ErrorResponse(
+                        "agent_skill_forbidden",
+                        "Only an app declaring the ai-gateway interface may read another app's agent skill."),
+                    statusCode: StatusCodes.Status403Forbidden);
+            }
+
+            var target = await apps.GetAppAsync(targetAppId, cancellationToken);
+            if (target?.AgentSkillFile is not { } skillFile)
+            {
+                return CoreJson.Json(
+                    new ErrorResponse("agent_skill_not_found", "That app declares no agent skill."),
+                    statusCode: StatusCodes.Status404NotFound);
+            }
+
+            // Resolved through the display-asset helper rather than by joining paths here. It is not
+            // merely containment: it refuses reserved app namespaces (the path a past IDOR was read
+            // through) and fails closed on a symbolic link at the app root or anywhere below it. A
+            // second, simpler resolver beside it would be the one missing those checks.
+            //
+            // Declared is also not the same as present — the path was validated at install, but the
+            // file may never have been packaged. That is an app packaging fault, answered as a plain
+            // absence rather than a server error.
+            var relative = CoreDataPaths.NormalizeRelativeAssetPath("", skillFile);
+            if (relative is null ||
+                !AppAssetEndpoints.TryResolveAsset(paths.AppsRoot, targetAppId, relative, out var absolute, out _))
+            {
+                return CoreJson.Json(
+                    new ErrorResponse("agent_skill_not_found", "That app declares an agent skill that was not packaged."),
+                    statusCode: StatusCodes.Status404NotFound);
+            }
+
+            var markdown = await File.ReadAllTextAsync(absolute, cancellationToken);
+            return CoreJson.Json(new AgentSkillResponse(target.Id, target.DisplayName, markdown));
+        });
+
         app.MapGet("/api/internal/apps/{appId}/app-directory", async (
             string appId,
             HttpRequest request,
@@ -295,6 +370,11 @@ internal sealed record InstalledAppsResponse(IReadOnlyList<string> AppIds);
 
 // App-token roster: id → display name for every installed app. Consumed by system apps (e.g. the
 // Telemetry UI) to label their appId-keyed data. A generic capability, not telemetry-specific.
+/// One app's agent skill, as another app reads it. The app id and name travel with the text so a
+/// consumer can attribute it — prose reaching a model without saying whose it is invites exactly the
+/// confusion this feature is careful about elsewhere.
+internal sealed record AgentSkillResponse(string AppId, string DisplayName, string Markdown);
+
 internal sealed record AppDirectoryResponse(IReadOnlyList<AppDirectoryEntry> Apps);
 
 internal sealed record AppDirectoryEntry(
