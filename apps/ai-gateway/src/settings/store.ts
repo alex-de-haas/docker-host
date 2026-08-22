@@ -40,9 +40,22 @@ export interface AssistantSettings {
    * outright.
    */
   mcpAutoAllow: Record<string, boolean>;
+  /**
+   * appId → digest of the skill text the operator has accepted from that app.
+   *
+   * Enabling a provider is consent to the app's prose **as it stands**; it cannot be consent to
+   * whatever the publisher writes next. An update rewrites the file under the same path, and without
+   * this the new instructions would reach the model on the strength of a decision made about
+   * different text.
+   *
+   * Recorded on first delivery rather than demanded up front: enabling is the act of consent, and
+   * asking twice for the same decision is what this feature already refused to do elsewhere. What is
+   * withheld is a *change* after that.
+   */
+  mcpSkillDigests: Record<string, string>;
 }
 
-const DEFAULTS: AssistantSettings = { systemPrompt: "", mcpProviders: {}, mcpAutoAllow: {} };
+const DEFAULTS: AssistantSettings = { systemPrompt: "", mcpProviders: {}, mcpAutoAllow: {}, mcpSkillDigests: {} };
 
 /** Cap on the operator prompt. Generous for instructions, small enough not to crowd the context. */
 export const MAX_SYSTEM_PROMPT_CHARS = 8_000;
@@ -67,6 +80,7 @@ export class SettingsStore {
         systemPrompt: typeof parsed.systemPrompt === "string" ? parsed.systemPrompt : "",
         mcpProviders: isBooleanRecord(parsed.mcpProviders) ? parsed.mcpProviders : {},
         mcpAutoAllow: isBooleanRecord(parsed.mcpAutoAllow) ? parsed.mcpAutoAllow : {},
+        mcpSkillDigests: isStringRecord(parsed.mcpSkillDigests) ? parsed.mcpSkillDigests : {},
       };
     } catch {
       // Missing or unreadable settings must not take the assistant down — an operator with a broken
@@ -82,6 +96,7 @@ export class SettingsStore {
     const next: AssistantSettings = {
       systemPrompt: (patch.systemPrompt ?? current.systemPrompt).slice(0, MAX_SYSTEM_PROMPT_CHARS),
       mcpProviders: patch.mcpProviders ?? current.mcpProviders,
+      mcpSkillDigests: patch.mcpSkillDigests ?? current.mcpSkillDigests,
       mcpAutoAllow: patch.mcpAutoAllow ?? current.mcpAutoAllow,
     };
 
@@ -118,6 +133,15 @@ export class SettingsStore {
     }
     return this.update({ mcpProviders: kept, mcpAutoAllow: keptAutoAllow });
   }
+}
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.values(value).every((entry) => typeof entry === "string")
+  );
 }
 
 function isBooleanRecord(value: unknown): value is Record<string, boolean> {

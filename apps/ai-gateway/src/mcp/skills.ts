@@ -9,7 +9,59 @@
 // What *is* here is attribution. App-authored prose reaching a model without saying whose it is, and
 // without a boundary the model can see, is how an app's instructions get mistaken for the operator's.
 
+import { createHash } from "node:crypto";
+
 export type AppSkill = { appId: string; displayName: string; markdown: string };
+
+/** A skill whose text changed since the operator accepted it, waiting to be looked at. */
+export type PendingSkill = AppSkill & { approvedDigest: string | null };
+
+/**
+ * The digest an approval is recorded against.
+ *
+ * Over the text itself, not the file path or the app version: an app that rewrites its skill without
+ * bumping a version must still be caught, and one that moves an unchanged file must not be.
+ */
+export function skillDigest(markdown: string): string {
+  return createHash("sha256").update(markdown.trim(), "utf8").digest("hex").slice(0, 32);
+}
+
+/**
+ * Splits what an operator has accepted from what changed under them.
+ *
+ * Enabling a provider is consent to that app's prose **as it stands**, so a skill seen for the first
+ * time is delivered and its digest recorded — asking again for a decision just made is the same
+ * double question this feature refused elsewhere. A skill whose text has since changed is withheld:
+ * the operator's decision was about different words, and an update rewriting the file under the same
+ * path would otherwise reach the model on the strength of it.
+ */
+export function partitionSkills(
+  skills: readonly AppSkill[],
+  approved: Readonly<Record<string, string>>,
+): { deliver: AppSkill[]; pending: PendingSkill[]; newlyApproved: Record<string, string> } {
+  const deliver: AppSkill[] = [];
+  const pending: PendingSkill[] = [];
+  const newlyApproved: Record<string, string> = {};
+
+  for (const skill of skills) {
+    const digest = skillDigest(skill.markdown);
+    const known = approved[skill.appId];
+    if (known === undefined) {
+      deliver.push(skill);
+      newlyApproved[skill.appId] = digest;
+      continue;
+    }
+
+    if (known === digest) {
+      deliver.push(skill);
+      continue;
+    }
+
+    pending.push({ ...skill, approvedDigest: known });
+  }
+
+  return { deliver, pending, newlyApproved };
+}
 
 /**
  * One app's skill, or null when it declares none.

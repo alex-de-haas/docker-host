@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ProviderRow } from "@/components/provider-row";
-import { establishSession, loadSettings, saveSettings, type Settings, type SettingsResponse } from "@/lib/api";
+import { approveSkill, establishSession, loadSettings, saveSettings, type Settings, type SettingsResponse } from "@/lib/api";
 import { startThemeSync } from "@/lib/shell-theme";
 
 export default function SettingsPage() {
@@ -25,6 +25,22 @@ export default function SettingsPage() {
         setPrompt(loaded.settings.systemPrompt);
       })
       .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Could not load settings."));
+  }, []);
+
+  const approve = useCallback(async (appId: string, markdown: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await approveSkill(appId, markdown);
+      // Re-read rather than dropping the row locally: the server decides what is still pending, and a
+      // second change landing between the read and the click must reappear rather than vanish.
+      setData(await loadSettings());
+      setStatus("Approved — applies to the next session.");
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : "Could not approve.");
+    } finally {
+      setBusy(false);
+    }
   }, []);
 
   const save = useCallback(
@@ -83,6 +99,37 @@ export default function SettingsPage() {
           {error && <span className="text-xs text-destructive">{error}</span>}
         </div>
       </section>
+
+      {(data.pendingSkills ?? []).length > 0 && (
+        <section>
+          <h2 className="text-[15px] font-semibold">Changed app instructions</h2>
+          <p className="mb-3 text-[13px] text-muted-foreground">
+            These apps rewrote the documentation they give the assistant. Enabling an app accepted the
+            text it had then, so the new text is being withheld until you have read it — an update
+            cannot put fresh instructions in front of the model on the strength of an older decision.
+          </p>
+          <div className="grid gap-3">
+            {(data.pendingSkills ?? []).map((skill) => (
+              <div key={skill.appId} className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-3">
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-medium">{skill.displayName}</div>
+                    <div className="truncate font-mono text-xs text-muted-foreground">{skill.appId}</div>
+                  </div>
+                  <Button size="sm" disabled={busy} onClick={() => void approve(skill.appId, skill.markdown)}>
+                    Approve
+                  </Button>
+                </div>
+                {/* The text itself, not a summary of it: approving prose you cannot read is not
+                    approval, and a diff would still hide what the whole now says. */}
+                <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-md bg-background p-3 text-xs">
+                  {skill.markdown}
+                </pre>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       <section>
         <h2 className="text-[15px] font-semibold">MCP providers</h2>

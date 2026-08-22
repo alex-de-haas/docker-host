@@ -89,6 +89,31 @@ Each is capped at 8,000 characters so one app cannot crowd out the operator's in
 app's, and a skill that cannot be read is skipped rather than fatal — an agent that knows less costs
 less than an assistant that will not open because one app is mid-update.
 
+## A Changed Skill Is Withheld
+
+Enabling a provider is consent to that app's prose **as it stands**. It cannot be consent to whatever
+the publisher writes next, and an update rewrites the file under the same path — so without this, new
+instructions would reach the model on the strength of a decision made about different words.
+
+The approval is a digest per app in the gateway's settings, beside the provider toggle that already
+carries the operator's decision. Not a per-app flag: that was tried and removed as a second question
+about one trust, and reviving it here would have brought the question back.
+
+- **First sighting is delivered and recorded.** Enabling was the act of consent; asking again for a
+  decision just made is the double question this design refused elsewhere.
+- **A change is withheld** and appears on the settings page **with its new text** — approving prose
+  you cannot read is not approval, and a diff would still hide what the whole now says.
+- **Approval names the text that was on screen.** The digest travels with the click, so an update
+  landing between the render and the press is refused rather than approved: "approve whatever is
+  current" would approve words nobody read, which is this mechanism's own failure arriving through
+  its approval path.
+- **The digest is over the text**, not the path or the version: an app that rewrites its skill without
+  bumping anything is caught, and one that moves an unchanged file is not.
+- Holding one app holds nothing else.
+
+The connector is unaffected. `hosty mcp` runs on the local control channel, which already carries
+host-operator power, so it has no toggle to hang an approval from and needs none.
+
 ## Testing Expectations
 
 - **Manifest validation as pairs**: every escaping shape refused beside a legitimate path accepted,
@@ -102,6 +127,9 @@ less than an assistant that will not open because one app is mid-update.
 - **Composition**: the reader's own text first and unwrapped, every skill attributed, the preamble
   present, and the per-app cap enforced — asserted for a session prompt and for the connector's
   instructions, each beside the no-skill case that must stay clean.
+- **Withholding as a set**: a first sighting delivered and recorded, an unchanged skill still
+  delivered, a changed one withheld with nothing recorded for it, and one app held without holding
+  another. The digest is asserted to ignore surrounding whitespace and to follow the text.
 - **Not covered**: that a provider toggled *off* contributes no skill is asserted structurally (skills
   are keyed off the servers a session received) rather than through a session-level test, because the
   gateway's suite has no harness that builds a session against a live provider set.

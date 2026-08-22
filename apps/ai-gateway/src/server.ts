@@ -8,7 +8,8 @@ import { serveStaticSite } from "./settings/static-site.js";
 const APP_SESSION_STREAM_SECONDS = 3600;
 import { SessionNotFoundError, type SessionManager } from "./sessions/manager.js";
 import type { HarnessAdapter } from "./harness/adapter.js";
-import { MAX_SYSTEM_PROMPT_CHARS, type SettingsStore } from "./settings/store.js";
+import { MAX_SYSTEM_PROMPT_CHARS, type AssistantSettings, type SettingsStore } from "./settings/store.js";
+import { partitionSkills, skillDigest, type AppSkill, type PendingSkill } from "./mcp/skills.js";
 import type { ProviderDirectory } from "./settings/providers.js";
 import type { McpProxy } from "./mcp/proxy.js";
 
@@ -174,6 +175,44 @@ async function route(
     return;
   }
 
+  // Approving one app's changed skill.
+  //
+  // Takes the digest the operator was shown, not just the app id: between the page rendering the text
+  // and the click, another update could land, and "approve whatever is current" would then approve
+  // words nobody read — which is the failure this whole mechanism exists to prevent, arriving through
+  // its own approval path.
+  if (url.pathname === "/api/settings/skills/approve" && settings && method === "POST") {
+    const body = await readJson(request);
+    const appId = typeof body.appId === "string" ? body.appId.trim() : "";
+    const digest = typeof body.digest === "string" ? body.digest.trim() : "";
+    if (!appId || !digest) {
+      sendJson(response, 422, {
+        code: "skill_approval_invalid",
+        message: "appId and digest are required.",
+      });
+      return;
+    }
+
+    const skill = providers ? await providers.readSkill(appId) : null;
+    if (!skill) {
+      sendJson(response, 404, { code: "skill_not_found", message: "That app declares no agent skill." });
+      return;
+    }
+
+    if (skillDigest(skill.markdown) !== digest) {
+      sendJson(response, 409, {
+        code: "skill_changed_again",
+        message: "This app's skill changed again since it was shown. Review the new text.",
+      });
+      return;
+    }
+
+    const current = await settings.read();
+    await settings.update({ mcpSkillDigests: { ...current.mcpSkillDigests, [appId]: digest } });
+    sendJson(response, 200, { appId, digest });
+    return;
+  }
+
   if (url.pathname === "/api/settings" && settings && (method === "GET" || method === "PUT")) {
     if (method === "PUT") {
       const body = await readJson(request);
@@ -226,10 +265,15 @@ async function route(
     }
 
     const current = await settings.read();
+    // Withheld skills travel with the settings, because withholding silently would be the worst of
+    // both designs: the operator's decision is honoured and they never learn there is one to make.
+    // The new text comes too — approving prose you cannot read is not approval.
+    const pendingSkills = await readPendingSkills(providers, discovered?.providers ?? [], current);
     // Capabilities ride along so the page can say what a change actually does on this harness
     // instead of one wording that is false on one of them.
     sendJson(response, 200, {
       settings: current,
+      pendingSkills,
       providers: discovered?.providers ?? [],
       discovery: discovered ? "ok" : "unavailable",
       harness: { name: adapter.name, capabilities: adapter.capabilities },
@@ -391,6 +435,29 @@ async function streamEvents(
     clearTimeout(tokenDeadline);
     unsubscribe();
   });
+}
+
+/**
+ * The skills of enabled providers whose text has changed since the operator accepted it.
+ *
+ * Read on the settings page rather than pushed from a session: a withheld skill has to be visible
+ * where the decision is made, and a session that quietly dropped one leaves no trace anywhere else.
+ */
+async function readPendingSkills(
+  providers: ProviderDirectory | null,
+  discovered: readonly { appId: string }[],
+  current: AssistantSettings,
+): Promise<PendingSkill[]> {
+  if (!providers) {
+    return [];
+  }
+
+  const enabled = discovered.filter((provider) => current.mcpProviders[provider.appId] === true);
+  const skills = await Promise.all(enabled.map((provider) => providers.readSkill(provider.appId)));
+  return partitionSkills(
+    skills.filter((skill): skill is AppSkill => skill !== null),
+    current.mcpSkillDigests,
+  ).pending;
 }
 
 function applyCors(request: IncomingMessage, response: ServerResponse): void {

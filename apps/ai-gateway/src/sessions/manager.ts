@@ -1,4 +1,4 @@
-import { composeSystemPrompt, type AppSkill } from "../mcp/skills.js";
+import { composeSystemPrompt, partitionSkills, type AppSkill } from "../mcp/skills.js";
 import { randomUUID } from "node:crypto";
 import type { HarnessAdapter, HarnessEvent, HarnessRun } from "../harness/adapter.js";
 import type { SessionRecord, SessionStatus, SessionStore, StoredEvent } from "./store.js";
@@ -150,7 +150,7 @@ export class SessionManager {
       const mcpServers = await this.buildMcpServers(session);
       // After the servers, deliberately: the set of enabled providers is what decides whose skill is
       // read, and buildMcpServers is where that set is resolved. Asking first would use a stale one.
-      const systemPrompt = composeSystemPrompt(operatorPrompt, await this.readEnabledSkills(session));
+      const systemPrompt = composeSystemPrompt(operatorPrompt, await this.readDeliverableSkills(session));
       session.run = this.adapter.start({
         sessionId: id,
         cwd: this.workDir,
@@ -243,6 +243,34 @@ export class SessionManager {
 
     const skills = await Promise.all(session.mcpAppIds.map((appId) => this.providers!.readSkill(appId)));
     return skills.filter((skill): skill is AppSkill => skill !== null);
+  }
+
+  /**
+   * The skills this session may actually be given: what the operator has accepted, minus anything
+   * whose text has changed since.
+   *
+   * The first sighting of a skill is delivered and recorded — enabling the provider was the decision,
+   * and asking again for it is the double question this feature declined to ask. A later change is
+   * withheld until the operator looks at the new words, because their decision was about the old
+   * ones.
+   */
+  private async readDeliverableSkills(session: LiveSession): Promise<AppSkill[]> {
+    const skills = await this.readEnabledSkills(session);
+    if (skills.length === 0 || !this.settings) {
+      return skills;
+    }
+
+    const current = await this.settings.read();
+    const { deliver, newlyApproved } = partitionSkills(skills, current.mcpSkillDigests);
+    if (Object.keys(newlyApproved).length > 0) {
+      // Recorded before the session runs, so a first sighting cannot be delivered twice as a first
+      // sighting — the next change is then measured against text that was actually handed over.
+      await this.settings.update({
+        mcpSkillDigests: { ...current.mcpSkillDigests, ...newlyApproved },
+      });
+    }
+
+    return deliver;
   }
 
   /** Re-reads the fleet and the policy, then rebuilds this session's grants from both. */

@@ -8,9 +8,13 @@ export type Settings = {
   mcpAutoAllow: Record<string, boolean>;
 };
 
+/** A skill whose text changed since it was accepted, with the new text to read before approving. */
+export type PendingSkill = { appId: string; displayName: string; markdown: string };
+
 export type SettingsResponse = {
   settings: Settings;
   providers: Provider[];
+  pendingSkills?: PendingSkill[];
   discovery: string;
   harness?: { name?: string; capabilities?: { liveReconfigure?: boolean } };
 };
@@ -64,6 +68,25 @@ export async function establishSession(): Promise<void> {
 
 export async function loadSettings(): Promise<SettingsResponse> {
   return (await call("/settings")).json() as Promise<SettingsResponse>;
+}
+
+/**
+ * Accepts one app's changed skill, naming the text that was on screen.
+ *
+ * The digest travels with the click because the page can go stale: another update could land between
+ * rendering the text and approving it, and "approve whatever is current" would approve words nobody
+ * read — the exact failure this mechanism exists to prevent, arriving through its own approval path.
+ */
+export async function approveSkill(appId: string, markdown: string): Promise<void> {
+  const digest = await digestOf(markdown);
+  await call("/settings/skills/approve", { method: "POST", body: JSON.stringify({ appId, digest }) });
+}
+
+/** Must match the server's digest exactly; see `skillDigest` in the gateway. */
+async function digestOf(markdown: string): Promise<string> {
+  const bytes = new TextEncoder().encode(markdown.trim());
+  const hash = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(hash)].map((byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, 32);
 }
 
 export async function saveSettings(patch: Partial<Settings>): Promise<SettingsResponse> {
