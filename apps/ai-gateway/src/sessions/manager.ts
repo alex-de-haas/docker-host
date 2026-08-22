@@ -246,13 +246,12 @@ export class SessionManager {
   }
 
   /**
-   * The skills this session may actually be given: what the operator has accepted, minus anything
-   * whose text has changed since.
+   * The skills this session may be given: only those matching a digest the operator approved.
    *
-   * The first sighting of a skill is delivered and recorded — enabling the provider was the decision,
-   * and asking again for it is the double question this feature declined to ask. A later change is
-   * withheld until the operator looks at the new words, because their decision was about the old
-   * ones.
+   * This path no longer writes settings. Recording a baseline here was how text that arrived *after*
+   * the operator's decision could approve itself, and it also had two concurrent sessions writing the
+   * same file. The baseline now belongs to the act of enabling a provider, which is where the
+   * decision is actually made.
    */
   private async readDeliverableSkills(session: LiveSession): Promise<AppSkill[]> {
     const skills = await this.readEnabledSkills(session);
@@ -261,16 +260,7 @@ export class SessionManager {
     }
 
     const current = await this.settings.read();
-    const { deliver, newlyApproved } = partitionSkills(skills, current.mcpSkillDigests);
-    if (Object.keys(newlyApproved).length > 0) {
-      // Recorded before the session runs, so a first sighting cannot be delivered twice as a first
-      // sighting — the next change is then measured against text that was actually handed over.
-      await this.settings.update({
-        mcpSkillDigests: { ...current.mcpSkillDigests, ...newlyApproved },
-      });
-    }
-
-    return deliver;
+    return partitionSkills(skills, current.mcpSkillDigests).deliver;
   }
 
   /** Re-reads the fleet and the policy, then rebuilds this session's grants from both. */

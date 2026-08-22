@@ -9,7 +9,13 @@ export type Settings = {
 };
 
 /** A skill whose text changed since it was accepted, with the new text to read before approving. */
-export type PendingSkill = { appId: string; displayName: string; markdown: string };
+export type PendingSkill = {
+  appId: string;
+  displayName: string;
+  markdown: string;
+  /** The digest this text was measured against, or null when the app was never approved at all. */
+  approvedDigest: string | null;
+};
 
 export type SettingsResponse = {
   settings: Settings;

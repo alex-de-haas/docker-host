@@ -22,47 +22,6 @@ export type PendingSkill = AppSkill & { approvedDigest: string | null };
  * Over the text itself, not the file path or the app version: an app that rewrites its skill without
  * bumping a version must still be caught, and one that moves an unchanged file must not be.
  */
-export function skillDigest(markdown: string): string {
-  return createHash("sha256").update(markdown.trim(), "utf8").digest("hex").slice(0, 32);
-}
-
-/**
- * Splits what an operator has accepted from what changed under them.
- *
- * Enabling a provider is consent to that app's prose **as it stands**, so a skill seen for the first
- * time is delivered and its digest recorded — asking again for a decision just made is the same
- * double question this feature refused elsewhere. A skill whose text has since changed is withheld:
- * the operator's decision was about different words, and an update rewriting the file under the same
- * path would otherwise reach the model on the strength of it.
- */
-export function partitionSkills(
-  skills: readonly AppSkill[],
-  approved: Readonly<Record<string, string>>,
-): { deliver: AppSkill[]; pending: PendingSkill[]; newlyApproved: Record<string, string> } {
-  const deliver: AppSkill[] = [];
-  const pending: PendingSkill[] = [];
-  const newlyApproved: Record<string, string> = {};
-
-  for (const skill of skills) {
-    const digest = skillDigest(skill.markdown);
-    const known = approved[skill.appId];
-    if (known === undefined) {
-      deliver.push(skill);
-      newlyApproved[skill.appId] = digest;
-      continue;
-    }
-
-    if (known === digest) {
-      deliver.push(skill);
-      continue;
-    }
-
-    pending.push({ ...skill, approvedDigest: known });
-  }
-
-  return { deliver, pending, newlyApproved };
-}
-
 /**
  * One app's skill, or null when it declares none.
  *
@@ -101,6 +60,40 @@ export async function readAppSkill(
   } catch {
     return null;
   }
+}
+
+export function skillDigest(markdown: string): string {
+  return createHash("sha256").update(markdown.trim(), "utf8").digest("hex").slice(0, 32);
+}
+
+/**
+ * Splits what an operator has accepted from what did not come with their decision.
+ *
+ * A skill is delivered only against a digest recorded when the operator enabled the provider. There
+ * is deliberately **no** "first sighting is accepted" path: enabling while the app shipped one text,
+ * and the app updating before the first session, would otherwise deliver and auto-approve words that
+ * were not there when the decision was made — the exact substitution this mechanism exists to stop,
+ * arriving through its own baseline.
+ *
+ * So an app with no recorded digest is withheld too. The cost is one approval for a provider enabled
+ * while its app was unreachable; the alternative cost is a guarantee with a hole in it.
+ */
+export function partitionSkills(
+  skills: readonly AppSkill[],
+  approved: Readonly<Record<string, string>>,
+): { deliver: AppSkill[]; pending: PendingSkill[] } {
+  const deliver: AppSkill[] = [];
+  const pending: PendingSkill[] = [];
+
+  for (const skill of skills) {
+    if (approved[skill.appId] === skillDigest(skill.markdown)) {
+      deliver.push(skill);
+    } else {
+      pending.push({ ...skill, approvedDigest: approved[skill.appId] ?? null });
+    }
+  }
+
+  return { deliver, pending };
 }
 
 /** Longer than this and one app's prose would crowd out the operator's own instructions. */

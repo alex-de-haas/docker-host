@@ -1,4 +1,5 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 
 // Operator-owned assistant policy, living in the gateway's own data directory.
@@ -61,6 +62,14 @@ const DEFAULTS: AssistantSettings = { systemPrompt: "", mcpProviders: {}, mcpAut
 export const MAX_SYSTEM_PROMPT_CHARS = 8_000;
 
 export class SettingsStore {
+  /**
+   * Serializes update, which is a read-modify-write.
+   *
+   * Two callers reading the same snapshot and writing back their own patch lose one of the two, and
+   * the pair that loses is invisible: a digest silently absent later reads as "this app changed" and
+   * withholds a skill nobody touched.
+   */
+  private queue: Promise<unknown> = Promise.resolve();
   private cached: AssistantSettings | null = null;
 
   constructor(private readonly dataDir: string) {}
@@ -92,18 +101,51 @@ export class SettingsStore {
   }
 
   async update(patch: Partial<AssistantSettings>): Promise<AssistantSettings> {
+    // Chained rather than locked: each update waits for the one before it, so the snapshot it reads
+    // is never one another writer has already replaced. A rejected predecessor must not poison the
+    // chain, hence the swallow.
+    const run = this.queue.then(() => this.applyUpdate(patch), () => this.applyUpdate(patch));
+    this.queue = run.catch(() => undefined);
+    return run;
+  }
+
+  /**
+   * Records approved skill digests without replacing the ones already there.
+   *
+   * `update` replaces a field wholesale, so a caller merging on its own has to read first — and that
+   * read happens outside the serialized section, which is exactly where two callers lose one of the
+   * two writes. Merging inside is the only version of this that cannot race.
+   */
+  async mergeSkillDigests(digests: Readonly<Record<string, string>>): Promise<AssistantSettings> {
+    const run = this.queue.then(
+      () => this.applyUpdate({}, digests),
+      () => this.applyUpdate({}, digests),
+    );
+    this.queue = run.catch(() => undefined);
+    return run;
+  }
+
+  private async applyUpdate(
+    patch: Partial<AssistantSettings>,
+    mergeDigests?: Readonly<Record<string, string>>,
+  ): Promise<AssistantSettings> {
     const current = await this.read();
     const next: AssistantSettings = {
       systemPrompt: (patch.systemPrompt ?? current.systemPrompt).slice(0, MAX_SYSTEM_PROMPT_CHARS),
       mcpProviders: patch.mcpProviders ?? current.mcpProviders,
-      mcpSkillDigests: patch.mcpSkillDigests ?? current.mcpSkillDigests,
+      mcpSkillDigests: mergeDigests
+        ? { ...current.mcpSkillDigests, ...mergeDigests }
+        : patch.mcpSkillDigests ?? current.mcpSkillDigests,
       mcpAutoAllow: patch.mcpAutoAllow ?? current.mcpAutoAllow,
     };
 
     await mkdir(this.dataDir, { recursive: true });
+    // Unique per write, not per process: two concurrent updates sharing one temp path race, and the
+    // loser's rename fails with ENOENT after the winner moved the file out from under it — a settings
+    // save that throws for a reason nothing in the caller can explain.
     // Temp file plus rename: a crash mid-write must not leave a truncated settings file that the
     // next start silently reads as "everything disabled, prompt gone".
-    const temporary = `${this.file}.${process.pid}.tmp`;
+    const temporary = `${this.file}.${process.pid}.${randomUUID()}.tmp`;
     await writeFile(temporary, JSON.stringify(next, null, 2), "utf8");
     await rename(temporary, this.file);
     this.cached = next;

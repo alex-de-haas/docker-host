@@ -10,6 +10,7 @@ import { AuditReporter } from "../audit.js";
 import { TokenExchange } from "./exchange.js";
 import { McpProxy } from "./proxy.js";
 import type { ProviderDirectory } from "../settings/providers.js";
+import { skillDigest } from "./skills.js";
 
 const APP = "com-example-notes";
 
@@ -76,8 +77,14 @@ describe("app skills in a session", () => {
     return adapter.lastStart?.systemPrompt;
   }
 
-  it("carries an enabled app's skill, below the operator's own prompt", async () => {
-    await settings.update({ systemPrompt: "Be brief.", mcpProviders: { [APP]: true } });
+  it("carries an approved app's skill, below the operator's own prompt", async () => {
+    // The digest stands for the baseline the settings page records when the provider is enabled;
+    // without one the skill is withheld, which the next test asserts.
+    await settings.update({
+      systemPrompt: "Be brief.",
+      mcpProviders: { [APP]: true },
+      mcpSkillDigests: { [APP]: skillDigest("Call list_people first.") },
+    });
 
     const prompt = await startSession();
 
@@ -85,6 +92,16 @@ describe("app skills in a session", () => {
     expect(prompt).toContain(`<app-skill app="${APP}"`);
     // The operator's instructions stay first: an app appearing above them would read as the operator.
     expect(prompt!.indexOf("Be brief.")).toBeLessThan(prompt!.indexOf("app-skill"));
+  });
+
+  it("withholds a skill that carries no approved digest", async () => {
+    // Enabled, readable, and still withheld: text that arrived without the operator's decision must
+    // not deliver itself. This is the hole the first version had.
+    await settings.update({ systemPrompt: "Be brief.", mcpProviders: { [APP]: true } });
+
+    const prompt = await startSession();
+
+    expect(prompt).toBe("Be brief.");
   });
 
   it("carries no skill when the provider is off", async () => {

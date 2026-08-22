@@ -207,8 +207,7 @@ async function route(
       return;
     }
 
-    const current = await settings.read();
-    await settings.update({ mcpSkillDigests: { ...current.mcpSkillDigests, [appId]: digest } });
+    await settings.mergeSkillDigests({ [appId]: digest });
     sendJson(response, 200, { appId, digest });
     return;
   }
@@ -244,11 +243,21 @@ async function route(
         });
         return;
       }
+      // Enabling a provider is where consent happens, so it is where the skill's baseline is taken:
+      // the text the app ships *at that moment* is what the operator is accepting. Recording it later,
+      // at first delivery, let an update land in between and approve itself.
+      const skillBaseline = isBooleanRecord(body.mcpProviders)
+        ? await snapshotEnabledSkills(providers, settings, body.mcpProviders)
+        : {};
+
       await settings.update({
         systemPrompt: typeof body.systemPrompt === "string" ? body.systemPrompt : undefined,
         mcpProviders: isBooleanRecord(body.mcpProviders) ? body.mcpProviders : undefined,
         mcpAutoAllow: isBooleanRecord(body.mcpAutoAllow) ? body.mcpAutoAllow : undefined,
       });
+      if (Object.keys(skillBaseline).length > 0) {
+        await settings.mergeSkillDigests(skillBaseline);
+      }
       if (isBooleanRecord(body.mcpProviders) || isBooleanRecord(body.mcpAutoAllow)) {
         // Immediately, not at the next timer tick — the page says "applied to running sessions", and
         // for a *revoked* grant that has to be true the moment the operator sees it.
@@ -435,6 +444,45 @@ async function streamEvents(
     clearTimeout(tokenDeadline);
     unsubscribe();
   });
+}
+
+/**
+ * The approved-digest map after a provider toggle, with a baseline taken for whatever was just
+ * switched on.
+ *
+ * Only for apps moving from off to on. Re-recording on every save would silently re-approve an app
+ * whose text changed while it was already enabled — the operator would keep pressing Save on an
+ * unrelated setting and keep accepting text they never saw.
+ *
+ * An app whose skill cannot be read right now gets no baseline, so its skill is withheld until
+ * approved. That is the fail-closed half of the same rule: no snapshot, no delivery.
+ */
+async function snapshotEnabledSkills(
+  providers: ProviderDirectory | null,
+  settings: SettingsStore,
+  nextProviders: Record<string, boolean>,
+): Promise<Record<string, string>> {
+  if (!providers) {
+    return {};
+  }
+
+  const current = await settings.read();
+  const newlyEnabled = Object.entries(nextProviders)
+    .filter(([appId, enabled]) => enabled && current.mcpProviders[appId] !== true)
+    .map(([appId]) => appId);
+  if (newlyEnabled.length === 0) {
+    return {};
+  }
+
+  const digests: Record<string, string> = {};
+  for (const appId of newlyEnabled) {
+    const skill = await providers.readSkill(appId);
+    if (skill) {
+      digests[appId] = skillDigest(skill.markdown);
+    }
+  }
+
+  return digests;
 }
 
 /**

@@ -99,8 +99,11 @@ The approval is a digest per app in the gateway's settings, beside the provider 
 carries the operator's decision. Not a per-app flag: that was tried and removed as a second question
 about one trust, and reviving it here would have brought the question back.
 
-- **First sighting is delivered and recorded.** Enabling was the act of consent; asking again for a
-  decision just made is the double question this design refused elsewhere.
+- **The baseline is taken when the provider is enabled**, not at first delivery. Recording it on
+  first sight looked equivalent and was not: an operator enabling while the app shipped one text, and
+  the app updating before the first session, would have had the new words delivered and self-approved
+  — the substitution this exists to stop, arriving through its own baseline. An app whose skill cannot
+  be read at that moment gets no baseline and is withheld until approved.
 - **A change is withheld** and appears on the settings page **with its new text** — approving prose
   you cannot read is not approval, and a diff would still hide what the whole now says.
 - **Approval names the text that was on screen.** The digest travels with the click, so an update
@@ -110,6 +113,10 @@ about one trust, and reviving it here would have brought the question back.
 - **The digest is over the text**, not the path or the version: an app that rewrites its skill without
   bumping anything is caught, and one that moves an unchanged file is not.
 - Holding one app holds nothing else.
+- **Digests are merged inside the store, never by the caller.** `update` replaces a field wholesale,
+  so a caller merging on its own reads outside the serialized section — where two writers lose one of
+  the two, and a digest silently absent later reads as "this app changed" and withholds a skill nobody
+  touched.
 
 The connector is unaffected. `hosty mcp` runs on the local control channel, which already carries
 host-operator power, so it has no toggle to hang an approval from and needs none.
