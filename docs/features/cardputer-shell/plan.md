@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-07-31
-Updated: 2026-08-20
+Updated: 2026-08-23
 
 ## Goal
 
@@ -684,12 +684,26 @@ own PR under the platform version, never inside the firmware PR.
   with the build-timestamp floor and the clock-unset state, time zone, endpoint
   validation, authorization, transport, state synchronization,
   minimum-Core-version handling, and diagnostics — `settings_store.cpp`,
-  `wifi_manager.cpp`, SNTP in `firmware_app.cpp`, and the `endpoint`, `auth`,
-  `sse` and `state` units of `hosty_core`, each with host tests.
-  `kMinimumCoreVersion` is `0.73.0`, checked on both the staged and the full
-  sync path. Diagnostics are the blocking failure overlays this plan reserves
+  `wifi_manager.cpp`, and SNTP in `firmware_app.cpp`, with endpoint validation,
+  authorization, transport and state synchronization in the `endpoint`, `auth`,
+  `sse` and `state` units of `hosty_core`. Only the `hosty_core` half carries
+  host tests; `tools/host-test.sh` compiles `components/hosty_core/src/*.cpp`
+  and the harness, never the `main/` sources, so configuration storage, Wi-Fi
+  provisioning and the SNTP floor are implemented but unasserted — see the
+  testing deliverable below. `kMinimumCoreVersion` is `0.73.0`, checked on both
+  the staged and the full sync path. Diagnostics are the blocking failure overlays this plan reserves
   them for: thirty `show_error`/`show_overlay` sites carry the endpoint,
   authorization, operation and OTA failures in plain words.
+- [ ] Host tests for the `main/` units. Added 2026-08-23 after review found the
+  gap hidden inside the item above. [Verification](#verification) requires
+  host-side unit tests for storage migration, unset-clock behavior and
+  rejection of a time before the build timestamp; all three live in
+  `settings_store.cpp` and `firmware_app.cpp`, which `tools/host-test.sh` does
+  not compile, so none of them are asserted. The work is not only the test
+  cases: the harness reaches `hosty_core` alone, so the parts under test have
+  to be separable from the ESP-IDF headers first — which is the same shape as
+  the [rollback tests](#power-alerts-and-recovery) deliverable and probably one
+  piece of work with it.
 - [x] Implement the keyboard-first Dashboard, Apps, Updates, and Device views
   with unknown/stale/busy/error states — `View` covers all four, and the states
   are `ConnectionState::Stale`, `RuntimeState`/`OperationState::Unknown` and
@@ -722,7 +736,10 @@ own PR under the platform version, never inside the firmware PR.
 - [x] Implement A/B firmware OTA from the compiled-in origin over validated
   HTTPS, with health confirmation and downgrade policy — `firmware_ota.cpp`
   streams through `esp_https_ota` against the certificate bundle, refuses a
-  candidate that is not newer than the running image, and confirms health with
+  candidate **older** than the running image — `version_at_least` compares
+  `>= 0`, so an image of the same version reinstalls rather than being turned
+  away, which is the shipped behavior and not a strict-newer check — and
+  confirms health with
   `esp_ota_mark_app_valid_cancel_rollback` on the first boot that reports
   `ESP_OTA_IMG_PENDING_VERIFY`. Clock and battery are preconditions rather than
   advice: OTA is refused with an unset clock, and below 50% off USB-C.
