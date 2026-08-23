@@ -1,4 +1,4 @@
-import { composeSystemPrompt, type AppSkill } from "../mcp/skills.js";
+import { composeSystemPrompt, partitionSkills, type AppSkill } from "../mcp/skills.js";
 import { randomUUID } from "node:crypto";
 import type { HarnessAdapter, HarnessEvent, HarnessRun } from "../harness/adapter.js";
 import type { SessionRecord, SessionStatus, SessionStore, StoredEvent } from "./store.js";
@@ -150,7 +150,7 @@ export class SessionManager {
       const mcpServers = await this.buildMcpServers(session);
       // After the servers, deliberately: the set of enabled providers is what decides whose skill is
       // read, and buildMcpServers is where that set is resolved. Asking first would use a stale one.
-      const systemPrompt = composeSystemPrompt(operatorPrompt, await this.readEnabledSkills(session));
+      const systemPrompt = composeSystemPrompt(operatorPrompt, await this.readDeliverableSkills(session));
       session.run = this.adapter.start({
         sessionId: id,
         cwd: this.workDir,
@@ -243,6 +243,24 @@ export class SessionManager {
 
     const skills = await Promise.all(session.mcpAppIds.map((appId) => this.providers!.readSkill(appId)));
     return skills.filter((skill): skill is AppSkill => skill !== null);
+  }
+
+  /**
+   * The skills this session may be given: only those matching a digest the operator approved.
+   *
+   * This path no longer writes settings. Recording a baseline here was how text that arrived *after*
+   * the operator's decision could approve itself, and it also had two concurrent sessions writing the
+   * same file. The baseline now belongs to the act of enabling a provider, which is where the
+   * decision is actually made.
+   */
+  private async readDeliverableSkills(session: LiveSession): Promise<AppSkill[]> {
+    const skills = await this.readEnabledSkills(session);
+    if (skills.length === 0 || !this.settings) {
+      return skills;
+    }
+
+    const current = await this.settings.read();
+    return partitionSkills(skills, current.mcpSkillDigests).deliver;
   }
 
   /** Re-reads the fleet and the policy, then rebuilds this session's grants from both. */

@@ -3,7 +3,7 @@
   "id": "hosty.ai-gateway",
   "name": "Hosty AI Gateway",
   "description": "Hosty assistant service: admin-only operator chat sessions supervised on a host-resident agent harness. Headless \u2014 Shell renders the chat UI and calls this API with delegated tokens.",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "role": "system",
   "source": {
     "type": "git",

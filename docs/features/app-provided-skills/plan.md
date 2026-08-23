@@ -70,14 +70,11 @@ about Hosty, not about any app, and it cannot grow to cover apps Hosty does not 
       be what refuses; anonymous and foreign-token callers; a declared-but-unpackaged skill as an
       absence; composition for both readers beside their no-skill cases; and the session pair — a
       skill present when the provider is on, absent when it is off.
-- [ ] **A changed skill is withheld until reviewed** — the approved decision, and not implemented.
-      Dropping the per-app flag removed the state it depended on, and I did not notice that the
-      decision depended on it; the code currently serves whatever the latest install vendored.
-
-      It is still implementable without reviving that flag: the approval belongs to the **gateway**,
-      beside the provider toggle the operator already uses, as a digest per app. The connector needs
-      none — the CLI already holds host-operator power, which is why it has no toggle either. Needs
-      the settings field, the comparison at session build, and a surface for approving the new text.
+- [x] **A changed skill is withheld until reviewed.** Shipped 2026-08-20 without reviving the per-app
+      flag: the approval is a digest per app in the gateway's settings, beside the provider toggle.
+      First sighting is delivered and recorded — enabling was the decision — and a later change is
+      withheld, surfaced on the settings page with the new text, and approved against the digest that
+      was on screen.
 
 - [ ] Tests: the **vendoring** byte budget. The delivery cap (8,000 characters per app) is asserted;
       that the shared install-time budget refuses an oversized skill is not, because the vendoring
