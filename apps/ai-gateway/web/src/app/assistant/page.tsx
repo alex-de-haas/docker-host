@@ -8,6 +8,7 @@ import { TranscriptEvent } from "@/components/transcript";
 import { cn } from "@/lib/utils";
 import { establishSession } from "@/lib/api";
 import { composeAskDraft } from "@/lib/ask-draft";
+import { clearDraft, pruneDrafts, readDraft, writeDraft } from "@/lib/draft-store";
 import { startThemeSync } from "@/lib/shell-theme";
 import {
   createSession,
@@ -60,6 +61,9 @@ export default function AssistantPage() {
     setStatus(record.status);
     setEvents([]);
     setStreamed("");
+    // Whatever was left unsent in this session, put back in the box. Per session, so switching away
+    // and back returns your own half-written sentence rather than someone else's.
+    setInput(readDraft(record.id));
     try {
       window.localStorage.setItem(SESSION_STORAGE_KEY, record.id);
     } catch {
@@ -108,6 +112,9 @@ export default function AssistantPage() {
       try {
         await establishSession();
         const [harness, list] = await Promise.all([getHealth(), listSessions().catch(() => [])]);
+        // Drafts of sessions the gateway no longer has: without this the store grows for the life of
+        // the browser profile, and the operator has no way to see the keys, let alone clear them.
+        pruneDrafts(list.map((record) => record.id));
         if (cancelled) {
           return;
         }
@@ -197,6 +204,14 @@ export default function AssistantPage() {
     return () => window.removeEventListener("message", onMessage);
   }, []);
 
+  // Written on change rather than on unload: a closed laptop, a crashed tab and a navigation away all
+  // skip unload handlers, and those are exactly the cases where the text matters most.
+  useEffect(() => {
+    if (session) {
+      writeDraft(session.id, input);
+    }
+  }, [input, session]);
+
   const send = useCallback(async () => {
     const trimmed = input.trim();
     if (!trimmed || !session || sending) {
@@ -207,6 +222,9 @@ export default function AssistantPage() {
     try {
       await postMessage(session.id, trimmed);
       setInput("");
+      // Cleared only once the gateway has it: clearing before the round trip would lose the text on
+      // exactly the failure the operator most wants it kept for.
+      clearDraft(session.id);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {

@@ -1,3 +1,4 @@
+import { isWaitingStatus, WaitingNotifier } from "../notifications.js";
 import { composeSystemPrompt, partitionSkills, type AppSkill } from "../mcp/skills.js";
 import { randomUUID } from "node:crypto";
 import type { HarnessAdapter, HarnessEvent, HarnessRun } from "../harness/adapter.js";
@@ -60,6 +61,7 @@ export class SessionManager {
     private readonly proxy: McpProxy | null = null,
     /** Loopback origin the harness reaches this gateway on, for the per-session MCP proxy. */
     private readonly proxyBaseUrl: string | null = null,
+    private readonly notifier: WaitingNotifier | null = null,
   ) {}
 
   /**
@@ -694,6 +696,14 @@ export class SessionManager {
     session.record.status = status;
     session.record.updatedAt = new Date().toISOString();
     await this.store.saveRecord(session.record);
+
+    // Announced on *entering* the state, which this method already guarantees: it returns early when
+    // the status has not changed, so a session that is asked about repeatedly does not re-announce.
+    // Nothing is published on resolution — an inbox row that appears and disappears on its own is
+    // one the operator learns to distrust; the state the UI reads is cleared instead.
+    if (isWaitingStatus(status)) {
+      this.notifier?.waiting(id, status, session.record.createdBy ?? null);
+    }
     this.fanOut(session, {
       seq: session.record.lastEventSeq,
       ts: session.record.updatedAt,

@@ -1,3 +1,4 @@
+import { WaitingNotifier } from "./notifications.js";
 import { mkdir } from "node:fs/promises";
 import { loadConfig } from "./config.js";
 import { AuditReporter } from "./audit.js";
@@ -28,6 +29,7 @@ const adapter: HarnessAdapter =
       : new ClaudeHarnessAdapter();
 const store = new SessionStore(config.dataDir);
 const audit = new AuditReporter(config.coreOrigin, config.serviceToken, config.appId);
+const notifier = new WaitingNotifier(config.coreOrigin, config.serviceToken, config.appId);
 const settings = new SettingsStore(config.dataDir);
 const providers = new ProviderDirectory(config.coreOrigin, config.serviceToken, config.appId);
 const exchange = new TokenExchange(config.coreOrigin, config.appId);
@@ -49,6 +51,7 @@ const manager: SessionManager = new SessionManager(
   exchange,
   proxy,
   proxyBaseUrl,
+  notifier,
 );
 
 // Retention: once at boot, then daily. The sweep is cheap (a directory listing), and running it

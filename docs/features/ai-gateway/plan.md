@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-08-09
-Updated: 2026-08-15
+Updated: 2026-08-20
 
 Two changes to the shipped assistant ([feature.md](feature.md)): the operator can be **asked a
 question**, and the operator can **configure the assistant** in a UI of its own. Kept in one plan and
@@ -121,10 +121,11 @@ started, and this plan is not deleted while they remain.
       by convention. Parked 2026-08-11: the assistant is admin-only, so the exposure is bounded to
       administrators. Note this bounds *who* can start a session, not the risk inside one — see
       Accepted Risk.
-- [ ] **App-provided skills.** Per-app instruction bundles with inspect-before-enable and off by
-      default. Parked 2026-08-11. An MCP tool is a typed call approved per invocation; a skill is
-      instructions the model follows, with no approval between an app's text and the agent's behavior.
-      That trust step deserves its own decision rather than riding along.
+- [x] **App-provided skills.** Shipped 2026-08-20 as its own feature —
+      [app-provided-skills](../app-provided-skills/feature.md) — which is what "that trust step
+      deserves its own decision rather than riding along" asked for. Off by default in the sense that
+      matters: a skill rides the app's MCP provider toggle, and a text that changes after that
+      decision is withheld until the operator reads it.
 
 ## Accepted Risk
 

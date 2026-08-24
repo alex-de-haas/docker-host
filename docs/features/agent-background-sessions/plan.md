@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-08-11
-Updated: 2026-08-18
+Updated: 2026-08-20
 
 Make an assistant session findable and make it reach the operator when it needs them, so leaving an
 agent working while you close the tab becomes a usable feature rather than a way to lose work.
@@ -78,18 +78,29 @@ as "working". A list that does not distinguish those is close to useless.
 
 ## Deliverables
 
-- [ ] Shell persists the active session id across reloads.
-- [ ] **Unsent draft input survives closing the panel and reloading the page.** Kept per session in
+- [x] The active session id survives a reload. Landed in the gateway's panel page rather than in
+      Shell — [assistant-entry-points](../assistant-entry-points/plan.md) shipped first and moved the
+      panel's pixels there, which this plan anticipated ("whichever ships second inherits the other's
+      reality"). Stored per browser; reopening reattaches instead of orphaning a running session.
+- [x] **Unsent draft input survives closing the panel and reloading the page.** Kept per session in
       the browser's local storage, restored on reopen, cleared on send. Reported 2026-08-18: text
       typed, panel closed to go copy an error message, text gone. The transcript half of that report
       needs no new work — events are already persisted and reattach replays them — but the draft is
       the one thing the gateway never sees, so only the client can keep it.
-- [ ] Shell session list backed by the gateway's existing `GET /api/sessions`, ordered with
-      operator-blocked sessions first, with reattach on open.
-- [ ] Attention indicator in the list and on the sidebar Assistant entry.
-- [ ] Gateway publishes a notification on entering a waiting status, keyed by session for dedupe,
-      linking to the session; nothing is published on resolution beyond clearing the state the UI
-      reads.
+- [x] A session list backed by `GET /api/sessions`, with reattach on open — in the gateway's panel
+      page, for the same reason. **Ordering is not done**: the list is newest-first, not
+      operator-blocked-first, because nothing yet publishes which sessions are blocked. That is the
+      attention state below, and the ordering follows it rather than being guessed at separately.
+- [ ] Attention indicator in the list and on the sidebar Assistant entry. The sidebar entry is gone —
+      the trigger is the right rail's tab now — so this is the panel's tab and its session list, and
+      it is what [assistant-entry-points](../assistant-entry-points/plan.md)'s badge is blocked on.
+- [ ] Opening a session from a notification. Needs a Shell route that reveals the panel and forwards
+      a session id into its frame — the mechanism exists (the `outbound` channel built for asks), the
+      route does not.
+- [x] Gateway publishes a notification on entering a waiting status, keyed by session for dedupe;
+      nothing is published on resolution. **The link goes to Shell, not to the session**: selecting a
+      specific session needs the panel to accept a deep link, which Shell has no route for — recorded
+      below rather than faked with a link that lands somewhere and does nothing.
 - [x] Correct [notifications](../notifications/feature.md): its status listed the Shell bell as
       outstanding although it shipped.
 - [ ] Swift client: notification permission, `UNUserNotificationCenter` banner on the `notification`
