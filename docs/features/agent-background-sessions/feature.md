@@ -49,8 +49,10 @@ because a notification could not be delivered would be a far worse trade.
 cannot. Permission is asked on the first notification rather than at launch: a prompt shown before the
 operator has seen anything that would ever notify them is the prompt people deny, and a denial is far
 harder to undo than a delay. The banner is identified by the host's own notification id, so a
-reconnect replaying what was missed replaces it rather than stacking a second. Only host-relative
-links are followed — a notification is written by an app, and one that could send the operator
+reconnect replaying what was missed replaces it rather than stacking a second. The banner shows even
+while the app is frontmost — suppressing it, which is the default, would mean an operator watching one
+session never learns another has stopped for them. Only host-relative links are followed, re-checked
+at the moment of acting on one rather than only where it was stored — a notification is written by an app, and one that could send the operator
 anywhere would make an installed app a phishing vector with the host's own banner as the delivery.
 
 ## The Draft Is The Client's Alone
@@ -94,4 +96,5 @@ harness that resumes it.
 - **Abandonment as a pair**: left alone before the deadline, stopped after it, and a merely running
   session untouched however long it runs — reclaiming that one on a clock would kill live work.
 - **The Swift payload**: what a banner needs decoded, fields it cannot use ignored, an unreadable
-  payload costing only the banner, and host-relative links only.
+  payload costing only the banner, host-relative links only, and read state understood — a live event
+  is new by definition, an inbox row may not be.

@@ -89,12 +89,17 @@ export function ShellRightPanel({
             >
               {tab.label}
               {(attention?.[tab.appId] ?? 0) > 0 && (
-                // On the tab, because the tab is on every page: a session that stops for a person is
-                // only findable if the trigger says so from wherever the operator happens to be.
-                <span
-                  className="ml-1.5 inline-flex size-1.5 rounded-full bg-amber-500 align-middle"
-                  aria-label={`${attention?.[tab.appId]} waiting for you`}
-                />
+                <>
+                  {/* On the tab, because the tab is on every page: a session that stops for a person
+                      is only findable if the trigger says so from wherever the operator happens to be.
+                      The dot is decoration; the words are what a screen reader reads, and an aria-label
+                      on a non-interactive span would not reach the button's accessible name. */}
+                  <span
+                    className="ml-1.5 inline-flex size-1.5 rounded-full bg-amber-500 align-middle"
+                    aria-hidden
+                  />
+                  <span className="sr-only">, {attention?.[tab.appId]} waiting for you</span>
+                </>
               )}
             </button>
           ))}
@@ -112,6 +117,7 @@ export function ShellRightPanel({
           resolveDelegatedTokenRequest={resolveDelegatedTokenRequest}
           onStartApp={onStartApp}
           outbound={outbound}
+          onAttention={onAttention}
           onAskAssistant={onAskAssistant}
         />
       </div>
@@ -128,6 +134,7 @@ function RightPanelBody({
   onAuthRequired,
   resolveDelegatedTokenRequest,
   onStartApp,
+  onAttention,
   outbound,
   onAskAssistant,
 }: {
@@ -139,6 +146,7 @@ function RightPanelBody({
   onAuthRequired?: (appId: string) => void;
   resolveDelegatedTokenRequest?: (appId: string) => ((refresh: boolean) => Promise<DelegatedTokenGrant>) | undefined;
   onStartApp?: (appId: string) => void;
+  onAttention?: (appId: string, count: number) => void;
   outbound?: { message: unknown; nonce: number } | null;
   onAskAssistant?: (text: string, sourceAppId: string) => void;
 }) {
@@ -178,6 +186,7 @@ function RightPanelBody({
       onDelegatedTokenRequest={resolveDelegatedTokenRequest?.(activeTab.appId)}
       outbound={outbound}
       onAskAssistant={onAskAssistant}
+      onAttention={onAttention ? (count) => onAttention(activeTab.appId, count) : undefined}
     />
   );
 }

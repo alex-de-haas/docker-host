@@ -26,6 +26,20 @@ final class AppsModel {
     /// itself knows nothing about apps.
     private let notifications = NotificationRouter()
 
+    /// Where a tapped banner should take the operator, as a host-relative path.
+    ///
+    /// Surfaced rather than acted on here: this model owns apps, not navigation, and a path is all a
+    /// router needs. Reading it is what turns a tap into a destination.
+    private func catchUpNotifications() async {
+        guard let inbox = try? await session.client.notifications() else { return }
+        await notifications.catchUp(inbox)
+    }
+
+    var onNotificationOpen: ((String) -> Void)? {
+        get { notifications.onOpen }
+        set { notifications.onOpen = newValue }
+    }
+
     // Held outside the main actor's isolation so `deinit`, which is nonisolated, can still cancel them.
     // A model dropped without `stopFollowing()` would otherwise leave its event stream open, holding a
     // connection to Core for as long as the process lives.
@@ -364,6 +378,9 @@ final class AppsModel {
                     // A connection, or a reconnection after a gap during which anything could have
                     // happened. Reload immediately and without debouncing.
                     await reload()
+                    // And read the inbox: the gap is exactly where a notification was published to
+                    // nobody, since the stream keeps nothing for a subscriber that was not there.
+                    await catchUpNotifications()
                 case .event(let event):
                     switch event.known {
                     case .appChanged, .appRemoved, .appUpdateCheckChanged, .fleetUpdateCheckChanged:

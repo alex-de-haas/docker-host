@@ -700,6 +700,33 @@ export class SessionManager {
    */
   async sweepAbandoned(maxWaitMs: number, now = Date.now()): Promise<string[]> {
     const abandoned: string[] = [];
+
+    // Persisted records, not just live ones. A gateway restart leaves a session that was waiting
+    // recorded as waiting while its harness is already gone; sessions are loaded lazily, so one
+    // nobody reopened would never be swept and would sit in the list — and in the attention count —
+    // as permanently blocked.
+    for (const record of await this.store.listRecords()) {
+      if (!isWaitingStatus(record.status) || this.live.has(record.id)) {
+        continue;
+      }
+
+      if (now - Date.parse(record.updatedAt) < maxWaitMs) {
+        continue;
+      }
+
+      // Written straight to the store: hydrating a live session only to abandon it would start a
+      // harness for the sole purpose of stopping it.
+      //
+      // The duration is knowable here too — `updatedAt` is when it began waiting — so it is recorded
+      // rather than reported as unknown, which is what it says everywhere else.
+      const waitedMs = now - Date.parse(record.updatedAt);
+      record.status = "abandoned";
+      record.updatedAt = new Date(now).toISOString();
+      await this.store.saveRecord(record);
+      this.audit.report("session_abandoned", { sessionId: record.id, waitedMs: String(waitedMs) });
+      abandoned.push(record.id);
+    }
+
     for (const [id, session] of this.live) {
       if (!isWaitingStatus(session.record.status)) {
         continue;
@@ -709,6 +736,9 @@ export class SessionManager {
         continue;
       }
 
+      // Captured before setStatus, which stamps updatedAt with *now*: computing it afterwards audited
+      // every abandonment as having waited about zero, which is the one number the record exists for.
+      const waitedMs = now - Date.parse(session.record.updatedAt);
       const run = session.run;
       session.run = null;
       session.pendingApprovals.clear();
@@ -722,7 +752,7 @@ export class SessionManager {
       }
 
       await this.setStatus(id, "abandoned");
-      this.audit.report("session_abandoned", { sessionId: id, waitedMs: String(now - Date.parse(session.record.updatedAt)) });
+      this.audit.report("session_abandoned", { sessionId: id, waitedMs: String(waitedMs) });
       abandoned.push(id);
     }
 

@@ -1912,7 +1912,16 @@ export function ShellClient({
       return;
     }
 
+    // The tab has to be selected as well as the rail revealed: the outbound message is handed only to
+    // the *active* tab's frame, so a link arriving while another app's panel was open reached nobody
+    // and then stripped its own parameter on the way out.
+    const assistantTab = appPanelTabs.find((tab) => tab.appId === assistantGateway?.appId);
+    if (!assistantTab) {
+      return;
+    }
+
     setPanelOpen(true);
+    setActivePanelKey(assistantTab.key);
     setAssistantAsk((current) => ({
       message: { type: "hosty:open-assistant-session", sessionId: assistantSessionParam },
       nonce: (current?.nonce ?? 0) + 1,
@@ -1922,7 +1931,7 @@ export function ShellClient({
     const next = new URLSearchParams(searchParams.toString());
     next.delete("assistantSession");
     router.replace(`${pathname}${next.toString() ? `?${next}` : ""}`);
-  }, [assistantSessionParam, pathname, router, searchParams]);
+  }, [appPanelTabs, assistantGateway?.appId, assistantSessionParam, pathname, router, searchParams]);
 
   const askAssistant = useCallback((text: string, sourceAppId: string) => {
     if (!askLimiter.current.tryAcquire(sourceAppId)) {

@@ -26,6 +26,13 @@ struct HostNotificationTests {
         #expect(HostNotification.decode("{}") == nil)
     }
 
+    @Test func knowsWhatTheOperatorHasAlreadySeen() {
+        // The catch-up read must not re-announce what was read elsewhere, and a live event carries no
+        // read state at all — it is new by definition.
+        #expect(HostNotification.decode(#"{"id":"n","title":"t"}"#)?.read == false)
+        #expect(HostNotification.decode(#"{"id":"n","title":"t","readAt":"2026-08-20T10:00:00Z"}"#)?.read == true)
+    }
+
     @Test func followsOnlyHostRelativeLinks() {
         // A notification is written by an app. One that could send the operator to an arbitrary URL
         // would make an installed app a phishing vector against the person who installed it, with the

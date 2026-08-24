@@ -898,5 +898,8 @@ describe("parseActiveFrameAttention", () => {
     expect(read(-4)).toBe(0);
     expect(read(10_000)).toBe(99);
     expect(read("3")).toBeNull();
+    // typeof NaN is "number", and it survives every clamp to arrive as a count nothing can render.
+    expect(read(Number.NaN)).toBeNull();
+    expect(read(Number.POSITIVE_INFINITY)).toBeNull();
   });
 });

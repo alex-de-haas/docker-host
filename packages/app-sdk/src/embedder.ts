@@ -132,13 +132,15 @@ export function parseActiveFrameAttention(
   }
 
   const candidate = event.data as { type?: unknown; count?: unknown };
-  if (candidate.type !== ATTENTION_TYPE || typeof candidate.count !== "number") {
+  // `typeof NaN === "number"`, and NaN survives every clamp below to arrive as a badge count no
+  // renderer can do anything with. Finiteness is the check that was actually meant.
+  if (candidate.type !== ATTENTION_TYPE || !Number.isFinite(candidate.count)) {
     return null;
   }
 
   // Clamped rather than trusted: a negative or absurd count would render as a badge nobody can
   // explain, and the frame has no business deciding how large a number the shell displays.
-  return Math.max(0, Math.min(99, Math.floor(candidate.count)));
+  return Math.max(0, Math.min(99, Math.floor(candidate.count as number)));
 }
 
 export function parseActiveFrameAskAssistant(

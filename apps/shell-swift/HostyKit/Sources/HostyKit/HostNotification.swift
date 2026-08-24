@@ -10,12 +10,14 @@ public struct HostNotification: Decodable, Sendable, Hashable {
     public let title: String
     public let body: String?
     public let link: String?
+    public let readAt: String?
 
-    public init(id: String, title: String, body: String? = nil, link: String? = nil) {
+    public init(id: String, title: String, body: String? = nil, link: String? = nil, readAt: String? = nil) {
         self.id = id
         self.title = title
         self.body = body
         self.link = link
+        self.readAt = readAt
     }
 
     /// Decodes one `notification` event payload.
@@ -27,6 +29,12 @@ public struct HostNotification: Decodable, Sendable, Hashable {
         guard let data = payload.data(using: .utf8) else { return nil }
         return try? JSONDecoder().decode(HostNotification.self, from: data)
     }
+
+    /// Whether the operator has already seen this one elsewhere.
+    ///
+    /// Present only on the inbox read, not on the live event, so it defaults to false: a notification
+    /// arriving on the stream is by definition new.
+    public var read: Bool { readAt != nil }
 
     /// Where a tapped banner should land, or nil when it should do nothing.
     ///

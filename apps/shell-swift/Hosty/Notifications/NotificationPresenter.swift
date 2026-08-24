@@ -17,6 +17,15 @@ final class NotificationPresenter {
         self.center = center
     }
 
+    /// Installs the tap handler. Held here because the centre keeps its delegate weakly, and a
+    /// responder that fell out of memory would make every tap silently do nothing again.
+    private var responder: NotificationResponder?
+
+    func handleTaps(with responder: NotificationResponder) {
+        self.responder = responder
+        center.delegate = responder
+    }
+
     /// Asks once, when there is something worth asking for.
     ///
     /// Deliberately not at launch: a permission prompt on first open, before the operator has seen

@@ -65,6 +65,49 @@ describe("abandoning a session nobody returned to", () => {
     expect(await store.readEvents(id, 0)).not.toHaveLength(0);
   });
 
+  it("sweeps a session left waiting by a restart, which no live map remembers", async () => {
+    // A gateway restart leaves the record waiting while its harness is already gone. Sessions load
+    // lazily, so one nobody reopened would sit in the list — and in the attention count — as blocked
+    // forever.
+    const id = await waitingSession();
+    // A fresh manager over the same store is what a restart looks like from here.
+    const restarted = new SessionManager(
+      new SessionStore(dataDir),
+      new FakeHarnessAdapter(),
+      new AuditReporter(null, null, "hosty.ai-gateway"),
+      dataDir,
+      new SettingsStore(dataDir),
+    );
+
+    try {
+      expect(await restarted.sweepAbandoned(DAY, Date.now() + DAY + 1)).toEqual([id]);
+      expect((await store.readRecord(id))?.status).toBe("abandoned");
+    } finally {
+      await restarted.shutdown();
+    }
+  });
+
+  it("records how long it actually waited", async () => {
+    // setStatus stamps updatedAt with *now*, so a duration computed after it audited every
+    // abandonment as having waited about zero — the one number the record exists for.
+    const id = await waitingSession();
+    const reports: Record<string, string>[] = [];
+    const manager2 = new SessionManager(
+      new SessionStore(dataDir),
+      new FakeHarnessAdapter(),
+      { report: (_action: string, details: Record<string, string>) => reports.push(details) } as unknown as AuditReporter,
+      dataDir,
+      new SettingsStore(dataDir),
+    );
+
+    try {
+      await manager2.sweepAbandoned(DAY, Date.parse((await store.readRecord(id))!.updatedAt) + 2 * DAY);
+      expect(Number(reports[0]?.waitedMs ?? 0)).toBeGreaterThan(DAY);
+    } finally {
+      await manager2.shutdown();
+    }
+  });
+
   it("does not touch a session that is merely running", async () => {
     // "Running" is the agent working. Reclaiming it on a clock would kill live work.
     const record = await manager.createSession({ createdBy: "user_admin" });

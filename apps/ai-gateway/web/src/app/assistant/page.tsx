@@ -40,6 +40,9 @@ const MAX_ASK_CHARS = 4_000;
 export default function AssistantPage() {
   const [health, setHealth] = useState<HarnessHealth | null>(null);
   const [sessions, setSessions] = useState<AssistantSession[]>([]);
+  // A session the embedder asked for before the list existed. Shell strips its parameter as soon as it
+  // posts, so a request dropped here is not retried by anyone — it has to wait for the list instead.
+  const [requestedSessionId, setRequestedSessionId] = useState<string | null>(null);
   const [session, setSession] = useState<AssistantSession | null>(null);
   const [status, setStatus] = useState("idle");
   const [events, setEvents] = useState<AssistantEvent[]>([]);
@@ -112,15 +115,23 @@ export default function AssistantPage() {
     void (async () => {
       try {
         await establishSession();
-        const [harness, list] = await Promise.all([getHealth(), listSessions().catch(() => [])]);
-        // Drafts of sessions the gateway no longer has: without this the store grows for the life of
-        // the browser profile, and the operator has no way to see the keys, let alone clear them.
-        pruneDrafts(list.map((record) => record.id));
+        // Listed separately from the health probe because a failure means different things: no
+        // harness is a state to show, while no *list* is not knowledge of an empty fleet of sessions.
+        const harness = await getHealth();
+        const list = await listSessions().catch(() => null);
+        if (list) {
+          // Only after a successful listing. A transient failure answered as "no sessions" would have
+          // this delete every saved draft — turning a network blip into permanent loss of exactly the
+          // text this feature exists to protect.
+          pruneDrafts(list.map((record) => record.id));
+        }
         if (cancelled) {
           return;
         }
         setHealth(harness);
-        setSessions(list);
+        // An unavailable listing leaves the list as it was rather than emptying it: "we could not
+        // ask" and "there are none" are different statements, and only one of them is knowledge.
+        setSessions(list ?? []);
         if (!harness.available) {
           return;
         }
@@ -201,10 +212,7 @@ export default function AssistantPage() {
         // A notification arriving at the rail: open the session it was about. Only the id crosses —
         // the panel decides whether that session still exists and what to show, which is the same
         // division as everywhere else here.
-        const wanted = sessions.find((record) => record.id === data.sessionId);
-        if (wanted) {
-          attach(wanted);
-        }
+        setRequestedSessionId(data.sessionId);
         return;
       }
 
@@ -223,6 +231,19 @@ export default function AssistantPage() {
     // Re-attached when the session list changes: the handler resolves an incoming id against it, and
     // a listener closed over an empty first render would refuse every session that arrived later.
   }, [attach, sessions]);
+
+  // Honoured once the list can answer. Held rather than dropped because the request arrives from a
+  // notification the operator just acted on, and losing it silently is worse than opening a moment late.
+  useEffect(() => {
+    if (!requestedSessionId) {
+      return;
+    }
+    const wanted = sessions.find((record) => record.id === requestedSessionId);
+    if (wanted) {
+      attach(wanted);
+      setRequestedSessionId(null);
+    }
+  }, [attach, requestedSessionId, sessions]);
 
   // Written on change rather than on unload: a closed laptop, a crashed tab and a navigation away all
   // skip unload handlers, and those are exactly the cases where the text matters most.
