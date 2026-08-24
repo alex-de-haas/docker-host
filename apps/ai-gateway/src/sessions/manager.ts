@@ -1,3 +1,4 @@
+import { isWaitingStatus, WaitingNotifier } from "../notifications.js";
 import { composeSystemPrompt, partitionSkills, type AppSkill } from "../mcp/skills.js";
 import { randomUUID } from "node:crypto";
 import type { HarnessAdapter, HarnessEvent, HarnessRun } from "../harness/adapter.js";
@@ -60,6 +61,7 @@ export class SessionManager {
     private readonly proxy: McpProxy | null = null,
     /** Loopback origin the harness reaches this gateway on, for the per-session MCP proxy. */
     private readonly proxyBaseUrl: string | null = null,
+    private readonly notifier: WaitingNotifier | null = null,
   ) {}
 
   /**
@@ -685,6 +687,78 @@ export class SessionManager {
     }
   }
 
+  /**
+   * Stops sessions that have waited for a person past the deadline, keeping their transcripts.
+   *
+   * A harness paused on an approval holds a process, its MCP proxy route and its share of the
+   * delegation chain indefinitely. Nothing here reclaims that on its own: "waiting" is a state a
+   * session can legitimately sit in for hours, so only a clock can tell it apart from one nobody is
+   * ever coming back to.
+   *
+   * The transcript survives — the point is to release the machinery, not to erase what happened, and
+   * an operator returning to find the session gone would have lost the very question it was asking.
+   */
+  async sweepAbandoned(maxWaitMs: number, now = Date.now()): Promise<string[]> {
+    const abandoned: string[] = [];
+
+    // Persisted records, not just live ones. A gateway restart leaves a session that was waiting
+    // recorded as waiting while its harness is already gone; sessions are loaded lazily, so one
+    // nobody reopened would never be swept and would sit in the list — and in the attention count —
+    // as permanently blocked.
+    for (const record of await this.store.listRecords()) {
+      if (!isWaitingStatus(record.status) || this.live.has(record.id)) {
+        continue;
+      }
+
+      if (now - Date.parse(record.updatedAt) < maxWaitMs) {
+        continue;
+      }
+
+      // Written straight to the store: hydrating a live session only to abandon it would start a
+      // harness for the sole purpose of stopping it.
+      //
+      // The duration is knowable here too — `updatedAt` is when it began waiting — so it is recorded
+      // rather than reported as unknown, which is what it says everywhere else.
+      const waitedMs = now - Date.parse(record.updatedAt);
+      record.status = "abandoned";
+      record.updatedAt = new Date(now).toISOString();
+      await this.store.saveRecord(record);
+      this.audit.report("session_abandoned", { sessionId: record.id, waitedMs: String(waitedMs) });
+      abandoned.push(record.id);
+    }
+
+    for (const [id, session] of this.live) {
+      if (!isWaitingStatus(session.record.status)) {
+        continue;
+      }
+
+      if (now - Date.parse(session.record.updatedAt) < maxWaitMs) {
+        continue;
+      }
+
+      // Captured before setStatus, which stamps updatedAt with *now*: computing it afterwards audited
+      // every abandonment as having waited about zero, which is the one number the record exists for.
+      const waitedMs = now - Date.parse(session.record.updatedAt);
+      const run = session.run;
+      session.run = null;
+      session.pendingApprovals.clear();
+      session.pendingQuestions.clear();
+      session.mcpAppIds = [];
+      this.proxy?.unregister(id);
+      if (run) {
+        // Released before the status flips, so nothing can answer an approval into a run that is
+        // already being torn down.
+        await run.stop().catch(() => undefined);
+      }
+
+      await this.setStatus(id, "abandoned");
+      this.audit.report("session_abandoned", { sessionId: id, waitedMs: String(waitedMs) });
+      abandoned.push(id);
+    }
+
+    return abandoned;
+  }
+
   private async setStatus(id: string, status: SessionStatus): Promise<void> {
     const session = this.live.get(id);
     if (!session || session.record.status === status) {
@@ -694,6 +768,14 @@ export class SessionManager {
     session.record.status = status;
     session.record.updatedAt = new Date().toISOString();
     await this.store.saveRecord(session.record);
+
+    // Announced on *entering* the state, which this method already guarantees: it returns early when
+    // the status has not changed, so a session that is asked about repeatedly does not re-announce.
+    // Nothing is published on resolution — an inbox row that appears and disappears on its own is
+    // one the operator learns to distrust; the state the UI reads is cleared instead.
+    if (isWaitingStatus(status)) {
+      this.notifier?.waiting(id, status, session.record.createdBy ?? null);
+    }
     this.fanOut(session, {
       seq: session.record.lastEventSeq,
       ts: session.record.updatedAt,

@@ -17,6 +17,20 @@ const SHELL_VIEW_HREFS: Record<ShellView, string> = {
   settings: "/settings",
 };
 
+/**
+ * A session an arriving link asks the assistant panel to open.
+ *
+ * A query parameter rather than a path: the panel is chrome present on every page, so "open this
+ * session" is a request about the rail rather than a place to navigate to — and a path would have to
+ * pick a page to sit under, which is a choice with no right answer.
+ */
+export function readAssistantSessionParam(value: string | null): string | null {
+  const trimmed = value?.trim() ?? "";
+  // Session ids are opaque to Shell; only their shape is checked, so a crafted link cannot smuggle
+  // anything into the message posted to the panel.
+  return /^[a-zA-Z0-9_-]{1,64}$/.test(trimmed) ? trimmed : null;
+}
+
 /** What the top strip calls each Shell page, when no app's page fills the content area. */
 export const SHELL_VIEW_LABELS: Record<ShellView, string> = {
   dashboard: "Dashboard",

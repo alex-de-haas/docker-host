@@ -14,6 +14,14 @@ export type SessionStatus =
   | "awaiting_approval"
   | "awaiting_question"
   | "cancelled"
+  /**
+   * Waited for a person long enough that nobody is coming.
+   *
+   * Distinct from `cancelled`, which the operator chose, and from `failed`, which the harness caused.
+   * Collapsing it into either would misreport who decided — and the transcript is kept precisely so
+   * the operator can still read what it was waiting to ask.
+   */
+  | "abandoned"
   | "failed";
 
 export interface SessionRecord {

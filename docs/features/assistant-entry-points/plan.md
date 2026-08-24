@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-08-18
-Updated: 2026-08-19
+Updated: 2026-08-20
 
 Make the assistant reachable from anywhere in Shell, and let an app hand it context — without letting
 an app *drive* it.
@@ -67,29 +67,10 @@ Two asks from the owner (2026-08-18), one mechanism short of possible today:
       `hosty:request-delegated-token` handshake — the alternative, a gateway minting user-scoped
       tokens for itself, is the "token, not proxy" rule the bridge is built on.
 - [x] Shell: the keyboard shortcut (`Ctrl`/`Cmd`+`Shift`+`A`), which toggles rather than only opens.
-- [ ] **Blocked** — Shell: the assistant tab's badge. It must read the same state as
-      agent-background-sessions' attention indicator ("one source, never a second poll"), and that
-      indicator is still an unchecked deliverable there, so nothing publishes the state to read.
-      Building it here would mean inventing exactly the second poll this plan forbids. Unblocks when
-      that plan ships its attention signal — which also needs updating there, since it names "the
-      sidebar Assistant entry" and that entry no longer exists.
-- [x] SDK: `hosty:ask-assistant` in `embedder.ts` — message shape, origin verification identical to
-      the existing pair, and an `askAssistant(text)` helper. SDK minor bump.
-- [x] Shell: the routing — a verified `hosty:ask-assistant` reveals the panel and is forwarded into
-      its iframe with the source app id attached; length capped; messages from origins that fail
-      verification dropped with a console warning, exactly as the token handshake does. The panel
-      page owns the draft insertion and the provenance line.
-      The app→Shell hop — where an app's text actually enters — is verified and tested. The
-      Shell→panel hop is **not**, and stays open below as its own item: it needs a platform change,
-      not a decision.
-- [x] Telemetry UI: "Ask Assistant" on an error row, composing app id, timestamp, severity and body
-      into the text. `apps/telemetry` minor bump.
-- [x] Tests (contract): the message verified beside one from a wrong origin, wrong source window and
-      no active frame dropped; the three intents kept distinct; the cap asserted at its boundary.
-- [x] Tests (draft safety): provenance is prefixed, the operator's own text is appended to rather
-      than replaced, a run of accepted asks is bounded, and the rule is a pure function returning a
-      draft — there is no path from an app's text to a sent message, which is the guarantee rather
-      than a discipline.
+- [x] Shell: the assistant tab's badge. Unblocked and shipped 2026-08-20 by
+      [agent-background-sessions](../agent-background-sessions/plan.md), which published the attention
+      state it had to read. It is that state, not a second poll: the page holding the sessions posts
+      the count and Shell renders it, sender-verified like every other embedder message.
 - [ ] Tests (Shell wiring): that a verified ask actually reaches the panel, rate-limited. Not covered
       — the forwarding lives in a React component and Shell's suite is pure-logic `.mjs` with no
       component harness. The pieces either side are tested (the SDK parser, the SDK limiter, the

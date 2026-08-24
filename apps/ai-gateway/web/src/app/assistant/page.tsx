@@ -8,6 +8,8 @@ import { TranscriptEvent } from "@/components/transcript";
 import { cn } from "@/lib/utils";
 import { establishSession } from "@/lib/api";
 import { composeAskDraft } from "@/lib/ask-draft";
+import { clearDraft, pruneDrafts, readDraft, writeDraft } from "@/lib/draft-store";
+import { isWaiting, orderSessions, publishAttention, waitingCount } from "@/lib/attention";
 import { startThemeSync } from "@/lib/shell-theme";
 import {
   createSession,
@@ -38,6 +40,9 @@ const MAX_ASK_CHARS = 4_000;
 export default function AssistantPage() {
   const [health, setHealth] = useState<HarnessHealth | null>(null);
   const [sessions, setSessions] = useState<AssistantSession[]>([]);
+  // A session the embedder asked for before the list existed. Shell strips its parameter as soon as it
+  // posts, so a request dropped here is not retried by anyone — it has to wait for the list instead.
+  const [requestedSessionId, setRequestedSessionId] = useState<string | null>(null);
   const [session, setSession] = useState<AssistantSession | null>(null);
   const [status, setStatus] = useState("idle");
   const [events, setEvents] = useState<AssistantEvent[]>([]);
@@ -60,6 +65,9 @@ export default function AssistantPage() {
     setStatus(record.status);
     setEvents([]);
     setStreamed("");
+    // Whatever was left unsent in this session, put back in the box. Per session, so switching away
+    // and back returns your own half-written sentence rather than someone else's.
+    setInput(readDraft(record.id));
     try {
       window.localStorage.setItem(SESSION_STORAGE_KEY, record.id);
     } catch {
@@ -107,12 +115,23 @@ export default function AssistantPage() {
     void (async () => {
       try {
         await establishSession();
-        const [harness, list] = await Promise.all([getHealth(), listSessions().catch(() => [])]);
+        // Listed separately from the health probe because a failure means different things: no
+        // harness is a state to show, while no *list* is not knowledge of an empty fleet of sessions.
+        const harness = await getHealth();
+        const list = await listSessions().catch(() => null);
+        if (list) {
+          // Only after a successful listing. A transient failure answered as "no sessions" would have
+          // this delete every saved draft — turning a network blip into permanent loss of exactly the
+          // text this feature exists to protect.
+          pruneDrafts(list.map((record) => record.id));
+        }
         if (cancelled) {
           return;
         }
         setHealth(harness);
-        setSessions(list);
+        // An unavailable listing leaves the list as it was rather than emptying it: "we could not
+        // ask" and "there are none" are different statements, and only one of them is knowledge.
+        setSessions(list ?? []);
         if (!harness.available) {
           return;
         }
@@ -182,8 +201,22 @@ export default function AssistantPage() {
       if (event.source !== window.parent) {
         return;
       }
-      const data = event.data as { type?: unknown; text?: unknown; sourceAppId?: unknown } | null;
-      if (!data || data.type !== "hosty:ask-assistant" || typeof data.text !== "string") {
+      const data = event.data as
+        | { type?: unknown; text?: unknown; sourceAppId?: unknown; sessionId?: unknown }
+        | null;
+      if (!data) {
+        return;
+      }
+
+      if (data.type === "hosty:open-assistant-session" && typeof data.sessionId === "string") {
+        // A notification arriving at the rail: open the session it was about. Only the id crosses —
+        // the panel decides whether that session still exists and what to show, which is the same
+        // division as everywhere else here.
+        setRequestedSessionId(data.sessionId);
+        return;
+      }
+
+      if (data.type !== "hosty:ask-assistant" || typeof data.text !== "string") {
         return;
       }
 
@@ -195,7 +228,47 @@ export default function AssistantPage() {
 
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, []);
+    // Re-attached when the session list changes: the handler resolves an incoming id against it, and
+    // a listener closed over an empty first render would refuse every session that arrived later.
+  }, [attach, sessions]);
+
+  // Honoured once the list can answer. Held rather than dropped because the request arrives from a
+  // notification the operator just acted on, and losing it silently is worse than opening a moment late.
+  useEffect(() => {
+    if (!requestedSessionId) {
+      return;
+    }
+    const wanted = sessions.find((record) => record.id === requestedSessionId);
+    if (wanted) {
+      attach(wanted);
+      setRequestedSessionId(null);
+    }
+  }, [attach, requestedSessionId, sessions]);
+
+  // Written on change rather than on unload: a closed laptop, a crashed tab and a navigation away all
+  // skip unload handlers, and those are exactly the cases where the text matters most.
+  useEffect(() => {
+    if (session) {
+      writeDraft(session.id, input);
+    }
+  }, [input, session]);
+
+  // The active session's status arrives on the stream, not in the list read at load. Folding it back
+  // in is what keeps the ordering and the badge true for the session most likely to block — the one
+  // the operator is watching.
+  useEffect(() => {
+    if (session) {
+      setSessions((current) =>
+        current.map((record) => (record.id === session.id ? { ...record, status } : record)),
+      );
+    }
+  }, [session, status]);
+
+  // One source: this page holds the list and the stream, so it publishes and the embedder listens. A
+  // shell polling the gateway for the same fact would disagree with this one for its whole interval.
+  useEffect(() => {
+    publishAttention(waitingCount(sessions));
+  }, [sessions]);
 
   const send = useCallback(async () => {
     const trimmed = input.trim();
@@ -207,6 +280,9 @@ export default function AssistantPage() {
     try {
       await postMessage(session.id, trimmed);
       setInput("");
+      // Cleared only once the gateway has it: clearing before the round trip would lose the text on
+      // exactly the failure the operator most wants it kept for.
+      clearDraft(session.id);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -291,7 +367,7 @@ export default function AssistantPage() {
 
       {showSessions ? (
         <SessionList
-          sessions={sessions}
+          sessions={orderSessions(sessions)}
           activeId={session?.id ?? null}
           onPick={(record) => {
             setShowSessions(false);
@@ -390,9 +466,16 @@ function SessionList({
         >
           <div className="truncate text-sm">{record.title || "Untitled session"}</div>
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            {isWaiting(record.status) && (
+              // Marked as well as ordered: ordering alone is invisible to someone who has not seen the
+              // list before, and the row has to say *why* it is first.
+              <span className="inline-flex size-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden />
+            )}
             <span>{new Date(record.createdAt).toLocaleString()}</span>
             <span aria-hidden>·</span>
-            <span>{record.status}</span>
+            <span className={cn(isWaiting(record.status) && "font-medium text-amber-600 dark:text-amber-500")}>
+              {isWaiting(record.status) ? "waiting for you" : record.status}
+            </span>
           </div>
         </button>
       ))}

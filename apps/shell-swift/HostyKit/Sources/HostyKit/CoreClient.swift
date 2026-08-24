@@ -59,6 +59,17 @@ public actor CoreClient {
         try await get("/api/core/status", authenticated: false)
     }
 
+    /// The operator's own notification inbox.
+    ///
+    /// Needed because the event stream is not durable: `CoreEventHub` stores nothing for a
+    /// disconnected subscriber, and this client stops the stream when the scene backgrounds. Without
+    /// a catch-up read, a session that stopped while the window was closed is one the operator only
+    /// finds by going to look — which is the failure the banner exists to prevent.
+    public func notifications() async throws -> [HostNotification] {
+        let page: NotificationPage = try await get("/api/notifications")
+        return page.notifications
+    }
+
     public func authSession() async throws -> AuthSession {
         try await get("/api/auth/session")
     }
@@ -382,4 +393,10 @@ public actor CoreClient {
     private func escape(_ component: String) -> String {
         component.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? component
     }
+}
+
+
+/// The inbox as Core returns it.
+struct NotificationPage: Decodable, Sendable {
+    let notifications: [HostNotification]
 }

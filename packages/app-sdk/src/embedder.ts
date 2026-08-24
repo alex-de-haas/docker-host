@@ -16,6 +16,7 @@
 import {
   ASK_ASSISTANT_MAX_CHARS,
   ASK_ASSISTANT_TYPE,
+  ATTENTION_TYPE,
   AUTH_REQUIRED_INTENT_TYPE,
   DELEGATED_TOKEN_REQUEST_TYPE,
 } from "./index";
@@ -110,6 +111,38 @@ export interface AskAssistantIntent {
  * embedder must still decide is *where* the text goes — this function says an app asked, never that
  * the assistant should send anything. Nothing here may be auto-sent.
  */
+/**
+ * Verifies an attention count posted by a frame the embedder deliberately embeds.
+ *
+ * Read from the frame rather than polled by the embedder: the page that holds the session list and
+ * its event stream is the one source, and a shell asking the same question on a timer would be a
+ * second source that disagrees with the first for the length of its interval.
+ *
+ * Sender-verified like every other message here, though the payload is only a count: a wrong badge is
+ * a small harm, and a wrong badge that any page could set is a way to make an operator stop trusting
+ * the badge that matters.
+ */
+export function parseActiveFrameAttention(
+  event: EmbedderMessage,
+  activeFrameWindow: unknown,
+  activeFrameUrl: string,
+): number | null {
+  if (!isActiveFrameMessage(event, activeFrameWindow, activeFrameUrl)) {
+    return null;
+  }
+
+  const candidate = event.data as { type?: unknown; count?: unknown };
+  // `typeof NaN === "number"`, and NaN survives every clamp below to arrive as a badge count no
+  // renderer can do anything with. Finiteness is the check that was actually meant.
+  if (candidate.type !== ATTENTION_TYPE || !Number.isFinite(candidate.count)) {
+    return null;
+  }
+
+  // Clamped rather than trusted: a negative or absurd count would render as a badge nobody can
+  // explain, and the frame has no business deciding how large a number the shell displays.
+  return Math.max(0, Math.min(99, Math.floor(candidate.count as number)));
+}
+
 export function parseActiveFrameAskAssistant(
   event: EmbedderMessage,
   activeFrameWindow: unknown,

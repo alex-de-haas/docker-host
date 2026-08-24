@@ -3,7 +3,11 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ExternalLink, ShieldAlert } from "lucide-react";
 import { ASK_ASSISTANT_TYPE, DELEGATED_TOKEN_TYPE } from "@hosty-sdk/app";
-import { parseActiveFrameAskAssistant, parseActiveFrameDelegatedTokenRequest } from "@hosty-sdk/app/embedder";
+import {
+  parseActiveFrameAskAssistant,
+  parseActiveFrameAttention,
+  parseActiveFrameDelegatedTokenRequest,
+} from "@hosty-sdk/app/embedder";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { HostyResolvedTheme, HostyThemePreference } from "../types";
@@ -33,6 +37,7 @@ export function EmbeddedAppFrame({
   onMessage,
   onAskAssistant,
   outbound,
+  onAttention,
 }: {
   src: string;
   title: string;
@@ -70,6 +75,13 @@ export function EmbeddedAppFrame({
    * reuses it. The nonce is what makes a repeat explicit — the same text asked twice is two asks.
    */
   outbound?: { message: unknown; nonce: number } | null;
+  /**
+   * How many of this frame's sessions are waiting for the operator.
+   *
+   * Reported by the frame rather than polled, so the badge and the list behind it cannot disagree.
+   * Undefined attaches no listener, which is the right answer for every frame but the assistant's.
+   */
+  onAttention?: (count: number) => void;
 }) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -125,6 +137,14 @@ export function EmbeddedAppFrame({
     }
 
     const handleMessage = (event: MessageEvent) => {
+      if (onAttention) {
+        const count = parseActiveFrameAttention(event, iframeRef.current?.contentWindow, src);
+        if (count !== null) {
+          onAttention(count);
+          return;
+        }
+      }
+
       const intent = parseActiveFrameAskAssistant(event, iframeRef.current?.contentWindow, src);
       if (intent) {
         onAskAssistant(intent.text, appId);
@@ -142,7 +162,7 @@ export function EmbeddedAppFrame({
 
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [onAskAssistant, src, appId]);
+  }, [onAskAssistant, onAttention, src, appId]);
 
   useEffect(() => {
     if (!onMessage) {
