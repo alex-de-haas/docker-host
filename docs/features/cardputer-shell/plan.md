@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-07-31
-Updated: 2026-08-20
+Updated: 2026-08-23
 
 ## Goal
 
@@ -684,16 +684,46 @@ own PR under the platform version, never inside the firmware PR.
   with the build-timestamp floor and the clock-unset state, time zone, endpoint
   validation, authorization, transport, state synchronization,
   minimum-Core-version handling, and diagnostics — `settings_store.cpp`,
-  `wifi_manager.cpp`, SNTP in `firmware_app.cpp`, and the `endpoint`, `auth`,
-  `sse` and `state` units of `hosty_core`, each with host tests.
+  `wifi_manager.cpp`, and SNTP in `firmware_app.cpp`, with endpoint validation,
+  authorization, transport and state synchronization in the `endpoint`, `auth`,
+  `sse` and `state` units of `hosty_core`. Only the `hosty_core` half carries
+  host tests; `apps/shell-cardputer/tools/host-test.sh` compiles
+  `components/hosty_core/src/*.cpp` and the harness, never the `main/` sources,
+  so configuration storage, Wi-Fi provisioning and the SNTP floor are
+  implemented but unasserted — see the testing deliverable below.
   `kMinimumCoreVersion` is `0.73.0`, checked on both the staged and the full
   sync path. Diagnostics are the blocking failure overlays this plan reserves
   them for: thirty `show_error`/`show_overlay` sites carry the endpoint,
-  authorization, operation and OTA failures in plain words.
+  authorization, operation and OTA failures in plain words. Storage *migration*
+  is not part of this item and is not implemented; it is tracked below.
+- [ ] Implement storage migration and gate health confirmation on it. Added
+  2026-08-23 after review found it missing entirely, not merely untested.
+  [Firmware Update And Recovery](#firmware-update-and-recovery) requires that a
+  new image "marks itself healthy only after storage migration", and that an
+  incompatible storage schema is handled without losing the working image.
+  `SettingsStore::load` reads the current keys with per-value defaults and
+  stores no schema version at all, so there is nothing to migrate *from* and no
+  way to detect a schema the image cannot read; `mark_image_healthy_when_ready`
+  correspondingly gates on sync or a 60-second timeout, never on migration. The
+  work is a persisted schema version, a migration step ahead of health
+  confirmation, and the incompatible-schema path that rolls back rather than
+  starting on unreadable settings.
+- [ ] Host tests for the `main/` units. Added 2026-08-23 after review found the
+  gap hidden inside the configuration item above.
+  [Verification](#verification) requires host-side unit tests for storage
+  migration, unset-clock behavior and rejection of a time before the build
+  timestamp; all three live in `settings_store.cpp` and `firmware_app.cpp`,
+  which `apps/shell-cardputer/tools/host-test.sh` does not compile, so none of
+  them are asserted. The work is not only the test cases: the harness reaches
+  `hosty_core` alone, so the parts under test have to be separable from the
+  ESP-IDF headers first — which is the same shape as the
+  [rollback tests](#power-alerts-and-recovery) deliverable and probably one
+  piece of work with it. The migration tests depend on the item above; the
+  clock ones do not.
 - [x] Implement the keyboard-first Dashboard, Apps, Updates, and Device views
-  with unknown/stale/busy/error states — `View` covers all four, and the states
-  are `ConnectionState::Stale`, `RuntimeState`/`OperationState::Unknown` and
-  `is_busy()`, rendered by `render.cpp` under `test_render`.
+  with unknown/stale/busy/error states — `View` covers all four, and the
+  states are `ConnectionState::Stale`, `RuntimeState`/`OperationState::Unknown`
+  and `is_busy()`, rendered by `render.cpp` under `test_render`.
 - [x] Replace discoverability-dependent hotkeys with cyclic left/right view
   navigation, connection-aware header, contextual footer/action menus, and a
   selectable persisted Amber/Ocean/Violet theme.
@@ -722,7 +752,10 @@ own PR under the platform version, never inside the firmware PR.
 - [x] Implement A/B firmware OTA from the compiled-in origin over validated
   HTTPS, with health confirmation and downgrade policy — `firmware_ota.cpp`
   streams through `esp_https_ota` against the certificate bundle, refuses a
-  candidate that is not newer than the running image, and confirms health with
+  candidate **older** than the running image — `version_at_least` compares
+  `>= 0`, so an image of the same version reinstalls rather than being turned
+  away, which is the shipped behavior and not a strict-newer check — and
+  confirms health with
   `esp_ota_mark_app_valid_cancel_rollback` on the first boot that reports
   `ESP_OTA_IMG_PENDING_VERIFY`. Clock and battery are preconditions rather than
   advice: OTA is refused with an unset clock, and below 50% off USB-C.
