@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { establishSession } from "@/lib/api";
 import { composeAskDraft } from "@/lib/ask-draft";
 import { clearDraft, pruneDrafts, readDraft, writeDraft } from "@/lib/draft-store";
+import { isWaiting, orderSessions, publishAttention, waitingCount } from "@/lib/attention";
 import { startThemeSync } from "@/lib/shell-theme";
 import {
   createSession,
@@ -189,8 +190,25 @@ export default function AssistantPage() {
       if (event.source !== window.parent) {
         return;
       }
-      const data = event.data as { type?: unknown; text?: unknown; sourceAppId?: unknown } | null;
-      if (!data || data.type !== "hosty:ask-assistant" || typeof data.text !== "string") {
+      const data = event.data as
+        | { type?: unknown; text?: unknown; sourceAppId?: unknown; sessionId?: unknown }
+        | null;
+      if (!data) {
+        return;
+      }
+
+      if (data.type === "hosty:open-assistant-session" && typeof data.sessionId === "string") {
+        // A notification arriving at the rail: open the session it was about. Only the id crosses —
+        // the panel decides whether that session still exists and what to show, which is the same
+        // division as everywhere else here.
+        const wanted = sessions.find((record) => record.id === data.sessionId);
+        if (wanted) {
+          attach(wanted);
+        }
+        return;
+      }
+
+      if (data.type !== "hosty:ask-assistant" || typeof data.text !== "string") {
         return;
       }
 
@@ -202,7 +220,9 @@ export default function AssistantPage() {
 
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, []);
+    // Re-attached when the session list changes: the handler resolves an incoming id against it, and
+    // a listener closed over an empty first render would refuse every session that arrived later.
+  }, [attach, sessions]);
 
   // Written on change rather than on unload: a closed laptop, a crashed tab and a navigation away all
   // skip unload handlers, and those are exactly the cases where the text matters most.
@@ -211,6 +231,23 @@ export default function AssistantPage() {
       writeDraft(session.id, input);
     }
   }, [input, session]);
+
+  // The active session's status arrives on the stream, not in the list read at load. Folding it back
+  // in is what keeps the ordering and the badge true for the session most likely to block — the one
+  // the operator is watching.
+  useEffect(() => {
+    if (session) {
+      setSessions((current) =>
+        current.map((record) => (record.id === session.id ? { ...record, status } : record)),
+      );
+    }
+  }, [session, status]);
+
+  // One source: this page holds the list and the stream, so it publishes and the embedder listens. A
+  // shell polling the gateway for the same fact would disagree with this one for its whole interval.
+  useEffect(() => {
+    publishAttention(waitingCount(sessions));
+  }, [sessions]);
 
   const send = useCallback(async () => {
     const trimmed = input.trim();
@@ -309,7 +346,7 @@ export default function AssistantPage() {
 
       {showSessions ? (
         <SessionList
-          sessions={sessions}
+          sessions={orderSessions(sessions)}
           activeId={session?.id ?? null}
           onPick={(record) => {
             setShowSessions(false);
@@ -408,9 +445,16 @@ function SessionList({
         >
           <div className="truncate text-sm">{record.title || "Untitled session"}</div>
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            {isWaiting(record.status) && (
+              // Marked as well as ordered: ordering alone is invisible to someone who has not seen the
+              // list before, and the row has to say *why* it is first.
+              <span className="inline-flex size-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden />
+            )}
             <span>{new Date(record.createdAt).toLocaleString()}</span>
             <span aria-hidden>·</span>
-            <span>{record.status}</span>
+            <span className={cn(isWaiting(record.status) && "font-medium text-amber-600 dark:text-amber-500")}>
+              {isWaiting(record.status) ? "waiting for you" : record.status}
+            </span>
           </div>
         </button>
       ))}

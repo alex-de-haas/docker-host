@@ -687,6 +687,48 @@ export class SessionManager {
     }
   }
 
+  /**
+   * Stops sessions that have waited for a person past the deadline, keeping their transcripts.
+   *
+   * A harness paused on an approval holds a process, its MCP proxy route and its share of the
+   * delegation chain indefinitely. Nothing here reclaims that on its own: "waiting" is a state a
+   * session can legitimately sit in for hours, so only a clock can tell it apart from one nobody is
+   * ever coming back to.
+   *
+   * The transcript survives — the point is to release the machinery, not to erase what happened, and
+   * an operator returning to find the session gone would have lost the very question it was asking.
+   */
+  async sweepAbandoned(maxWaitMs: number, now = Date.now()): Promise<string[]> {
+    const abandoned: string[] = [];
+    for (const [id, session] of this.live) {
+      if (!isWaitingStatus(session.record.status)) {
+        continue;
+      }
+
+      if (now - Date.parse(session.record.updatedAt) < maxWaitMs) {
+        continue;
+      }
+
+      const run = session.run;
+      session.run = null;
+      session.pendingApprovals.clear();
+      session.pendingQuestions.clear();
+      session.mcpAppIds = [];
+      this.proxy?.unregister(id);
+      if (run) {
+        // Released before the status flips, so nothing can answer an approval into a run that is
+        // already being torn down.
+        await run.stop().catch(() => undefined);
+      }
+
+      await this.setStatus(id, "abandoned");
+      this.audit.report("session_abandoned", { sessionId: id, waitedMs: String(now - Date.parse(session.record.updatedAt)) });
+      abandoned.push(id);
+    }
+
+    return abandoned;
+  }
+
   private async setStatus(id: string, status: SessionStatus): Promise<void> {
     const session = this.live.get(id);
     if (!session || session.record.status === status) {

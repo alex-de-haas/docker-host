@@ -61,7 +61,10 @@ export class WaitingNotifier {
         body: asking
           ? "A session is paused until you answer."
           : "A session is paused until you allow or deny an action.",
-        link: "/",
+        // Carries the session, so a banner or an inbox row lands on the conversation that is waiting
+        // rather than on the assistant in general. Shell reads the parameter, reveals the rail and
+        // forwards the id into the panel.
+        link: `/?assistantSession=${encodeURIComponent(sessionId)}`,
         dedupeKey: dedupeKeyFor(sessionId),
       }),
       signal: AbortSignal.timeout(1_500),

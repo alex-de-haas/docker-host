@@ -16,12 +16,14 @@ import {
   LAUNCH_MODE_ATTRIBUTE,
   ASK_ASSISTANT_TYPE,
   ASK_ASSISTANT_MAX_CHARS,
+  ATTENTION_TYPE,
 } from "./index";
 import {
   createReissueRateLimiter,
   parseActiveFrameAuthRequired,
   parseActiveFrameDelegatedTokenRequest,
   parseActiveFrameAskAssistant,
+  parseActiveFrameAttention,
 } from "./embedder";
 import {
   clearAppSecretsCache,
@@ -848,5 +850,53 @@ describe("delegated tokens", () => {
       if (savedKey !== undefined) process.env.HOSTY_DELEGATED_TOKEN_PUBLIC_KEY = savedKey;
       if (savedAppId !== undefined) process.env.HOSTY_APP_ID = savedAppId;
     }
+  });
+});
+
+describe("parseActiveFrameAttention", () => {
+  const frameWindow = {} as unknown;
+  const frameUrl = "https://app.test/assistant";
+
+  it("reads a count from the frame the embedder mounted", () => {
+    expect(
+      parseActiveFrameAttention(
+        { data: { type: ATTENTION_TYPE, count: 3 }, origin: "https://app.test", source: frameWindow },
+        frameWindow,
+        frameUrl,
+      ),
+    ).toBe(3);
+  });
+
+  it("ignores a count from anywhere else", () => {
+    // A wrong badge is a small harm; a wrong badge any page could set is a way to make the operator
+    // stop trusting the badge that matters.
+    expect(
+      parseActiveFrameAttention(
+        { data: { type: ATTENTION_TYPE, count: 9 }, origin: "https://evil.test", source: frameWindow },
+        frameWindow,
+        frameUrl,
+      ),
+    ).toBeNull();
+    expect(
+      parseActiveFrameAttention(
+        { data: { type: ATTENTION_TYPE, count: 9 }, origin: "https://app.test", source: {} },
+        frameWindow,
+        frameUrl,
+      ),
+    ).toBeNull();
+  });
+
+  it("clamps what it will display", () => {
+    // The frame has no business deciding how large a number the shell renders.
+    const read = (count: unknown) =>
+      parseActiveFrameAttention(
+        { data: { type: ATTENTION_TYPE, count }, origin: "https://app.test", source: frameWindow },
+        frameWindow,
+        frameUrl,
+      );
+
+    expect(read(-4)).toBe(0);
+    expect(read(10_000)).toBe(99);
+    expect(read("3")).toBeNull();
   });
 });

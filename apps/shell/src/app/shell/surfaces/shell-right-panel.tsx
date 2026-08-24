@@ -32,6 +32,8 @@ export function ShellRightPanel({
   reloadKey,
   outbound,
   onAskAssistant,
+  attention,
+  onAttention,
 }: {
   tabs: AppSurfaceTab[];
   activeTab: AppSurfaceTab | null;
@@ -55,6 +57,9 @@ export function ShellRightPanel({
   /** Handed to the active tab's frame; see EmbeddedAppFrame's `outbound`. */
   outbound?: { message: unknown; nonce: number } | null;
   onAskAssistant?: (text: string, sourceAppId: string) => void;
+  /** appId → how many of its sessions want the operator. Rendered on the tab. */
+  attention?: Record<string, number>;
+  onAttention?: (appId: string, count: number) => void;
 }) {
   const { src, error } = useAppSurfaceSrc(activeTab, onOpenSurfaceFrame, "Could not open this panel.", reloadKey);
 
@@ -83,6 +88,14 @@ export function ShellRightPanel({
               title={tab.running ? tab.label : `${tab.label} (not running)`}
             >
               {tab.label}
+              {(attention?.[tab.appId] ?? 0) > 0 && (
+                // On the tab, because the tab is on every page: a session that stops for a person is
+                // only findable if the trigger says so from wherever the operator happens to be.
+                <span
+                  className="ml-1.5 inline-flex size-1.5 rounded-full bg-amber-500 align-middle"
+                  aria-label={`${attention?.[tab.appId]} waiting for you`}
+                />
+              )}
             </button>
           ))}
         </div>

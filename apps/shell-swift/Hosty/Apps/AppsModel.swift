@@ -22,6 +22,9 @@ final class AppsModel {
     private(set) var icons: AppIconStore
 
     private let session: HostSession
+    /// Raises OS banners. Owned here because this is where the stream is consumed; the presenter
+    /// itself knows nothing about apps.
+    private let notifications = NotificationRouter()
 
     // Held outside the main actor's isolation so `deinit`, which is nonisolated, can still cancel them.
     // A model dropped without `stopFollowing()` would otherwise leave its event stream open, holding a
@@ -365,7 +368,11 @@ final class AppsModel {
                     switch event.known {
                     case .appChanged, .appRemoved, .appUpdateCheckChanged, .fleetUpdateCheckChanged:
                         scheduleReload()
-                    case .notification, nil:
+                    case .notification:
+                        // The one event this client can act on in a way a browser tab cannot: raise a
+                        // banner for a person who has closed the window.
+                        await notifications.handle(event.data)
+                    case nil:
                         break
                     }
                 case .unauthorized:

@@ -46,6 +46,14 @@ export function createAuthRequiredIntent(appId: string): AuthRequiredIntent {
  */
 export const ASK_ASSISTANT_TYPE = "hosty:ask-assistant";
 
+/**
+ * How many of an embedded assistant's sessions are waiting for the operator.
+ *
+ * Published by the page that holds them, not asked for on a timer: one source, so a shell's badge and
+ * the list behind it can never disagree.
+ */
+export const ATTENTION_TYPE = "hosty:assistant-attention";
+
 /** Longer than a prompt fragment is a page dumping itself into someone's draft. */
 export const ASK_ASSISTANT_MAX_CHARS = 4000;
 

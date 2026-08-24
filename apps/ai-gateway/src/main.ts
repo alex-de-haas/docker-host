@@ -69,6 +69,24 @@ const sweep = (): void => {
 sweep();
 const sweepTimer = setInterval(sweep, 24 * 60 * 60 * 1000);
 
+/**
+ * A session waiting for a person past this holds a harness process, a proxy route and its share of
+ * the delegation chain for nothing. Checked hourly rather than daily: a day-long grid would mean a
+ * session abandoned just after a tick keeps all of that for nearly two days.
+ */
+const ABANDON_AFTER_MS = 24 * 60 * 60 * 1000;
+const abandonSweep = (): void => {
+  void manager
+    .sweepAbandoned(ABANDON_AFTER_MS)
+    .then((abandoned) => {
+      if (abandoned.length > 0) {
+        console.log(`[sessions] stopped ${abandoned.length} session(s) waiting over 24h; transcripts kept`);
+      }
+    })
+    .catch((error) => console.warn("[sessions] abandon sweep failed", error));
+};
+const abandonTimer = setInterval(abandonSweep, 60 * 60 * 1000);
+
 const server = createGatewayServer(manager, adapter, settings, providers, proxy);
 server.listen(config.port, () => {
   console.log(
@@ -78,6 +96,7 @@ server.listen(config.port, () => {
 
 const shutdown = (): void => {
   clearInterval(sweepTimer);
+  clearInterval(abandonTimer);
   server.close();
   void manager.shutdown().finally(() => process.exit(0));
 };

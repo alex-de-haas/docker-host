@@ -31,6 +31,7 @@ import {
   SIDEBAR_COMPACT_STORAGE_KEY,
   RIGHT_PANEL_OPEN_STORAGE_KEY,
   SHELL_VIEW_LABELS,
+  readAssistantSessionParam,
   shellViewRequiresAdmin,
 } from "./shell/shell-routes";
 import { emptyDetailPanelState, emptyInstallPanelState } from "./shell/state";
@@ -175,6 +176,9 @@ export function ShellClient({
   const [activePanelKey, setActivePanelKey] = useState<string | null>(null);
   // Bumped when a placed surface reports its session expired; the shared hook re-mints on the change.
   const [surfaceAuthNonce, setSurfaceAuthNonce] = useState(0);
+  // appId → sessions waiting for the operator, as the panel's own page reports it. Shell never asks:
+  // the page holding the sessions is the one source, and a poll here would disagree with it.
+  const [panelAttention, setPanelAttention] = useState<Record<string, number>>({});
   // What Shell last asked the assistant panel, as a message for its frame. The nonce is the ask:
   // the same text twice is two asks, and the panel must see both.
   const [assistantAsk, setAssistantAsk] = useState<{ message: unknown; nonce: number } | null>(null);
@@ -1899,6 +1903,27 @@ export function ShellClient({
    * page's frame rather than a call into a component. The panel fills the draft and stops there:
    * only the operator sends, which is the rule the whole entry-point design rests on.
    */
+  // A notification links here with the session it is about. Revealing the rail and forwarding the id
+  // reuses the channel built for asks — the panel owns which session is shown, and Shell only carries
+  // the request, which is the same division as everywhere else in the rail.
+  const assistantSessionParam = readAssistantSessionParam(searchParams.get("assistantSession"));
+  useEffect(() => {
+    if (!assistantSessionParam) {
+      return;
+    }
+
+    setPanelOpen(true);
+    setAssistantAsk((current) => ({
+      message: { type: "hosty:open-assistant-session", sessionId: assistantSessionParam },
+      nonce: (current?.nonce ?? 0) + 1,
+    }));
+    // Stripped once acted on: a reload should not re-open a session the operator has since left, and
+    // a link that keeps reasserting itself is one they cannot navigate away from.
+    const next = new URLSearchParams(searchParams.toString());
+    next.delete("assistantSession");
+    router.replace(`${pathname}${next.toString() ? `?${next}` : ""}`);
+  }, [assistantSessionParam, pathname, router, searchParams]);
+
   const askAssistant = useCallback((text: string, sourceAppId: string) => {
     if (!askLimiter.current.tryAcquire(sourceAppId)) {
       return;
@@ -2222,6 +2247,10 @@ export function ShellClient({
             onAuthRequired={handleSurfaceAuthRequired}
             resolveDelegatedTokenRequest={requestDelegatedTokenFor}
             onOpenSurfaceFrame={openSurfaceFrame}
+            attention={panelAttention}
+            onAttention={(appId, count) =>
+              setPanelAttention((current) => (current[appId] === count ? current : { ...current, [appId]: count }))
+            }
             onAskAssistant={assistantAvailable ? askAssistant : undefined}
             // Panels are deliberately not administrator-only, but starting an app is: Core refuses a
             // host.user, so offering them the button would promise something guaranteed to fail.
