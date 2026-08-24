@@ -1,6 +1,6 @@
 # MCP Facade — One Remote Endpoint For The Whole Fleet
 
-Status: Ready
+Status: In Progress
 Created: 2026-08-24
 Updated: 2026-08-24
 
@@ -59,12 +59,16 @@ the day scoped tokens land.
 
 ## Deliverables
 
-- [ ] MCP endpoint on the gateway, authenticated by scoped-token introspection.
-- [ ] Aggregated `tools/list` with connector-compatible naming.
-- [ ] Per-call forwarding through per-user delegated tokens, read-only filter enforced.
-- [ ] Core MCP tools in the catalog.
-- [ ] Skills delivered via `instructions`, approval-gated, attribution order asserted.
-- [ ] `notifications/tools/list_changed` on fleet changes.
+- [x] MCP endpoint on the gateway, authenticated by scoped-token introspection.
+- [x] Aggregated `tools/list` with connector-compatible naming.
+- [x] Per-call forwarding through per-user delegated tokens, read-only filter enforced.
+- [x] Core MCP tools in the catalog. The exchange could not serve this — it branches off a token
+      descended from a browser interaction — so Core gained an on-behalf-of route instead, and
+      `hosty:core` as a delegation target; recorded in [feature.md](feature.md).
+- [x] Skills delivered via `instructions`, approval-gated, attribution order asserted.
+- [ ] `notifications/tools/list_changed` on fleet changes. Needs the streamable-HTTP GET stream,
+      which the endpoint currently refuses rather than half-implements; until it exists, a client
+      sees a newly installed app's tools on its next connection.
 - [ ] Live verification from a stock Claude Code over a **non-loopback** origin — which also closes
       the last open cell of ai-agent-bridge step 6, and is recorded there when it happens.
 - [ ] On ship: ai-agent-bridge topology-4 note and decision log updated to name the facade.

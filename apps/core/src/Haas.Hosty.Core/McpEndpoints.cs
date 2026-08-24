@@ -23,7 +23,7 @@ internal static class McpEndpoints
         var group = app.MapGroup("/api/mcp");
 
         // Gated before the protocol handler sees anything, on either of two credentials: an
-        // administrator session, or an access token scoped to `hosty:core` carrying `mcp:read`
+        // administrator session, or an access token scoped to `core` carrying `mcp:read`
         // (docs/features/scoped-access-tokens/feature.md) — the first credential reaching Core that
         // is narrower than "an administrator". requireCsrf is on for the browser case; a bearer
         // credential — what an external MCP client presents — is CSRF-exempt by design, so agent
@@ -44,6 +44,28 @@ internal static class McpEndpoints
             {
                 var lifetimes = http.RequestServices.GetRequiredService<AuthLifetimes>();
                 var state = await users.ReadAsync(http.RequestAborted);
+
+                // A delegated token minted for this endpoint on a user's behalf, which is how the
+                // MCP facade puts Core's tools in one aggregated catalog beside the apps'
+                // (docs/features/mcp-facade/). Signature-verified and five minutes long, so it is
+                // checked before the opaque forms below; the actor's role is re-read from the
+                // directory rather than trusted from the claims, because this surface is
+                // administrator-only and a token outlives a demotion by up to its whole TTL.
+                var delegated = http.RequestServices.GetRequiredService<DelegatedTokenService>();
+                if (delegated.ReadClaims(bearer) is { } claims &&
+                    string.Equals(claims.Aud, AccessTokenScopes.CoreAudience, StringComparison.Ordinal))
+                {
+                    var actor = state.Users.FirstOrDefault(candidate =>
+                        string.Equals(candidate.Id, claims.Sub, StringComparison.Ordinal));
+                    if (actor is null || actor.Disabled || !AppAccessPolicy.IsAdmin(actor))
+                    {
+                        return CoreJson.Json(
+                            new ErrorResponse("admin_required", "This Core operation requires a Host administrator."),
+                            statusCode: StatusCodes.Status403Forbidden);
+                    }
+
+                    return await next(context);
+                }
                 var scoped = ScopedCredentials.Resolve(
                     state, bearer, clock.UtcNow, lifetimes, AccessTokenScopes.CoreAudience);
                 if (scoped is not null)

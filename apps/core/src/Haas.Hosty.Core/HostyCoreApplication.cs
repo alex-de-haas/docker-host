@@ -373,6 +373,7 @@ internal static class HostyCoreApplication
         AppBackupEndpoints.Map(app);
         AppSecretsEndpoints.Map(app);
         TokenIntrospectionEndpoints.Map(app);
+        OnBehalfOfTokenEndpoints.Map(app);
         NotificationEndpoints.Map(app);
         EventStreamEndpoints.Map(app);
         McpEndpoints.Map(app);

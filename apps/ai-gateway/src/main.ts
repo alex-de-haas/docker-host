@@ -8,6 +8,7 @@ import { createGatewayServer } from "./server.js";
 import { SettingsStore } from "./settings/store.js";
 import { TokenExchange } from "./mcp/exchange.js";
 import { McpProxy } from "./mcp/proxy.js";
+import { McpFacade } from "./facade/facade.js";
 import { ProviderDirectory } from "./settings/providers.js";
 import { ClaudeHarnessAdapter } from "./harness/claude.js";
 import { CodexHarnessAdapter } from "./harness/codex.js";
@@ -87,7 +88,21 @@ const abandonSweep = (): void => {
 };
 const abandonTimer = setInterval(abandonSweep, 60 * 60 * 1000);
 
-const server = createGatewayServer(manager, adapter, settings, providers, proxy);
+// One MCP endpoint that is the whole host, for an external agent client with no CLI or SSH on the
+// path (docs/features/mcp-facade/). Core's own MCP endpoint joins the catalog beside the apps, which
+// is why the origin is resolved here rather than guessed inside the facade.
+const facade = new McpFacade(
+  {
+    coreOrigin: config.coreOrigin,
+    serviceToken: config.serviceToken,
+    appId: config.appId,
+    coreMcpUrl: config.coreOrigin ? `${config.coreOrigin.replace(/\/$/, "")}/api/mcp` : null,
+  },
+  providers,
+  settings,
+);
+
+const server = createGatewayServer(manager, adapter, settings, providers, proxy, facade);
 server.listen(config.port, () => {
   console.log(
     `hosty.ai-gateway listening on :${config.port} (harness=${adapter.name}, data=${config.dataDir})`,

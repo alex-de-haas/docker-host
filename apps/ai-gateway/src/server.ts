@@ -12,6 +12,7 @@ import { MAX_SYSTEM_PROMPT_CHARS, type AssistantSettings, type SettingsStore } f
 import { partitionSkills, skillDigest, type AppSkill, type PendingSkill } from "./mcp/skills.js";
 import type { ProviderDirectory } from "./settings/providers.js";
 import type { McpProxy } from "./mcp/proxy.js";
+import type { McpFacade } from "./facade/facade.js";
 
 // Plain node:http — the API is a handful of JSON routes plus one SSE stream; a framework would be
 // the largest dependency in the app for no gain.
@@ -30,9 +31,10 @@ export function createGatewayServer(
   settings: SettingsStore | null = null,
   providers: ProviderDirectory | null = null,
   proxy: McpProxy | null = null,
+  facade: McpFacade | null = null,
 ): Server {
   return createServer((request, response) => {
-    void route(request, response, manager, adapter, settings, providers, proxy).catch((error) => {
+    void route(request, response, manager, adapter, settings, providers, proxy, facade).catch((error) => {
       if (error instanceof SessionNotFoundError) {
         sendJson(response, 404, { code: "session_not_found", message: error.message });
         return;
@@ -61,6 +63,7 @@ async function route(
   settings: SettingsStore | null,
   providers: ProviderDirectory | null,
   proxy: McpProxy | null,
+  facade: McpFacade | null,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", "http://gateway.local");
   const method = request.method ?? "GET";
@@ -68,6 +71,13 @@ async function route(
 
   if (method === "OPTIONS") {
     response.writeHead(204).end();
+    return;
+  }
+
+  // Outside /api and ahead of the operator gate, like the proxy below and for the same kind of
+  // reason: an external agent client authenticates with a scoped access token of its own, which
+  // Core introspects, rather than with an operator's delegated token (facade/facade.ts).
+  if (facade && (await facade.handle(request, response, url.pathname))) {
     return;
   }
 
@@ -262,6 +272,11 @@ async function route(
         // Immediately, not at the next timer tick — the page says "applied to running sessions", and
         // for a *revoked* grant that has to be true the moment the operator sees it.
         await manager.applyProviderPolicy();
+        // The facade caches an assembled catalog per user for a few seconds. That window is
+        // harmless for access (every call re-mints, so a stale catalog can offer a name but never
+        // make a refused call succeed) and wrong for *policy*: a provider the operator just turned
+        // off should stop being offered now, not shortly.
+        facade?.invalidate();
       }
     }
 
