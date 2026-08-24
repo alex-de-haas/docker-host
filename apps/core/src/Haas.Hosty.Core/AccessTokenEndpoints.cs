@@ -209,7 +209,12 @@ internal static class AccessTokenEndpoints
                             session.UserId,
                             state.Users.FirstOrDefault(candidate => string.Equals(candidate.Id, session.UserId, StringComparison.Ordinal))?.DisplayName,
                             session.CreatedAt,
-                            session.LastSeenAt ?? session.CreatedAt))
+                            session.LastSeenAt ?? session.CreatedAt,
+                            // What this credential may reach. Null here is the full-role credential
+                            // the list always showed, and the surface says so rather than leaving
+                            // "no audience" to be read as "no reach".
+                            session.Audience,
+                            session.Scopes ?? []))
                         .ToArray();
 
                     return CoreJson.Json(new AccessTokenListResponse(views));
@@ -222,6 +227,7 @@ internal static class AccessTokenEndpoints
             UserDirectoryStore users,
             IClock clock,
             AuthLifetimes lifetimes,
+            AppRegistryStore apps,
             AuditStore audit,
             CancellationToken cancellationToken) =>
             CoreSessionAuthorization.RequireSessionAsync(
@@ -238,10 +244,51 @@ internal static class AccessTokenEndpoints
                             statusCode: StatusCodes.Status400BadRequest);
                     }
 
+                    // Audience and scopes arrive as a pair or not at all. Half of one is never what
+                    // the operator meant: an audience with no scopes may do nothing at all, and
+                    // scopes with no audience name powers over nothing — and both would be minted
+                    // silently, then puzzled over when they did not work.
+                    var audience = string.IsNullOrWhiteSpace(input.Audience) ? null : input.Audience.Trim();
+                    var scopes = AccessTokenScopes.TryNormalize(input.Scopes);
+                    if ((audience is null) != (scopes is null))
+                    {
+                        return CoreJson.Json(
+                            new ErrorResponse(
+                                "scope_incomplete",
+                                "A scoped credential needs both an audience and at least one known scope."),
+                            statusCode: StatusCodes.Status400BadRequest);
+                    }
+
+                    // An audience naming an app that is not installed is a typo, and a typo here
+                    // produces a credential that is valid, listed, and silently useless — refused
+                    // while the operator is still looking at the form instead.
+                    if (audience is not null &&
+                        !string.Equals(audience, AccessTokenScopes.CoreAudience, StringComparison.Ordinal) &&
+                        await apps.GetAppAsync(audience, cancellationToken) is null)
+                    {
+                        return CoreJson.Json(
+                            new ErrorResponse("audience_not_found", "No installed app has that id."),
+                            statusCode: StatusCodes.Status400BadRequest);
+                    }
+
+                    // Core MCP is an administrator surface, and a credential cannot grant what its
+                    // approver does not hold. Refused here so an ordinary user is told why, rather
+                    // than handed a credential that every call will refuse; the authoritative check
+                    // is at use, where a later role change is also caught.
+                    if (string.Equals(audience, AccessTokenScopes.CoreAudience, StringComparison.Ordinal) &&
+                        !AppAccessPolicy.IsAdmin(user))
+                    {
+                        return CoreJson.Json(
+                            new ErrorResponse(
+                                "admin_required",
+                                "A credential for Core MCP requires a Host administrator."),
+                            statusCode: StatusCodes.Status403Forbidden);
+                    }
+
                     var credential = await IssueAsync(
-                        user.Id, AccessTokenKinds.Manual, label, users, clock, lifetimes, cancellationToken);
+                        user.Id, AccessTokenKinds.Manual, label, users, clock, lifetimes, cancellationToken, audience, scopes);
                     var fingerprint = CoreSessionAuthorization.FingerprintSessionId(credential.Id);
-                    await AppendAuditAsync(audit, "auth.credential.created", fingerprint, user.Id, clock, label, AccessTokenKinds.Manual, cancellationToken);
+                    await AppendAuditAsync(audit, "auth.credential.created", fingerprint, user.Id, clock, label, AccessTokenKinds.Manual, cancellationToken, audience, scopes);
 
                     // The only time the value is ever returned. Nothing stores it in a form that can be
                     // read back, so a caller that loses it revokes and creates another.
@@ -309,7 +356,9 @@ internal static class AccessTokenEndpoints
         UserDirectoryStore users,
         IClock clock,
         AuthLifetimes lifetimes,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? audience = null,
+        IReadOnlyList<string>? scopes = null)
     {
         var now = clock.UtcNow;
         var record = new AuthSessionRecord(
@@ -320,7 +369,9 @@ internal static class AccessTokenEndpoints
             RevokedAt: null,
             LastSeenAt: now,
             Kind: kind,
-            Label: label);
+            Label: label,
+            Audience: audience,
+            Scopes: scopes);
 
         await users.UpdateAsync(state => state with
         {
@@ -355,7 +406,9 @@ internal static class AccessTokenEndpoints
         IClock clock,
         string? label,
         string? kind,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? audience = null,
+        IReadOnlyList<string>? scopes = null)
     {
         var details = new Dictionary<string, string>(StringComparer.Ordinal);
         if (!string.IsNullOrWhiteSpace(label))
@@ -366,6 +419,18 @@ internal static class AccessTokenEndpoints
         if (!string.IsNullOrWhiteSpace(kind))
         {
             details["kind"] = kind;
+        }
+
+        // Recorded on creation because it is what the credential can do: a later reader of the log
+        // should not have to find the credential to learn whether an administrator was minted.
+        if (!string.IsNullOrWhiteSpace(audience))
+        {
+            details["audience"] = audience;
+        }
+
+        if (scopes is { Count: > 0 })
+        {
+            details["scopes"] = string.Join(' ', scopes);
         }
 
         return audit.AppendAsync(
@@ -433,11 +498,16 @@ internal sealed record AccessTokenView(
     string UserId,
     string? UserDisplayName,
     DateTimeOffset CreatedAt,
-    DateTimeOffset LastSeenAt);
+    DateTimeOffset LastSeenAt,
+    string? Audience = null,
+    IReadOnlyList<string>? Scopes = null);
 
 internal sealed record AccessTokenListResponse(IReadOnlyList<AccessTokenView> Credentials);
 
-internal sealed record AccessTokenCreateRequest(string Label);
+internal sealed record AccessTokenCreateRequest(
+    string Label,
+    string? Audience = null,
+    IReadOnlyList<string>? Scopes = null);
 
 internal sealed record AccessTokenCreateResponse(string Id, string Label, string Token);
 

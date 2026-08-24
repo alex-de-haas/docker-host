@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { validateDelegatedToken, type DelegatedTokenClaims } from "@hosty-sdk/app/delegated";
+import { validateDelegatedToken } from "@hosty-sdk/app/delegated";
+import { hasScope, introspectScopedToken, SCOPE_MCP_READ } from "@hosty-sdk/app/scoped-token";
 import { getAppDirectorySnapshot } from "@/lib/host-auth";
 import { getDemoConfig } from "@/lib/demo-config";
 import {
@@ -16,9 +17,13 @@ export const runtime = "nodejs";
 //
 // The division of labour is the whole point, and it is easy to get backwards:
 //
-//   * **Core authenticates.** The caller presents a short-TTL delegated token Core signed; this app
-//     validates it locally against the public key Core injected, so Core stays out of the data path
-//     and there is no per-call round trip. The app builds no identity system of its own.
+//   * **Core authenticates.** The app builds no identity system of its own. Two credentials arrive
+//     here and both are Core's answer to "who is this", differing only in how the answer is
+//     obtained: a short-TTL **delegated token**, signed and validated locally against the key Core
+//     injected (no round trip, but unrevocable — which is why it lives five minutes and cannot sit
+//     in a client's config file), and a **scoped access token**, opaque and introspected against
+//     Core on every call (a round trip, but revocation lands instantly — which is what lets an
+//     external agent client keep one in its configuration).
 //   * **The app authorizes.** Core cannot know what "read the people directory" means here or who
 //     may do it. Every tool below re-runs this app's own permission model for the delegated actor —
 //     the same model the HTTP routes use, not a parallel one written for agents. An MCP surface
@@ -44,13 +49,18 @@ export async function POST(request: Request) {
     return jsonRpcError(null, -32700, "Parse error: expected a JSON-RPC request object.");
   }
 
-  // Authentication first, before the method is even looked at: an unauthenticated caller learns
+  // The tool being invoked, resolved before authentication so the scoped path can name it to Core —
+  // that name is the audit line for an external client's action, which never reaches Core otherwise.
+  const invokedTool =
+    body.method === "tools/call" && typeof body.params?.name === "string" ? body.params.name : undefined;
+
+  // Authentication first, before the method is even acted on: an unauthenticated caller learns
   // nothing about which tools exist.
-  const claims = readDelegatedClaims(request);
-  if (!claims) {
+  const actor = await resolveActor(request, invokedTool);
+  if (!actor.ok) {
     return NextResponse.json(
-      { error: { code: "delegated_token_required", message: "A valid Hosty delegated token for this app is required." } },
-      { status: 401, headers: { "Cache-Control": "no-store" } },
+      { error: { code: actor.code, message: actor.message } },
+      { status: actor.status, headers: { "Cache-Control": "no-store" } },
     );
   }
 
@@ -75,7 +85,7 @@ export async function POST(request: Request) {
     case "tools/list":
       return jsonRpcResult(id, { tools: TOOLS });
     case "tools/call":
-      return callTool(id, body.params ?? {}, claims);
+      return callTool(id, body.params ?? {}, actor.actor);
     default:
       return jsonRpcError(id, -32601, `Method not found: ${body.method}`);
   }
@@ -102,25 +112,22 @@ const TOOLS = [
   },
 ];
 
-async function callTool(
-  id: number | string | null,
-  params: Record<string, unknown>,
-  claims: DelegatedTokenClaims,
-) {
+async function callTool(id: number | string | null, params: Record<string, unknown>, actor: Actor) {
   const name = typeof params.name === "string" ? params.name : "";
   const assignments = await readDemoAppRoleAssignments();
-  // The delegated token carries the Hosty identity; this app turns it into its own domain role.
-  // `status: "active"` because a valid, unexpired token is what Core issues only for an active,
-  // permitted user — every issue re-runs the full access policy on the Core side.
+  // Whichever credential arrived, it carried the Hosty identity; this app turns it into its own
+  // domain role. `status: "active"` because Core hands out neither credential's answer for a user
+  // who is disabled or has lost access — every delegated issue and every introspection re-runs the
+  // full access policy on the Core side.
   const permissions = resolveDemoAppPermissions(
-    { status: "active", userId: claims.sub, hostRole: claims.role },
+    { status: "active", userId: actor.userId, hostRole: actor.hostRole },
     assignments,
   );
 
   if (name === "get_my_app_role") {
     return toolResult(id, {
-      userId: claims.sub,
-      hostRole: claims.role,
+      userId: actor.userId,
+      hostRole: actor.hostRole,
       appRole: permissions.role,
       roleLabel: permissions.roleLabel,
       source: permissions.source,
@@ -136,7 +143,7 @@ async function callTool(
       return toolResult(
         id,
         {
-          error: `The app role '${permissions.role}' does not grant demo.people.read, so this directory is not readable for ${claims.sub}.`,
+          error: `The app role '${permissions.role}' does not grant demo.people.read, so this directory is not readable for ${actor.userId}.`,
         },
         // isError is the protocol's own failure signal: a client can tell the call failed without
         // parsing the JSON inside the text content. It stays a tool *result*, so the model still
@@ -176,12 +183,66 @@ async function callTool(
   return jsonRpcError(id, -32602, `Unknown tool: ${name}`);
 }
 
-/** Reads and validates the bearer token. Audience defaults to HOSTY_APP_ID, so a token minted for
- * another app is rejected — the check that stops one app's token from working on another. */
-function readDelegatedClaims(request: Request): DelegatedTokenClaims | null {
+/** Who Core says is calling. Both credentials reduce to this — the rest of the file never learns
+ * which one arrived, because the app's authorization model does not depend on it. */
+type Actor = { userId: string; hostRole: string | null };
+
+type ActorResolution =
+  | { ok: true; actor: Actor }
+  | { ok: false; status: number; code: string; message: string };
+
+/**
+ * Accepts either credential, in the order that costs least.
+ *
+ * The delegated token is tried first because it validates locally: a gateway-proxied or
+ * `hosty mcp` call never pays for a round trip. Only a bearer that is *not* a delegated token is
+ * introspected against Core, which is the external-client path.
+ *
+ * Both audience checks are Core's, not this app's: `validateDelegatedToken` defaults its expected
+ * audience to HOSTY_APP_ID, and introspection is answered for the app the service token identifies.
+ * A credential minted for another app is refused either way, without this file comparing ids.
+ */
+async function resolveActor(request: Request, tool: string | undefined): Promise<ActorResolution> {
   const header = request.headers.get("authorization") ?? "";
   const token = header.toLowerCase().startsWith("bearer ") ? header.slice(7).trim() : "";
-  return token ? validateDelegatedToken(token) : null;
+  if (!token) {
+    return { ok: false, status: 401, code: "credential_required", message: "A Hosty credential for this app is required." };
+  }
+
+  const claims = validateDelegatedToken(token);
+  if (claims) {
+    return { ok: true, actor: { userId: claims.sub, hostRole: claims.role } };
+  }
+
+  const introspected = await introspectScopedToken(token, { tool });
+  if (introspected.active) {
+    // Every tool here is read-only, so `mcp:read` is the whole of what this surface offers. The
+    // scope is checked even though nothing else is on offer yet: a credential that was never
+    // granted this must not work merely because there is nothing narrower to compare it against.
+    if (!hasScope(introspected, SCOPE_MCP_READ)) {
+      return {
+        ok: false,
+        status: 403,
+        code: "scope_required",
+        message: `This credential does not carry the '${SCOPE_MCP_READ}' scope.`,
+      };
+    }
+
+    return { ok: true, actor: { userId: introspected.sub, hostRole: introspected.role } };
+  }
+
+  // Core being unreachable is not a bad credential, and answering 401 would tell a client with a
+  // perfectly good token to go and get another one. 503 says what is true: nothing could be checked.
+  if (introspected.error && introspected.error.code !== "introspection_unconfigured") {
+    return {
+      ok: false,
+      status: 503,
+      code: introspected.error.code,
+      message: "This app could not reach Hosty Core to validate the credential.",
+    };
+  }
+
+  return { ok: false, status: 401, code: "credential_invalid", message: "The credential is not valid for this app." };
 }
 
 /** Tool payloads go back as JSON text content, the shape MCP clients expect. */

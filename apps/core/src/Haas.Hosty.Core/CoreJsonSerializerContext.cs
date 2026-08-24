@@ -188,6 +188,8 @@ internal static class CoreJson
 [JsonSerializable(typeof(AccessTokenCreateRequest))]
 [JsonSerializable(typeof(AccessTokenCreateResponse))]
 [JsonSerializable(typeof(AccessTokenRevokeResponse))]
+[JsonSerializable(typeof(TokenIntrospectionRequest))]
+[JsonSerializable(typeof(TokenIntrospectionResponse))]
 [JsonSerializable(typeof(LogoutResponse))]
 [JsonSerializable(typeof(AppsResponse))]
 [JsonSerializable(typeof(InstalledAppsResponse))]

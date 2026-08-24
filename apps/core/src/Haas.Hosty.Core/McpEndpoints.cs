@@ -8,10 +8,12 @@ namespace Haas.Hosty.Core;
 // registry data Core already owns, so an agent client gets typed tools instead of guessing at shell
 // commands. Control-plane only — it never proxies an app's domain API.
 //
-// Read-only in v1. Lifecycle mutations are the obvious next step, but Core MCP has no approval
-// mechanism of its own and the assistant's gate lives in its harness, which only pauses that
-// harness's own calls — a mutation tool here would be reachable by any external client with a
-// credential, bypassing it. Adding one means deciding where its approval lives first.
+// Read-only. Lifecycle mutations are the obvious next step, but Core MCP has no approval mechanism
+// of its own and the assistant's gate lives in its harness, which only pauses that harness's own
+// calls — a mutation tool here would be reachable by any external client with a credential,
+// bypassing it. Adding one means deciding where its approval lives first; the scope machinery this
+// endpoint now accepts is where that decision is expected to land
+// (docs/features/core-mcp/plan.md).
 internal static class McpEndpoints
 {
     public static void Map(WebApplication app)
@@ -20,14 +22,62 @@ internal static class McpEndpoints
         // callers, and this endpoint should be held to that rule rather than sitting outside it.
         var group = app.MapGroup("/api/mcp");
 
-        // Admin-gated, before the protocol handler sees anything. requireCsrf is on for the
-        // browser case; a bearer credential — what an external MCP client presents — is CSRF-exempt
-        // by design, so agent clients are unaffected.
+        // Gated before the protocol handler sees anything, on either of two credentials: an
+        // administrator session, or an access token scoped to `hosty:core` carrying `mcp:read`
+        // (docs/features/scoped-access-tokens/feature.md) — the first credential reaching Core that
+        // is narrower than "an administrator". requireCsrf is on for the browser case; a bearer
+        // credential — what an external MCP client presents — is CSRF-exempt by design, so agent
+        // clients are unaffected.
         group.AddEndpointFilter(async (context, next) =>
         {
             var http = context.HttpContext;
             var users = http.RequestServices.GetRequiredService<UserDirectoryStore>();
             var clock = http.RequestServices.GetRequiredService<IClock>();
+
+            // A credential scoped to `core` is checked first, because the session path refuses one
+            // outright — falling through would answer "not a session" to a credential minted for
+            // exactly this endpoint. Every tool here declares `readOnlyHint: true`, so `mcp:read` is
+            // the whole of what this surface offers, and a scoped credential without it is refused
+            // by name rather than told it is not an administrator, which it never claimed to be.
+            var bearer = CoreSessionAuthorization.ReadBearerToken(http.Request);
+            if (bearer is not null)
+            {
+                var lifetimes = http.RequestServices.GetRequiredService<AuthLifetimes>();
+                var state = await users.ReadAsync(http.RequestAborted);
+                var scoped = ScopedCredentials.Resolve(
+                    state, bearer, clock.UtcNow, lifetimes, AccessTokenScopes.CoreAudience);
+                if (scoped is not null)
+                {
+                    // A scope narrows what a credential may do; it never widens who may hold one.
+                    // This surface is administrator-only, so the actor is still required to be an
+                    // administrator — re-read here rather than trusted from issuance, because a role
+                    // downgrade has to reach a long-lived credential. Without this check the scope
+                    // would have been an escalation: any signed-in user could mint themselves a
+                    // `core` credential and read the whole fleet through it.
+                    if (!AppAccessPolicy.IsAdmin(scoped.User))
+                    {
+                        return CoreJson.Json(
+                            new ErrorResponse(
+                                "admin_required",
+                                "This Core operation requires a Host administrator."),
+                            statusCode: StatusCodes.Status403Forbidden);
+                    }
+
+                    if (!AccessTokenScopes.Grants(scoped.Record.Scopes, AccessTokenScopes.McpRead))
+                    {
+                        return CoreJson.Json(
+                            new ErrorResponse(
+                                "scope_required",
+                                $"This credential does not carry the '{AccessTokenScopes.McpRead}' scope."),
+                            statusCode: StatusCodes.Status403Forbidden);
+                    }
+
+                    await CoreSessionAuthorization.TouchSessionAsync(
+                        users, scoped.Record, clock.UtcNow, http.RequestAborted);
+                    return await next(context);
+                }
+            }
+
             var authorized = false;
             var denial = await CoreSessionAuthorization.RequireAdminSessionAsync(
                 http.Request,

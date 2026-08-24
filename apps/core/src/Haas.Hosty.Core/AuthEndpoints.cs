@@ -33,6 +33,11 @@ internal static class AuthEndpoints
             var now = DateTimeOffset.UtcNow;
             var session = state.Sessions.FirstOrDefault(candidate =>
                 string.Equals(candidate.Id, sessionId, StringComparison.Ordinal) &&
+                // A scoped credential is not a session, and this endpoint resolves one by hand rather
+                // than through CoreSessionAuthorization — so the rule that holds everywhere else has
+                // to be restated here, or the one probe every client makes first would answer with
+                // the user record for a credential that may do nothing but read one app's tools.
+                candidate.Audience is null &&
                 CoreSessionAuthorization.IsSessionLive(candidate, now, lifetimes.IdleFor(candidate.Kind)));
             var user = session is null
                 ? null

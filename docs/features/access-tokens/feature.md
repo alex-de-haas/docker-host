@@ -1,7 +1,7 @@
 # Access Tokens — Credentials For Clients Without A Browser
 
 Created: 2026-07-31
-Updated: 2026-08-17
+Updated: 2026-08-24
 
 Core accepts a session as `Authorization: Bearer <session id>`, but a session could once only be created
 by posting Core's HTML login form — which is why the Swift Shell used to sign in through a `WKWebView`
@@ -33,13 +33,17 @@ Two kinds exist, differing only in where they came from
 
 ## The credential carries its approver's full role
 
-Core has two roles and **no scopes**, so an access token can do everything the user who approved it can
-do — including installing apps, reading app secrets and managing users when that user is a
-`host.admin`.
+Core has two roles, so an access token can do everything the user who approved it can do — including
+installing apps, reading app secrets and managing users when that user is a `host.admin`.
 
 This is stated wherever it matters rather than left to be discovered: the Shell surface says it, and a
 client that presents itself as narrower than its credential is narrower only in its own interface,
-which is not an authorization boundary. Narrowing it for real needs scopes, which do not exist yet.
+which is not an authorization boundary.
+
+Narrowing it for real is [scoped-access-tokens](../scoped-access-tokens/feature.md): the same record
+with an audience and scopes, refused as a Core session outright and accepted only where it says. A
+credential without those fields — every one described in this document — is the full-role credential
+above, unchanged.
 
 `GET /api/auth/session` returns the record's `Kind` alongside the user, so a client can see what it
 holds and warn its operator.

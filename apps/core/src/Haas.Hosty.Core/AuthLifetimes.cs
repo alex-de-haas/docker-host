@@ -114,3 +114,64 @@ internal static class AccessTokenKinds
 
     public static bool IsKnown(string? kind) => IsAccessToken(kind);
 }
+
+// The audience and scope vocabulary for scoped access tokens
+// (docs/features/scoped-access-tokens/feature.md).
+//
+// An unscoped access token carries its approver's whole role and is accepted wherever a session is —
+// which is why a client config holding one holds an administrator. A scoped token is the opposite
+// shape: it names exactly one audience and exactly what it may do there, and it is refused
+// everywhere else, including on every ordinary /api route.
+internal static class AccessTokenScopes
+{
+    // The audience naming Core's own MCP endpoint rather than an app. Core's tools are all read-only
+    // today, so this + McpRead is the first credential narrower than "an administrator".
+    //
+    // The colon is load-bearing: an app id must match `^[a-z0-9][a-z0-9._-]{0,62}$`, which admits a
+    // plain `core` — so a bare "core" would be an audience an installed app could occupy, and the
+    // one-audience guarantee would quietly stop holding for exactly the credential that reaches the
+    // control plane. No app id can contain a colon, so no app can ever claim this one.
+    public const string CoreAudience = "hosty:core";
+
+    // May call MCP tools that declare `annotations.readOnlyHint: true`. The one scope in v1;
+    // mutation scopes are defined by the feature that introduces mutations, not here.
+    public const string McpRead = "mcp:read";
+
+    private static readonly string[] Known = [McpRead];
+
+    public static bool IsKnownScope(string scope)
+        => Known.Contains(scope, StringComparer.Ordinal);
+
+    /// <summary>Whether a credential carries a scope. Ordinal, because a scope is a protocol
+    /// constant rather than text — `MCP:Read` is not this scope and must not be treated as it.</summary>
+    public static bool Grants(IReadOnlyList<string>? scopes, string scope)
+        => scopes is not null && scopes.Contains(scope, StringComparer.Ordinal);
+
+    /// <summary>Normalizes an operator-supplied scope list, or null when any entry is unknown.
+    /// Unknown is refused rather than dropped: a typo silently becoming a narrower credential is a
+    /// credential that mysteriously does not work, and the operator has no way to see why.</summary>
+    public static IReadOnlyList<string>? TryNormalize(IReadOnlyList<string>? scopes)
+    {
+        if (scopes is null || scopes.Count == 0)
+        {
+            return null;
+        }
+
+        var normalized = new List<string>(scopes.Count);
+        foreach (var scope in scopes)
+        {
+            var trimmed = scope?.Trim();
+            if (string.IsNullOrEmpty(trimmed) || !IsKnownScope(trimmed))
+            {
+                return null;
+            }
+
+            if (!normalized.Contains(trimmed, StringComparer.Ordinal))
+            {
+                normalized.Add(trimmed);
+            }
+        }
+
+        return normalized;
+    }
+}

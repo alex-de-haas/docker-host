@@ -701,6 +701,10 @@ export type AccessTokenView = {
   userDisplayName: string | null;
   createdAt: string;
   lastSeenAt: string;
+  // What the credential may be presented to — an app id, or "core" — and what it may do there.
+  // Null/absent is the full-role credential: everything its approver can do, on every surface.
+  audience?: string | null;
+  scopes?: string[] | null;
 };
 export type AppOpenTarget = "workspace" | "tab";
 export type HostyResolvedTheme = "light" | "dark";
