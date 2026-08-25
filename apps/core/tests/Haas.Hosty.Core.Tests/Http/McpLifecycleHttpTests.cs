@@ -7,7 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Haas.Hosty.Core.Tests.Http;
 
-// Core MCP lifecycle mutations (docs/features/core-mcp/plan.md): the standing-grant gate, over the
+// Core MCP lifecycle mutations (docs/features/core-mcp/feature.md): the standing-grant gate, over the
 // real pipeline.
 //
 // The determinism trick throughout: mutations target an app id that is not installed. An authorized

@@ -136,7 +136,7 @@ internal static class AccessTokenScopes
     // May call MCP tools that declare `annotations.readOnlyHint: true`.
     public const string McpRead = "mcp:read";
 
-    // May start, stop and restart apps through Core MCP (docs/features/core-mcp/plan.md). One scope
+    // May start, stop and restart apps through Core MCP (docs/features/core-mcp/feature.md). One scope
     // for all three verbs by decision; per-verb scopes wait for a demonstrated need. This is Core's
     // own lifecycle authority, so it pairs only with the `hosty:core` audience — no app reads it.
     public const string McpLifecycle = "mcp:lifecycle";

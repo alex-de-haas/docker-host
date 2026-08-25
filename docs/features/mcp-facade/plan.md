@@ -44,7 +44,7 @@ the day scoped tokens land.
   shift, safe `__` boundaries — and so the two surfaces never teach clients two dialects.
 - **Visibility follows Core's policy**, exactly as in the connector: an app the acting user may not
   reach drops out when Core refuses to mint its token — the facade re-implements no access rules.
-- **Read-only, fail-closed**, until mutation scopes exist ([core-mcp](../core-mcp/plan.md)): only
+- **Read-only, fail-closed**, until mutation scopes exist ([core-mcp](../core-mcp/feature.md)): only
   tools declaring `annotations.readOnlyHint: true` are exported, hidden from the list *and* refused
   on call, enforced facade-side.
 - **Skills ride `initialize` `instructions`**, as the connector already does: only apps whose tools

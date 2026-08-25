@@ -7,7 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Haas.Hosty.Core.Tests.Http;
 
-// Core MCP over the real pipeline (docs/features/core-mcp/plan.md): initialize → tools/list →
+// Core MCP over the real pipeline (docs/features/core-mcp/feature.md): initialize → tools/list →
 // tools/call, plus the auth gate and the result bounds.
 //
 // The handshake alone would not prove much. Attribute-declared tools are discovered by reflection, so

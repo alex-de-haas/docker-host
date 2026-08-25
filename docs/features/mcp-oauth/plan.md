@@ -27,7 +27,7 @@ The flow a capable client runs, end to end:
    endpoint is rate-limited since registration is anonymous.
 3. Authorization code + PKCE (mandatory in OAuth 2.1): the user's browser lands on a Core/Shell
    consent page that names the client, the resource, and the scopes in plain terms. Consent is the
-   natural future home of standing mutation grants ([core-mcp](../core-mcp/plan.md)) — approving a
+   natural future home of standing mutation grants ([core-mcp](../core-mcp/feature.md)) — approving a
    scope *is* the approval — but this feature ships read scopes only.
 4. The client receives a short-lived access token plus a refresh token and rotates on its own; the
    refresh token is the long-lived revocable credential, and it lives in the client — never in an

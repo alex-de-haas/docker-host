@@ -136,9 +136,11 @@ grants), and install/remove are not exposed over MCP at all.
 credential in an `--mcp-config` entry — no gateway code on the path. A `hosty:core` token carrying
 `mcp:lifecycle` restarted the running `com.haas.solitaire` container (`RESULT: running`); the same
 client holding a read-only token had `stop_app` refused and relayed the refusal's own text, which is
-the tool-result-not-transport-error design doing its job. Both landed in the audit log
-(`app.lifecycle.restart succeeded` / `app.lifecycle.start refused`, actor named), and issuing a
-lifecycle-only credential was refused live with `scope_requires_read`.
+the tool-result-not-transport-error design doing its job. The stock client's own pair landed in the
+audit log — `app.lifecycle.restart succeeded` at 12:09:43, `app.lifecycle.stop refused` at
+12:09:59, actor named on both. A preceding `curl` pass had already produced the mirror pair
+(`app.lifecycle.start refused` / `app.lifecycle.restart succeeded`), and issuing a lifecycle-only
+credential was refused live with `scope_requires_read`.
 
 ## Dependency And AOT
 
