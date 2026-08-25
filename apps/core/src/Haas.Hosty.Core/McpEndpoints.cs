@@ -4,7 +4,7 @@ using ModelContextProtocol.Server;
 
 namespace Haas.Hosty.Core;
 
-// Core MCP (docs/features/core-mcp/plan.md): an embedded Model Context Protocol endpoint over the
+// Core MCP (docs/features/core-mcp/feature.md): an embedded Model Context Protocol endpoint over the
 // registry data Core already owns, so an agent client gets typed tools instead of guessing at shell
 // commands. Control-plane only — it never proxies an app's domain API.
 //
@@ -13,7 +13,7 @@ namespace Haas.Hosty.Core;
 // calls — a mutation tool here would be reachable by any external client with a credential,
 // bypassing it. Adding one means deciding where its approval lives first; the scope machinery this
 // endpoint now accepts is where that decision is expected to land
-// (docs/features/core-mcp/plan.md).
+// (docs/features/core-mcp/feature.md).
 internal static class McpEndpoints
 {
     public static void Map(WebApplication app)
@@ -265,7 +265,7 @@ internal sealed class HostyCoreTools
         }
     }
 
-    // --- Lifecycle mutations (docs/features/core-mcp/plan.md) ----------------------------------
+    // --- Lifecycle mutations (docs/features/core-mcp/feature.md) ----------------------------------
     //
     // Gated on the mcp:lifecycle standing grant, resolved by the endpoint filter into
     // McpCallerGrants. The refusal is a tool *result* naming the scope, never a transport error:

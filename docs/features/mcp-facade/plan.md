@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-08-24
-Updated: 2026-08-24
+Updated: 2026-08-25
 
 An aggregating streamable-HTTP MCP server on the `hosty.ai-gateway` system app: one config entry in
 an external client (Claude Code, VS Code, Cursor, a phone client) yields Core's control-plane tools,
@@ -44,7 +44,7 @@ the day scoped tokens land.
   shift, safe `__` boundaries — and so the two surfaces never teach clients two dialects.
 - **Visibility follows Core's policy**, exactly as in the connector: an app the acting user may not
   reach drops out when Core refuses to mint its token — the facade re-implements no access rules.
-- **Read-only, fail-closed**, until mutation scopes exist ([core-mcp](../core-mcp/plan.md)): only
+- **Read-only, fail-closed**, until mutation scopes exist ([core-mcp](../core-mcp/feature.md)): only
   tools declaring `annotations.readOnlyHint: true` are exported, hidden from the list *and* refused
   on call, enforced facade-side.
 - **Skills ride `initialize` `instructions`**, as the connector already does: only apps whose tools
@@ -71,7 +71,11 @@ the day scoped tokens land.
       which the endpoint currently refuses rather than half-implements; until it exists, a client
       sees a newly installed app's tools on its next connection.
 - [ ] Live verification from a stock Claude Code over a **non-loopback** origin — which also closes
-      the last open cell of ai-agent-bridge step 6, and is recorded there when it happens.
+      the last open cell of ai-agent-bridge step 6, and is recorded there when it happens. The
+      loopback half was proven on 2026-08-25 (recorded in [feature.md](feature.md)): one config
+      entry, aggregated catalog, on-behalf-of forwarding, read-only filter and revocation all
+      exercised by a stock `claude -p` on the dev host — but that host runs no ingress, so external
+      origin, TLS and a proxy in the path remain unexercised.
 - [ ] On ship: ai-agent-bridge topology-4 note and decision log updated to name the facade.
 
 ## Resolved Questions (2026-08-24, owner approval in chat)

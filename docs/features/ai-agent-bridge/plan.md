@@ -16,7 +16,7 @@ drafted against the gaps this document records:
 [scoped-access-tokens](../scoped-access-tokens/feature.md) (the token scopes and audit callback of open
 question 3 and the step-6 plaintext-admin-token cost), [mcp-facade](../mcp-facade/plan.md) (step-7
 topology 4's deferred "mcp-hub", placed on the existing gateway system app),
-[mcp-oauth](../mcp-oauth/plan.md), and [core-mcp](../core-mcp/plan.md) mutations.
+[mcp-oauth](../mcp-oauth/plan.md), and [core-mcp](../core-mcp/feature.md) mutations.
 
 ## Deliverables
 

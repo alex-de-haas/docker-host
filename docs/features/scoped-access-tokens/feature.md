@@ -1,7 +1,7 @@
 # Scoped Access Tokens — Audience-Bound Credentials For External Clients
 
 Created: 2026-08-24
-Updated: 2026-08-24
+Updated: 2026-08-25
 
 An [access token](../access-tokens/feature.md) may carry an **audience** and **scopes**. Without
 them it is the credential that always existed: its approver's whole role, accepted wherever a Core
@@ -167,6 +167,15 @@ app declaring an `mcp` interface) and an *Access* column that says **Full access
 than leaving a blank cell — an absent audience is the widest credential on that page, and a reader
 should not have to infer that from an absence. Full access stays the default: narrowing is a
 deliberate choice.
+
+## Verified Live
+
+2026-08-25, dev host, Core 0.88.0, plain `curl` — the full credential lifecycle: a
+`com.haas.demo-app`-scoped token called `list_people` and got real directory data; the same bearer
+presented to Core was refused `credential_scoped` naming its audience; revocation took effect on the
+literal next call (`401 credential_invalid`); and the audit trail read exactly as designed —
+`created` (with audience and scopes) → `used succeeded` (naming the tool) → `revoked` → `used
+refused`.
 
 ## Testing Expectations
 
