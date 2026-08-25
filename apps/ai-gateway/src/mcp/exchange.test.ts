@@ -11,7 +11,8 @@ const GATEWAY = "hosty.ai-gateway";
 const PROXY = { baseUrl: "http://gw.test", sessionId: "session-1", key: "session-key" };
 
 function provider(appId: string, overrides: Partial<McpProvider> = {}): McpProvider {
-  return { appId, displayName: appId, url: `http://${appId}/api/mcp`, running: true, ...overrides };
+  const url = `http://${appId}/api/mcp`;
+  return { appId, displayName: appId, url, running: true, interfaces: [{ key: "default", url }], ...overrides };
 }
 
 function stubCore(handler: (targetAppId: string) => Response): void {

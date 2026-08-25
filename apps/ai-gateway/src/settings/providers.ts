@@ -14,9 +14,24 @@ export const MCP_INTERFACE = "mcp";
 export interface McpProvider {
   appId: string;
   displayName: string;
-  /** Resolved from the caller's vantage point by Core; null when the app exposes no usable URL. */
+  /** Resolved from the caller's vantage point by Core; null when the app exposes no usable URL.
+   * The *default* declaration's URL, kept for the assistant's own sessions, which address an app
+   * rather than one of its interfaces. */
   url: string | null;
   running: boolean;
+  /**
+   * Every `mcp` declaration this app makes, with the interface key Core resolved it under.
+   *
+   * One app may declare several, and the key is part of a tool's exported name in the CLI
+   * connector's mapping (`app__admin__tool`). Discovery dropped it and kept only the first URL,
+   * which silently renamed every tool of a non-default interface and made the extra declarations
+   * unreachable — so the facade's names diverged from the connector's for exactly the apps that
+   * have more than one surface.
+   *
+   * Policy stays per app regardless: one toggle covers everything an app declares, because the
+   * question an operator answers is "may this app's tools reach an agent".
+   */
+  interfaces: Array<{ key: string; url: string }>;
 }
 
 interface AppDirectoryEntry {
@@ -97,18 +112,29 @@ export class ProviderDirectory {
       installedAppIds.push(entry.id);
 
       const declarations = Array.isArray(entry.interfaces) ? entry.interfaces : [];
-      const mcp = (declarations as Array<Record<string, unknown>>).find(
+      const mcp = (declarations as Array<Record<string, unknown>>).filter(
         (declaration) => declaration?.name === MCP_INTERFACE,
       );
-      if (!mcp) {
+      if (mcp.length === 0) {
         continue;
       }
+
+      const interfaces = mcp
+        .filter((declaration): declaration is Record<string, unknown> & { url: string } =>
+          typeof declaration.url === "string" && declaration.url.length > 0)
+        .map((declaration) => ({
+          // Core sends the key it resolved the declaration under; `default` is the one the naming
+          // scheme leaves out, and it is also the sane fallback for a Core too old to send one.
+          key: typeof declaration.key === "string" && declaration.key ? declaration.key : "default",
+          url: declaration.url,
+        }));
 
       providers.push({
         appId: entry.id,
         displayName: typeof entry.displayName === "string" ? entry.displayName : entry.id,
-        url: typeof mcp.url === "string" && mcp.url ? mcp.url : null,
+        url: interfaces.find((declaration) => declaration.key === "default")?.url ?? interfaces[0]?.url ?? null,
         running: entry.runtimeState === "running",
+        interfaces,
       });
     }
 

@@ -680,7 +680,16 @@ describe("gateway", () => {
       expect(body.discovery).toBe("ok");
       // Only the app that declares `mcp` — Shell declares none and must not appear.
       expect(body.providers).toEqual([
-        { appId: "com.haas.demo-app", displayName: "Demo App", url: "http://127.0.0.1:3101/api/mcp", running: true },
+        {
+          appId: "com.haas.demo-app",
+          displayName: "Demo App",
+          url: "http://127.0.0.1:3101/api/mcp",
+          running: true,
+          // Every declaration with the key Core resolved it under. Dropping the key renamed the
+          // tools of any non-default interface, which is exactly what the facade's naming must not
+          // do — it has to match the CLI connector's.
+          interfaces: [{ key: "default", url: "http://127.0.0.1:3101/api/mcp" }],
+        },
       ]);
       expect(body.settings.mcpProviders).toEqual({});
     } finally {

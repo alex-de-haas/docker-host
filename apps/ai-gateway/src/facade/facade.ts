@@ -1,0 +1,436 @@
+// One MCP endpoint that is the whole host.
+//
+// An external agent client (Claude Code, an editor, a phone client) puts *one* entry in its config
+// and gets Core's control-plane tools, every enabled app's tools, and those apps' skills — over
+// HTTPS, with no CLI or SSH anywhere on the path. That is the gap `hosty mcp` cannot close: the
+// connector is a process, so it has to run on the host.
+//
+// Nothing here re-implements an access rule. The client's credential is introspected by Core on
+// every request, every tool call travels on a delegated token Core minted for the acting user, and
+// an app that user may not reach simply produces no tools. The facade decides what is *offered*;
+// Core decides what is *allowed*.
+//
+// Read-only, fail-closed, for as long as external clients are: only a tool declaring
+// `readOnlyHint: true` is exported, and a name the catalog does not carry is refused on call as well
+// as hidden from the listing — hiding alone would still let a client call from a list it cached.
+
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { composeSystemPrompt, partitionSkills, type AppSkill } from "../mcp/skills.js";
+import { PROTOCOL_VERSION, callTool, openSession } from "../mcp/upstream.js";
+import type { ProviderDirectory } from "../settings/providers.js";
+import type { SettingsStore } from "../settings/store.js";
+import { buildCatalog, sourcesFor, type Catalog } from "./catalog.js";
+import { CORE_TARGET, introspect, mintOnBehalfOf } from "./tokens.js";
+
+/** The path an external client is pointed at. */
+export const FACADE_PATH = "/mcp";
+
+/** Same ceiling the operator API uses; a JSON-RPC request body is far smaller. */
+const MAX_BODY_BYTES = 64 * 1024;
+
+/** Sliding window for the per-address request limit. */
+const RATE_WINDOW_MS = 10_000;
+
+/**
+ * Requests one address may make per window.
+ *
+ * Generous for an agent client — a session's `initialize`, listing and tool calls arrive in small
+ * bursts — and far below what it takes to make refusing a junk credential expensive.
+ */
+const RATE_LIMIT = 60;
+
+/** Addresses tracked at once. Bounded so the limiter cannot itself become the memory a flood
+ * exhausts; the oldest bucket is dropped when the map is full. */
+const RATE_MAX_ADDRESSES = 4_096;
+
+/**
+ * How long an assembled catalog is reused for one user.
+ *
+ * This caches a *listing*, never an authorization, and the distinction is what makes it safe: every
+ * call still introspects the client's credential and still mints a fresh delegated token, so a
+ * catalog that has gone stale can offer a name whose call then fails at Core — it can never make a
+ * refused call succeed. Short anyway, because the fan-out it saves is also what a client waits on.
+ */
+const CATALOG_TTL_MS = 30_000;
+
+interface CachedCatalog {
+  catalog: Catalog;
+  instructions: string | undefined;
+  expiresAtMs: number;
+}
+
+export interface FacadeConfig {
+  coreOrigin: string | null;
+  serviceToken: string | null;
+  appId: string;
+  /** Core's own MCP endpoint. Null on a host where it cannot be resolved, which costs the catalog
+   * Core's four tools and nothing else. */
+  coreMcpUrl: string | null;
+}
+
+export class McpFacade {
+  private readonly catalogs = new Map<string, CachedCatalog>();
+  private readonly limiter = new SlidingWindowLimiter(RATE_LIMIT, RATE_WINDOW_MS, RATE_MAX_ADDRESSES);
+
+  constructor(
+    private readonly config: FacadeConfig,
+    private readonly providers: ProviderDirectory,
+    private readonly settings: SettingsStore,
+  ) {}
+
+  /** True when this request was the facade's, answered or refused. */
+  async handle(request: IncomingMessage, response: ServerResponse, pathname: string): Promise<boolean> {
+    if (pathname !== FACADE_PATH) {
+      return false;
+    }
+
+    if (!this.config.coreOrigin || !this.config.serviceToken) {
+      // Without Core there is no way to establish who is calling, and a facade that cannot do that
+      // must answer nothing rather than fall back to trusting the caller.
+      send(response, 503, { jsonrpc: "2.0", id: null, error: { code: -32000, message: "Hosty Core is not configured for this app." } });
+      return true;
+    }
+
+    if (request.method !== "POST") {
+      // Streamable HTTP also defines a GET stream for server-initiated messages. Refused rather than
+      // half-implemented: a client that opened one would wait for notifications this facade does not
+      // yet send (docs/features/mcp-facade/plan.md).
+      send(response, 405, { jsonrpc: "2.0", id: null, error: { code: -32000, message: "This endpoint accepts POST." } });
+      return true;
+    }
+
+    let raw: string;
+    try {
+      raw = await readBody(request);
+    } catch (error) {
+      // Distinct from a parse failure on purpose: the client sent well-formed bytes and there were
+      // simply too many of them, which is a different thing to fix and a different status to act on.
+      const tooLarge = error instanceof PayloadTooLargeError;
+      send(response, tooLarge ? 413 : 400, {
+        jsonrpc: "2.0",
+        id: null,
+        error: tooLarge
+          ? { code: -32001, message: `Request body exceeds ${MAX_BODY_BYTES} bytes.` }
+          : { code: -32700, message: "Parse error." },
+      });
+      return true;
+    }
+
+    let body: JsonRpcRequest | null;
+    try {
+      body = JSON.parse(raw) as JsonRpcRequest;
+    } catch {
+      send(response, 400, { jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error." } });
+      return true;
+    }
+
+    if (!body || typeof body.method !== "string") {
+      send(response, 400, { jsonrpc: "2.0", id: null, error: { code: -32600, message: "Invalid request." } });
+      return true;
+    }
+
+    // Resolved before authentication so the tool's name can travel to Core, where it becomes the
+    // audit line for this client's action — the call reaches Core nowhere else.
+    const invokedTool =
+      body.method === "tools/call" && typeof body.params?.name === "string" ? body.params.name : undefined;
+
+    // Ahead of introspection, and that ordering is the point. This endpoint is meant to be exposed
+    // publicly, and every request carrying a bearer costs a Core round trip *and* an audit line
+    // appended to a durable file — so an unauthenticated flood of junk credentials would spend the
+    // host's disk and I/O rather than merely being refused. The limiter is what stops a refusal
+    // from being expensive.
+    if (!this.limiter.allow(remoteAddress(request))) {
+      response.setHeader("retry-after", String(Math.ceil(RATE_WINDOW_MS / 1000)));
+      send(response, 429, {
+        jsonrpc: "2.0",
+        id: null,
+        error: { code: -32000, message: "Too many requests. Slow down and retry." },
+      });
+      return true;
+    }
+
+    const presented = readBearer(request);
+    if (!presented) {
+      // The header a client needs in order to try again, per the MCP authorization spec's shape.
+      response.setHeader("www-authenticate", 'Bearer realm="hosty"');
+      send(response, 401, { jsonrpc: "2.0", id: null, error: { code: -32001, message: "A Hosty access token scoped to this app is required." } });
+      return true;
+    }
+
+    const actor = await introspect(
+      { coreOrigin: this.config.coreOrigin, serviceToken: this.config.serviceToken, appId: this.config.appId },
+      presented,
+      invokedTool,
+    );
+    if (!actor.active) {
+      // Any error means the credential was never actually checked — Core unreachable, this app not
+      // configured to reach it, or a body that could not be read. All of them are 503: answering 401
+      // would send a client with a perfectly good token off to get another one over a fault on this
+      // side. Only an `active: false` with no error is Core having checked and said no.
+      const unchecked = Boolean(actor.error);
+      send(response, unchecked ? 503 : 401, {
+        jsonrpc: "2.0",
+        id: null,
+        error: {
+          code: unchecked ? -32000 : -32001,
+          message: unchecked
+            ? "This app could not validate the credential with Hosty Core."
+            : "The credential is not valid for this app.",
+        },
+      });
+      return true;
+    }
+
+    // A notification carries no id and gets no response body, per JSON-RPC.
+    if (body.method === "notifications/initialized") {
+      response.writeHead(202).end();
+      return true;
+    }
+
+    const id = body.id ?? null;
+    switch (body.method) {
+      case "initialize": {
+        const assembled = await this.catalogFor(actor.sub, presented);
+        send(response, 200, {
+          jsonrpc: "2.0",
+          id,
+          result: {
+            protocolVersion: PROTOCOL_VERSION,
+            capabilities: { tools: {} },
+            serverInfo: { name: this.config.appId, version: "1" },
+            ...(assembled.instructions ? { instructions: assembled.instructions } : {}),
+          },
+        });
+        return true;
+      }
+      case "tools/list": {
+        const assembled = await this.catalogFor(actor.sub, presented);
+        send(response, 200, { jsonrpc: "2.0", id, result: { tools: assembled.catalog.tools } });
+        return true;
+      }
+      case "tools/call": {
+        await this.invoke(response, id, actor.sub, presented, body.params ?? {});
+        return true;
+      }
+      default:
+        send(response, 200, { jsonrpc: "2.0", id, error: { code: -32601, message: `Method not found: ${body.method}` } });
+        return true;
+    }
+  }
+
+  /** Drops a user's cached catalog. Called when policy changes, so a provider the operator just
+   * turned off stops being offered without waiting out the TTL. */
+  invalidate(): void {
+    this.catalogs.clear();
+  }
+
+  private async invoke(
+    response: ServerResponse,
+    id: JsonRpcId,
+    userId: string,
+    presented: string,
+    params: Record<string, unknown>,
+  ): Promise<void> {
+    const name = typeof params.name === "string" ? params.name : "";
+    const assembled = await this.catalogFor(userId, presented);
+    const entry = assembled.catalog.route.get(name);
+    if (!entry) {
+      // Refused on call as well as hidden from the listing: a client calling from a cached list
+      // must not reach a tool the filter excluded. The message says the surface is filtered rather
+      // than only that the name is unknown, so a model can tell the two apart.
+      send(response, 200, {
+        jsonrpc: "2.0",
+        id,
+        error: { code: -32602, message: `Unknown tool: ${name}. This surface offers read-only tools only.` },
+      });
+      return;
+    }
+
+    const token = await mintOnBehalfOf(
+      this.config.coreOrigin!,
+      this.config.serviceToken!,
+      this.config.appId,
+      presented,
+      entry.appId,
+    );
+    if (!token) {
+      send(response, 200, {
+        jsonrpc: "2.0",
+        id,
+        error: { code: -32000, message: `Hosty would not issue a credential for ${entry.appId} on your behalf.` },
+      });
+      return;
+    }
+
+    const session = await openSession(entry.url, token.token);
+    const called = session ? await callTool(entry.url, token.token, session, entry.tool, params.arguments) : null;
+    if (!called) {
+      send(response, 200, {
+        jsonrpc: "2.0",
+        id,
+        error: { code: -32000, message: `${entry.appId} did not answer.` },
+      });
+      return;
+    }
+
+    // The app's own answer, passed through unexamined — including a refusal, which is a *result* the
+    // model must read rather than an error that would end its turn.
+    send(response, 200, called.error ? { jsonrpc: "2.0", id, error: called.error } : { jsonrpc: "2.0", id, result: called.result });
+  }
+
+  private async catalogFor(userId: string, presented: string): Promise<CachedCatalog> {
+    const cached = this.catalogs.get(userId);
+    if (cached && cached.expiresAtMs > Date.now()) {
+      return cached;
+    }
+
+    const [discovered, policy] = await Promise.all([this.providers.read(), this.settings.read()]);
+    // `discovered` is null when the app-directory read failed, and that costs the *apps* — never
+    // Core, whose URL is configured independently and whose tools stay reachable while a transient
+    // discovery failure lasts. Collapsing both would have emptied the catalog over one timeout.
+    const sources = sourcesFor(
+      discovered?.providers ?? [],
+      policy.mcpProviders,
+      this.config.coreMcpUrl
+        ? { appId: CORE_TARGET, displayName: "Hosty Core", url: this.config.coreMcpUrl }
+        : null,
+    );
+
+    const catalog = await buildCatalog(sources, (appId) =>
+      mintOnBehalfOf(this.config.coreOrigin!, this.config.serviceToken!, this.config.appId, presented, appId).then(
+        (token) => token?.token ?? null,
+      ),
+    );
+
+    const assembled: CachedCatalog = {
+      catalog,
+      instructions: await this.instructionsFor(catalog, policy.mcpSkillDigests ?? {}),
+      expiresAtMs: Date.now() + CATALOG_TTL_MS,
+    };
+    this.catalogs.set(userId, assembled);
+    return assembled;
+  }
+
+  /**
+   * The facade's own text first and unwrapped, then the skills of apps whose tools this client
+   * actually received — and only those the operator has approved.
+   *
+   * The approval gate is right here and not in the connector because the callers differ: `hosty mcp`
+   * runs on the host's control channel, where the caller already holds operator power and a gate
+   * would refuse someone who could simply uninstall the app. A facade caller is a remote user who is
+   * not that person.
+   */
+  private async instructionsFor(catalog: Catalog, approved: Record<string, string>): Promise<string | undefined> {
+    const own =
+      "You are connected to a Hosty host. The tools below come from the apps installed on it and " +
+      "from Hosty Core itself; each tool's description names the app it belongs to. This surface is " +
+      "read-only: anything that would change the host is not offered here.";
+
+    const skills: AppSkill[] = [];
+    for (const appId of catalog.contributingAppIds) {
+      if (appId === CORE_TARGET) {
+        continue;
+      }
+      const skill = await this.providers.readSkill(appId);
+      if (skill) {
+        skills.push(skill);
+      }
+    }
+
+    return composeSystemPrompt(own, partitionSkills(skills, approved).deliver);
+  }
+}
+
+type JsonRpcId = number | string | null;
+
+interface JsonRpcRequest {
+  id?: JsonRpcId;
+  method?: string;
+  params?: Record<string, unknown>;
+}
+
+function readBearer(request: IncomingMessage): string | null {
+  const header = request.headers.authorization ?? "";
+  return header.toLowerCase().startsWith("bearer ") ? header.slice("bearer ".length).trim() || null : null;
+}
+
+function send(response: ServerResponse, status: number, payload: unknown): void {
+  const body = JSON.stringify(payload);
+  response.writeHead(status, {
+    "content-type": "application/json",
+    "content-length": Buffer.byteLength(body),
+    "cache-control": "no-store",
+  });
+  response.end(body);
+}
+
+/** Its own type so the caller can answer 413 rather than folding a size cap into "parse error". */
+class PayloadTooLargeError extends Error {}
+
+async function readBody(request: IncomingMessage): Promise<string> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of request) {
+    const buffer = chunk as Buffer;
+    size += buffer.length;
+    if (size > MAX_BODY_BYTES) {
+      throw new PayloadTooLargeError("payload too large");
+    }
+    chunks.push(buffer);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+/**
+ * A per-address sliding window, in memory.
+ *
+ * Deliberately small and local: it exists to keep an unauthenticated flood from costing Core round
+ * trips and audit writes, not to be a fair-use policy. A restart forgets it, which is fine — the
+ * cost it bounds is per-request, not cumulative.
+ */
+class SlidingWindowLimiter {
+  private readonly hits = new Map<string, number[]>();
+
+  constructor(
+    private readonly limit: number,
+    private readonly windowMs: number,
+    private readonly maxAddresses: number,
+  ) {}
+
+  allow(address: string): boolean {
+    const now = Date.now();
+    const recent = (this.hits.get(address) ?? []).filter((at) => now - at < this.windowMs);
+    if (recent.length >= this.limit) {
+      // Kept rather than dropped: a caller that keeps hammering keeps being refused, instead of
+      // having its window forgotten by its own next request.
+      this.hits.set(address, recent);
+      return false;
+    }
+
+    recent.push(now);
+    this.hits.set(address, recent);
+
+    if (this.hits.size > this.maxAddresses) {
+      // Map insertion order is oldest-first, so the first key is the least recently *started*
+      // bucket. Bounding the map matters more than which one goes.
+      const oldest = this.hits.keys().next();
+      if (!oldest.done && oldest.value !== address) {
+        this.hits.delete(oldest.value);
+      }
+    }
+
+    return true;
+  }
+}
+
+/**
+ * The address a request came from, for the limiter's bucket.
+ *
+ * The socket's own peer, never a header a caller supplies — nobody may pick their own bucket. The
+ * residual is the same one Core's device-code cap records: behind a proxy that does not preserve the
+ * peer address, every request shares one bucket and the per-address limit degenerates into a global
+ * one. Widening that is an ingress decision, not this endpoint's to make.
+ */
+function remoteAddress(request: IncomingMessage): string {
+  return request.socket.remoteAddress ?? "unknown";
+}
