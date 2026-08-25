@@ -132,6 +132,14 @@ The details follow the surface's existing conventions, and one of its own:
 `update_app` is deferred (an update can change what an app *is*, which composes poorly with standing
 grants), and install/remove are not exposed over MCP at all.
 
+**Verified live on 2026-08-25**, on the dev host (Core 0.88.0), through a stock `claude -p` with the
+credential in an `--mcp-config` entry — no gateway code on the path. A `hosty:core` token carrying
+`mcp:lifecycle` restarted the running `com.haas.solitaire` container (`RESULT: running`); the same
+client holding a read-only token had `stop_app` refused and relayed the refusal's own text, which is
+the tool-result-not-transport-error design doing its job. Both landed in the audit log
+(`app.lifecycle.restart succeeded` / `app.lifecycle.start refused`, actor named), and issuing a
+lifecycle-only credential was refused live with `scope_requires_read`.
+
 ## Dependency And AOT
 
 `ModelContextProtocol.AspNetCore` (pinned at 2.1.0) is **Core's first NuGet package reference**. Core

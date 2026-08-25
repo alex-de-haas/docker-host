@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-08-24
-Updated: 2026-08-24
+Updated: 2026-08-25
 
 An aggregating streamable-HTTP MCP server on the `hosty.ai-gateway` system app: one config entry in
 an external client (Claude Code, VS Code, Cursor, a phone client) yields Core's control-plane tools,
@@ -71,7 +71,11 @@ the day scoped tokens land.
       which the endpoint currently refuses rather than half-implements; until it exists, a client
       sees a newly installed app's tools on its next connection.
 - [ ] Live verification from a stock Claude Code over a **non-loopback** origin — which also closes
-      the last open cell of ai-agent-bridge step 6, and is recorded there when it happens.
+      the last open cell of ai-agent-bridge step 6, and is recorded there when it happens. The
+      loopback half was proven on 2026-08-25 (recorded in [feature.md](feature.md)): one config
+      entry, aggregated catalog, on-behalf-of forwarding, read-only filter and revocation all
+      exercised by a stock `claude -p` on the dev host — but that host runs no ingress, so external
+      origin, TLS and a proxy in the path remain unexercised.
 - [ ] On ship: ai-agent-bridge topology-4 note and decision log updated to name the facade.
 
 ## Resolved Questions (2026-08-24, owner approval in chat)

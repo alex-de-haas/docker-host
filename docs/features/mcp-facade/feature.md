@@ -1,7 +1,7 @@
 # MCP Facade — One Remote Endpoint For The Whole Fleet
 
 Created: 2026-08-24
-Updated: 2026-08-24
+Updated: 2026-08-25
 
 `POST /mcp` on the `hosty.ai-gateway` app is an MCP server that is the whole host: one entry in an
 external agent client's configuration yields Core's control-plane tools, every enabled app's tools,
@@ -140,6 +140,19 @@ An external client can act on these only if they differ, so they do:
 | tool not in the catalog | JSON-RPC error naming that the surface is read-only |
 | delegation refused | JSON-RPC error naming the app, so "you may not" is distinguishable from "no such tool" |
 | the app's own refusal | passed through as the app's **result**, unexamined — it is what the model must read |
+
+## Verified Live (Loopback)
+
+2026-08-25, dev host, gateway 0.18.0. One `hosty.ai-gateway`-scoped token, one entry: the catalog
+aggregated Core's four tools beside Demo App's and Telemetry's (nine in all, every description
+naming its app, the host's own text first in `instructions`); `list_people` and `get_host_status`
+answered real data through per-user on-behalf-of tokens; `restart_app` by its facade name was
+refused as "read-only tools only" without reaching Core — while the introspection that preceded the
+refusal still put the attempt in Hosty audit, tool name included. A stock `claude -p` holding
+nothing but the facade entry called Demo App's `get_my_app_role` and answered
+`appRole=admin source=host-admin-bootstrap permissions=7` — the same unguessable values the
+connector's live cell set as the standard. Non-loopback (external origin, TLS, a proxy in the path)
+remains open; the dev host runs no ingress.
 
 ## Testing Expectations
 
