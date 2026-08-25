@@ -108,9 +108,16 @@ internal static class AccessTokenKinds
     // the path for a client that cannot run the device flow at all.
     public const string Manual = "manual";
 
+    // Issued by the OAuth token endpoint (docs/features/mcp-oauth/plan.md). The same record with the
+    // same powers, but short-lived by an absolute expiry: the client holds a refresh token and
+    // rotates, so nothing long-lived ever sits in its config. Always scoped — an unscoped oauth
+    // token cannot be issued.
+    public const string OAuth = "oauth";
+
     public static bool IsAccessToken(string? kind)
         => string.Equals(kind, Device, StringComparison.Ordinal) ||
-            string.Equals(kind, Manual, StringComparison.Ordinal);
+            string.Equals(kind, Manual, StringComparison.Ordinal) ||
+            string.Equals(kind, OAuth, StringComparison.Ordinal);
 
     public static bool IsKnown(string? kind) => IsAccessToken(kind);
 }

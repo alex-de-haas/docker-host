@@ -1,8 +1,8 @@
 # MCP OAuth — Automated Issuance For Scoped Tokens
 
-Status: Ready
+Status: In Progress
 Created: 2026-08-24
-Updated: 2026-08-24
+Updated: 2026-08-25
 
 An OAuth 2.1 issuance path per the MCP authorization specification, so clients that speak it
 (Claude Code, VS Code, Cursor) obtain and rotate scoped access tokens themselves instead of a user
@@ -43,15 +43,20 @@ reason it is permanent.
 
 ## Deliverables
 
-- [ ] AS metadata, `/authorize`, `/token` (code + refresh grants), PKCE enforced, refresh rotation,
-      revocation wired to the existing token management page.
-- [ ] Dynamic Client Registration with rate limiting and an operator-visible client list.
-- [ ] Shell consent page showing client, resource, scopes; refusal is first-class.
-- [ ] Resource-indicator handling minting single-audience tokens; a request without a resource is
+- [x] AS metadata, `/authorize`, `/token` (code + refresh grants), PKCE enforced, refresh rotation,
+      revocation wired to the existing token management page (one row per grant, cascading to its
+      access tokens).
+- [x] Dynamic Client Registration with rate limiting, behind the live-editable Core-settings
+      breaker, and the operator-visible client list on the tokens tab.
+- [x] Shell consent page showing client, resource, scopes; refusal is first-class.
+- [x] Resource-indicator handling minting single-audience tokens; a request without a resource is
       refused, never defaulted to a broad token.
-- [ ] Protected-resource metadata served by the SDK helpers (TS + .NET) and the facade.
+- [x] Protected-resource metadata served by the SDK helpers (TS + .NET) and the facade, with the
+      401 challenge header on Core MCP, demo-app, and the facade.
 - [ ] Live verification: a stock Claude Code completes the flow against a non-loopback origin with
-      no token in its config, and a revoked grant stops a session on its next call.
+      no token in its config, and a revoked grant stops a session on its next call. Needs a public
+      origin for Core's auth surface — the dev host runs no ingress, so this belongs to the prod
+      host, together with the facade's own non-loopback cell.
 
 ## Resolved Questions (2026-08-24, owner approval in chat)
 

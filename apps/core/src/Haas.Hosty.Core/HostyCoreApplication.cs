@@ -64,6 +64,9 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<AuditStore>();
         builder.Services.AddSingleton<AppAuthCodeStore>();
         builder.Services.AddSingleton<DeviceAuthorizationStore>();
+        builder.Services.AddSingleton<OAuthStore>();
+        builder.Services.AddSingleton<OAuthAuthorizationStore>();
+        builder.Services.AddSingleton<OAuthRegistrationLimiter>();
         builder.Services.AddSingleton<AppSessionGrantStore>();
         builder.Services.AddSingleton<AppIdentityService>();
         builder.Services.AddSingleton<LocalPasswordAuthService>();
@@ -377,6 +380,7 @@ internal static class HostyCoreApplication
         AppSecretsEndpoints.Map(app);
         TokenIntrospectionEndpoints.Map(app);
         OnBehalfOfTokenEndpoints.Map(app);
+        OAuthEndpoints.Map(app);
         NotificationEndpoints.Map(app);
         EventStreamEndpoints.Map(app);
         McpEndpoints.Map(app);

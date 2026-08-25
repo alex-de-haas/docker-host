@@ -121,7 +121,10 @@ internal sealed record AuthSessionRecord(
     string? Audience = null,
     // What the credential may do at that audience (AccessTokenScopes). Null/empty on an unscoped
     // record; an audience without scopes cannot be issued, because it could do nothing anyway.
-    IReadOnlyList<string>? Scopes = null);
+    IReadOnlyList<string>? Scopes = null,
+    // The OAuth grant (refresh-token chain) this access token descends from, so revoking the grant
+    // finds and revokes every access token it issued. Null on everything the OAuth path did not mint.
+    string? GrantId = null);
 
 internal sealed record LocalPasswordCredentialRecord(
     string UserId,

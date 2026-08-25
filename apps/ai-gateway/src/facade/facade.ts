@@ -15,6 +15,7 @@
 // as hidden from the listing — hiding alone would still let a client call from a list it cached.
 
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { buildProtectedResourceMetadata, buildWwwAuthenticate } from "@hosty-sdk/app/oauth-resource";
 import { composeSystemPrompt, partitionSkills, type AppSkill } from "../mcp/skills.js";
 import { PROTOCOL_VERSION, callTool, openSession } from "../mcp/upstream.js";
 import type { ProviderDirectory } from "../settings/providers.js";
@@ -24,6 +25,9 @@ import { CORE_TARGET, introspect, mintOnBehalfOf } from "./tokens.js";
 
 /** The path an external client is pointed at. */
 export const FACADE_PATH = "/mcp";
+
+/** The RFC 9728 metadata path for that resource: the well-known prefix inserted before its path. */
+export const FACADE_METADATA_PATH = "/.well-known/oauth-protected-resource/mcp";
 
 /** Same ceiling the operator API uses; a JSON-RPC request body is far smaller. */
 const MAX_BODY_BYTES = 64 * 1024;
@@ -80,6 +84,17 @@ export class McpFacade {
 
   /** True when this request was the facade's, answered or refused. */
   async handle(request: IncomingMessage, response: ServerResponse, pathname: string): Promise<boolean> {
+    // The facade's own OAuth resource metadata: a pointer at Core, which is the authorization
+    // server. 404 when the gateway is not published to a public origin — no metadata means the
+    // manual token path, never a guessed identity.
+    if (pathname === FACADE_METADATA_PATH) {
+      const metadata = this.resourceMetadata();
+      send(response, metadata ? 200 : 404, metadata ?? {
+        error: "This host's gateway is not published to a public origin, so it has no OAuth resource identity.",
+      });
+      return true;
+    }
+
     if (pathname !== FACADE_PATH) {
       return false;
     }
@@ -151,8 +166,11 @@ export class McpFacade {
 
     const presented = readBearer(request);
     if (!presented) {
-      // The header a client needs in order to try again, per the MCP authorization spec's shape.
-      response.setHeader("www-authenticate", 'Bearer realm="hosty"');
+      // The header a client needs in order to try again. With a resource identity it points at the
+      // metadata — the thread a stock client pulls to discover the OAuth flow; without one it is
+      // the bare challenge the spec's shape requires.
+      const metadata = this.resourceMetadata();
+      response.setHeader("www-authenticate", metadata ? buildWwwAuthenticate(metadata) : 'Bearer realm="hosty"');
       send(response, 401, { jsonrpc: "2.0", id: null, error: { code: -32001, message: "A Hosty access token scoped to this app is required." } });
       return true;
     }
@@ -166,8 +184,15 @@ export class McpFacade {
       // Any error means the credential was never actually checked — Core unreachable, this app not
       // configured to reach it, or a body that could not be read. All of them are 503: answering 401
       // would send a client with a perfectly good token off to get another one over a fault on this
-      // side. Only an `active: false` with no error is Core having checked and said no.
+      // side. Only an `active: false` with no error is Core having checked and said no — and that
+      // 401 carries the same discovery challenge the missing-token one does, because a client whose
+      // cached credential just expired or was revoked is exactly the client that needs to restart
+      // the OAuth flow rather than dead-end.
       const unchecked = Boolean(actor.error);
+      if (!unchecked) {
+        const metadata = this.resourceMetadata();
+        response.setHeader("www-authenticate", metadata ? buildWwwAuthenticate(metadata) : 'Bearer realm="hosty"');
+      }
       send(response, unchecked ? 503 : 401, {
         jsonrpc: "2.0",
         id: null,
@@ -222,6 +247,15 @@ export class McpFacade {
    * turned off stops being offered without waiting out the TTL. */
   invalidate(): void {
     this.catalogs.clear();
+  }
+
+  /** This facade's RFC 9728 document, or null while the gateway has no public identity. The
+   * gateway's own endpoint key is `http`, so the origin comes from HOSTY_PUBLIC_ORIGIN_HTTP. */
+  private resourceMetadata() {
+    return buildProtectedResourceMetadata({
+      publicOrigin: process.env.HOSTY_PUBLIC_ORIGIN_HTTP,
+      resourcePath: FACADE_PATH,
+    });
   }
 
   private async invoke(

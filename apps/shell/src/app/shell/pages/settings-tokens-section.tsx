@@ -49,6 +49,11 @@ export function SettingsTokensSection({
   // has anything to validate one against, and offering the rest would produce credentials nothing
   // accepts. Empty for an ordinary user, whose /api/apps listing is their own.
   const [mcpApps, setMcpApps] = useState<{ id: string; displayName: string }[]>([]);
+  // Registered OAuth clients — who may start an authorization flow against this host. Admin-only
+  // on the Core side; an ordinary user's fetch 403s and the section simply does not render.
+  const [oauthClients, setOauthClients] = useState<
+    { clientId: string; name: string; createdAt: string; sourceAddress: string | null; liveGrants: number }[]
+  >([]);
   // Shown once, right after creation, and never retrievable again.
   const [issued, setIssued] = useState<{ label: string; token: string } | null>(null);
   const [copied, setCopied] = useState(false);
@@ -77,6 +82,20 @@ export function SettingsTokensSection({
     } catch {
       setError("Could not reach Core.");
     }
+  }, [coreOrigin]);
+
+  // Read once, like the app roster: registrations change when an operator connects a client, not
+  // while this page sits open.
+  useEffect(() => {
+    void (async () => {
+      try {
+        const response = await fetch(`${coreOrigin}/api/auth/oauth/clients`, { credentials: "include" });
+        if (!response.ok) return;
+        setOauthClients(((await response.json()) as { clients?: typeof oauthClients }).clients ?? []);
+      } catch {
+        // The list is informational; failing to load it must not break the credential form.
+      }
+    })();
   }, [coreOrigin]);
 
   // Read once rather than on the five-second poll below: the app roster changes when someone
@@ -330,6 +349,37 @@ export function SettingsTokensSection({
           how a lost device is dealt with.
         </p>
       </div>
+
+      {oauthClients.length > 0 ? (
+        <div className="space-y-2">
+          <h4 className="text-sm font-medium">OAuth clients</h4>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Client</TableHead>
+                <TableHead>Registered</TableHead>
+                <TableHead>From</TableHead>
+                <TableHead>Live grants</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {oauthClients.map((client) => (
+                <TableRow key={client.clientId}>
+                  <TableCell>{client.name}</TableCell>
+                  <TableCell className="text-muted-foreground">{formatWhen(client.createdAt)}</TableCell>
+                  <TableCell className="text-muted-foreground">{client.sourceAddress ?? "unknown"}</TableCell>
+                  <TableCell className="text-muted-foreground">{client.liveGrants}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+          <p className="text-xs text-muted-foreground">
+            Who may start an OAuth sign-in against this host. What each one was actually granted appears
+            above as an oauth credential, revocable like any other. Registration itself is controlled by
+            the &quot;{"OAuth client registration"}&quot; switch in Core settings.
+          </p>
+        </div>
+      ) : null}
     </div>
   );
 }
