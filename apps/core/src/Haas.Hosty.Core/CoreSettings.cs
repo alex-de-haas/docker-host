@@ -30,6 +30,9 @@ internal sealed class CoreSettingsDocument
     // User-management overrides (currently just the disabled-user retention window). String-valued like
     // `Ingress`/`Updates`; additive to the schema for the same reason, so the version is NOT bumped.
     public IReadOnlyDictionary<string, string> Users { get => field ?? EmptyUsers; init; } = EmptyUsers;
+    // OAuth overrides (currently just the dynamic-client-registration toggle). String-valued like the
+    // groups above; additive, so the schema version is NOT bumped.
+    public IReadOnlyDictionary<string, string> OAuth { get => field ?? EmptyOAuth; init; } = EmptyOAuth;
 
     private static readonly IReadOnlyDictionary<string, double> EmptyAuth =
         new Dictionary<string, double>(StringComparer.Ordinal);
@@ -41,6 +44,9 @@ internal sealed class CoreSettingsDocument
         new Dictionary<string, string>(StringComparer.Ordinal);
 
     private static readonly IReadOnlyDictionary<string, string> EmptyUsers =
+        new Dictionary<string, string>(StringComparer.Ordinal);
+
+    private static readonly IReadOnlyDictionary<string, string> EmptyOAuth =
         new Dictionary<string, string>(StringComparer.Ordinal);
 }
 
@@ -308,6 +314,54 @@ internal static class CoreUserRetentionSettings
 // The user-retention equivalent of CoreSettingRow: a single numeric row.
 internal sealed record CoreUserRetentionSettingRow(int EffectiveRetentionDays, bool Overridden);
 
+// Whether an unauthenticated client may register itself as an OAuth client (RFC 7591), which is the
+// first step of the MCP authorization flow. Off by default and deliberately an explicit act: DCR is
+// an anonymous write, and a host that never exposes a public origin has no reason to accept one.
+// The rest of the OAuth surface (metadata, /authorize, /token) is inert without a registered client,
+// so this one toggle is the feature's breaker. Env baseline with a persisted override, like the
+// other Core settings sections.
+internal sealed record OAuthSettings(bool DynamicRegistrationEnabled)
+{
+    public const string DynamicRegistrationKey = "HOSTY_OAUTH_DCR_ENABLED";
+
+    public static OAuthSettings Defaults { get; } = new(false);
+
+    public static OAuthSettings FromEnvironment()
+        => TryParseEnabled(Environment.GetEnvironmentVariable(DynamicRegistrationKey), out var enabled)
+            ? new OAuthSettings(enabled)
+            : Defaults;
+
+    public static bool TryParseEnabled(string? raw, out bool enabled)
+    {
+        enabled = false;
+        var trimmed = raw?.Trim();
+        if (string.Equals(trimmed, "true", StringComparison.OrdinalIgnoreCase) || trimmed == "1")
+        {
+            enabled = true;
+            return true;
+        }
+
+        return string.Equals(trimmed, "false", StringComparison.OrdinalIgnoreCase) || trimmed == "0";
+    }
+}
+
+internal static class CoreOAuthSettings
+{
+    public const string Group = "Agent clients";
+
+    public const string DynamicRegistrationLabel = "OAuth client registration";
+
+    public const string DynamicRegistrationDescription =
+        "Whether an agent client (Claude Code, an editor) may register itself for the OAuth sign-in "
+        + "flow. Registration is anonymous, so leave this off except while connecting a new client; "
+        + "already-registered clients and issued credentials keep working either way.";
+
+    public static bool IsKnown(string key)
+        => string.Equals(key, OAuthSettings.DynamicRegistrationKey, StringComparison.Ordinal);
+}
+
+internal sealed record CoreOAuthSettingRow(bool Enabled, bool Overridden);
+
 // A choice for a select-typed setting: the stored value and the label the Shell shows.
 internal sealed record CoreSettingOption(string Value, string Label);
 
@@ -450,10 +504,12 @@ internal sealed class CoreSettingsService
     private Dictionary<string, string> ingressOverrides;
     private Dictionary<string, string> updateCheckOverrides;
     private Dictionary<string, string> userRetentionOverrides;
+    private Dictionary<string, string> oauthOverrides;
     private volatile AuthLifetimes current;
     private volatile IngressSettings currentIngress;
     private volatile UpdateCheckSettings currentUpdateCheck;
     private volatile UserRetentionSettings currentUserRetention;
+    private volatile OAuthSettings currentOAuth;
 
     public CoreSettingsService(CoreSettingsStore store)
     {
@@ -463,10 +519,12 @@ internal sealed class CoreSettingsService
         ingressOverrides = LoadIngressOverrides(document);
         updateCheckOverrides = LoadUpdateCheckOverrides(document);
         userRetentionOverrides = LoadUserRetentionOverrides(document);
+        oauthOverrides = LoadOAuthOverrides(document);
         current = Compute(overrides);
         currentIngress = ComputeIngress(ingressOverrides);
         currentUpdateCheck = ComputeUpdateCheck(updateCheckOverrides);
         currentUserRetention = ComputeUserRetention(userRetentionOverrides);
+        currentOAuth = ComputeOAuth(oauthOverrides);
     }
 
     // The live auth lifetimes: env-or-default baseline with persisted overrides applied.
@@ -483,6 +541,10 @@ internal sealed class CoreSettingsService
     // The live disabled-user retention window: env-or-default baseline with a persisted override applied.
     // Read by the purge scheduler each cycle, so a save takes effect without restart.
     public UserRetentionSettings UserRetention => currentUserRetention;
+
+    // The live OAuth toggle: env-or-default baseline with a persisted override applied. Read by the
+    // registration endpoint per request, so a save takes effect without restart.
+    public OAuthSettings OAuth => currentOAuth;
 
     public IReadOnlyList<CoreSettingRow> GetAuthRows()
     {
@@ -515,6 +577,9 @@ internal sealed class CoreSettingsService
     public CoreUserRetentionSettingRow GetUserRetentionRow()
         => new(currentUserRetention.DisabledRetentionDays, Overridden: userRetentionOverrides.ContainsKey(UserRetentionSettings.DisabledRetentionDaysKey));
 
+    public CoreOAuthSettingRow GetOAuthRow()
+        => new(currentOAuth.DynamicRegistrationEnabled, Overridden: oauthOverrides.ContainsKey(OAuthSettings.DynamicRegistrationKey));
+
     // True when at least one of the submitted keys is an ingress setting — the endpoint uses this to
     // decide whether a save must re-render the tunnel config.
     public static bool TouchesIngress(IReadOnlyDictionary<string, string?> input)
@@ -532,6 +597,7 @@ internal sealed class CoreSettingsService
         var ingressChanges = new Dictionary<string, string?>(StringComparer.Ordinal);
         var updateCheckChanges = new Dictionary<string, string?>(StringComparer.Ordinal);
         var userRetentionChanges = new Dictionary<string, string?>(StringComparer.Ordinal);
+        var oauthChanges = new Dictionary<string, string?>(StringComparer.Ordinal);
         foreach (var (key, raw) in input)
         {
             if (CoreAuthSettings.IsKnown(key))
@@ -550,6 +616,10 @@ internal sealed class CoreSettingsService
             {
                 userRetentionChanges[key] = NormalizeUserRetentionValue(key, raw);
             }
+            else if (CoreOAuthSettings.IsKnown(key))
+            {
+                oauthChanges[key] = NormalizeOAuthValue(key, raw);
+            }
             else
             {
                 throw new AppLifecycleException("core_setting_unknown", $"Unknown Core setting '{key}'.");
@@ -563,6 +633,7 @@ internal sealed class CoreSettingsService
             var mergedIngress = Apply(ingressOverrides, ingressChanges);
             var mergedUpdateCheck = Apply(updateCheckOverrides, updateCheckChanges);
             var mergedUserRetention = Apply(userRetentionOverrides, userRetentionChanges);
+            var mergedOAuth = Apply(oauthOverrides, oauthChanges);
 
             await store.SaveAsync(
                 new CoreSettingsDocument
@@ -572,16 +643,19 @@ internal sealed class CoreSettingsService
                     Ingress = mergedIngress,
                     Updates = mergedUpdateCheck,
                     Users = mergedUserRetention,
+                    OAuth = mergedOAuth,
                 },
                 cancellationToken);
             overrides = mergedAuth;
             ingressOverrides = mergedIngress;
             updateCheckOverrides = mergedUpdateCheck;
             userRetentionOverrides = mergedUserRetention;
+            oauthOverrides = mergedOAuth;
             current = Compute(mergedAuth);
             currentIngress = ComputeIngress(mergedIngress);
             currentUpdateCheck = ComputeUpdateCheck(mergedUpdateCheck);
             currentUserRetention = ComputeUserRetention(mergedUserRetention);
+            currentOAuth = ComputeOAuth(mergedOAuth);
         }
         finally
         {
@@ -857,6 +931,53 @@ internal sealed class CoreSettingsService
         }
 
         return settings;
+    }
+
+    private static Dictionary<string, string> LoadOAuthOverrides(CoreSettingsDocument document)
+    {
+        var loaded = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (key, value) in document.OAuth)
+        {
+            // Same per-entry tolerance as the other sections: skip unknown keys and hand-edited
+            // values that do not parse rather than crashing startup.
+            if (!CoreOAuthSettings.IsKnown(key) || !OAuthSettings.TryParseEnabled(value, out _))
+            {
+                continue;
+            }
+
+            loaded[key] = value;
+        }
+
+        return loaded;
+    }
+
+    private static OAuthSettings ComputeOAuth(IReadOnlyDictionary<string, string> overrides)
+    {
+        var settings = OAuthSettings.FromEnvironment();
+        if (overrides.TryGetValue(OAuthSettings.DynamicRegistrationKey, out var raw) &&
+            OAuthSettings.TryParseEnabled(raw, out var enabled))
+        {
+            settings = settings with { DynamicRegistrationEnabled = enabled };
+        }
+
+        return settings;
+    }
+
+    // Validates an OAuth toggle value for persistence, or null to clear. Stored canonically as
+    // "true"/"false" so the document stays stable however the value arrived.
+    private static string? NormalizeOAuthValue(string key, string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+
+        if (!OAuthSettings.TryParseEnabled(raw, out var enabled))
+        {
+            throw new AppLifecycleException("core_setting_invalid", $"'{key}' must be true or false.");
+        }
+
+        return enabled ? "true" : "false";
     }
 
     // Converts an hours value to a TimeSpan, rejecting non-finite, non-positive, and out-of-range

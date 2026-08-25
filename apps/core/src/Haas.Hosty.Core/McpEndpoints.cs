@@ -34,6 +34,23 @@ internal static class McpEndpoints
             var users = http.RequestServices.GetRequiredService<UserDirectoryStore>();
             var clock = http.RequestServices.GetRequiredService<IClock>();
 
+            // The MCP authorization handshake: a 401 from this surface names where its resource
+            // metadata lives, which is how a stock client discovers the OAuth flow instead of
+            // dead-ending. On the response's way out rather than per refusal site, so no refusal
+            // path can forget it.
+            http.Response.OnStarting(() =>
+            {
+                if (http.Response.StatusCode == StatusCodes.Status401Unauthorized)
+                {
+                    var origin = http.RequestServices.GetRequiredService<HostyCoreRuntimeConfig>()
+                        .EffectiveCorePublicOrigin.TrimEnd('/');
+                    http.Response.Headers.WWWAuthenticate =
+                        $"Bearer resource_metadata=\"{origin}/.well-known/oauth-protected-resource/api/mcp\"";
+                }
+
+                return Task.CompletedTask;
+            });
+
             // A credential scoped to `hosty:core` is checked first, because the session path refuses
             // outright — falling through would answer "not a session" to a credential minted for
             // exactly this endpoint. Every tool here declares `readOnlyHint: true`, so `mcp:read` is

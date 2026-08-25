@@ -128,6 +128,19 @@ internal static class CoreSettingsEndpoints
             Unit: "day",
             Options: null));
 
+        var oauth = settings.GetOAuthRow();
+        rows.Add(new CoreSettingSummary(
+            OAuthSettings.DynamicRegistrationKey,
+            Type: "select",
+            Value: oauth.Enabled ? "true" : "false",
+            Default: "false",
+            Group: CoreOAuthSettings.Group,
+            Label: CoreOAuthSettings.DynamicRegistrationLabel,
+            Description: CoreOAuthSettings.DynamicRegistrationDescription,
+            Overridden: oauth.Overridden,
+            Unit: null,
+            Options: [new CoreSettingOption("false", "Off"), new CoreSettingOption("true", "On")]));
+
         return new CoreSettingsResponse(rows);
     }
 }

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { validateDelegatedToken } from "@hosty-sdk/app/delegated";
 import { hasScope, introspectScopedToken, SCOPE_MCP_READ } from "@hosty-sdk/app/scoped-token";
+import { buildProtectedResourceMetadata, buildWwwAuthenticate } from "@hosty-sdk/app/oauth-resource";
 import { getAppDirectorySnapshot } from "@/lib/host-auth";
 import { getDemoConfig } from "@/lib/demo-config";
 import {
@@ -58,9 +59,19 @@ export async function POST(request: Request) {
   // nothing about which tools exist.
   const actor = await resolveActor(request, invokedTool);
   if (!actor.ok) {
+    // A 401 names where this resource's OAuth metadata lives, when it has one — the thread a stock
+    // client pulls to discover the flow instead of dead-ending. Only on 401: a 403 or 503 caller
+    // already authenticated, and re-authenticating is not the fix for either.
+    const metadata = actor.status === 401 ? buildProtectedResourceMetadata() : null;
     return NextResponse.json(
       { error: { code: actor.code, message: actor.message } },
-      { status: actor.status, headers: { "Cache-Control": "no-store" } },
+      {
+        status: actor.status,
+        headers: {
+          "Cache-Control": "no-store",
+          ...(metadata ? { "WWW-Authenticate": buildWwwAuthenticate(metadata) } : {}),
+        },
+      },
     );
   }
 

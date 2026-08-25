@@ -343,6 +343,32 @@ describe("MCP facade", () => {
     expect(coreCalls.filter((call) => call.path.endsWith("/token/introspect")).length).toBeLessThan(80);
   });
 
+  it("serves its resource metadata when published, and challenges with it on a bare 401", async () => {
+    // The facade's whole OAuth role: a pointer at Core. Without a public origin the pointer would
+    // name a URL nothing serves, so its absence is a 404 and the challenge stays bare.
+    const withoutOrigin = await fetch(`${facadeOrigin}/.well-known/oauth-protected-resource/mcp`);
+    expect(withoutOrigin.status).toBe(404);
+
+    process.env.HOSTY_PUBLIC_ORIGIN_HTTP = "https://assistant.example.test";
+    process.env.HOSTY_CORE_PUBLIC_ORIGIN = "https://core.example.test";
+    try {
+      const published = await fetch(`${facadeOrigin}/.well-known/oauth-protected-resource/mcp`);
+      expect(published.status).toBe(200);
+      const body = (await published.json()) as { resource: string; authorization_servers: string[] };
+      expect(body.resource).toBe("https://assistant.example.test/mcp");
+      expect(body.authorization_servers).toEqual(["https://core.example.test"]);
+
+      const challenged = await rpc("tools/list", undefined, null);
+      expect(challenged.status).toBe(401);
+      expect(challenged.headers.get("www-authenticate")).toContain(
+        "https://assistant.example.test/.well-known/oauth-protected-resource/mcp",
+      );
+    } finally {
+      delete process.env.HOSTY_PUBLIC_ORIGIN_HTTP;
+      delete process.env.HOSTY_CORE_PUBLIC_ORIGIN;
+    }
+  });
+
   it("offers nothing from a provider the operator has not enabled", async () => {
     await settings.update({ mcpProviders: {} });
     // A fresh facade, because the catalog is cached per user for a few seconds by design.

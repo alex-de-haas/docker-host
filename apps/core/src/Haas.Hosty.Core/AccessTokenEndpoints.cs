@@ -182,6 +182,7 @@ internal static class AccessTokenEndpoints
             UserDirectoryStore users,
             IClock clock,
             AuthLifetimes lifetimes,
+            OAuthStore oauth,
             CancellationToken cancellationToken) =>
             CoreSessionAuthorization.RequireSessionAsync(
                 request,
@@ -194,6 +195,10 @@ internal static class AccessTokenEndpoints
                     var isAdmin = AppAccessPolicy.IsAdmin(user);
                     var views = state.Sessions
                         .Where(session => AccessTokenKinds.IsAccessToken(session.Kind))
+                        // An OAuth access token lives an hour and its client mints the next one
+                        // itself; listing each would bury the durable credentials in churn. The
+                        // *grant* is what an operator holds and revokes, and it is listed below.
+                        .Where(session => !string.Equals(session.Kind, AccessTokenKinds.OAuth, StringComparison.Ordinal))
                         .Where(session => CoreSessionAuthorization.IsSessionLive(session, now, lifetimes.IdleFor(session.Kind)))
                         // A host.user sees only their own; an administrator sees every one, because
                         // revoking a credential on a lost device is a host-wide concern.
@@ -217,7 +222,28 @@ internal static class AccessTokenEndpoints
                             session.Scopes ?? []))
                         .ToArray();
 
-                    return CoreJson.Json(new AccessTokenListResponse(views));
+                    // OAuth grants, one row per refresh chain: the client's name as the label,
+                    // the audience and scopes it holds, rotation as last use. Same visibility rule
+                    // as the rows above — owners see their own, an administrator sees all.
+                    var oauthState = await oauth.ReadAsync(cancellationToken);
+                    var grantViews = oauthState.Grants
+                        .Where(grant => OAuthStore.IsGrantLive(grant, now))
+                        .Where(grant => isAdmin || string.Equals(grant.UserId, user.Id, StringComparison.Ordinal))
+                        .OrderByDescending(grant => grant.CreatedAt)
+                        .Select(grant => new AccessTokenView(
+                            CoreSessionAuthorization.FingerprintSessionId(grant.Id),
+                            AccessTokenKinds.OAuth,
+                            oauthState.Clients.FirstOrDefault(client =>
+                                string.Equals(client.ClientId, grant.ClientId, StringComparison.Ordinal))?.Name ?? grant.ClientId,
+                            grant.UserId,
+                            state.Users.FirstOrDefault(candidate => string.Equals(candidate.Id, grant.UserId, StringComparison.Ordinal))?.DisplayName,
+                            grant.CreatedAt,
+                            grant.RotatedAt ?? grant.CreatedAt,
+                            grant.Audience,
+                            grant.Scopes))
+                        .ToArray();
+
+                    return CoreJson.Json(new AccessTokenListResponse([.. views, .. grantViews]));
                 },
                 cancellationToken: cancellationToken));
 
@@ -349,6 +375,7 @@ internal static class AccessTokenEndpoints
             UserDirectoryStore users,
             IClock clock,
             AppSessionGrantStore grants,
+            OAuthStore oauth,
             CoreEventHub events,
             AuditStore audit,
             CancellationToken cancellationToken) =>
@@ -358,6 +385,60 @@ internal static class AccessTokenEndpoints
                 clock,
                 async user =>
                 {
+                    // An OAuth grant first: the listing shows chains, so a chain fingerprint is what
+                    // the revoke button sends. Revoking kills the refresh token and every access
+                    // token it issued — the client's next call fails, and its next refresh fails too.
+                    var oauthState = await oauth.ReadAsync(cancellationToken);
+                    var targetGrant = oauthState.Grants.FirstOrDefault(grant =>
+                        grant.RevokedAt is null &&
+                        string.Equals(CoreSessionAuthorization.FingerprintSessionId(grant.Id), fingerprint, StringComparison.OrdinalIgnoreCase));
+                    if (targetGrant is not null)
+                    {
+                        if (!AppAccessPolicy.IsAdmin(user) && !string.Equals(targetGrant.UserId, user.Id, StringComparison.Ordinal))
+                        {
+                            // Same answer a missing credential gets, so this cannot probe which ids exist.
+                            return CoreJson.Json(
+                                new ErrorResponse("credential_not_found", "No such credential."),
+                                statusCode: StatusCodes.Status404NotFound);
+                        }
+
+                        var revokedAt = clock.UtcNow;
+                        await oauth.UpdateAsync<object?>(current => (current with
+                        {
+                            Grants = current.Grants
+                                .Select(grant => string.Equals(grant.Id, targetGrant.Id, StringComparison.Ordinal) && grant.RevokedAt is null
+                                    ? grant with { RevokedAt = revokedAt }
+                                    : grant)
+                                .ToArray(),
+                        }, null), cancellationToken);
+
+                        var issuedIds = new List<string>();
+                        await users.UpdateAsync(current => current with
+                        {
+                            Sessions = current.Sessions
+                                .Select(session =>
+                                {
+                                    if (string.Equals(session.GrantId, targetGrant.Id, StringComparison.Ordinal) && session.RevokedAt is null)
+                                    {
+                                        issuedIds.Add(session.Id);
+                                        return session with { RevokedAt = revokedAt };
+                                    }
+
+                                    return session;
+                                })
+                                .ToArray(),
+                        }, cancellationToken);
+                        foreach (var issuedId in issuedIds)
+                        {
+                            events.CloseSession(issuedId);
+                        }
+
+                        await AppendAuditAsync(audit, "auth.credential.revoked", fingerprint, user.Id, clock,
+                            oauthState.Clients.FirstOrDefault(client => string.Equals(client.ClientId, targetGrant.ClientId, StringComparison.Ordinal))?.Name,
+                            AccessTokenKinds.OAuth, cancellationToken, targetGrant.Audience, targetGrant.Scopes);
+                        return CoreJson.Json(new AccessTokenRevokeResponse("revoked"));
+                    }
+
                     var state = await users.ReadAsync(cancellationToken);
                     // Callers hold the fingerprint the listing gave them; the real id never left Core.
                     var target = state.Sessions.FirstOrDefault(session =>
@@ -404,20 +485,26 @@ internal static class AccessTokenEndpoints
         AuthLifetimes lifetimes,
         CancellationToken cancellationToken,
         string? audience = null,
-        IReadOnlyList<string>? scopes = null)
+        IReadOnlyList<string>? scopes = null,
+        // Idle-only unless the caller says otherwise. The OAuth path passes a short absolute cap,
+        // because its client holds a refresh token and rotates — the opposite trade from a
+        // credential in a pocket.
+        TimeSpan? absoluteLifetime = null,
+        string? grantId = null)
     {
         var now = clock.UtcNow;
         var record = new AuthSessionRecord(
             Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant(),
             userId,
             now,
-            DateTimeOffset.MaxValue,
+            absoluteLifetime is { } cap ? now + cap : DateTimeOffset.MaxValue,
             RevokedAt: null,
             LastSeenAt: now,
             Kind: kind,
             Label: label,
             Audience: audience,
-            Scopes: scopes);
+            Scopes: scopes,
+            GrantId: grantId);
 
         await users.UpdateAsync(state => state with
         {
