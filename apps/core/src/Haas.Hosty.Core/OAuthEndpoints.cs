@@ -289,6 +289,7 @@ internal static class OAuthEndpoints
             UserDirectoryStore users,
             IClock clock,
             CoreSettingsService settings,
+            CoreEventHub events,
             AuditStore audit,
             CancellationToken cancellationToken) =>
         {
@@ -300,8 +301,8 @@ internal static class OAuthEndpoints
             var form = await request.ReadFormAsync(cancellationToken);
             return form["grant_type"].ToString() switch
             {
-                "authorization_code" => await RedeemCodeAsync(form, oauth, pending, users, clock, settings, audit, cancellationToken),
-                "refresh_token" => await RefreshAsync(form, oauth, users, clock, settings, cancellationToken),
+                "authorization_code" => await RedeemCodeAsync(form, oauth, pending, users, clock, settings, events, audit, cancellationToken),
+                "refresh_token" => await RefreshAsync(form, oauth, users, clock, settings, events, audit, cancellationToken),
                 _ => TokenError("unsupported_grant_type", "Supported: authorization_code, refresh_token."),
             };
         });
@@ -314,6 +315,7 @@ internal static class OAuthEndpoints
         UserDirectoryStore users,
         IClock clock,
         CoreSettingsService settings,
+        CoreEventHub events,
         AuditStore audit,
         CancellationToken cancellationToken)
     {
@@ -377,10 +379,24 @@ internal static class OAuthEndpoints
             redeemed.ApprovedUserId, AccessTokenKinds.OAuth, redeemed.ClientName, users, clock, settings.AuthLifetimes,
             cancellationToken, redeemed.Audience, redeemed.Scopes, AccessTokenLifetime, grant.Id);
 
+        // The same post-append re-check the refresh path runs, closing the race with a concurrent
+        // revocation of the just-created grant (see RefreshAsync for why either ordering is covered).
+        var latest = await oauth.ReadAsync(cancellationToken);
+        if (latest.Grants.FirstOrDefault(candidate => string.Equals(candidate.Id, grant.Id, StringComparison.Ordinal))
+                is not { RevokedAt: null })
+        {
+            await RevokeIssuedAccessTokensAsync(grant.Id, users, events, clock.UtcNow, cancellationToken);
+            return TokenError("invalid_grant", "The grant was revoked.");
+        }
+
         await AppendAuditAsync(audit, clock, "auth.oauth.grant", "issued", redeemed.ClientName, redeemed.Audience, redeemed.ApprovedUserId, cancellationToken);
         return CoreJson.Json(new OAuthTokenResponse(
             access.Id, "Bearer", (int)AccessTokenLifetime.TotalSeconds, refreshToken, string.Join(' ', redeemed.Scopes)));
     }
+
+    /// <summary>Spent hashes retained per chain. ~two days of hourly rotation; a replay older than
+    /// this is refused without the family kill, which fails toward an inconvenience.</summary>
+    private const int SpentHashesRetained = 50;
 
     private static async Task<IResult> RefreshAsync(
         IFormCollection form,
@@ -388,6 +404,8 @@ internal static class OAuthEndpoints
         UserDirectoryStore users,
         IClock clock,
         CoreSettingsService settings,
+        CoreEventHub events,
+        AuditStore audit,
         CancellationToken cancellationToken)
     {
         var presented = form["refresh_token"].ToString();
@@ -402,32 +420,63 @@ internal static class OAuthEndpoints
         var replacement = NewSecret("hosty_oauth_refresh");
 
         // Rotation inside the store's lock: the presented token is spent and replaced atomically,
-        // so two racing refreshes redeem one rotation between them and the loser is told the truth —
-        // its token is gone.
-        var rotated = await oauth.UpdateAsync(state =>
+        // so two racing refreshes redeem one rotation between them. The same pass detects a
+        // *replay* — a token this chain already spent. Two parties presenting one token means one
+        // of them stole it, and whichever refreshed first holds the live chain; the only safe
+        // answer is to kill the chain, or the thief who won the race keeps a credential while the
+        // victim is quietly locked out.
+        var (rotated, replayed) = await oauth.UpdateAsync(state =>
         {
             var grant = state.Grants.FirstOrDefault(candidate =>
                 string.Equals(candidate.RefreshTokenHash, hash, StringComparison.Ordinal) &&
                 string.Equals(candidate.ClientId, clientId, StringComparison.Ordinal) &&
                 OAuthStore.IsGrantLive(candidate, now));
-            if (grant is null)
+            if (grant is not null)
             {
-                return (state, (OAuthGrantRecord?)null);
+                var spent = (grant.SpentRefreshTokenHashes ?? []).Append(grant.RefreshTokenHash).ToArray();
+                var next = grant with
+                {
+                    RefreshTokenHash = OAuthStore.HashRefreshToken(replacement),
+                    RotatedAt = now,
+                    ExpiresAt = now + settings.AuthLifetimes.AccessTokenIdle,
+                    SpentRefreshTokenHashes = spent.Length <= SpentHashesRetained ? spent : spent[^SpentHashesRetained..],
+                };
+                return (state with
+                {
+                    Grants = state.Grants
+                        .Select(candidate => ReferenceEquals(candidate, grant) ? next : candidate)
+                        .ToArray(),
+                }, ((OAuthGrantRecord?)next, (OAuthGrantRecord?)null));
             }
 
-            var next = grant with
+            var replayVictim = state.Grants.FirstOrDefault(candidate =>
+                string.Equals(candidate.ClientId, clientId, StringComparison.Ordinal) &&
+                OAuthStore.IsGrantLive(candidate, now) &&
+                (candidate.SpentRefreshTokenHashes ?? []).Contains(hash, StringComparer.Ordinal));
+            if (replayVictim is null)
             {
-                RefreshTokenHash = OAuthStore.HashRefreshToken(replacement),
-                RotatedAt = now,
-                ExpiresAt = now + settings.AuthLifetimes.AccessTokenIdle,
-            };
+                return (state, ((OAuthGrantRecord?)null, (OAuthGrantRecord?)null));
+            }
+
             return (state with
             {
                 Grants = state.Grants
-                    .Select(candidate => ReferenceEquals(candidate, grant) ? next : candidate)
+                    .Select(candidate => ReferenceEquals(candidate, replayVictim)
+                        ? replayVictim with { RevokedAt = now }
+                        : candidate)
                     .ToArray(),
-            }, (OAuthGrantRecord?)next);
+            }, ((OAuthGrantRecord?)null, (OAuthGrantRecord?)replayVictim));
         }, cancellationToken);
+
+        if (replayed is not null)
+        {
+            // The chain is dead; now so is everything it issued, including the winner's access
+            // token — the winner may be the thief.
+            await RevokeIssuedAccessTokensAsync(replayed.Id, users, events, now, cancellationToken);
+            await AppendAuditAsync(audit, clock, "auth.oauth.grant", "revoked_replay",
+                LabelFor(await oauth.ReadAsync(cancellationToken), replayed), replayed.Audience, replayed.UserId, cancellationToken);
+            return TokenError("invalid_grant", "This refresh token was already used. The grant has been revoked; authorize again.");
+        }
 
         if (rotated is null)
         {
@@ -441,8 +490,51 @@ internal static class OAuthEndpoints
             rotated.UserId, AccessTokenKinds.OAuth, LabelFor(await oauth.ReadAsync(cancellationToken), rotated), users, clock,
             settings.AuthLifetimes, cancellationToken, rotated.Audience, rotated.Scopes, AccessTokenLifetime, rotated.Id);
 
+        // Re-checked *after* the session was appended, which closes the race with a concurrent
+        // revocation: a revoke that landed before this read is caught here and the fresh token is
+        // taken back; one that lands after it will find the token in its own cascade scan, because
+        // the append happened first. Either ordering leaves nothing alive.
+        var latest = await oauth.ReadAsync(cancellationToken);
+        if (latest.Grants.FirstOrDefault(candidate => string.Equals(candidate.Id, rotated.Id, StringComparison.Ordinal))
+                is not { RevokedAt: null })
+        {
+            await RevokeIssuedAccessTokensAsync(rotated.Id, users, events, clock.UtcNow, cancellationToken);
+            return TokenError("invalid_grant", "The grant was revoked.");
+        }
+
         return CoreJson.Json(new OAuthTokenResponse(
             access.Id, "Bearer", (int)AccessTokenLifetime.TotalSeconds, replacement, string.Join(' ', rotated.Scopes)));
+    }
+
+    /// <summary>Revokes every access token a grant issued and closes their event streams — the same
+    /// cascade the credentials page runs when a grant row is revoked.</summary>
+    private static async Task RevokeIssuedAccessTokensAsync(
+        string grantId,
+        UserDirectoryStore users,
+        CoreEventHub events,
+        DateTimeOffset revokedAt,
+        CancellationToken cancellationToken)
+    {
+        var issuedIds = new List<string>();
+        await users.UpdateAsync(current => current with
+        {
+            Sessions = current.Sessions
+                .Select(session =>
+                {
+                    if (string.Equals(session.GrantId, grantId, StringComparison.Ordinal) && session.RevokedAt is null)
+                    {
+                        issuedIds.Add(session.Id);
+                        return session with { RevokedAt = revokedAt };
+                    }
+
+                    return session;
+                })
+                .ToArray(),
+        }, cancellationToken);
+        foreach (var issuedId in issuedIds)
+        {
+            events.CloseSession(issuedId);
+        }
     }
 
     // --- Dynamic client registration (RFC 7591) ------------------------------------------------

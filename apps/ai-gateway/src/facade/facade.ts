@@ -184,8 +184,15 @@ export class McpFacade {
       // Any error means the credential was never actually checked — Core unreachable, this app not
       // configured to reach it, or a body that could not be read. All of them are 503: answering 401
       // would send a client with a perfectly good token off to get another one over a fault on this
-      // side. Only an `active: false` with no error is Core having checked and said no.
+      // side. Only an `active: false` with no error is Core having checked and said no — and that
+      // 401 carries the same discovery challenge the missing-token one does, because a client whose
+      // cached credential just expired or was revoked is exactly the client that needs to restart
+      // the OAuth flow rather than dead-end.
       const unchecked = Boolean(actor.error);
+      if (!unchecked) {
+        const metadata = this.resourceMetadata();
+        response.setHeader("www-authenticate", metadata ? buildWwwAuthenticate(metadata) : 'Bearer realm="hosty"');
+      }
       send(response, unchecked ? 503 : 401, {
         jsonrpc: "2.0",
         id: null,

@@ -62,18 +62,12 @@ public sealed class OAuthHttpTests
         // ...and every other /api surface refuses it, exactly like a manually minted one.
         Assert.Equal(HttpStatusCode.Forbidden, (await SendAsync(client, HttpMethod.Get, "/api/auth/credentials", access)).StatusCode);
 
-        // 7. Rotation: the new pair works, the spent refresh token is dead.
+        // 7. Rotation: the new pair works. (Presenting the *spent* token is deliberately not done
+        //    here — a replay is a theft signal that kills the whole chain, and it has its own test.)
         var rotated = await RefreshAsync(client, clientId, refresh);
         var access2 = rotated.GetProperty("access_token").GetString()!;
         var refresh2 = rotated.GetProperty("refresh_token").GetString()!;
         Assert.Equal(HttpStatusCode.OK, (await InitializeMcpAsync(client, access2)).StatusCode);
-        using var replayed = await PostFormAsync(client, new()
-        {
-            ["grant_type"] = "refresh_token",
-            ["refresh_token"] = refresh,
-            ["client_id"] = clientId,
-        });
-        Assert.Equal(HttpStatusCode.BadRequest, replayed.StatusCode);
 
         // 8. The credential page lists the grant as one row, named for the client — not the hourly
         //    access tokens it issued.
@@ -98,6 +92,51 @@ public sealed class OAuthHttpTests
             ["client_id"] = clientId,
         });
         Assert.Equal(HttpStatusCode.BadRequest, refreshDead.StatusCode);
+    }
+
+    [Fact]
+    public async Task AReplayedRefreshTokenKillsTheWholeChain()
+    {
+        // The theft this exists for: two parties hold one refresh token, the thief refreshes first
+        // and wins the live chain, the victim's replay is the only signal anything is wrong. That
+        // replay must revoke everything — the chain and the winner's access token — or the thief
+        // keeps a credential while the victim is quietly locked out.
+        await using var harness = await CoreHttpHarness.StartAsync();
+        await SeedShellAsync(harness);
+        var admin = await SeedSessionAsync(harness, "host.admin");
+        using var client = harness.CreateClient();
+        await EnableRegistrationAsync(client, admin);
+        var clientId = (await RegisterAsync(client, "c")).GetProperty("client_id").GetString()!;
+
+        var (verifier, challenge) = NewPkcePair();
+        var code = await ApprovedCodeAsync(client, admin, clientId, challenge);
+        var tokens = await RedeemAsync(client, clientId, code, verifier);
+        var refresh1 = tokens.GetProperty("refresh_token").GetString()!;
+
+        // The "thief" rotates and holds the live pair.
+        var rotated = await RefreshAsync(client, clientId, refresh1);
+        var thiefAccess = rotated.GetProperty("access_token").GetString()!;
+        var thiefRefresh = rotated.GetProperty("refresh_token").GetString()!;
+        Assert.Equal(HttpStatusCode.OK, (await InitializeMcpAsync(client, thiefAccess)).StatusCode);
+
+        // The "victim" replays the spent token: refused, and the chain dies with it.
+        using var replay = await PostFormAsync(client, new()
+        {
+            ["grant_type"] = "refresh_token",
+            ["refresh_token"] = refresh1,
+            ["client_id"] = clientId,
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, replay.StatusCode);
+
+        // The winner's spoils are gone too: access token dead now, refresh dead on its next use.
+        Assert.Equal(HttpStatusCode.Unauthorized, (await InitializeMcpAsync(client, thiefAccess)).StatusCode);
+        using var thiefRefreshDead = await PostFormAsync(client, new()
+        {
+            ["grant_type"] = "refresh_token",
+            ["refresh_token"] = thiefRefresh,
+            ["client_id"] = clientId,
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, thiefRefreshDead.StatusCode);
     }
 
     [Fact]

@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-08-24
-Updated: 2026-08-24
+Updated: 2026-08-25
 
 An OAuth 2.1 issuance path per the MCP authorization specification, so clients that speak it
 (Claude Code, VS Code, Cursor) obtain and rotate scoped access tokens themselves instead of a user

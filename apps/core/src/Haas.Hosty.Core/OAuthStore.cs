@@ -89,4 +89,11 @@ internal sealed record OAuthGrantRecord(
     DateTimeOffset CreatedAt,
     DateTimeOffset ExpiresAt,
     DateTimeOffset? RotatedAt = null,
-    DateTimeOffset? RevokedAt = null);
+    DateTimeOffset? RevokedAt = null,
+    // The hashes this chain has already spent, newest last. Kept so a *replayed* refresh token is
+    // recognizable as this chain's past rather than as noise: two parties presenting the same
+    // token means one of them stole it, and the only safe answer is to kill the whole chain —
+    // otherwise whichever party refreshed first (the thief, in the attack this exists for) keeps a
+    // live credential while the victim is quietly locked out. Bounded; a replay older than the
+    // window is refused without the kill, which fails toward an inconvenience, never a grant.
+    IReadOnlyList<string>? SpentRefreshTokenHashes = null);

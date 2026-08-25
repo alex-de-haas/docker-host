@@ -30,6 +30,13 @@ same introspection. OAuth replaces issuance only, nothing downstream of it.
 5. `POST /api/auth/oauth/token` redeems the code with the PKCE verifier and answers an access token
    plus a refresh token. Refreshing **rotates**: the presented token is spent and replaced
    atomically inside the store's lock, so two racing refreshes redeem one rotation between them.
+   The chain remembers its spent hashes (bounded), and a **replayed** spent token kills the whole
+   grant — access tokens included. Two parties presenting one token means one of them stole it, and
+   whichever refreshed first holds the live chain; without the kill, a thief who won the race would
+   keep a credential while the victim was quietly locked out. Issuance also re-checks the grant
+   *after* appending the access token, which closes the race with a concurrent revocation in either
+   ordering: a revoke landing before the re-check is caught there, one landing after finds the
+   token in its own cascade scan.
 
 ## What Comes Out
 
@@ -88,9 +95,10 @@ without a public identity (null, not a guess): no metadata simply means the manu
 ## Testing Expectations
 
 - The whole flow over the real pipeline: register → authorize → consent → redeem → the token
-  working on the surface it names and refused as a Core session — then rotation (spent refresh
-  token dead beside its replacement working) and the one-row revocation stopping both the live
-  access token and the next refresh.
+  working on the surface it names and refused as a Core session — then rotation and the one-row
+  revocation stopping both the live access token and the next refresh.
+- The theft signal: a replayed spent refresh token killing the whole chain, including the winner's
+  access token and its refresh — asserted from the victim's and the thief's side both.
 - The breaker: registration refused off, working on, refused again when turned back off — with
   already-issued credentials untouched.
 - PKCE pairs: wrong verifier refused; a code dying on first presentation, valid or not.
