@@ -332,26 +332,35 @@ internal sealed class HostyCoreTools
         var target = NormalizeAppId(appId);
         if (!grants.Lifecycle)
         {
-            await AppendLifecycleAuditAsync(audit, clock, verb, target, tool, grants.ActorUserId, "refused", cancellationToken);
+            await AppendLifecycleAuditAsync(audit, clock, verb, target, tool, grants.ActorUserId, "refused");
             return CoreJson.Text(new McpError(
                 $"This credential does not carry the '{AccessTokenScopes.McpLifecycle}' scope, which {tool} requires. " +
                 "A host administrator can issue a Core credential with app control, or run this from their own session."));
         }
 
+        // The outcome is settled first and the audit line written after, decoupled on purpose. Once
+        // the action ran, nothing may rewrite what happened: an audit append that fails inside a
+        // catch block would have reported a *completed* mutation as a failed tool call — inviting a
+        // client to repeat a restart that already succeeded — and burying the real answer under a
+        // storage problem.
+        string payload;
+        string outcome;
         try
         {
             var result = await action(target, cancellationToken);
-            await AppendLifecycleAuditAsync(audit, clock, verb, target, tool, grants.ActorUserId, "succeeded", cancellationToken);
-            return CoreJson.Text(new McpLifecycleResult(target, verb, result.App?.RuntimeState ?? result.Status, null));
+            outcome = "succeeded";
+            payload = CoreJson.Text(new McpLifecycleResult(target, verb, result.App?.RuntimeState ?? result.Status, null));
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            // The attempt failed — an unknown id, a runtime that refused, a manifest problem. Audited
-            // as a failure and returned as a result the model can act on; a thrown error would just
-            // end the turn.
-            await AppendLifecycleAuditAsync(audit, clock, verb, target, tool, grants.ActorUserId, "failed", cancellationToken);
-            return CoreJson.Text(new McpLifecycleResult(target, verb, null, $"Could not {verb} '{target}': {exception.Message}"));
+            // The attempt failed — an unknown id, a runtime that refused, a manifest problem.
+            // Returned as a result the model can act on; a thrown error would just end the turn.
+            outcome = "failed";
+            payload = CoreJson.Text(new McpLifecycleResult(target, verb, null, $"Could not {verb} '{target}': {exception.Message}"));
         }
+
+        await AppendLifecycleAuditAsync(audit, clock, verb, target, tool, grants.ActorUserId, outcome);
+        return payload;
     }
 
     // Caller-supplied text on its way into a durable log and a runtime lookup: bounded and stripped
@@ -362,30 +371,43 @@ internal sealed class HostyCoreTools
         return cleaned.Length <= 120 ? cleaned : cleaned[..120];
     }
 
-    private static Task AppendLifecycleAuditAsync(
+    // Best-effort, and never on the request's cancellation token: a client that disconnects right
+    // after its restart completed must not be the reason the completed mutation left no trace. A
+    // failed append costs the line — logged so an operator can see the trail has a hole — but it
+    // must not falsify the response, which describes something that already happened.
+    private static async Task AppendLifecycleAuditAsync(
         AuditStore audit,
         IClock clock,
         string verb,
         string appId,
         string tool,
         string actorUserId,
-        string outcome,
-        CancellationToken cancellationToken)
-        => audit.AppendAsync(
-            new AuditRecord(
-                Id: $"audit_{Guid.NewGuid():N}",
-                Action: $"app.lifecycle.{verb}",
-                ResourceType: "app",
-                ResourceId: appId,
-                Outcome: outcome,
-                ActorUserId: actorUserId,
-                CreatedAt: clock.UtcNow,
-                Details: new Dictionary<string, string>(StringComparer.Ordinal)
-                {
-                    ["tool"] = tool,
-                    ["via"] = "mcp",
-                }),
-            cancellationToken);
+        string outcome)
+    {
+        try
+        {
+            await audit.AppendAsync(
+                new AuditRecord(
+                    Id: $"audit_{Guid.NewGuid():N}",
+                    Action: $"app.lifecycle.{verb}",
+                    ResourceType: "app",
+                    ResourceId: appId,
+                    Outcome: outcome,
+                    ActorUserId: actorUserId,
+                    CreatedAt: clock.UtcNow,
+                    Details: new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        ["tool"] = tool,
+                        ["via"] = "mcp",
+                    }),
+                CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine(
+                $"[audit] failed to record app.lifecycle.{verb} ({outcome}) for '{appId}': {exception.Message}");
+        }
+    }
 }
 
 /// <summary>

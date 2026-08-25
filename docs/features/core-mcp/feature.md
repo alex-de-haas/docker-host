@@ -100,8 +100,11 @@ audience — never the scopes of the credential it descends from — so it canno
 grant, and inferring one from the admin role would let a facade client holding a read-only token
 reach mutations around the grant. Nothing visible is lost: the facade exports only
 `readOnlyHint: true` tools anyway. Issuance also binds `mcp:lifecycle` to the `hosty:core` audience
-(`scope_invalid_for_audience` otherwise) — on an app audience it would be a scope nothing reads,
-minted cleanly and silently inert.
+(`scope_invalid_for_audience` otherwise) and requires `mcp:read` alongside it
+(`scope_requires_read`): `mcp:read` is the entry to the surface, so a lifecycle-only credential
+would be minted cleanly and refused on every call — unable to invoke the very tools it names. Both
+are the same refusal philosophy: a credential that cannot work is refused while the operator is
+still looking at the form.
 
 The details follow the surface's existing conventions, and one of its own:
 
@@ -115,7 +118,13 @@ The details follow the surface's existing conventions, and one of its own:
 - **Every call is audited** — `app.lifecycle.{start|stop|restart}`, with actor, target app id, the
   tool, `via: mcp`, and the outcome that actually happened (`succeeded`, `failed`, `refused`).
   Refusals included: this is where an agent's word becomes an action on the host, and the refusals
-  are the more interesting half of that record.
+  are the more interesting half of that record. The line is written **after** the outcome is
+  settled, best-effort, and never on the request's cancellation token: once the action ran, nothing
+  may rewrite what happened. An append that failed inside the response path would have reported a
+  completed restart as a failed tool call — inviting the client to repeat it — and a client
+  disconnecting right after its mutation completed must not be the reason it left no trace. A failed
+  append costs the line (logged, so the operator can see the trail has a hole), never the truth of
+  the answer.
 - **Per-action approval — a call without a standing grant parking as a pending action an operator
   approves — is deferred to its own future plan.** Until it exists, no scope means the structured
   refusal, never a silent queue.
@@ -159,7 +168,8 @@ which presents as a build that hangs for minutes with no output.
   refused with the scope named and nothing about the app (gate order); an administrator session by
   role; the delegated path refused whatever the actor's role; every outcome — including the
   refusal — in the audit log with the actor and what actually happened; issuance binding the scope
-  to the `hosty:core` audience.
+  to the `hosty:core` audience and requiring `mcp:read` beside it; and a broken audit store leaving
+  the tool's answer untouched rather than falsifying it into a failure.
 - The auth gate in all three shapes it can be reached: anonymous, invalid bearer, valid non-admin.
 - The log-line clamp asserted at both ends of the range through the budget the tool reports back.
 - Route visibility in the live `EndpointDataSource`, so the platform-wide anonymous-caller sweep

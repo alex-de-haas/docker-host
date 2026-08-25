@@ -146,11 +146,44 @@ public sealed class McpLifecycleHttpTests
         Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
         Assert.Equal("scope_invalid_for_audience", (await ReadJsonAsync(refused)).GetProperty("code").GetString());
 
+        // Lifecycle without read is refused too: mcp:read is the entry to the surface, so a
+        // lifecycle-only credential would be minted cleanly and refused on every call — unable to
+        // invoke the very tools it names.
+        using var lonely = await SendAsync(
+            client, HttpMethod.Post, "/api/auth/credentials", admin,
+            new { label = "a", audience = "hosty:core", scopes = new[] { "mcp:lifecycle" } });
+        Assert.Equal(HttpStatusCode.BadRequest, lonely.StatusCode);
+        Assert.Equal("scope_requires_read", (await ReadJsonAsync(lonely)).GetProperty("code").GetString());
+
         // The same pair on the Core audience is exactly what the feature exists to issue.
         using var allowed = await SendAsync(
             client, HttpMethod.Post, "/api/auth/credentials", admin,
             new { label = "a", audience = "hosty:core", scopes = new[] { "mcp:read", "mcp:lifecycle" } });
         Assert.Equal(HttpStatusCode.OK, allowed.StatusCode);
+    }
+
+    [Fact]
+    public async Task AnAuditWriteFailureNeverFalsifiesTheOutcome()
+    {
+        // The audit line is owed, but it describes something that already happened. If the append
+        // fails, the client must still receive the real answer — reporting a completed mutation as
+        // a failed call invites repeating it — and the failure must not escape as a transport error.
+        await using var harness = await CoreHttpHarness.StartAsync();
+        var admin = await SeedSessionAsync(harness, "host.admin");
+        using var client = harness.CreateClient();
+        var control = await CreateCredentialAsync(client, admin, "control", ["mcp:read", "mcp:lifecycle"]);
+
+        // Break the audit store the way storage breaks: a directory where the append-only file
+        // should be makes every append throw.
+        var auditPath = harness.Services.GetRequiredService<CoreDataPaths>().AuditLogPath;
+        File.Delete(auditPath);
+        Directory.CreateDirectory(auditPath);
+
+        var result = await CallToolAsync(client, control, "start_app", new { appId = "com.example.absent" });
+
+        // The lifecycle answer, exactly as if the audit store were healthy.
+        Assert.Contains("com.example.absent", result.GetProperty("error").GetString()!, StringComparison.Ordinal);
+        Assert.Equal("start", result.GetProperty("action").GetString());
     }
 
     // --- helpers -------------------------------------------------------------------------------
