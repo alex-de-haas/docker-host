@@ -1,7 +1,7 @@
 # Core MCP
 
 Created: 2026-08-09
-Updated: 2026-08-20
+Updated: 2026-08-25
 
 An embedded Model Context Protocol endpoint on Core, giving agent clients typed tools for the things
 Core already knows — which apps exist, what state they are in, what their logs say — instead of
@@ -32,18 +32,23 @@ never performs or proxies work that belongs to a runtime app's own domain API.
   gate (403); an invalid bearer gets 401; a valid non-admin session gets 403.
 - `requireCsrf: true` as on every session-authenticated `/api` mutation. Bearer credentials are
   CSRF-exempt platform-wide, so an external MCP client presenting an access token is unaffected.
-- Core has no token scopes yet — an access token carries its approver's full role. Requiring an admin
-  credential and shipping only read-only tools keeps the blast radius at "an admin can read their own
-  host". Scoped tokens belong to [access-tokens](../access-tokens/feature.md).
+- Three credential shapes pass the filter: an administrator session, a
+  [scoped access token](../scoped-access-tokens/feature.md) with audience `hosty:core` and
+  `mcp:read`, and a delegated token addressed to `hosty:core` (the facade's on-behalf-of path, still
+  administrator-only, re-read from the directory rather than trusted from the claims). Each accepted
+  caller is resolved into `McpCallerGrants` — who is acting, and whether they hold lifecycle
+  authority — which the mutation tools consult.
 
 ## Tools
 
-All four are read-only, and each **says so on the wire**: every tool advertises
-`annotations.readOnlyHint: true`. Being read-only by design is not something a client can see, and an
-agent client with an approval gate must assume an unannotated tool may mutate — which, run
-unattended, means it refuses to call it at all. Hosty already holds *apps* to this bar (`hosty mcp`
-will not export a tool that does not declare it), so Core declaring nothing was Core exempting itself
-from its own contract.
+Four reads and three lifecycle mutations, and every one **says what it is on the wire**: the read
+tools advertise `annotations.readOnlyHint: true`, the mutations do not, and `stop_app`/`restart_app`
+declare `destructiveHint`. A tool's nature is not something a client can see from the design — an
+agent client with an approval gate must assume an unannotated tool may mutate (run unattended, that
+means refusing to call it at all), and a mutation claiming to be read-only would sail through every
+filter built on the hint. Hosty already holds *apps* to this bar (`hosty mcp` will not export a tool
+that does not declare itself), so Core declaring nothing was Core exempting itself from its own
+contract.
 
 Results are shaped for a model rather than a UI: small, flat, and naming apps by their reverse-DNS id
 so a follow-up call needs no disambiguation.
@@ -69,11 +74,54 @@ so a follow-up call needs no disambiguation.
 - Payloads serialize through Core's source-generated JSON context, the same path as every HTTP
   response, and are returned as JSON strings inside the MCP tool result.
 
-Lifecycle mutations are absent on purpose. They are the payoff — "stop Solitaire" is a mutation — but
-Core MCP has no approval mechanism of its own, and the assistant's gate lives in its harness, which
-pauses only that harness's own calls. A mutation tool here would be reachable by any external client
-holding a credential, bypassing the gate entirely. Shipping one means first deciding where its
-approval lives.
+## Lifecycle Mutations
+
+`start_app`, `stop_app`, `restart_app` — the payoff "stop Solitaire" asks for. They were withheld
+until the question "where does the approval live" had an answer, because a mutation tool here is
+reachable by any external client holding a credential, and the assistant's harness gate pauses only
+that harness's own calls. The answer is **the approval lives in Core**, as a standing grant: the
+`mcp:lifecycle` scope on a [scoped access token](../scoped-access-tokens/feature.md). An
+administrator issuing that credential *is* the approval, and revoking it withdraws it — for every
+caller, whichever client they run.
+
+The gate stopped being all-or-nothing the moment mutation tools existed. The endpoint filter
+resolves each accepted caller into `McpCallerGrants` — who is acting, and whether they hold
+lifecycle authority — and the tools consult it:
+
+| Caller | Reads | Mutations |
+| --- | --- | --- |
+| administrator session | yes | yes — the full-role credential, by role, as on every `/api` lifecycle route |
+| `hosty:core` token with `mcp:read` | yes | refused, naming the scope |
+| `hosty:core` token with `mcp:lifecycle` | yes | yes |
+| delegated token (the facade's path) | yes | **never** |
+
+The last row is deliberate and role does not override it: a delegated token carries sub, role and
+audience — never the scopes of the credential it descends from — so it cannot *prove* a standing
+grant, and inferring one from the admin role would let a facade client holding a read-only token
+reach mutations around the grant. Nothing visible is lost: the facade exports only
+`readOnlyHint: true` tools anyway. Issuance also binds `mcp:lifecycle` to the `hosty:core` audience
+(`scope_invalid_for_audience` otherwise) — on an app audience it would be a scope nothing reads,
+minted cleanly and silently inert.
+
+The details follow the surface's existing conventions, and one of its own:
+
+- **A refusal is a tool result naming `mcp:lifecycle`**, never a transport error — a model can relay
+  "this credential may not do that" and only give up on a JSON-RPC error. The scope answers *before*
+  the app lookup, so a read-only credential cannot use refusal shapes to probe which ids exist.
+- **Honest annotations**: no `readOnlyHint`; `stop_app` and `restart_app` declare `destructiveHint`
+  (stopping interrupts whatever the app is doing for its users); `restart_app` is not idempotent —
+  the end state repeats, but every call is another interruption. External surfaces key their filters
+  off these hints, so a wrong annotation is a wrong permission model somewhere else.
+- **Every call is audited** — `app.lifecycle.{start|stop|restart}`, with actor, target app id, the
+  tool, `via: mcp`, and the outcome that actually happened (`succeeded`, `failed`, `refused`).
+  Refusals included: this is where an agent's word becomes an action on the host, and the refusals
+  are the more interesting half of that record.
+- **Per-action approval — a call without a standing grant parking as a pending action an operator
+  approves — is deferred to its own future plan.** Until it exists, no scope means the structured
+  refusal, never a silent queue.
+
+`update_app` is deferred (an update can change what an app *is*, which composes poorly with standing
+grants), and install/remove are not exposed over MCP at all.
 
 ## Dependency And AOT
 
@@ -103,9 +151,15 @@ which presents as a build that hangs for minutes with no output.
   tool. Listing alone is not enough — attribute-declared tools are discovered by reflection, so the
   failure worth catching is a server that initializes cleanly and then advertises nothing, or
   advertises a tool that throws when invoked.
-- **Every tool advertises `readOnlyHint: true`, asserted on the wire** rather than on the attribute:
-  what a client acts on is the `tools/list` payload, and an attribute that stopped mapping to it
-  would leave the tools uncallable by any gated client while every other test stayed green.
+- **Every read tool advertises `readOnlyHint: true` and no mutation tool does, asserted on the
+  wire** rather than on the attribute: what a client acts on is the `tools/list` payload, and an
+  attribute that stopped mapping to it would leave tools uncallable — or worse, offered as safe —
+  by any gated client while every other test stayed green.
+- The mutation gate as pairs: a credential with `mcp:lifecycle` past the gate beside one without it
+  refused with the scope named and nothing about the app (gate order); an administrator session by
+  role; the delegated path refused whatever the actor's role; every outcome — including the
+  refusal — in the audit log with the actor and what actually happened; issuance binding the scope
+  to the `hosty:core` audience.
 - The auth gate in all three shapes it can be reached: anonymous, invalid bearer, valid non-admin.
 - The log-line clamp asserted at both ends of the range through the budget the tool reports back.
 - Route visibility in the live `EndpointDataSource`, so the platform-wide anonymous-caller sweep

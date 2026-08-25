@@ -20,6 +20,10 @@ const FULL_ACCESS = "";
 // admits only [a-z0-9._-], so no installed app can ever claim this one.
 const CORE_AUDIENCE = "hosty:core";
 
+// Form-only sentinel for "Core MCP with lifecycle control": same audience, one more scope. Never
+// sent to Core — the submit handler maps it back to CORE_AUDIENCE plus the scope pair.
+const CORE_CONTROL = "hosty:core+lifecycle";
+
 // Credentials for clients that have no browser: a device console, a native client, a
 // script. Two ways in — a device approves itself here after showing a code, or a credential is created
 // here and its value shown once — and one list to revoke what exists.
@@ -128,7 +132,11 @@ export function SettingsTokensSection({
       // form never assembles one.
       const response = await sendCsrfJson(
         `${coreOrigin}/api/auth/credentials`,
-        audience === FULL_ACCESS ? { label } : { label, audience, scopes: ["mcp:read"] },
+        audience === FULL_ACCESS
+          ? { label }
+          : audience === CORE_CONTROL
+            ? { label, audience: CORE_AUDIENCE, scopes: ["mcp:read", "mcp:lifecycle"] }
+            : { label, audience, scopes: ["mcp:read"] },
       );
       const created = (await response.json()) as { label: string; token: string };
       setIssued({ label: created.label, token: created.token });
@@ -216,6 +224,7 @@ export function SettingsTokensSection({
             >
               <option value={FULL_ACCESS}>Full access — everything you can do</option>
               <option value={CORE_AUDIENCE}>Core MCP — read-only</option>
+              <option value={CORE_CONTROL}>Core MCP — read + app control</option>
               {mcpApps.map((app) => (
                 <option key={app.id} value={app.id}>
                   {app.displayName} — read-only tools
@@ -232,7 +241,9 @@ export function SettingsTokensSection({
           For a client that cannot run the device flow. Pass the value as an <code>Authorization: Bearer</code> header.
           {audience === FULL_ACCESS
             ? " A full-access credential can do everything you can, on every Core surface."
-            : " A limited credential reaches only what is selected here and is refused everywhere else, including every other app."}
+            : audience === CORE_CONTROL
+              ? " This credential can read the fleet and also start, stop and restart apps. It is refused everywhere else."
+              : " A limited credential reaches only what is selected here and is refused everywhere else, including every other app."}
         </p>
       </form>
 

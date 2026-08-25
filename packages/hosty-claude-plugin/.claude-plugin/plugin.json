@@ -1,6 +1,6 @@
 {
   "name": "hosty",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Connects Claude Code to a Hosty host: every app's read-only MCP tools as one server, plus how to read them.",
   "author": {
     "name": "Alex de Haas"

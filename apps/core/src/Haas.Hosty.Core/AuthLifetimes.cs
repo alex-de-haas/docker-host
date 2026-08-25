@@ -133,13 +133,17 @@ internal static class AccessTokenScopes
     // control plane. No app id can contain a colon, so no app can ever claim this one.
     public const string CoreAudience = "hosty:core";
 
-    // May call MCP tools that declare `annotations.readOnlyHint: true`. The one scope in v1;
-    // mutation scopes are defined by the feature that introduces mutations, not here.
+    // May call MCP tools that declare `annotations.readOnlyHint: true`.
     public const string McpRead = "mcp:read";
+
+    // May start, stop and restart apps through Core MCP (docs/features/core-mcp/plan.md). One scope
+    // for all three verbs by decision; per-verb scopes wait for a demonstrated need. This is Core's
+    // own lifecycle authority, so it pairs only with the `hosty:core` audience — no app reads it.
+    public const string McpLifecycle = "mcp:lifecycle";
 
     /// <summary>Every scope this host issues. Public so a refusal can name them rather than leaving
     /// the caller to guess what it should have asked for.</summary>
-    public static readonly string[] Known = [McpRead];
+    public static readonly string[] Known = [McpRead, McpLifecycle];
 
     public static bool IsKnownScope(string scope)
         => Known.Contains(scope, StringComparer.Ordinal);

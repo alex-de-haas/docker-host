@@ -64,6 +64,13 @@ internal static class McpEndpoints
                             statusCode: StatusCodes.Status403Forbidden);
                     }
 
+                    // Read-only, whatever the actor's role. A delegated token carries sub, role and
+                    // audience — never the scopes of the credential it descends from — so the
+                    // on-behalf-of path cannot prove the standing grant mutations require. Inferring
+                    // lifecycle from the admin role here would let a facade client whose own token
+                    // holds only mcp:read reach mutations around the grant. The facade exports only
+                    // read-only tools anyway, so nothing an external client can see is lost.
+                    http.Items[McpCallerGrants.Key] = new McpCallerGrants(Lifecycle: false, actor.Id);
                     return await next(context);
                 }
                 var scoped = ScopedCredentials.Resolve(
@@ -96,26 +103,54 @@ internal static class McpEndpoints
 
                     await CoreSessionAuthorization.TouchSessionAsync(
                         users, scoped.Record, clock.UtcNow, http.RequestAborted);
+
+                    // What this credential may do beyond reading is exactly what it says: the gate
+                    // stops being all-or-nothing the moment mutation tools exist, and the scope is
+                    // the standing grant those tools check.
+                    http.Items[McpCallerGrants.Key] = new McpCallerGrants(
+                        AccessTokenScopes.Grants(scoped.Record.Scopes, AccessTokenScopes.McpLifecycle),
+                        scoped.User.Id);
                     return await next(context);
                 }
             }
 
+            // Inlined rather than RequireAdminSessionAsync, because the tools need to know *who* is
+            // acting — the audit line for a mutation names the actor — and that wrapper never hands
+            // the user out. The refusal is byte-for-byte the one it produced.
             var authorized = false;
-            var denial = await CoreSessionAuthorization.RequireAdminSessionAsync(
+            McpCallerGrants? sessionGrants = null;
+            var denial = await CoreSessionAuthorization.RequireSessionAsync(
                 http.Request,
                 users,
                 clock,
-                () =>
+                user =>
                 {
+                    if (!string.Equals(user.Role, "host.admin", StringComparison.Ordinal))
+                    {
+                        return Task.FromResult<IResult>(CoreJson.Json(
+                            new ErrorResponse("admin_required", "This Core operation requires a Host administrator session."),
+                            statusCode: StatusCodes.Status403Forbidden));
+                    }
+
                     authorized = true;
+                    // An administrator's session is the full-role credential; lifecycle comes with
+                    // the role, exactly as it does on every /api lifecycle route the same person
+                    // could call directly.
+                    sessionGrants = new McpCallerGrants(Lifecycle: true, user.Id);
                     return Task.FromResult<IResult>(Results.Empty);
                 },
                 requireCsrf: true,
                 cancellationToken: http.RequestAborted);
 
-            // RequireAdminSessionAsync only invokes the action when the caller passes, so an
-            // untouched flag means the returned IResult is the 401/403 to send back.
-            return authorized ? await next(context) : denial;
+            // The action only runs when the caller passes, so an untouched flag means the returned
+            // IResult is the 401/403 to send back.
+            if (!authorized)
+            {
+                return denial;
+            }
+
+            http.Items[McpCallerGrants.Key] = sessionGrants;
+            return await next(context);
         });
 
         group.MapMcp();
@@ -229,6 +264,144 @@ internal sealed class HostyCoreTools
             return CoreJson.Text(new McpLogTail(appId, tail, null, $"Could not read logs for '{appId}': {exception.Message}"));
         }
     }
+
+    // --- Lifecycle mutations (docs/features/core-mcp/plan.md) ----------------------------------
+    //
+    // Gated on the mcp:lifecycle standing grant, resolved by the endpoint filter into
+    // McpCallerGrants. The refusal is a tool *result* naming the scope, never a transport error:
+    // a model can explain "this credential may not do that" and only give up on a JSON-RPC error.
+    //
+    // Every call is audited — actor, tool, target app, outcome, refusals included — because this is
+    // where an agent's word becomes an action on the host, and the refusals are the more
+    // interesting half of that record.
+
+    [McpServerTool(Name = "start_app", Destructive = false, Idempotent = true)]
+    [Description("Starts an installed app. Requires a credential carrying the mcp:lifecycle scope; refused otherwise. Use the id from list_apps.")]
+    public static Task<string> StartAppAsync(
+        [Description("Reverse-DNS app id, e.g. com.haas.solitaire.")] string appId,
+        CoreLifecycleService lifecycle,
+        IHttpContextAccessor httpContext,
+        AuditStore audit,
+        IClock clock,
+        CancellationToken cancellationToken)
+        => MutateAsync("start_app", "start", appId, lifecycle.StartAsync, httpContext, audit, clock, cancellationToken);
+
+    // Destructive on purpose: stopping interrupts whatever the app is doing for its users right
+    // now. Idempotent, because stopping a stopped app changes nothing further.
+    [McpServerTool(Name = "stop_app", Destructive = true, Idempotent = true)]
+    [Description("Stops a running app, interrupting whatever it is doing for its users. Requires a credential carrying the mcp:lifecycle scope; refused otherwise.")]
+    public static Task<string> StopAppAsync(
+        [Description("Reverse-DNS app id, e.g. com.haas.solitaire.")] string appId,
+        CoreLifecycleService lifecycle,
+        IHttpContextAccessor httpContext,
+        AuditStore audit,
+        IClock clock,
+        CancellationToken cancellationToken)
+        => MutateAsync("stop_app", "stop", appId, lifecycle.StopAsync, httpContext, audit, clock, cancellationToken);
+
+    // Not idempotent: the end state repeats, but every call is another interruption.
+    [McpServerTool(Name = "restart_app", Destructive = true, Idempotent = false)]
+    [Description("Restarts an app: a stop, then a start. Requires a credential carrying the mcp:lifecycle scope; refused otherwise.")]
+    public static Task<string> RestartAppAsync(
+        [Description("Reverse-DNS app id, e.g. com.haas.solitaire.")] string appId,
+        CoreLifecycleService lifecycle,
+        IHttpContextAccessor httpContext,
+        AuditStore audit,
+        IClock clock,
+        CancellationToken cancellationToken)
+        => MutateAsync("restart_app", "restart", appId, lifecycle.RestartAsync, httpContext, audit, clock, cancellationToken);
+
+    private static async Task<string> MutateAsync(
+        string tool,
+        string verb,
+        string appId,
+        Func<string, CancellationToken, Task<AppLifecycleResponse>> action,
+        IHttpContextAccessor httpContext,
+        AuditStore audit,
+        IClock clock,
+        CancellationToken cancellationToken)
+    {
+        // The filter resolved who is calling and what they may do. A tool must not run without that
+        // answer: grants missing means the request somehow reached the handler around the filter,
+        // and the only safe reading of that is refusal.
+        if (httpContext.HttpContext?.Items[McpCallerGrants.Key] is not McpCallerGrants grants)
+        {
+            return CoreJson.Text(new McpError("The caller's authorization could not be established."));
+        }
+
+        var target = NormalizeAppId(appId);
+        if (!grants.Lifecycle)
+        {
+            await AppendLifecycleAuditAsync(audit, clock, verb, target, tool, grants.ActorUserId, "refused", cancellationToken);
+            return CoreJson.Text(new McpError(
+                $"This credential does not carry the '{AccessTokenScopes.McpLifecycle}' scope, which {tool} requires. " +
+                "A host administrator can issue a Core credential with app control, or run this from their own session."));
+        }
+
+        try
+        {
+            var result = await action(target, cancellationToken);
+            await AppendLifecycleAuditAsync(audit, clock, verb, target, tool, grants.ActorUserId, "succeeded", cancellationToken);
+            return CoreJson.Text(new McpLifecycleResult(target, verb, result.App?.RuntimeState ?? result.Status, null));
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // The attempt failed — an unknown id, a runtime that refused, a manifest problem. Audited
+            // as a failure and returned as a result the model can act on; a thrown error would just
+            // end the turn.
+            await AppendLifecycleAuditAsync(audit, clock, verb, target, tool, grants.ActorUserId, "failed", cancellationToken);
+            return CoreJson.Text(new McpLifecycleResult(target, verb, null, $"Could not {verb} '{target}': {exception.Message}"));
+        }
+    }
+
+    // Caller-supplied text on its way into a durable log and a runtime lookup: bounded and stripped
+    // of control characters, the same treatment every other untrusted label gets.
+    private static string NormalizeAppId(string appId)
+    {
+        var cleaned = new string((appId ?? "").Trim().Where(character => !char.IsControl(character)).ToArray());
+        return cleaned.Length <= 120 ? cleaned : cleaned[..120];
+    }
+
+    private static Task AppendLifecycleAuditAsync(
+        AuditStore audit,
+        IClock clock,
+        string verb,
+        string appId,
+        string tool,
+        string actorUserId,
+        string outcome,
+        CancellationToken cancellationToken)
+        => audit.AppendAsync(
+            new AuditRecord(
+                Id: $"audit_{Guid.NewGuid():N}",
+                Action: $"app.lifecycle.{verb}",
+                ResourceType: "app",
+                ResourceId: appId,
+                Outcome: outcome,
+                ActorUserId: actorUserId,
+                CreatedAt: clock.UtcNow,
+                Details: new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["tool"] = tool,
+                    ["via"] = "mcp",
+                }),
+            cancellationToken);
+}
+
+/// <summary>
+/// What the authenticated caller of this MCP surface may do, resolved once by the endpoint filter
+/// and read by the tools out of <c>HttpContext.Items</c>.
+/// </summary>
+/// <remarks>
+/// Reading is always granted by passing the filter at all; what varies is mutation authority.
+/// An administrator session carries it by role. A scoped access token carries it only with the
+/// <c>mcp:lifecycle</c> scope. A delegated token never carries it, because it does not carry the
+/// scopes of the credential it descends from — role alone must not stand in for the grant.
+/// </remarks>
+internal sealed record McpCallerGrants(bool Lifecycle, string ActorUserId)
+{
+    /// <summary>The <c>HttpContext.Items</c> slot the filter writes and the tools read.</summary>
+    public const string Key = "hosty:mcp-caller-grants";
 }
 
 internal sealed record McpAppList(IReadOnlyList<McpAppSummary> Apps);
@@ -264,3 +437,6 @@ internal sealed record McpHostStatus(string CoreVersion, int Apps, int Running, 
 internal sealed record McpLogTail(string AppId, int Lines, string? Text, string? Error);
 
 internal sealed record McpError(string Error);
+
+/// <summary>One lifecycle mutation's outcome: the state the app landed in, or why it did not.</summary>
+internal sealed record McpLifecycleResult(string AppId, string Action, string? RuntimeState, string? Error);
