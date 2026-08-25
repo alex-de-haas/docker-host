@@ -57,5 +57,6 @@ It carries **app** tools only. Host control — installing, starting, stopping, 
 here, and is not something to attempt through app tools. If the user wants those, tell them to use
 the `hosty` CLI on the host, or Hosty Shell.
 
-Core's own read-only observability lives on a separate MCP endpoint (`/api/mcp`), which is a
-different server entry. Do not assume the two are the same connection.
+Core's own tools live on a separate MCP endpoint (`/api/mcp`), which is a different server entry —
+reads for any accepted credential, and lifecycle control (start/stop/restart) only when the
+credential carries the `mcp:lifecycle` scope. Do not assume the two are the same connection.

@@ -88,6 +88,7 @@ internal static class CoreJson
 [JsonSerializable(typeof(McpAppDetail))]
 [JsonSerializable(typeof(McpHostStatus))]
 [JsonSerializable(typeof(McpLogTail))]
+[JsonSerializable(typeof(McpLifecycleResult))]
 [JsonSerializable(typeof(McpError))]
 // App-reported audit events (the AI gateway's lifecycle/approval reports).
 [JsonSerializable(typeof(AppAuditReportRequest))]

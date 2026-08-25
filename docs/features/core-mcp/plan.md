@@ -1,8 +1,8 @@
 # Core MCP Mutations — Lifecycle Tools With Core-Owned Approval
 
-Status: Ready
+Status: In Progress
 Created: 2026-08-24
-Updated: 2026-08-24
+Updated: 2026-08-25
 
 [feature.md](feature.md) records why lifecycle mutations were left out of Core MCP: "Core MCP has no
 approval mechanism of its own, and the assistant's gate lives in its harness, which pauses only that
@@ -40,11 +40,14 @@ per-call audit path.
 
 ## Deliverables
 
-- [ ] Mutation tools on Core MCP with honest annotations, gated on mutation scopes, refusing with
+- [x] Mutation tools on Core MCP with honest annotations, gated on mutation scopes, refusing with
       the scope named.
-- [ ] Scope vocabulary for lifecycle mutations, recorded as a stable contract next to `mcp:read`.
-- [ ] Audit lines for every mutation call and refusal.
-- [ ] feature.md rewritten: the "mutations are absent on purpose" section replaced by the shipped
+- [x] Scope vocabulary for lifecycle mutations, recorded as a stable contract next to `mcp:read` —
+      including the audience binding (`mcp:lifecycle` pairs only with `hosty:core`) and the rule the
+      implementation surfaced: a delegated token never carries lifecycle, because it cannot prove
+      the scopes of the credential it descends from.
+- [x] Audit lines for every mutation call and refusal.
+- [x] feature.md rewritten: the "mutations are absent on purpose" section replaced by the shipped
       authorization model.
 - [ ] Live verification through a stock external client: a token with the scope restarts a real
       app; the same client without the scope is refused; both appear in the audit log.

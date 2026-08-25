@@ -287,6 +287,36 @@ internal static class AccessTokenEndpoints
                             statusCode: StatusCodes.Status400BadRequest);
                     }
 
+                    // mcp:lifecycle is Core's own lifecycle authority, so it pairs only with the
+                    // hosty:core audience. On an app audience it would be a scope nothing ever
+                    // reads — issued cleanly, listed, and silently inert, which is the same trap
+                    // the unknown-scope refusal above closes.
+                    if (audience is not null &&
+                        !string.Equals(audience, AccessTokenScopes.CoreAudience, StringComparison.Ordinal) &&
+                        AccessTokenScopes.Grants(scopes, AccessTokenScopes.McpLifecycle))
+                    {
+                        return CoreJson.Json(
+                            new ErrorResponse(
+                                "scope_invalid_for_audience",
+                                $"The '{AccessTokenScopes.McpLifecycle}' scope applies only to the '{AccessTokenScopes.CoreAudience}' audience."),
+                            statusCode: StatusCodes.Status400BadRequest);
+                    }
+
+                    // mcp:read is the entry to the MCP surface; mcp:lifecycle extends it and never
+                    // replaces it. A lifecycle-only credential would pass every issuance check and
+                    // then be refused on every call — minted cleanly, listed, and unable to invoke
+                    // the very tools it names, which is the silently-inert trap these guards exist
+                    // to refuse while the operator is still looking at the form.
+                    if (AccessTokenScopes.Grants(scopes, AccessTokenScopes.McpLifecycle) &&
+                        !AccessTokenScopes.Grants(scopes, AccessTokenScopes.McpRead))
+                    {
+                        return CoreJson.Json(
+                            new ErrorResponse(
+                                "scope_requires_read",
+                                $"The '{AccessTokenScopes.McpLifecycle}' scope requires '{AccessTokenScopes.McpRead}' alongside it."),
+                            statusCode: StatusCodes.Status400BadRequest);
+                    }
+
                     // Core MCP is an administrator surface, and a credential cannot grant what its
                     // approver does not hold. Refused here so an ordinary user is told why, rather
                     // than handed a credential that every call will refuse; the authoritative check

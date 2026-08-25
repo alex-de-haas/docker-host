@@ -31,7 +31,9 @@ public sealed class McpHttpTests
             .Select(tool => tool.GetProperty("name").GetString() ?? "")
             .Order(StringComparer.Ordinal)
             .ToArray();
-        Assert.Equal(["get_app", "get_host_status", "list_apps", "tail_app_logs"], names);
+        Assert.Equal(
+            ["get_app", "get_host_status", "list_apps", "restart_app", "start_app", "stop_app", "tail_app_logs"],
+            names);
 
         var listed = await CallToolAsync(client, admin, "list_apps", new { });
         var summaries = listed.GetProperty("apps").EnumerateArray().ToArray();
@@ -54,31 +56,46 @@ public sealed class McpHttpTests
     }
 
     [Fact]
-    public async Task EveryToolDeclaresItselfReadOnlyOnTheWire()
+    public async Task EveryToolDeclaresWhatItIsOnTheWire()
     {
-        // Core MCP is read-only by design, but a client cannot know that from the design — it reads
-        // `annotations.readOnlyHint`. Without it an agent client with an approval gate treats these
-        // tools as possibly-mutating: observed 2026-08-20 with `codex exec`, where every call came
-        // back "user cancelled MCP tool call" because nothing could approve it unattended.
+        // A client cannot know a tool's nature from the design — it reads `annotations`. A read tool
+        // without `readOnlyHint: true` is uncallable by a gated unattended client (observed
+        // 2026-08-20 with `codex exec`: every call came back "user cancelled"), and a mutation tool
+        // *with* it would sail through every filter built on the hint — the connector's, the
+        // facade's — as though it were safe. Both directions of the lie are asserted, on the wire,
+        // because an attribute that stopped mapping to the payload would leave every other test green.
         //
         // Hosty already holds *apps* to this bar — `hosty mcp` refuses to export a tool that does not
-        // declare it — so Core failing to declare it was Core exempting itself from its own contract.
+        // declare itself — so Core failing to declare is Core exempting itself from its own contract.
         await using var harness = await CoreHttpHarness.StartAsync();
         var admin = await SeedSessionAsync(harness, "host.admin");
         using var client = harness.CreateClient();
         await InitializeAsync(client, admin);
 
+        string[] mutations = ["start_app", "stop_app", "restart_app"];
         var tools = await CallAsync(client, admin, "tools/list", new { });
         foreach (var tool in tools.GetProperty("tools").EnumerateArray())
         {
-            var name = tool.GetProperty("name").GetString();
+            var name = tool.GetProperty("name").GetString()!;
             Assert.True(
                 tool.TryGetProperty("annotations", out var annotations),
                 $"{name} declares no annotations, so a client must assume it may mutate.");
-            Assert.True(
-                annotations.TryGetProperty("readOnlyHint", out var readOnly) && readOnly.GetBoolean(),
-                $"{name} does not declare readOnlyHint: true.");
+
+            var readOnly = annotations.TryGetProperty("readOnlyHint", out var hint) && hint.GetBoolean();
+            if (mutations.Contains(name))
+            {
+                Assert.False(readOnly, $"{name} mutates but claims readOnlyHint: true.");
+            }
+            else
+            {
+                Assert.True(readOnly, $"{name} does not declare readOnlyHint: true.");
+            }
         }
+
+        // Stopping interrupts an app's users; a filter keyed on destructiveHint must see that.
+        var stop = tools.GetProperty("tools").EnumerateArray()
+            .Single(tool => tool.GetProperty("name").GetString() == "stop_app");
+        Assert.True(stop.GetProperty("annotations").GetProperty("destructiveHint").GetBoolean());
     }
 
     [Fact]
