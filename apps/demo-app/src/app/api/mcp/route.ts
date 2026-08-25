@@ -231,14 +231,17 @@ async function resolveActor(request: Request, tool: string | undefined): Promise
     return { ok: true, actor: { userId: introspected.sub, hostRole: introspected.role } };
   }
 
-  // Core being unreachable is not a bad credential, and answering 401 would tell a client with a
-  // perfectly good token to go and get another one. 503 says what is true: nothing could be checked.
-  if (introspected.error && introspected.error.code !== "introspection_unconfigured") {
+  // Any error at all means the credential was never actually checked — Core unreachable, this app
+  // not configured to reach it, or an answer that could not be read. All of them are 503: answering
+  // 401 would tell a client with a perfectly good token to go and get another one, to fix a fault on
+  // this side of the wire. An `active: false` with no error is the opposite — Core checked and said
+  // no — and only that is a 401.
+  if (introspected.error) {
     return {
       ok: false,
       status: 503,
       code: introspected.error.code,
-      message: "This app could not reach Hosty Core to validate the credential.",
+      message: "This app could not validate the credential with Hosty Core.",
     };
   }
 

@@ -3,7 +3,8 @@ namespace Haas.Hosty.Core;
 // Resolution for scoped access tokens (docs/features/scoped-access-tokens/feature.md).
 //
 // Two surfaces consult this and nothing else does: Core MCP, which accepts a bearer scoped to
-// `core`, and the introspection endpoint, through which an app validates a bearer scoped to itself.
+// `hosty:core`, and the introspection endpoint, through which an app validates a bearer scoped to
+// itself.
 // Both ask the same question — "is this token live, for *my* audience, and whose is it" — so it is
 // answered once here rather than twice in their own shapes.
 //

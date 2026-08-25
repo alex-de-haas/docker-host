@@ -137,7 +137,9 @@ internal static class AccessTokenScopes
     // mutation scopes are defined by the feature that introduces mutations, not here.
     public const string McpRead = "mcp:read";
 
-    private static readonly string[] Known = [McpRead];
+    /// <summary>Every scope this host issues. Public so a refusal can name them rather than leaving
+    /// the caller to guess what it should have asked for.</summary>
+    public static readonly string[] Known = [McpRead];
 
     public static bool IsKnownScope(string scope)
         => Known.Contains(scope, StringComparer.Ordinal);
