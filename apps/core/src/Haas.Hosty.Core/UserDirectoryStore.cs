@@ -109,7 +109,19 @@ internal sealed record AuthSessionRecord(
     string? Kind = null,
     // Operator-supplied name, shown in the credential list so a lost device can be recognized and
     // revoked. Browser sessions have none.
-    string? Label = null);
+    string? Label = null,
+    // What this credential may be presented to: a single app id, or `hosty:core`. Null is the credential
+    // this feature did not change — a browser session or a full-role access token, which is every
+    // record written before scopes shipped.
+    //
+    // Non-null makes the record a *scoped* credential, and the rule that gives that word meaning is
+    // in CoreSessionAuthorization: a record with an audience is refused as a Core session outright.
+    // One audience per credential, never a list: a bearer is handed to the party it addresses, so a
+    // credential valid at two audiences lets the first replay it against the second.
+    string? Audience = null,
+    // What the credential may do at that audience (AccessTokenScopes). Null/empty on an unscoped
+    // record; an audience without scopes cannot be issued, because it could do nothing anyway.
+    IReadOnlyList<string>? Scopes = null);
 
 internal sealed record LocalPasswordCredentialRecord(
     string UserId,

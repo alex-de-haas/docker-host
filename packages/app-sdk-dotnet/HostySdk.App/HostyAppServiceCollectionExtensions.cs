@@ -22,6 +22,20 @@ public static class HostyAppServiceCollectionExtensions
     }
 
     /// <summary>
+    /// Registers <see cref="HostyScopedTokenClient"/>, which validates a scoped access token an
+    /// external client presented straight to this app. Independent of the auth stack for the same
+    /// reason secrets are: the endpoint that needs it is usually an app's MCP surface rather than a
+    /// browser-facing one, and it adds the shared Core client and options only when missing.
+    /// </summary>
+    public static IServiceCollection AddHostyScopedTokens(this IServiceCollection services, HostyAppOptions options)
+    {
+        services.TryAddSingleton(options);
+        AddCoreHttpClient(services, options);
+        services.TryAddSingleton<HostyScopedTokenClient>();
+        return services;
+    }
+
+    /// <summary>
     /// Wires the Hosty app auth stack: the Core-backed identity validator behind the
     /// platform-decided 30s positive cache, an <c>IHttpClientFactory</c> client aimed at
     /// Core, and the <c>Hosty</c> authentication scheme. Per the trust model in

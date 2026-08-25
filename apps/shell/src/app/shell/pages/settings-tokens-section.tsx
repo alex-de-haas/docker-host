@@ -2,22 +2,32 @@
 
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useState } from "react";
-import { Check, Copy, KeyRound, LoaderCircle, MonitorSmartphone, Plus, Trash2 } from "lucide-react";
+import { Check, Copy, KeyRound, LoaderCircle, MonitorSmartphone, Plus, ShieldAlert, ShieldCheck, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { redirectToCoreLoginIfAuthRequired } from "../core-api";
-import type { AccessTokenView, DeviceAuthorizationRequestView } from "../types";
+import type { AccessTokenView, CoreApp, DeviceAuthorizationRequestView } from "../types";
 import { EmptyState, IconButton, InlineError } from "../ui";
+
+// What a credential may be limited to. "" is the credential this surface always issued — full role,
+// every surface — and it stays the default: narrowing is a deliberate choice, and a form that
+// quietly picked a narrow default would produce credentials that mysteriously do not work.
+const FULL_ACCESS = "";
+
+// Core's own MCP endpoint as an audience. The colon keeps it out of the app-id space — an app id
+// admits only [a-z0-9._-], so no installed app can ever claim this one.
+const CORE_AUDIENCE = "hosty:core";
 
 // Credentials for clients that have no browser: a device console, a native client, a
 // script. Two ways in — a device approves itself here after showing a code, or a credential is created
 // here and its value shown once — and one list to revoke what exists.
 //
-// Both produce the same thing, and it is worth being blunt about what that is: Core has no scopes, so
-// the credential carries the whole role of whoever approves it. This surface says so rather than
-// letting the word "token" imply something narrower.
+// A credential created here is full-role by default — it can do everything its approver can — and
+// this surface says so rather than letting the word "token" imply something narrower. The Access
+// selector is the way to mint one that is genuinely narrower: it names a single audience and the
+// scope it carries there, and Core refuses it everywhere else (scoped-access-tokens).
 export function SettingsTokensSection({
   coreOrigin,
   sendCsrfJson,
@@ -30,6 +40,11 @@ export function SettingsTokensSection({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [label, setLabel] = useState("");
+  const [audience, setAudience] = useState(FULL_ACCESS);
+  // Apps that can actually receive a scoped credential: only an app declaring an `mcp` interface
+  // has anything to validate one against, and offering the rest would produce credentials nothing
+  // accepts. Empty for an ordinary user, whose /api/apps listing is their own.
+  const [mcpApps, setMcpApps] = useState<{ id: string; displayName: string }[]>([]);
   // Shown once, right after creation, and never retrievable again.
   const [issued, setIssued] = useState<{ label: string; token: string } | null>(null);
   const [copied, setCopied] = useState(false);
@@ -58,6 +73,26 @@ export function SettingsTokensSection({
     } catch {
       setError("Could not reach Core.");
     }
+  }, [coreOrigin]);
+
+  // Read once rather than on the five-second poll below: the app roster changes when someone
+  // installs something, not while a credential form is open.
+  useEffect(() => {
+    void (async () => {
+      try {
+        const response = await fetch(`${coreOrigin}/api/apps`, { credentials: "include" });
+        if (!response.ok) return;
+        const apps = ((await response.json()) as { apps?: CoreApp[] }).apps ?? [];
+        setMcpApps(
+          apps
+            .filter((app) => Boolean(app.interfaces?.mcp?.length))
+            .map((app) => ({ id: app.id, displayName: app.displayName })),
+        );
+      } catch {
+        // The selector simply offers Core only. This list is a convenience, and failing to load it
+        // must not break the form that issues ordinary credentials.
+      }
+    })();
   }, [coreOrigin]);
 
   // A pending code expires in ten minutes and a device is usually waiting on this screen right now, so
@@ -89,7 +124,12 @@ export function SettingsTokensSection({
   const create = (event: FormEvent) => {
     event.preventDefault();
     return run(async () => {
-      const response = await sendCsrfJson(`${coreOrigin}/api/auth/credentials`, { label });
+      // Audience and scopes travel together or not at all; Core refuses half of a pair, so the
+      // form never assembles one.
+      const response = await sendCsrfJson(
+        `${coreOrigin}/api/auth/credentials`,
+        audience === FULL_ACCESS ? { label } : { label, audience, scopes: ["mcp:read"] },
+      );
       const created = (await response.json()) as { label: string; token: string };
       setIssued({ label: created.label, token: created.token });
       setLabel("");
@@ -108,8 +148,9 @@ export function SettingsTokensSection({
         <h3 className="text-sm font-medium">Access tokens</h3>
         <p className="text-xs text-muted-foreground">
           Credentials for clients that cannot open a browser — a native client, a script, a device
-          console. A credential carries the full role of whoever approves it, so approving one from an
-          administrator account grants administrator access to this host until it is revoked.
+          console, an agent client. A credential carries the full role of whoever approves it unless it
+          is limited to one audience below, so approving an unlimited one from an administrator account
+          grants administrator access to this host until it is revoked.
         </p>
       </div>
 
@@ -165,6 +206,23 @@ export function SettingsTokensSection({
               className="w-64"
             />
           </div>
+          <div className="space-y-1">
+            <Label htmlFor="token-audience">Access</Label>
+            <select
+              id="token-audience"
+              value={audience}
+              onChange={(event) => setAudience(event.target.value)}
+              className="h-9 w-72 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs"
+            >
+              <option value={FULL_ACCESS}>Full access — everything you can do</option>
+              <option value={CORE_AUDIENCE}>Core MCP — read-only</option>
+              {mcpApps.map((app) => (
+                <option key={app.id} value={app.id}>
+                  {app.displayName} — read-only tools
+                </option>
+              ))}
+            </select>
+          </div>
           <Button type="submit" disabled={busy || label.trim().length === 0}>
             {busy ? <LoaderCircle className="size-4 animate-spin" /> : <Plus className="size-4" />}
             Create
@@ -172,6 +230,9 @@ export function SettingsTokensSection({
         </div>
         <p className="text-xs text-muted-foreground">
           For a client that cannot run the device flow. Pass the value as an <code>Authorization: Bearer</code> header.
+          {audience === FULL_ACCESS
+            ? " A full-access credential can do everything you can, on every Core surface."
+            : " A limited credential reaches only what is selected here and is refused everywhere else, including every other app."}
         </p>
       </form>
 
@@ -209,6 +270,7 @@ export function SettingsTokensSection({
               <TableRow>
                 <TableHead>Label</TableHead>
                 <TableHead>Kind</TableHead>
+                <TableHead>Access</TableHead>
                 <TableHead>Approved by</TableHead>
                 <TableHead>Last used</TableHead>
                 <TableHead className="w-12" />
@@ -223,6 +285,22 @@ export function SettingsTokensSection({
                       {credential.kind === "device" ? <MonitorSmartphone className="size-3.5" /> : <KeyRound className="size-3.5" />}
                       {credential.kind === "device" ? "Device" : "Created here"}
                     </span>
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {credential.audience ? (
+                      <span className="inline-flex items-center gap-1">
+                        <ShieldCheck className="size-3.5" />
+                        {credential.audience === CORE_AUDIENCE ? "Core MCP" : credential.audience}
+                        {credential.scopes?.length ? ` · ${credential.scopes.join(" ")}` : null}
+                      </span>
+                    ) : (
+                      // Said in words, not left as a blank cell: "no audience" is the widest
+                      // credential here, and a reader should not have to infer that from an absence.
+                      <span className="inline-flex items-center gap-1">
+                        <ShieldAlert className="size-3.5" />
+                        Full access
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell className="text-muted-foreground">{credential.userDisplayName ?? credential.userId}</TableCell>
                   <TableCell className="text-muted-foreground">{formatWhen(credential.lastSeenAt)}</TableCell>

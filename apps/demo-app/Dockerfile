@@ -23,7 +23,7 @@ ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 ENV HOSTY_APP_ID=com.haas.demo-app
 # Keep in step with apps/demo-app/manifest.json + package.json (enforced by scripts/check-versions.mjs).
-ENV HOSTY_APP_VERSION=0.9.0
+ENV HOSTY_APP_VERSION=0.10.0
 # gosu lets the entrypoint drop from root to the unprivileged `node` user after fixing data-dir
 # ownership (see docker-entrypoint.sh).
 RUN apt-get update \

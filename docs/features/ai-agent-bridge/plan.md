@@ -2,16 +2,21 @@
 
 Status: In Progress
 Created: 2026-06-09
-Updated: 2026-08-20
+Updated: 2026-08-24
 
 The shared model, the boundaries and the decision log live in [feature.md](feature.md) and are in
 force. This document holds only what is **not built**: the rollout checklist, and the design for the
 steps that have no feature folder of their own yet.
 
 Each step is designed here and then implemented under its own plan, which is what carries the Ready
-approval. Two sibling plans grew out of this work and are tracked separately rather than as steps:
+approval. Sibling plans grew out of this work and are tracked separately rather than as steps:
 [delegated-token-exchange](../delegated-token-exchange/plan.md), which step 9 cannot ship without,
-and [agent-background-sessions](../agent-background-sessions/plan.md).
+and [agent-background-sessions](../agent-background-sessions/plan.md). On 2026-08-24 four more were
+drafted against the gaps this document records:
+[scoped-access-tokens](../scoped-access-tokens/feature.md) (the token scopes and audit callback of open
+question 3 and the step-6 plaintext-admin-token cost), [mcp-facade](../mcp-facade/plan.md) (step-7
+topology 4's deferred "mcp-hub", placed on the existing gateway system app),
+[mcp-oauth](../mcp-oauth/plan.md), and [core-mcp](../core-mcp/plan.md) mutations.
 
 ## Deliverables
 
@@ -102,12 +107,14 @@ plaintext in the client config, which `claude mcp get` prints back unmasked. Tok
 exist, so "read-only" cannot be expressed — Core MCP being read-only is a property of the endpoint,
 not of the credential.
 
-**Paid off for the app path on 2026-08-16, and only there.** The connector's entry is
+**Paid off for the app path on 2026-08-16, and for Core MCP on 2026-08-24.** The connector's entry is
 `{"command":"hosty","args":["mcp","--user","…"],"env":{}}` — `claude mcp get` prints it back with
-nothing to redact. The two Core MCP entries above still carry admin tokens in plaintext, because
-Core MCP is reached as an HTTP server rather than through the connector. Removing that would mean
-either exporting Core's own tools through `hosty mcp` or having token scopes, neither of which is
-built.
+nothing to redact. The two Core MCP entries above carried admin tokens in plaintext, because Core MCP
+is reached as an HTTP server rather than through the connector; the fix was the second of the two
+options recorded here — [scoped-access-tokens](../scoped-access-tokens/feature.md) shipped, and a
+credential with audience `hosty:core` and scope `mcp:read` is refused as a Core session everywhere
+else. An
+existing client config keeps working; it is an admin token until it is replaced with a scoped one.
 
 One edge case is recorded for every external path, this step included: a client holding previously
 issued Core tokens keeps calling an app MCP endpoint while Core is down or unreachable, because
@@ -261,10 +268,13 @@ edge case here.
 - **What is the disposable-runtime and data-isolation contract for validation?** Current feeds and
   source overrides are installed-app mechanisms, not disposable environments, and can affect
   production lifecycle state or data. Must be resolved before step 12 is implemented.
-- **What does the audit callback contract look like?** An external client acting on an app never
-  passes through Core, so the action is invisible to Hosty audit unless the app or client reports it.
-  Until this exists, external clients stay read-only by scope — so this gates the write half of steps
-  6 and 7.
+- **What does the audit callback contract look like?** **Answered for the scoped-token path on
+  2026-08-24**, and the answer is that no callback contract was needed: an external client presenting
+  a [scoped access token](../scoped-access-tokens/feature.md) *does* pass through Core, because the
+  app introspects the credential on every call, and the request names the tool being invoked. Core
+  writes `auth.credential.used` for that call and for every refusal. Still open for the other two
+  paths — a delegated token is validated locally inside the app, and `hosty mcp` calls apps directly,
+  so neither is visible to Hosty audit today.
 
 ## Verification
 

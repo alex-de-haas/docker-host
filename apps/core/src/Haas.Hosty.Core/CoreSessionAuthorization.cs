@@ -205,6 +205,29 @@ internal static class CoreSessionAuthorization
             return Unauthorized("session_invalid", "Core session is missing, expired, or revoked.");
         }
 
+        // A scoped credential is not a session, and this is the line that makes that true.
+        //
+        // Audience and scopes were added to the *same* record deliberately (revocation, the idle
+        // window and the logout cascade already work on it), which means every existing /api route
+        // would otherwise accept one the moment it was issued — a credential minted to read one
+        // app's MCP tools would install apps. So the refusal lives here, once, ahead of every route,
+        // rather than being an opt-in each route could forget. A route that wants to accept a scoped
+        // credential says so itself and checks the scope it needs (Core MCP does).
+        //
+        // 403 rather than 401: the credential is valid and the holder knows what they presented, so
+        // naming the audience is the difference between a fixable mistake and an unexplained refusal.
+        if (session.Audience is { } audience)
+        {
+            return new CoreSessionAuthorizationResult(
+                null,
+                CoreJson.Json(
+                    new ErrorResponse(
+                        "credential_scoped",
+                        $"This credential is scoped to '{audience}' and cannot be used as a Core session."),
+                    statusCode: StatusCodes.Status403Forbidden),
+                Terminal: true);
+        }
+
         var user = state.Users.FirstOrDefault(candidate => string.Equals(candidate.Id, session.UserId, StringComparison.Ordinal));
         if (user is null)
         {
@@ -233,7 +256,9 @@ internal static class CoreSessionAuthorization
     // Advance the idle window on authenticated use, throttled. Best-effort: a concurrent write that already
     // removed or revoked the session simply leaves it unchanged (the FirstOrDefault guard inside the
     // mutation), and a failure here must not fail the authenticated request, so it is fire-and-forget-safe.
-    private static async Task TouchSessionAsync(
+    // Internal so scoped-credential resolution slides the same window the session path does: a token used
+    // daily through an app's MCP endpoint is in use, and would otherwise idle out as though it were not.
+    internal static async Task TouchSessionAsync(
         UserDirectoryStore users,
         AuthSessionRecord session,
         DateTimeOffset now,
