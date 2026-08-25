@@ -115,15 +115,19 @@ export class McpFacade {
       invokedTool,
     );
     if (!actor.active) {
-      // Core unreachable is not a bad credential: answering 401 would send a client with a perfectly
-      // good token off to get another one while the truth is that nothing could be checked.
-      const unreachable = actor.error && actor.error.code !== "introspection_unconfigured";
-      send(response, unreachable ? 503 : 401, {
+      // Any error means the credential was never actually checked — Core unreachable, this app not
+      // configured to reach it, or a body that could not be read. All of them are 503: answering 401
+      // would send a client with a perfectly good token off to get another one over a fault on this
+      // side. Only an `active: false` with no error is Core having checked and said no.
+      const unchecked = Boolean(actor.error);
+      send(response, unchecked ? 503 : 401, {
         jsonrpc: "2.0",
         id: null,
         error: {
-          code: unreachable ? -32000 : -32001,
-          message: unreachable ? "This app could not reach Hosty Core to validate the credential." : "The credential is not valid for this app.",
+          code: unchecked ? -32000 : -32001,
+          message: unchecked
+            ? "This app could not validate the credential with Hosty Core."
+            : "The credential is not valid for this app.",
         },
       });
       return true;
