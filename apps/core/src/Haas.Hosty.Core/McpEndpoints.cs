@@ -34,7 +34,7 @@ internal static class McpEndpoints
             var users = http.RequestServices.GetRequiredService<UserDirectoryStore>();
             var clock = http.RequestServices.GetRequiredService<IClock>();
 
-            // A credential scoped to `core` is checked first, because the session path refuses one
+            // A credential scoped to `hosty:core` is checked first, because the session path refuses
             // outright — falling through would answer "not a session" to a credential minted for
             // exactly this endpoint. Every tool here declares `readOnlyHint: true`, so `mcp:read` is
             // the whole of what this surface offers, and a scoped credential without it is refused
@@ -53,7 +53,7 @@ internal static class McpEndpoints
                     // administrator — re-read here rather than trusted from issuance, because a role
                     // downgrade has to reach a long-lived credential. Without this check the scope
                     // would have been an escalation: any signed-in user could mint themselves a
-                    // `core` credential and read the whole fleet through it.
+                    // `hosty:core` credential and read the whole fleet through it.
                     if (!AppAccessPolicy.IsAdmin(scoped.User))
                     {
                         return CoreJson.Json(

@@ -76,9 +76,17 @@ property the design exists for: an operator who revokes a credential has revoked
 to explain. The accepted cost is that while Core is down, this credential cannot be validated — the
 same envelope as delegated-token minting, and a state in which the host is already degraded.
 
-The SDK helpers therefore distinguish *inactive* from *unreachable*, and callers owe their clients
-different answers: 401 for the first, 503 for the second. Collapsing them would tell a client with a
-perfectly good credential to go and get another one whenever Core happens to be restarting.
+The SDK helpers therefore distinguish *inactive* from *not established*, and callers owe their
+clients different answers: 401 for the first, 503 for the second. Collapsing them would tell a client
+with a perfectly good credential to go and get another one whenever Core happens to be restarting.
+
+Only a literal `active: false` is the first. Core unreachable, this app unconfigured, and **a 200
+whose body cannot be read as an introspection result** are all the second — the last one because a
+wire-format change or a mangling proxy is a fault on the host's side of the wire, not a verdict on
+the credential. Fail-closed and "not a grant" are unchanged in every case; what differs is only what
+the caller is told. The active shape is required whole (a subject, and scopes as a list of strings),
+so a payload claiming success that cannot authorize anything is treated as unreadable rather than
+half-believed.
 
 ### Introspection is the audit callback
 
@@ -103,6 +111,12 @@ An unknown scope is **refused at issuance**, never dropped. A typo silently beco
 credential is a credential that mysteriously does not work, with nothing on screen to explain it.
 Audience and scopes arrive as a pair or not at all, and an audience naming an app that is not
 installed is refused while the operator is still looking at the form.
+
+The unknown-scope check runs **before** the pair check, and the order is load-bearing. Normalizing an
+unknown scope yields nothing, which the pair check cannot tell from "asked for no scopes" — so a
+request plainly asking to be narrow (`{scopes: ["mcp:write"]}`, no audience) would have been answered
+with a full-role credential accepted as a Core session. Refusing an unusable list first, by name, is
+what keeps this validation from producing the exact failure it exists to prevent.
 
 ## Core MCP Accepts One
 
@@ -166,7 +180,9 @@ deliberate choice.
 - Access re-checked per call: an assignment removed mid-life turns a credential inactive, beside an
   administrator's credential unaffected — so the refusal is shown to come from the access rule
   rather than from the credential going stale.
-- Issuance refusing half a pair, an unknown scope, and an audience that is not installed.
+- Issuance refusing half a pair, an unknown scope, an unknown scope **with no audience** (the
+  ordering hole, which would otherwise mint a full-role credential), and an audience that is not
+  installed.
 - Core MCP accepting a `hosty:core`-scoped credential and refusing one scoped to an app.
 - The scope-is-not-an-escalation pair: an ordinary user refused at issuance, and a credential issued
   to an administrator refused at use once that administrator is demoted.

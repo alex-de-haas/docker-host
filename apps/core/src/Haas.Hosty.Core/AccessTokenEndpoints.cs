@@ -250,6 +250,22 @@ internal static class AccessTokenEndpoints
                     // silently, then puzzled over when they did not work.
                     var audience = string.IsNullOrWhiteSpace(input.Audience) ? null : input.Audience.Trim();
                     var scopes = AccessTokenScopes.TryNormalize(input.Scopes);
+
+                    // A supplied list that normalizes to nothing means an unknown scope, and it is
+                    // refused *before* the parity check below — which cannot tell "asked for nothing"
+                    // from "asked for something we rejected" and would read this as an ordinary
+                    // unscoped request. That is the one failure this whole validation exists to
+                    // prevent, arriving through the validation itself: a request plainly asking to be
+                    // narrow would have been answered with a full-role credential.
+                    if (input.Scopes is { Count: > 0 } && scopes is null)
+                    {
+                        return CoreJson.Json(
+                            new ErrorResponse(
+                                "scope_unknown",
+                                $"Unknown scope. This host issues: {string.Join(", ", AccessTokenScopes.Known)}."),
+                            statusCode: StatusCodes.Status400BadRequest);
+                    }
+
                     if ((audience is null) != (scopes is null))
                     {
                         return CoreJson.Json(

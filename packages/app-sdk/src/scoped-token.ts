@@ -63,15 +63,21 @@ export async function introspectScopedToken(
   // address than a host process does — so a guessed `localhost` would be right in one runtime and
   // silently wrong in the other. This is the same origin every other Core call in this SDK uses.
   const coreOrigin = options.coreOrigin?.trim() || process.env.HOSTY_CORE_ORIGIN?.trim();
-  if (!token || !appId || !serviceToken || !coreOrigin) {
+  if (!token) {
+    // Nothing was presented, which is the caller's own business and not a failure of this app.
+    return { active: false, error: { status: null, code: "credential_missing", message: "No credential was presented." } };
+  }
+
+  // Distinct from the above on purpose: here a credential *was* presented and could not be checked,
+  // because this app is not configured to reach Core. Answering the client "invalid credential"
+  // would send someone to rotate a token that may be perfectly good, to fix a fault on this side.
+  if (!appId || !serviceToken || !coreOrigin) {
     return {
       active: false,
       error: {
         status: null,
         code: "introspection_unconfigured",
-        message: !token
-          ? "No credential was presented."
-          : "HOSTY_APP_ID, HOSTY_APP_SERVICE_TOKEN, and HOSTY_CORE_ORIGIN must all be configured.",
+        message: "HOSTY_APP_ID, HOSTY_APP_SERVICE_TOKEN, and HOSTY_CORE_ORIGIN must all be configured.",
       },
     };
   }
@@ -131,18 +137,43 @@ export async function introspectScopedToken(
     };
   }
 
-  // Fail closed on the shape: only a literal `true` is active. Anything else — absent, a string, the
-  // wrong nesting — means the answer could not be read, and an unreadable answer is not a grant.
   const body = payload as { active?: unknown; sub?: unknown; role?: unknown; scopes?: unknown };
-  if (body?.active !== true || typeof body.sub !== "string") {
+
+  // A literal `false` is an answer: Core checked and said no.
+  if (body?.active === false) {
     return { active: false };
+  }
+
+  // Anything else is a body this helper could not read, and the two must not collapse into one
+  // result. Fail closed either way — an unreadable answer is never a grant — but report it as an
+  // error, because a caller turns "not valid" into 401 and "could not be established" into 503, and
+  // a wire-format change or a mangling proxy would otherwise look exactly like a bad credential.
+  //
+  // The whole active shape is required, not just `active`: a payload claiming success with no
+  // subject, or with scopes that are not a list of strings, cannot authorize anything, and a caller
+  // reading only `active` must not be handed one.
+  if (
+    body?.active !== true ||
+    typeof body.sub !== "string" ||
+    !body.sub ||
+    !Array.isArray(body.scopes) ||
+    body.scopes.some((scope) => typeof scope !== "string")
+  ) {
+    return {
+      active: false,
+      error: {
+        status: response.status,
+        code: "core_response_invalid",
+        message: "Core answered with a body this client could not read as an introspection result.",
+      },
+    };
   }
 
   return {
     active: true,
     sub: body.sub,
     role: typeof body.role === "string" ? body.role : null,
-    scopes: Array.isArray(body.scopes) ? body.scopes.filter((scope): scope is string => typeof scope === "string") : [],
+    scopes: body.scopes as string[],
   };
 }
 

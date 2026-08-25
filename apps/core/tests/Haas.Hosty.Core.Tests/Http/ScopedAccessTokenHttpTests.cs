@@ -214,6 +214,15 @@ public sealed class ScopedAccessTokenHttpTests
             client, HttpMethod.Post, "/api/auth/credentials", owner, new { label = "a", scopes = new[] { "mcp:read" } });
         Assert.Equal(HttpStatusCode.BadRequest, scopesOnly.StatusCode);
 
+        // The hole this ordering exists to close: an unknown scope with *no* audience normalizes to
+        // null, which the parity check above reads as "asked for nothing" — so a request plainly
+        // asking to be narrow was answered with a full-role credential accepted as a Core session.
+        using var unknownScopeAlone = await SendAsync(
+            client, HttpMethod.Post, "/api/auth/credentials", owner,
+            new { label = "a", scopes = new[] { "mcp:write" } });
+        Assert.Equal(HttpStatusCode.BadRequest, unknownScopeAlone.StatusCode);
+        Assert.Equal("scope_unknown", (await ReadJsonAsync(unknownScopeAlone)).GetProperty("code").GetString());
+
         // A typo in a scope must not quietly become a narrower credential nobody asked for.
         using var unknownScope = await SendAsync(
             client, HttpMethod.Post, "/api/auth/credentials", owner,

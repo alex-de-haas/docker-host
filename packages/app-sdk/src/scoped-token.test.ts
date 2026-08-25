@@ -78,21 +78,43 @@ describe("introspectScopedToken", () => {
     expect(unreachable.active === false && unreachable.error?.code).toBe("introspection_unavailable");
   });
 
-  it("fails closed on every answer that is not a literal active:true with a subject", async () => {
-    // The hint being optional elsewhere in this platform is exactly why: a truthy-looking value, a
-    // missing subject, or an unreadable body all mean "we could not establish this", never a grant.
+  it("fails closed on every answer that is not a complete active result, and calls it unreadable", async () => {
+    // Two properties at once. Fail closed: a truthy-looking value, a missing subject, or scopes that
+    // are not a list of strings never authorize anything. And *report* it as an error rather than as
+    // an inactive credential — a caller turns the first into 503 and the second into 401, so
+    // collapsing them would tell a client with a good token to go and get another one whenever a
+    // wire-format change or a mangling proxy garbled the body.
     for (const body of [
-      { active: "true", sub: "user_1" },
+      { active: "true", sub: "user_1", scopes: [] },
       { active: true },
-      { active: true, sub: 42 },
+      { active: true, sub: 42, scopes: [] },
+      { active: true, sub: "user_1" },
+      { active: true, sub: "user_1", scopes: "mcp:read" },
+      { active: true, sub: "user_1", scopes: [1] },
       {},
     ]) {
       vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(200, body)));
-      expect((await introspectScopedToken("hostyat_value")).active).toBe(false);
+      const result = await introspectScopedToken("hostyat_value");
+      expect(result.active).toBe(false);
+      expect(result.active === false && result.error?.code).toBe("core_response_invalid");
     }
 
     vi.stubGlobal("fetch", vi.fn(async () => new Response("<html>", { status: 200 })));
     expect((await introspectScopedToken("hostyat_value")).active).toBe(false);
+  });
+
+  it("separates a credential nobody presented from an app that cannot check one", async () => {
+    // Both are "not active", and a caller owes its client different answers: nothing presented is
+    // the caller's own business, while an unconfigured app means a perfectly good credential went
+    // unchecked because of a fault on this side.
+    vi.stubGlobal("fetch", vi.fn());
+    expect((await introspectScopedToken("")).active === false && (await introspectScopedToken("")).error?.code).toBe(
+      "credential_missing",
+    );
+
+    delete process.env.HOSTY_APP_SERVICE_TOKEN;
+    const unconfigured = await introspectScopedToken("hostyat_value");
+    expect(unconfigured.active === false && unconfigured.error?.code).toBe("introspection_unconfigured");
   });
 
   it("refuses to guess a Core origin when the environment has none", async () => {

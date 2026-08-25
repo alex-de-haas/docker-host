@@ -112,7 +112,8 @@ not of the credential.
 nothing to redact. The two Core MCP entries above carried admin tokens in plaintext, because Core MCP
 is reached as an HTTP server rather than through the connector; the fix was the second of the two
 options recorded here — [scoped-access-tokens](../scoped-access-tokens/feature.md) shipped, and a
-credential with audience `core` and scope `mcp:read` is refused as a Core session everywhere else. An
+credential with audience `hosty:core` and scope `mcp:read` is refused as a Core session everywhere
+else. An
 existing client config keeps working; it is an admin token until it is replaced with a scoped one.
 
 One edge case is recorded for every external path, this step included: a client holding previously

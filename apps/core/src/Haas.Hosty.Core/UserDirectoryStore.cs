@@ -110,7 +110,7 @@ internal sealed record AuthSessionRecord(
     // Operator-supplied name, shown in the credential list so a lost device can be recognized and
     // revoked. Browser sessions have none.
     string? Label = null,
-    // What this credential may be presented to: a single app id, or `core`. Null is the credential
+    // What this credential may be presented to: a single app id, or `hosty:core`. Null is the credential
     // this feature did not change — a browser session or a full-role access token, which is every
     // record written before scopes shipped.
     //
