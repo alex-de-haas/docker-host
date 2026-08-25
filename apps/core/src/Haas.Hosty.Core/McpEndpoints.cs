@@ -117,7 +117,6 @@ internal static class McpEndpoints
             // Inlined rather than RequireAdminSessionAsync, because the tools need to know *who* is
             // acting — the audit line for a mutation names the actor — and that wrapper never hands
             // the user out. The refusal is byte-for-byte the one it produced.
-            var authorized = false;
             McpCallerGrants? sessionGrants = null;
             var denial = await CoreSessionAuthorization.RequireSessionAsync(
                 http.Request,
@@ -132,7 +131,6 @@ internal static class McpEndpoints
                             statusCode: StatusCodes.Status403Forbidden));
                     }
 
-                    authorized = true;
                     // An administrator's session is the full-role credential; lifecycle comes with
                     // the role, exactly as it does on every /api lifecycle route the same person
                     // could call directly.
@@ -142,9 +140,11 @@ internal static class McpEndpoints
                 requireCsrf: true,
                 cancellationToken: http.RequestAborted);
 
-            // The action only runs when the caller passes, so an untouched flag means the returned
-            // IResult is the 401/403 to send back.
-            if (!authorized)
+            // The grants double as the authorized flag: the action sets them only on success, so
+            // null means the returned IResult is the 401/403 to send back — and what goes into
+            // Items is provably non-null, which is the invariant the tools' fail-closed check
+            // depends on.
+            if (sessionGrants is null)
             {
                 return denial;
             }
@@ -364,11 +364,29 @@ internal sealed class HostyCoreTools
     }
 
     // Caller-supplied text on its way into a durable log and a runtime lookup: bounded and stripped
-    // of control characters, the same treatment every other untrusted label gets.
+    // of control characters, the same treatment every other untrusted label gets. Bounded *before*
+    // it is scanned or copied — this runs on the refusal path too, where a read-only credential can
+    // land at no cost to itself, so the work must never be proportional to what the caller sent. A
+    // legal app id fits in 63 characters; the slice is generous.
     private static string NormalizeAppId(string appId)
     {
-        var cleaned = new string((appId ?? "").Trim().Where(character => !char.IsControl(character)).ToArray());
-        return cleaned.Length <= 120 ? cleaned : cleaned[..120];
+        var span = (appId ?? "").AsSpan().Trim();
+        if (span.Length > 120)
+        {
+            span = span[..120];
+        }
+
+        Span<char> buffer = stackalloc char[span.Length];
+        var length = 0;
+        foreach (var character in span)
+        {
+            if (!char.IsControl(character))
+            {
+                buffer[length++] = character;
+            }
+        }
+
+        return new string(buffer[..length]);
     }
 
     // Best-effort, and never on the request's cancellation token: a client that disconnects right
