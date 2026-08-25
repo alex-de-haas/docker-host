@@ -23,7 +23,7 @@ internal static class McpEndpoints
         var group = app.MapGroup("/api/mcp");
 
         // Gated before the protocol handler sees anything, on either of two credentials: an
-        // administrator session, or an access token scoped to `core` carrying `mcp:read`
+        // administrator session, or an access token scoped to `hosty:core` carrying `mcp:read`
         // (docs/features/scoped-access-tokens/feature.md) — the first credential reaching Core that
         // is narrower than "an administrator". requireCsrf is on for the browser case; a bearer
         // credential — what an external MCP client presents — is CSRF-exempt by design, so agent

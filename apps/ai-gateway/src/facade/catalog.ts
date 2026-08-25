@@ -18,6 +18,17 @@ import { interfaceKey, toolName } from "./tool-key.js";
  * app's to produce and a buggy one must not spin here. */
 const MAX_PAGES = 20;
 
+/**
+ * Budget for reading **one source completely** — handshake and every page together.
+ *
+ * Spent across the whole walk rather than refreshed per page, which is the connector's own rule and
+ * the reason it has one: an app answering each page just inside a per-page ceiling would otherwise
+ * hold the fan-out for twenty times as long, and the fan-out is what a client waits on before it
+ * sees any tools at all. A client would give up mid-`initialize` while one slow app kept the
+ * catalog open.
+ */
+const SOURCE_BUDGET_MS = 10_000;
+
 /** One exported tool, with everything needed to route a call back to where it came from. */
 export interface CatalogEntry {
   /** The name the client sees, namespaced. */
@@ -35,6 +46,9 @@ export interface CatalogSource {
   appId: string;
   displayName: string;
   url: string;
+  /** The interface key Core resolved this declaration under. Part of the exported name for anything
+   * other than `default`, so dropping it renames every tool of a non-default interface. */
+  interfaceKey: string;
 }
 
 /**
@@ -45,17 +59,26 @@ export interface CatalogSource {
  * this does", and an unknown tool is not offered while external clients are read-only.
  */
 export async function readSource(source: CatalogSource, token: string): Promise<CatalogEntry[]> {
-  const session = await openSession(source.url, token);
+  const deadline = Date.now() + SOURCE_BUDGET_MS;
+  const remaining = (): number => deadline - Date.now();
+
+  const session = await openSession(source.url, token, "hosty-ai-gateway", remaining());
   if (!session) {
     return [];
   }
 
-  const key = interfaceKey(source.appId);
+  const key = interfaceKey(source.appId, source.interfaceKey);
   const entries: CatalogEntry[] = [];
   let cursor: string | undefined;
 
   for (let page = 0; page < MAX_PAGES; page++) {
-    const listed = await listTools(source.url, token, session, cursor);
+    if (remaining() <= 0) {
+      // Out of budget. Keeping the pages already read is this catalog's policy — a source that runs
+      // long costs its own later tools, never the rest of the fleet's.
+      break;
+    }
+
+    const listed = await listTools(source.url, token, session, cursor, remaining());
     if (!listed) {
       break;
     }
@@ -160,8 +183,16 @@ export function sourcesFor(
   enabled: Readonly<Record<string, boolean>>,
   core: { appId: string; displayName: string; url: string } | null,
 ): CatalogSource[] {
+  // One source per *declaration*, not per app: an app may offer several MCP interfaces, and each
+  // carries its own key into the exported names. The toggle stays per app.
   const sources: CatalogSource[] = providers
-    .filter((provider) => enabled[provider.appId] === true && provider.running && provider.url)
-    .map((provider) => ({ appId: provider.appId, displayName: provider.displayName, url: provider.url! }));
-  return core ? [core, ...sources] : sources;
+    .filter((provider) => enabled[provider.appId] === true && provider.running)
+    .flatMap((provider) =>
+      provider.interfaces.map((declaration) => ({
+        appId: provider.appId,
+        displayName: provider.displayName,
+        url: declaration.url,
+        interfaceKey: declaration.key,
+      })));
+  return core ? [{ ...core, interfaceKey: "default" }, ...sources] : sources;
 }

@@ -31,6 +31,8 @@ describe("MCP facade", () => {
   let credentialActive: boolean;
   /** Whether Core will mint an on-behalf-of token for the app. */
   let mintAllowed: boolean;
+  /** The interface key the fake Core reports for the app's `mcp` declaration. */
+  let interfaceKey: string;
 
   let app: Server;
   let appUrl: string;
@@ -78,6 +80,7 @@ describe("MCP facade", () => {
     appCalls = [];
     credentialActive = true;
     mintAllowed = true;
+    interfaceKey = "default";
 
     core = createServer((request, response) => {
       void (async () => {
@@ -109,7 +112,7 @@ describe("MCP facade", () => {
                 id: APP,
                 displayName: "Notes",
                 runtimeState: "running",
-                interfaces: [{ name: "mcp", url: `${appUrl}/api/mcp` }],
+                interfaces: [{ name: "mcp", key: interfaceKey, url: `${appUrl}/api/mcp` }],
               },
             ],
           });
@@ -269,6 +272,75 @@ describe("MCP facade", () => {
     // No app skill is approved here, so nothing but the host's own text is present — an app must
     // never be able to appear above it.
     expect(body.result.instructions?.startsWith("You are connected to a Hosty host.")).toBe(true);
+  });
+
+  it("names a non-default interface the way the connector does", async () => {
+    // The key is part of the exported name for anything but `default`. Discovery dropped it, so
+    // every tool of an `admin` interface was offered as `app__tool` — a name no client rule written
+    // against `hosty mcp` would match, which defeats the whole point of porting the scheme.
+    interfaceKey = "admin";
+    const response = await rpc("tools/list");
+    const body = (await response.json()) as { result: { tools: Array<{ name: string }> } };
+
+    expect(body.result.tools.map((tool) => tool.name)).toEqual(["com_dexample_dnotes__admin__list_people"]);
+  });
+
+  it("keeps Core's tools when app discovery fails", async () => {
+    // A transient app-directory failure costs the apps. Core's URL is configured independently and
+    // its tools stay reachable — collapsing the two emptied the catalog over one timeout.
+    const facade = new McpFacade(
+      { coreOrigin, serviceToken: SERVICE_TOKEN, appId: GATEWAY, coreMcpUrl: `${appUrl}/api/mcp` },
+      // A directory pointed at nothing: read() answers null, exactly as an unreachable Core does.
+      new ProviderDirectory("http://127.0.0.1:1", SERVICE_TOKEN, GATEWAY),
+      settings,
+    );
+    const server = createServer((request, response) => {
+      void facade.handle(request, response, "/mcp");
+    });
+    const origin = await listen(server);
+
+    const response = await fetch(`${origin}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer hostyat_client" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+    });
+    const body = (await response.json()) as { result: { tools: Array<{ name: string }> } };
+    expect(body.result.tools.length).toBeGreaterThan(0);
+
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it("answers 413 for an oversized body rather than calling it a parse error", async () => {
+    // Well-formed bytes, too many of them. A client fixes that differently from malformed JSON, and
+    // cannot tell the two apart if both come back as -32700.
+    const response = await fetch(`${facadeOrigin}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer hostyat_client" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: { pad: "x".repeat(70_000) } }),
+    });
+
+    expect(response.status).toBe(413);
+    const body = (await response.json()) as { error: { message: string } };
+    expect(body.error.message).toContain("exceeds");
+  });
+
+  it("refuses a flood before it reaches Core, so a junk credential is cheap to refuse", async () => {
+    // This endpoint is meant to be publicly exposed, and Core writes an audit line for every
+    // inactive credential presented — so an unauthenticated flood would spend the host's disk and
+    // I/O. The limiter has to sit ahead of introspection for that to be true, which is what the
+    // call count asserts.
+    credentialActive = false;
+    let refused = 0;
+    for (let attempt = 0; attempt < 80; attempt++) {
+      const response = await rpc("tools/list", undefined, "hostyat_junk");
+      if (response.status === 429) {
+        refused += 1;
+      }
+    }
+
+    expect(refused).toBeGreaterThan(0);
+    // The refused ones never became Core round trips.
+    expect(coreCalls.filter((call) => call.path.endsWith("/token/introspect")).length).toBeLessThan(80);
   });
 
   it("offers nothing from a provider the operator has not enabled", async () => {

@@ -73,6 +73,15 @@ tools enter an agent's context" is one question, not two.
   deliberate port rather than a second scheme. Client permission rules are written against these
   strings, so a divergence would mean a rule that works through `hosty mcp` and silently does not
   here. The tests assert the port against the connector's own worked examples.
+- **One source per declaration, not per app.** An app may declare several `mcp` interfaces, and the
+  interface key is part of the exported name for anything but `default`. Discovery originally kept
+  only the first URL and dropped the key, which renamed every tool of a non-default interface and
+  made the extra declarations unreachable — the divergence the port exists to prevent. Policy stays
+  per app: one toggle covers everything an app declares.
+- **One budget per source**, spent across the handshake and every page rather than refreshed per
+  page. This is the connector's own rule, and it has one because an app answering each page just
+  inside a per-page ceiling would otherwise hold the fan-out for twenty times as long — and the
+  fan-out is what a client waits on before it sees any tools at all.
 - **Descriptions carry the app.** A model choosing between two similar tools from different apps has
   nothing else to go on, and an app's own text has no reason to carry it.
 - **Visibility is Core's answer.** An app the acting user may not reach produces no token and
@@ -80,7 +89,8 @@ tools enter an agent's context" is one question, not two.
 - **A failed source costs that source.** An app that cannot be reached, or a page that cannot be
   read, leaves the rest of the catalog intact — the opposite policy from
   [readonly.ts](../../../apps/ai-gateway/src/mcp/readonly.ts), which produces a permission answer and
-  refuses on any doubt. Both are correct for what they produce.
+  refuses on any doubt. Both are correct for what they produce. A failure of *discovery itself* is
+  bounded the same way: it costs the apps, never Core, whose endpoint is configured independently.
 
 ### The cache, and why it cannot grant anything
 
@@ -103,6 +113,19 @@ simply uninstall the app, while a facade caller is a remote user who is not that
 The host's own text comes first and unwrapped, and app text is fenced and attributed by the shared
 `composeSystemPrompt` — an app must not be able to appear above the text that describes the surface.
 
+## The Perimeter
+
+A per-address sliding window (60 requests per 10 seconds) runs **ahead of introspection**, and that
+ordering is the whole point. This endpoint is meant to be publicly exposed, and every request
+carrying a bearer costs a Core round trip *and* an audit line appended to a durable file — so
+without it an unauthenticated flood of junk credentials would spend the host's disk and I/O rather
+than merely being refused. The limiter is what makes a refusal cheap.
+
+The bucket is the socket's peer address, never a header a caller supplies, so nobody may choose
+their own. The residual is the one Core's device-code cap already records: behind a proxy that does
+not preserve the peer address, every request shares one bucket and the per-address limit degenerates
+into a global one. Widening that is an ingress decision rather than this endpoint's to make.
+
 ## Failure Answers
 
 An external client can act on these only if they differ, so they do:
@@ -112,6 +135,8 @@ An external client can act on these only if they differ, so they do:
 | no credential | `401` with `WWW-Authenticate: Bearer` |
 | credential Core rejected | `401` |
 | Core unreachable | `503` — nothing could be checked; the credential may be perfectly good |
+| body over 64 KB | `413` — well-formed bytes, too many of them, which a client fixes differently from malformed JSON |
+| too many requests | `429` with `Retry-After` |
 | tool not in the catalog | JSON-RPC error naming that the surface is read-only |
 | delegation refused | JSON-RPC error naming the app, so "you may not" is distinguishable from "no such tool" |
 | the app's own refusal | passed through as the app's **result**, unexamined — it is what the model must read |
@@ -126,6 +151,9 @@ An external client can act on these only if they differ, so they do:
 - A filtered tool refused on call with nothing reaching the app.
 - Rejected-credential (`401`) beside unreachable-Core (`503`).
 - The stale-catalog hazard: a tool offered from cache whose call is still refused at Core.
+- A non-default interface key reaching the exported name; Core's tools surviving a discovery
+  failure; `413` distinguished from a parse error; and a flood refused *before* it becomes Core
+  round trips, asserted on the call count rather than on the status alone.
 - On the Core side, as pairs: a system app allowed beside an ordinary one refused; a credential
   addressed to one app refused for another system app; the acting user's access as the ceiling;
   revocation stopping the next call; and the `hosty:core` target both issuing a token and that token

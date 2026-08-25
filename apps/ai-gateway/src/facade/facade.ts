@@ -28,6 +28,21 @@ export const FACADE_PATH = "/mcp";
 /** Same ceiling the operator API uses; a JSON-RPC request body is far smaller. */
 const MAX_BODY_BYTES = 64 * 1024;
 
+/** Sliding window for the per-address request limit. */
+const RATE_WINDOW_MS = 10_000;
+
+/**
+ * Requests one address may make per window.
+ *
+ * Generous for an agent client — a session's `initialize`, listing and tool calls arrive in small
+ * bursts — and far below what it takes to make refusing a junk credential expensive.
+ */
+const RATE_LIMIT = 60;
+
+/** Addresses tracked at once. Bounded so the limiter cannot itself become the memory a flood
+ * exhausts; the oldest bucket is dropped when the map is full. */
+const RATE_MAX_ADDRESSES = 4_096;
+
 /**
  * How long an assembled catalog is reused for one user.
  *
@@ -55,6 +70,7 @@ export interface FacadeConfig {
 
 export class McpFacade {
   private readonly catalogs = new Map<string, CachedCatalog>();
+  private readonly limiter = new SlidingWindowLimiter(RATE_LIMIT, RATE_WINDOW_MS, RATE_MAX_ADDRESSES);
 
   constructor(
     private readonly config: FacadeConfig,
@@ -83,9 +99,26 @@ export class McpFacade {
       return true;
     }
 
+    let raw: string;
+    try {
+      raw = await readBody(request);
+    } catch (error) {
+      // Distinct from a parse failure on purpose: the client sent well-formed bytes and there were
+      // simply too many of them, which is a different thing to fix and a different status to act on.
+      const tooLarge = error instanceof PayloadTooLargeError;
+      send(response, tooLarge ? 413 : 400, {
+        jsonrpc: "2.0",
+        id: null,
+        error: tooLarge
+          ? { code: -32001, message: `Request body exceeds ${MAX_BODY_BYTES} bytes.` }
+          : { code: -32700, message: "Parse error." },
+      });
+      return true;
+    }
+
     let body: JsonRpcRequest | null;
     try {
-      body = JSON.parse(await readBody(request)) as JsonRpcRequest;
+      body = JSON.parse(raw) as JsonRpcRequest;
     } catch {
       send(response, 400, { jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error." } });
       return true;
@@ -100,6 +133,21 @@ export class McpFacade {
     // audit line for this client's action — the call reaches Core nowhere else.
     const invokedTool =
       body.method === "tools/call" && typeof body.params?.name === "string" ? body.params.name : undefined;
+
+    // Ahead of introspection, and that ordering is the point. This endpoint is meant to be exposed
+    // publicly, and every request carrying a bearer costs a Core round trip *and* an audit line
+    // appended to a durable file — so an unauthenticated flood of junk credentials would spend the
+    // host's disk and I/O rather than merely being refused. The limiter is what stops a refusal
+    // from being expensive.
+    if (!this.limiter.allow(remoteAddress(request))) {
+      response.setHeader("retry-after", String(Math.ceil(RATE_WINDOW_MS / 1000)));
+      send(response, 429, {
+        jsonrpc: "2.0",
+        id: null,
+        error: { code: -32000, message: "Too many requests. Slow down and retry." },
+      });
+      return true;
+    }
 
     const presented = readBearer(request);
     if (!presented) {
@@ -237,15 +285,16 @@ export class McpFacade {
     }
 
     const [discovered, policy] = await Promise.all([this.providers.read(), this.settings.read()]);
-    const sources = discovered
-      ? sourcesFor(
-          discovered.providers,
-          policy.mcpProviders,
-          this.config.coreMcpUrl
-            ? { appId: CORE_TARGET, displayName: "Hosty Core", url: this.config.coreMcpUrl }
-            : null,
-        )
-      : [];
+    // `discovered` is null when the app-directory read failed, and that costs the *apps* — never
+    // Core, whose URL is configured independently and whose tools stay reachable while a transient
+    // discovery failure lasts. Collapsing both would have emptied the catalog over one timeout.
+    const sources = sourcesFor(
+      discovered?.providers ?? [],
+      policy.mcpProviders,
+      this.config.coreMcpUrl
+        ? { appId: CORE_TARGET, displayName: "Hosty Core", url: this.config.coreMcpUrl }
+        : null,
+    );
 
     const catalog = await buildCatalog(sources, (appId) =>
       mintOnBehalfOf(this.config.coreOrigin!, this.config.serviceToken!, this.config.appId, presented, appId).then(
@@ -315,6 +364,9 @@ function send(response: ServerResponse, status: number, payload: unknown): void 
   response.end(body);
 }
 
+/** Its own type so the caller can answer 413 rather than folding a size cap into "parse error". */
+class PayloadTooLargeError extends Error {}
+
 async function readBody(request: IncomingMessage): Promise<string> {
   const chunks: Buffer[] = [];
   let size = 0;
@@ -322,9 +374,63 @@ async function readBody(request: IncomingMessage): Promise<string> {
     const buffer = chunk as Buffer;
     size += buffer.length;
     if (size > MAX_BODY_BYTES) {
-      throw new Error("payload too large");
+      throw new PayloadTooLargeError("payload too large");
     }
     chunks.push(buffer);
   }
   return Buffer.concat(chunks).toString("utf8");
+}
+
+/**
+ * A per-address sliding window, in memory.
+ *
+ * Deliberately small and local: it exists to keep an unauthenticated flood from costing Core round
+ * trips and audit writes, not to be a fair-use policy. A restart forgets it, which is fine — the
+ * cost it bounds is per-request, not cumulative.
+ */
+class SlidingWindowLimiter {
+  private readonly hits = new Map<string, number[]>();
+
+  constructor(
+    private readonly limit: number,
+    private readonly windowMs: number,
+    private readonly maxAddresses: number,
+  ) {}
+
+  allow(address: string): boolean {
+    const now = Date.now();
+    const recent = (this.hits.get(address) ?? []).filter((at) => now - at < this.windowMs);
+    if (recent.length >= this.limit) {
+      // Kept rather than dropped: a caller that keeps hammering keeps being refused, instead of
+      // having its window forgotten by its own next request.
+      this.hits.set(address, recent);
+      return false;
+    }
+
+    recent.push(now);
+    this.hits.set(address, recent);
+
+    if (this.hits.size > this.maxAddresses) {
+      // Map insertion order is oldest-first, so the first key is the least recently *started*
+      // bucket. Bounding the map matters more than which one goes.
+      const oldest = this.hits.keys().next();
+      if (!oldest.done && oldest.value !== address) {
+        this.hits.delete(oldest.value);
+      }
+    }
+
+    return true;
+  }
+}
+
+/**
+ * The address a request came from, for the limiter's bucket.
+ *
+ * The socket's own peer, never a header a caller supplies — nobody may pick their own bucket. The
+ * residual is the same one Core's device-code cap records: behind a proxy that does not preserve the
+ * peer address, every request shares one bucket and the per-address limit degenerates into a global
+ * one. Widening that is an ingress decision, not this endpoint's to make.
+ */
+function remoteAddress(request: IncomingMessage): string {
+  return request.socket.remoteAddress ?? "unknown";
 }

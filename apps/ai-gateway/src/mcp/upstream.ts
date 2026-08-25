@@ -40,12 +40,25 @@ export async function openSession(
   url: string,
   token: string,
   clientName = "hosty-ai-gateway",
+  timeoutMs = DEFAULT_TIMEOUT_MS,
 ): Promise<UpstreamSession | null> {
-  const opened = await post(url, token, null, "initialize", {
-    protocolVersion: PROTOCOL_VERSION,
-    capabilities: {},
-    clientInfo: { name: clientName, version: "1" },
-  });
+  if (timeoutMs <= 0) {
+    return null;
+  }
+
+  const opened = await post(
+    url,
+    token,
+    null,
+    "initialize",
+    {
+      protocolVersion: PROTOCOL_VERSION,
+      capabilities: {},
+      clientInfo: { name: clientName, version: "1" },
+    },
+    false,
+    timeoutMs,
+  );
   if (!opened) {
     return null;
   }
@@ -62,8 +75,21 @@ export async function listTools(
   token: string,
   session: UpstreamSession,
   cursor?: string,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
 ): Promise<ToolPage | null> {
-  const listed = await post(url, token, session.id, "tools/list", cursor ? { cursor } : undefined);
+  if (timeoutMs <= 0) {
+    return null;
+  }
+
+  const listed = await post(
+    url,
+    token,
+    session.id,
+    "tools/list",
+    cursor ? { cursor } : undefined,
+    false,
+    timeoutMs,
+  );
   const result = listed?.body?.result as { tools?: unknown; nextCursor?: unknown } | undefined;
   if (!Array.isArray(result?.tools)) {
     return null;

@@ -66,6 +66,7 @@ the day scoped tokens land.
       descended from a browser interaction — so Core gained an on-behalf-of route instead, and
       `hosty:core` as a delegation target; recorded in [feature.md](feature.md).
 - [x] Skills delivered via `instructions`, approval-gated, attribution order asserted.
+- [x] The rate-limited perimeter this plan's Target Behavior called for. It was implemented without being listed here, which is how a stated obligation goes untracked — recorded now, and described in [feature.md](feature.md).
 - [ ] `notifications/tools/list_changed` on fleet changes. Needs the streamable-HTTP GET stream,
       which the endpoint currently refuses rather than half-implements; until it exists, a client
       sees a newly installed app's tools on its next connection.
