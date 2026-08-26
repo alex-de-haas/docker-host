@@ -1,7 +1,7 @@
 # App-Provided Skills
 
 Created: 2026-08-20
-Updated: 2026-08-20
+Updated: 2026-08-25
 
 An app ships the prose an agent needs to use it well, the way it already ships its icon and its long
 description. MCP tells an agent *what calls exist*; a skill tells it how this app is meant to be
@@ -68,10 +68,13 @@ The control route needs no such gate, for the reason above.
 
 ## Attribution Is The Contract
 
-Wherever a skill lands, the reader's own text comes **first and unwrapped** — the operator's system
-prompt in a session, the connector's own instructions in a client. An app must not be able to appear
-above the text that describes the surface, because there it reads as the operator or the host
-speaking.
+Wherever a skill lands, the reader's own text comes **first and unwrapped** — in a session the
+host's built-in preamble and then the operator's system prompt
+([host-prompt.ts](../../../apps/ai-gateway/src/sessions/host-prompt.ts)), in a client the
+connector's own instructions. An app must not be able to appear above the text that describes the
+surface, because there it reads as the operator or the host speaking. Between the two texts that
+legitimately are the host and the operator, the host goes first and the operator second — identity
+and ground rules are the platform's to state, and the operator's later words can override them.
 
 Each skill is then fenced and named:
 

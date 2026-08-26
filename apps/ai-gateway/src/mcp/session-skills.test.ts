@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { SessionStore } from "../sessions/store.js";
 import { SettingsStore } from "../settings/store.js";
+import { HOST_SYSTEM_PROMPT } from "../sessions/host-prompt.js";
 import { SessionManager } from "../sessions/manager.js";
 import { FakeHarnessAdapter } from "../harness/fake.js";
 import { AuditReporter } from "../audit.js";
@@ -77,9 +78,10 @@ describe("app skills in a session", () => {
     return adapter.lastStart?.systemPrompt;
   }
 
-  it("carries an approved app's skill, below the operator's own prompt", async () => {
-    // The digest stands for the baseline the settings page records when the provider is enabled;
-    // without one the skill is withheld, which the next test asserts.
+  it("layers the prompt host-first, operator second, skills last", async () => {
+    // The stack is the contract. The host states identity and ground rules; the operator's own
+    // words come after so they can override any of it; an app must not appear above either — above
+    // the operator it would read as the operator, above the host it would read as the platform.
     await settings.update({
       systemPrompt: "Be brief.",
       mcpProviders: { [APP]: true },
@@ -88,10 +90,14 @@ describe("app skills in a session", () => {
 
     const prompt = await startSession();
 
+    expect(prompt!.startsWith("# Hosty host assistant")).toBe(true);
     expect(prompt).toContain("Call list_people first.");
     expect(prompt).toContain(`<app-skill app="${APP}"`);
-    // The operator's instructions stay first: an app appearing above them would read as the operator.
-    expect(prompt!.indexOf("Be brief.")).toBeLessThan(prompt!.indexOf("app-skill"));
+    expect(prompt!.indexOf(HOST_SYSTEM_PROMPT)).toBeLessThan(prompt!.indexOf("Be brief."));
+    // The needle is the opening tag with its attribute: the host preamble legitimately *mentions*
+    // the <app-skill> fence by name in its trust-boundaries rule, and a bare "app-skill" would
+    // find that mention instead of the section.
+    expect(prompt!.indexOf("Be brief.")).toBeLessThan(prompt!.indexOf("<app-skill app="));
   });
 
   it("withholds a skill that carries no approved digest", async () => {
@@ -101,7 +107,7 @@ describe("app skills in a session", () => {
 
     const prompt = await startSession();
 
-    expect(prompt).toBe("Be brief.");
+    expect(prompt).toBe(`${HOST_SYSTEM_PROMPT}\n\nBe brief.`);
   });
 
   it("carries no skill when the provider is off", async () => {
@@ -111,7 +117,7 @@ describe("app skills in a session", () => {
 
     const prompt = await startSession();
 
-    expect(prompt).toBe("Be brief.");
-    expect(prompt).not.toContain("app-skill");
+    expect(prompt).toBe(`${HOST_SYSTEM_PROMPT}\n\nBe brief.`);
+    expect(prompt).not.toContain("<app-skill app=");
   });
 });

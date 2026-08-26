@@ -1,7 +1,7 @@
 # AI Gateway
 
 Created: 2026-08-09
-Updated: 2026-08-19
+Updated: 2026-08-25
 
 The Hosty assistant: an optional, removable system app (`hosty.ai-gateway`) hosting admin-only
 operator chat sessions on a host-resident agent harness, plus the Shell surface that renders them.
@@ -152,6 +152,13 @@ gateway restart.
 - Credential: the Agent SDK does not read an interactive `claude login` — it needs an environment
   credential (`ANTHROPIC_API_KEY`, a `claude setup-token` OAuth token, or a provider
   `CLAUDE_CODE_USE_*` configuration), offered as optional secret app settings.
+- Every session's prompt begins with the host's own preamble
+  ([host-prompt.ts](../../../apps/ai-gateway/src/sessions/host-prompt.ts)): identity, the approval
+  gate's semantics, the platform's ground rules (never a second Core, never raw docker on managed
+  containers, credential hygiene), and the trust boundary for third-party text. The operator's
+  settings prompt follows it — later words win, so the operator can override any of it — and app
+  skills come last, fenced. The facade's instructions deliberately do not carry the preamble: an
+  external client has no shell and no approval cards, so it would be false there.
 - The system prompt names its preset explicitly (`{type: "preset", preset: "claude_code"}`) rather
   than relying on the SDK default, because the operator profile is defined as behaving like the
   admin running Claude Code by hand — that is the Claude Code prompt, and leaving it to a default

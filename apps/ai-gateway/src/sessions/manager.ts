@@ -1,5 +1,6 @@
 import { isWaitingStatus, WaitingNotifier } from "../notifications.js";
 import { composeSystemPrompt, partitionSkills, type AppSkill } from "../mcp/skills.js";
+import { HOST_SYSTEM_PROMPT } from "./host-prompt.js";
 import { randomUUID } from "node:crypto";
 import type { HarnessAdapter, HarnessEvent, HarnessRun } from "../harness/adapter.js";
 import type { SessionRecord, SessionStatus, SessionStore, StoredEvent } from "./store.js";
@@ -152,7 +153,13 @@ export class SessionManager {
       const mcpServers = await this.buildMcpServers(session);
       // After the servers, deliberately: the set of enabled providers is what decides whose skill is
       // read, and buildMcpServers is where that set is resolved. Asking first would use a stale one.
-      const systemPrompt = composeSystemPrompt(operatorPrompt, await this.readDeliverableSkills(session));
+      // Host preamble first, operator text second — the platform states identity and ground rules,
+      // and the operator's own words come after so they can override any of it. App skills follow,
+      // fenced, inside composeSystemPrompt. The facade's instructions deliberately do not carry the
+      // preamble: an external client has no shell and no approval cards, so it would be false there.
+      const systemPrompt = composeSystemPrompt(
+        [HOST_SYSTEM_PROMPT, operatorPrompt?.trim()].filter(Boolean).join("\n\n"),
+        await this.readDeliverableSkills(session));
       session.run = this.adapter.start({
         sessionId: id,
         cwd: this.workDir,
