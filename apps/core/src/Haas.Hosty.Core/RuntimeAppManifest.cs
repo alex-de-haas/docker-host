@@ -21,6 +21,17 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
     private static readonly Regex AppIdPattern = new("^[a-z0-9][a-z0-9._-]{0,62}$", RegexOptions.Compiled);
     private readonly HttpClient httpClient = httpClient ?? CreateDefaultHttpClient();
 
+    // Local manifests are re-loaded on every lifecycle read (list reconcile, supervision, context
+    // builds), so the read + SHA-256 + parse is cached per resolved file path and revalidated by file
+    // stamp. Only the parse is cached — Select still runs per call, because its outcome depends on the
+    // requested runtime and it is the validation whose errors callers expect fresh. URL manifests are
+    // never cached: they are install/update-time fetches that must observe the remote's current bytes.
+    // Keys are manifest paths (installed copies plus whatever paths installs were run from) — a
+    // bounded, operator-driven set, so there is no eviction.
+    private readonly ConcurrentDictionary<string, CachedLocalManifest> localManifestCache = new(StringComparer.Ordinal);
+
+    private sealed record CachedLocalManifest(RuntimeAppManifest Manifest, string Json, string Digest, FileStamp Stamp);
+
     // The one place the manifest/asset fetch client is configured, so the composition root and the
     // no-client fallback cannot drift apart on it.
     //
@@ -50,7 +61,19 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
             throw new AppManifestException("manifest_path_required", "A runtime app manifest path is required.");
         }
 
-        var source = await ReadManifestSourceAsync(manifestPath.Trim(), cancellationToken);
+        var trimmed = manifestPath.Trim();
+        // The stamp is read before the file, so a racing rewrite can at worst cache fresh bytes under
+        // a stale stamp — the next load sees the mismatch and re-reads.
+        var localPath = TryResolveLocalManifestPath(trimmed);
+        var stamp = localPath is null ? default : FileStamp.Read(localPath);
+        if (localPath is not null &&
+            localManifestCache.TryGetValue(localPath, out var cached) &&
+            cached.Stamp == stamp)
+        {
+            return Select(cached.Manifest, localPath, cached.Digest, selectedRuntime, cached.Json, manifestUrl: null);
+        }
+
+        var source = await ReadManifestSourceAsync(trimmed, cancellationToken);
         var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(source.Json))).ToLowerInvariant();
         RuntimeAppManifest? manifest;
         try
@@ -67,7 +90,32 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
             throw new AppManifestException("manifest_json_invalid", "Runtime app manifest must be a JSON object.");
         }
 
+        if (localPath is not null)
+        {
+            localManifestCache[localPath] = new CachedLocalManifest(manifest, source.Json, digest, stamp);
+        }
+
         return Select(manifest, source.Reference, digest, selectedRuntime, source.Json, source.ManifestUrl);
+    }
+
+    // Mirrors ReadManifestSourceAsync/ReadLocalManifestAsync resolution for the cache key: null for a
+    // URL manifest (or an unsupported scheme, which the read path rejects with its own error). Drift
+    // here cannot serve wrong content — a mismatched key only misses the cache — but keep them in step.
+    private static string? TryResolveLocalManifestPath(string manifestPath)
+    {
+        var path = manifestPath;
+        if (TryCreateAbsoluteUri(manifestPath, out var uri))
+        {
+            if (!uri.IsFile)
+            {
+                return null;
+            }
+
+            path = uri.LocalPath;
+        }
+
+        var fullPath = Path.GetFullPath(path);
+        return Directory.Exists(fullPath) ? Path.Combine(fullPath, ManifestFileName) : fullPath;
     }
 
     public async Task SaveManifestCopyAsync(

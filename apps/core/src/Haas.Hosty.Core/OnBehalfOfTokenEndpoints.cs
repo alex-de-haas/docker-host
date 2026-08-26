@@ -100,7 +100,7 @@ internal static class OnBehalfOfTokenEndpoints
             try
             {
                 var (actor, resolved) = await identity.RequireAccessibleUserAsync(
-                    target, scoped.User.Id, cancellationToken);
+                    state, target, scoped.User.Id, cancellationToken);
 
                 // Unbranched, with a fresh chain origin. The hour-long chain bound exists to make a
                 // stolen delegated token die with the interaction it descends from; here there is no

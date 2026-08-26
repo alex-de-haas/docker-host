@@ -4,6 +4,19 @@ using System.Text.Json.Serialization.Metadata;
 
 namespace Haas.Hosty.Core;
 
+// Identity of one on-disk document version, used by stores that cache their parsed state: a stamp
+// mismatch means the file changed behind the cache (an out-of-band edit, another store instance) and
+// the cached copy must be re-read. Writes inside the process refresh caches directly; the stamp is
+// the guard for the writers the process cannot see.
+internal readonly record struct FileStamp(bool Exists, DateTime LastWriteTimeUtc, long Length)
+{
+    public static FileStamp Read(string path)
+    {
+        var info = new FileInfo(path);
+        return info.Exists ? new FileStamp(true, info.LastWriteTimeUtc, info.Length) : default;
+    }
+}
+
 internal static class JsonStorage
 {
     public static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web)

@@ -5,21 +5,29 @@ internal sealed class UserDirectoryStore(CoreDataPaths paths)
     // This store is auth-critical (sessions, users, invitations, assignments) and every caller does a
     // whole-document read-modify-write. Without serialization two concurrent writers race last-writer-
     // wins and silently drop each other's record — e.g. two logins racing loses a session (the holder
-    // gets 401s), or login racing invitation-accept drops the new user. UpdateAsync closes that window.
+    // gets 401s), or login racing invitation-accept drops the new user. All writes go through this gate.
     private readonly SemaphoreSlim gate = new(1, 1);
+
+    // Session resolution reads this store on every authenticated request, so reads must not cost a
+    // disk parse. The cache is safe because every write goes through the gate above and replaces it
+    // with the state it just persisted; revocation therefore lands in the cache in the same call that
+    // lands it on disk. The file stamp covers the one writer the gate cannot see — an operator editing
+    // state.json out of band — by turning a stamp mismatch into a plain re-read. A racing read may
+    // briefly publish a fresh state under a stale stamp; the only consequence is one redundant re-read.
+    private volatile CachedState? cache;
+
+    private sealed record CachedState(UserDirectoryState State, FileStamp Stamp);
 
     private string StatePath => Path.Combine(paths.AuthRoot, "state.json");
 
-    // Callers treat the collections below as non-null (their declarations say so), but that contract does
-    // not survive deserialization: the fallback here only covers a *missing* file, so a document that does
+    // Callers treat the collections as non-null (their declarations say so), but that contract does not
+    // survive deserialization: the null fallback only covers a *missing* file, so a document that does
     // exist without a `users` or `sessions` key deserializes those to null anyway. Normalizing once here
     // keeps every call site — login, disable, purge — from having to guard, and turns a partial state.json
     // into an empty directory rather than a 500. Nothing downstream distinguishes null from empty.
     // PasswordCredentials stays as-is: it is declared nullable, so its consumers already handle null.
-    public async Task<UserDirectoryState> ReadAsync(CancellationToken cancellationToken = default)
-    {
-        var state = await JsonStorage.ReadAsync<UserDirectoryState>(StatePath, cancellationToken);
-        return state is null
+    private static UserDirectoryState Normalize(UserDirectoryState? state)
+        => state is null
             ? new UserDirectoryState(1, [], [], [], [])
             : state with
             {
@@ -28,10 +36,39 @@ internal sealed class UserDirectoryStore(CoreDataPaths paths)
                 Assignments = state.Assignments ?? [],
                 Sessions = state.Sessions ?? [],
             };
+
+    public async Task<UserDirectoryState> ReadAsync(CancellationToken cancellationToken = default)
+    {
+        var stamp = FileStamp.Read(StatePath);
+        var cached = cache;
+        if (cached is not null && cached.Stamp == stamp)
+        {
+            return cached.State;
+        }
+
+        var state = Normalize(await JsonStorage.ReadAsync<UserDirectoryState>(StatePath, cancellationToken));
+        cache = new CachedState(state, stamp);
+        return state;
     }
 
     public async Task WriteAsync(UserDirectoryState state, CancellationToken cancellationToken = default)
-        => await JsonStorage.WriteAsync(StatePath, state, restrictToOwner: true, cancellationToken);
+    {
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            await WriteLockedAsync(state, cancellationToken);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private async Task WriteLockedAsync(UserDirectoryState state, CancellationToken cancellationToken)
+    {
+        await JsonStorage.WriteAsync(StatePath, state, restrictToOwner: true, cancellationToken);
+        cache = new CachedState(Normalize(state), FileStamp.Read(StatePath));
+    }
 
     // Atomic read-modify-write. The mutator runs under an exclusive lock against the freshest on-disk
     // state; it may throw (validation) to abort the write, and returns the next state plus a caller value
@@ -45,7 +82,7 @@ internal sealed class UserDirectoryStore(CoreDataPaths paths)
         {
             var current = await ReadAsync(cancellationToken);
             var (next, result) = mutate(current);
-            await WriteAsync(next, cancellationToken);
+            await WriteLockedAsync(next, cancellationToken);
             return result;
         }
         finally

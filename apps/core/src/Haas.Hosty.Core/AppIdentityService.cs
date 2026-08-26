@@ -164,7 +164,25 @@ internal sealed class AppIdentityService(
         CancellationToken cancellationToken)
     {
         var state = await users.ReadAsync(cancellationToken);
+        return await RequireAccessibleUserAsync(state, appId, userId, cancellationToken);
+    }
+
+    // For callers that already read the directory state in the same request (introspection,
+    // on-behalf-of), so one call does not resolve the same store twice.
+    public async Task<(HostUserRecord User, AppRecord App)> RequireAccessibleUserAsync(
+        UserDirectoryState state,
+        string appId,
+        string userId,
+        CancellationToken cancellationToken)
+    {
         var app = await RequireInstalledAppAsync(appId, cancellationToken);
+        return (RequireAccessibleUser(state, app, userId), app);
+    }
+
+    // The policy core, kept in one copy for every caller shape — including those that already hold
+    // both the state and the app record and must not pay a second resolve for either.
+    public static HostUserRecord RequireAccessibleUser(UserDirectoryState state, AppRecord app, string userId)
+    {
         var user = state.Users.FirstOrDefault(candidate => string.Equals(candidate.Id, userId, StringComparison.Ordinal)) ??
             throw new AppIdentityException("user_not_found", "Host user was not found.");
         if (user.Disabled)
@@ -187,14 +205,14 @@ internal sealed class AppIdentityService(
         // a document that exists without an `assignments` key deserializes this to null despite the
         // non-nullable declaration. Guarding keeps that a closed door rather than a 500.
         var userAssigned = (state.Assignments ?? []).Any(assignment =>
-            string.Equals(assignment.AppId, appId, StringComparison.Ordinal) &&
+            string.Equals(assignment.AppId, app.Id, StringComparison.Ordinal) &&
             string.Equals(assignment.UserId, user.Id, StringComparison.Ordinal));
         if (!string.Equals(user.Role, "host.admin", StringComparison.Ordinal) && !userAssigned)
         {
             throw new AppIdentityException("app_access_denied", "Host user is not assigned to this app.");
         }
 
-        return (user, app);
+        return user;
     }
 
     private async Task<AppRecord> RequireInstalledAppAsync(string appId, CancellationToken cancellationToken)
