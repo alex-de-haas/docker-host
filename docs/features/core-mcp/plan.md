@@ -14,16 +14,26 @@ updated, reconfigured, by whom, and whether it worked. An operator asking "why d
 asking about actions on the host, and the record of those actions exists: Core has written an audit
 log all along.
 
-It became sharper the moment lifecycle mutations landed on this surface. An agent can now stop an app
-and cannot read that it did; the record of an agent's own actions is the one thing the agent is
-blind to.
+It became sharper the moment lifecycle mutations landed on this surface — and revealed a second gap
+underneath the first. An agent can now stop an app and cannot read that it did. But an *operator*
+stopping the same app through Shell or the CLI writes no record at all, so the asymmetry runs the
+other way too: today the agent's actions are the only ones the host remembers.
+
+Reading is therefore the smaller half of this. A tool over a record that mostly does not exist would
+answer "why did this restart" only when an agent was the one who restarted it.
 
 ## Current Behavior
 
 - `AuditStore` appends one JSON line per action: `Action`, `ResourceType`, `ResourceId`, `Outcome`,
   `ActorUserId`, `CreatedAt`, and a free-form `Details` map.
 - Reachable **only** over the CLI's control channel (`GET /control/v1/audit/recent`), so it needs a
-  shell on the host. Neither Shell nor any agent client can read it.
+  shell on the host. Neither Shell nor any agent client can read it — checked, and there is no Shell
+  consumer anywhere.
+- **Most lifecycle actions are not recorded at all.** `app.lifecycle.*` is written by exactly one
+  caller — `McpEndpoints` — while `LifecycleEndpoints`, the path Shell and the CLI use, calls
+  `CoreLifecycleService` without touching `AuditStore`. What exists beside it is `app.{action}` with
+  outcome `reported`, which is an **app** describing its own work, not Core recording what it did to
+  an app.
 - `ReadRecentAsync(limit = 100)` reads the **whole file** with `ReadAllLinesAsync`, reverses it, and
   takes the newest N.
 - **Nothing trims the log.** There is no retention sweep for it anywhere.
@@ -45,6 +55,10 @@ blind to.
 
 ## Deliverables
 
+- [ ] **Core records lifecycle actions wherever they originate**, not only on the MCP path:
+      `LifecycleEndpoints` (start, stop, restart, update, autostart, runtime switch) writing the same
+      `app.lifecycle.*` shape with the acting user. Without this the reader below has almost nothing
+      to read, and the surface would quietly imply the host keeps a history it does not keep.
 - [ ] `AuditStore` gains a filtered, bounded read: by resource id, action prefix, outcome and time
       range, without loading the whole file for every call.
 - [ ] `search_audit` on Core MCP, `readOnlyHint: true`, with the window contract in every result.
@@ -69,13 +83,18 @@ blind to.
 3. **Retention.** The log has grown unbounded since it was written. Trimming it changes what an
    investigation can reach; not trimming makes every read of it slower forever. The MCP tool does not
    create this problem, but it is the first thing that reads the log often enough to feel it.
-4. **Should an agent see other actors' actions?** The record includes `ActorUserId`. On an admin-only
-   surface every reader could see them anyway through Shell; the question is whether a *tool* that
-   surfaces them to a model is the same decision.
+4. **Should an agent see other actors' actions?** The record includes `ActorUserId`, and this is a
+   **new disclosure** rather than parity with something an operator can already see: nothing in Shell
+   reads the audit log, so today the only way to it is a shell on the host. An earlier draft of this
+   question argued from Shell visibility that does not exist, which would have made the decision look
+   already-made. It is not.
 
 ## Verification
 
 - Live: stop an app through `stop_app`, then find that action, its actor and its outcome through
   `search_audit` — the agent reading its own trail is the loop this exists to close.
+- **And the same stop performed from Shell**, found the same way. That is the pair that proves the
+  producer work landed: a surface that could only see the agent's own actions would pass the first
+  check and still answer the operator's actual question with silence.
 - The negative that matters: a refused mutation appears too. A tool that only recorded successes
   would hide exactly the case an operator investigates.
