@@ -2,7 +2,7 @@
 
 Status: Draft
 Created: 2026-07-28
-Updated: 2026-07-28
+Updated: 2026-08-26
 
 ## Goal
 
@@ -11,11 +11,17 @@ of its own — `waiting` — instead of leaving it indistinguishable from `stopp
 
 ## Why it does not exist today
 
-Autostart sorts by capability start-priority, then alphabetically by app id
-([CoreLifecycleService.cs:2481](../../../apps/core/src/Haas.Hosty.Core/CoreLifecycleService.cs)); the
-dependency graph is never consulted. A consumer whose id sorts before its provider simply starts first
-and comes up with a dead `HOSTY_DEPENDENCY_{ALIAS}_URL`. Nothing is broken enough to notice reliably,
-which is exactly why it has survived.
+Autostart groups by capability start-priority and runs those tiers in sequence, starting the apps
+*within* a tier concurrently
+([CoreLifecycleService.StartAutostartAppsAsync](../../../apps/core/src/Haas.Hosty.Core/CoreLifecycleService.cs));
+the dependency graph is never consulted. A consumer and its provider in the same tier simply start
+together, and the consumer comes up with a dead `HOSTY_DEPENDENCY_{ALIAS}_URL`. Nothing is broken
+enough to notice reliably, which is exactly why it has survived.
+
+Until [core-lifecycle-parallelism](../core-lifecycle-parallelism/feature.md) (2026-08-26) a tier ran
+serially in alphabetical id order, so a pair whose ids happened to sort provider-first was ordered
+correctly by accident. That accident is gone; the underlying gap is unchanged, but it no longer hides
+behind alphabetical luck, which raises the value of building this.
 
 The two prerequisites are now in place: dependency state is resolved and projected
 ([cross-app-dependencies](../cross-app-dependencies/feature.md)), and the runtime-state vocabulary can
@@ -26,7 +32,8 @@ carry a non-terminal value without every `!= "running"` gate misreading it
 
 - Autostart visits apps in dependency order. Capability start-priority stays the outer key (the OTLP
   collector must precede its exporters regardless of who declares what); the dependency graph orders
-  within it.
+  within it. Since a tier now starts concurrently, "orders within it" means dependency *waves* —
+  parallel inside a wave, barriered between them — rather than a return to one-at-a-time.
 - An app whose required dependency is not yet running is not started and is not left looking stopped:
   its `RuntimeState` becomes `waiting`, which the Shell renders distinctly from both `stopped` and
   `starting`.

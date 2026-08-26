@@ -282,6 +282,41 @@ internal sealed class HostyCoreTools
         }
     }
 
+    [McpServerTool(Name = "search_audit", ReadOnly = true)]
+    [Description(
+        "Searches the host's audit log: who did what to this host and whether it worked. Distinct from tail_app_logs, " +
+        "which is an app's own output — this records actions taken *on* apps and on the host's own credentials, " +
+        "users and backups. Coverage is uneven today: lifecycle actions are recorded only when an agent performed " +
+        "them, so an absent entry is not evidence that nothing happened.")]
+    public static async Task<string> SearchAuditAsync(
+        AuditStore audit,
+        IClock clock,
+        CancellationToken cancellationToken,
+        [Description("Only entries about this resource, e.g. an app id from list_apps. Omit for all.")] string? resourceId = null,
+        [Description("Only actions starting with this, e.g. 'app.lifecycle' or 'auth'. Omit for all.")] string? actionPrefix = null,
+        [Description("Only this outcome: succeeded, failed, refused, reported. Omit for all.")] string? outcome = null,
+        [Description("How far back to look, in seconds (60 to 30 days, default 86400).")] int rangeSeconds = 86_400,
+        [Description("How many entries to return (1-200, default 50).")] int limit = 50)
+    {
+        var result = await audit.SearchAsync(
+            new AuditQuery(resourceId, actionPrefix, outcome, rangeSeconds, limit),
+            clock.UtcNow,
+            cancellationToken: cancellationToken);
+
+        return CoreJson.Text(new McpAuditSearch(
+            result.Entries.Select(entry => new McpAuditEntry(
+                entry.CreatedAt,
+                entry.Action,
+                entry.ResourceType,
+                entry.ResourceId,
+                entry.Outcome,
+                // Who authorized it is the whole point of this record: an audit entry without an actor
+                // answers "something happened" rather than the question anyone asks of an audit.
+                entry.ActorUserId,
+                entry.Details)).ToArray(),
+            result.Window));
+    }
+
     // --- Lifecycle mutations (docs/features/core-mcp/feature.md) ----------------------------------
     //
     // Gated on the mcp:lifecycle standing grant, resolved by the endpoint filter into
@@ -492,6 +527,25 @@ internal sealed record McpAppInterface(string Name, string? Url);
 internal sealed record McpHostStatus(string CoreVersion, int Apps, int Running, int NotRunning, int WithErrors);
 
 internal sealed record McpLogTail(string AppId, int Lines, string? Text, string? Error);
+
+/// <summary>
+/// Audit entries, and the window that produced them.
+/// </summary>
+/// <remarks>
+/// The window is not decoration: without it an agent reports "nothing happened" when it means
+/// "nothing in the newest fifty", which is a false statement about the host rather than a report
+/// about the query.
+/// </remarks>
+internal sealed record McpAuditSearch(IReadOnlyList<McpAuditEntry> Entries, AuditWindow Window);
+
+internal sealed record McpAuditEntry(
+    DateTimeOffset At,
+    string Action,
+    string ResourceType,
+    string? ResourceId,
+    string Outcome,
+    string? ActorUserId,
+    IReadOnlyDictionary<string, string> Details);
 
 internal sealed record McpError(string Error);
 

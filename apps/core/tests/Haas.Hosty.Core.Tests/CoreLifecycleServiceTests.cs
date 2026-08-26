@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
@@ -2802,6 +2803,76 @@ public sealed class CoreLifecycleServiceTests
         Assert.True(result.Succeeded);
         Assert.Equal("com.example.notes", result.AppId);
         Assert.Equal(1, fixture.Adapter.StartCount);
+    }
+
+    [Fact]
+    public async Task StartAutostartAppsAsync_StartsAppsOfOneTierConcurrently()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        await fixture.Service.InstallAsync(new AppInstallRequest(
+            await fixture.WriteManifestAsync("1.0.0", id: "com.example.other", name: "Other")));
+
+        // A rendezvous both starts must reach before either may finish: it can only be satisfied if
+        // they are in flight at the same time. Serially the first would wait here until the timeout
+        // fires, surfacing as a failed autostart rather than a passing test.
+        var bothInFlight = new TaskCompletionSource();
+        var arrived = 0;
+        fixture.Adapter.StartProbe = async () =>
+        {
+            if (Interlocked.Increment(ref arrived) == 2)
+            {
+                bothInFlight.SetResult();
+            }
+
+            await bothInFlight.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        };
+
+        var results = await fixture.Service.StartAutostartAppsAsync();
+
+        Assert.All(results, result => Assert.True(result.Succeeded, result.Message));
+        Assert.Equal(2, fixture.Adapter.StartCount);
+        // Submission order is still alphabetical, and Task.WhenAll preserves it.
+        Assert.Equal(["com.example.notes", "com.example.other"], results.Select(result => result.AppId));
+    }
+
+    [Fact]
+    public async Task StartAutostartAppsAsync_FinishesACapabilityProviderBeforeTheNextTierStarts()
+    {
+        // Capability start-priority is a barrier, not a sort key: the collector's endpoint URL must be
+        // persisted before a lower tier's start-time env injection reads it, so parallelism inside a
+        // tier must never leak across one.
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        await fixture.Service.InstallAsync(new AppInstallRequest(
+            await fixture.WriteManifestAsync("1.0.0", id: "com.example.collector", name: "Collector")));
+        await fixture.Apps.UpdateAppAsync("com.example.collector", app => app with
+        {
+            Provides = [PlatformCapabilities.OtlpCollector],
+        });
+
+        var timeline = new ConcurrentQueue<string>();
+        fixture.Adapter.StartProbe = async () =>
+        {
+            var appId = fixture.Adapter.LastContext!.App.Id;
+            timeline.Enqueue($"enter:{appId}");
+            // Yields the continuation, so anything running concurrently gets to interleave its own
+            // entry between this enter and its exit — which is exactly what must not happen here.
+            await Task.Yield();
+            timeline.Enqueue($"exit:{appId}");
+        };
+
+        var results = await fixture.Service.StartAutostartAppsAsync();
+
+        Assert.All(results, result => Assert.True(result.Succeeded, result.Message));
+        Assert.Equal(
+            [
+                "enter:com.example.collector",
+                "exit:com.example.collector",
+                "enter:com.example.notes",
+                "exit:com.example.notes",
+            ],
+            timeline);
     }
 
     [Fact]
@@ -6852,9 +6923,15 @@ public sealed class CoreLifecycleServiceTests
         public Task<IReadOnlySet<string>> ListRunningAppIdsAsync(CancellationToken cancellationToken = default)
             => Task.FromResult<IReadOnlySet<string>>(RunningAppIds);
 
-        public int StartCount { get; private set; }
+        // Interlocked: autostart runs the apps of one priority tier concurrently, so these counters are
+        // incremented from several threads at once and a plain ++ would lose increments.
+        private int startCount;
 
-        public int StopCount { get; private set; }
+        private int stopCount;
+
+        public int StartCount => Volatile.Read(ref startCount);
+
+        public int StopCount => Volatile.Read(ref stopCount);
 
         public int? FailOnStartCount { get; set; }
 
@@ -6879,14 +6956,14 @@ public sealed class CoreLifecycleServiceTests
 
         public async Task<AppRuntimeStartResult> StartAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
         {
-            StartCount++;
+            var attempt = Interlocked.Increment(ref startCount);
             LastContext = context;
             if (StartProbe is { } probe)
             {
                 await probe();
             }
 
-            if (FailOnStartCount == StartCount)
+            if (FailOnStartCount == attempt)
             {
                 throw new AppLifecycleException("runtime_start_failed", "Runtime failed to start.");
             }
@@ -6907,7 +6984,7 @@ public sealed class CoreLifecycleServiceTests
 
         public async Task<AppRuntimeOperationResult> StopAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
         {
-            StopCount++;
+            var attempt = Interlocked.Increment(ref stopCount);
             if (StopProbe is { } probe)
             {
                 await probe();
@@ -6918,7 +6995,7 @@ public sealed class CoreLifecycleServiceTests
                 await gate;
             }
 
-            if (FailOnStopCount == StopCount)
+            if (FailOnStopCount == attempt)
             {
                 throw new AppLifecycleException("runtime_stop_failed", "Runtime failed to stop.");
             }
