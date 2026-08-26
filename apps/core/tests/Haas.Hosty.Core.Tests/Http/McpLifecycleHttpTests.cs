@@ -123,7 +123,14 @@ public sealed class McpLifecycleHttpTests
 
         var readOnly = await CreateCredentialAsync(client, admin, "read only", ["mcp:read"]);
         var listed = await CallAsync(client, readOnly, "tools/list", new { });
-        Assert.Equal(7, listed.GetProperty("tools").EnumerateArray().Count());
+        var names = listed.GetProperty("tools").EnumerateArray()
+            .Select(tool => tool.GetProperty("name").GetString())
+            .ToArray();
+        // The claim is that listing is not filtered by scope — refusal happens at the call, where it
+        // can name the missing grant. A bare count asserted that too, but broke on every tool added
+        // for a reason that had nothing to do with this test's subject.
+        Assert.Contains("list_apps", names);
+        Assert.Contains("stop_app", names);
 
         var apps = await CallToolAsync(client, readOnly, "list_apps", new { });
         Assert.True(apps.TryGetProperty("apps", out _));

@@ -1,6 +1,6 @@
 # Core MCP: The Host's Own Audit
 
-Status: Draft
+Status: In Progress
 Created: 2026-08-20
 Updated: 2026-08-20
 
@@ -59,9 +59,9 @@ answer "why did this restart" only when an agent was the one who restarted it.
       `LifecycleEndpoints` (start, stop, restart, update, autostart, runtime switch) writing the same
       `app.lifecycle.*` shape with the acting user. Without this the reader below has almost nothing
       to read, and the surface would quietly imply the host keeps a history it does not keep.
-- [ ] `AuditStore` gains a filtered, bounded read: by resource id, action prefix, outcome and time
+- [x] `AuditStore` gains a filtered, bounded read: by resource id, action prefix, outcome and time
       range, without loading the whole file for every call.
-- [ ] `search_audit` on Core MCP, `readOnlyHint: true`, with the window contract in every result.
+- [x] `search_audit` on Core MCP, `readOnlyHint: true`, with the window contract in every result.
 - [ ] A stated rule for `Details`, enforced where audit records are written rather than where they
       are read: this tool turns that map into an export surface, and today nothing constrains what a
       future call site puts in it.
@@ -69,6 +69,24 @@ answer "why did this restart" only when an agent was the one who restarted it.
 - [ ] Tests: the filters as pairs (a match beside a non-match), the window contract in every
       direction, and `Details` asserted to carry no credential material for every existing writer.
 - [ ] Docs: `feature.md`, index.
+
+## Decisions
+
+Owner, 2026-08-20: **ship the reader first; fix who writes what afterwards.** Recorded with what it
+costs, because the cost is real and belongs in the document rather than in a conversation.
+
+Until the producer work lands, `search_audit` answers well about credentials, users, backups and
+notifications — and about **lifecycle only when an agent performed it**. The operator's own start,
+stop and update write nothing. The tool says so in its own description rather than letting an empty
+result be read as "nothing happened", which is the failure mode this whole surface is careful about.
+
+- **Actor travels with every entry.** An audit without an actor answers "something happened" rather
+  than the question anyone asks of an audit. This is a **new disclosure** — nothing in Shell reads
+  the log today — and it is admin-only, like the rest of the surface.
+- **`mcp:read`, not a new scope.** A scope for a read that every admin credential already implies
+  would be ceremony; the surface is admin-gated and the audit is host state like the rest of it.
+- **The read is bounded by a scan ceiling**, not only by the time window. Nothing trims this log, so a
+  filter matching three entries in a very long file must not read the file.
 
 ## Open Questions
 

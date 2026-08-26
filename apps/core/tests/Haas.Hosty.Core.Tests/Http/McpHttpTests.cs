@@ -32,7 +32,7 @@ public sealed class McpHttpTests
             .Order(StringComparer.Ordinal)
             .ToArray();
         Assert.Equal(
-            ["get_app", "get_host_status", "list_apps", "restart_app", "start_app", "stop_app", "tail_app_logs"],
+            ["get_app", "get_host_status", "list_apps", "restart_app", "search_audit", "start_app", "stop_app", "tail_app_logs"],
             names);
 
         var listed = await CallToolAsync(client, admin, "list_apps", new { });
@@ -54,6 +54,77 @@ public sealed class McpHttpTests
         Assert.Equal(1, status.GetProperty("withErrors").GetInt32());
         Assert.False(string.IsNullOrWhiteSpace(status.GetProperty("coreVersion").GetString()));
     }
+
+    [Fact]
+    public async Task SearchesTheAuditAndSaysWhatWindowProducedTheAnswer()
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        var audit = harness.Services.GetRequiredService<AuditStore>();
+        var clock = harness.Services.GetRequiredService<IClock>();
+        await audit.AppendAsync(Entry("app.lifecycle.stop", "com.example.notes", "succeeded", clock.UtcNow));
+        await audit.AppendAsync(Entry("app.lifecycle.start", "com.example.other", "refused", clock.UtcNow));
+        var admin = await SeedSessionAsync(harness, "host.admin");
+        using var client = harness.CreateClient();
+        await InitializeAsync(client, admin);
+
+        var all = await CallToolAsync(client, admin, "search_audit", new { });
+        Assert.Equal(2, all.GetProperty("entries").GetArrayLength());
+        Assert.False(all.GetProperty("window").GetProperty("rangeClamped").GetBoolean());
+
+        // The pair: a filter that matches beside the same filter that does not. Either alone is
+        // satisfied by a search that ignores its arguments entirely.
+        var mine = await CallToolAsync(client, admin, "search_audit", new { resourceId = "com.example.notes" });
+        Assert.Equal(1, mine.GetProperty("entries").GetArrayLength());
+        Assert.Equal("app.lifecycle.stop", mine.GetProperty("entries")[0].GetProperty("action").GetString());
+        // Who authorized it is the question an audit exists to answer.
+        Assert.Equal("user_admin", mine.GetProperty("entries")[0].GetProperty("actorUserId").GetString());
+
+        var none = await CallToolAsync(client, admin, "search_audit", new { resourceId = "com.example.absent" });
+        Assert.Equal(0, none.GetProperty("entries").GetArrayLength());
+
+        // A refusal is findable: a surface recording only successes would hide the case an operator
+        // actually investigates.
+        var refused = await CallToolAsync(client, admin, "search_audit", new { outcome = "refused" });
+        Assert.Equal(1, refused.GetProperty("entries").GetArrayLength());
+        Assert.Equal("com.example.other", refused.GetProperty("entries")[0].GetProperty("resourceId").GetString());
+    }
+
+    [Fact]
+    public async Task ReportsItsClampsRatherThanApplyingThemSilently()
+    {
+        // An over-large ask answered quietly looks identical to a host where that much simply did not
+        // happen. Keeping those apart is the whole job of the window.
+        await using var harness = await CoreHttpHarness.StartAsync();
+        var audit = harness.Services.GetRequiredService<AuditStore>();
+        var clock = harness.Services.GetRequiredService<IClock>();
+        await audit.AppendAsync(Entry("app.lifecycle.stop", "com.example.notes", "succeeded", clock.UtcNow));
+        await audit.AppendAsync(Entry("app.lifecycle.stop", "com.example.notes", "succeeded", clock.UtcNow));
+        var admin = await SeedSessionAsync(harness, "host.admin");
+        using var client = harness.CreateClient();
+        await InitializeAsync(client, admin);
+
+        var clamped = await CallToolAsync(client, admin, "search_audit", new { rangeSeconds = 999_999_999, limit = 9_999 });
+        Assert.True(clamped.GetProperty("window").GetProperty("rangeClamped").GetBoolean());
+        Assert.True(clamped.GetProperty("window").GetProperty("limitClamped").GetBoolean());
+
+        // Both directions: a full page says so, an unfilled one does not. A flag that is always true
+        // says nothing.
+        var full = await CallToolAsync(client, admin, "search_audit", new { limit = 1 });
+        Assert.True(full.GetProperty("window").GetProperty("truncated").GetBoolean());
+        var partial = await CallToolAsync(client, admin, "search_audit", new { limit = 50 });
+        Assert.False(partial.GetProperty("window").GetProperty("truncated").GetBoolean());
+    }
+
+    private static AuditRecord Entry(string action, string resourceId, string outcome, DateTimeOffset at)
+        => new(
+            Id: $"audit_{Guid.NewGuid():N}",
+            Action: action,
+            ResourceType: "app",
+            ResourceId: resourceId,
+            Outcome: outcome,
+            ActorUserId: "user_admin",
+            CreatedAt: at,
+            Details: new Dictionary<string, string>(StringComparer.Ordinal));
 
     [Fact]
     public async Task EveryToolDeclaresWhatItIsOnTheWire()
