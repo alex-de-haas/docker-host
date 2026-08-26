@@ -1137,6 +1137,90 @@ public sealed class DockerRuntimeAdapterTests
         Assert.Equal(new HashSet<string> { "app.one", "app.two" }, running);
     }
 
+    [Fact]
+    public async Task GetHealthAsync_InspectsEveryServiceContainerInOneCall()
+    {
+        // One spawn per app, not per service: this runs for every believed-running app on every
+        // supervision tick, so a per-service call made steady-state churn scale with container count.
+        var runner = new FakeDockerCommandRunner(args => args switch
+        {
+            ["inspect", "--format", var format, ..] when format.Contains("State.Status", StringComparison.Ordinal) =>
+                new DockerCommandResult(0, string.Join('\n',
+                    ContainerInspectLine("hosty-com-example-app-app", "running", health: "healthy"),
+                    ContainerInspectLine("hosty-com-example-app-worker", "running", health: "")), ""),
+            _ => new DockerCommandResult(0, "", ""),
+        });
+
+        var health = await CreateAdapter(runner).GetHealthAsync(CreateMultiServiceDockerContext("app", "worker"));
+
+        Assert.Equal("healthy", health.Status);
+        Assert.Equal(["app", "worker"], health.Services.Select(service => service.Service));
+        Assert.All(health.Services, service => Assert.Equal("running", service.Status));
+        var containerInspects = runner.Commands.Count(command =>
+            command is ["inspect", "--format", var format, ..] && format.Contains("State.Status", StringComparison.Ordinal));
+        Assert.Equal(1, containerInspects);
+    }
+
+    [Fact]
+    public async Task GetHealthAsync_MapsLinesByNameSoAMissingContainerReadsStopped()
+    {
+        // docker prints a line only for the containers that exist and exits non-zero for the rest, so
+        // the batch is mapped back by the {{.Name}} field rather than by position. Absence is the
+        // "stopped" answer — the non-zero exit must not discard the good line that came with it.
+        var runner = new FakeDockerCommandRunner(args => args switch
+        {
+            ["inspect", "--format", var format, ..] when format.Contains("State.Status", StringComparison.Ordinal) =>
+                new DockerCommandResult(1, ContainerInspectLine("hosty-com-example-app-worker", "running"), "No such object: hosty-com-example-app-app"),
+            _ => new DockerCommandResult(0, "", ""),
+        });
+
+        var health = await CreateAdapter(runner).GetHealthAsync(CreateMultiServiceDockerContext("app", "worker"));
+
+        Assert.Equal("unhealthy", health.Status);
+        Assert.Equal("stopped", health.Services.Single(service => service.Service == "app").Status);
+        Assert.Equal("running", health.Services.Single(service => service.Service == "worker").Status);
+    }
+
+    [Fact]
+    public async Task GetHealthAsync_ResolvesImageRepoDigestOncePerImageAcrossCalls()
+    {
+        // An image id is the digest of that image's own config, so the mapping never changes; asking
+        // docker for it again on every tick was pure spawn cost.
+        var runner = new FakeDockerCommandRunner(args => args switch
+        {
+            ["inspect", "--format", var format, ..] when format.Contains("State.Status", StringComparison.Ordinal) =>
+                new DockerCommandResult(0, ContainerInspectLine("hosty-com-example-app-app", "running"), ""),
+            ["inspect", "--format", var format, ..] when format.Contains("RepoDigests", StringComparison.Ordinal) =>
+                new DockerCommandResult(0, "sha256:image-id\tghcr.io/example/app@sha256:deadbeef", ""),
+            _ => new DockerCommandResult(0, "", ""),
+        });
+        var adapter = CreateAdapter(runner);
+        var context = CreateMultiServiceDockerContext("app");
+
+        var first = await adapter.GetHealthAsync(context);
+        var second = await adapter.GetHealthAsync(context);
+
+        Assert.Equal("ghcr.io/example/app@sha256:deadbeef", first.Services.Single().Image);
+        Assert.Equal("ghcr.io/example/app@sha256:deadbeef", second.Services.Single().Image);
+        var imageInspects = runner.Commands.Count(command =>
+            command is ["inspect", "--format", var format, ..] && format.Contains("RepoDigests", StringComparison.Ordinal));
+        Assert.Equal(1, imageInspects);
+    }
+
+    // One line of the batched container-inspect format: name, status, pid, exit code, image id,
+    // config image, health, restart count, started at.
+    private static string ContainerInspectLine(string containerName, string status, string health = "")
+        => string.Join('\t',
+            $"/{containerName}",
+            status,
+            "1234",
+            "0",
+            "sha256:image-id",
+            "ghcr.io/example/app:latest",
+            health,
+            "0",
+            "2026-08-26T00:00:00Z");
+
     private static RuntimeLifecycleContext CreateMultiServiceDockerContext(params string[] serviceKeys)
     {
         var services = serviceKeys

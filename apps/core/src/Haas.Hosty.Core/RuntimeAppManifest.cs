@@ -1735,6 +1735,14 @@ internal sealed class DockerRuntimeAdapter(
     // ever started (small), so it does not need explicit eviction.
     private readonly ConcurrentDictionary<string, byte> wslMirroredAdvised = new(StringComparer.Ordinal);
 
+    // Image id -> its first repo digest, for health's drift reporting. An image id is the digest of
+    // that image's own config, so the content it names never changes and the mapping is stable for
+    // the life of the process; only re-tagging the identical content under another repository could
+    // add an entry, which does not change what the container is running. Bounded by the number of
+    // distinct images this host has run, so it needs no eviction. Failures are NOT cached: an image
+    // built locally has no repo digest at all, and re-asking costs nothing once the lookup is batched.
+    private readonly ConcurrentDictionary<string, string> imageRepoDigests = new(StringComparer.Ordinal);
+
     // Kernel info files whose contents mark a WSL2 environment; allocated once, not per check.
     private static readonly string[] WslKernelInfoPaths = ["/proc/sys/kernel/osrelease", "/proc/version"];
 
@@ -2067,11 +2075,10 @@ internal sealed class DockerRuntimeAdapter(
 
     public async Task<AppRuntimeHealthResult> GetHealthAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
     {
-        var services = new List<AppRuntimeServiceHealth>();
-        foreach (var service in context.Manifest.Services)
-        {
-            services.Add(await InspectServiceHealthAsync(context.App.Id, service.Key, cancellationToken));
-        }
+        var services = await InspectServicesHealthAsync(
+            context.App.Id,
+            [.. context.Manifest.Services.Select(service => service.Key)],
+            cancellationToken);
 
         return new AppRuntimeHealthResult(SummarizeHealthStatus(services), services);
     }
@@ -2113,48 +2120,103 @@ internal sealed class DockerRuntimeAdapter(
             : "unknown";
     }
 
-    // Inspects a single service container in one `docker inspect` call, then resolves the running
-    // image's first repo digest (`repository@sha256:...`) so clients can detect "running != lock"
-    // drift. A missing container or unavailable docker is reported as "stopped" —
+    // Inspects ALL of an app's service containers in one `docker inspect` call, then resolves the
+    // running images' first repo digests (`repository@sha256:...`) so clients can detect
+    // "running != lock" drift. A missing container or unavailable docker is reported as "stopped" —
     // health is best-effort observation and never throws.
-    private async Task<AppRuntimeServiceHealth> InspectServiceHealthAsync(string appId, string serviceKey, CancellationToken cancellationToken)
+    //
+    // One spawn per app rather than two per service: this runs for every believed-running app on every
+    // 15s supervision tick, where a per-service pair of spawns made steady-state process churn scale
+    // with container count for a reading that is usually unchanged.
+    private async Task<IReadOnlyList<AppRuntimeServiceHealth>> InspectServicesHealthAsync(
+        string appId,
+        IReadOnlyList<string> serviceKeys,
+        CancellationToken cancellationToken)
     {
-        var containerName = BuildContainerName(appId, serviceKey);
-        // Tab-separated so an empty middle field cannot shift columns. {{.Image}} is the image id;
-        // {{.Config.Image}} is the reference the container was launched with (the pinned digest).
-        // {{if .State.Health}} guards the health field: .State.Health is nil when the image declares
-        // no HEALTHCHECK, and an unguarded {{.State.Health.Status}} would error out the whole inspect.
-        // RestartCount and StartedAt are observation-only signals for uptime / crash-loop legibility.
-        const string format = "{{.State.Status}}\t{{.State.Pid}}\t{{.State.ExitCode}}\t{{.Image}}\t{{.Config.Image}}\t{{if .State.Health}}{{.State.Health.Status}}{{end}}\t{{.RestartCount}}\t{{.State.StartedAt}}";
-        var inspect = await RunRawAsync(["inspect", "--format", format, containerName], cancellationToken);
-        if (inspect.ExitCode != 0)
+        if (serviceKeys.Count == 0)
         {
-            return new AppRuntimeServiceHealth(serviceKey, "stopped", null, null, null, null, null);
+            return [];
         }
 
-        var parsed = ParseContainerInspect(inspect.StandardOutput);
-        var image = parsed.ConfigImage;
-        if (!string.IsNullOrWhiteSpace(parsed.ImageId))
+        // Container names are derived, so two service keys can normalize onto one name (see
+        // BuildContainerName). Inspect each distinct name once and fan the answer back out.
+        var namesByService = serviceKeys.ToDictionary(
+            key => key,
+            key => BuildContainerName(appId, key),
+            StringComparer.Ordinal);
+        var distinctNames = namesByService.Values.Distinct(StringComparer.Ordinal).ToArray();
+
+        // Tab-separated so an empty middle field cannot shift columns. {{.Name}} leads so each line
+        // identifies its own container: docker emits one line per FOUND container and reports the
+        // missing ones on stderr, so position alone could not be trusted to map a line back to the
+        // name that produced it. {{.Image}} is the image id; {{.Config.Image}} is the reference the
+        // container was launched with (the pinned digest). {{if .State.Health}} guards the health
+        // field: .State.Health is nil when the image declares no HEALTHCHECK, and an unguarded
+        // {{.State.Health.Status}} would error out the whole inspect. RestartCount and StartedAt are
+        // observation-only signals for uptime / crash-loop legibility.
+        const string format = "{{.Name}}\t{{.State.Status}}\t{{.State.Pid}}\t{{.State.ExitCode}}\t{{.Image}}\t{{.Config.Image}}\t{{if .State.Health}}{{.State.Health.Status}}{{end}}\t{{.RestartCount}}\t{{.State.StartedAt}}";
+        // The exit code is deliberately ignored: a batch naming one absent container exits non-zero
+        // while still printing good lines for the containers that do exist. Absence IS the "stopped"
+        // answer, so what matters is which names came back, not the status of the call as a whole.
+        var inspect = await RunRawAsync(["inspect", "--format", format, .. distinctNames], cancellationToken);
+        var parsedByName = new Dictionary<string, ContainerInspectInfo>(StringComparer.Ordinal);
+        foreach (var line in (inspect.StandardOutput ?? string.Empty)
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
-            var repoDigest = await ResolveImageRepoDigestAsync(parsed.ImageId!, cancellationToken);
-            if (!string.IsNullOrWhiteSpace(repoDigest))
+            var separator = line.IndexOf('\t', StringComparison.Ordinal);
+            if (separator <= 0)
             {
-                image = repoDigest;
+                continue;
+            }
+
+            // docker reports the name as "/container-name".
+            var name = line[..separator].TrimStart('/');
+            if (!string.IsNullOrEmpty(name))
+            {
+                parsedByName[name] = ParseContainerInspect(line[(separator + 1)..]);
             }
         }
 
-        return new AppRuntimeServiceHealth(
-            Service: serviceKey,
-            Status: parsed.Status,
-            ProcessId: parsed.Pid,
-            ExitCode: parsed.ExitCode,
-            LogPath: null,
-            WorkingDirectory: null,
-            Message: null,
-            Image: string.IsNullOrWhiteSpace(image) ? null : image,
-            Health: parsed.Health,
-            RestartCount: parsed.RestartCount,
-            StartedAt: parsed.StartedAt);
+        var repoDigests = await ResolveImageRepoDigestsAsync(
+            [.. parsedByName.Values
+                .Select(parsed => parsed.ImageId)
+                .Where(imageId => !string.IsNullOrWhiteSpace(imageId))
+                .Select(imageId => imageId!)
+                .Distinct(StringComparer.Ordinal)],
+            cancellationToken);
+
+        var services = new List<AppRuntimeServiceHealth>(serviceKeys.Count);
+        foreach (var serviceKey in serviceKeys)
+        {
+            if (!parsedByName.TryGetValue(namesByService[serviceKey], out var parsed))
+            {
+                services.Add(new AppRuntimeServiceHealth(serviceKey, "stopped", null, null, null, null, null));
+                continue;
+            }
+
+            var image = parsed.ConfigImage;
+            if (!string.IsNullOrWhiteSpace(parsed.ImageId) &&
+                repoDigests.TryGetValue(parsed.ImageId!, out var repoDigest) &&
+                !string.IsNullOrWhiteSpace(repoDigest))
+            {
+                image = repoDigest;
+            }
+
+            services.Add(new AppRuntimeServiceHealth(
+                Service: serviceKey,
+                Status: parsed.Status,
+                ProcessId: parsed.Pid,
+                ExitCode: parsed.ExitCode,
+                LogPath: null,
+                WorkingDirectory: null,
+                Message: null,
+                Image: string.IsNullOrWhiteSpace(image) ? null : image,
+                Health: parsed.Health,
+                RestartCount: parsed.RestartCount,
+                StartedAt: parsed.StartedAt));
+        }
+
+        return services;
     }
 
     // Parses the tab-separated `docker inspect` line above. Maps docker's container state to the
@@ -2444,17 +2506,73 @@ internal sealed class DockerRuntimeAdapter(
         return result.ExitCode == 0 ? ParseRepoDigest(result.StandardOutput) : null;
     }
 
-    // Reads an image id's first repo digest (`repository@sha256:...`) for health reporting.
-    private async Task<string?> ResolveImageRepoDigestAsync(string imageId, CancellationToken cancellationToken)
+    // Reads image ids' first repo digests (`repository@sha256:...`) for health reporting, serving what
+    // is already known from the process cache and asking docker once for the rest. Ids absent from the
+    // result have no repo digest (a locally built image) or could not be inspected; health treats both
+    // as "no digest to report" and falls back to the reference the container was launched with.
+    private async Task<IReadOnlyDictionary<string, string>> ResolveImageRepoDigestsAsync(
+        IReadOnlyList<string> imageIds,
+        CancellationToken cancellationToken)
     {
-        var result = await RunRawAsync(["inspect", "--format", "{{index .RepoDigests 0}}", imageId], cancellationToken);
-        if (result.ExitCode != 0)
+        var resolved = new Dictionary<string, string>(StringComparer.Ordinal);
+        var missing = new List<string>();
+        foreach (var imageId in imageIds)
         {
-            return null;
+            if (imageRepoDigests.TryGetValue(imageId, out var cached))
+            {
+                resolved[imageId] = cached;
+            }
+            else
+            {
+                missing.Add(imageId);
+            }
         }
 
-        var value = result.StandardOutput?.Trim();
-        return string.IsNullOrWhiteSpace(value) || value.Contains("no value", StringComparison.OrdinalIgnoreCase) ? null : value;
+        if (missing.Count == 0)
+        {
+            return resolved;
+        }
+
+        // {{.Id}} leads so each line identifies itself, exactly as the container batch does. The
+        // {{if .RepoDigests}} guard matters more here than it reads: a bare {{index .RepoDigests 0}}
+        // raises a template error on an image with none (anything built locally), and one such image
+        // in the batch would otherwise take the whole call's output down with it.
+        var result = await RunRawAsync(
+            ["inspect", "--format", "{{.Id}}\t{{if .RepoDigests}}{{index .RepoDigests 0}}{{end}}", .. missing],
+            cancellationToken);
+        foreach (var line in (result.StandardOutput ?? string.Empty)
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var fields = line.Split('\t');
+            if (fields.Length < 2)
+            {
+                continue;
+            }
+
+            var imageId = fields[0].Trim();
+            var digest = fields[1].Trim();
+            if (string.IsNullOrEmpty(imageId) ||
+                string.IsNullOrEmpty(digest) ||
+                digest.Contains("no value", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            // docker echoes the id in full even when it was asked by a short id, so key the cache by
+            // BOTH: the caller looks it up by whatever form the container inspect reported.
+            imageRepoDigests[imageId] = digest;
+            resolved[imageId] = digest;
+            var requested = missing.FirstOrDefault(candidate =>
+                imageId.StartsWith(candidate, StringComparison.Ordinal) ||
+                candidate.StartsWith(imageId, StringComparison.Ordinal));
+            if (requested is not null)
+            {
+                imageRepoDigests[requested] = digest;
+                resolved[requested] = digest;
+            }
+        }
+
+        return resolved;
     }
 
     // Light remote digest lookup for the reviewed-update plan: resolves `repository:tag` to its index

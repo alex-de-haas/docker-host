@@ -3044,25 +3044,72 @@ internal sealed class CoreLifecycleService(
         return File.Exists(localCopy) ? localCopy : null;
     }
 
+    // How many autostarts may be in flight at once inside one priority tier. Bounded rather than
+    // unlimited because a start can pull an image: a homelab host that fans out twenty concurrent
+    // `docker pull`s starves each of them of bandwidth and finishes later than a smaller batch would.
+    private const int MaxConcurrentAutostarts = 4;
+
+    // How many apps the supervision tick may observe at once. Higher than the autostart bound because
+    // an observation is a cheap read (one inspect batch or one healthcheck request), not a pull.
+    private const int MaxConcurrentObservations = 8;
+
     public async Task<IReadOnlyList<AppBackgroundLifecycleResult>> StartAutostartAppsAsync(CancellationToken cancellationToken = default)
     {
         var results = new List<AppBackgroundLifecycleResult>();
         var records = await apps.ListAppRecordsAsync(cancellationToken);
-        // System apps with a start priority go first — the telemetry collector is the OTLP sink other
-        // apps point at, so its endpoint URL must be resolved and persisted before their start-time
-        // env injection reads it (see ResolveTelemetryEndpointAsync). Otherwise alphabetical id order.
-        foreach (var app in records.Where(app =>
-            string.Equals(app.Kind, "runtime", StringComparison.Ordinal) &&
-            (app.Autostart ?? true))
-            .OrderByDescending(app => PlatformCapabilities.StartPriority(app.Provides))
-            .ThenBy(app => app.Id, StringComparer.Ordinal))
+        // Capability start-priority is a hard barrier between tiers, not a sort key: the telemetry
+        // collector is the OTLP sink other apps point at, so its endpoint URL must be resolved and
+        // persisted before a lower tier's start-time env injection reads it (see
+        // ResolveTelemetryEndpointAsync). Tiers therefore run strictly in sequence.
+        //
+        // Within a tier the apps are independent — each start holds only its own app's operation lock,
+        // the port allocator serializes on its own gate, and every failure is captured per app by
+        // RunBackgroundLifecycleActionAsync — so they run concurrently. Serially, boot took the SUM of
+        // every app's start (image pull, source checkout, port-release wait); one slow pull delayed
+        // every app behind it. Concurrently a tier costs about its slowest app. Stops were parallelized
+        // for the same reason (StopRuntimeAppsAsync).
+        //
+        // NOTE: cross-app dependency order is still not honoured here — it never was (autostart has
+        // never consulted the dependency graph, so a consumer sorting before its provider already
+        // started first and came up against an address nothing was listening on yet). What changes is
+        // that the alphabetical accident which sometimes ordered a pair correctly is gone; both now
+        // start together. Fixing it properly is dependency-ordered-autostart's `waiting` state.
+        var tiers = records
+            .Where(app =>
+                string.Equals(app.Kind, "runtime", StringComparison.Ordinal) &&
+                (app.Autostart ?? true))
+            .GroupBy(app => PlatformCapabilities.StartPriority(app.Provides))
+            .OrderByDescending(tier => tier.Key);
+
+        foreach (var tier in tiers)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            results.Add(await RunBackgroundLifecycleActionAsync(
-                app.Id,
-                "autostart",
-                async () => await StartAsync(app.Id, cancellationToken),
-                cancellationToken));
+            using var slots = new SemaphoreSlim(MaxConcurrentAutostarts, MaxConcurrentAutostarts);
+            // Alphabetical within the tier so the *submission* order — and therefore the reported
+            // result order, which Task.WhenAll preserves — stays what it has always been.
+            var tasks = tier
+                .OrderBy(app => app.Id, StringComparer.Ordinal)
+                .Select(async app =>
+                {
+                    await slots.WaitAsync(cancellationToken);
+                    try
+                    {
+                        return await RunBackgroundLifecycleActionAsync(
+                            app.Id,
+                            "autostart",
+                            async () => await StartAsync(app.Id, cancellationToken),
+                            cancellationToken);
+                    }
+                    finally
+                    {
+                        slots.Release();
+                    }
+                })
+                .ToArray();
+
+            // WhenAll waits for every task even when one faults, so a cancelled boot never leaves a
+            // start running detached against a Core that is already tearing down.
+            results.AddRange(await Task.WhenAll(tasks));
         }
 
         return results;
@@ -5708,22 +5755,31 @@ internal sealed class CoreLifecycleService(
         IReadOnlySet<string> supervisedAppIds, CancellationToken cancellationToken = default)
     {
         var records = await apps.ListAppRecordsAsync(cancellationToken);
-        var observations = new List<AppHealthObservation>();
-        foreach (var app in records)
+        // Observed concurrently, bounded: each app's observation is an independent probe (a docker
+        // inspect batch, or an HTTP/TCP healthcheck) writing only its own record under its own lock,
+        // and serially the tick's duration was the SUM of them — so one app with a slow healthcheck
+        // pushed every other app's observation past the next tick. Task.WhenAll preserves submission
+        // order, so observations stay in record order for the supervisor's transition bookkeeping.
+        using var slots = new SemaphoreSlim(MaxConcurrentObservations, MaxConcurrentObservations);
+        var probes = records.Select(async app =>
         {
+            await slots.WaitAsync(cancellationToken);
             try
             {
-                var observation = await ObserveRuntimeHealthForAppAsync(app, supervisedAppIds.Contains(app.Id), cancellationToken);
-                if (observation is not null)
-                {
-                    observations.Add(observation);
-                }
+                return await ObserveRuntimeHealthForAppAsync(app, supervisedAppIds.Contains(app.Id), cancellationToken);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 logger.LogWarning(ex, "Failed to observe runtime health for app '{AppId}'.", app.Id);
+                return null;
             }
-        }
+            finally
+            {
+                slots.Release();
+            }
+        }).ToArray();
+
+        var observations = (await Task.WhenAll(probes)).OfType<AppHealthObservation>().ToArray();
 
         await ReconcileStoppedButRunningDockerAppsAsync(records, cancellationToken);
         return observations;
