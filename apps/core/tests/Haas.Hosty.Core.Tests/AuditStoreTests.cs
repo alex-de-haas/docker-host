@@ -48,15 +48,7 @@ public sealed class AuditStoreTests
         // Nothing trimmed this file before, so it grew for the life of the host. The cap is 8 MiB, so
         // the oversized log is staged directly rather than appended a line at a time.
         var paths = CreatePaths();
-        Directory.CreateDirectory(Path.GetDirectoryName(paths.AuditLogPath)!);
-        var padded = CreateRecord(0) with
-        {
-            Id = "audit_pad",
-            Details = new Dictionary<string, string>(StringComparer.Ordinal) { ["pad"] = new string('x', 9 * 1024 * 1024) },
-        };
-        await File.WriteAllTextAsync(
-            paths.AuditLogPath,
-            Serialize(padded) + Environment.NewLine + Serialize(CreateRecord(1)) + Environment.NewLine);
+        await StageOversizedLogAsync(paths, CreateRecord(1));
 
         var store = new AuditStore(paths);
         await store.AppendAsync(CreateRecord(2));
@@ -112,6 +104,82 @@ public sealed class AuditStoreTests
     public async Task ReadRecentAsync_ReturnsNothingWhenNoLogExists()
     {
         Assert.Empty(await new AuditStore(CreatePaths()).ReadRecentAsync());
+    }
+
+    [Fact]
+    public async Task SearchAsync_ReportsTruncationOnceRotationHasDiscardedAGeneration()
+    {
+        // Running out of retained trail before reaching the window's start means something different
+        // after history has been dropped: older matching events may have existed. Reporting the answer
+        // as complete there is exactly the "nothing happened" lie the window exists to prevent.
+        var paths = CreatePaths();
+        var store = new AuditStore(paths);
+        await RotateTwiceAsync(paths, store);
+
+        var result = await store.SearchAsync(
+            new AuditQuery(RangeSeconds: 30 * 24 * 60 * 60),
+            DateTimeOffset.Parse("2026-08-26T01:00:00Z"));
+
+        Assert.True(File.Exists(paths.AuditLogPath + ".discarded"), "the second rotation drops a generation");
+        Assert.True(result.Window.Truncated);
+    }
+
+    [Fact]
+    public async Task SearchAsync_ReportsACompleteAnswerOnAYoungHost()
+    {
+        // The control for the test above: exhausting the trail is honest when nothing was ever
+        // discarded, and a fresh host must not be told its answer might be missing entries.
+        var paths = CreatePaths();
+        var store = new AuditStore(paths);
+        await store.AppendAsync(CreateRecord(0));
+
+        var result = await store.SearchAsync(
+            new AuditQuery(RangeSeconds: 30 * 24 * 60 * 60),
+            DateTimeOffset.Parse("2026-08-26T01:00:00Z"));
+
+        Assert.Single(result.Entries);
+        Assert.False(result.Window.Truncated);
+    }
+
+    [Fact]
+    public async Task ReadRecentAsync_ReadsOneSnapshotOfBothGenerations()
+    {
+        // The reader opens the live log and the rotated generation together, so the pair it walks is
+        // fixed. Opening them one after another by path let a rotation in between hand back the inode
+        // the walk had just finished — every record twice, and the newest ones missed entirely.
+        var paths = CreatePaths();
+        var store = new AuditStore(paths);
+        await StageOversizedLogAsync(paths, CreateRecord(1));
+        await store.AppendAsync(CreateRecord(2));
+
+        var recent = await store.ReadRecentAsync();
+
+        Assert.Equal(recent.Select(record => record.Id).Distinct(), recent.Select(record => record.Id));
+        Assert.Equal(["audit_0002", "audit_0001", "audit_pad"], recent.Select(record => record.Id));
+    }
+
+    // Fills and rotates the live log twice, so the second rotation overwrites the generation the first
+    // one produced — the point at which the trail stops reaching back to the first event.
+    private static async Task RotateTwiceAsync(CoreDataPaths paths, AuditStore store)
+    {
+        await StageOversizedLogAsync(paths, CreateRecord(1));
+        await store.AppendAsync(CreateRecord(2));
+        await StageOversizedLogAsync(paths, CreateRecord(3));
+        await store.AppendAsync(CreateRecord(4));
+    }
+
+    // The cap is 8 MiB, so an oversized log is staged directly rather than appended a line at a time.
+    private static async Task StageOversizedLogAsync(CoreDataPaths paths, AuditRecord tail)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(paths.AuditLogPath)!);
+        var padded = CreateRecord(0) with
+        {
+            Id = "audit_pad",
+            Details = new Dictionary<string, string>(StringComparer.Ordinal) { ["pad"] = new string('x', 9 * 1024 * 1024) },
+        };
+        await File.WriteAllTextAsync(
+            paths.AuditLogPath,
+            Serialize(padded) + Environment.NewLine + Serialize(tail) + Environment.NewLine);
     }
 
     private static string Serialize(AuditRecord record)

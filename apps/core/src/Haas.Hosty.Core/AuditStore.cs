@@ -29,6 +29,14 @@ internal sealed class AuditStore(CoreDataPaths paths)
     // directory's owner-only permissions cover it without a second rule.
     private string RotatedLogPath => paths.AuditLogPath + ".1";
 
+    // Written the first time a rotation overwrites an existing previous generation — the moment the
+    // trail stops reaching back to the host's first event. A search that runs out of retained history
+    // before reaching the start of its window needs this to tell "the host is young, you saw
+    // everything" from "older matching events existed and were discarded"; without it the second case
+    // would report a partial answer as complete. On disk rather than in memory because the fact
+    // outlives the process that discarded the generation.
+    private string HistoryDiscardedMarkerPath => paths.AuditLogPath + ".discarded";
+
     public async Task AppendAsync(AuditRecord record, CancellationToken cancellationToken = default)
     {
         var line = JsonSerializer.Serialize(record, CoreJsonSerializerContext.Default.AuditRecord);
@@ -80,14 +88,40 @@ internal sealed class AuditStore(CoreDataPaths paths)
             return;
         }
 
+        // A previous generation already there is about to be overwritten: this rotation is the one
+        // that drops history, and every later search has to know that.
+        var discardsHistory = File.Exists(RotatedLogPath);
         try
         {
             File.Move(paths.AuditLogPath, RotatedLogPath, overwrite: true);
+            if (discardsHistory)
+            {
+                MarkHistoryDiscarded();
+            }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // Losing a rotation costs disk; losing the append loses an audit record. Keep appending to
             // the oversized file and try again on the next one.
+        }
+    }
+
+    private void MarkHistoryDiscarded()
+    {
+        if (File.Exists(HistoryDiscardedMarkerPath))
+        {
+            return;
+        }
+
+        try
+        {
+            // The timestamp is a diagnostic; the file's existence is the signal.
+            File.WriteAllText(HistoryDiscardedMarkerPath, $"{DateTimeOffset.UtcNow:O}{Environment.NewLine}");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Best-effort. A missing marker costs a search its truncation flag, which is the same
+            // honesty gap that existed before rotation did — never a wrong record.
         }
     }
 
@@ -159,9 +193,16 @@ internal sealed class AuditStore(CoreDataPaths paths)
                 limit != query.Limit,
                 matches.Count,
                 // "There may be more", never a count: the scan stopped early, and saying how many were
-                // missed would be a number this read did not earn. Reported when the limit filled or the
-                // ceiling was hit without reaching the window's start — both mean the answer is partial.
-                matches.Count >= limit || (!reachedWindowStart && scanned >= scanCeiling)));
+                // missed would be a number this read did not earn. Reported when the limit filled, when
+                // the ceiling was hit, or when the retained trail simply ran out — each without having
+                // reached the window's start, and each meaning the answer is partial.
+                //
+                // The last of those is what rotation introduced. Running out of file is only an honest
+                // "you saw everything" while nothing has ever been discarded; once a generation has
+                // been dropped, the same exhaustion means older matching events may have existed. The
+                // marker is what tells the two apart — a young host still reports a complete answer.
+                matches.Count >= limit ||
+                (!reachedWindowStart && (scanned >= scanCeiling || File.Exists(HistoryDiscardedMarkerPath)))));
     }
 
     private static bool Matches(AuditRecord record, AuditQuery query)
@@ -201,18 +242,50 @@ internal sealed class AuditStore(CoreDataPaths paths)
         return records;
     }
 
-    // The whole trail newest-first: the live log, then the generation it rotated away from. Callers
-    // stop as soon as they have their answer, so the rotated file is only ever touched by a read that
-    // asked for more history than the live log still holds.
+    // The whole trail newest-first: the live log, then the generation it rotated away from.
+    //
+    // BOTH handles are opened up front, under the same gate rotation runs in, so the walk is over a
+    // fixed pair of files. Opening them lazily by path was a real defect: a rotation landing between
+    // the two opens renames the live file to `.1`, so the second open would hand back the inode the
+    // walk had just finished — every record duplicated, and the newly created live log (holding the
+    // newest entries) never read at all. The gate is held only for the opens, never for the walk, so
+    // a long read never blocks an append.
     private async IAsyncEnumerable<string> ReadLinesNewestFirstAsync(
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        foreach (var path in (string[])[paths.AuditLogPath, RotatedLogPath])
+        var (live, rotated) = await OpenGenerationsAsync(cancellationToken);
+        try
         {
-            await foreach (var line in ReadLinesBackwardAsync(path, cancellationToken))
+            foreach (var stream in new[] { live, rotated })
             {
-                yield return line;
+                if (stream is null)
+                {
+                    continue;
+                }
+
+                await foreach (var line in ReadLinesBackwardAsync(stream, cancellationToken))
+                {
+                    yield return line;
+                }
             }
+        }
+        finally
+        {
+            live?.Dispose();
+            rotated?.Dispose();
+        }
+    }
+
+    private async Task<(FileStream? Live, FileStream? Rotated)> OpenGenerationsAsync(CancellationToken cancellationToken)
+    {
+        await appendGate.WaitAsync(cancellationToken);
+        try
+        {
+            return (TryOpenForTailRead(paths.AuditLogPath), TryOpenForTailRead(RotatedLogPath));
+        }
+        finally
+        {
+            appendGate.Release();
         }
     }
 
@@ -220,61 +293,54 @@ internal sealed class AuditStore(CoreDataPaths paths)
     // from the end. A line straddling a block boundary is carried into the next (earlier) block, where
     // its beginning is; splitting on the newline BYTE is safe because no byte of a multi-byte UTF-8
     // sequence can be 0x0A.
+    // The caller owns the stream: these walks are composed over a snapshot opened up front, so
+    // disposal belongs to whoever took the snapshot.
     private static async IAsyncEnumerable<string> ReadLinesBackwardAsync(
-        string path,
+        FileStream stream,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        var stream = TryOpenForTailRead(path);
-        if (stream is null)
-        {
-            yield break;
-        }
+        var position = stream.Length;
+        var block = new byte[ReadBlockBytes];
+        var carry = Array.Empty<byte>();
 
-        await using (stream)
+        while (position > 0)
         {
-            var position = stream.Length;
-            var block = new byte[ReadBlockBytes];
-            var carry = Array.Empty<byte>();
+            cancellationToken.ThrowIfCancellationRequested();
+            var take = (int)Math.Min(ReadBlockBytes, position);
+            position -= take;
+            stream.Seek(position, SeekOrigin.Begin);
+            await stream.ReadExactlyAsync(block.AsMemory(0, take), cancellationToken);
 
-            while (position > 0)
+            // The carry belongs AFTER this block's bytes: it is the tail of a line whose start is
+            // in the block just read.
+            var chunk = new byte[take + carry.Length];
+            Buffer.BlockCopy(block, 0, chunk, 0, take);
+            Buffer.BlockCopy(carry, 0, chunk, take, carry.Length);
+
+            var end = chunk.Length;
+            for (var index = chunk.Length - 1; index >= 0; index -= 1)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                var take = (int)Math.Min(ReadBlockBytes, position);
-                position -= take;
-                stream.Seek(position, SeekOrigin.Begin);
-                await stream.ReadExactlyAsync(block.AsMemory(0, take), cancellationToken);
-
-                // The carry belongs AFTER this block's bytes: it is the tail of a line whose start is
-                // in the block just read.
-                var chunk = new byte[take + carry.Length];
-                Buffer.BlockCopy(block, 0, chunk, 0, take);
-                Buffer.BlockCopy(carry, 0, chunk, take, carry.Length);
-
-                var end = chunk.Length;
-                for (var index = chunk.Length - 1; index >= 0; index -= 1)
+                if (chunk[index] != (byte)'\n')
                 {
-                    if (chunk[index] != (byte)'\n')
-                    {
-                        continue;
-                    }
-
-                    if (Decode(chunk, index + 1, end - index - 1) is { } line)
-                    {
-                        yield return line;
-                    }
-
-                    end = index;
+                    continue;
                 }
 
-                // Everything before the leftmost newline continues into the previous block.
-                carry = chunk[..end];
+                if (Decode(chunk, index + 1, end - index - 1) is { } line)
+                {
+                    yield return line;
+                }
+
+                end = index;
             }
 
-            // Whatever is left once the start of the file is reached is its first line, complete.
-            if (Decode(carry, 0, carry.Length) is { } first)
-            {
-                yield return first;
-            }
+            // Everything before the leftmost newline continues into the previous block.
+            carry = chunk[..end];
+        }
+
+        // Whatever is left once the start of the file is reached is its first line, complete.
+        if (Decode(carry, 0, carry.Length) is { } first)
+        {
+            yield return first;
         }
     }
 

@@ -38,6 +38,11 @@ a gate around one small write costs nothing worth measuring. A rotation that fai
 read-only file) is swallowed and retried on the next append: losing a rotation costs disk, losing the
 append would cost an audit record.
 
+The rotation that **overwrites** an existing previous generation is the moment the trail stops reaching
+back to the host's first event. That rotation writes a marker file (`audit.ndjson.discarded`) beside
+the log, because the fact outlives the process that discarded the generation and a later search has to
+know it — see the truncation rule below.
+
 ## Reads are tail reads
 
 Both readers — `ReadRecentAsync` (the newest N, behind `/control/v1/audit/recent`) and `SearchAsync`
@@ -48,16 +53,29 @@ sequence can be `0x0A`. Nothing materializes the file, so the cost of a read is 
 answer rather than by how long the host has been up — the newest-50 read touches exactly one block
 however large the log has grown.
 
+A read **snapshots both generations up front**, opening the live log and the rotated file together
+under the same gate rotation runs in, and only then walks them. Opening them lazily by path would let
+a rotation landing between the two opens hand the reader the inode it had just finished — every record
+duplicated, and the newly created live log never read at all. The gate is held for the opens only, so
+a long read never blocks an append; entries appended during a read simply belong to the next one.
+
 `SearchAsync` additionally carries a scan ceiling (20 000 records) so a filter that matches three
-entries in a very long file still cannot read all of it, and reports `Truncated` when it stopped on
-the limit or the ceiling rather than at the window's start. The window travels with the result because
-a caller that cannot see a clamp reports "nothing happened" when it means "nothing in the newest
-fifty".
+entries in a very long file still cannot read all of it. It reports `Truncated` when it stopped on the
+limit, on the ceiling, **or on the end of the retained trail after a generation has been discarded** —
+each without having reached the window's start. That last case is why the marker exists: running out
+of file is an honest "you saw everything" on a host young enough to still hold its whole history, and
+a claim of completeness that may be false once anything has been dropped. A young host therefore still
+reports a complete answer. The window travels with the result because a caller that cannot see a clamp
+reports "nothing happened" when it means "nothing in the newest fifty".
 
 ## Testing Expectations
 
 - `AuditStoreTests`: a newest-first read is exact and complete across read-block boundaries (the carry
   is where a wrong tail reader silently drops or splices lines); a log with no trailing newline still
   yields its last line first; an oversized log is rotated aside and a read still spans the rotation;
-  `SearchAsync` filters from the end, reports truncation when the limit fills, and stops at the start
-  of its window; a missing log reads empty.
+  a read over a rotated pair returns no duplicated records; `SearchAsync` filters from the end,
+  reports truncation when the limit fills, and stops at the start of its window; a missing log reads
+  empty.
+- `AuditStoreTests`, both directions of the truncation rule: a search that exhausts the trail reports
+  `Truncated` once a second rotation has discarded a generation, and reports a complete answer on a
+  host that has never discarded one.
