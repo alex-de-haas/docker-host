@@ -28,7 +28,6 @@ internal static class TokenIntrospectionEndpoints
             TokenIntrospectionRequest? input,
             AppServiceTokenService serviceTokens,
             AppRegistryStore apps,
-            AppIdentityService identity,
             UserDirectoryStore users,
             AuthLifetimes lifetimes,
             AuditStore audit,
@@ -43,7 +42,8 @@ internal static class TokenIntrospectionEndpoints
                     statusCode: StatusCodes.Status401Unauthorized);
             }
 
-            if (await apps.GetAppAsync(appId, cancellationToken) is null)
+            var appRecord = await apps.GetAppAsync(appId, cancellationToken);
+            if (appRecord is null)
             {
                 return CoreJson.Json(
                     new ErrorResponse("app_not_found", "Runtime app was not found."),
@@ -72,10 +72,11 @@ internal static class TokenIntrospectionEndpoints
             // it was minted against — an assignment is removed, a role is downgraded, an app becomes
             // a system app — and this is where that catches up with it. Reusing the identity flows'
             // own gate rather than restating its rules keeps there from being a second copy, which is
-            // the copy that would go stale unnoticed.
+            // the copy that would go stale unnoticed. The state and app record resolved above are
+            // passed through, so the check costs no second resolve of either.
             try
             {
-                await identity.RequireAccessibleUserAsync(appId, match.User.Id, cancellationToken);
+                AppIdentityService.RequireAccessibleUser(state, appRecord, match.User.Id);
             }
             catch (AppIdentityException)
             {

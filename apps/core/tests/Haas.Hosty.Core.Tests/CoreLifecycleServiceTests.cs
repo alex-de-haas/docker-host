@@ -4262,7 +4262,7 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
-    public async Task ListAppsAsync_ReconcilesStaleRunningLocalCommandState()
+    public async Task ListAppsAsync_ServesPersistedStateAndSupervisionReconcilesIt()
     {
         var fixture = await LifecycleFixture.CreateAsync();
         var manifest = await fixture.WriteLocalCommandManifestAsync();
@@ -4274,10 +4274,15 @@ public sealed class CoreLifecycleServiceTests
             LastOperation = "start",
         });
 
-        var apps = await fixture.Service.ListAppsAsync();
+        // The list serves persisted state without probing, so the stale "running" survives the read…
+        var listed = Assert.Single(await fixture.Service.ListAppsAsync());
+        Assert.Equal("running", listed.RuntimeState);
 
-        var listed = Assert.Single(apps);
-        Assert.Equal("stopped", listed.RuntimeState);
+        // …and the supervisor's observation pass is what reconciles it back to reality.
+        await fixture.Service.ObserveRuntimeHealthAsync(new HashSet<string>(StringComparer.Ordinal));
+
+        var reconciled = Assert.Single(await fixture.Service.ListAppsAsync());
+        Assert.Equal("stopped", reconciled.RuntimeState);
         var stored = await fixture.Apps.GetAppAsync("com.example.local");
         Assert.Equal("stopped", stored?.RuntimeState);
         Assert.Equal("started", stored?.OperationStatus);

@@ -641,6 +641,40 @@ public sealed class AppRegistryStoreTests
         Assert.Equal("1111111111111111111111111111111111111111", reread?.SourceState?.OverrideCommit);
     }
 
+    [Fact]
+    public async Task GetAppAsync_ServesTheCachedRecordUntilTheFileChanges()
+    {
+        var root = await CreateTempRootAsync();
+        var store = new AppRegistryStore(CreatePaths(root));
+        await store.UpsertAppAsync(CreateApp("com.example.notes"));
+
+        var first = await store.GetAppAsync("com.example.notes");
+        var second = await store.GetAppAsync("com.example.notes");
+
+        // Reference equality is the point: the second read must be the cache, not a re-parse.
+        Assert.Same(first, second);
+
+        await store.UpdateAppAsync("com.example.notes", app => app with { DisplayName = "Renamed Notes" });
+        Assert.Equal("Renamed Notes", (await store.GetAppAsync("com.example.notes"))?.DisplayName);
+    }
+
+    [Fact]
+    public async Task GetAppAsync_ObservesAnOutOfBandStateDeletion()
+    {
+        // The uninstall path deletes state.json directly (TryDelete), not through this store, so the
+        // cache must notice the file vanishing rather than keep serving the removed app.
+        var root = await CreateTempRootAsync();
+        var paths = CreatePaths(root);
+        var store = new AppRegistryStore(paths);
+        await store.UpsertAppAsync(CreateApp("com.example.notes"));
+        Assert.NotNull(await store.GetAppAsync("com.example.notes"));
+
+        File.Delete(Path.Combine(paths.AppsRoot, "com.example.notes", "state.json"));
+
+        Assert.Null(await store.GetAppAsync("com.example.notes"));
+        Assert.Empty(await store.ListAppRecordsAsync());
+    }
+
     private static AppRecord CreateApp(string id)
         => new(
             Id: id,

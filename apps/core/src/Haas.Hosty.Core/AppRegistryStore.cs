@@ -10,6 +10,17 @@ internal sealed class AppRegistryStore(CoreDataPaths paths, CoreEventHub? events
     private readonly ConcurrentDictionary<string, SemaphoreSlim> appLocks = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, long> dataRemovalGenerations = new(StringComparer.Ordinal);
 
+    // Parsed records, keyed by app id (== directory name). The registry is read on every list poll,
+    // every supervision tick, and every ingress reconcile, so reads must not cost a parse per app.
+    // Writes invalidate rather than populate: the read path's Migrate + HydrateAppUiAsync projections
+    // stay the only code that shapes a served record, so a cached record is byte-for-byte what an
+    // uncached read would have produced. The stamp guards the writers this store cannot see — the
+    // uninstall path deletes state.json directly, and an operator can edit it out of band — by
+    // turning a mismatch into a plain re-read.
+    private readonly ConcurrentDictionary<string, CachedRecord> recordCache = new(StringComparer.Ordinal);
+
+    private sealed record CachedRecord(AppRecord Record, FileStamp Stamp);
+
     public async Task<IReadOnlyList<AppSummary>> ListAppsAsync(CancellationToken cancellationToken = default)
         => (await ListAppRecordsAsync(cancellationToken))
             .Select(app => AppSummary.From(app))
@@ -26,16 +37,15 @@ internal sealed class AppRegistryStore(CoreDataPaths paths, CoreEventHub? events
         foreach (var appDirectory in Directory.EnumerateDirectories(paths.AppsRoot).Order(StringComparer.Ordinal))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var statePath = Path.Combine(appDirectory, "state.json");
             try
             {
-                var state = await JsonStorage.ReadAsync<AppStateDocument>(statePath, cancellationToken);
-                if (state?.App is null || string.IsNullOrWhiteSpace(state.App.Id))
+                var record = await ReadRecordAsync(Path.GetFileName(appDirectory), appDirectory, cancellationToken);
+                if (record is null || string.IsNullOrWhiteSpace(record.Id))
                 {
                     continue;
                 }
 
-                apps.Add(await HydrateAppUiAsync(Migrate(state), appDirectory, cancellationToken));
+                apps.Add(record);
             }
             catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
             {
@@ -67,10 +77,30 @@ internal sealed class AppRegistryStore(CoreDataPaths paths, CoreEventHub? events
             return null;
         }
 
-        var document = await JsonStorage.ReadAsync<AppStateDocument>(Path.Combine(appRoot, "state.json"), cancellationToken);
-        return document?.App is null
-            ? null
-            : await HydrateAppUiAsync(Migrate(document), appRoot, cancellationToken);
+        return await ReadRecordAsync(appId, appRoot, cancellationToken);
+    }
+
+    // A racing write can leave a fresh record under a stale stamp here (stamp read before the file);
+    // the next read sees the mismatch and re-reads, so the cache never serves a stale record past it.
+    private async Task<AppRecord?> ReadRecordAsync(string appId, string appRoot, CancellationToken cancellationToken)
+    {
+        var statePath = Path.Combine(appRoot, "state.json");
+        var stamp = FileStamp.Read(statePath);
+        if (recordCache.TryGetValue(appId, out var cached) && cached.Stamp == stamp)
+        {
+            return cached.Record;
+        }
+
+        var document = await JsonStorage.ReadAsync<AppStateDocument>(statePath, cancellationToken);
+        if (document?.App is null)
+        {
+            recordCache.TryRemove(appId, out _);
+            return null;
+        }
+
+        var record = await HydrateAppUiAsync(Migrate(document), appRoot, cancellationToken);
+        recordCache[appId] = new CachedRecord(record, stamp);
+        return record;
     }
 
     public async Task<AppStateDocument> UpdateAppAsync(
@@ -103,6 +133,8 @@ internal sealed class AppRegistryStore(CoreDataPaths paths, CoreEventHub? events
             {
                 Directory.Delete(appRoot, recursive: true);
             }
+
+            recordCache.TryRemove(appId, out _);
         }
         finally
         {
@@ -123,6 +155,7 @@ internal sealed class AppRegistryStore(CoreDataPaths paths, CoreEventHub? events
         var document = new AppStateDocument(CurrentSchemaVersion, normalized);
         // Owner-only: this document carries setting values, including ones flagged secret.
         await JsonStorage.WriteOwnerFileAsync(GetAppStatePath(app.Id), document, cancellationToken);
+        recordCache.TryRemove(app.Id, out _);
         // Both public writers (UpsertAppAsync, UpdateAppAsync) funnel through here, so every commit
         // — install, any lifecycle verb, a supervisor RuntimeState flip, a reconcile — emits exactly
         // one hint without publishers having to remember to. Publishing runs under the per-app mutex

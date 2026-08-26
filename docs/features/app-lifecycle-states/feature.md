@@ -1,7 +1,7 @@
 # App Lifecycle States — Intermediate `starting` And `stopping`
 
 Created: 2026-07-28
-Updated: 2026-07-28
+Updated: 2026-08-25
 
 An installed app's `runtimeState` reports whether a lifecycle verb is in flight, not only where it
 ended up. A start that pulls an image, resolves a source checkout, or waits out a lingering host port
@@ -76,8 +76,8 @@ committed just before cancellation landed) is left untouched.
 ## Recovery
 
 A Core process that dies mid-verb leaves a non-terminal state that nothing downstream would ever
-correct: the summary reconcile, the supervisor's observation filter and the health mapper all only
-look at `IsUp` records, so a stranded app would sit `starting` forever *and* fall out of supervision.
+correct: the supervisor's observation filter and the health mapper both only look at `IsUp` records,
+so a stranded app would sit `starting` forever *and* fall out of supervision.
 
 `RecoverStrandedLifecycleStatesAsync` runs at boot, before autostart reconciliation, and resets every
 `IsBusy` record to `unknown` — honest, because what the dead process left behind is exactly what is

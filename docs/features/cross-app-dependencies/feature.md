@@ -1,7 +1,7 @@
 # Cross-App Dependencies — Declared Providers, Injected URLs, And Reported State
 
 Created: 2026-06-22
-Updated: 2026-07-28
+Updated: 2026-08-25
 
 ## Goal
 
@@ -116,10 +116,10 @@ are purged once, at boot.
 - **Injection** (`DockerRuntimeAdapter` / `LocalCommandRuntimeAdapter`):
   `HOSTY_DEPENDENCY_{ALIAS}_URL`; docker applies the `host.docker.internal` rewrite.
 - **State projection** (`CoreLifecycleService.ResolveDependencySummariesAsync` → `AppSummary.Dependencies`,
-  as `AppDependencySummary` / `AppDependencyEndpointSummary`). `ListAppsAsync` reconciles the whole
-  record set first and hands that snapshot over, so listing stays one pass over `state.json` instead of
-  re-reading every provider once per consumer — and a provider reconciled to stopped reads stopped for
-  its consumers in the same response.
+  as `AppDependencySummary` / `AppDependencyEndpointSummary`). `ListAppsAsync` reads the record set
+  once (persisted state, no live probing — the supervisor owns reconciliation) and hands that snapshot
+  over, so listing stays one pass over the registry instead of re-reading every provider once per
+  consumer — and a provider and its consumers can never disagree within a response.
 - **Client derivation** (`collectAppProblems` in `apps/shell/src/app/shell/app-problems.ts`): the sole
   place the state becomes a severity, shared by the collapsed row's icons and the expanded panel's alerts.
 - **Retired-advisory cleanup** (`NotificationService.PurgeByDedupePrefixAsync`, called once from the

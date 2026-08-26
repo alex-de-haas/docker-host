@@ -89,22 +89,18 @@ internal sealed class CoreLifecycleService(
 
     public async Task<IReadOnlyList<AppSummary>> ListAppsAsync(CancellationToken cancellationToken = default)
     {
+        // The list serves persisted state, never a live probe: the supervisor observes both runtimes
+        // every tick, reconciles RuntimeState, and publishes app.changed on every flip, so what this
+        // returns is at most one supervision interval stale — while lifecycle verbs persist their own
+        // transitions synchronously, so operator actions are visible immediately. Probing here would
+        // let one hung app's healthcheck stall the whole list for every client, once per poll
+        // (`/api/apps/{id}/health` is the live-probe surface). Dependency state is resolved against
+        // this one snapshot, so a provider and its consumers can never disagree within a response.
         var records = await apps.ListAppRecordsAsync(cancellationToken);
-        // Reconcile the whole set BEFORE building any summary. Dependency state is resolved against
-        // this snapshot, so a provider that reconciles running -> stopped has to be stopped for its
-        // consumers too — otherwise one response could report the provider itself stopped while its
-        // consumer still reads dependencies[].running: true, hiding the client's error icon until a
-        // later request.
-        var reconciled = new List<AppRecord>(records.Count);
+        var summaries = new List<AppSummary>(records.Count);
         foreach (var app in records)
         {
-            reconciled.Add(await ReconcileRuntimeStateForSummaryAsync(app, cancellationToken));
-        }
-
-        var summaries = new List<AppSummary>(reconciled.Count);
-        foreach (var app in reconciled)
-        {
-            summaries.Add(await BuildAppSummaryAsync(app, cancellationToken, reconciled));
+            summaries.Add(await BuildAppSummaryAsync(app, cancellationToken, records));
         }
 
         return summaries;
@@ -5684,56 +5680,6 @@ internal sealed class CoreLifecycleService(
             .ToArray();
     }
 
-    private async Task<AppRecord> ReconcileRuntimeStateForSummaryAsync(AppRecord app, CancellationToken cancellationToken)
-    {
-        if (!string.Equals(app.Kind, "runtime", StringComparison.Ordinal) ||
-            !AppRuntimeStates.IsUp(app.RuntimeState) ||
-            string.IsNullOrWhiteSpace(app.ManifestPath))
-        {
-            return app;
-        }
-
-        RuntimeAppManifestSelection selection;
-        try
-        {
-            selection = await LoadSelectionForAppAsync(app, cancellationToken);
-        }
-        catch (Exception ex) when (ex is AppManifestException or IOException or UnauthorizedAccessException or JsonException)
-        {
-            return app;
-        }
-
-        if (!string.Equals(selection.RuntimeProfile.Type, "localCommand", StringComparison.Ordinal))
-        {
-            return app;
-        }
-
-        AppRuntimeHealthResult health;
-        try
-        {
-            health = await ResolveAdapter(selection.RuntimeProfile.Type).GetHealthAsync(
-                await CreateRuntimeContextAsync(app, selection, cancellationToken),
-                cancellationToken);
-        }
-        catch (Exception ex) when (ex is AppLifecycleException or IOException or UnauthorizedAccessException)
-        {
-            return app;
-        }
-
-        var observedRuntimeState = ResolveRuntimeStateFromHealth(health);
-        if (observedRuntimeState is null ||
-            string.Equals(observedRuntimeState, app.RuntimeState, StringComparison.Ordinal))
-        {
-            return app;
-        }
-
-        var updated = await apps.UpdateAppAsync(app.Id, current => current with
-        {
-            RuntimeState = observedRuntimeState,
-        }, cancellationToken);
-        return updated.App;
-    }
-
     // Maps an aggregate health status to the coarse persisted RuntimeState. Note the two vocabularies
     // overlap by name and not by meaning: the health "starting" here is a CONTAINER whose HEALTHCHECK
     // has not passed yet — the container is already up, so it reconciles to `running`, and it must
@@ -5751,8 +5697,8 @@ internal sealed class CoreLifecycleService(
         };
 
     // Phase 1 supervision read: observe each relevant runtime app's current health across BOTH
-    // runtimes (the summary-path reconcile above stays localCommand-only so listing never fans out to
-    // docker), reconcile the persisted RuntimeState from what is actually observed, and return the
+    // runtimes — this is the only reconciler behind the list path, which serves persisted state
+    // without probing — reconcile the persisted RuntimeState from what is actually observed, and return the
     // per-app aggregate health so the supervisor can detect transitions and notify. `supervisedAppIds`
     // are apps the supervisor is actively retrying after a crash: their persisted state may already be
     // "stopped" during restart backoff, but they must keep being observed so retries and give-up still
