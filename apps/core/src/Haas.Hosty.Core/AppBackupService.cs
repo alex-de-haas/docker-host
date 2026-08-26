@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
@@ -22,6 +23,15 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock, ILogge
             _ => new AppBackupRetentionRule(KeepLast: AutomaticRetentionCount, MaxAgeDays: null),
             StringComparer.Ordinal),
         DeleteOnlyKnownBackup: false);
+
+    // An orphaned archive — a .zip whose .json metadata is gone — is hashed so the apply path can
+    // prove the file did not change between the plan that listed it and the delete that removes it.
+    // That hash is the only expensive thing in a cleanup plan, and the plan is rebuilt on every
+    // backups-list request, after every retention-managed backup, and every 6 hours by the scheduler —
+    // while an orphan is never deleted automatically (Automatic: false), so the same archive stayed
+    // there being re-read in full, indefinitely. Keyed by the file's identity rather than its path
+    // alone: an archive that changed is re-hashed, so the guard keeps its meaning exactly.
+    private readonly ConcurrentDictionary<string, (FileStamp Stamp, string Sha256)> orphanArchiveDigests = new(StringComparer.Ordinal);
 
     public async Task<AppBackupRecord?> CreateBackupAsync(
         string appId,
@@ -77,12 +87,20 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock, ILogge
 
     public async Task<IReadOnlyList<AppBackupRecord>> ListBackupsAsync(string appId, CancellationToken cancellationToken = default)
     {
+        // The records are handed to the plan builder rather than letting it re-read them: every
+        // metadata file in the app's backup folder was otherwise opened and deserialized twice per
+        // request, once here and once inside the plan.
         var records = await ReadBackupRecordsAsync(appId, cancellationToken);
-        var plan = await CreateCleanupPlanAsync(appId, cancellationToken);
+        var plan = await CreateCleanupPlanCoreAsync(appId, records, cancellationToken);
+        // One lookup keyed by app + backup id, so annotating N records costs N rather than N × plan
+        // candidates.
+        var candidatesByBackup = plan.Candidates.ToDictionary(
+            candidate => $"{candidate.AppId}\0{candidate.BackupId}",
+            StringComparer.Ordinal);
         return records
             .Select(record => record with
             {
-                Retention = BuildRetentionStatus(record, plan.Candidates),
+                Retention = BuildRetentionStatus(record, candidatesByBackup),
             })
             .OrderByDescending(record => record.CreatedAt)
             .ToArray();
@@ -204,9 +222,18 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock, ILogge
     private static bool IsRetentionManagedReason(string reason)
         => DefaultRetentionPolicy.Rules.ContainsKey(reason);
 
-    public async Task<AppBackupCleanupPlan> CreateCleanupPlanAsync(
+    public Task<AppBackupCleanupPlan> CreateCleanupPlanAsync(
         string? appId = null,
         CancellationToken cancellationToken = default)
+        => CreateCleanupPlanCoreAsync(appId, knownRecords: null, cancellationToken);
+
+    // `knownRecords` lets a caller that has already read one app's metadata hand it over instead of
+    // paying for the parse twice; it applies only to a single-app plan, since that is the only shape
+    // in which the caller can know it holds the complete set.
+    private async Task<AppBackupCleanupPlan> CreateCleanupPlanCoreAsync(
+        string? appId,
+        IReadOnlyList<AppBackupRecord>? knownRecords,
+        CancellationToken cancellationToken)
     {
         var appIds = appId is null
             ? EnumerateBackupAppIds()
@@ -216,7 +243,10 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock, ILogge
         foreach (var currentAppId in appIds.Order(StringComparer.Ordinal))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            candidates.AddRange(await CreateCleanupCandidatesForAppAsync(currentAppId, cancellationToken));
+            candidates.AddRange(await CreateCleanupCandidatesForAppAsync(
+                currentAppId,
+                appId is null ? null : knownRecords,
+                cancellationToken));
         }
 
         var orderedCandidates = candidates
@@ -372,6 +402,7 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock, ILogge
 
     private async Task<IReadOnlyList<AppBackupCleanupCandidate>> CreateCleanupCandidatesForAppAsync(
         string appId,
+        IReadOnlyList<AppBackupRecord>? knownRecords,
         CancellationToken cancellationToken)
     {
         var backupRoot = GetBackupRoot(appId);
@@ -381,7 +412,7 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock, ILogge
         }
 
         var candidates = new Dictionary<string, AppBackupCleanupCandidate>(StringComparer.Ordinal);
-        var records = await ReadBackupRecordsAsync(appId, cancellationToken);
+        var records = knownRecords ?? await ReadBackupRecordsAsync(appId, cancellationToken);
         // Safe to key on: ReadBackupRecordsAsync drops records with a missing or duplicate BackupId.
         var recordsById = records.ToDictionary(record => record.BackupId, StringComparer.Ordinal);
         var backupIds = new HashSet<string>(recordsById.Keys, StringComparer.Ordinal);
@@ -476,9 +507,24 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock, ILogge
             CreatedAt: fileInfo.Exists ? fileInfo.LastWriteTimeUtc : clock.UtcNow,
             ArchivePath: archivePath,
             MetadataPath: Path.Combine(GetBackupRoot(appId), $"{backupId}.json"),
-            ArchiveSha256: fileInfo.Exists ? await ComputeSha256Async(archivePath, cancellationToken) : null,
+            ArchiveSha256: fileInfo.Exists ? await ResolveOrphanArchiveDigestAsync(archivePath, cancellationToken) : null,
             ArchiveSize: fileInfo.Exists ? fileInfo.Length : null,
             Automatic: false);
+    }
+
+    private async Task<string> ResolveOrphanArchiveDigestAsync(string archivePath, CancellationToken cancellationToken)
+    {
+        // Read the stamp before the bytes: a rewrite racing this read is then caught by the NEXT
+        // plan, rather than being cached under the stamp it had before the change.
+        var stamp = FileStamp.Read(archivePath);
+        if (orphanArchiveDigests.TryGetValue(archivePath, out var cached) && cached.Stamp == stamp)
+        {
+            return cached.Sha256;
+        }
+
+        var sha256 = await ComputeSha256Async(archivePath, cancellationToken);
+        orphanArchiveDigests[archivePath] = (stamp, sha256);
+        return sha256;
     }
 
     private static AppBackupCleanupCandidate CreateCandidate(
@@ -505,12 +551,9 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock, ILogge
 
     private AppBackupRetentionStatus BuildRetentionStatus(
         AppBackupRecord record,
-        IReadOnlyList<AppBackupCleanupCandidate> candidates)
+        IReadOnlyDictionary<string, AppBackupCleanupCandidate> candidatesByBackup)
     {
-        var candidate = candidates.FirstOrDefault(candidate =>
-            string.Equals(candidate.AppId, record.AppId, StringComparison.Ordinal) &&
-            string.Equals(candidate.BackupId, record.BackupId, StringComparison.Ordinal));
-        if (candidate is not null)
+        if (candidatesByBackup.TryGetValue($"{record.AppId}\0{record.BackupId}", out var candidate))
         {
             return new AppBackupRetentionStatus(
                 Eligible: true,
