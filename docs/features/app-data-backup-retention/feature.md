@@ -1,7 +1,7 @@
 # Feature: App Data Backup Retention
 
 Created: 2026-06-03
-Updated: 2026-08-11
+Updated: 2026-08-26
 
 ## Description
 
@@ -51,6 +51,8 @@ POST /control/v1/apps/{appId}/backups/cleanup
 
 The preview response includes cleanup candidates and a plan digest. Apply requires that digest; Core recomputes the current plan before deleting files and rejects stale digests. Candidate deletion verifies paths stay under `<hosty-data-root>/backups/<app-id>/` and verifies archive SHA-256 before deleting archives.
 
+Building a plan hashes only the archives it has no metadata for (`missing-metadata` candidates); everything else carries the SHA-256 its metadata already recorded. Those orphan digests are cached per process, keyed by the file's identity (length + last write time) rather than its path alone, because a plan is rebuilt on every backups-list request, after every retention-managed backup, and on every scheduler pass — while an orphan is never deleted automatically, so the same archive would otherwise be re-read in full indefinitely. An archive that changes is re-hashed, so the delete-time comparison keeps its meaning.
+
 Cleanup handles missing archive or metadata pairs gracefully. Missing-archive metadata can be removed automatically. Archive-only candidates are exposed in previews but require explicit apply.
 
 ## Scheduled Cleanup
@@ -84,5 +86,6 @@ Destructive CLI commands require `--yes`. Manual filesystem cleanup remains a re
 ## Testing Expectations
 
 - Retention policy, cleanup preview/apply digests, and malformed-metadata tolerance — `AppBackupServiceTests`.
+- Orphan-digest caching — `AppBackupServiceTests`: a rewrite that preserves the file's identity is served from the cache, one that changes its length is re-hashed, and a backups list still reports retention status now that it shares its parsed records with the plan builder.
 - The scheduled cleanup pass — `AppBackupRetentionSchedulerTests`.
 - Backup scope (the `cache/` sibling stays out of archives and restores) — `AppBackupServiceTests`.

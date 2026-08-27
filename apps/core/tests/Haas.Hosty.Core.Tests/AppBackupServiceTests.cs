@@ -176,6 +176,77 @@ public sealed class AppBackupServiceTests
         Assert.True(File.Exists(good.ArchivePath));
     }
 
+    [Fact]
+    public async Task CleanupPlan_ReusesAnOrphanArchiveDigestWhileTheFileIsUnchanged()
+    {
+        // An orphan is never deleted automatically, yet its hash was recomputed on every plan — and a
+        // plan is built on every backups-list request, after every retention-managed backup, and every
+        // six hours. Rewriting the bytes while preserving the file's identity (same length, same write
+        // time) is the only way to observe the cache from outside: a re-read would change the digest.
+        var fixture = BackupFixture.Create();
+        var orphanArchivePath = await CreateOrphanArchiveAsync(fixture);
+        var stampedAt = File.GetLastWriteTimeUtc(orphanArchivePath);
+
+        var first = OrphanDigest(await fixture.Service.CreateCleanupPlanAsync("com.example.notes"));
+        Assert.NotNull(first);
+
+        await File.WriteAllBytesAsync(orphanArchivePath, [0x50, 0x4b, 0x05, 0x07]);
+        File.SetLastWriteTimeUtc(orphanArchivePath, stampedAt);
+
+        Assert.Equal(first, OrphanDigest(await fixture.Service.CreateCleanupPlanAsync("com.example.notes")));
+    }
+
+    [Fact]
+    public async Task CleanupPlan_RehashesAnOrphanArchiveWhoseFileChanged()
+    {
+        // The cached digest is what the apply path compares against before deleting, so the cache must
+        // never outlive the file it describes.
+        var fixture = BackupFixture.Create();
+        var orphanArchivePath = await CreateOrphanArchiveAsync(fixture);
+
+        var first = OrphanDigest(await fixture.Service.CreateCleanupPlanAsync("com.example.notes"));
+        await File.WriteAllBytesAsync(orphanArchivePath, [0x50, 0x4b, 0x05, 0x06, 0x00]);
+
+        var second = OrphanDigest(await fixture.Service.CreateCleanupPlanAsync("com.example.notes"));
+        Assert.NotNull(second);
+        Assert.NotEqual(first, second);
+    }
+
+    [Fact]
+    public async Task ListBackupsAsync_StillReportsRetentionAfterSharingItsRecordsWithThePlan()
+    {
+        // ListBackupsAsync now hands its parsed records to the plan builder instead of letting it
+        // re-read them; the annotation it produces must be unchanged.
+        var fixture = BackupFixture.Create();
+        await File.WriteAllTextAsync(Path.Combine(fixture.DataPath, "notes.txt"), "original");
+        var manual = await fixture.Service.CreateBackupAsync("com.example.notes", "manual");
+        Assert.NotNull(manual);
+
+        var listed = Assert.Single(await fixture.Service.ListBackupsAsync("com.example.notes"));
+
+        Assert.Equal(manual.BackupId, listed.BackupId);
+        Assert.False(listed.Retention?.Eligible);
+        Assert.Equal("manual-kept", listed.Retention?.Reason);
+        Assert.False(listed.Retention?.WouldDeleteInCurrentPlan);
+    }
+
+    // A real backup beside the orphan, because a plan protects everything but a missing archive while
+    // the app has only one backup id to its name — an orphan on its own is never a candidate.
+    private static async Task<string> CreateOrphanArchiveAsync(BackupFixture fixture)
+    {
+        await File.WriteAllTextAsync(Path.Combine(fixture.DataPath, "notes.txt"), "original");
+        Assert.NotNull(await fixture.Service.CreateBackupAsync("com.example.notes", "manual"));
+
+        var orphanArchivePath = Path.Combine(fixture.BackupRoot, "orphan.zip");
+        await File.WriteAllBytesAsync(orphanArchivePath, [0x50, 0x4b, 0x05, 0x06]);
+        return orphanArchivePath;
+    }
+
+    private static string? OrphanDigest(AppBackupCleanupPlan plan)
+        => plan.Candidates
+            .Single(candidate => string.Equals(candidate.CleanupReason, "missing-metadata", StringComparison.Ordinal))
+            .ArchiveSha256;
+
     // A metadata file may omit archivePath entirely. Deleting such a backup must still clear the
     // record instead of throwing out of Path.GetFullPath(null) deep inside the containment check.
     [Fact]
