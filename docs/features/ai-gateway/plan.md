@@ -121,7 +121,7 @@ started, and this plan is not deleted while they remain.
       by convention. Parked 2026-08-11: the assistant is admin-only, so the exposure is bounded to
       administrators. Note this bounds *who* can start a session, not the risk inside one — see
       Accepted Risk.
-- [x] **App-provided skills.** Shipped 2026-08-20 as its own feature —
+- [x] **App-provided skills.** Shipped 2026-08-21 as its own feature —
       [app-provided-skills](../app-provided-skills/feature.md) — which is what "that trust step
       deserves its own decision rather than riding along" asked for. Off by default in the sense that
       matters: a skill rides the app's MCP provider toggle, and a text that changes after that
