@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-08-20
-Updated: 2026-08-22
+Updated: 2026-08-28
 
 An app ships the prose an agent needs to use it well, the way it already ships its icon and its
 long description — and an operator decides, per app, whether that prose reaches a model.

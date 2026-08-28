@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-08-18
-Updated: 2026-08-24
+Updated: 2026-08-28
 
 Make the assistant reachable from anywhere in Shell, and let an app hand it context — without letting
 an app *drive* it.
