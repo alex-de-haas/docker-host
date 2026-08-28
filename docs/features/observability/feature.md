@@ -145,13 +145,18 @@ metrics target** at `GET /api/internal/telemetry/metrics`, so infra metrics land
 keyed the same way, as app OTLP metrics. This is the universal baseline: it works for every running
 container regardless of instrumentation, and it keeps the telemetry containers unprivileged.
 
-The `container → app` map is read from `docker ps` once and reused across ticks, refreshed when it is
-empty (nothing running yet — the state a starting app changes) and when a sample names a container it
-has no owner for, which is the signal that something started since. It is also **dropped when a tick
-finds nothing to sample at all** (everything stopped, or docker is unavailable), so the next tick goes
-back through the cheap `docker ps` and skips sampling: a map kept past the containers it describes
-would leave the expensive call running every tick over a host with nothing to report, making the idle
-host the costly case. `docker stats` is deliberately
+The `container → app` map is read from `docker ps` once and reused across ticks. It is re-read when it
+is empty (nothing running yet — the state a starting app changes), when a sample names a **Hosty**
+container it has no owner for (something started since — foreign containers are excluded by the
+`hosty-` name prefix, or a host running anything outside Hosty would re-read on every tick and cache
+nothing), and once the map is a minute old. That age cap is not decoration: container names are
+derived by `BuildContainerName`, which normalizes punctuation, so `foo.bar` and `foo-bar` with the
+same service key produce the same container name — a collision the removal path already guards
+against. Nothing in a sample would reveal such a takeover, so the map is bounded by age rather than
+trusted until contradicted. The map is also **dropped when a tick finds nothing to sample at all**
+(everything stopped, or docker is unavailable), so the next tick goes back through the cheap
+`docker ps` and skips sampling: a map kept past the containers it describes would leave the expensive
+call running every tick over a host with nothing to report, making the idle host the costly case. `docker stats` is deliberately
 left unscoped rather than given the known container names: naming them would fail the call over a
 container that stopped since the last refresh, and would hide exactly the new containers that signal
 the map is stale. The sampling call itself is still one `docker stats --no-stream` per tick, which
@@ -321,9 +326,11 @@ lack of auth. Closing that gap is [plan.md](plan.md)'s first deliverable.
   or a host with no resolvable collector endpoint, produces none.
 - **Core producer.** `DockerStatsExposition` renders the three `container.*` series with app/service
   attribution, idles as empty text when the telemetry app is absent, and survives a docker-less host.
-  The owner map is read once across ticks, re-read when a sample names a container it does not know,
-  dropped when a tick finds nothing to sample, and never latched by an empty result — a host with
-  nothing running keeps asking cheaply, and skips the sampling call entirely.
+  The owner map is read once across ticks, re-read when a sample names a *Hosty* container it does not
+  know, re-read once it reaches its age cap (the guard for a container name taken over by a colliding
+  app id), left alone for foreign containers, dropped when a tick finds nothing to sample, and never
+  latched by an empty result — a host with nothing running keeps asking cheaply and skips the sampling
+  call entirely.
   The exposition endpoint rejects a missing, invalid, or uninstalled-app token with 401 and serves a
   valid one — the regression guard for the "internal means safe" class of mistake — and the
   endpoint-authorization harness must keep enumerating the route.
