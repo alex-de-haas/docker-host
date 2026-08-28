@@ -106,6 +106,31 @@ public sealed class DockerStatsExpositionTests
         Assert.Equal(0, runner.StatsCalls);
     }
 
+    [Fact]
+    public async Task BuildSnapshotAsync_StopsSamplingOnceEverythingHasStopped()
+    {
+        // The cached map must not outlive what it describes: with nothing left to sample, a stale
+        // non-empty map would keep the expensive call running every tick and never fall back to the
+        // cheap `docker ps` that can skip it — turning the idle host into the costly case.
+        var runner = new RecordingDockerRunner
+        {
+            PsOutput = "cont-a\tcom.acme.app\tweb\n",
+            StatsOutput = "cont-a\t1.5%\t10MiB / 100MiB\t10%\n",
+        };
+        var exposition = CreateExposition(runner);
+        await exposition.BuildSnapshotAsync(CancellationToken.None);
+
+        runner.PsOutput = string.Empty;
+        runner.StatsOutput = string.Empty;
+
+        // The tick that finds nothing to sample drops the map; the next one is back to asking cheaply.
+        Assert.Empty(await exposition.BuildSnapshotAsync(CancellationToken.None));
+        Assert.Empty(await exposition.BuildSnapshotAsync(CancellationToken.None));
+
+        Assert.Equal(2, runner.PsCalls);
+        Assert.Equal(2, runner.StatsCalls);
+    }
+
     private static DockerStatsExposition CreateExposition(IDockerCommandRunner runner)
     {
         var root = Path.Combine(Path.GetTempPath(), $"hosty-core-stats-tests-{Guid.NewGuid():N}");

@@ -41,7 +41,9 @@ internal sealed class DockerStatsExposition(
     // for, which is the signal that something started since the last refresh. Stale entries for
     // removed containers are harmless: a container that no longer runs never appears in a sample, so
     // its entry is never consulted. Touched only from the single-threaded tick loop.
-    private IReadOnlyDictionary<string, ContainerStatOwner> owners =
+    private IReadOnlyDictionary<string, ContainerStatOwner> owners = EmptyOwners;
+
+    private static readonly IReadOnlyDictionary<string, ContainerStatOwner> EmptyOwners =
         new Dictionary<string, ContainerStatOwner>(StringComparer.Ordinal);
 
     public string CurrentPrometheusText => current;
@@ -95,6 +97,17 @@ internal sealed class DockerStatsExposition(
         var stats = DockerStatsParser.Parse(await RunDockerOrEmptyAsync(
             ["stats", "--no-stream", "--format", "{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}"],
             cancellationToken));
+
+        if (stats.Count == 0)
+        {
+            // Nothing to sample at all: every container has stopped, or docker is unavailable. Drop
+            // the map so the next tick goes back through the cheap `docker ps` and can take the
+            // skip-sampling path above. Without this a stale non-empty map would keep the expensive
+            // sampling call running every tick over a host with nothing to report — turning the
+            // cheapest case into the most expensive one.
+            owners = EmptyOwners;
+            return string.Empty;
+        }
 
         if (stats.Any(stat => !owners.ContainsKey(stat.ContainerName)))
         {
