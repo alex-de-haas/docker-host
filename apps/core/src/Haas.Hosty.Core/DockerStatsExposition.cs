@@ -34,6 +34,16 @@ internal sealed class DockerStatsExposition(
     // Latest rendered snapshot, swapped atomically each tick and served by the exposition endpoint.
     private volatile string current = string.Empty;
 
+    // Container → owning app, cached across ticks. `docker ps` answers a question that changes when an
+    // app starts, stops or is installed — not every ten seconds — so re-reading it with a process spawn
+    // per tick was pure repetition. Refreshed when the map is empty (nothing running yet, which is
+    // exactly the state a starting app changes) and when a sample names a container we have no owner
+    // for, which is the signal that something started since the last refresh. Stale entries for
+    // removed containers are harmless: a container that no longer runs never appears in a sample, so
+    // its entry is never consulted. Touched only from the single-threaded tick loop.
+    private IReadOnlyDictionary<string, ContainerStatOwner> owners =
+        new Dictionary<string, ContainerStatOwner>(StringComparer.Ordinal);
+
     public string CurrentPrometheusText => current;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -66,20 +76,30 @@ internal sealed class DockerStatsExposition(
         while (await timer.WaitForNextTickAsync(stoppingToken));
     }
 
-    private async Task<string> BuildSnapshotAsync(CancellationToken cancellationToken)
+    // Internal (not private) so the owner-map caching can be exercised without driving the timer.
+    internal async Task<string> BuildSnapshotAsync(CancellationToken cancellationToken)
     {
-        var owners = ParseContainerOwners(await RunDockerOrEmptyAsync(
-            ["ps", "--no-trunc", "--filter", "label=hosty.app.id", "--format",
-                "{{.Names}}\t{{.Label \"hosty.app.id\"}}\t{{.Label \"hosty.app.service\"}}"],
-            cancellationToken));
         if (owners.Count == 0)
         {
-            return string.Empty;
+            owners = await LoadContainerOwnersAsync(cancellationToken);
+            if (owners.Count == 0)
+            {
+                return string.Empty;
+            }
         }
 
+        // Deliberately NOT scoped to the container names already known: naming them explicitly would
+        // fail the call over a container that stopped since the last refresh, and — the real problem —
+        // would hide the containers that started since, which are the only signal that the owner map
+        // needs refreshing.
         var stats = DockerStatsParser.Parse(await RunDockerOrEmptyAsync(
             ["stats", "--no-stream", "--format", "{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}"],
             cancellationToken));
+
+        if (stats.Any(stat => !owners.ContainsKey(stat.ContainerName)))
+        {
+            owners = await LoadContainerOwnersAsync(cancellationToken);
+        }
 
         var builder = new StringBuilder();
         foreach (var stat in stats)
@@ -107,6 +127,12 @@ internal sealed class DockerStatsExposition(
 
         return builder.ToString();
     }
+
+    private async Task<IReadOnlyDictionary<string, ContainerStatOwner>> LoadContainerOwnersAsync(CancellationToken cancellationToken)
+        => ParseContainerOwners(await RunDockerOrEmptyAsync(
+            ["ps", "--no-trunc", "--filter", "label=hosty.app.id", "--format",
+                "{{.Names}}\t{{.Label \"hosty.app.id\"}}\t{{.Label \"hosty.app.service\"}}"],
+            cancellationToken));
 
     // Renders one Prometheus sample: name{hosty_app_id="…",service="…"} value
     internal static void AppendSample(StringBuilder builder, string name, string appId, string service, double value)

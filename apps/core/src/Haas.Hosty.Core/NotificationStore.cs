@@ -8,10 +8,29 @@ internal sealed class NotificationStore(CoreDataPaths paths)
 {
     private readonly SemaphoreSlim _gate = new(1, 1);
 
+    // Every inbox query deserialized this document from disk. The bell is polled by each open Shell
+    // client, so that was a recurring parse for a document that only this store writes. Cached like
+    // the other single-writer stores: writes replace it, and the file stamp catches an out-of-band
+    // edit by turning a mismatch into a plain re-read.
+    private volatile CachedState? _cache;
+
+    private sealed record CachedState(NotificationState State, FileStamp Stamp);
+
     private string StatePath => Path.Combine(paths.CoreRoot, "notifications", "notifications.json");
 
     public async Task<NotificationState> ReadAsync(CancellationToken cancellationToken = default)
-        => await JsonStorage.ReadAsync<NotificationState>(StatePath, cancellationToken) ?? NotificationState.Empty;
+    {
+        var stamp = FileStamp.Read(StatePath);
+        var cached = _cache;
+        if (cached is not null && cached.Stamp == stamp)
+        {
+            return cached.State;
+        }
+
+        var state = await JsonStorage.ReadAsync<NotificationState>(StatePath, cancellationToken) ?? NotificationState.Empty;
+        _cache = new CachedState(state, stamp);
+        return state;
+    }
 
     public async Task<TResult> UpdateAsync<TResult>(
         Func<NotificationState, (NotificationState State, TResult Result)> update,
@@ -20,11 +39,12 @@ internal sealed class NotificationStore(CoreDataPaths paths)
         await _gate.WaitAsync(cancellationToken);
         try
         {
-            var current = await JsonStorage.ReadAsync<NotificationState>(StatePath, cancellationToken) ?? NotificationState.Empty;
+            var current = await ReadAsync(cancellationToken);
             var (next, result) = update(current);
             if (!ReferenceEquals(next, current))
             {
                 await JsonStorage.WriteAsync(StatePath, next, restrictToOwner: true, cancellationToken);
+                _cache = new CachedState(next, FileStamp.Read(StatePath));
             }
 
             return result;

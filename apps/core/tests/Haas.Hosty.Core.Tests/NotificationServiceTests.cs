@@ -196,6 +196,30 @@ public sealed class NotificationServiceTests
     }
 
     [Fact]
+    public async Task ApplyRetentionAsync_CapsUnreadAtThePerUserBudgetKeepingTheNewest()
+    {
+        // Unread was the one class with no ceiling, so an operator who never opens the bell grew this
+        // document without bound — and publishing is a whole-document read-modify-write, so every
+        // later publish paid for the growth.
+        var fixture = await Fixture.CreateAsync();
+        for (var index = 0; index < NotificationService.MaxPerUser + 5; index += 1)
+        {
+            await fixture.Service.PublishAsync(
+                new CoreScope(), "user_alice", NotificationService.AudienceUser, "info", $"Advisory {index:D3}", null, null, null);
+            fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddMinutes(1);
+        }
+
+        var pruned = await fixture.Service.ApplyRetentionAsync();
+
+        var remaining = await fixture.Service.QueryAsync("user_alice", false, false, NotificationService.MaxPerUser, 0);
+        Assert.Equal(5, pruned);
+        Assert.Equal(NotificationService.MaxPerUser, remaining.Notifications.Count);
+        // The newest survive: the oldest unread advisories are the ones least likely to still matter.
+        Assert.Equal("Advisory 104", remaining.Notifications[0].Title);
+        Assert.DoesNotContain(remaining.Notifications, record => record.Title == "Advisory 000");
+    }
+
+    [Fact]
     public async Task ApplyRetentionAsync_KeepsRecentlyReadNotificationCreatedLongAgo()
     {
         var fixture = await Fixture.CreateAsync();

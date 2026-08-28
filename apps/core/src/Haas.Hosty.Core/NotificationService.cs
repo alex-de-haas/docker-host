@@ -21,6 +21,12 @@ internal sealed class NotificationService(
 
     public static bool IsValidLevel(string level) => ValidLevels.Contains(level);
 
+    // What makes two records "the same notification" for dedupe, once the dedupe key itself matches:
+    // same recipient, same producer. Kept beside the publish path that indexes on it so the two cannot
+    // drift into disagreeing about identity. NUL separators because none of the parts can contain one.
+    private static string DedupeIdentity(NotificationRecord record)
+        => $"{record.RecipientUserId}\0{record.Source.Kind}\0{record.Source.AppId}";
+
     public async Task<AppNotificationCreateResponse> PublishAsync(
         NotificationScope scope,
         string target,
@@ -64,14 +70,21 @@ internal sealed class NotificationService(
             }
 
             var list = state.Notifications.ToList();
+            // One pass over the inbox to index the unread records this key could collide with, rather
+            // than a scan of the whole document per recipient: a broadcast fans out to every user, so
+            // the old shape was recipients × inbox.
+            var existingKeys = dedupeKey is null
+                ? null
+                : state.Notifications
+                    .Where(existing =>
+                        existing.ReadAt is null &&
+                        string.Equals(existing.DedupeKey, dedupeKey, StringComparison.Ordinal))
+                    .Select(DedupeIdentity)
+                    .ToHashSet(StringComparer.Ordinal);
+
             foreach (var candidate in candidates)
             {
-                if (dedupeKey is not null && list.Any(existing =>
-                        existing.ReadAt is null &&
-                        string.Equals(existing.RecipientUserId, candidate.RecipientUserId, StringComparison.Ordinal) &&
-                        string.Equals(existing.Source.Kind, candidate.Source.Kind, StringComparison.Ordinal) &&
-                        string.Equals(existing.Source.AppId, candidate.Source.AppId, StringComparison.Ordinal) &&
-                        string.Equals(existing.DedupeKey, dedupeKey, StringComparison.Ordinal)))
+                if (existingKeys is not null && !existingKeys.Add(DedupeIdentity(candidate)))
                 {
                     continue;
                 }
@@ -196,8 +209,17 @@ internal sealed class NotificationService(
         }, cancellationToken);
     }
 
-    // Per recipient: keep all unread; among read, drop those older than the retention window and cap
-    // the remainder at MaxPerUser. Unread records are never pruned.
+    // Per recipient: keep the newest MaxPerUser unread, then fill what is left of the same budget with
+    // read records newer than the retention window, newest first. Unread is prioritized but no longer
+    // unbounded.
+    //
+    // Keeping every unread record was the one rule with no ceiling anywhere, and an operator who never
+    // opens the bell is the normal case rather than the exotic one: supervisor advisories and app
+    // notifications accumulate, and because publishing is a whole-document read-modify-write, every
+    // later publish paid for the growth. Past the cap the older unread records are also the ones least
+    // likely to still matter — a month-old "app stopped" advisory for an app that has since been
+    // restarted many times. Dropping the oldest is a real loss of a message the user never saw, which
+    // is why the budget is per recipient and generous rather than tight.
     public async Task<int> ApplyRetentionAsync(CancellationToken cancellationToken = default)
     {
         return await store.UpdateAsync(state =>
@@ -206,7 +228,11 @@ internal sealed class NotificationService(
             var kept = new List<NotificationRecord>(state.Notifications.Count);
             foreach (var group in state.Notifications.GroupBy(n => n.RecipientUserId, StringComparer.Ordinal))
             {
-                var unread = group.Where(n => n.ReadAt is null).ToList();
+                var unread = group
+                    .Where(n => n.ReadAt is null)
+                    .OrderByDescending(n => n.CreatedAt)
+                    .Take(MaxPerUser)
+                    .ToList();
                 kept.AddRange(unread);
 
                 var readSlots = Math.Max(0, MaxPerUser - unread.Count);

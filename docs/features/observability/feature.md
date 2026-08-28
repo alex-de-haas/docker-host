@@ -1,7 +1,7 @@
 # Feature: Observability (telemetry collection, storage, and UI)
 
 Created: 2026-06-28
-Updated: 2026-08-15
+Updated: 2026-08-28
 
 Runtime apps export OpenTelemetry to a collector; a Hosty-native **telemetry backend** stores the
 three signals in embedded SQLite and serves a query API; a **telemetry UI** system app renders
@@ -144,6 +144,16 @@ promoted `hosty_app_id` label, which is then dropped since the row is already ke
 metrics target** at `GET /api/internal/telemetry/metrics`, so infra metrics land in the same store,
 keyed the same way, as app OTLP metrics. This is the universal baseline: it works for every running
 container regardless of instrumentation, and it keeps the telemetry containers unprivileged.
+
+The `container → app` map is read from `docker ps` once and reused across ticks, refreshed when it is
+empty (nothing running yet — the state a starting app changes) and when a sample names a container it
+has no owner for, which is the signal that something started since. `docker stats` is deliberately
+left unscoped rather than given the known container names: naming them would fail the call over a
+container that stopped since the last refresh, and would hide exactly the new containers that signal
+the map is stale. The sampling call itself is still one `docker stats --no-stream` per tick, which
+internally waits for two cgroup samples to compute CPU% — removing that would mean supervising a
+long-lived streaming child process (a new abstraction, plus restart/EOF/daemon-restart handling), a
+trade deliberately not taken for a background producer with no request-path impact.
 
 That endpoint **requires an app service token**, like every other app→Core route, and rejects a token
 whose app is no longer installed. Any valid app token is accepted — the exposition is host-wide, so
@@ -307,6 +317,9 @@ lack of auth. Closing that gap is [plan.md](plan.md)'s first deliverable.
   or a host with no resolvable collector endpoint, produces none.
 - **Core producer.** `DockerStatsExposition` renders the three `container.*` series with app/service
   attribution, idles as empty text when the telemetry app is absent, and survives a docker-less host.
+  The owner map is read once across ticks, re-read when a sample names a container it does not know,
+  and never latched by an empty result — a host with nothing running keeps asking, and skips the
+  sampling call entirely.
   The exposition endpoint rejects a missing, invalid, or uninstalled-app token with 401 and serves a
   valid one — the regression guard for the "internal means safe" class of mistake — and the
   endpoint-authorization harness must keep enumerating the route.
