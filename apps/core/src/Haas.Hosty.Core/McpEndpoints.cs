@@ -87,7 +87,7 @@ internal static class McpEndpoints
                     // lifecycle from the admin role here would let a facade client whose own token
                     // holds only mcp:read reach mutations around the grant. The facade exports only
                     // read-only tools anyway, so nothing an external client can see is lost.
-                    http.Items[McpCallerGrants.Key] = new McpCallerGrants(Lifecycle: false, actor.Id);
+                    http.Items[McpCallerGrants.Key] = new McpCallerGrants(Lifecycle: false, Update: false, actor.Id);
                     return await next(context);
                 }
                 var scoped = ScopedCredentials.Resolve(
@@ -126,6 +126,7 @@ internal static class McpEndpoints
                     // the standing grant those tools check.
                     http.Items[McpCallerGrants.Key] = new McpCallerGrants(
                         AccessTokenScopes.Grants(scoped.Record.Scopes, AccessTokenScopes.McpLifecycle),
+                        AccessTokenScopes.Grants(scoped.Record.Scopes, AccessTokenScopes.McpUpdate),
                         scoped.User.Id);
                     return await next(context);
                 }
@@ -148,10 +149,10 @@ internal static class McpEndpoints
                             statusCode: StatusCodes.Status403Forbidden));
                     }
 
-                    // An administrator's session is the full-role credential; lifecycle comes with
-                    // the role, exactly as it does on every /api lifecycle route the same person
-                    // could call directly.
-                    sessionGrants = new McpCallerGrants(Lifecycle: true, user.Id);
+                    // An administrator's session is the full-role credential; lifecycle and update
+                    // come with the role, exactly as they do on every /api route the same person
+                    // could call directly. The scopes narrow *tokens*, never the role itself.
+                    sessionGrants = new McpCallerGrants(Lifecycle: true, Update: true, user.Id);
                     return Task.FromResult<IResult>(Results.Empty);
                 },
                 requireCsrf: true,
@@ -363,6 +364,115 @@ internal sealed class HostyCoreTools
         CancellationToken cancellationToken)
         => MutateAsync("restart_app", "restart", appId, lifecycle.RestartAsync, httpContext, audit, clock, cancellationToken);
 
+    // --- Updates (docs/features/core-mcp/plan.md) ------------------------------------------------
+    //
+    // Two steps, mirroring what the CLI and Shell already do, because the shape *is* the safeguard:
+    // planning names the versions and the changes, and applying names the plan it was shown. An
+    // approval then attaches to a specific plan rather than to "update this app, whatever that turns
+    // out to mean by the time it runs".
+
+    [McpServerTool(Name = "plan_app_update", Destructive = false, Idempotent = true)]
+    [Description(
+        "Computes what updating an app would do - versions, runtime, whether a pre-update backup is taken, and the " +
+        "changes found - and returns a planDigest to pass to apply_app_update. Changes nothing. Requires the " +
+        "mcp:update scope. Read sourceConfigured before concluding anything from an empty change list.")]
+    public static async Task<string> PlanAppUpdateAsync(
+        [Description("Reverse-DNS app id, e.g. com.haas.solitaire.")] string appId,
+        CoreLifecycleService lifecycle,
+        IHttpContextAccessor httpContext,
+        CancellationToken cancellationToken)
+    {
+        if (httpContext.HttpContext?.Items[McpCallerGrants.Key] is not McpCallerGrants grants)
+        {
+            return CoreJson.Text(new McpError("The caller's authorization could not be established."));
+        }
+
+        // Gated even though it mutates nothing: a plan reaches out to the app's source and reports
+        // what is available there, which is more than a credential without the update grant was given.
+        if (!grants.Update)
+        {
+            return CoreJson.Text(new McpError(
+                $"This credential does not carry the '{AccessTokenScopes.McpUpdate}' scope, which plan_app_update requires."));
+        }
+
+        var target = NormalizeAppId(appId);
+        try
+        {
+            var plan = await lifecycle.CreateUpdatePlanAsync(target, new AppUpdatePlanRequest(), cancellationToken);
+            return CoreJson.Text(new McpUpdatePlan(
+                plan.AppId,
+                plan.CurrentVersion,
+                plan.TargetVersion,
+                plan.CurrentRuntime,
+                plan.TargetRuntime,
+                plan.PlanDigest,
+                plan.WillCreatePreUpdateBackup,
+                plan.Changes,
+                // Carried because an empty change list means two different things, and only this tells
+                // them apart: nothing new, or nothing Core could check. Reporting the first when it is
+                // the second would have an agent announce an app is up to date on the strength of a
+                // question that was never asked.
+                plan.SourceConfigured,
+                null));
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            return CoreJson.Text(new McpUpdatePlan(
+                target, null, null, null, null, null, false, [], false,
+                $"Could not plan an update for '{target}': {exception.Message}"));
+        }
+    }
+
+    [McpServerTool(Name = "apply_app_update", Destructive = true, Idempotent = false)]
+    [Description(
+        "Applies an update previously computed by plan_app_update, naming its planDigest. The app is stopped and " +
+        "replaced, interrupting whatever it is doing for its users. Refused if the plan no longer matches what the " +
+        "host would do now. Requires the mcp:update scope.")]
+    public static async Task<string> ApplyAppUpdateAsync(
+        [Description("Reverse-DNS app id, e.g. com.haas.solitaire.")] string appId,
+        [Description("The planDigest returned by plan_app_update for this app.")] string planDigest,
+        CoreLifecycleService lifecycle,
+        IHttpContextAccessor httpContext,
+        AuditStore audit,
+        IClock clock,
+        CancellationToken cancellationToken)
+    {
+        if (httpContext.HttpContext?.Items[McpCallerGrants.Key] is not McpCallerGrants grants)
+        {
+            return CoreJson.Text(new McpError("The caller's authorization could not be established."));
+        }
+
+        var target = NormalizeAppId(appId);
+        if (!grants.Update)
+        {
+            await AppendLifecycleAuditAsync(audit, clock, "update", target, "apply_app_update", grants.ActorUserId, "refused");
+            return CoreJson.Text(new McpError(
+                $"This credential does not carry the '{AccessTokenScopes.McpUpdate}' scope, which apply_app_update requires. " +
+                "A host administrator can issue a Core credential with app updates, or run this from their own session."));
+        }
+
+        // The digest is the approval. Core refuses one that no longer describes what it would do now,
+        // so an update that changed underneath the plan cannot be applied on the strength of the older
+        // one - which is the whole reason this is two calls rather than one.
+        var digest = NormalizeAppId(planDigest);
+        string payload;
+        string outcome;
+        try
+        {
+            var result = await lifecycle.EnqueueUpdateAsync(target, new AppUpdateApplyRequest(digest), cancellationToken);
+            outcome = "succeeded";
+            payload = CoreJson.Text(new McpLifecycleResult(target, "update", result.App?.RuntimeState ?? result.Status, null));
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            outcome = "failed";
+            payload = CoreJson.Text(new McpLifecycleResult(target, "update", null, $"Could not update '{target}': {exception.Message}"));
+        }
+
+        await AppendLifecycleAuditAsync(audit, clock, "update", target, "apply_app_update", grants.ActorUserId, outcome);
+        return payload;
+    }
+
     private static async Task<string> MutateAsync(
         string tool,
         string verb,
@@ -490,11 +600,23 @@ internal sealed class HostyCoreTools
 /// <c>mcp:lifecycle</c> scope. A delegated token never carries it, because it does not carry the
 /// scopes of the credential it descends from — role alone must not stand in for the grant.
 /// </remarks>
-internal sealed record McpCallerGrants(bool Lifecycle, string ActorUserId)
+internal sealed record McpCallerGrants(bool Lifecycle, bool Update, string ActorUserId)
 {
     /// <summary>The <c>HttpContext.Items</c> slot the filter writes and the tools read.</summary>
     public const string Key = "hosty:mcp-caller-grants";
 }
+
+internal sealed record McpUpdatePlan(
+    string? AppId,
+    string? CurrentVersion,
+    string? TargetVersion,
+    string? CurrentRuntime,
+    string? TargetRuntime,
+    string? PlanDigest,
+    bool WillCreatePreUpdateBackup,
+    IReadOnlyList<string> Changes,
+    bool SourceConfigured,
+    string? Error);
 
 internal sealed record McpAppList(IReadOnlyList<McpAppSummary> Apps);
 

@@ -195,6 +195,58 @@ public sealed class McpLifecycleHttpTests
 
     // --- helpers -------------------------------------------------------------------------------
 
+    [Fact]
+    public async Task LifecycleDoesNotCarryUpdate()
+    {
+        // The reason this scope exists. An operator granting "restart it when it wedges" has not
+        // thereby granted "change which version runs" — least of all months later, when a scope they
+        // approved once quietly grew a second meaning.
+        await using var harness = await CoreHttpHarness.StartAsync();
+        await SeedSystemAppAsync(harness, "com.example.notes");
+        var admin = await SeedSessionAsync(harness, "host.admin");
+        using var client = harness.CreateClient();
+
+        var lifecycleOnly = await CreateCredentialAsync(
+            client, admin, "lifecycle", ["mcp:read", "mcp:lifecycle"]);
+
+        var planned = await CallToolAsync(client, lifecycleOnly, "plan_app_update", new { appId = "com.example.notes" });
+        Assert.Contains("mcp:update", planned.GetProperty("error").GetString());
+
+        var applied = await CallToolAsync(
+            client, lifecycleOnly, "apply_app_update", new { appId = "com.example.notes", planDigest = "whatever" });
+        Assert.Contains("mcp:update", applied.GetProperty("error").GetString());
+
+        // The acceptance beside the refusals: a scope check that refused everyone would satisfy both
+        // negatives on its own and be completely broken. The plan may still fail on its merits — this
+        // app has no source configured — but it must fail *past* the gate, not on it.
+        var updater = await CreateCredentialAsync(client, admin, "updater", ["mcp:read", "mcp:update"]);
+        var allowed = await CallToolAsync(client, updater, "plan_app_update", new { appId = "com.example.notes" });
+        Assert.DoesNotContain("mcp:update", allowed.ToString());
+    }
+
+    [Fact]
+    public async Task UpdateScopeIsRefusedOnAnAppAudience()
+    {
+        // Same trap the lifecycle scope closes: on an app audience it would be issued cleanly, listed,
+        // and read by nothing. Generalised to every Core-only scope so the next one cannot be guarded
+        // in one place and forgotten in the other.
+        await using var harness = await CoreHttpHarness.StartAsync();
+        await SeedSystemAppAsync(harness, "com.example.notes");
+        var admin = await SeedSessionAsync(harness, "host.admin");
+        using var client = harness.CreateClient();
+
+        using var response = await SendAsync(
+            client,
+            HttpMethod.Post,
+            "/api/auth/credentials",
+            admin,
+            new { label = "wrong audience", audience = "com.example.notes", scopes = new[] { "mcp:read", "mcp:update" } });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal("scope_invalid_for_audience", body.GetProperty("code").GetString());
+    }
+
     private static async Task<string> CreateCredentialAsync(
         HttpClient client,
         string session,

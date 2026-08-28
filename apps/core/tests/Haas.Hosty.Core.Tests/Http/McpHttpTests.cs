@@ -32,7 +32,10 @@ public sealed class McpHttpTests
             .Order(StringComparer.Ordinal)
             .ToArray();
         Assert.Equal(
-            ["get_app", "get_host_status", "list_apps", "restart_app", "search_audit", "start_app", "stop_app", "tail_app_logs"],
+            [
+                "apply_app_update", "get_app", "get_host_status", "list_apps", "plan_app_update",
+                "restart_app", "search_audit", "start_app", "stop_app", "tail_app_logs",
+            ],
             names);
 
         var listed = await CallToolAsync(client, admin, "list_apps", new { });
@@ -143,7 +146,9 @@ public sealed class McpHttpTests
         using var client = harness.CreateClient();
         await InitializeAsync(client, admin);
 
-        string[] mutations = ["start_app", "stop_app", "restart_app"];
+        // plan_app_update is here too: it changes nothing, but it reaches the app's source and reports
+        // what is available, which is not the "safe to call unattended" promise readOnlyHint makes.
+        string[] mutations = ["start_app", "stop_app", "restart_app", "plan_app_update", "apply_app_update"];
         var tools = await CallAsync(client, admin, "tools/list", new { });
         foreach (var tool in tools.GetProperty("tools").EnumerateArray())
         {
@@ -167,6 +172,15 @@ public sealed class McpHttpTests
         var stop = tools.GetProperty("tools").EnumerateArray()
             .Single(tool => tool.GetProperty("name").GetString() == "stop_app");
         Assert.True(stop.GetProperty("annotations").GetProperty("destructiveHint").GetBoolean());
+
+        // Applying an update stops and replaces the app, so it is destructive for the same reason —
+        // while planning one is not, and a filter must be able to tell the halves of this pair apart.
+        var apply = tools.GetProperty("tools").EnumerateArray()
+            .Single(tool => tool.GetProperty("name").GetString() == "apply_app_update");
+        Assert.True(apply.GetProperty("annotations").GetProperty("destructiveHint").GetBoolean());
+        var plan = tools.GetProperty("tools").EnumerateArray()
+            .Single(tool => tool.GetProperty("name").GetString() == "plan_app_update");
+        Assert.False(plan.GetProperty("annotations").GetProperty("destructiveHint").GetBoolean());
     }
 
     [Fact]

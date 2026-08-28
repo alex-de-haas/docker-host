@@ -313,18 +313,21 @@ internal static class AccessTokenEndpoints
                             statusCode: StatusCodes.Status400BadRequest);
                     }
 
-                    // mcp:lifecycle is Core's own lifecycle authority, so it pairs only with the
-                    // hosty:core audience. On an app audience it would be a scope nothing ever
-                    // reads — issued cleanly, listed, and silently inert, which is the same trap
-                    // the unknown-scope refusal above closes.
+                    // These are Core's own authority, so they pair only with the hosty:core audience.
+                    // On an app audience such a scope would be one nothing ever reads — issued
+                    // cleanly, listed, and silently inert, which is the same trap the unknown-scope
+                    // refusal above closes. Iterated rather than checked one by one, so a scope added
+                    // later cannot be guarded here and forgotten below.
+                    var coreOnly = AccessTokenScopes.CoreOnly
+                        .FirstOrDefault(scope => AccessTokenScopes.Grants(scopes, scope));
                     if (audience is not null &&
                         !string.Equals(audience, AccessTokenScopes.CoreAudience, StringComparison.Ordinal) &&
-                        AccessTokenScopes.Grants(scopes, AccessTokenScopes.McpLifecycle))
+                        coreOnly is not null)
                     {
                         return CoreJson.Json(
                             new ErrorResponse(
                                 "scope_invalid_for_audience",
-                                $"The '{AccessTokenScopes.McpLifecycle}' scope applies only to the '{AccessTokenScopes.CoreAudience}' audience."),
+                                $"The '{coreOnly}' scope applies only to the '{AccessTokenScopes.CoreAudience}' audience."),
                             statusCode: StatusCodes.Status400BadRequest);
                     }
 
@@ -333,8 +336,7 @@ internal static class AccessTokenEndpoints
                     // then be refused on every call — minted cleanly, listed, and unable to invoke
                     // the very tools it names, which is the silently-inert trap these guards exist
                     // to refuse while the operator is still looking at the form.
-                    if (AccessTokenScopes.Grants(scopes, AccessTokenScopes.McpLifecycle) &&
-                        !AccessTokenScopes.Grants(scopes, AccessTokenScopes.McpRead))
+                    if (coreOnly is not null && !AccessTokenScopes.Grants(scopes, AccessTokenScopes.McpRead))
                     {
                         return CoreJson.Json(
                             new ErrorResponse(

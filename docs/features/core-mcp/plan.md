@@ -70,6 +70,11 @@ answer "why did this restart" only when an agent was the one who restarted it.
       direction, and `Details` asserted to carry no credential material for every existing writer.
 - [ ] Docs: `feature.md`, index.
 
+## Deliverables — updates
+
+- [x] `plan_app_update` / `apply_app_update`, two steps, behind a **new `mcp:update` scope**.
+- [ ] `feature.md` describes both, and the audit tool, as current reality.
+
 ## Decisions
 
 Owner, 2026-08-20: **ship the reader first; fix who writes what afterwards.** Recorded with what it
@@ -85,6 +90,17 @@ result be read as "nothing happened", which is the failure mode this whole surfa
   the log today — and it is admin-only, like the rest of the surface.
 - **`mcp:read`, not a new scope.** A scope for a read that every admin credential already implies
   would be ceremony; the surface is admin-gated and the audit is host state like the rest of it.
+- **Updates get their own scope, `mcp:update`.** The lifecycle scope's own note says per-verb scopes
+  wait for a demonstrated need; this is not another verb. Start, stop and restart act on what is
+  installed, while an update changes *what is installed*, and an operator who granted "restart it when
+  it wedges" has not thereby granted "change which version runs" — least of all months later, when a
+  scope they approved once would have quietly grown a second meaning.
+- **Two calls, not one.** Planning names the versions and the changes; applying names the plan it was
+  shown. An approval then attaches to a specific plan rather than to "update this app, whatever that
+  means by the time it runs" — and Core refuses a digest that no longer describes what it would do.
+- **`sourceConfigured` travels with every plan.** An empty change list means two different things —
+  nothing new, or nothing Core could check — and without the flag an agent would announce an app is up
+  to date on the strength of a question that was never asked.
 - **The read is bounded by a scan ceiling**, not only by the time window. Nothing trims this log, so a
   filter matching three entries in a very long file must not read the file.
 
