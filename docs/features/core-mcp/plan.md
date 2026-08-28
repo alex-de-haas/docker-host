@@ -1,7 +1,7 @@
 # Core MCP: The Host's Own Audit
 
 Status: In Progress
-Created: 2026-08-28
+Created: 2026-08-26
 Updated: 2026-08-28
 
 Let an agent answer "what happened to this app", which is the question Core MCP currently cannot
