@@ -211,6 +211,7 @@ internal static class CoreJson
 [JsonSerializable(typeof(AppDirectoryResponse))]
 [JsonSerializable(typeof(AgentSkillResponse))]
 [JsonSerializable(typeof(McpAuditSearch))]
+[JsonSerializable(typeof(McpUpdatePlan))]
 [JsonSerializable(typeof(AppDirectoryInterface))]
 [JsonSerializable(typeof(AppUpdateAvailabilityResponse))]
 [JsonSerializable(typeof(UsersResponse))]

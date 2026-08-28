@@ -1,8 +1,8 @@
 # Core MCP: The Host's Own Audit
 
 Status: In Progress
-Created: 2026-08-20
-Updated: 2026-08-20
+Created: 2026-08-28
+Updated: 2026-08-28
 
 Let an agent answer "what happened to this app", which is the question Core MCP currently cannot
 answer about the thing it owns.
@@ -70,9 +70,19 @@ answer "why did this restart" only when an agent was the one who restarted it.
       direction, and `Details` asserted to carry no credential material for every existing writer.
 - [ ] Docs: `feature.md`, index.
 
+## Deliverables — updates
+
+- [x] `plan_app_update` / `apply_app_update`, two steps, behind a **new `mcp:update` scope**.
+- [ ] `feature.md` describes both, and the audit tool, as current reality.
+- [ ] **The settled outcome of an update reaches the audit.** Applying is reported as *accepted*,
+      because the work runs detached and the response carries the pre-update runtime state. Nobody
+      writes what happened afterwards: `CoreLifecycleService` holds no `AuditStore`, which is the same
+      missing wire as the producer deliverable above. Until it lands, `search_audit` can show that an
+      update was accepted and never that it failed.
+
 ## Decisions
 
-Owner, 2026-08-20: **ship the reader first; fix who writes what afterwards.** Recorded with what it
+Owner, 2026-08-28: **ship the reader first; fix who writes what afterwards.** Recorded with what it
 costs, because the cost is real and belongs in the document rather than in a conversation.
 
 Until the producer work lands, `search_audit` answers well about credentials, users, backups and
@@ -85,6 +95,17 @@ result be read as "nothing happened", which is the failure mode this whole surfa
   the log today — and it is admin-only, like the rest of the surface.
 - **`mcp:read`, not a new scope.** A scope for a read that every admin credential already implies
   would be ceremony; the surface is admin-gated and the audit is host state like the rest of it.
+- **Updates get their own scope, `mcp:update`.** The lifecycle scope's own note says per-verb scopes
+  wait for a demonstrated need; this is not another verb. Start, stop and restart act on what is
+  installed, while an update changes *what is installed*, and an operator who granted "restart it when
+  it wedges" has not thereby granted "change which version runs" — least of all months later, when a
+  scope they approved once would have quietly grown a second meaning.
+- **Two calls, not one.** Planning names the versions and the changes; applying names the plan it was
+  shown. An approval then attaches to a specific plan rather than to "update this app, whatever that
+  means by the time it runs" — and Core refuses a digest that no longer describes what it would do.
+- **`sourceConfigured` travels with every plan.** An empty change list means two different things —
+  nothing new, or nothing Core could check — and without the flag an agent would announce an app is up
+  to date on the strength of a question that was never asked.
 - **The read is bounded by a scan ceiling**, not only by the time window. Nothing trims this log, so a
   filter matching three entries in a very long file must not read the file.
 

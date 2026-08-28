@@ -148,9 +148,25 @@ internal static class AccessTokenScopes
     // own lifecycle authority, so it pairs only with the `hosty:core` audience — no app reads it.
     public const string McpLifecycle = "mcp:lifecycle";
 
+    // May plan and apply app updates through Core MCP. Separate from mcp:lifecycle, which that scope's
+    // own note anticipated by saying per-verb scopes wait for a demonstrated need: this is not another
+    // verb. Start, stop and restart act on what is installed; an update changes *what is installed*,
+    // and an operator granting "restart it when it wedges" has not thereby granted "change which
+    // version runs" — least of all months later, when a scope silently grew a meaning.
+    public const string McpUpdate = "mcp:update";
+
     /// <summary>Every scope this host issues. Public so a refusal can name them rather than leaving
     /// the caller to guess what it should have asked for.</summary>
-    public static readonly string[] Known = [McpRead, McpLifecycle];
+    public static readonly string[] Known = [McpRead, McpLifecycle, McpUpdate];
+
+    /// <summary>
+    /// Scopes that are Core's own authority and mean nothing on an app audience.
+    /// </summary>
+    /// <remarks>
+    /// A set rather than a check per scope: the guards that use it were written for one scope, and a
+    /// second copied beside it is how the next scope gets added to only one of them.
+    /// </remarks>
+    public static readonly string[] CoreOnly = [McpLifecycle, McpUpdate];
 
     public static bool IsKnownScope(string scope)
         => Known.Contains(scope, StringComparer.Ordinal);
