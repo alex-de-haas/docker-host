@@ -1,7 +1,7 @@
 # Notifications
 
 Created: 2026-06-16
-Updated: 2026-08-15
+Updated: 2026-08-28
 
 Hosty notifications are a **platform capability owned by Core**: a per-user inbox that any producer
 writes into and any client renders. Notifications are always **user-targeted**. Runtime apps emit them
@@ -182,18 +182,26 @@ stream's semantics.
 
 - `NotificationStore` persists a `NotificationState` document via `JsonStorage` at
   `<core-root>/notifications/notifications.json` (mirroring `UserDirectoryStore`), guarding against a
-  persisted file that omits the collection property.
+  persisted file that omits the collection property. The parsed document is cached in memory and
+  replaced by the store's own writes, with a file stamp catching an out-of-band edit — the bell is
+  polled by every open client, and this store is its only writer
+  ([core-read-path-caching](../core-read-path-caching/feature.md)).
 - `NotificationService` owns publish (fan-out, dedupe), query, mark-read, purge, and retention; it is
   registered in DI in `HostyCoreApplication`, and the endpoints are mapped like `AppBackupEndpoints`.
 - Retention (`NotificationRetentionScheduler`, mirroring `AppBackupRetentionScheduler`) runs after
-  startup and periodically. Per recipient: **all unread records are kept**; read records are dropped
-  once read more than 30 days ago (the cutoff applies to `ReadAt`, not `CreatedAt`), and the survivors
-  fill whatever is left of a 100-record budget after the unread ones are counted, newest first. The
-  budget therefore bounds *retained read* records, not the inbox: a recipient holding more than 100
-  unread records keeps every one of them and retains no read ones at all. A pass that pruned
-  anything emits a `notification.retention.cleanup` audit with counts.
+  startup and periodically. Per recipient the budget is 100 records and it bounds the **whole** inbox:
+  the newest 100 unread records are kept, then read records fill whatever is left of that budget,
+  newest first, dropping any read more than 30 days ago (the cutoff applies to `ReadAt`, not
+  `CreatedAt`). Unread is prioritized but no longer unlimited — it used to be the one class with no
+  ceiling, so an operator who never opened the bell grew this document without bound, and because
+  publishing is a whole-document read-modify-write every later publish paid for that growth. Past the
+  cap the **oldest unread records are dropped**, which is a real loss of a message the user never saw;
+  the budget is per recipient and deliberately generous for that reason. A pass that pruned anything
+  emits a `notification.retention.cleanup` audit with counts.
 - Dedupe: a publish is reported `deduplicated` and creates nothing when an **unread** record with the
-  same `(source, recipientUserId, dedupeKey)` already exists.
+  same `(source, recipientUserId, dedupeKey)` already exists. The publish path indexes the matching
+  unread records once per call rather than scanning the inbox per recipient, so a broadcast costs one
+  pass instead of recipients × inbox.
 
 ## AOT / Source-Gen
 

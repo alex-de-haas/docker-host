@@ -16,9 +16,18 @@ namespace Haas.Hosty.Core;
 internal sealed class DockerStatsExposition(
     AppRegistryStore apps,
     IDockerCommandRunner dockerRunner,
+    IClock clock,
     ILogger<DockerStatsExposition> logger) : BackgroundService
 {
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(10);
+
+    // Longest a cached owner map may be trusted. Container names are derived, and derivation is not
+    // injective — BuildContainerName normalizes punctuation, so app `foo.bar` and app `foo-bar` with
+    // the same service key produce the SAME container name (a collision the removal path already
+    // guards against explicitly). Uninstall one and start the other and the cached entry would
+    // attribute the new app's metrics to the old one, with no unknown name to trigger a refresh. The
+    // age cap bounds that to a minute instead of forever, and still spares five of every six reads.
+    private static readonly TimeSpan MaxOwnerMapAge = TimeSpan.FromSeconds(60);
 
     // Prometheus label the backend promotes app attribution from; matches the collector's promoted
     // `hosty_app_id`, so docker stats attribute the same way as app OTLP metrics.
@@ -33,6 +42,19 @@ internal sealed class DockerStatsExposition(
 
     // Latest rendered snapshot, swapped atomically each tick and served by the exposition endpoint.
     private volatile string current = string.Empty;
+
+    // Container → owning app, cached across ticks. `docker ps` answers a question that changes when an
+    // app starts, stops or is installed — not every ten seconds — so re-reading it with a process spawn
+    // per tick was pure repetition. Refreshed when the map is empty (nothing running yet, which is
+    // exactly the state a starting app changes), when a sample names a *Hosty* container we have no
+    // owner for (something started since), and once the map reaches MaxOwnerMapAge. Touched only from
+    // the single-threaded tick loop.
+    private IReadOnlyDictionary<string, ContainerStatOwner> owners = EmptyOwners;
+
+    private DateTimeOffset ownersLoadedAt;
+
+    private static readonly IReadOnlyDictionary<string, ContainerStatOwner> EmptyOwners =
+        new Dictionary<string, ContainerStatOwner>(StringComparer.Ordinal);
 
     public string CurrentPrometheusText => current;
 
@@ -66,20 +88,46 @@ internal sealed class DockerStatsExposition(
         while (await timer.WaitForNextTickAsync(stoppingToken));
     }
 
-    private async Task<string> BuildSnapshotAsync(CancellationToken cancellationToken)
+    // Internal (not private) so the owner-map caching can be exercised without driving the timer.
+    internal async Task<string> BuildSnapshotAsync(CancellationToken cancellationToken)
     {
-        var owners = ParseContainerOwners(await RunDockerOrEmptyAsync(
-            ["ps", "--no-trunc", "--filter", "label=hosty.app.id", "--format",
-                "{{.Names}}\t{{.Label \"hosty.app.id\"}}\t{{.Label \"hosty.app.service\"}}"],
-            cancellationToken));
         if (owners.Count == 0)
         {
-            return string.Empty;
+            owners = await LoadContainerOwnersAsync(cancellationToken);
+            if (owners.Count == 0)
+            {
+                return string.Empty;
+            }
         }
 
+        // Deliberately NOT scoped to the container names already known: naming them explicitly would
+        // fail the call over a container that stopped since the last refresh, and — the real problem —
+        // would hide the containers that started since, which are the only signal that the owner map
+        // needs refreshing.
         var stats = DockerStatsParser.Parse(await RunDockerOrEmptyAsync(
             ["stats", "--no-stream", "--format", "{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}"],
             cancellationToken));
+
+        if (stats.Count == 0)
+        {
+            // Nothing to sample at all: every container has stopped, or docker is unavailable. Drop
+            // the map so the next tick goes back through the cheap `docker ps` and can take the
+            // skip-sampling path above. Without this a stale non-empty map would keep the expensive
+            // sampling call running every tick over a host with nothing to report — turning the
+            // cheapest case into the most expensive one.
+            owners = EmptyOwners;
+            return string.Empty;
+        }
+
+        // Only an unattributed *Hosty* container means the map is behind. A shared host runs the
+        // operator's own containers too, and `docker stats` reports all of them: treating any unknown
+        // name as a refresh signal would re-run `docker ps` on every tick of every host that runs
+        // anything outside Hosty — which is most of them — and cache nothing.
+        if (clock.UtcNow - ownersLoadedAt >= MaxOwnerMapAge ||
+            stats.Any(stat => IsHostyContainer(stat.ContainerName) && !owners.ContainsKey(stat.ContainerName)))
+        {
+            owners = await LoadContainerOwnersAsync(cancellationToken);
+        }
 
         var builder = new StringBuilder();
         foreach (var stat in stats)
@@ -107,6 +155,21 @@ internal sealed class DockerStatsExposition(
 
         return builder.ToString();
     }
+
+    private async Task<IReadOnlyDictionary<string, ContainerStatOwner>> LoadContainerOwnersAsync(CancellationToken cancellationToken)
+    {
+        var loaded = ParseContainerOwners(await RunDockerOrEmptyAsync(
+            ["ps", "--no-trunc", "--filter", "label=hosty.app.id", "--format",
+                "{{.Names}}\t{{.Label \"hosty.app.id\"}}\t{{.Label \"hosty.app.service\"}}"],
+            cancellationToken));
+        ownersLoadedAt = clock.UtcNow;
+        return loaded;
+    }
+
+    // Every container Core runs is named by BuildContainerName, which prefixes this; anything else in
+    // a `docker stats` sample belongs to the operator, not to Hosty.
+    private static bool IsHostyContainer(string containerName)
+        => containerName.StartsWith("hosty-", StringComparison.Ordinal);
 
     // Renders one Prometheus sample: name{hosty_app_id="…",service="…"} value
     internal static void AppendSample(StringBuilder builder, string name, string appId, string service, double value)
