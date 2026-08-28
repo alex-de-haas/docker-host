@@ -1,7 +1,7 @@
 # Agent Background Sessions
 
-Created: 2026-08-20
-Updated: 2026-08-20
+Created: 2026-08-24
+Updated: 2026-08-24
 
 Leaving an agent working while you close the tab is a feature rather than a way to lose work: the
 session is findable when you come back, and it reaches you when it needs you.

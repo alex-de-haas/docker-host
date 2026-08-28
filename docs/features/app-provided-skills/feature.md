@@ -1,6 +1,6 @@
 # App-Provided Skills
 
-Created: 2026-08-20
+Created: 2026-08-21
 Updated: 2026-08-25
 
 An app ships the prose an agent needs to use it well, the way it already ships its icon and its long

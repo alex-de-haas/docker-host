@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-08-09
-Updated: 2026-08-20
+Updated: 2026-08-24
 
 Two changes to the shipped assistant ([feature.md](feature.md)): the operator can be **asked a
 question**, and the operator can **configure the assistant** in a UI of its own. Kept in one plan and
