@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-08-20
-Updated: 2026-08-22
+Updated: 2026-08-28
 
 An app ships the prose an agent needs to use it well, the way it already ships its icon and its
 long description — and an operator decides, per app, whether that prose reaches a model.
@@ -70,7 +70,7 @@ about Hosty, not about any app, and it cannot grow to cover apps Hosty does not 
       be what refuses; anonymous and foreign-token callers; a declared-but-unpackaged skill as an
       absence; composition for both readers beside their no-skill cases; and the session pair — a
       skill present when the provider is on, absent when it is off.
-- [x] **A changed skill is withheld until reviewed.** Shipped 2026-08-20 without reviving the per-app
+- [x] **A changed skill is withheld until reviewed.** Shipped 2026-08-23 without reviving the per-app
       flag: the approval is a digest per app in the gateway's settings, beside the provider toggle.
       First sighting is delivered and recorded — enabling was the decision — and a later change is
       withheld, surfaced on the settings page with the new text, and approved against the digest that
@@ -101,7 +101,7 @@ later reader sees why rather than only what.
   "this is for the catalog".
 
 - **The skill follows the MCP provider toggle; there is no separate switch.** Corrected on
-  2026-08-20, during implementation, after the owner asked what a second flag would decide. It would
+  2026-08-21, during implementation, after the owner asked what a second flag would decide. It would
   ask the same question twice: enabling a provider already accepts that this app's text enters the
   model's context, because a tool arrives with its name and description and there is no version of it
   that does not. An operator who cannot explain the difference between two toggles on one page is

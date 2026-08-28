@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-08-18
-Updated: 2026-08-24
+Updated: 2026-08-28
 
 Make the assistant reachable from anywhere in Shell, and let an app hand it context — without letting
 an app *drive* it.
@@ -67,7 +67,7 @@ Two asks from the owner (2026-08-18), one mechanism short of possible today:
       `hosty:request-delegated-token` handshake — the alternative, a gateway minting user-scoped
       tokens for itself, is the "token, not proxy" rule the bridge is built on.
 - [x] Shell: the keyboard shortcut (`Ctrl`/`Cmd`+`Shift`+`A`), which toggles rather than only opens.
-- [x] Shell: the assistant tab's badge. Unblocked and shipped 2026-08-20 by
+- [x] Shell: the assistant tab's badge. Unblocked and shipped 2026-08-24 by
       [agent-background-sessions](../agent-background-sessions/plan.md), which published the attention
       state it had to read. It is that state, not a second poll: the page holding the sessions posts
       the count and Shell renders it, sender-verified like every other embedder message.
