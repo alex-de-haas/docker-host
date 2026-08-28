@@ -24,6 +24,12 @@ const CORE_AUDIENCE = "hosty:core";
 // sent to Core — the submit handler maps it back to CORE_AUDIENCE plus the scope pair.
 const CORE_CONTROL = "hosty:core+lifecycle";
 
+// Same audience again, with updates on top. A separate option rather than a wider "control" one,
+// because that is the whole reason `mcp:update` is a separate scope: an operator choosing "start and
+// stop things for me" has not chosen "change which versions run". Folding it in here would have
+// undone the distinction at the only place anyone actually makes the choice.
+const CORE_UPDATE = "hosty:core+update";
+
 // Credentials for clients that have no browser: a device console, a native client, a
 // script. Two ways in — a device approves itself here after showing a code, or a credential is created
 // here and its value shown once — and one list to revoke what exists.
@@ -155,6 +161,8 @@ export function SettingsTokensSection({
           ? { label }
           : audience === CORE_CONTROL
             ? { label, audience: CORE_AUDIENCE, scopes: ["mcp:read", "mcp:lifecycle"] }
+            : audience === CORE_UPDATE
+              ? { label, audience: CORE_AUDIENCE, scopes: ["mcp:read", "mcp:lifecycle", "mcp:update"] }
             : { label, audience, scopes: ["mcp:read"] },
       );
       const created = (await response.json()) as { label: string; token: string };
@@ -244,6 +252,7 @@ export function SettingsTokensSection({
               <option value={FULL_ACCESS}>Full access — everything you can do</option>
               <option value={CORE_AUDIENCE}>Core MCP — read-only</option>
               <option value={CORE_CONTROL}>Core MCP — read + app control</option>
+              <option value={CORE_UPDATE}>Core MCP — read + app control + updates</option>
               {mcpApps.map((app) => (
                 <option key={app.id} value={app.id}>
                   {app.displayName} — read-only tools
@@ -262,6 +271,8 @@ export function SettingsTokensSection({
             ? " A full-access credential can do everything you can, on every Core surface."
             : audience === CORE_CONTROL
               ? " This credential can read the fleet and also start, stop and restart apps. It is refused everywhere else."
+              : audience === CORE_UPDATE
+                ? " This credential can also update apps — changing which version runs, not only restarting what is installed. It is refused everywhere else."
               : " A limited credential reaches only what is selected here and is refused everywhere else, including every other app."}
         </p>
       </form>
