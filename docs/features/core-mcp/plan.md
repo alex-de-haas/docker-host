@@ -1,8 +1,8 @@
 # Core MCP: The Host's Own Audit
 
 Status: In Progress
-Created: 2026-08-20
-Updated: 2026-08-20
+Created: 2026-08-28
+Updated: 2026-08-28
 
 Let an agent answer "what happened to this app", which is the question Core MCP currently cannot
 answer about the thing it owns.
@@ -74,10 +74,15 @@ answer "why did this restart" only when an agent was the one who restarted it.
 
 - [x] `plan_app_update` / `apply_app_update`, two steps, behind a **new `mcp:update` scope**.
 - [ ] `feature.md` describes both, and the audit tool, as current reality.
+- [ ] **The settled outcome of an update reaches the audit.** Applying is reported as *accepted*,
+      because the work runs detached and the response carries the pre-update runtime state. Nobody
+      writes what happened afterwards: `CoreLifecycleService` holds no `AuditStore`, which is the same
+      missing wire as the producer deliverable above. Until it lands, `search_audit` can show that an
+      update was accepted and never that it failed.
 
 ## Decisions
 
-Owner, 2026-08-20: **ship the reader first; fix who writes what afterwards.** Recorded with what it
+Owner, 2026-08-28: **ship the reader first; fix who writes what afterwards.** Recorded with what it
 costs, because the cost is real and belongs in the document rather than in a conversation.
 
 Until the producer work lands, `search_audit` answers well about credentials, users, backups and

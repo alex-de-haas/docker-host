@@ -460,13 +460,28 @@ internal sealed class HostyCoreTools
         try
         {
             var result = await lifecycle.EnqueueUpdateAsync(target, new AppUpdateApplyRequest(digest), cancellationToken);
-            outcome = "succeeded";
-            payload = CoreJson.Text(new McpLifecycleResult(target, "update", result.App?.RuntimeState ?? result.Status, null));
+
+            // **Accepted, not succeeded.** The apply runs detached — EnqueueUpdateAsync returns
+            // "updating" the moment the work is queued — so calling this a success would report an
+            // outcome nobody has yet. The runtime state in that response is still the *pre-update*
+            // one, which is exactly how a model concludes the update is done and moves on.
+            //
+            // The settled outcome lands on the app record, not here, and audit does not learn it:
+            // CoreLifecycleService holds no AuditStore, and giving it one belongs to the producer
+            // deliverable in docs/features/core-mcp/plan.md. Until then this line says what it knows.
+            outcome = "accepted";
+            payload = CoreJson.Text(new McpLifecycleResult(
+                target,
+                "update",
+                result.Status,
+                null,
+                "The update was accepted and runs in the background. Call get_app to see whether it finished; " +
+                "the runtime state above is the one from before it started."));
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             outcome = "failed";
-            payload = CoreJson.Text(new McpLifecycleResult(target, "update", null, $"Could not update '{target}': {exception.Message}"));
+            payload = CoreJson.Text(new McpLifecycleResult(target, "update", null, $"Could not update '{target}': {exception.Message}", null));
         }
 
         await AppendLifecycleAuditAsync(audit, clock, "update", target, "apply_app_update", grants.ActorUserId, outcome);
@@ -672,4 +687,14 @@ internal sealed record McpAuditEntry(
 internal sealed record McpError(string Error);
 
 /// <summary>One lifecycle mutation's outcome: the state the app landed in, or why it did not.</summary>
-internal sealed record McpLifecycleResult(string AppId, string Action, string? RuntimeState, string? Error);
+internal sealed record McpLifecycleResult(
+    string AppId,
+    string Action,
+    string? RuntimeState,
+    string? Error,
+    /// <summary>
+    /// Set when the action was only *accepted*. Start, stop and restart settle before they answer;
+    /// an update does not, and a result that looked identical either way is how a model reports a
+    /// finished update that is still running — or has since failed.
+    /// </summary>
+    string? Note = null);

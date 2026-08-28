@@ -341,7 +341,10 @@ internal static class AccessTokenEndpoints
                         return CoreJson.Json(
                             new ErrorResponse(
                                 "scope_requires_read",
-                                $"The '{AccessTokenScopes.McpLifecycle}' scope requires '{AccessTokenScopes.McpRead}' alongside it."),
+                                // The scope the caller actually asked for, not the one this guard was
+                                // first written for: telling someone who requested mcp:update to pair
+                                // mcp:read with mcp:lifecycle sends them to fix the wrong thing.
+                                $"The '{coreOnly}' scope requires '{AccessTokenScopes.McpRead}' alongside it."),
                             statusCode: StatusCodes.Status400BadRequest);
                     }
 

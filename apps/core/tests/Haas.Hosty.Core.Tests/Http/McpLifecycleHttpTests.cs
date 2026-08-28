@@ -225,6 +225,50 @@ public sealed class McpLifecycleHttpTests
     }
 
     [Fact]
+    public async Task RequiresReadNamesTheScopeThatWasAskedFor()
+    {
+        // The guard was generalised to every Core-only scope but its message still named the scope it
+        // was first written for, which would send someone who asked for mcp:update to fix mcp:lifecycle.
+        await using var harness = await CoreHttpHarness.StartAsync();
+        var admin = await SeedSessionAsync(harness, "host.admin");
+        using var client = harness.CreateClient();
+
+        using var response = await SendAsync(
+            client,
+            HttpMethod.Post,
+            "/api/auth/credentials",
+            admin,
+            new { label = "no read", audience = "hosty:core", scopes = new[] { "mcp:update" } });
+
+        var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal("scope_requires_read", body.GetProperty("code").GetString());
+        Assert.Contains("mcp:update", body.GetProperty("message").GetString());
+    }
+
+    [Fact]
+    public async Task AnAppliedUpdateIsReportedAsAcceptedRatherThanDone()
+    {
+        // The apply runs detached, so "succeeded" would be an outcome nobody has yet — and the runtime
+        // state in the response is still the pre-update one, which is exactly how a model concludes an
+        // update finished and moves on. The audit line must not claim it either.
+        await using var harness = await CoreHttpHarness.StartAsync();
+        await SeedSystemAppAsync(harness, "com.example.notes");
+        var admin = await SeedSessionAsync(harness, "host.admin");
+        using var client = harness.CreateClient();
+
+        var applied = await CallToolAsync(
+            client, admin, "apply_app_update", new { appId = "com.example.notes", planDigest = "no-such-plan" });
+
+        // This particular apply fails on the digest, which is the honest outcome for a plan that was
+        // never computed — what matters is that a *successful* enqueue never reports completion, and
+        // the audit trail agrees with the tool.
+        Assert.True(applied.TryGetProperty("error", out _));
+        var audit = harness.Services.GetRequiredService<AuditStore>();
+        var entries = await audit.ReadRecentAsync();
+        Assert.DoesNotContain(entries, entry => entry.Action == "app.lifecycle.update" && entry.Outcome == "succeeded");
+    }
+
+    [Fact]
     public async Task UpdateScopeIsRefusedOnAnAppAudience()
     {
         // Same trap the lifecycle scope closes: on an app audience it would be issued cleanly, listed,
