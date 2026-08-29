@@ -254,8 +254,10 @@ the right edge of its pane, and the window refused to be dragged below 1453pt. A
 `NavigationSplitView` fails identically, so the fault is the nesting rather than the `TabView`.
 `HSplitView` is a plain `NSSplitView` and takes the inset once: the detail fills its pane, and the
 window floor fell to 1048pt — the sidebar, the list's own minimum, and what the detail's form
-actually needs. A `NavigationStack` sits above the split view because the list's title, subtitle,
-search field and toolbar have to hang from something.
+actually needs. Each pane carries its own `NavigationStack`: the list's title, subtitle, search field
+and toolbar have to hang from something now that the split view is gone, and one shared stack would
+put the list's title and the detail's in the same container, where which of them wins is decided by
+view order rather than by intent.
 
 iOS keeps the `NavigationSplitView` it had. `HSplitView` is a macOS type, and iPadOS 26 was measured
 and does not share the defect: on a 1376x1032 iPad in landscape the same nesting puts the detail's
@@ -269,7 +271,11 @@ pane being the one AppKit hands the whole delta to during a live resize — befo
 ballooned from 352pt to 711pt for the length of a window-edge drag and snapped back on release.
 
 Rows carry the selection as a `tag` rather than a `NavigationLink`: the pane beside the list reads
-that selection, and on macOS there is no navigation destination left for a link to push.
+that selection, and on macOS there is no navigation destination left for a link to push. This still
+pushes in compact width, where the iOS split view collapses into a stack — verified on an iPhone
+simulator against the same shape the client uses, an observable router with the list in a child view
+and the detail reading the property the list writes: tapping a row shows the detail with a working
+back button.
 
 The tab carries a badge counting what is actionable on that screen: apps with an update available,
 plus Core itself as one more.

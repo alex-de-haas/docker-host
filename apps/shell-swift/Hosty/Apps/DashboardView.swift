@@ -24,17 +24,19 @@ struct DashboardView: View {
         //
         // The `NavigationStack` above it is what the title, subtitle, search field and toolbar of the
         // list hang from — the split view they used to reach is gone.
-        NavigationStack {
-            HSplitView {
+        HSplitView {
+            NavigationStack {
                 DashboardListView(session: session, model: model, router: router)
-                    // The floor is what an app row needs to stay one line per fact: at 260 the name
-                    // and its `System` badge wrapped, and "Running" broke across two lines, the
-                    // moment a detail appeared beside it and the split gave the list its minimum.
-                    .frame(minWidth: 300, idealWidth: 352, maxWidth: 460)
-
-                detail
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+            // The floor is what an app row needs to stay one line per fact: at 260 the name and its
+            // `System` badge wrapped, and "Running" broke across two lines, the moment a detail
+            // appeared beside it and the split gave the list its minimum.
+            .frame(minWidth: 300, idealWidth: 352, maxWidth: 460)
+
+            NavigationStack {
+                detail
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         #else
         NavigationSplitView {
