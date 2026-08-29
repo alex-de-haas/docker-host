@@ -12,20 +12,52 @@ struct DashboardView: View {
     let router: ShellRouter
 
     var body: some View {
+        #if os(macOS)
+        // Two panes, and deliberately *not* a second `NavigationSplitView`. Nesting one navigation
+        // container's split inside another's makes macOS 26 subtract the outer sidebar's width a
+        // second time: measured in a 1200pt window with a 148pt tab sidebar and a 308pt list, the
+        // detail was laid out in 1200 − 148 − 308 − 148, so its content came out 556 wide and pinned
+        // to the right edge, and the window refused to go below 1453pt on this host. `HSplitView` is
+        // a plain `NSSplitView` rather than a navigation container, so it takes the inset once: the
+        // same measurement puts the detail at its proper width and drops the window minimum to what
+        // the list's own `minWidth` asks for.
+        //
+        // The `NavigationStack` above it is what the title, subtitle, search field and toolbar of the
+        // list hang from — the split view they used to reach is gone.
+        HSplitView {
+            NavigationStack {
+                DashboardListView(session: session, model: model, router: router)
+            }
+            // The floor is what an app row needs to stay one line per fact: at 260 the name and its
+            // `System` badge wrapped, and "Running" broke across two lines, the moment a detail
+            // appeared beside it and the split gave the list its minimum.
+            .frame(minWidth: 300, idealWidth: 352, maxWidth: 460)
+
+            NavigationStack {
+                detail
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        #else
         NavigationSplitView {
             DashboardListView(session: session, model: model, router: router)
         } detail: {
-            if let id = router.managedAppID {
-                NavigationStack {
-                    AppDetailView(appID: id, model: model)
-                }
+            NavigationStack { detail }
+        }
+        #endif
+    }
+
+    /// The selected app's management screen, or the line explaining why there is nothing to show.
+    @ViewBuilder
+    private var detail: some View {
+        if let id = router.managedAppID {
+            AppDetailView(appID: id, model: model)
                 .id(id)
-            } else {
-                ContentUnavailableView {
-                    Label("Select an app", systemImage: "shippingbox")
-                } description: {
-                    Text("Choose an installed app to see its state, services, and available actions.")
-                }
+        } else {
+            ContentUnavailableView {
+                Label("Select an app", systemImage: "shippingbox")
+            } description: {
+                Text("Choose an installed app to see its state, services, and available actions.")
             }
         }
     }
@@ -55,14 +87,16 @@ private struct DashboardListView: View {
             // One list, not a user/system split. A system app is told apart by its badge, not by which
             // table it sits in — the same shape the browser Shell settled on.
             Section {
+                // Tagged rows rather than `NavigationLink`s: the selection is what the pane beside
+                // this list reads, and on macOS there is no longer a navigation destination for a
+                // link to push. One binding drives both platforms.
                 ForEach(filtered) { app in
-                    NavigationLink(value: app.id) {
-                        AppRow(
-                            app: app,
-                            icons: model.icons,
-                            onUpdate: { act(onUpdateFor: app) },
-                            isBusy: model.isBusy(app))
-                    }
+                    AppRow(
+                        app: app,
+                        icons: model.icons,
+                        onUpdate: { act(onUpdateFor: app) },
+                        isBusy: model.isBusy(app))
+                        .tag(app.id)
                 }
             } header: {
                 AppCounts(apps: model.apps)

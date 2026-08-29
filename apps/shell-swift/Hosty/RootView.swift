@@ -216,27 +216,38 @@ private struct ShellTabs: View {
                 .badge(pendingUpdateCount)
             }
 
-            Tab("Apps", systemImage: "square.grid.2x2", value: ShellRouter.Destination.apps) {
-                NavigationStack {
-                    AppsView(model: appsModel, router: router)
-                        // Compact only, and the reason the section below is compact-excluded rather
-                        // than merely hidden: pushing keeps the three destinations in the tab bar.
-                        .navigationDestination(item: openedApp) { app in
-                            AppWorkspaceView(app: app, session: session, router: router)
-                        }
+            // The flat list is the compact presentation of the apps, and only that. In regular width
+            // the sidebar already lists every app by name a few rows below, so a destination whose
+            // entire content is a grid of those same rows is a tap that leads back to what the
+            // operator can already see.
+            if isCompact {
+                Tab("Apps", systemImage: "square.grid.2x2", value: ShellRouter.Destination.apps) {
+                    NavigationStack {
+                        AppsView(model: appsModel, router: router)
+                            // Compact only, and the reason the section below is compact-excluded
+                            // rather than merely hidden: pushing keeps the destinations in the tab
+                            // bar.
+                            .navigationDestination(item: openedApp) { app in
+                                AppWorkspaceView(app: app, session: session, router: router)
+                            }
+                    }
                 }
-            }
-            .hiddenFromSidebar()
-
-            // Apps as sidebar entries, beside the destinations, the way the browser Shell lists them.
-            //
-            // Declared only in regular width. `defaultVisibility(.hidden, for: .tabBar)` does not keep
-            // them out of the compact tab bar — verified in the simulator, where the destinations
-            // themselves ended up behind a "More" item — so in compact they are not tabs at all and
-            // the Apps list pushes instead.
-            if !isCompact {
+            } else {
+                // Apps as sidebar entries, beside the destinations, the way the browser Shell lists
+                // them.
+                //
+                // Declared only in regular width. `defaultVisibility(.hidden, for: .tabBar)` does not
+                // keep them out of the compact tab bar — verified in the simulator, where the
+                // destinations themselves ended up behind a "More" item — so in compact they are not
+                // tabs at all and the Apps list pushes instead.
                 TabSection("Apps") {
                     ForEach(appsModel.uiApps) { app in
+                        // One repeated grid glyph rather than each app's own artwork. A tab draws
+                        // an icon only from its `systemImage`/`image` initializers: handed a plain
+                        // `Color` with an explicit frame a custom label drew nothing at all, and
+                        // handed the app's `Image` it drew it stretched into a tall pill — an
+                        // explicit square frame and a 1:1 aspect ratio were both ignored. Per-app
+                        // artwork here needs a `List`-backed sidebar instead of a `TabSection`.
                         Tab(app.displayName, systemImage: "square.grid.2x2", value: ShellRouter.Destination.app(app.id)) {
                             NavigationStack {
                                 AppWorkspaceView(app: app, session: session, router: router)
@@ -283,24 +294,40 @@ private struct ShellTabs: View {
         return apps + (appsModel.coreUpdate?.canApply == true ? 1 : 0)
     }
 
-    /// A non-administrator has no Dashboard, so a selection pointing at it would render nothing. Core
-    /// decides the role; this only keeps the selection on a destination that exists.
+    /// The tab actually on screen for the router's destination.
+    ///
+    /// Two destinations can name something that is not there: Dashboard, which Core answers to nobody
+    /// but an administrator, and — in regular width — the flat Apps list, which the sidebar replaces.
+    /// This only keeps the selection on a destination that exists; the router keeps saying where the
+    /// operator meant to be.
     private var selection: Binding<ShellRouter.Destination> {
         Binding(
             get: {
-                if router.destination == .dashboard, !session.canManageApps {
-                    return .apps
-                }
+                switch router.destination {
+                case .dashboard where !session.canManageApps:
+                    return firstAvailable
+
+                case .apps where !isCompact:
+                    return firstAvailable
 
                 // Compact has no per-app tab; the workspace is pushed inside Apps, which stays the
                 // selected destination while it is open.
-                if isCompact, router.destination.appID != nil {
+                case .app where isCompact:
                     return .apps
-                }
 
-                return router.destination
+                default:
+                    return router.destination
+                }
             },
             set: { router.destination = $0 })
+    }
+
+    /// Where a destination with no tab of its own lands. Settings is the floor: it is the one
+    /// destination every role gets on every host, including one with no apps installed at all.
+    private var firstAvailable: ShellRouter.Destination {
+        if session.canManageApps { return .dashboard }
+        if isCompact { return .apps }
+        return appsModel.uiApps.first.map { .app($0.id) } ?? .settings
     }
 }
 
@@ -322,28 +349,4 @@ private struct EmptyRootPreview: View {
 
 #Preview("No hosts") {
     EmptyRootPreview()
-}
-
-/// `AdaptableTabBarPlacement` is an iOS type: on macOS the adaptive style is always a sidebar, so
-/// there is no second placement to hide anything from. These keep the tab declarations readable
-/// instead of splitting the whole `TabView` in two with `#if`.
-extension TabContent {
-    /// Hides a tab where the sidebar already lists the same thing.
-    func hiddenFromSidebar() -> some TabContent<TabValue> {
-        #if os(iOS)
-        defaultVisibility(.hidden, for: .sidebar)
-        #else
-        self
-        #endif
-    }
-
-    /// Keeps per-app tabs out of the compact tab bar, where a dozen apps would crowd out the
-    /// destinations.
-    func hiddenFromTabBar() -> some TabContent<TabValue> {
-        #if os(iOS)
-        defaultVisibility(.hidden, for: .tabBar)
-        #else
-        self
-        #endif
-    }
 }
