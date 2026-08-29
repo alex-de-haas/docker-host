@@ -1,7 +1,7 @@
 # Swift Shell
 
 Created: 2026-07-29
-Updated: 2026-08-04
+Updated: 2026-08-28
 
 `apps/shell-swift` is a native SwiftUI client for iOS, iPadOS, and macOS that manages a Hosty host's
 installed apps: their state, lifecycle, and updates.
@@ -191,10 +191,25 @@ are not declared as tabs at all: `defaultVisibility(.hidden, for: .tabBar)` does
 `TabSection`'s tabs out of the compact tab bar, so declaring them there pushes the destinations
 themselves behind a "More" item. One router state drives both presentations.
 
+**The flat Apps list is a compact destination only.** In regular width the sidebar lists every app by
+name a few rows below the destinations, so a destination whose entire content is a grid of those same
+rows leads back to what the operator can already see. It is therefore not declared at all outside
+compact, rather than declared and hidden. Two destinations can then name a tab that is not there —
+Dashboard for a non-administrator, and the Apps list in regular width — and both resolve to the first
+one that exists: Dashboard, else the first app, else Settings, which is the one destination every role
+gets on every host.
+
+Sidebar rows carry one repeated grid symbol rather than each app's own artwork. A `Tab` draws an icon
+only from its `systemImage`/`image` initializers. Measured on macOS 26: a custom `label` handed a
+plain `Color` with an explicit frame drew nothing at all, and handed the app's own `Image` drew it
+stretched into a tall pill that also grew the row — an explicit square frame and a 1:1 aspect ratio
+were both ignored. Per-app artwork in the sidebar needs a `List`-backed sidebar rather than a
+`TabSection`.
+
 The router is hoisted out of the views because the destinations cross-reference each other: Open from
 an app's management detail moves to its workspace, and Manage from a workspace moves back and selects
 it. A selection naming an app that has been removed resolves to the Apps list rather than rendering an
-empty tab.
+empty tab — and, where that list is not itself a destination, on to the first one that is.
 
 ## Dashboard
 
@@ -230,6 +245,31 @@ app.
 
 Selecting an app drives the detail column rather than creating a second navigation hierarchy, so on
 iPad the client is three columns: destinations, apps, detail.
+
+**On macOS the two panes are an `HSplitView`, not a second `NavigationSplitView`.** Nesting one
+navigation container's split inside another's makes macOS 26 subtract the outer sidebar's width a
+second time. Measured in a 1200pt window with a 148pt tab sidebar and a 308pt list, the nested detail
+was laid out in `1200 − 148 − 308 − 148`: its content came out 556pt wide instead of 704 and pinned to
+the right edge of its pane, and the window refused to be dragged below 1453pt. An outer
+`NavigationSplitView` fails identically, so the fault is the nesting rather than the `TabView`.
+`HSplitView` is a plain `NSSplitView` and takes the inset once: the detail fills its pane, and the
+window floor fell to 1048pt — the sidebar, the list's own minimum, and what the detail's form
+actually needs. A `NavigationStack` sits above the split view because the list's title, subtitle,
+search field and toolbar have to hang from something.
+
+iOS keeps the `NavigationSplitView` it had. `HSplitView` is a macOS type, and iPadOS 26 was measured
+and does not share the defect: on a 1376x1032 iPad in landscape the same nesting puts the detail's
+content at x=610 with width 746 — the list column ends at 590, plus a 20pt margin, filling the rest of
+the window exactly. The same shape on macOS was out by the width of the tab sidebar.
+
+The list pane is 300–460pt, ideally 352. The floor is what an app row needs to keep one line per
+fact: at 260 the name and its `System` badge wrapped, and "Running" broke in two, as soon as a detail
+appeared beside it and the split gave the list its minimum. A declared width is also what stops the
+pane being the one AppKit hands the whole delta to during a live resize — before it had one, the list
+ballooned from 352pt to 711pt for the length of a window-edge drag and snapped back on release.
+
+Rows carry the selection as a `tag` rather than a `NavigationLink`: the pane beside the list reads
+that selection, and on macOS there is no navigation destination left for a link to push.
 
 The tab carries a badge counting what is actionable on that screen: apps with an update available,
 plus Core itself as one more.
@@ -516,6 +556,14 @@ Distribution is by local Xcode build; nothing packages or publishes this app.
   content view collapses to its title bar while behaving correctly everywhere else. App rows and the
   Dashboard counts are also inspected at an accessibility Dynamic Type size, where the update marker
   becomes a labelled row rather than a glyph at the far edge.
+- Column widths on macOS are verified **during** a window-edge drag, not from before-and-after
+  screenshots: a pane with no width of its own absorbs the whole resize while the mouse is down and
+  snaps back on release, so both still frames agree and the defect is invisible. A synthetic
+  press-move-release also has to move in steps — a single jump resizes the window without AppKit ever
+  entering a live resize, which is exactly the state that shows the bug.
+- The window's own floor is checked by dragging an edge until it stops, and read back from the window
+  frame rather than judged by eye. A layout that insets itself twice does not look wrong at rest; it
+  shows up as a window that refuses to get smaller and springs back.
 - Signing in on macOS is verified across a relaunch, not only within one: the credential surviving a
   quit and reopen is the check that catches a keychain write failing silently, which inside a single
   run looks like nothing at all. The built product's entitlements must carry the keychain access group:
