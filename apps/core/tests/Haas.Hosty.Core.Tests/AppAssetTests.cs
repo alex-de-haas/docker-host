@@ -314,6 +314,115 @@ public sealed class AppAssetTests
         Assert.Equal(0, followed);
     }
 
+    // --- The agent skill under the shared asset budget ------------------------------------------
+
+    [Fact]
+    public async Task VendorDisplayAssets_VendorsADeclaredSkillBesideTheDisplayAssets()
+    {
+        // The accepted half the refusals below are measured against: a path that vendored no skill at
+        // all would satisfy every negative on its own while being completely broken.
+        var source = NewTempDir();
+        Directory.CreateDirectory(Path.Combine(source, "assets"));
+        Directory.CreateDirectory(Path.Combine(source, "docs"));
+        await File.WriteAllTextAsync(Path.Combine(source, "assets", "icon.svg"), "<svg/>");
+        await File.WriteAllTextAsync(Path.Combine(source, "docs", "agent.md"), "# How this app is worked\n");
+        var manifestPath = await WriteManifestAsync(
+            source,
+            """
+            "icon": "assets/icon.svg"
+            """,
+            agentSkillFile: "docs/agent.md");
+
+        var appRoot = NewTempDir();
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+        await new AppManifestService().VendorDisplayAssetsAsync(selection, appRoot);
+
+        Assert.Equal("<svg/>", await File.ReadAllTextAsync(Path.Combine(appRoot, "assets", "icon.svg")));
+        Assert.Equal("# How this app is worked\n", await File.ReadAllTextAsync(Path.Combine(appRoot, "docs", "agent.md")));
+    }
+
+    [Theory]
+    // The skill reuses the markdown description's own 256 KiB per-file cap rather than carrying a
+    // second one, so the boundary is where that cap sits: exactly at it the file is carried, one byte
+    // past it the skill never reaches disk. Asserted as a pair because the size is the only thing that
+    // differs — a vendoring path broken for skills entirely would pass the refusal alone.
+    [InlineData(256 * 1024, true)]
+    [InlineData((256 * 1024) + 1, false)]
+    public async Task VendorDisplayAssets_RefusesASkillPastTheSharedPerFileByteCap(int size, bool vendored)
+    {
+        var source = NewTempDir();
+        Directory.CreateDirectory(Path.Combine(source, "docs"));
+        // One byte per character, so the file is exactly `size` bytes and the boundary is the one the
+        // cap names rather than one an encoding chose.
+        await File.WriteAllTextAsync(Path.Combine(source, "docs", "agent.md"), new string('a', size));
+        var manifestPath = await WriteManifestAsync(source, catalogMetadataFields: null, agentSkillFile: "docs/agent.md");
+
+        var appRoot = NewTempDir();
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+        await new AppManifestService().VendorDisplayAssetsAsync(selection, appRoot);
+
+        Assert.Equal(vendored, File.Exists(Path.Combine(appRoot, "docs", "agent.md")));
+    }
+
+    [Theory]
+    // The per-app budget is the display assets' budget, not a second one of the skill's own: the
+    // screenshots spend it first and the skill gets what is left. 32 is the per-app file ceiling, so
+    // one short of it the skill still fits, and at it the skill is the file that does not.
+    [InlineData(31, true)]
+    [InlineData(32, false)]
+    public async Task VendorDisplayAssets_RefusesASkillTheDisplayAssetsLeftNoBudgetFor(int screenshots, bool vendored)
+    {
+        var source = NewTempDir();
+        Directory.CreateDirectory(Path.Combine(source, "assets"));
+        Directory.CreateDirectory(Path.Combine(source, "docs"));
+        var references = new List<string>();
+        for (var index = 0; index < screenshots; index++)
+        {
+            var name = $"shot-{index:00}.png";
+            await File.WriteAllBytesAsync(Path.Combine(source, "assets", name), [1, 2, 3]);
+            references.Add($"\"assets/{name}\"");
+        }
+
+        await File.WriteAllTextAsync(Path.Combine(source, "docs", "agent.md"), "# How this app is worked\n");
+        var manifestPath = await WriteManifestAsync(
+            source,
+            $$"""
+            "screenshots": [{{string.Join(", ", references)}}]
+            """,
+            agentSkillFile: "docs/agent.md");
+
+        var appRoot = NewTempDir();
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+        await new AppManifestService().VendorDisplayAssetsAsync(selection, appRoot);
+
+        // The screenshots must all have landed, or the skill's absence would be measuring a broken
+        // fixture rather than the ceiling.
+        Assert.Equal(screenshots, Directory.EnumerateFiles(Path.Combine(appRoot, "assets")).Count());
+        Assert.Equal(vendored, File.Exists(Path.Combine(appRoot, "docs", "agent.md")));
+    }
+
+    [Fact]
+    public async Task VendorDisplayAssets_RemovesAPreviouslyVendoredSkillTheBudgetNowRefuses()
+    {
+        // An update that keeps the declaration but oversizes the file must not leave the old copy in
+        // place: both delivery routes read whatever is on disk, so a survivor is instructions the
+        // installed app no longer contains — delivered under an approval given for different words.
+        var source = NewTempDir();
+        Directory.CreateDirectory(Path.Combine(source, "docs"));
+        await File.WriteAllTextAsync(Path.Combine(source, "docs", "agent.md"), new string('a', (256 * 1024) + 1));
+        var manifestPath = await WriteManifestAsync(source, catalogMetadataFields: null, agentSkillFile: "docs/agent.md");
+
+        var appRoot = NewTempDir();
+        Directory.CreateDirectory(Path.Combine(appRoot, "docs"));
+        var previous = Path.Combine(appRoot, "docs", "agent.md");
+        await File.WriteAllTextAsync(previous, "# The skill the previous version shipped\n");
+
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+        await new AppManifestService().VendorDisplayAssetsAsync(selection, appRoot);
+
+        Assert.False(File.Exists(previous));
+    }
+
     // --- helpers --------------------------------------------------------------------------------
 
     private static string NewTempDir()
@@ -323,11 +432,14 @@ public sealed class AppAssetTests
         return dir;
     }
 
-    private static async Task<string> WriteManifestAsync(string dir, string? catalogMetadataFields)
+    private static async Task<string> WriteManifestAsync(string dir, string? catalogMetadataFields, string? agentSkillFile = null)
     {
         var catalogMetadata = catalogMetadataFields is null
             ? ""
             : $$""", "catalogMetadata": { {{catalogMetadataFields}} }""";
+        var agent = agentSkillFile is null
+            ? ""
+            : $$""", "agent": { "skillFile": "{{agentSkillFile}}" }""";
         var path = Path.Combine(dir, "manifest.json");
         await File.WriteAllTextAsync(path, $$"""
             {
@@ -339,7 +451,7 @@ public sealed class AppAssetTests
               "services": [{
                 "key": "app",
                 "runtimes": { "docker": { "type": "docker", "image": "ghcr.io/example/notes:1.0.0" } }
-              }]{{catalogMetadata}}
+              }]{{catalogMetadata}}{{agent}}
             }
             """);
         return path;
