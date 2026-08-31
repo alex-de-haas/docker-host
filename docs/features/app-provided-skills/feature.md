@@ -1,7 +1,7 @@
 # App-Provided Skills
 
 Created: 2026-08-21
-Updated: 2026-08-25
+Updated: 2026-08-31
 
 An app ships the prose an agent needs to use it well, the way it already ships its icon and its long
 description. MCP tells an agent *what calls exist*; a skill tells it how this app is meant to be
@@ -55,6 +55,12 @@ Two things this replaced, both wrong and worth recording because they read as re
 
 Both are keyed off **tools the client actually has**, never off policy alone: instructions for tools a
 session does not have read as a capability rather than as an absence.
+
+**The Hosty assistant is a reader like any other**, though it runs on the host with shell access and
+is the highest-consequence one there is. That argues for the gate, which exists, not for exclusion:
+the assistant **already** receives app-authored text through this very toggle — the name and
+description of every enabled provider's tool. Excluding skills would draw a line the platform draws
+nowhere else, on the one surface where people actually work.
 
 **The app-to-app route had to earn its authorization.** Every other `/api/internal/apps/{appId}/…`
 route answers about the caller itself — the service token is validated against the id in the path,
@@ -124,6 +130,11 @@ about one trust, and reviving it here would have brought the question back.
 The connector is unaffected. `hosty mcp` runs on the local control channel, which already carries
 host-operator power, so it has no toggle to hang an approval from and needs none.
 
+**This is stricter than the rest of the platform, and knowingly so.** An app update rewrites its tool
+*names and descriptions* silently while the provider stays enabled — the same app-authored text,
+reaching the same model, under the same decision, with no digest in the way. Recorded as a known
+asymmetry rather than smoothed over: it is a gap on that surface, not a reason to open one here.
+
 ## Testing Expectations
 
 - **Manifest validation as pairs**: every escaping shape refused beside a legitimate path accepted,
@@ -140,6 +151,16 @@ host-operator power, so it has no toggle to hang an approval from and needs none
 - **Withholding as a set**: a first sighting delivered and recorded, an unchanged skill still
   delivered, a changed one withheld with nothing recorded for it, and one app held without holding
   another. The digest is asserted to ignore surrounding whitespace and to follow the text.
+- **The install-time budget as boundary pairs**, one per limb, because a skill that shared one and
+  bypassed the other would pass a test of either alone: the markdown description's 256 KiB per-file cap
+  asserted at the byte, the per-app **file** ceiling exhausted by tiny screenshots, and the per-app
+  **byte** ceiling spent by large ones while the file count stays far below its own limit. Each pair
+  differs only in the size or the count, which is what makes the budget rather than the fixture the
+  thing under test; verified by widening every constant and watching each refusal fail. Sizes are
+  written as raw bytes, so no encoding decision can move a boundary while the test keeps passing. A
+  skill the budget refuses on an **update** is asserted to remove the previously vendored copy, since
+  both delivery routes read whatever is on disk and a survivor is text the installed app no longer
+  contains.
 - **Not covered**: that a provider toggled *off* contributes no skill is asserted structurally (skills
   are keyed off the servers a session received) rather than through a session-level test, because the
   gateway's suite has no harness that builds a session against a live provider set.

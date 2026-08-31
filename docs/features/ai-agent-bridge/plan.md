@@ -96,7 +96,7 @@ individually, because "a stock client connected" is four different claims and on
       **outside the repository and told not to read files**, so the source could not be the answer;
       the rule is a Hosty design choice, not general MCP knowledge. What this proves is that a loaded
       skill supplies facts the model otherwise lacks — the assumption
-      [app-provided-skills](../app-provided-skills/plan.md) rests on.
+      [app-provided-skills](../app-provided-skills/feature.md) rests on.
 - [ ] **A non-loopback origin.** Everything so far was `127.0.0.1`, so nothing exercises external
       ingress, TLS, or a proxy in the path.
 
