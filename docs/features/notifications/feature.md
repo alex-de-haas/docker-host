@@ -1,7 +1,7 @@
 # Notifications
 
 Created: 2026-06-16
-Updated: 2026-08-28
+Updated: 2026-08-31
 
 Hosty notifications are a **platform capability owned by Core**: a per-user inbox that any producer
 writes into and any client renders. Notifications are always **user-targeted**. Runtime apps emit them
@@ -175,8 +175,8 @@ stream's semantics.
   polls every 30 seconds as a backstop, and posts `/api/notifications/read`. It tracks ids it has
   already counted so a record arriving twice (poll plus stream) is not double-counted.
 - **Swift client**: `CoreEventStream` models the `notification` event and consumes the stream, so the
-  transport is in place; raising an OS banner from it is tracked in
-  [agent-background-sessions](../agent-background-sessions/plan.md).
+  transport is in place; raising an OS banner from it shipped with
+  [agent-background-sessions](../agent-background-sessions/feature.md).
 
 ## Storage And Retention
 

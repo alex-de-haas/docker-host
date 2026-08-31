@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-08-18
-Updated: 2026-08-28
+Updated: 2026-08-31
 
 Make the assistant reachable from anywhere in Shell, and let an app hand it context — without letting
 an app *drive* it.
@@ -26,14 +26,14 @@ Two asks from the owner (2026-08-18), one mechanism short of possible today:
   every page, styled as a page link. Hidden when no running app declares the `ai-gateway` interface.
 - `openAssistant(context)` exists in `shell-client.tsx`; a non-null context **starts a new session**
   and the panel sends the context as a seed. The app-details dialog is its only structured caller.
-- No keyboard shortcut, no attention state on the trigger (the indicator is an unchecked deliverable
-  of [agent-background-sessions](../agent-background-sessions/plan.md)).
+- No keyboard shortcut, no attention state on the trigger (the indicator did not exist yet; it
+  shipped later with [agent-background-sessions](../agent-background-sessions/feature.md)).
 - Apps embedded in the workspace have no assistant-related message in the embedder contract.
 
 ## Target Behavior
 
 - **The assistant is a tab on Shell's right panel** — the `ui.panel` surface from
-  [app-ui-surfaces](../app-ui-surfaces/plan.md), declared by the gateway. The tab strip is on every
+  [app-ui-surfaces](../app-ui-surfaces/feature.md), declared by the gateway. The tab strip is on every
   page, so the trigger is permanently in view; the attention dot renders on the tab; a keyboard
   shortcut toggles it. Hidden as today for non-admins and when no gateway runs.
 - **Docked beside the content, never over it.** The overlay is the root cause of the lost-draft
@@ -68,7 +68,7 @@ Two asks from the owner (2026-08-18), one mechanism short of possible today:
       tokens for itself, is the "token, not proxy" rule the bridge is built on.
 - [x] Shell: the keyboard shortcut (`Ctrl`/`Cmd`+`Shift`+`A`), which toggles rather than only opens.
 - [x] Shell: the assistant tab's badge. Unblocked and shipped 2026-08-24 by
-      [agent-background-sessions](../agent-background-sessions/plan.md), which published the attention
+      [agent-background-sessions](../agent-background-sessions/feature.md), which published the attention
       state it had to read. It is that state, not a second poll: the page holding the sessions posts
       the count and Shell renders it, sender-verified like every other embedder message.
 - [ ] Tests (Shell wiring): that a verified ask actually reaches the panel, rate-limited. Not covered

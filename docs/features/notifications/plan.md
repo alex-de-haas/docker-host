@@ -2,7 +2,7 @@
 
 Status: Draft
 Created: 2026-06-16
-Updated: 2026-08-15
+Updated: 2026-08-31
 
 The v1 backend, the consumer contract, live delivery, retention, and the Shell bell all ship — see
 [feature.md](feature.md). What remains is exposing the same `NotificationService` to the clients that
@@ -43,7 +43,7 @@ the existing service rather than a redesign.
 - [ ] Docs: fold each shipped surface into [feature.md](feature.md) and regenerate the index.
 
 Not tracked here: the macOS OS banner on the `notification` event, which belongs to
-[agent-background-sessions](../agent-background-sessions/plan.md) along with the gateway's use of the
+[agent-background-sessions](../agent-background-sessions/feature.md) along with the gateway's use of the
 producer endpoint. The transport it needs already exists.
 
 Version outcome: platform minor for the interface registration, the MCP facade, and the read-back
