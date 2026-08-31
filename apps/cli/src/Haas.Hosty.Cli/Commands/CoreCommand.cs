@@ -117,6 +117,49 @@ internal sealed partial class CoreCommand(CommandContext context)
         return CoreStartTarget.FromExecutable(installation.ExecutablePath);
     }
 
+    // Both background paths start Core with its stdout redirected into core.log, and a `>` redirect
+    // truncates. That erased exactly the run worth reading: a crash is followed by a restart, and the
+    // restart wipes the log of the crash — including a restart the operator triggers from Shell, or one
+    // a Core update performs on its own. Rotating first keeps the previous runs (L-L3 in the 2026-07-05
+    // review).
+    //
+    // Best-effort by design: a generation that cannot be moved — a stale Windows handle on the file,
+    // the failure mode WindowsProcessControl exists for — must not stop Core from starting. The worst
+    // case degrades to today's behavior for one start.
+    internal static void RotateCoreLog(string logPath, int keep = 3)
+    {
+        try
+        {
+            if (!File.Exists(logPath))
+            {
+                return;
+            }
+
+            var oldest = $"{logPath}.{keep}";
+            if (File.Exists(oldest))
+            {
+                File.Delete(oldest);
+            }
+
+            for (var generation = keep - 1; generation >= 1; generation--)
+            {
+                var from = $"{logPath}.{generation}";
+                if (File.Exists(from))
+                {
+                    File.Move(from, $"{logPath}.{generation + 1}", overwrite: true);
+                }
+            }
+
+            File.Move(logPath, $"{logPath}.1", overwrite: true);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+    }
+
     private Process StartForeground(CoreStartTarget target, string url, LaunchSettings settings)
     {
         var startInfo = CreateCoreStartInfo(target, url, settings);
@@ -129,6 +172,7 @@ internal sealed partial class CoreCommand(CommandContext context)
         var logDirectory = Path.Combine(context.Environment.RootDirectory, "core", "logs");
         Directory.CreateDirectory(logDirectory);
         var logPath = Path.Combine(logDirectory, "core.log");
+        RotateCoreLog(logPath);
 
         if (OperatingSystem.IsWindows())
         {

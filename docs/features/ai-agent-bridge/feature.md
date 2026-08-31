@@ -1,7 +1,7 @@
 # AI Agent Bridge
 
 Created: 2026-08-14
-Updated: 2026-08-17
+Updated: 2026-08-31
 
 The umbrella for Hosty's AI integration: how an authenticated user works with runtime apps and app
 source through an agent, without the model ever holding credentials, unrestricted application access,
@@ -41,6 +41,7 @@ flowchart LR
 
   Shell --> AIG
   AIG --> CoreMcp
+  AIG --> PMMcp
   Ext --> CoreMcp
   CoreMcp --> Core
   Ext --> PMMcp
@@ -49,9 +50,11 @@ flowchart LR
 ```
 
 Arrows from Core to system apps and runtime apps are lifecycle ownership, not request orchestration.
-Two planned data paths are deliberately absent from the diagram — the gateway calling app MCP
-endpoints (blocked on [delegated-token-exchange](../delegated-token-exchange/plan.md)) and apps
-calling a gateway model API (rollout step 10) — because neither is built ([plan.md](plan.md)).
+The gateway's arrow to app MCP is the shipped path of
+[delegated-token-exchange](../delegated-token-exchange/feature.md): providers discovered at session
+start, one branched token per app, and a per-session forwarding proxy carrying the calls. One planned
+data path is still deliberately absent — apps calling a gateway model API (rollout step 10) — because
+it is not built ([plan.md](plan.md)).
 
 Core is responsible for runtime lifecycle, manifest and app-state storage, user identity, app
 assignment and token issuance, interface discovery, read-only control-plane MCP tools, and audit and
@@ -76,8 +79,8 @@ app MCP endpoints like any other client. Every write pauses for approval. See
 surface.
 
 **User profile (non-admin)** — not built. The design is rollout
-[step 9](plan.md#step-9--the-user-profile), blocked on
-[delegated-token-exchange](../delegated-token-exchange/plan.md).
+[step 9](plan.md#step-9--the-user-profile); the credential dependency it was blocked on,
+[delegated-token-exchange](../delegated-token-exchange/feature.md), has since shipped.
 
 The first shipped assistant is admin-only because every scenario driving the feature — realtime
 diagnosis, log investigation, app fixes, update installation — is an operator scenario.

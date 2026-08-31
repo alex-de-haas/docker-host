@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
 import { isAuthRequiredError, readApiError, throwIfAuthRequired } from "@/lib/api-client";
 import { OtlpLogTable, SEVERITY_FILTERS } from "@/components/observability/otlp-log-table";
 import type { FleetOtlpLogsResponse, TelemetryApp } from "@/lib/types";
+import { withCoreSource } from "@/lib/core-source";
 import { EmptyState, PageHeader } from "@/components/page-shell";
 
 const ALL = "__all__";
@@ -33,7 +34,10 @@ type LogsState = { loading: boolean; error: string | null; response: FleetOtlpLo
 // records merged across every resource into one searchable, severity-filterable stream. Backed by the
 // Core fleet endpoint (GET /api/observability/logs) which does the cross-app merge + global ordering.
 // This is the structured OTLP stream — never interleaved with the console (docker logs) view.
-export function ObservabilityStructuredLogsPage({ apps }: { apps: TelemetryApp[] }) {
+export function ObservabilityStructuredLogsPage({ apps: roster }: { apps: TelemetryApp[] }) {
+  // Hosty Core is a source without an installed app behind it, so the roster alone would leave its
+  // records visible under "All resources" and impossible to isolate.
+  const apps = withCoreSource(roster);
   const [selectedAppId, setSelectedAppId] = useState<string>(ALL);
   const [severityFloor, setSeverityFloor] = useState(0);
   const [rangeSeconds, setRangeSeconds] = useState(900);

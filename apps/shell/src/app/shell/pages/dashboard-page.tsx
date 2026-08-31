@@ -29,6 +29,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { toast } from "sonner";
+import { CoreLogsDialog } from "../dialogs/core-logs-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -316,6 +317,7 @@ export function DashboardPage({
         coreUpdate={coreUpdate}
         coreUpdating={coreUpdating}
         canManageApps={canManageApps}
+        coreOrigin={coreOrigin}
         onUpdateCore={onUpdateCore}
       />
 
@@ -401,12 +403,14 @@ function AppCounts({ apps }: { apps: CoreApp[] }) {
 // started from: it is where an administrator is already reading the host's version, and a fact that
 // cannot be acted on beside itself is an odd place to stop.
 function CoreSection({
+  coreOrigin,
   status,
   coreUpdate,
   coreUpdating,
   canManageApps,
   onUpdateCore,
 }: {
+  coreOrigin: string;
   status: CoreStatus | null;
   coreUpdate: CoreUpdateStatus | null;
   coreUpdating: boolean;
@@ -414,6 +418,7 @@ function CoreSection({
   onUpdateCore: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [logsOpen, setLogsOpen] = useState(false);
   const showUpdate = canManageApps && (coreUpdate?.updateAvailable === true || coreUpdating);
 
   // Two URLs in the shape an app endpoint uses — the address it listens on, and the origin it is
@@ -464,6 +469,14 @@ function CoreSection({
         <div className="flex shrink-0 items-center gap-3">
           <span className="text-sm text-muted-foreground">{status?.version ? `v${status.version}` : "version unknown"}</span>
           <StatusBadge value={status ? status.status : "offline"} />
+          {/* Every installed app has its console logs one click away in the row menu below; Core is
+              not an installed app and had nowhere to show its own. */}
+          {canManageApps && (
+            <Button variant="outline" size="sm" onClick={() => setLogsOpen(true)}>
+              <Terminal className="h-4 w-4" />
+              Logs
+            </Button>
+          )}
           {showUpdate && (
             <Button variant="outline" size="sm" disabled={coreUpdating} onClick={onUpdateCore}>
               {coreUpdating ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ArrowUpCircle className="h-4 w-4" />}
@@ -505,6 +518,8 @@ function CoreSection({
           </div>
         </div>
       )}
+
+      <CoreLogsDialog open={logsOpen} coreOrigin={coreOrigin} onOpenChange={setLogsOpen} />
     </div>
   );
 }
