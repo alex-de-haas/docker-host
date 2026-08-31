@@ -13,7 +13,8 @@ namespace Haas.Hosty.TelemetryBackend;
 internal sealed class TelemetryIngestService(
     TelemetryBackendOptions options,
     SqliteTelemetryStore store,
-    ILogger<TelemetryIngestService> logger) : BackgroundService
+    ILogger<TelemetryIngestService> logger,
+    HttpMessageHandler? transport = null) : BackgroundService
 {
     // Prometheus label the collector promotes from the `hosty.app.id` resource attribute (dots become
     // underscores). It attributes a scraped series to its app and is then dropped from the stored set.
@@ -22,6 +23,13 @@ internal sealed class TelemetryIngestService(
     // Persisted-offset keys in the store's ingest_state table.
     private const string LogsTailKey = "logs";
     private const string TracesTailKey = "traces";
+
+    // Core's log cursor, plus a fingerprint of the Core run it belongs to. The run id is a string and
+    // ingest_state stores longs, so what is persisted is the first 8 bytes of its SHA-256 — enough to
+    // notice "a different Core is answering now", without a schema change this backend has no
+    // migration mechanism to perform.
+    private const string CoreLogsCursorKey = "core-logs";
+    private const string CoreLogsRunKey = "core-logs-run";
 
     // Pruning (DELETE + size check + vacuum + checkpoint) is expensive, so it runs on its own cadence
     // rather than every ingest tick; retention is coarse-grained so once a minute is ample.
@@ -35,14 +43,22 @@ internal sealed class TelemetryIngestService(
     private static readonly TimeSpan PruneStepBudget = TimeSpan.FromMilliseconds(250);
 
     private readonly FileTailReader tailReader = new();
-    private readonly HttpClient httpClient = new() { Timeout = TimeSpan.FromSeconds(5) };
+    // `transport` is null in production (DI passes three arguments); tests hand in a stub so the pull
+    // loop's cursor and restart handling can be exercised without a live Core.
+    private readonly HttpClient httpClient = (transport is null ? new HttpClient() : new HttpClient(transport))
+        .WithTimeout(TimeSpan.FromSeconds(5));
 
     // Byte offsets into the collector's OTLP-logs/-traces files the tail loops resume from each tick.
     // Loaded from the store at startup so a restart resumes instead of replaying the whole file.
     private long logTailOffset;
     private long traceTailOffset;
+
+    // Where Core's own records were read up to, and which Core run that cursor belongs to.
+    private long coreLogsCursor;
+    private long coreLogsRunFingerprint;
     private DateTimeOffset lastPruneUtc = DateTimeOffset.MinValue;
     private DateTimeOffset lastMetricsScrapeUtc = DateTimeOffset.MinValue;
+    private DateTimeOffset lastCoreLogsPullUtc = DateTimeOffset.MinValue;
 
     // True while a prune pass has used up its per-tick budget and still has work left; the next ticks
     // keep resuming it (after tailing) until the store reports the pass complete.
@@ -63,6 +79,7 @@ internal sealed class TelemetryIngestService(
         // whole otelcol file-sink history.
         logTailOffset = store.GetTailOffset(LogsTailKey);
         traceTailOffset = store.GetTailOffset(TracesTailKey);
+        ResumeCoreLogCursor();
 
         using var timer = new PeriodicTimer(options.IngestInterval);
         while (await timer.WaitForNextTickAsync(stoppingToken))
@@ -97,6 +114,12 @@ internal sealed class TelemetryIngestService(
 
         await TailLogsAsync(now, cancellationToken);
         await TailTracesAsync(cancellationToken);
+
+        if (now - lastCoreLogsPullUtc >= options.CoreLogsPullInterval)
+        {
+            await PullCoreLogsAsync(now, cancellationToken);
+            lastCoreLogsPullUtc = now;
+        }
 
         // Prune on its own cadence, not every tick — and in bounded slices, never as one blocking
         // pass: each tick spends at most PruneStepBudget, and an unfinished pass resumes next tick
@@ -231,6 +254,101 @@ internal sealed class TelemetryIngestService(
     // an unreachable collector as "no data", never an error — but the paired reason string lets the
     // caller say *why* once, which distinguishes the two failures that look identical from the UI:
     // a target that is down (connection refused) and one pointed at the wrong port (404).
+    // Loaded at startup so a backend restart resumes Core's stream instead of replaying or skipping it.
+    internal void ResumeCoreLogCursor()
+    {
+        coreLogsCursor = store.GetTailOffset(CoreLogsCursorKey);
+        coreLogsRunFingerprint = store.GetTailOffset(CoreLogsRunKey);
+    }
+
+    // Core's own log records, the one stream whose producer is the host kernel. Core keeps them in
+    // memory and we ask for them; it deliberately runs no OpenTelemetry SDK and pushes nothing (see
+    // docs/features/observability/feature.md).
+    internal async Task PullCoreLogsAsync(DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(options.CoreLogsPullUrl))
+        {
+            return;
+        }
+
+        var requestedCursor = coreLogsCursor;
+        var page = await FetchCoreLogsAsync(requestedCursor, now, cancellationToken);
+        if (page is null)
+        {
+            return;
+        }
+
+        // A different Core is answering: its rings restarted at sequence 1, so a cursor carried over
+        // from the previous run points past records that no longer exist and would silently swallow the
+        // whole new run. Adopt the new run, and re-ask from its start — the same reset the file tails
+        // perform on rotation.
+        var fingerprint = RunFingerprint(page.RunId);
+        if (fingerprint != coreLogsRunFingerprint)
+        {
+            coreLogsRunFingerprint = fingerprint;
+            store.SaveTailOffset(CoreLogsRunKey, fingerprint);
+
+            // Only when the cursor we just used belonged to that older run. A zero cursor already asked
+            // from the beginning, so the page in hand is complete — re-asking would just fetch it twice,
+            // which is what a first pull against a fresh store used to do.
+            if (requestedCursor > 0)
+            {
+                coreLogsCursor = 0;
+                store.SaveTailOffset(CoreLogsCursorKey, 0);
+
+                page = await FetchCoreLogsAsync(0, now, cancellationToken);
+                if (page is null)
+                {
+                    return;
+                }
+            }
+        }
+
+        // Record first, advance the cursor only once the write succeeded — a transient store failure
+        // re-reads the page next tick rather than dropping it, exactly like the file tails.
+        if (page.Records.Count > 0)
+        {
+            store.RecordLogs(page.Records);
+        }
+
+        if (page.NextCursor != coreLogsCursor)
+        {
+            coreLogsCursor = page.NextCursor;
+            store.SaveTailOffset(CoreLogsCursorKey, coreLogsCursor);
+        }
+    }
+
+    private async Task<ParsedCoreLogPull?> FetchCoreLogsAsync(long after, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        // `failingScrapeUrls` is keyed by target URL, so this tracks by the pull URL like every other
+        // target — but by the base URL, not the request: the cursor in the query string changes on
+        // every call, so keying by the request would report a fresh outage each pull and never clear.
+        var target = options.CoreLogsPullUrl ?? string.Empty;
+        var (body, failure) = await FetchAsync($"{target}?after={after}", options.CoreServiceToken, cancellationToken);
+        if (body is null)
+        {
+            // Edges only, like the metrics targets: Core being down is already loud elsewhere, and a
+            // warning every pull would bury the records this exists to surface.
+            if (failingScrapeUrls.Add(target))
+            {
+                logger.LogWarning("Core log pull from {Url} failed ({Failure}); Core's own logs stop until it recovers.", target, failure);
+            }
+
+            return null;
+        }
+
+        if (failingScrapeUrls.Remove(target))
+        {
+            logger.LogInformation("Core log pull from {Url} recovered.", target);
+        }
+
+        return CoreLogPullParser.Parse(body, now);
+    }
+
+    // Stable 64-bit fingerprint of Core's run id, so a string identity survives in a long-valued column.
+    private static long RunFingerprint(string runId)
+        => BitConverter.ToInt64(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(runId)), 0);
+
     private async Task<(string? Body, string? Failure)> FetchAsync(string url, string? bearerToken, CancellationToken cancellationToken)
     {
         try
@@ -262,4 +380,13 @@ internal sealed class TelemetryIngestService(
 
     private static readonly IReadOnlyDictionary<string, string> EmptyLabels =
         new Dictionary<string, string>(StringComparer.Ordinal);
+}
+
+internal static class HttpClientTimeoutExtensions
+{
+    public static HttpClient WithTimeout(this HttpClient client, TimeSpan timeout)
+    {
+        client.Timeout = timeout;
+        return client;
+    }
 }

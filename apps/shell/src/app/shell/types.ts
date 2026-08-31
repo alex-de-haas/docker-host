@@ -498,6 +498,26 @@ export type LogsResponse = {
   services?: LogsServiceSegment[];
 };
 
+// Core's own log records, from `GET /api/core/logs`. Distinct from the per-app console tail above:
+// these are structured records out of Core's in-memory rings, not a text blob out of `docker logs`.
+// `count` folds a run of identical repeats — a tick that failed 360 times is one record, not 360.
+export type CoreLogRecord = {
+  sequence: number;
+  timestamp: string;
+  level: string;
+  category: string;
+  message: string;
+  exception?: string | null;
+  count: number;
+  lastSeen: string;
+};
+
+export type CoreLogsResponse = {
+  runId: string;
+  ring: string;
+  records: CoreLogRecord[];
+};
+
 export type CoreRuntimeServiceHealth = {
   service: string;
   status: string;

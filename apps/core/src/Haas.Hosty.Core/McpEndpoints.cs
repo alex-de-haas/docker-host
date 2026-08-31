@@ -270,6 +270,22 @@ internal sealed class HostyCoreTools
         // either way, so an agent that asked for more knows it was capped rather than concluding the
         // app only ever logged this much.
         var tail = Math.Clamp(lines, 1, 500);
+
+        // Telemetry attributes Hosty Core's own records to a reserved id, so an agent that has just read
+        // the fleet's logs can arrive here holding one. It is not an installed app and never will be:
+        // say so plainly, rather than letting the lifecycle lookup surface a raw "app not found" that
+        // reads like the host is broken.
+        if (string.Equals(appId, CoreLogBuffer.CoreSourceId, StringComparison.Ordinal))
+        {
+            return CoreJson.Text(new McpLogTail(
+                appId,
+                tail,
+                null,
+                $"'{appId}' is Hosty Core itself — the host kernel, not an installed app, so it has no " +
+                "console output to tail. Its own logs are on the host in ~/.hosty/core/logs/core.log, " +
+                "and in the Core logs dialog on Shell's Dashboard."));
+        }
+
         try
         {
             var logs = await lifecycle.GetLogsAsync(appId, tail, cancellationToken);

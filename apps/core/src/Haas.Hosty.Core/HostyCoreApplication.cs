@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.AspNetCore.Cors.Infrastructure;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.Extensions.Configuration.Memory;
 
 namespace Haas.Hosty.Core;
 
@@ -27,6 +28,18 @@ internal static class HostyCoreApplication
         builder.Services.ConfigureHttpJsonOptions(options =>
             options.SerializerOptions.TypeInfoResolverChain.Insert(0, CoreJsonSerializerContext.Default));
         builder.Services.AddSingleton(config);
+
+        // Core's own logs, held in memory: the Dashboard's Core logs dialog reads these rings, and so
+        // will the telemetry backend's pull. Registered through DI rather than
+        // builder.Logging.AddProvider so the provider takes the same IClock as everything else —
+        // neither it nor the buffer depends on anything that logs, so resolving them while the logger
+        // factory is being built cannot cycle.
+        builder.Services.AddSingleton<CoreLogBuffer>();
+        builder.Services.AddSingleton<ILoggerProvider>(sp => new CoreLogBufferLoggerProvider(
+            sp.GetRequiredService<CoreLogBuffer>(),
+            sp.GetRequiredService<IClock>()));
+        ConfigureLogging(builder);
+
         builder.Services.AddSingleton<CoreSettingsStore>();
         builder.Services.AddSingleton<CoreSettingsService>();
         // AuthLifetimes resolves live from the settings service (edited from the Shell platform panel),
@@ -369,6 +382,7 @@ internal static class HostyCoreApplication
         GlobalMountEndpoints.Map(app);
         CoreBootstrapEndpoints.Map(app);
         CoreSettingsEndpoints.Map(app);
+        CoreLogEndpoints.Map(app);
         CoreRestartEndpoints.Map(app);
         CloudflareConnectionEndpoints.Map(app);
         CloudflarePublicationEndpoints.Map(app);
@@ -422,6 +436,44 @@ internal static class HostyCoreApplication
         }
 
         return await action();
+    }
+
+    // Core shipped with no logging configuration at all, which left every ASP.NET request at
+    // Information. Measured over 26.6 h on a live host: ~96 % of `core.log` was the request pipeline
+    // and ~0.06 % was Core's own records — not what an operator opens that file for, and every record
+    // in it was Information, so a severity floor would have filtered nothing.
+    //
+    // The defaults arrive as a configuration source rather than AddFilter calls, inserted *ahead* of
+    // the other sources so they hold the lowest precedence. CreateSlimBuilder already wires logging
+    // configuration, so `Logging__LogLevel__Microsoft.AspNetCore=Information` works today and reaches
+    // Core through the CLI's start path; an operator turning the request trail back on for a debugging
+    // session has to keep winning over whatever we ship, and a code-side AddFilter on the same
+    // category would beat them instead.
+    private static void ConfigureLogging(WebApplicationBuilder builder)
+    {
+        builder.Configuration.Sources.Insert(0, new MemoryConfigurationSource
+        {
+            InitialData = new Dictionary<string, string?>(StringComparer.Ordinal)
+            {
+                ["Logging:LogLevel:Default"] = "Information",
+                ["Logging:LogLevel:Microsoft"] = "Warning",
+                ["Logging:LogLevel:System"] = "Warning",
+            },
+        });
+
+        // The rings keep what the console drops. The trail is bounded, costs no disk, and is exactly
+        // what someone debugging an ingress or auth problem opens the dialog for. A provider-scoped
+        // rule outranks the category rules above, for this provider alone.
+        builder.Logging.AddFilter<CoreLogBufferLoggerProvider>("Microsoft", LogLevel.Information);
+        builder.Logging.AddFilter<CoreLogBufferLoggerProvider>("System", LogLevel.Information);
+
+        // `core.log` is Core's stdout, and it carried no timestamps at all — neither the file nor
+        // `hosty core logs` could say when anything happened.
+        builder.Logging.AddSimpleConsole(options =>
+        {
+            options.TimestampFormat = "yyyy-MM-dd HH:mm:ss.fff ";
+            options.UseUtcTimestamp = true;
+        });
     }
 
     private static string CreateControlSecret()

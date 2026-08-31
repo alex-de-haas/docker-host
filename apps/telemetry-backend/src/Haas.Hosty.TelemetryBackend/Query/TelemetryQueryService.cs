@@ -61,7 +61,7 @@ internal sealed class TelemetryQueryService(SqliteTelemetryStore store)
             present.Add(parsed.AppId);
         }
 
-        return new BackendFleetLogsResponse(range, present.Count, records);
+        return new BackendFleetLogsResponse(range, CountApps(present), records);
     }
 
     public BackendTracesResponse GetFleetTraces(
@@ -113,8 +113,14 @@ internal sealed class TelemetryQueryService(SqliteTelemetryStore store)
             }
         }
 
-        return new BackendTracesResponse(range, present.Count, summaries);
+        return new BackendTracesResponse(range, CountApps(present), summaries);
     }
+
+    // The count is reported and rendered as a number of *apps*. Hosty Core contributes records under a
+    // reserved id but is the host kernel, not an installed app, so counting it would inflate every
+    // fleet response by one.
+    private static int CountApps(HashSet<string> present)
+        => present.Count - (present.Contains(CoreLogPullParser.CoreAppId) ? 1 : 0);
 
     public BackendTraceDetailResponse GetTrace(string traceId)
     {

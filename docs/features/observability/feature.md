@@ -1,17 +1,19 @@
 # Feature: Observability (telemetry collection, storage, and UI)
 
 Created: 2026-06-28
-Updated: 2026-08-28
+Updated: 2026-08-31
 
 Runtime apps export OpenTelemetry to a collector; a Hosty-native **telemetry backend** stores the
 three signals in embedded SQLite and serves a query API; a **telemetry UI** system app renders
 Metrics / Structured logs / Traces. All three run as services of one installable system app,
 `hosty.telemetry`.
 
-Core is **not** on the telemetry read path. It contributes only what needs host Docker access —
+Core is **not** on the telemetry read path. It contributes what needs host Docker access —
 `docker stats` infra metrics, re-exposed as a Prometheus endpoint the backend scrapes, and the
 on-demand `docker logs` console tail Shell shows per app — plus the lifecycle and wiring that hands
-every producer its endpoint.
+every producer its endpoint. It also keeps **its own** log records in memory, serves them to Shell,
+and lets the telemetry backend pull them — the one stream nothing else can produce, because Core is
+the host kernel rather than an installed app, with no runtime to inject `OTEL_*` into.
 
 ## Non-goals
 
@@ -42,6 +44,8 @@ Core ──docker stats─────────▶│ backend: embedded SQLit
   /api/internal/telemetry/metrics (scraped by the backend)                                │
                              └────────────────────────────────────────────────────────────┘
 Core ──docker logs (on demand)──────────────────────▶ Shell per-app Console logs dialog
+Core ──its own log records (in-memory rings)────────▶ Shell Core logs dialog
+                             ▲ backend pulls the same rings (app service token) ─┘
 ```
 
 The collector is a **dumb funnel, not a store**: it has no query API, no history, no retention beyond
@@ -188,6 +192,58 @@ Apps actions menu, gated on the app's `logs` capability, so minimal logs stay re
 telemetry app uninstalled or stopped. OTLP logs are the opt-in counterpart: structured records with
 severity, attributes, and `trace_id` / `span_id` correlation, only for apps that wire a logs SDK.
 
+**Core's own logs** are a third stream, and the only one whose producer is the kernel itself. Core
+feeds every record the logging pipeline emits into two fixed-capacity in-memory rings — its own
+categories in one, `Microsoft.*` and `System.*` in the other — and serves them from
+`GET /api/core/logs?ring=&tail=&level=`, host-admin only, because request paths run through those
+records (and in Development so do app secret *key names*). Shell reads it in a **Core logs** dialog on
+the Dashboard's Core card, opening on Core's own records with the request trail behind a toggle.
+
+The rings are deliberately not `~/.hosty/core/logs/core.log`: that file exists only because the CLI
+redirects Core's stdout into it on a background start, so a foreground or `npm run dev` Core has none
+at all. It remains the post-mortem artifact for a Core that is **not** running, and the CLI now
+rotates it (`core.log.1`…`.3`) instead of letting the next start's `>` redirect truncate the run that
+just crashed.
+
+Two rings rather than one because their densities are nothing alike: measured over 26.6 h on a live
+host, ~96 % of records were the ASP.NET request pipeline and ~0.06 % were Core's own, so one shared
+ring would evict the events worth reading within the hour. The same measurement sets the logging
+defaults — Core previously configured none at all, which left every request at Information. The
+console (which *is* `core.log`) now drops `Microsoft` and `System` to Warning and carries UTC
+timestamps, where before it carried none; a provider-scoped rule keeps those categories at
+Information for the rings alone, so the request trail stays available in the dialog without going to
+disk. The defaults ship as the lowest-precedence configuration source, so an operator debugging an
+ingress problem can still raise a category the ordinary way — `Logging__LogLevel__Microsoft.AspNetCore=Information`
+in Core's environment — and win.
+
+**Into the store, by pull.** With the telemetry app installed, the backend adds a third ingest loop
+beside its two file tails: every ~10 s it reads `GET /api/internal/telemetry/logs?after=<sequence>`
+with the same app service token that guards the docker-stats exposition, and records what comes back
+under the reserved id `hosty.core`. Only Core's own ring is exported — at ~96 % of all records the
+request trail would evict the fleet's logs from a 3-day store with a ~1 GiB ceiling — and a folded
+repeat travels as one row plus a count, so a tick failing every 10 s costs one row rather than 360 an
+hour. A repeat that is still going gets a fresh sequence once a minute so the pull sees it again:
+otherwise the store would hold the first occurrence's count of 1 and let that row age out of retention
+while the failure was still happening. This is the metric heartbeat's shape, applied to logs. The cursor lives in the store's existing `ingest_state` table alongside the file offsets; each
+response carries Core's run id, and when that changes the cursor resets to zero, because Core's rings
+are in memory and a restarted Core numbers from 1 again.
+
+**Core does not run an OpenTelemetry SDK**, and the direction is the point. Core is an AOT binary with
+a single package reference; it starts *before* the collector it would export to; an exporter queue
+would put a managed app inside the kernel's failure path; and OTLP ingest is still unauthenticated, so
+a pushed record attributed to the host could be forged by anything that reaches the port. Pulling
+inverts all four and reuses auth that already exists.
+
+`hosty.core` is **reserved, not registered**. The store, the query routes, and the MCP tool schemas all
+treat an app id as an opaque key with no roster validation, so Core rides the same columns with no
+schema change — which matters, because the backend has no migration mechanism. What it costs instead
+is a handful of deliberate special cases: the telemetry UI names it and injects it into the logs and
+traces resource filters (the roster-driven dropdowns would otherwise leave its records visible under
+"All resources" and impossible to isolate), the fleet responses exclude it from the *app* count they
+report, and Core's MCP `tail_app_logs` answers that it is the host kernel rather than surfacing an
+"app not found". It is deliberately **not** added to the app-directory roster: the ai-gateway reads
+that same payload to discover providers, and Core would leak into it.
+
 ## Store, retention, and pruning
 
 The backend's store is **embedded SQLite** (`Microsoft.Data.Sqlite`) at
@@ -303,6 +359,17 @@ lack of auth. Closing that gap is [plan.md](plan.md)'s first deliverable.
   Prometheus snapshot; `DockerStatsParser.cs` parses the CLI output.
 - `apps/core/src/Haas.Hosty.Core/LifecycleEndpoints.cs` — `GET /api/internal/telemetry/metrics` (app
   service token required) and `GET /api/apps/{id}/logs` (console tail).
+- `apps/core/src/Haas.Hosty.Core/CoreLogBuffer.cs` — the two rings, their capacity and
+  collapse-on-repeat; `CoreLogBufferLoggerProvider.cs` feeds them from the logging pipeline and
+  `CoreLogEndpoints.cs` serves `GET /api/core/logs`. `HostyCoreApplication.ConfigureLogging` sets the
+  console/ring split. `CoreCommand.RotateCoreLog` (CLI) rotates the file.
+- `apps/shell/src/app/shell/dialogs/core-logs-dialog.tsx` — the Core logs dialog, opened from
+  `CoreSection` in `pages/dashboard-page.tsx`.
+- `apps/telemetry-backend/src/Haas.Hosty.TelemetryBackend/Telemetry/CoreLogPullParser.cs` — parses
+  Core's pull payload and attributes it to `hosty.core`; `Ingest/TelemetryIngestService.PullCoreLogsAsync`
+  is the loop and its cursor/run-id reset.
+- `apps/telemetry-ui/src/lib/core-source.ts` — the reserved id in the UI, used by `lib/enrich.ts` and
+  the logs/traces resource filters.
 - `apps/core/src/Haas.Hosty.Core/DomainEndpoints.cs` — `GET /api/internal/apps/{appId}/app-directory`,
   the roster the UI labels appIds from.
 - `RuntimeTelemetrySettings.FromManifest` / `BuildTelemetryEnvironment` (`RuntimeAppManifest.cs`) —
@@ -324,6 +391,22 @@ lack of auth. Closing that gap is [plan.md](plan.md)'s first deliverable.
 - **`OTEL_*` injection.** Opt-in manifests produce the full env set in both the docker
   (`host.docker.internal`) and localCommand (loopback) endpoint forms; an app that has not opted in,
   or a host with no resolvable collector endpoint, produces none.
+- **Core's own logs.** The rings keep order, drop oldest-first at capacity, and fold a repeat of the
+  newest record into a count with first/last-seen stamps rather than spending a slot per repeat — the
+  `DockerStatsExposition` tick warns every 10 s, so an outage would otherwise cost 360 slots an hour.
+  Framework categories reach the framework ring and never Core's own. `GET /api/core/logs` refuses a
+  non-admin session, honours `ring` / `tail` / `level`, and rejects a malformed filter with its own
+  error code. The shipped logging defaults quiet `Microsoft`/`System` while sitting beneath every
+  other configuration source, so an environment override still wins. The CLI's rotation keeps the
+  previous runs and is a quiet no-op when there is no log yet.
+- **The pull.** `GET /api/internal/telemetry/logs` rejects a missing, invalid, or uninstalled-app
+  token, exports only Core's own ring, caps one page, and holds the caller's cursor when nothing is
+  new. The backend's loop resumes from its persisted cursor rather than replaying, and re-asks from
+  zero when the run id changes — but *not* on a first pull against an empty store, which is a cursor
+  of zero already. An unreachable Core contributes nothing and keeps the cursor.
+- **The reserved id.** `hosty.core` is selectable in the UI's resource filters, is excluded from the
+  app count the fleet responses report, and makes Core's MCP `tail_app_logs` explain the category
+  error instead of reporting a missing app.
 - **Core producer.** `DockerStatsExposition` renders the three `container.*` series with app/service
   attribution, idles as empty text when the telemetry app is absent, and survives a docker-less host.
   The owner map is read once across ticks, re-read when a sample names a *Hosty* container it does not
