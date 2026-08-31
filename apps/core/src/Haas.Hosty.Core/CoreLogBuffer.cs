@@ -70,15 +70,25 @@ internal sealed class CoreLogRing(int capacity)
     private int start;
     private long nextSequence;
 
+    // How long a still-repeating record may keep the sequence a cursor reader has already passed before
+    // it is re-sequenced and therefore exported again. Mirrors the telemetry backend's metric heartbeat:
+    // an unchanging series is not re-inserted every scrape, but is re-recorded often enough to stay
+    // legible as live.
+    internal static readonly TimeSpan RepeatHeartbeat = TimeSpan.FromSeconds(60);
+
     public int Capacity => capacity;
 
-    // A record identical to the newest one folds into it — count and last-seen advance, the sequence
-    // and timestamp stay at the first occurrence. This is the `DockerStatsExposition` case: its tick
-    // warns every 10 s while docker is unavailable, which is 360 slots an hour, during an outage that
-    // has also taken the telemetry containers down so nothing is draining the ring. Folding costs the
-    // export nothing it would have used: it already saw the record, and the growing count is a reading
-    // aid rather than a new event. Deliberately only against the newest entry — "last message repeated
-    // N times" semantics, which is what a repeating tick actually produces.
+    // A record identical to the newest one folds into it — count and last-seen advance rather than the
+    // ring spending another slot. This is the `DockerStatsExposition` case: its tick warns every 10 s
+    // while docker is unavailable, which is 360 slots an hour, during an outage that has also taken the
+    // telemetry containers down so nothing is draining the ring. Deliberately only against the newest
+    // entry — "last message repeated N times" semantics, which is what a repeating tick produces.
+    //
+    // A fold also re-sequences the entry once per RepeatHeartbeat. Without that a repeat is invisible to
+    // a cursor reader forever: `ReadAfter` only returns sequences above the cursor, so the telemetry
+    // store would keep the first occurrence's count of 1 and its original timestamp, and that row would
+    // age out of retention while the failure was still happening. Re-sequencing on a heartbeat exports
+    // the failure as ongoing at about a row a minute, instead of either a row per repeat or nothing.
     public void Add(DateTimeOffset timestamp, LogLevel level, string category, string message, string? exception)
     {
         lock (gate)
@@ -93,6 +103,13 @@ internal sealed class CoreLogRing(int capacity)
                 {
                     newest.Count++;
                     newest.LastSeen = timestamp;
+                    if (timestamp - newest.SequencedAt >= RepeatHeartbeat)
+                    {
+                        // Still the newest entry, so taking a new sequence keeps the ring ordered by it.
+                        newest.Sequence = ++nextSequence;
+                        newest.SequencedAt = timestamp;
+                    }
+
                     return;
                 }
             }
@@ -100,6 +117,7 @@ internal sealed class CoreLogRing(int capacity)
             var entry = new Entry
             {
                 Sequence = ++nextSequence,
+                SequencedAt = timestamp,
                 Timestamp = timestamp,
                 Level = level,
                 Category = category,
@@ -177,6 +195,10 @@ internal sealed class CoreLogRing(int capacity)
     private sealed class Entry
     {
         public long Sequence;
+
+        // When Sequence was last assigned — the heartbeat clock for a folded repeat, kept apart from
+        // Timestamp, which stays at the first occurrence so the record still says when it started.
+        public DateTimeOffset SequencedAt;
         public DateTimeOffset Timestamp;
         public LogLevel Level;
         public string Category = string.Empty;

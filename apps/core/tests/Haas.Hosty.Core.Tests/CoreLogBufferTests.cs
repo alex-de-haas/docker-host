@@ -54,6 +54,46 @@ public sealed class CoreLogBufferTests
         Assert.Equal(1L, record.Sequence);
     }
 
+    // A fold keeps the ring at one slot, but it must not make the repeat invisible to the telemetry
+    // pull: ReadAfter only returns sequences above the cursor, so without a heartbeat re-sequence the
+    // store would keep the first occurrence's count of 1 and let that row age out of retention while
+    // the failure was still going on.
+    [Fact]
+    public void Add_ReExportsAStillRepeatingRecordOnTheHeartbeat()
+    {
+        var ring = new CoreLogRing(10);
+        ring.Add(Start, LogLevel.Warning, "Haas.Hosty.Core.Stats", "tick failed", null);
+        var exported = Assert.Single(ring.Read(tail: 100, minLevel: LogLevel.Trace)).Sequence;
+
+        // Inside the heartbeat the cursor reader has already seen it and gets nothing new.
+        ring.Add(Start.AddSeconds(10), LogLevel.Warning, "Haas.Hosty.Core.Stats", "tick failed", null);
+        Assert.Empty(ring.ReadAfter(exported, limit: 100, minLevel: LogLevel.Trace));
+
+        // Past it, the same slot comes back with the accumulated count and the failure reads as live.
+        ring.Add(Start + CoreLogRing.RepeatHeartbeat, LogLevel.Warning, "Haas.Hosty.Core.Stats", "tick failed", null);
+        var repeat = Assert.Single(ring.ReadAfter(exported, limit: 100, minLevel: LogLevel.Trace));
+
+        Assert.Equal(3, repeat.Count);
+        Assert.Equal(Start, repeat.Timestamp);
+        Assert.Equal(Start + CoreLogRing.RepeatHeartbeat, repeat.LastSeen);
+        Assert.True(repeat.Sequence > exported);
+    }
+
+    // Re-sequencing must not cost the ring a slot, or the burst it exists to survive comes back.
+    [Fact]
+    public void Add_KeepsARepeatInOneSlotAcrossManyHeartbeats()
+    {
+        var ring = new CoreLogRing(10);
+        for (var minute = 0; minute < 30; minute++)
+        {
+            ring.Add(Start.AddMinutes(minute), LogLevel.Warning, "Haas.Hosty.Core.Stats", "tick failed", null);
+        }
+
+        var record = Assert.Single(ring.Read(tail: 100, minLevel: LogLevel.Trace));
+
+        Assert.Equal(30, record.Count);
+    }
+
     [Fact]
     public void Add_DoesNotFoldWhenAnotherRecordCameBetween()
     {

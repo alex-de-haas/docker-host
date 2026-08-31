@@ -222,7 +222,9 @@ with the same app service token that guards the docker-stats exposition, and rec
 under the reserved id `hosty.core`. Only Core's own ring is exported — at ~96 % of all records the
 request trail would evict the fleet's logs from a 3-day store with a ~1 GiB ceiling — and a folded
 repeat travels as one row plus a count, so a tick failing every 10 s costs one row rather than 360 an
-hour. The cursor lives in the store's existing `ingest_state` table alongside the file offsets; each
+hour. A repeat that is still going gets a fresh sequence once a minute so the pull sees it again:
+otherwise the store would hold the first occurrence's count of 1 and let that row age out of retention
+while the failure was still happening. This is the metric heartbeat's shape, applied to logs. The cursor lives in the store's existing `ingest_state` table alongside the file offsets; each
 response carries Core's run id, and when that changes the cursor resets to zero, because Core's rings
 are in memory and a restarted Core numbers from 1 again.
 
