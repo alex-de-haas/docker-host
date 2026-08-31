@@ -35,7 +35,7 @@ export function Markdown({ text, className }: { text: string; className?: string
   return (
     <div className={cn(PROSE_CLASS, className)}>
       <ReactMarkdown
-        // Soft breaks after GFM, so a table's own line endings are already structure by the time
+        // Soft breaks after GFM, so a table's own line endings are already structured by the time
         // stray newlines become line breaks.
         remarkPlugins={[remarkGfm, remarkSoftBreaks]}
         urlTransform={transformChatUrl}
@@ -45,14 +45,21 @@ export function Markdown({ text, className }: { text: string; className?: string
           h1: ({ children }) => <h4>{children}</h4>,
           h2: ({ children }) => <h4>{children}</h4>,
           h3: ({ children }) => <h5>{children}</h5>,
-          a: ({ href, children }) => (
-            // The panel is embedded in Shell; a link that replaced it would take the operator's
-            // session and their unsent draft with it. `noreferrer` keeps the host's URL off the
-            // destination.
-            <a href={href} target="_blank" rel="noopener noreferrer">
-              {children}
-            </a>
-          ),
+          a: ({ href, children }) =>
+            href ? (
+              // The panel is embedded in Shell; a link that replaced it would take the operator's
+              // session and their unsent draft with it. `noreferrer` keeps the host's URL off the
+              // destination.
+              <a href={href} target="_blank" rel="noopener noreferrer">
+                {children}
+              </a>
+            ) : (
+              // `transformChatUrl` refused the target. An anchor with an empty href is still
+              // clickable and resolves to the panel's own URL, so a refused link would open the
+              // session in a new tab — the one thing this policy exists to prevent. It is rendered
+              // as the text it always was instead, which the operator can still read.
+              <>{children}</>
+            ),
           // The panel is narrow and a table is as wide as its content: scrolling the table beats
           // wrapping every cell into an unreadable column.
           table: ({ children }) => (

@@ -266,7 +266,9 @@ gateway restart.
   `web/src/lib/markdown.ts`, pure and unit-tested rather than inline in the component:
   - **Links must navigate, not execute.** Only `http(s)`, `mailto` and same-document `#` targets
     survive `transformChatUrl`; `javascript:`, `data:`, credentials in the authority, and relative
-    references become an empty href that keeps its text readable. Links open in a new tab
+    references are rendered as the plain text they always were, not as an anchor — an empty href is
+    still clickable and resolves to the panel's own URL, which would open the operator's session in
+    a new tab, the one thing the policy exists to prevent. Links open in a new tab
     (`noreferrer noopener`) — one that replaced the embedded panel would take the operator's session
     and unsent draft with it. An image is rendered as a link rather than fetched: Marketplace loads
     images because a catalog it already trusts serves them, while a transcript's image URL is a
