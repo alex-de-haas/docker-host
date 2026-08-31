@@ -22,6 +22,13 @@ way back to a previous conversation, and there was no way back at all.
 else brings it here — including an open rail showing another app's panel. A shortcut that could only
 open would make the rail a trap on a small screen.
 
+**The tab carries an attention badge**, and it is the count
+[agent-background-sessions](../agent-background-sessions/feature.md) publishes rather than a poll of
+its own — one source, so the badge and the list behind it cannot disagree. The page holding the
+sessions posts the count and Shell renders it, sender-verified like every other embedder message and
+clamped: a wrong badge any page could set is how an operator learns to ignore the badge that
+matters.
+
 **The panel still presents the operator's delegated token.** Not for authentication — the app session
 cookie does that — but because the gateway keeps the presented bearer as the session's *delegation
 seed* for app MCP. A panel authenticating only with its cookie would leave `session.credential` null,
@@ -67,11 +74,6 @@ severity and the message into plain text. Errors only: an "ask about this" on ev
 be noise, and the button exists for the moment an operator is already stuck.
 
 ## What This Does Not Do
-
-**The attention badge on the assistant tab is not built.** It must read the same state as
-[agent-background-sessions](../agent-background-sessions/feature.md)' attention indicator — one source,
-never a second poll — and that state does not exist yet. Building it here would mean inventing the
-second poll the design forbids.
 
 **The panel page does not verify its own embedder's origin.** Shell verifies the app→Shell hop, which
 is where an app's text enters; the Shell→panel hop is unverified because the page has no trustworthy
