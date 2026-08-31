@@ -320,23 +320,26 @@ internal sealed class TelemetryIngestService(
 
     private async Task<ParsedCoreLogPull?> FetchCoreLogsAsync(long after, DateTimeOffset now, CancellationToken cancellationToken)
     {
-        var url = $"{options.CoreLogsPullUrl}?after={after}";
-        var (body, failure) = await FetchAsync(url, options.CoreServiceToken, cancellationToken);
+        // `failingScrapeUrls` is keyed by target URL, so this tracks by the pull URL like every other
+        // target — but by the base URL, not the request: the cursor in the query string changes on
+        // every call, so keying by the request would report a fresh outage each pull and never clear.
+        var target = options.CoreLogsPullUrl ?? string.Empty;
+        var (body, failure) = await FetchAsync($"{target}?after={after}", options.CoreServiceToken, cancellationToken);
         if (body is null)
         {
             // Edges only, like the metrics targets: Core being down is already loud elsewhere, and a
             // warning every pull would bury the records this exists to surface.
-            if (failingScrapeUrls.Add(CoreLogsCursorKey))
+            if (failingScrapeUrls.Add(target))
             {
-                logger.LogWarning("Core log pull from {Url} failed ({Failure}); Core's own logs stop until it recovers.", options.CoreLogsPullUrl, failure);
+                logger.LogWarning("Core log pull from {Url} failed ({Failure}); Core's own logs stop until it recovers.", target, failure);
             }
 
             return null;
         }
 
-        if (failingScrapeUrls.Remove(CoreLogsCursorKey))
+        if (failingScrapeUrls.Remove(target))
         {
-            logger.LogInformation("Core log pull recovered.");
+            logger.LogInformation("Core log pull from {Url} recovered.", target);
         }
 
         return CoreLogPullParser.Parse(body, now);
