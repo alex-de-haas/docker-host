@@ -1,7 +1,7 @@
 # Repository And Release Model
 
 Created: 2026-05-12
-Updated: 2026-08-03
+Updated: 2026-08-31
 
 This document records the current repository layout and release artifact boundaries after the Core/Shell split and retirement of the legacy combined Host package.
 
@@ -47,6 +47,38 @@ app. It is ESP-IDF firmware installed on an M5Stack Cardputer ADV, consumes a
 bounded administrative subset of the Core API, and has no runtime-app manifest.
 Its version lives only in `apps/shell-cardputer/version.txt` and moves
 independently of the platform, browser Shell, and Apple client.
+
+### The shared root lockfile
+
+Every Node artifact here - the four Next.js apps, `apps/ai-gateway`, and `packages/app-sdk` - resolves
+through one root `package.json` / `package-lock.json` pair (npm workspaces). A component boundary in the
+diagram above is therefore not a dependency boundary: one lockfile decides what all of them install.
+
+The root `overrides` block is that shared tree's **security floor**. It currently holds
+`"postcss": "^8.5.26"`, above the `8.5.23` that patches GHSA-fxqj-rqcc-2cmp. Two properties of how it is
+written are load-bearing:
+
+- **Top-level, not nested under one dependent.** An override nested under a single package (`{"next":
+  {"postcss": ...}}`) reaches only that package's copy. Every other nester resolves independently - `vite`
+  declares its own `postcss` range and sat on a vulnerable version for weeks behind exactly such a guard,
+  where no Dependabot pull request could reach it either, because the root manifest has no direct
+  `postcss` dependency to bump.
+- **A caret range, not an exact version.** An exact override is simultaneously a floor and a **ceiling**,
+  and the ceiling is the half that rots: the removed `overrides.next["."]` pin held Next.js below its own
+  advisory fixes until nine of them had accumulated. A caret floats upward on its own.
+
+Changing an override does not by itself re-resolve anything. npm prefers an existing lockfile resolution,
+so `npm install` and `npm install --package-lock-only` are both no-ops against an already-locked nested
+node; `npm dedupe --package-lock-only` re-resolves it. Verify the result by resolved version rather than by
+reading manifests:
+
+```bash
+node -e "const l=require('./package-lock.json');for(const k of Object.keys(l.packages))if(/node_modules\/postcss$/.test(k))console.log(k,l.packages[k].version)"
+```
+
+A change to this floor is a lockfile-only change and carries no artifact version bump; it reaches hosts the
+way any other lockfile change does (see "Mutable tags and the publish guard" for image apps, and the source
+commit probe in [Runtime App Update](../runtime-app-update/feature.md) for source-installed apps).
 
 ## GitHub Actions Model
 
