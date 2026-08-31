@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { History, Loader2, MessageSquarePlus, Send, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, InlineError, StatusBadge } from "@/components/status";
+import { Markdown } from "@/components/markdown";
 import { TranscriptEvent } from "@/components/transcript";
 import { cn } from "@/lib/utils";
 import { establishSession } from "@/lib/api";
@@ -398,8 +399,11 @@ export default function AssistantPage() {
               />
             ))}
             {streamed && (
-              <div className="rounded-lg bg-muted/60 px-3 py-2 text-sm whitespace-pre-wrap">
-                {streamed}
+              // Formatted while it streams, not once it lands: the parser closes an unfinished block
+              // at the end of what has arrived, so a half-written table is a table with fewer rows
+              // rather than a paragraph of pipes that reflows the moment the turn ends.
+              <div className="rounded-lg bg-muted/60 px-3 py-2">
+                <Markdown text={streamed} />
                 <Loader2 className="ml-1 inline h-3 w-3 animate-spin text-muted-foreground" aria-hidden />
               </div>
             )}
