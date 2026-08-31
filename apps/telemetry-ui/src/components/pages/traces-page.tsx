@@ -30,6 +30,7 @@ import { cn } from "@/lib/utils";
 import { isAuthRequiredError, readApiError, throwIfAuthRequired } from "@/lib/api-client";
 import { buildServiceAccents, SERVICE_ACCENTS } from "@/components/observability/service-accents";
 import type { FleetTraceSummary, FleetTracesResponse, TelemetryApp, TraceDetailResponse, TraceDetailSpan } from "@/lib/types";
+import { withCoreSource } from "@/lib/core-source";
 import { EmptyState, PageHeader } from "@/components/page-shell";
 
 const ALL = "__all__";
@@ -53,7 +54,9 @@ type DetailState = { loading: boolean; error: string | null; response: TraceDeta
 // every resource (GET /api/observability/traces), each opening into a span waterfall
 // (GET /api/observability/traces/{traceId}). A distributed trace's spans can come from several apps,
 // so both reads are fleet-shaped; the resource filter narrows which apps' spans start a trace.
-export function ObservabilityTracesPage({ apps }: { apps: TelemetryApp[] }) {
+export function ObservabilityTracesPage({ apps: roster }: { apps: TelemetryApp[] }) {
+  // See the logs page: Core is a telemetry source with no roster entry behind it.
+  const apps = withCoreSource(roster);
   const [selectedAppId, setSelectedAppId] = useState<string>(ALL);
   const [rangeSeconds, setRangeSeconds] = useState(900);
   const [query, setQuery] = useState("");

@@ -27,6 +27,11 @@ internal sealed record TelemetryBackendOptions
     // against a Core that predates the requirement.
     public string? CoreServiceToken { get; init; }
 
+    // Core's own log records, pulled with the same credential. Core is the host kernel, not an app: it
+    // has no runtime to inject OTEL_* into and nothing else can produce this stream. Null when unset,
+    // which simply means Core's logs are not ingested — every other signal is unaffected.
+    public string? CoreLogsPullUrl { get; init; }
+
     // The collector's file sinks on the shared volume (logs/traces ingest), tailed continuously.
     public required string LogsFilePath { get; init; }
     public required string TracesFilePath { get; init; }
@@ -40,6 +45,11 @@ internal sealed record TelemetryBackendOptions
     // rows/day/app) of mostly-identical data, collapsing the intended 14-day retention to hours of prune
     // churn. Scraping every ~15 s (plus the unchanged-sample skip below) restores it. (T-H2)
     public TimeSpan MetricsScrapeInterval { get; init; } = TimeSpan.FromSeconds(15);
+
+    // Core's logs are pulled on their own cadence too. They are sparse by nature — a healthy host wrote
+    // ~45 of them a day in the measurement behind this feature — so the 1 s tail cadence would be
+    // thousands of empty round-trips a day for nothing.
+    public TimeSpan CoreLogsPullInterval { get; init; } = TimeSpan.FromSeconds(10);
 
     // A flat series is skipped rather than re-inserted every scrape, but is still re-recorded at least
     // this often so it stays legible as "live" and range queries keep an anchor point. Set to zero to
@@ -86,12 +96,16 @@ internal sealed record TelemetryBackendOptions
                 Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_DOCKER_METRICS_URL"),
                 Append(Environment.GetEnvironmentVariable("HOSTY_CORE_ORIGIN"), "/api/internal/telemetry/metrics")),
             CoreServiceToken = FirstNonEmpty(Environment.GetEnvironmentVariable("HOSTY_APP_SERVICE_TOKEN")),
+            CoreLogsPullUrl = FirstNonEmpty(
+                Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_CORE_LOGS_URL"),
+                Append(Environment.GetEnvironmentVariable("HOSTY_CORE_ORIGIN"), "/api/internal/telemetry/logs")),
             LogsFilePath = FirstNonEmpty(Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_LOGS_FILE"))
                 ?? Path.Combine(appData, "otlp-logs", "logs.jsonl"),
             TracesFilePath = FirstNonEmpty(Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_TRACES_FILE"))
                 ?? Path.Combine(appData, "otlp-traces", "traces.jsonl"),
             IngestInterval = ParseSeconds("HOSTY_TELEMETRY_INGEST_INTERVAL_SECONDS", 1, minimumSeconds: 0.1),
             MetricsScrapeInterval = ParseSeconds("HOSTY_TELEMETRY_METRICS_INTERVAL_SECONDS", 15, minimumSeconds: 1),
+            CoreLogsPullInterval = ParseSeconds("HOSTY_TELEMETRY_CORE_LOGS_INTERVAL_SECONDS", 10, minimumSeconds: 1),
             MetricsHeartbeat = ParseSeconds("HOSTY_TELEMETRY_METRICS_HEARTBEAT_SECONDS", 60, minimumSeconds: 0),
             MetricsRetention = ParseDays("HOSTY_TELEMETRY_METRICS_RETENTION_DAYS", 14),
             LogsRetention = ParseDays("HOSTY_TELEMETRY_LOGS_RETENTION_DAYS", 3),

@@ -172,6 +172,9 @@ internal static class CoreJson
 // HTTP responses / results.
 [JsonSerializable(typeof(HealthResponse))]
 [JsonSerializable(typeof(CoreStatusResponse))]
+// Core's own buffered log records, for the Dashboard's Core logs dialog.
+[JsonSerializable(typeof(CoreLogsResponse))]
+[JsonSerializable(typeof(CoreLogPullResponse))]
 [JsonSerializable(typeof(StopResponse))]
 [JsonSerializable(typeof(CoreRestartResponse))]
 [JsonSerializable(typeof(ErrorResponse))]

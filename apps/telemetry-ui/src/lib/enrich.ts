@@ -7,6 +7,7 @@ import type {
   TelemetryApp,
   TraceDetailResponse,
 } from "@/lib/types";
+import { CORE_SOURCE_ID, CORE_SOURCE_NAME } from "@/lib/core-source";
 
 // Display-name enrichment: the backend's query API is keyed by hosty.app.id; these functions inject the
 // human-readable app name (from the Core roster) into the merged logs/traces shapes the pages render.
@@ -14,6 +15,9 @@ import type {
 
 export function buildNameLookup(apps: TelemetryApp[]): Map<string, string> {
   const names = new Map<string, string>();
+  // Core is a source but not an installed app, so the roster never carries it; without this its
+  // records would render as the bare id `hosty.core`.
+  names.set(CORE_SOURCE_ID, CORE_SOURCE_NAME);
   for (const app of apps) {
     names.set(app.id, app.displayName);
   }
