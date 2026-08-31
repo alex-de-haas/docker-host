@@ -2,17 +2,17 @@
 
 Status: In Progress
 Created: 2026-06-09
-Updated: 2026-08-24
+Updated: 2026-08-31
 
 The shared model, the boundaries and the decision log live in [feature.md](feature.md) and are in
 force. This document holds only what is **not built**: the rollout checklist, and the design for the
 steps that have no feature folder of their own yet.
 
 Each step is designed here and then implemented under its own plan, which is what carries the Ready
-approval. Sibling plans grew out of this work and are tracked separately rather than as steps:
-[delegated-token-exchange](../delegated-token-exchange/plan.md), which step 9 cannot ship without,
-and [agent-background-sessions](../agent-background-sessions/plan.md). On 2026-08-24 four more were
-drafted against the gaps this document records:
+approval. Siblings grew out of this work and are tracked separately rather than as steps:
+[delegated-token-exchange](../delegated-token-exchange/feature.md), which step 9 cannot ship without,
+and [agent-background-sessions](../agent-background-sessions/feature.md) — both since shipped. On
+2026-08-24 four more were drafted against the gaps this document records:
 [scoped-access-tokens](../scoped-access-tokens/feature.md) (the token scopes and audit callback of open
 question 3 and the step-6 plaintext-admin-token cost), [mcp-facade](../mcp-facade/plan.md) (step-7
 topology 4's deferred "mcp-hub", placed on the existing gateway system app),
@@ -182,9 +182,9 @@ for the acting user; enforcement is server-side, so a fully prompt-injected sess
 exceed what the user could do personally. Optional hardening: run the loop in a container with no host
 mounts and network access limited to Core and app MCP origins — machinery Hosty already has.
 
-**Blocked on [delegated-token-exchange](../delegated-token-exchange/plan.md).** The whole security
-model is "every tool call carries a token for the acting user", and there is no way for the gateway to
-obtain one for a target app today.
+**Needed [delegated-token-exchange](../delegated-token-exchange/feature.md), which has since
+shipped.** The whole security model is "every tool call carries a token for the acting user", and
+until that landed the gateway had no way to obtain one for a target app.
 
 Each action gets a risk class — `read_only`, `draft_only`, `write_internal`, `write_external`,
 `communication`, `financial`, `destructive`, `privileged_admin`. Read-only queries run when the user

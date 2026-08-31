@@ -1,7 +1,7 @@
 # Assistant Entry Points
 
 Created: 2026-08-19
-Updated: 2026-08-19
+Updated: 2026-08-31
 
 The assistant is reachable from anywhere in Shell, and an app can hand it context — without letting
 an app drive it.
@@ -69,7 +69,7 @@ be noise, and the button exists for the moment an operator is already stuck.
 ## What This Does Not Do
 
 **The attention badge on the assistant tab is not built.** It must read the same state as
-[agent-background-sessions](../agent-background-sessions/plan.md)' attention indicator — one source,
+[agent-background-sessions](../agent-background-sessions/feature.md)' attention indicator — one source,
 never a second poll — and that state does not exist yet. Building it here would mean inventing the
 second poll the design forbids.
 

@@ -2,7 +2,7 @@
 
 Status: Draft
 Created: 2026-08-19
-Updated: 2026-08-19
+Updated: 2026-08-31
 
 The umbrella document: where Hosty is going, so individual decisions have a criterion to be judged
 against. It authorizes no implementation, owns almost no deliverables, and links the features it
@@ -118,7 +118,7 @@ Any future feature that weakens one of these must say so in its plan, in those w
 ## Contribution Points, Named
 
 Today's points exist but were each invented ad hoc: `ui.entrypoint`/`ui.navigation`, then
-`ui.settings` and `ui.panel` ([app-ui-surfaces](../app-ui-surfaces/plan.md)), and `interfaces.mcp`
+`ui.settings` and `ui.panel` ([app-ui-surfaces](../app-ui-surfaces/feature.md)), and `interfaces.mcp`
 ([app-mcp](../app-mcp/feature.md)). Widgets are a named future axis.
 
 The direction this document sets: **the next capability does not invent a fifth seam** — it either
@@ -167,9 +167,9 @@ Version outcome: documentation-only, here and for every change this umbrella eve
 
 [core-extension-model](../core-extension-model/plan.md) ·
 [ai-agent-bridge](../ai-agent-bridge/plan.md) ·
-[app-ui-surfaces](../app-ui-surfaces/plan.md) ·
+[app-ui-surfaces](../app-ui-surfaces/feature.md) ·
 [assistant-entry-points](../assistant-entry-points/plan.md) ·
-[agent-background-sessions](../agent-background-sessions/plan.md) ·
+[agent-background-sessions](../agent-background-sessions/feature.md) ·
 [runtime-source-workflows](../runtime-source-workflows/feature.md) ·
 [telemetry-mcp](../telemetry-mcp/feature.md) ·
 [hosty-mcp-connector](../hosty-mcp-connector/feature.md) ·
