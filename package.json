@@ -13,9 +13,7 @@
     "packages/app-sdk"
   ],
   "overrides": {
-    "next": {
-      "postcss": "8.5.26"
-    }
+    "postcss": "^8.5.26"
   },
   "scripts": {
     "dev": "node scripts/dev-local.mjs",
