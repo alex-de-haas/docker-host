@@ -1,7 +1,7 @@
 # AI Gateway
 
 Created: 2026-08-09
-Updated: 2026-08-25
+Updated: 2026-08-31
 
 The Hosty assistant: an optional, removable system app (`hosty.ai-gateway`) hosting admin-only
 operator chat sessions on a host-resident agent harness, plus the Shell surface that renders them.
@@ -253,6 +253,33 @@ gateway restart.
   something the agent cannot. Making them look alike would train the reflex an approval gate must
   not build. Answered cards collapse to the chosen values, and a pending one rebuilds from the event
   log on reconnect exactly as a pending approval does.
+- **Assistant prose is rendered as markdown**, both the finished message and the deltas still
+  streaming — harnesses write markdown whether or not anything renders it, so the operator was
+  reading the raw asterisks and pipe rows of a formatted answer. The renderer is `react-markdown`
+  with `remark-gfm`, the same pair Marketplace uses for an app description
+  (`apps/marketplace/src/components/markdown-description.tsx`), with prose styling expressed as
+  arbitrary descendant selectors so the output stays on the shell's design tokens without a
+  typography plugin. One markdown implementation in the repository, not two.
+- Two policies differ from Marketplace's, because the source differs. Marketplace renders a
+  description fetched from a catalog URL and resolves relative references against it; a transcript
+  renders what an agent was talked into writing, and has no base document at all. Both live in
+  `web/src/lib/markdown.ts`, pure and unit-tested rather than inline in the component:
+  - **Links must navigate, not execute.** Only `http(s)`, `mailto` and same-document `#` targets
+    survive `transformChatUrl`; `javascript:`, `data:`, credentials in the authority, and relative
+    references become an empty href that keeps its text readable. Links open in a new tab
+    (`noreferrer noopener`) — one that replaced the embedded panel would take the operator's session
+    and unsent draft with it. An image is rendered as a link rather than fetched: Marketplace loads
+    images because a catalog it already trusts serves them, while a transcript's image URL is a
+    string an agent produced, and rendering it would have the panel call out to wherever it points.
+  - **A soft newline stays a line break** (`remarkSoftBreaks`). CommonMark folds it into a space,
+    which would silently reflow the line-per-item prose that read correctly when the transcript was
+    plain text. Code is untouched — inline or fenced, its newlines live in the node's value.
+- Headings are remapped down (`h1`/`h2` → `h4`, `h3` → `h5`): inside a chat bubble a heading is a
+  size, not a rank, and the panel's own headings outrank anything the assistant writes.
+- Streaming needs no special case — every delta re-renders the whole message, and an unterminated
+  fence closes at the end of the document, so a code block appears as it is typed.
+- The operator's own message is *not* rendered as markdown: it is shown back exactly as typed, so
+  there is never a question of which of two texts the harness received.
 - Closing the panel only drops the SSE connection — the harness run keeps working. Reopening
   reattaches by the kept session id and the stream replay rebuilds pending approval cards.
   Contextual entries ("Ask assistant" on an app's details) always start a fresh session seeded with
@@ -276,6 +303,12 @@ gateway restart.
 - Settings: defaults (empty prompt, every provider off), round trip surviving a restart, rejection
   of malformed writes without storing them, pruning of toggles for uninstalled apps, the admin gate,
   and the unauthenticated page shell.
+- Markdown (vitest over the two pure policies — `web/src/lib` suites run in the gateway's own
+  vitest project; the library itself is not re-tested here): the allowed schemes, and refusal of
+  `javascript:`, `data:`, `file:`, credentials in the authority, and relative references. Soft
+  breaks are pinned on the mdast the plugin rewrites — text split at every newline, nested text
+  inside emphasis reached, and inline and fenced code left alone, which is what keeps a code block's
+  own line endings from being shredded into breaks.
 - The settings page is type-checked and linted by its own workspace (`ai-gateway:lint` runs `eslint`
   and `tsc --noEmit` over `web`), and `next build` gates it the way it gates Shell. The token
   handshake itself is verified in a browser against a stub embedder built to be hostile in the two

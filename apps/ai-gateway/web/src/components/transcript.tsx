@@ -5,11 +5,16 @@ import { HelpCircle, Loader2, Wrench } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { InlineError } from "@/components/status";
+import { Markdown } from "@/components/markdown";
 import { cn } from "@/lib/utils";
 import type { AssistantEvent, AssistantQuestion } from "@/lib/assistant-api";
 
 // The transcript, moved out of Shell with the rest of the panel. The gateway's event log is the
 // source: every proposed write pauses as an inline approval card until the operator decides.
+//
+// Assistant prose is markdown; the operator's own message is not. What they typed is shown back to
+// them exactly as they typed it — a message that reformatted itself on send would leave them unsure
+// which of the two texts the harness actually received.
 
 export function TranscriptEvent({
   event,
@@ -33,8 +38,8 @@ export function TranscriptEvent({
       );
     case "assistant_text":
       return (
-        <div className="rounded-lg bg-muted/60 px-3 py-2 text-sm whitespace-pre-wrap">
-          {String(event.text ?? "")}
+        <div className="rounded-lg bg-muted/60 px-3 py-2">
+          <Markdown text={String(event.text ?? "")} />
         </div>
       );
     case "tool_use":
