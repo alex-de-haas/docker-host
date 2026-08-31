@@ -352,9 +352,9 @@ public sealed class AppAssetTests
     {
         var source = NewTempDir();
         Directory.CreateDirectory(Path.Combine(source, "docs"));
-        // One byte per character, so the file is exactly `size` bytes and the boundary is the one the
-        // cap names rather than one an encoding chose.
-        await File.WriteAllTextAsync(Path.Combine(source, "docs", "agent.md"), new string('a', size));
+        // Raw bytes, not text: the assertion is about a byte boundary, and a writer that ever decided
+        // to emit a BOM or a different encoding would move it while the test kept passing.
+        await File.WriteAllBytesAsync(Path.Combine(source, "docs", "agent.md"), Filler(size));
         var manifestPath = await WriteManifestAsync(source, catalogMetadataFields: null, agentSkillFile: "docs/agent.md");
 
         var appRoot = NewTempDir();
@@ -401,6 +401,49 @@ public sealed class AppAssetTests
         Assert.Equal(vendored, File.Exists(Path.Combine(appRoot, "docs", "agent.md")));
     }
 
+    [Theory]
+    // The other limb of the same per-app budget, and the one the deliverable names. The pair above
+    // exhausts the *file* ceiling on tiny screenshots and never spends bytes, so a skill that shared
+    // file-count accounting while bypassing byte accounting would pass it — and quietly carry the
+    // per-app byte ceiling past 20 MiB. Here the file count stays at 10, well inside its ceiling, and
+    // only the bytes differ: nine 2 MiB screenshots leave the skill room, ten spend the budget exactly
+    // and leave it none.
+    [InlineData(9, true)]
+    [InlineData(10, false)]
+    public async Task VendorDisplayAssets_RefusesASkillPastTheSharedPerAppByteCeiling(int screenshots, bool vendored)
+    {
+        var source = NewTempDir();
+        Directory.CreateDirectory(Path.Combine(source, "assets"));
+        Directory.CreateDirectory(Path.Combine(source, "docs"));
+        // Exactly the per-screenshot cap each, so the arithmetic against the 20 MiB per-app ceiling is
+        // exact rather than approximate — ten of them are the ceiling to the byte.
+        var screenshot = Filler(2 * 1024 * 1024);
+        var references = new List<string>();
+        for (var index = 0; index < screenshots; index++)
+        {
+            var name = $"large-{index:00}.png";
+            await File.WriteAllBytesAsync(Path.Combine(source, "assets", name), screenshot);
+            references.Add($"\"assets/{name}\"");
+        }
+
+        await File.WriteAllTextAsync(Path.Combine(source, "docs", "agent.md"), "# How this app is worked\n");
+        var manifestPath = await WriteManifestAsync(
+            source,
+            $$"""
+            "screenshots": [{{string.Join(", ", references)}}]
+            """,
+            agentSkillFile: "docs/agent.md");
+
+        var appRoot = NewTempDir();
+        var selection = await new AppManifestService().LoadAsync(manifestPath);
+        await new AppManifestService().VendorDisplayAssetsAsync(selection, appRoot);
+
+        // Every screenshot lands in both cases — the file ceiling is nowhere near — so the skill's
+        // fate is the bytes and nothing else.
+        Assert.Equal(screenshots, Directory.EnumerateFiles(Path.Combine(appRoot, "assets")).Count());
+        Assert.Equal(vendored, File.Exists(Path.Combine(appRoot, "docs", "agent.md")));
+    }
+
     [Fact]
     public async Task VendorDisplayAssets_RemovesAPreviouslyVendoredSkillTheBudgetNowRefuses()
     {
@@ -409,7 +452,7 @@ public sealed class AppAssetTests
         // installed app no longer contains — delivered under an approval given for different words.
         var source = NewTempDir();
         Directory.CreateDirectory(Path.Combine(source, "docs"));
-        await File.WriteAllTextAsync(Path.Combine(source, "docs", "agent.md"), new string('a', (256 * 1024) + 1));
+        await File.WriteAllBytesAsync(Path.Combine(source, "docs", "agent.md"), Filler((256 * 1024) + 1));
         var manifestPath = await WriteManifestAsync(source, catalogMetadataFields: null, agentSkillFile: "docs/agent.md");
 
         var appRoot = NewTempDir();
@@ -424,6 +467,10 @@ public sealed class AppAssetTests
     }
 
     // --- helpers --------------------------------------------------------------------------------
+
+    // A byte buffer of an exact length, so every size boundary in this file is asserted against real
+    // bytes rather than against whatever a text writer decided to encode.
+    private static byte[] Filler(int size) => Enumerable.Repeat((byte)'a', size).ToArray();
 
     private static string NewTempDir()
     {

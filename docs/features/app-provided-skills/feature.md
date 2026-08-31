@@ -59,8 +59,8 @@ session does not have read as a capability rather than as an absence.
 **The Hosty assistant is a reader like any other**, though it runs on the host with shell access and
 is the highest-consequence one there is. That argues for the gate, which exists, not for exclusion:
 the assistant **already** receives app-authored text through this very toggle — the name and
-description of every enabled provider's tool. Excluding skills would draw a line drawn nowhere else,
-on the one surface where people actually work.
+description of every enabled provider's tool. Excluding skills would draw a line the platform draws
+nowhere else, on the one surface where people actually work.
 
 **The app-to-app route had to earn its authorization.** Every other `/api/internal/apps/{appId}/…`
 route answers about the caller itself — the service token is validated against the id in the path,
@@ -151,13 +151,16 @@ asymmetry rather than smoothed over: it is a gap on that surface, not a reason t
 - **Withholding as a set**: a first sighting delivered and recorded, an unchanged skill still
   delivered, a changed one withheld with nothing recorded for it, and one app held without holding
   another. The digest is asserted to ignore surrounding whitespace and to follow the text.
-- **The install-time budget as boundary pairs**: a skill exactly at the markdown description's 256 KiB
-  per-file cap vendored beside one a single byte past it refused, and — with the display assets spending
-  the per-app ceiling first — a skill that still fits beside one that no longer does. Each pair differs
-  only in the size or the count, which is what makes the budget rather than the fixture the thing under
-  test; verified by widening both constants and watching every refusal fail. A skill the budget refuses
-  on an **update** is asserted to remove the previously vendored copy, since both delivery routes read
-  whatever is on disk and a survivor is text the installed app no longer contains.
+- **The install-time budget as boundary pairs**, one per limb, because a skill that shared one and
+  bypassed the other would pass a test of either alone: the markdown description's 256 KiB per-file cap
+  asserted at the byte, the per-app **file** ceiling exhausted by tiny screenshots, and the per-app
+  **byte** ceiling spent by large ones while the file count stays far below its own limit. Each pair
+  differs only in the size or the count, which is what makes the budget rather than the fixture the
+  thing under test; verified by widening every constant and watching each refusal fail. Sizes are
+  written as raw bytes, so no encoding decision can move a boundary while the test keeps passing. A
+  skill the budget refuses on an **update** is asserted to remove the previously vendored copy, since
+  both delivery routes read whatever is on disk and a survivor is text the installed app no longer
+  contains.
 - **Not covered**: that a provider toggled *off* contributes no skill is asserted structurally (skills
   are keyed off the servers a session received) rather than through a session-level test, because the
   gateway's suite has no harness that builds a session against a live provider set.
