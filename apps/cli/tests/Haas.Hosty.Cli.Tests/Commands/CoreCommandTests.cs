@@ -91,6 +91,34 @@ public sealed class CoreCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task StartAsync_LiveRootWithSamePortDifferentUrl_IsRefusedNotReusedIdempotently()
+    {
+        // The requested binding differs from the live one in host, not port; reporting an
+        // idempotent reuse would silently drop the request.
+        WriteCoreDiscovery("http://127.0.0.1:7070/control/v1", processId: Environment.ProcessId);
+        var (console, output) = CreateConsole();
+
+        var exitCode = await CommandLine.RunAsync(["core", "start", "--url", "http://0.0.0.0:7070"], console);
+
+        Assert.Equal(1, exitCode);
+        var text = output.ToString();
+        Assert.Contains("already running for data root", text);
+        Assert.Contains("refused", text);
+        Assert.Contains("http://0.0.0.0:7070", text);
+    }
+
+    [Fact]
+    public async Task StartAsync_ContradictoryPortAndUrl_IsAUsageError()
+    {
+        var (console, output) = CreateConsole();
+
+        var exitCode = await CommandLine.RunAsync(["core", "start", "--port", "7070", "--url", "http://localhost:9999"], console);
+
+        Assert.Equal(2, exitCode);
+        Assert.Contains("contradicts", output.ToString());
+    }
+
+    [Fact]
     public async Task StartAsync_LiveRootWithoutConflictingIntent_ReportsAlreadyRunning()
     {
         using var server = new FakeCoreServer(

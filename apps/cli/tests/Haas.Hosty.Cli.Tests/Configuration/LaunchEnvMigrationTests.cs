@@ -73,32 +73,81 @@ public sealed class LaunchEnvMigrationTests : IDisposable
     }
 
     [Fact]
-    public void Run_NonDefaultDataRoot_PrintsThePointerNoticeAndFoldsThePortIntoThatRoot()
+    public void Run_PointerAtAThirdRootUnderAnExplicitTarget_IsNotThisInvocationsToMigrate()
     {
+        // The operator explicitly targeted THIS root; the file's pointer names another
+        // installation. Migrating (or deleting) it here would act on the wrong root, so the file
+        // is left exactly as it was.
         var environment = HostyEnvironment.Current();
         var externalRoot = Path.Combine(Path.GetTempPath(), $"hosty-migrated-root-{Guid.NewGuid():N}");
         WriteLaunchEnv(environment, $"HOSTY_DATA_ROOT={externalRoot}\nHOSTY_CORE_PORT=7171\n");
 
+        var notices = LaunchEnvMigration.Run(environment);
+
+        Assert.Empty(notices);
+        Assert.True(File.Exists(environment.LaunchConfigPath));
+        Assert.False(Directory.Exists(externalRoot));
+    }
+
+    [Fact]
+    public void Run_PointerAtAnotherRootOnADefaultInvocation_AbortsAndKeepsTheFile()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            // GetFolderPath(UserProfile) ignores a faked HOME on Windows, so a default-root
+            // invocation cannot be simulated there; the branch itself is platform-neutral.
+            return;
+        }
+
+        // A bare invocation lands on the default root only because nothing selected one; the
+        // legacy pointer says the installation lives elsewhere. Acting would hit the wrong root
+        // and deleting the pointer would erase the only record of the right one — so the command
+        // must stop, keep the file, and say how to rerun.
+        var previousHome = Environment.GetEnvironmentVariable("HOME");
+        var home = Path.Combine(Path.GetTempPath(), $"hosty-fake-home-{Guid.NewGuid():N}");
+        Environment.SetEnvironmentVariable(RootVariable, null);
+        Environment.SetEnvironmentVariable("HOME", home);
         try
         {
-            var notices = LaunchEnvMigration.Run(environment);
+            var environment = HostyEnvironment.Current();
+            var legacyRoot = Path.Combine(Path.GetTempPath(), $"hosty-legacy-root-{Guid.NewGuid():N}");
+            WriteLaunchEnv(environment, $"HOSTY_DATA_ROOT={legacyRoot}\nHOSTY_CORE_PORT=7171\n");
 
-            // The pointer cannot live inside the root it points to, so it becomes a notice…
-            Assert.Contains(notices, notice =>
-                notice.Contains("--data-root") && notice.Contains(Path.GetFullPath(externalRoot)));
-            // …and the port belongs to THAT root's store.
-            var settingsPath = Path.Combine(Path.GetFullPath(externalRoot), "core", "settings.json");
-            using var document = JsonDocument.Parse(File.ReadAllText(settingsPath));
-            Assert.Equal("7171", document.RootElement.GetProperty("server").GetProperty("HOSTY_CORE_PORT").GetString());
-            Assert.False(File.Exists(environment.LaunchConfigPath));
+            var exception = Assert.Throws<ConfigurationException>(() => LaunchEnvMigration.Run(environment));
+
+            Assert.Contains(legacyRoot, exception.Message);
+            Assert.Contains("--data-root", exception.Message);
+            Assert.True(File.Exists(environment.LaunchConfigPath));
+            Assert.False(Directory.Exists(legacyRoot));
         }
         finally
         {
-            if (Directory.Exists(externalRoot))
+            Environment.SetEnvironmentVariable("HOME", previousHome);
+            Environment.SetEnvironmentVariable(RootVariable, rootDirectory);
+            if (Directory.Exists(home))
             {
-                Directory.Delete(externalRoot, recursive: true);
+                Directory.Delete(home, recursive: true);
             }
         }
+    }
+
+    [Fact]
+    public void Run_PointerAtTheExplicitlyTargetedRoot_FoldsThereAndRemindsToExport()
+    {
+        // The operator followed the abort instructions: the explicit target IS the pointer's
+        // root. The port folds into that root's store, the file goes, and — since the pointer was
+        // the only thing selecting this root — the operator is reminded to keep selecting it.
+        var environment = HostyEnvironment.Current();
+        WriteLaunchEnv(environment, $"HOSTY_DATA_ROOT={environment.RootDirectory}\nHOSTY_CORE_PORT=7171\n");
+
+        var notices = LaunchEnvMigration.Run(environment);
+
+        var settingsPath = Path.Combine(environment.RootDirectory, "core", "settings.json");
+        using var document = JsonDocument.Parse(File.ReadAllText(settingsPath));
+        Assert.Equal("7171", document.RootElement.GetProperty("server").GetProperty("HOSTY_CORE_PORT").GetString());
+        Assert.False(File.Exists(environment.LaunchConfigPath));
+        Assert.Contains(notices, notice =>
+            notice.Contains("--data-root") && notice.Contains("HOSTY_DATA_ROOT"));
     }
 
     [Fact]

@@ -36,10 +36,35 @@ internal static class LaunchEnvMigration
             return [$"Legacy launch.env at '{path}' could not be read ({ex.Message}); leaving it in place."];
         }
 
-        // The data root the file's other values belong to: launch.env was the only thing that
-        // remembered a non-default root, so the port must be folded into THAT root's store.
+        // The root the file's pointer names, when it names one. Before anything is folded or
+        // deleted, the pointer must agree with the root this invocation is about to act on:
+        // migrating on a mismatch would run the command against the wrong installation (the first
+        // `hosty start` creating a second default-root Core, `hosty uninstall --delete-data`
+        // wiping the wrong data) and the delete would erase the only record of the right root. A
+        // pointer at the hardcoded default is vacuous — it holds nothing the default doesn't.
+        var comparison = environment.IsWindows ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         var dataRootRaw = values.GetValueOrDefault("HOSTY_DATA_ROOT", string.Empty).Trim();
-        var dataRoot = dataRootRaw.Length > 0 ? environment.ResolvePath(dataRootRaw) : environment.RootDirectory;
+        var pointerRoot = dataRootRaw.Length > 0 ? environment.ResolvePath(dataRootRaw) : null;
+        var pointerIsMeaningful = pointerRoot is not null &&
+            !PathsEqual(pointerRoot, environment.RootDirectory, comparison) &&
+            !PathsEqual(pointerRoot, environment.PreferredRootDirectory, comparison);
+        if (pointerIsMeaningful)
+        {
+            if (PathsEqual(environment.RootDirectory, environment.PreferredRootDirectory, comparison))
+            {
+                // Aimed at the default root only because nothing selected one; the installation
+                // lives elsewhere. Stop before acting on the wrong root.
+                throw new ConfigurationException(
+                    $"This installation's data root is '{pointerRoot}' (recorded in the legacy launch config '{path}'), " +
+                    $"but this command is aimed at the default root '{environment.RootDirectory}'. Rerun with " +
+                    $"--data-root '{pointerRoot}' (or export HOSTY_DATA_ROOT) to migrate the legacy config and " +
+                    "continue; if the pointer is obsolete, delete the file by hand.");
+            }
+
+            // The operator explicitly targeted another environment. The pointer describes a
+            // different installation, so it is not this invocation's to migrate or delete.
+            return [];
+        }
 
         var folded = true;
         if (values.GetValueOrDefault("HOSTY_CORE_PORT") is { } rawPort &&
@@ -47,7 +72,7 @@ internal static class LaunchEnvMigration
             port is > 0 and <= 65535 &&
             port != 7070)
         {
-            if (TryFoldPortIntoSettings(dataRoot, port, out var settingsPath, out var foldError))
+            if (TryFoldPortIntoSettings(environment.RootDirectory, port, out var settingsPath, out var foldError))
             {
                 notices.Add(
                     $"launch.env is retired: moved HOSTY_CORE_PORT={port} into the data root's settings store " +
@@ -63,18 +88,16 @@ internal static class LaunchEnvMigration
             }
         }
 
-        // Only a root the FILE recorded warrants the pointer notice — launch.env was the one thing
-        // that remembered it. A file without the key simply belongs to the current root.
-        if (dataRootRaw.Length > 0 &&
-            !string.Equals(
-                Path.TrimEndingDirectorySeparator(dataRoot),
-                Path.TrimEndingDirectorySeparator(environment.PreferredRootDirectory),
-                environment.IsWindows ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+        // The pointer named the root this invocation explicitly targeted; once the file is gone,
+        // nothing selects that root anymore — remind the operator before the delete below.
+        if (pointerRoot is not null &&
+            PathsEqual(pointerRoot, environment.RootDirectory, comparison) &&
+            !PathsEqual(environment.RootDirectory, environment.PreferredRootDirectory, comparison))
         {
             notices.Add(
-                $"launch.env pointed the data root at '{dataRoot}'. The CLI no longer stores this pointer " +
-                "(it cannot live inside the root it points to): select the environment per command with " +
-                $"--data-root '{dataRoot}', or export HOSTY_DATA_ROOT.");
+                $"launch.env pointed the data root at '{pointerRoot}'. The CLI no longer stores this pointer " +
+                "(it cannot live inside the root it points to): keep selecting the environment with " +
+                $"--data-root '{pointerRoot}', or export HOSTY_DATA_ROOT.");
         }
 
         if (values.GetValueOrDefault("HOSTY_CORE_PUBLIC_ORIGIN") is { } origin && !string.IsNullOrWhiteSpace(origin))
@@ -147,6 +170,12 @@ internal static class LaunchEnvMigration
             return false;
         }
     }
+
+    private static bool PathsEqual(string left, string right, StringComparison comparison)
+        => string.Equals(
+            Path.TrimEndingDirectorySeparator(left),
+            Path.TrimEndingDirectorySeparator(right),
+            comparison);
 
     private static Dictionary<string, string> Parse(IEnumerable<string> lines)
     {

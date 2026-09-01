@@ -122,15 +122,35 @@ internal sealed partial class CoreCommand(CommandContext context)
             endpoint = TryGetOrigin(live.ControlBaseUrl);
         }
 
-        var livePort = TryGetUrlPort(endpoint);
-        var requestedPort = options.Port ?? TryGetUrlPort(options.Url);
-        if (requestedPort is int requested && livePort is int running && requested != running)
+        // Conflicting intent is judged against the FULL requested binding, not its port alone: a
+        // --url naming another scheme or host on the live port is still a binding this start was
+        // asked for and did not get, and calling that an idempotent reuse would silently drop it.
+        string? refusedRequest = null;
+        if (options.Url is { } requestedUrl &&
+            Uri.TryCreate(requestedUrl, UriKind.Absolute, out var requestedUri) &&
+            endpoint is not null &&
+            Uri.TryCreate(endpoint, UriKind.Absolute, out var liveUri))
+        {
+            if (!string.Equals(requestedUri.Scheme, liveUri.Scheme, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(requestedUri.Host, liveUri.Host, StringComparison.OrdinalIgnoreCase) ||
+                requestedUri.Port != liveUri.Port)
+            {
+                refusedRequest = $"URL {requestedUrl}";
+            }
+        }
+        else if ((options.Port ?? TryGetUrlPort(options.Url)) is int requested &&
+            TryGetUrlPort(endpoint) is int running && requested != running)
+        {
+            refusedRequest = $"port {requested}";
+        }
+
+        if (refusedRequest is not null)
         {
             context.Error.MarkupLine(
                 $"[red]Hosty Core is already running for data root[/] {Markup.Escape(context.Environment.RootDirectory)} " +
                 $"[red](PID {processId?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unknown"}, endpoint {Markup.Escape(endpoint ?? "unknown")}).[/]");
             context.Error.MarkupLine(
-                $"[red]One Core process per data root — a second start on port {requested} was refused.[/]");
+                $"[red]One Core process per data root — a second start requesting {Markup.Escape(refusedRequest)} was refused; the requested binding was not applied.[/]");
             context.Error.MarkupLine(
                 "[grey]Stop it with [white]hosty core stop[/], persist a port change with [white]hosty core settings set HOSTY_CORE_PORT <port>[/] and restart, or address another environment with [white]--data-root[/].[/]");
             return 1;
@@ -744,6 +764,15 @@ internal sealed partial class CoreCommand(CommandContext context)
                 default:
                     throw new CommandUsageException($"Unknown core start option '{arg}'.", Usage);
             }
+        }
+
+        // A port that contradicts the URL's own port is two requests in one command; refuse it
+        // rather than letting one silently win.
+        if (url is not null && port is int chosenPort &&
+            TryGetUrlPort(url) is int urlPort && urlPort != chosenPort)
+        {
+            throw new CommandUsageException(
+                $"--port {chosenPort} contradicts --url {url} (which binds port {urlPort}).", Usage);
         }
 
         return new StartOptions(projectPath, url, foreground, port);
