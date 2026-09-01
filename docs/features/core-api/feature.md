@@ -1,11 +1,13 @@
 # Core API
 
 Created: 2026-05-13
-Updated: 2026-07-29
+Updated: 2026-09-01
 
 ## Description
 
 Hosty Core exposes browser APIs for Shell and app auth, plus a local control API for the CLI. The current lifecycle surface is runtime-app oriented.
+
+Every request-body record reachable from a mapped endpoint carries a `[JsonSerializable]` entry in `CoreJsonSerializerContext`. This is a hard requirement of the whole surface rather than a per-endpoint detail: routing builds the endpoint data source lazily on the first request and resolves JSON metadata for every mapped body type while doing so, so a single missing entry fails the build of the entire route table and Core answers 500 to every request while still starting, adopting containers and completing autostart. It also cannot be caught by running Core from source — `ConfigureServices` inserts the source-generated context at the head of the resolver chain, leaving the reflection resolver behind it under the JIT host, while the published Native AOT binary has that context alone.
 
 ## Browser APIs
 
@@ -107,3 +109,4 @@ An operator-triggered manual backup of a running app briefly stops it to copy a 
 - Control endpoints reject a missing or wrong `X-Hosty-Control-Secret`.
 - Reviewed-plan endpoints refuse an apply whose digest does not match the plan that was built.
 - `/api/core/status` redacts host detail for an anonymous caller while still identifying the component and version.
+- Every request-body record reachable from a mapped endpoint resolves in `CoreJsonSerializerContext`. Asserted against the context directly rather than through the request pipeline, whose fallback resolver under the JIT test host is exactly what would hide the defect, and guarded against inspecting nothing so a change to the endpoint metadata shape cannot make it pass vacuously.
