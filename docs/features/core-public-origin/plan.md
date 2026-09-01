@@ -1,6 +1,6 @@
 # Core's Own Public Origin — Editable Where Every Other Origin Is
 
-Status: Draft
+Status: Ready
 Created: 2026-07-30
 Updated: 2026-09-01
 
@@ -9,9 +9,9 @@ Updated: 2026-09-01
 Let an administrator set the address Core tells the world it lives at, from the surface that already
 edits every other host setting, and publish it through Cloudflare the way an app endpoint is published.
 
-The value is `HOSTY_CORE_PUBLIC_ORIGIN`. It is a CLI launch setting in `~/.hosty/config/launch.env`
-([cli-bootstrap.md](../cli-bootstrap/feature.md)) — a file Core neither owns nor holds a reference to. Shell shows
-the resolved value read-only on the Dashboard, saying `not configured` when it is unset
+The value is `HOSTY_CORE_PUBLIC_ORIGIN`. It is a plain environment variable Core reads once at startup
+(`HostyCoreRuntimeConfig.FromEnvironment`) and never stores — the operator must export it before every
+launch. Shell shows the resolved value read-only on the Dashboard, saying `not configured` when it is unset
 ([dashboard-page.tsx:504](../../../apps/shell/src/app/shell/pages/dashboard-page.tsx)); there is nowhere
 in any UI to change it.
 
@@ -43,15 +43,14 @@ which is an argument for the smallest design that is safe, not for skipping it.
 
 ## Target behavior
 
-A diff against [cli-bootstrap.md](../cli-bootstrap/feature.md) and
+A diff against [core-runtime-parameters/feature.md](../core-runtime-parameters/feature.md) and
 [cloudflare-ingress/feature.md](../cloudflare-ingress/feature.md).
 
 **`HOSTY_CORE_PUBLIC_ORIGIN` becomes a live Core setting with the environment variable as its baseline**,
 exactly the move the ingress provider already made: a persisted value wins over the env var, and clearing
 it falls back. This adds an override; where the baseline env var comes from is not this plan's
-concern — today the CLI writes it from `launch.env`, and once
-[core-runtime-parameters](../core-runtime-parameters/feature.md) retires that file the variable remains
-an ambient override with the same semantics. The two plans do not wait for each other.
+concern — it stays an ambient dev/fork override, the same stance every other Core setting takes towards
+its env var.
 
 Correcting the earlier claim in the ingress plan, which said this needs no restart because every reader
 reads per request: **the app-environment readers do not.** `HOSTY_CORE_PUBLIC_ORIGIN` is injected into
@@ -110,26 +109,25 @@ The three original questions are answered:
    origin into its app record as `HOSTY_PUBLIC_ORIGIN_WEB`, owned by the record and editable like any
    app's; the CLI launch-settings comment records the move. The question dissolved between this plan's
    writing and now.
-
-## Open questions
-
-1. **Does docker apps' `HOSTY_CORE_ORIGIN` decouple from this value?** Today
-   `BuildDockerCoreOrigin(EffectiveCorePublicOrigin)` rewrites a loopback value to
-   `host.docker.internal` but passes a non-loopback one through — so once an origin is set, containers
-   dial Core by its public name (out through the tunnel and back), even though
-   `--add-host host.docker.internal:host-gateway` keeps the direct path available. localCommand apps
-   already use `ListenUrl` unconditionally. Recommended: derive the docker value from `ListenUrl` with
-   the same loopback rewrite, making the public origin browser-only and shrinking a wrong value's blast
-   radius to links and OAuth metadata. Must be decided before the setting goes live — publication in v1
-   turns the current behavior into a silent side effect of one click — and needs a check that no app
-   relies on dialing Core by its public name.
+4. **Docker apps' `HOSTY_CORE_ORIGIN` decouples from this value.** Until now
+   `BuildDockerCoreOrigin(EffectiveCorePublicOrigin)` rewrote a loopback value to `host.docker.internal`
+   but passed a non-loopback one through, so once an origin was set containers dialed Core by its public
+   name — out through the tunnel and back — even though `--add-host host.docker.internal:host-gateway`
+   kept the direct path available. It is now derived from `ListenUrl` with the same loopback rewrite,
+   which is what `LocalCommandRuntimeAdapter` already did unconditionally. The public origin becomes
+   browser-only, and a wrong value's blast radius shrinks to links and OAuth metadata. The caveat the
+   question demanded was checked: no consumer dials Core by its public name — every reader of
+   `HOSTY_CORE_ORIGIN` (`apps/ai-gateway`, `apps/telemetry-backend`, `apps/marketplace`,
+   `apps/demo-app`, `packages/app-sdk`) uses it purely as a server-to-server base URL, and both SDKs
+   already document that a browser must never be sent there.
 
 ## Deliverables
 
 - [x] Answer the original open questions — decided 2026-09-01, recorded above; the answer to the
       publication question makes the target behavior final.
-- [ ] Decide the `HOSTY_CORE_ORIGIN` decoupling (open question 1) and implement whichever way it
-      lands.
+- [x] Decide the `HOSTY_CORE_ORIGIN` decoupling — decided 2026-09-01 (decision 4): it decouples.
+- [ ] Implement the decoupling: `BuildDockerCoreOrigin` derives from `ListenUrl`, with the adapter
+      tests pinning that a non-loopback public origin no longer reaches `HOSTY_CORE_ORIGIN`.
 - [ ] `HOSTY_CORE_PUBLIC_ORIGIN` as a live Core setting: definition, group, validation, env baseline,
       persisted-wins-over-env, reset semantics, `/api/core/settings` exposure.
 - [ ] Readers moved off the startup snapshot onto the live value, with the app-environment readers left
@@ -144,15 +142,11 @@ The three original questions are answered:
       wins).
 - [ ] The ingress diagnostics hint narrowed to the providers that cannot publish it.
 - [ ] Platform minor bump; `apps/shell` minor bump.
-- [ ] `feature.md` for this folder; `cli-bootstrap.md` updated to say the CLI setting is now a baseline;
-      `cloudflare-ingress/feature.md` updated where the hint changes; docs index regenerated.
+- [ ] `feature.md` for this folder; `cli-bootstrap/feature.md` updated where it still calls this an
+      export-it-yourself variable; `cloudflare-ingress/feature.md` updated where the hint changes; docs
+      index regenerated.
 
 ## Deliberately not doing
-
-- **Taking `launch.env` away from the CLI — here.** Core gains an override, not ownership. Retiring
-  `launch.env` itself is real and decided, but it belongs to
-  [core-runtime-parameters](../core-runtime-parameters/feature.md); this plan works identically before and
-  after it lands.
 - **Deriving the origin by probing interfaces or trusting the request `Host` header.** The header is
   chosen by the sender, and an allowlist derived from it lets a request name its own redirect target —
   recorded here because it is the obvious shortcut and it is not safe. See
@@ -178,9 +172,10 @@ The three original questions are answered:
 
 - [Cloudflare Ingress](../cloudflare-ingress/feature.md) — where this deliverable came from, and the
   diagnostics hint it replaces.
-- [CLI Bootstrap](../cli-bootstrap/feature.md) — `launch.env` and the CLI settings this makes a baseline.
-- [Core Runtime Parameters](../core-runtime-parameters/feature.md) — retires `launch.env` and supplies
-  the `hosty core settings` recovery path decision 2 relies on.
+- [CLI Bootstrap](../cli-bootstrap/feature.md) — the launch.env migration notice that still tells an
+  operator to export this variable by hand.
+- [Core Runtime Parameters](../core-runtime-parameters/feature.md) — the settings store this value moves
+  into, and the `hosty core settings` recovery path decision 2 relies on.
 - [Advertised App Origins](../advertised-app-origins/plan.md) — the adjacent "what address do we tell
   clients" problem, for LAN endpoints rather than Core itself.
 - [Auth And Gateway Model](../auth-gateway/feature.md) — the redirect allowlist and session rules a wrong
