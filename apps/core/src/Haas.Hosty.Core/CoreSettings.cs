@@ -1124,19 +1124,28 @@ internal sealed class CoreSettingsService
         {
             // Same per-entry tolerance as the other sections: skip unknown keys and hand-edited
             // values that do not parse rather than crashing startup. The group holds two keys of
-            // different shapes, so each is checked against its own parser.
-            var valid = key switch
+            // different shapes, so each is checked against its own parser — and each is stored as
+            // that parser's CANONICAL form, not as it was written. A hand-edited file is the one
+            // path into the store that never went through NormalizeServerValue, so normalizing on
+            // the way in is what keeps "stored values are canonical" true for every reader: an
+            // origin with a trailing slash or stray whitespace would otherwise reach OAuth metadata
+            // and invitation links verbatim.
+            string? canonical = key switch
             {
-                ServerSettings.PortKey => ServerSettings.TryParsePort(value, out _),
-                CoreOriginSettings.PublicOriginKey => CoreOriginSettings.TryNormalize(value, out _),
-                _ => false,
+                ServerSettings.PortKey => ServerSettings.TryParsePort(value, out var port)
+                    ? port.ToString(CultureInfo.InvariantCulture)
+                    : null,
+                CoreOriginSettings.PublicOriginKey => CoreOriginSettings.TryNormalize(value, out var origin)
+                    ? origin
+                    : null,
+                _ => null,
             };
-            if (!valid)
+            if (canonical is null)
             {
                 continue;
             }
 
-            loaded[key] = value;
+            loaded[key] = canonical;
         }
 
         return loaded;

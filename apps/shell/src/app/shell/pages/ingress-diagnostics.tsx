@@ -167,7 +167,9 @@ export function IngressDiagnostics() {
               )}
               {core.managed && (
                 <p className="text-muted-foreground">
-                  Hosty published this address, so reapplying it from the control above repairs the route and the record.
+                  {publishes
+                    ? "Hosty published this address, so reapplying it from the control above repairs the route and the record."
+                    : "Hosty published this address under the Cloudflare API provider, which is no longer selected — there is no control here to repair it with. Switch back to that provider to reapply or unpublish it, or fix the route and the record in Cloudflare yourself."}
                 </p>
               )}
               {/* The by-hand recipe is for the providers that cannot publish it. Under the API provider with

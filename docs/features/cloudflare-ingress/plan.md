@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-07-14
-Updated: 2026-07-30
+Updated: 2026-09-01
 
 The one-click Cloudflare ingress plan shipped through PRs #194–#201: the API client and private token
 store, the connect and discovery flow, the preservation-safe tunnel-config patcher, DNS CNAME CRUD and
@@ -155,9 +155,10 @@ Unchanged in substance from the 2026-07-28 audit, re-stated as behavior:
   synchronous, so nothing could ever produce it.
 - The connector-locality verdict is consulted before a mutation, not only at connect.
 - Core's own hostname is *reported* by diagnostics, with the CNAME target and tunnel service the
-  operator must create by hand. Publishing it through the product workflow was a separate feature
-  ([core-public-origin](../core-public-origin/feature.md)), since shipped — it turned on where
-  `HOSTY_CORE_PUBLIC_ORIGIN` lives, not on anything in this one.
+  operator must create by hand — now only under the providers that cannot publish it (`none` and
+  `cloudflared`). Publishing it through the product workflow was a separate feature, and
+  [core-public-origin](../core-public-origin/feature.md) has since shipped it: it turned on where
+  `HOSTY_CORE_PUBLIC_ORIGIN` lives, not on anything in this plan.
 
 ## Deliverables
 
