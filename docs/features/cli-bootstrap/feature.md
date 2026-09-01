@@ -55,14 +55,16 @@ On Windows the executable names use `.exe`.
 
 There is no launch config file and no `hosty config` command. The listen port is a per-environment
 value in the instance's own settings store (`hosty core settings set HOSTY_CORE_PORT <port>`, effective
-on the next start; `hosty core start --port` overrides it for a single run). `HOSTY_CORE_PUBLIC_ORIGIN`
-is a plain environment variable Core reads; the CLI neither stores nor injects it.
+on the next start; `hosty core start --port` overrides it for a single run). The public origin is a live
+setting in the same store (`hosty core settings set HOSTY_CORE_PUBLIC_ORIGIN <origin>`), with
+`HOSTY_CORE_PUBLIC_ORIGIN` surviving as an ambient baseline the stored value wins over; the CLI neither
+stores nor injects it. See [core-public-origin](../core-public-origin/feature.md).
 
 A legacy `~/.hosty/config/launch.env` is migrated read-and-delete on the CLI's first contact: a
 non-default `HOSTY_CORE_PORT` is folded into the target root's settings store, a non-default
 `HOSTY_DATA_ROOT` produces a notice pointing at `--data-root`/`HOSTY_DATA_ROOT` (the pointer cannot
-live inside the root it points to), a set `HOSTY_CORE_PUBLIC_ORIGIN` is echoed as an
-export-it-yourself notice, and the file is deleted.
+live inside the root it points to), a set `HOSTY_CORE_PUBLIC_ORIGIN` is echoed as a notice pointing at
+`hosty core settings set HOSTY_CORE_PUBLIC_ORIGIN`, and the file is deleted.
 
 Which first-party apps a brand-new host is seeded with — and where their manifests and feeds live — comes from the release-owned distribution catalog (`distribution-apps.0.1`, embedded in the Core binary; a source tree's repo-root `distribution-apps.json` wins). Seeding happens once; afterwards `hosty setup` installs and uninstalls catalog entries as ordinary lifecycle operations against a running Core. See [removable-system-apps](../removable-system-apps/feature.md).
 
