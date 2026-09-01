@@ -1282,7 +1282,10 @@ export function ShellClient({
           const outcome = await waitForShellUpdateToSettle({
             coreOrigin,
             shellAppId,
-            subscribe: (onSync) => subscribeToCoreEvents(coreOrigin, { names: [CoreEventNames.appChanged], onSync }),
+            // app.removed too: a removal mid-apply is one of the ways this wait ends, and without
+            // it the record would only be re-read on the next unrelated commit or the deadline.
+            subscribe: (onSync) =>
+              subscribeToCoreEvents(coreOrigin, { names: [CoreEventNames.appChanged, CoreEventNames.appRemoved], onSync }),
             // A running Shell is restarted by the apply, so its "updated" commit lands before the
             // start this page is actually waiting for. One that is already down ends at "updated".
             expectRestart: isAppUp(app.runtimeState),
@@ -1293,9 +1296,12 @@ export function ShellClient({
             return;
           }
 
+          // Deliberately vague: this is every way the record failed to settle — an apply still
+          // running past the deadline, the app removed, a flip the page never saw. The row renders
+          // whichever it was, so point at it rather than assert one.
           if (outcome.kind === "unresolved") {
-            toast.warning("Shell update still running", {
-              description: "It continues on the host. Reload this page once the Shell answers again.",
+            toast.warning("Shell update not confirmed", {
+              description: "The page stopped waiting for the outcome — check the app row, and reload once the Shell answers again.",
             });
             return;
           }

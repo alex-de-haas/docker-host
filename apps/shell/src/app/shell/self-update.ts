@@ -12,8 +12,9 @@ export type ShellUpdateOutcome =
   | { kind: "unresolved" };
 
 /**
- * Subscribes to app-record change hints, returning an unsubscribe. `onSync` is expected to run on
- * connect and on every reconnect as well as per hint — the wait leans on that to survive a drop.
+ * Subscribes to app-record hints (changes and removals both — a removal ends this wait too),
+ * returning an unsubscribe. `onSync` is expected to run on connect and on every reconnect as well as
+ * per hint — the wait leans on that to survive a dropped one.
  */
 export type SubscribeToAppChanges = (onSync: () => void | Promise<void>) => () => void;
 
