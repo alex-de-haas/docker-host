@@ -232,6 +232,12 @@ export async function streamEvents(
               lastSeq = event.seq;
             }
             onEvent(event);
+            // Terminal, unlike every other end of this stream: the session is gone, so the EOF that
+            // follows is not a dropped connection to retry. Reconnecting would fetch a 404 and put
+            // an error in a transcript the operator has already deleted.
+            if (event.type === "session_deleted") {
+              return;
+            }
           } catch {
             // A torn frame is dropped; the seq cursor makes the reconnect self-healing.
           }

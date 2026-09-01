@@ -57,6 +57,11 @@ export default function AssistantPage() {
   const [showSessions, setShowSessions] = useState(false);
   const [ready, setReady] = useState(false);
   const streamAbortRef = useRef<AbortController | null>(null);
+  // A session this client was watching that no longer exists; cleared once acted on.
+  const [deletedElsewhere, setDeletedElsewhere] = useState<string | null>(null);
+  // Sessions this tab deleted itself. The deletion fans out to every subscriber including this one,
+  // and its own click must not come back as "this session was deleted" from somewhere else.
+  const selfDeleted = useRef(new Set<string>());
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -92,6 +97,18 @@ export default function AssistantPage() {
         }
         if (event.type === "session_status") {
           setStatus(String(event.status ?? "idle"));
+          return;
+        }
+        if (event.type === "session_deleted") {
+          if (selfDeleted.current.delete(record.id)) {
+            // This tab's own delete, already handled where the button was pressed.
+            return;
+          }
+          // Deleted from somewhere else — another tab, another client. Recorded for the effect
+          // below rather than handled here: detaching needs the session list and the new-session
+          // path, and reaching those from inside the stream callback would tie this callback to
+          // state it must not go stale on.
+          setDeletedElsewhere(record.id);
           return;
         }
         setEvents((current) => [...current, event]);
@@ -307,6 +324,9 @@ export default function AssistantPage() {
   const remove = useCallback(
     async (sessionId: string) => {
       setError(null);
+      // Claimed before the request: the fan-out can reach this tab's own stream before the response
+      // does, and this is what tells the two apart.
+      selfDeleted.current.add(sessionId);
       try {
         await deleteSession(sessionId);
         // The draft belonged to a session that no longer exists; leaving it behind would resurrect
@@ -326,11 +346,35 @@ export default function AssistantPage() {
           await startNew();
         }
       } catch (cause) {
+        // Nothing was deleted, so the claim must not outlive the attempt — a later deletion from
+        // another tab would otherwise be swallowed as this one's own.
+        selfDeleted.current.delete(sessionId);
         setError(cause instanceof Error ? cause.message : String(cause));
       }
     },
     [session, startNew],
   );
+
+  useEffect(() => {
+    if (!deletedElsewhere) {
+      return;
+    }
+    setDeletedElsewhere(null);
+    setSessions((current) => current.filter((entry) => entry.id !== deletedElsewhere));
+    clearDraft(deletedElsewhere);
+    if (session?.id === deletedElsewhere) {
+      // The open session was deleted elsewhere: the composer must stop pointing at it, or the next
+      // message is sent into a session that is not there.
+      streamAbortRef.current?.abort();
+      try {
+        window.localStorage.removeItem(SESSION_STORAGE_KEY);
+      } catch {
+        // Reattachment across reloads already tolerates a stored id that no longer resolves.
+      }
+      setError("This session was deleted. Started a new one.");
+      void startNew();
+    }
+  }, [deletedElsewhere, session, startNew]);
 
   const rename = useCallback(async (sessionId: string, title: string) => {
     setError(null);

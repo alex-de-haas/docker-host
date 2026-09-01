@@ -138,7 +138,7 @@ export class SessionManager {
    * Subscribers are told before the record goes: another tab with this session open would otherwise
    * sit on a stream that has stopped meaning anything, and reconnect into a 404 it cannot explain.
    */
-  async deleteSession(id: string): Promise<boolean> {
+  async deleteSession(id: string, deletedBy: string): Promise<boolean> {
     const record = this.live.get(id)?.record ?? (await this.store.readRecord(id));
     if (!record) {
       return false;
@@ -163,10 +163,11 @@ export class SessionManager {
     }
     this.proxy?.unregister(id);
     await this.store.deleteSession(id);
-    // Reported like every other lifecycle transition: the deletion is the operator's action, and the
-    // transcript it removed is exactly what an audit trail cannot recover afterwards. The id and the
-    // actor go to Core; nothing of what was said does.
-    this.audit.report("ai_session_deleted", { sessionId: id });
+    // Reported like every other lifecycle transition, and with the administrator who asked for it:
+    // the transcript this removed is exactly what an audit trail cannot recover afterwards, so an
+    // unattributable deletion would be the one entry that matters least. The deleter is recorded
+    // separately from the session's creator, which is a different person often enough to matter.
+    this.audit.report("ai_session_deleted", { sessionId: id, deletedBy, createdBy: record.createdBy });
     return true;
   }
 

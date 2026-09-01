@@ -359,7 +359,7 @@ async function route(
   }
 
   if (rest === "" && method === "DELETE") {
-    const deleted = await manager.deleteSession(sessionId);
+    const deleted = await manager.deleteSession(sessionId, actor.userId);
     if (!deleted) {
       sendJson(response, 404, { code: "session_not_found", message: "Session not found." });
       return;
@@ -455,6 +455,13 @@ async function streamEvents(
   tokenExpSeconds: number,
 ): Promise<void> {
   const afterSeq = Number.parseInt(url.searchParams.get("after") ?? "0", 10) || 0;
+  // Checked before the headers go out: once a 200 is committed, a session that turns out to be gone
+  // can only be reported as an empty stream, and the client's reconnect loop reads that as a
+  // transient drop and comes straight back. A 404 is terminal on the client and says why.
+  if (!(await manager.getSession(sessionId))) {
+    sendJson(response, 404, { code: "session_not_found", message: "Session not found." });
+    return;
+  }
   response.writeHead(200, {
     "content-type": "text/event-stream",
     "cache-control": "no-cache, no-transform",
@@ -471,7 +478,16 @@ async function streamEvents(
     }
   };
 
-  const { replay, unsubscribe } = await manager.subscribe(sessionId, afterSeq, write);
+  let subscription;
+  try {
+    subscription = await manager.subscribe(sessionId, afterSeq, write);
+  } catch {
+    // Deleted between the check above and this line. The headers are already out, so the only
+    // honest answer is to close; the client's next attempt gets the 404.
+    response.end();
+    return;
+  }
+  const { replay, unsubscribe } = subscription;
   for (const event of replay) {
     write(event);
   }

@@ -303,11 +303,19 @@ gateway restart.
     confirmed one cannot send twice.
   - A session can be **deleted** (`DELETE /api/sessions/:id`), which removes its record and its
     transcript from disk and stops any run still producing one — by the same route a cancel takes,
-    so a harness is never left minting app tokens for a conversation nobody can read. Subscribers
-    are sent `session_deleted` and their stream is closed, rather than being left to reconnect into
-    a 404. The row asks for confirmation first, naming what is about to go: nothing restores a
-    deleted transcript. Core is told a session was deleted, with its id and the actor — never with
-    any of what was said.
+    so a harness is never left minting app tokens for a conversation nobody can read. The row asks
+    for confirmation first, naming what is about to go: nothing restores a deleted transcript.
+  - A deletion reaches the other clients watching that session, and is terminal for them:
+    subscribers are sent `session_deleted`, the stream is closed, and the client stops reconnecting
+    on that event instead of treating the EOF as a dropped connection. A panel whose open session
+    was deleted elsewhere detaches and starts a fresh one rather than leaving its composer pointed
+    at a session that is not there. Opening a stream for a session that is already gone is a `404`
+    — refused before a `200` is committed, because an empty `200` reads as a transient drop and the
+    client would come straight back.
+  - Core is told `ai_session_deleted` with the session id, the administrator who deleted it, and the
+    session's creator — never with any of what was said. Attribution matters more here than
+    elsewhere: the transcript this removes is exactly what an audit trail cannot recover, and the
+    operator deleting a session is often not the one who started it.
   - Titles stay in the gateway's store. They are derived from transcript text, and transcript
     content does not reach Core (decision 2026-08-08 — Core audits lifecycle and approvals only).
 - "Ask assistant" on an app's details appends to the composer draft of the open session, prefixed
@@ -343,9 +351,11 @@ gateway restart.
   must be a 400 with the existing title intact — reading a field off a non-object body would
   otherwise be a 500 for the client's mistake.
 - Deletion: the HTTP suite covers a session removed with its transcript (the event log reads empty
-  afterwards, not merely unlisted), a second delete answering 404, and — the case that would
-  otherwise only show up as a hung browser tab — an open event stream being ended when the session
-  it follows is deleted under it. That test hangs and fails if the stream is left open.
+  afterwards, not merely unlisted), a second delete answering 404, a stream opened for a deleted
+  session answering 404 rather than an empty 200, and — the case that would otherwise only show up
+  as a hung browser tab — an open event stream being ended when the session it follows is deleted
+  under it. That test hangs and fails if the stream is left open. The audit report is asserted to
+  carry the deleting administrator alongside the session's creator.
 - Markdown (vitest over the two pure policies — `web/src/lib` suites run in the gateway's own
   vitest project; the library itself is not re-tested here): the allowed schemes, and refusal of
   `javascript:`, `data:`, `file:`, credentials in the authority, and relative references. Soft
