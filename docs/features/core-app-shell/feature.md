@@ -1,7 +1,7 @@
 # Core App Shell
 
 Created: 2026-05-19
-Updated: 2026-08-04
+Updated: 2026-09-01
 
 Hosty Shell is the Core-managed browser UI runtime app. It renders a single authenticated Shell surface backed by Hosty Core APIs; it does not own Core lifecycle logic and it does not reintroduce the retired combined Next.js Host package.
 
@@ -47,10 +47,14 @@ still resolve, and the sidebar's two groups are described in
 [Shell Navigation](../shell-navigation/feature.md). An administrator-only surface falls back to the
 Apps route while the persistent orchestrator redirects a non-admin session to `/apps`.
 
-The sidebar is a persistent desktop-style rail with an expanded and a compact mode; the selected mode
-is stored in browser local storage. Because the sidebar and Core/session state are owned by the root
-layout, moving between routes does not remount it or briefly render the unauthenticated navigation
-state.
+The sidebar is a persistent desktop-style rail with an expanded and a compact mode; the selected
+mode — like the right panel's docked state — is stored in a cookie the server layout reads, so the
+first paint after a reload is already in the stored state instead of rendering the default and
+animating the correction. A missing cookie falls back once to the legacy local-storage value. The
+chrome's column animation stays disabled until the first Core load settles, so the right panel
+column appearing with the apps response snaps into place rather than looking like it opens itself.
+Because the sidebar and Core/session state are owned by the root layout, moving between routes does
+not remount it or briefly render the unauthenticated navigation state.
 
 Hosty Shell is installed as a system runtime app and does not appear as an entry in the Apps
 sidebar.
