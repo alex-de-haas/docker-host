@@ -19,9 +19,36 @@ if (OperatingSystem.IsWindows())
 }
 
 var builder = WebApplication.CreateSlimBuilder(args);
-HostyCoreApplication.ConfigureServices(builder);
+
+// Resolve the two process parameters (data root, port: flag → env → stored → default), then take
+// the per-root exclusive lock BEFORE anything binds or touches the root's state. One Core process
+// per data root: a second start against a live root — any port — is refused here by naming the live
+// instance, whether it came through `hosty core start` (which preflights the same check) or a
+// direct `dotnet run`. The instance id is loaded under the lock so first-start creation cannot race.
+HostyCoreRuntimeConfig config;
+CoreRootLock rootLock;
+try
+{
+    config = HostyCoreRuntimeConfig.FromEnvironment(builder.Environment, args);
+    rootLock = CoreRootLock.Acquire(config);
+}
+catch (CoreRootLockedException ex)
+{
+    await Console.Error.WriteLineAsync(ex.Message);
+    return 1;
+}
+
+config = config with { InstanceId = CoreInstanceId.LoadOrCreate(config.DataRoot) };
+
+HostyCoreApplication.ConfigureServices(builder, config);
+// Registered for disposal with the host so the lock is held for the full process lifetime and
+// released cleanly on shutdown (the OS releases it on any harder exit).
+builder.Services.AddSingleton(_ => rootLock);
 
 var app = builder.Build();
+// Materialize the lock registration so the container tracks it for disposal — nothing else ever
+// resolves it.
+_ = app.Services.GetRequiredService<CoreRootLock>();
 HostyCoreApplication.MapEndpoints(app);
 
 // Resolve the listen URL before running: once RunAsync rethrows a startup failure the

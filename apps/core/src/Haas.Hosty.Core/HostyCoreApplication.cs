@@ -954,7 +954,12 @@ internal sealed record HostyCoreRuntimeConfig(
     // Raw legacy bootstrap env (per-app manifest paths and enable flags), captured verbatim for the
     // distribution merge's deprecation layer. Which apps bootstrap — and from where — is otherwise
     // decided by the distribution list + operator choices, not by this config.
-    LegacyBootstrapEnv? Legacy = null)
+    LegacyBootstrapEnv? Legacy = null,
+    // The root's instance identity (CoreInstanceId.LoadOrCreate): empty for the default root, a
+    // stored GUID otherwise. Scopes docker resources so instances cannot touch each other's
+    // containers. Stamped by the entry point after the per-root lock is taken; hosts constructing a
+    // config directly (tests) keep the unscoped default.
+    string InstanceId = "")
 {
     public string EffectiveCorePublicOrigin => CorePublicOrigin ?? ListenUrl;
 
@@ -968,16 +973,30 @@ internal sealed record HostyCoreRuntimeConfig(
     public string EffectiveIngressConfigPath => IngressConfigPath ?? Path.Combine(DataRoot, "core", "ingress", "config.yml");
 
     public static HostyCoreRuntimeConfig FromEnvironment(IHostEnvironment environment)
+        => FromEnvironment(environment, []);
+
+    public static HostyCoreRuntimeConfig FromEnvironment(IHostEnvironment environment, string[] args)
     {
+        var startArguments = CoreStartArguments.Parse(args);
         var dataRoot = NormalizePath(
+            NormalizeOptional(startArguments.DataRoot) ??
             ReadFirst("HOSTY_DATA_ROOT", "HOSTY_HOME") ??
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".hosty"));
         var coreRoot = Path.Combine(dataRoot, "core");
         var runDirectory = Path.Combine(coreRoot, "run");
-        var corePort = ReadPort("HOSTY_CORE_PORT", 7070);
-        var listenUrl = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_CORE_URL")) ??
-            NormalizeOptional(Environment.GetEnvironmentVariable("ASPNETCORE_URLS")) ??
-            $"http://localhost:{corePort}";
+        // Listen URL and port resolve together. The port: flag → env → the port of an explicit
+        // listen URL → the root's stored value (settings.json, `hosty core settings set
+        // HOSTY_CORE_PORT`) → 7070. A flag or env var affects this run only; persisting a change
+        // goes through settings. The explicit-URL port outranks the store so a `--url` start never
+        // reports a CorePort it does not actually listen on.
+        var explicitListenUrl = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_CORE_URL")) ??
+            NormalizeOptional(Environment.GetEnvironmentVariable("ASPNETCORE_URLS"));
+        var corePort = startArguments.Port ??
+            ReadOptionalPort("HOSTY_CORE_PORT") ??
+            TryGetUrlPort(explicitListenUrl) ??
+            CoreSettingsStore.TryReadStoredPort(coreRoot) ??
+            ServerSettings.DefaultPort;
+        var listenUrl = explicitListenUrl ?? $"http://localhost:{corePort}";
         var corePublicOrigin = NormalizeOptional(Environment.GetEnvironmentVariable("HOSTY_CORE_PUBLIC_ORIGIN"));
         // The host Core advertises (and dials) for an app's published loopback port. Must be the IPv4
         // loopback literal, NOT "localhost": docker publishes these ports on 127.0.0.1 only, but on
@@ -1051,12 +1070,12 @@ internal sealed record HostyCoreRuntimeConfig(
     private static string? NormalizeOptional(string? value)
         => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
-    private static int ReadPort(string name, int defaultValue)
+    private static int? ReadOptionalPort(string name)
     {
         var value = NormalizeOptional(Environment.GetEnvironmentVariable(name));
         if (value is null)
         {
-            return defaultValue;
+            return null;
         }
 
         if (int.TryParse(value, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var port) &&
@@ -1067,6 +1086,11 @@ internal sealed record HostyCoreRuntimeConfig(
 
         throw new InvalidOperationException($"{name} must be an integer between 1 and {IPEndPoint.MaxPort}.");
     }
+
+    private static int? TryGetUrlPort(string? url)
+        => url is not null && Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Port > 0
+            ? uri.Port
+            : null;
 
     private static bool ReadBoolean(string name, bool defaultValue)
     {
@@ -1125,6 +1149,64 @@ internal sealed record HostyCoreRuntimeConfig(
         }
 
         return IPAddress.TryParse(host, out var address) && IPAddress.IsLoopback(address);
+    }
+}
+
+// Core's two process parameters, as `hosty core start` forwards them onto the Core argv:
+// `--data-root PATH` selects the environment, `--port N` overrides the listen port for this run
+// only. Unknown arguments are ignored — a dev host can receive ordinary ASP.NET arguments.
+internal sealed record CoreStartArguments(string? DataRoot, int? Port)
+{
+    public static CoreStartArguments Parse(IReadOnlyList<string> args)
+    {
+        string? dataRoot = null;
+        int? port = null;
+
+        for (var index = 0; index < args.Count; index++)
+        {
+            if (TryReadOption(args, ref index, "--data-root", out var dataRootValue))
+            {
+                dataRoot = dataRootValue;
+            }
+            else if (TryReadOption(args, ref index, "--port", out var portValue))
+            {
+                if (!int.TryParse(portValue.Trim(), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var parsed) ||
+                    parsed is not (> 0 and <= IPEndPoint.MaxPort))
+                {
+                    throw new InvalidOperationException($"--port must be an integer between 1 and {IPEndPoint.MaxPort}.");
+                }
+
+                port = parsed;
+            }
+        }
+
+        return new CoreStartArguments(dataRoot, port);
+    }
+
+    // Accepts both `--name value` and `--name=value`.
+    private static bool TryReadOption(IReadOnlyList<string> args, ref int index, string name, out string value)
+    {
+        value = string.Empty;
+        var argument = args[index];
+        if (string.Equals(argument, name, StringComparison.Ordinal))
+        {
+            if (index + 1 >= args.Count)
+            {
+                throw new InvalidOperationException($"{name} requires a value.");
+            }
+
+            index++;
+            value = args[index];
+            return true;
+        }
+
+        if (argument.StartsWith($"{name}=", StringComparison.Ordinal))
+        {
+            value = argument[(name.Length + 1)..];
+            return true;
+        }
+
+        return false;
     }
 }
 

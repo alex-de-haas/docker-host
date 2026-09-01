@@ -33,9 +33,17 @@ internal sealed class CoreSettingsDocument
     // OAuth overrides (currently just the dynamic-client-registration toggle). String-valued like the
     // groups above; additive, so the schema version is NOT bumped.
     public IReadOnlyDictionary<string, string> OAuth { get => field ?? EmptyOAuth; init; } = EmptyOAuth;
+    // Core process overrides (currently just the persisted listen port). String-valued like the
+    // groups above; additive, so the schema version is NOT bumped. Unlike the other groups this one
+    // is also read directly at startup (CoreSettingsStore.TryReadStoredPort), before any service
+    // exists — a port change can only ever apply on the next start.
+    public IReadOnlyDictionary<string, string> Server { get => field ?? EmptyServer; init; } = EmptyServer;
 
     private static readonly IReadOnlyDictionary<string, double> EmptyAuth =
         new Dictionary<string, double>(StringComparer.Ordinal);
+
+    private static readonly IReadOnlyDictionary<string, string> EmptyServer =
+        new Dictionary<string, string>(StringComparer.Ordinal);
 
     private static readonly IReadOnlyDictionary<string, string> EmptyIngress =
         new Dictionary<string, string>(StringComparer.Ordinal);
@@ -345,6 +353,41 @@ internal sealed record OAuthSettings(bool DynamicRegistrationEnabled)
     }
 }
 
+// The per-root Core process settings (currently just the listen port). The port a Core actually
+// listens on resolves at startup as flag → env → this stored value → default: the store is the
+// persistent per-environment value, while `--port`/HOSTY_CORE_PORT stay this-run-only overrides.
+internal sealed record ServerSettings(int Port)
+{
+    public const string PortKey = "HOSTY_CORE_PORT";
+    public const int DefaultPort = 7070;
+    public const int MaxPort = 65535;
+
+    public static bool TryParsePort(string? raw, out int port)
+    {
+        port = 0;
+        return int.TryParse(raw?.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out port)
+            && port is > 0 and <= MaxPort;
+    }
+}
+
+internal static class CoreServerSettings
+{
+    public const string Group = "Core process";
+
+    public const string PortLabel = "Listen port";
+
+    public const string PortDescription =
+        "The local port Core listens on. A change takes effect the next time Core starts — the "
+        + "running Core keeps its current port until then. A `hosty core start --port` flag or a "
+        + "HOSTY_CORE_PORT environment variable overrides the stored value for that run only.";
+
+    public static bool IsKnown(string key)
+        => string.Equals(key, ServerSettings.PortKey, StringComparison.Ordinal);
+}
+
+// The server equivalent of CoreSettingRow: the port the next plain start uses.
+internal sealed record CoreServerSettingRow(int StoredOrDefaultPort, bool Overridden);
+
 internal static class CoreOAuthSettings
 {
     public const string Group = "Agent clients";
@@ -483,6 +526,33 @@ internal sealed class CoreSettingsStore(CoreDataPaths paths, ILogger<CoreSetting
 
     public Task SaveAsync(CoreSettingsDocument document, CancellationToken cancellationToken = default)
         => JsonStorage.WriteAsync(FilePath, document, restrictToOwner: true, cancellationToken);
+
+    // Reads the root's persisted listen port for startup, before DI (and therefore this store)
+    // exists. An absent file, a foreign schema version, or an unparsable value all mean "no stored
+    // port" and startup falls back to the default — the same lenient per-entry stance Load() takes
+    // for the settings rows, minus the logging no logger can do this early.
+    public static int? TryReadStoredPort(string coreRoot)
+    {
+        try
+        {
+            var bytes = File.ReadAllBytes(Path.Combine(coreRoot, CoreSettingsSchema.FileName));
+            var document = JsonSerializer.Deserialize(bytes, CoreJsonSerializerContext.Default.CoreSettingsDocument);
+            if (document is null ||
+                !string.Equals(document.SchemaVersion, CoreSettingsSchema.Version, StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            return document.Server.TryGetValue(ServerSettings.PortKey, out var raw) &&
+                ServerSettings.TryParsePort(raw, out var port)
+                ? port
+                : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return null;
+        }
+    }
 }
 
 // One row for the settings endpoint: the definition, the current effective value, and whether a
@@ -505,6 +575,9 @@ internal sealed class CoreSettingsService
     private Dictionary<string, string> updateCheckOverrides;
     private Dictionary<string, string> userRetentionOverrides;
     private Dictionary<string, string> oauthOverrides;
+    // No "current" ServerSettings alongside these: nothing reads the port live — startup reads the
+    // file directly (TryReadStoredPort) and a change only ever applies on the next start.
+    private Dictionary<string, string> serverOverrides;
     private volatile AuthLifetimes current;
     private volatile IngressSettings currentIngress;
     private volatile UpdateCheckSettings currentUpdateCheck;
@@ -520,6 +593,7 @@ internal sealed class CoreSettingsService
         updateCheckOverrides = LoadUpdateCheckOverrides(document);
         userRetentionOverrides = LoadUserRetentionOverrides(document);
         oauthOverrides = LoadOAuthOverrides(document);
+        serverOverrides = LoadServerOverrides(document);
         current = Compute(overrides);
         currentIngress = ComputeIngress(ingressOverrides);
         currentUpdateCheck = ComputeUpdateCheck(updateCheckOverrides);
@@ -580,6 +654,16 @@ internal sealed class CoreSettingsService
     public CoreOAuthSettingRow GetOAuthRow()
         => new(currentOAuth.DynamicRegistrationEnabled, Overridden: oauthOverrides.ContainsKey(OAuthSettings.DynamicRegistrationKey));
 
+    // The port the next plain start uses: the stored override, else the built-in default. Env is
+    // deliberately NOT in this row's baseline — at runtime a flag/env outranks the store for that
+    // run only, which the description explains; the row reports the persistent value.
+    public CoreServerSettingRow GetServerRow()
+        => new(
+            serverOverrides.TryGetValue(ServerSettings.PortKey, out var raw) && ServerSettings.TryParsePort(raw, out var port)
+                ? port
+                : ServerSettings.DefaultPort,
+            Overridden: serverOverrides.ContainsKey(ServerSettings.PortKey));
+
     // True when at least one of the submitted keys is an ingress setting — the endpoint uses this to
     // decide whether a save must re-render the tunnel config.
     public static bool TouchesIngress(IReadOnlyDictionary<string, string?> input)
@@ -598,6 +682,7 @@ internal sealed class CoreSettingsService
         var updateCheckChanges = new Dictionary<string, string?>(StringComparer.Ordinal);
         var userRetentionChanges = new Dictionary<string, string?>(StringComparer.Ordinal);
         var oauthChanges = new Dictionary<string, string?>(StringComparer.Ordinal);
+        var serverChanges = new Dictionary<string, string?>(StringComparer.Ordinal);
         foreach (var (key, raw) in input)
         {
             if (CoreAuthSettings.IsKnown(key))
@@ -620,6 +705,10 @@ internal sealed class CoreSettingsService
             {
                 oauthChanges[key] = NormalizeOAuthValue(key, raw);
             }
+            else if (CoreServerSettings.IsKnown(key))
+            {
+                serverChanges[key] = NormalizeServerValue(key, raw);
+            }
             else
             {
                 throw new AppLifecycleException("core_setting_unknown", $"Unknown Core setting '{key}'.");
@@ -634,6 +723,7 @@ internal sealed class CoreSettingsService
             var mergedUpdateCheck = Apply(updateCheckOverrides, updateCheckChanges);
             var mergedUserRetention = Apply(userRetentionOverrides, userRetentionChanges);
             var mergedOAuth = Apply(oauthOverrides, oauthChanges);
+            var mergedServer = Apply(serverOverrides, serverChanges);
 
             await store.SaveAsync(
                 new CoreSettingsDocument
@@ -644,6 +734,7 @@ internal sealed class CoreSettingsService
                     Updates = mergedUpdateCheck,
                     Users = mergedUserRetention,
                     OAuth = mergedOAuth,
+                    Server = mergedServer,
                 },
                 cancellationToken);
             overrides = mergedAuth;
@@ -651,6 +742,7 @@ internal sealed class CoreSettingsService
             updateCheckOverrides = mergedUpdateCheck;
             userRetentionOverrides = mergedUserRetention;
             oauthOverrides = mergedOAuth;
+            serverOverrides = mergedServer;
             current = Compute(mergedAuth);
             currentIngress = ComputeIngress(mergedIngress);
             currentUpdateCheck = ComputeUpdateCheck(mergedUpdateCheck);
@@ -961,6 +1053,43 @@ internal sealed class CoreSettingsService
         }
 
         return settings;
+    }
+
+    private static Dictionary<string, string> LoadServerOverrides(CoreSettingsDocument document)
+    {
+        var loaded = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (key, value) in document.Server)
+        {
+            // Same per-entry tolerance as the other sections: skip unknown keys and hand-edited
+            // values that do not parse rather than crashing startup.
+            if (!CoreServerSettings.IsKnown(key) || !ServerSettings.TryParsePort(value, out _))
+            {
+                continue;
+            }
+
+            loaded[key] = value;
+        }
+
+        return loaded;
+    }
+
+    // Validates a listen-port value for persistence, or null to clear. Stored as the canonical
+    // integer string so the document stays culture-stable.
+    private static string? NormalizeServerValue(string key, string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+
+        if (!ServerSettings.TryParsePort(raw, out var port))
+        {
+            throw new AppLifecycleException(
+                "core_setting_invalid",
+                $"'{key}' must be an integer port between 1 and {ServerSettings.MaxPort}.");
+        }
+
+        return port.ToString(CultureInfo.InvariantCulture);
     }
 
     // Validates an OAuth toggle value for persistence, or null to clear. Stored canonically as

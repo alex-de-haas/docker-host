@@ -1769,7 +1769,7 @@ internal sealed class DockerRuntimeAdapter(
         // Siblings that `dependsOn` one another reach each other by service-name DNS over a
         // per-app user network, so the internal port never needs host publishing. Containers
         // run standalone otherwise, so only create the network when discovery is actually used.
-        var dependencyNetwork = RequiresUserNetwork(services) ? BuildNetworkName(context.App.Id) : null;
+        var dependencyNetwork = RequiresUserNetwork(services) ? BuildNetworkName(config.InstanceId, context.App.Id) : null;
         if (dependencyNetwork is not null)
         {
             _ = await RunDockerAsync(["network", "create", dependencyNetwork], ignoreFailures: true, cancellationToken);
@@ -1789,7 +1789,7 @@ internal sealed class DockerRuntimeAdapter(
             }
 
             var hostNetwork = service.Runtime.IsHostNetwork;
-            var containerName = BuildContainerName(context.App.Id, service.Key);
+            var containerName = BuildContainerName(config.InstanceId, context.App.Id, service.Key);
             var existingLock = context.App.ArtifactLocks?.GetValueOrDefault(service.Key);
 
             // Adoption: when a Core-owned container for this service is already running the exact image
@@ -1841,6 +1841,14 @@ internal sealed class DockerRuntimeAdapter(
                 "-e",
                 $"HOSTY_APP_SERVICE_KEY={service.Key}",
             };
+            if (config.InstanceId.Length > 0)
+            {
+                // Only non-default instances stamp the label: the default instance's containers must
+                // stay identical to what earlier Cores produced, and its ownership checks read an
+                // absent label as the empty id anyway.
+                runArgs.Add("--label");
+                runArgs.Add($"{InstanceLabel}={config.InstanceId}");
+            }
             if (hostNetwork)
             {
                 // Host networking shares the host's network namespace: the container's listeners
@@ -2016,7 +2024,7 @@ internal sealed class DockerRuntimeAdapter(
         var stillRunning = new List<string>();
         foreach (var service in context.Manifest.Services)
         {
-            var containerName = BuildContainerName(context.App.Id, service.Key);
+            var containerName = BuildContainerName(config.InstanceId, context.App.Id, service.Key);
             _ = await RunDockerAsync(["stop", containerName], ignoreFailures: true, cancellationToken);
             if (await IsContainerRunningAsync(containerName, cancellationToken))
             {
@@ -2041,12 +2049,12 @@ internal sealed class DockerRuntimeAdapter(
     {
         foreach (var service in context.Manifest.Services)
         {
-            await RemoveContainerIfOwnedAsync(context.App.Id, BuildContainerName(context.App.Id, service.Key), cancellationToken);
+            await RemoveContainerIfOwnedAsync(context.App.Id, BuildContainerName(config.InstanceId, context.App.Id, service.Key), cancellationToken);
         }
 
         // Drop the per-app discovery network (no-op when it was never created); containers are
         // already removed above so detachment cannot fail.
-        _ = await RunDockerAsync(["network", "rm", BuildNetworkName(context.App.Id)], ignoreFailures: true, cancellationToken);
+        _ = await RunDockerAsync(["network", "rm", BuildNetworkName(config.InstanceId, context.App.Id)], ignoreFailures: true, cancellationToken);
 
         return new AppRuntimeOperationResult("removed");
     }
@@ -2058,7 +2066,7 @@ internal sealed class DockerRuntimeAdapter(
         foreach (var service in context.Manifest.Services)
         {
             var output = await RunDockerAsync(
-                ["logs", "--tail", Math.Clamp(tail, 1, 1000).ToString(System.Globalization.CultureInfo.InvariantCulture), BuildContainerName(context.App.Id, service.Key)],
+                ["logs", "--tail", Math.Clamp(tail, 1, 1000).ToString(System.Globalization.CultureInfo.InvariantCulture), BuildContainerName(config.InstanceId, context.App.Id, service.Key)],
                 ignoreFailures: true,
                 cancellationToken);
             var text = string.IsNullOrWhiteSpace(output) ? string.Empty : output.TrimEnd();
@@ -2142,7 +2150,7 @@ internal sealed class DockerRuntimeAdapter(
         // BuildContainerName). Inspect each distinct name once and fan the answer back out.
         var namesByService = serviceKeys.ToDictionary(
             key => key,
-            key => BuildContainerName(appId, key),
+            key => BuildContainerName(config.InstanceId, appId, key),
             StringComparer.Ordinal);
         var distinctNames = namesByService.Values.Distinct(StringComparer.Ordinal).ToArray();
 
@@ -2341,22 +2349,37 @@ internal sealed class DockerRuntimeAdapter(
     // app `x-y`/service `z` vs app `x`/service `y-z`) collide on the same container name. A blind
     // `docker rm -f <name>` could therefore destroy a *different* app's — or a user's — container that
     // happens to share the normalized name. Only remove when the container carries this app's
-    // hosty.app.id label; a mismatch is left in place (the later `docker run --name` surfaces a clear
-    // name-conflict error) and an absent container is a no-op (C-M2).
+    // hosty.app.id label AND this Core's hosty.instance label (absent label = the default instance's
+    // empty id, so pre-label containers keep belonging to the default root); a mismatch is left in
+    // place (the later `docker run --name` surfaces a clear name-conflict error) and an absent
+    // container is a no-op (C-M2). The instance check is what makes removal unable to cross roots
+    // even if a name ever collides.
     private async Task RemoveContainerIfOwnedAsync(string appId, string containerName, CancellationToken cancellationToken)
     {
-        var inspect = await RunRawAsync(["inspect", "--format", "{{ index .Config.Labels \"hosty.app.id\" }}", containerName], cancellationToken);
+        var inspect = await RunRawAsync(
+            ["inspect", "--format", "{{ index .Config.Labels \"hosty.app.id\" }}\t{{ index .Config.Labels \"hosty.instance\" }}", containerName],
+            cancellationToken);
         if (inspect.ExitCode != 0)
         {
             return;
         }
 
-        var owner = inspect.StandardOutput.Trim();
-        if (!string.Equals(owner, appId, StringComparison.Ordinal))
+        // Trim only the trailing newline before splitting — a full Trim would eat a leading tab and
+        // shift an empty first label into the wrong column. A missing instance label prints empty,
+        // which reads back as the default instance's empty id.
+        var fields = inspect.StandardOutput.TrimEnd('\r', '\n').Split('\t');
+        var owner = fields.ElementAtOrDefault(0)?.Trim() ?? string.Empty;
+        var ownerInstance = fields.ElementAtOrDefault(1)?.Trim() ?? string.Empty;
+        if (!string.Equals(owner, appId, StringComparison.Ordinal) ||
+            !string.Equals(ownerInstance, config.InstanceId, StringComparison.Ordinal))
         {
             logger.LogWarning(
-                "Not removing container '{Container}': it is labelled for app '{Owner}', not '{AppId}'. A docker name conflict will surface instead of destroying another app's container.",
-                containerName, string.IsNullOrEmpty(owner) ? "<none>" : owner, appId);
+                "Not removing container '{Container}': it is labelled for app '{Owner}' (instance '{OwnerInstance}'), not app '{AppId}' of instance '{InstanceId}'. A docker name conflict will surface instead of destroying another owner's container.",
+                containerName,
+                string.IsNullOrEmpty(owner) ? "<none>" : owner,
+                string.IsNullOrEmpty(ownerInstance) ? "<default>" : ownerInstance,
+                appId,
+                config.InstanceId.Length == 0 ? "<default>" : config.InstanceId);
             return;
         }
 
@@ -2394,26 +2417,31 @@ internal sealed class DockerRuntimeAdapter(
         }
 
         var inspect = await RunRawAsync(
-            ["inspect", "--format", "{{.State.Running}}::{{ index .Config.Labels \"hosty.app.id\" }}::{{.Config.Image}}::{{range .Config.Env}}{{println .}}{{end}}", containerName],
+            ["inspect", "--format", "{{.State.Running}}::{{ index .Config.Labels \"hosty.app.id\" }}::{{ index .Config.Labels \"hosty.instance\" }}::{{.Config.Image}}::{{range .Config.Env}}{{println .}}{{end}}", containerName],
             cancellationToken);
         if (inspect.ExitCode != 0)
         {
             return false;
         }
 
-        // The first three fields cannot contain "::" (bool, validated app id, image reference), so the
-        // fourth capture is the raw env block regardless of what the container's variables hold.
-        var parts = inspect.StandardOutput.Trim().Split("::", 4);
-        if (parts.Length != 4)
+        // The first four fields cannot contain "::" (bool, validated app id, hex instance id, image
+        // reference), so the fifth capture is the raw env block regardless of what the container's
+        // variables hold.
+        var parts = inspect.StandardOutput.Trim().Split("::", 5);
+        if (parts.Length != 5)
         {
             return false;
         }
 
+        // The instance label must equal this Core's id (absent = the default instance's empty id):
+        // adoption must never cross roots — a second-root Core adopting the default root's container
+        // is exactly the disaster instance identity exists to prevent.
         var pinnedReference = (image with { Digest = existingLock.ImageDigest }).Reference;
         return string.Equals(parts[0].Trim(), "true", StringComparison.OrdinalIgnoreCase) &&
             string.Equals(parts[1].Trim(), appId, StringComparison.Ordinal) &&
-            string.Equals(parts[2].Trim(), pinnedReference, StringComparison.Ordinal) &&
-            HasValidServiceToken(appId, parts[3]);
+            string.Equals(parts[2].Trim(), config.InstanceId, StringComparison.Ordinal) &&
+            string.Equals(parts[3].Trim(), pinnedReference, StringComparison.Ordinal) &&
+            HasValidServiceToken(appId, parts[4]);
     }
 
     private bool HasValidServiceToken(string appId, string environmentBlock)
@@ -2476,21 +2504,35 @@ internal sealed class DockerRuntimeAdapter(
         }
     }
 
-    // Reports the app ids that currently own a running Hosty-labelled container. One `docker ps` per
-    // supervision tick (not per app); `{{.Label "..."}}` prints the label value per running container.
+    // Reports the app ids that currently own a running Hosty-labelled container OF THIS INSTANCE.
+    // One `docker ps` per supervision tick (not per app); `{{.Label "..."}}` prints the label value
+    // per running container. docker ps filters cannot express "label absent", which is what the
+    // default instance's containers look like, so the instance is a post-filter on the printed
+    // label: absent prints empty, matching the default's empty id — and a second-root Core never
+    // sees the default root's apps as its own (the reconcile sweep must not flip their records).
     public async Task<IReadOnlySet<string>> ListRunningAppIdsAsync(CancellationToken cancellationToken = default)
     {
         var result = await RunRawAsync(
-            ["ps", "--filter", "label=hosty.app.id", "--format", "{{.Label \"hosty.app.id\"}}"],
+            ["ps", "--filter", "label=hosty.app.id", "--format", "{{.Label \"hosty.app.id\"}}\t{{.Label \"hosty.instance\"}}"],
             cancellationToken);
         if (result.ExitCode != 0)
         {
             return new HashSet<string>(StringComparer.Ordinal);
         }
 
-        return result.StandardOutput
-            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .ToHashSet(StringComparer.Ordinal);
+        var appIds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var line in result.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var fields = line.TrimEnd('\r').Split('\t');
+            var appId = fields.ElementAtOrDefault(0)?.Trim() ?? string.Empty;
+            var instance = fields.ElementAtOrDefault(1)?.Trim() ?? string.Empty;
+            if (appId.Length > 0 && string.Equals(instance, config.InstanceId, StringComparison.Ordinal))
+            {
+                appIds.Add(appId);
+            }
+        }
+
+        return appIds;
     }
 
     // True when the reference is already present in the local image store (so a pinned restart need
@@ -2833,11 +2875,30 @@ internal sealed class DockerRuntimeAdapter(
         return result.StandardOutput;
     }
 
-    internal static string BuildContainerName(string appId, string serviceKey)
-        => $"hosty-{NormalizeDockerName(appId)}-{NormalizeDockerName(serviceKey)}";
+    // Container label carrying the owning Core instance's id (CoreInstanceId). Omitted entirely for
+    // the default instance so its containers stay byte-for-byte today's — and so containers that
+    // predate the label keep matching it (an absent label reads back as the empty id).
+    internal const string InstanceLabel = "hosty.instance";
 
-    internal static string BuildNetworkName(string appId)
-        => $"hosty-{NormalizeDockerName(appId)}-net";
+    // The short name-scope token for an instance id. Empty for the default instance (unscoped legacy
+    // names); otherwise the first 12 chars of the id, docker-normalized — plenty to separate the
+    // handful of roots one machine carries. Name collisions with an unlucky app id remain possible
+    // in principle, exactly as they already are between app ids (see RemoveContainerIfOwnedAsync);
+    // the label checks are what actually guard ownership.
+    internal static string BuildInstanceScope(string instanceId)
+        => instanceId.Length == 0
+            ? string.Empty
+            : NormalizeDockerName(instanceId.Length <= 12 ? instanceId : instanceId[..12]);
+
+    internal static string BuildContainerName(string instanceId, string appId, string serviceKey)
+        => BuildInstanceScope(instanceId) is { Length: > 0 } scope
+            ? $"hosty-{scope}-{NormalizeDockerName(appId)}-{NormalizeDockerName(serviceKey)}"
+            : $"hosty-{NormalizeDockerName(appId)}-{NormalizeDockerName(serviceKey)}";
+
+    internal static string BuildNetworkName(string instanceId, string appId)
+        => BuildInstanceScope(instanceId) is { Length: > 0 } scope
+            ? $"hosty-{scope}-{NormalizeDockerName(appId)}-net"
+            : $"hosty-{NormalizeDockerName(appId)}-net";
 
     // A user network is only needed when some service `dependsOn` another, i.e. when intra-app
     // service-name DNS is actually used; single-service and ordering-free apps stay standalone.

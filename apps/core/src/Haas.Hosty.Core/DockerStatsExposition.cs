@@ -17,8 +17,16 @@ internal sealed class DockerStatsExposition(
     AppRegistryStore apps,
     IDockerCommandRunner dockerRunner,
     IClock clock,
-    ILogger<DockerStatsExposition> logger) : BackgroundService
+    ILogger<DockerStatsExposition> logger,
+    // Runtime config, for the instance id that keeps a secondary-root Core from attributing (and
+    // double-reporting) the default root's containers. Optional only for unit fixtures, which then
+    // scrape as the default instance; production DI always supplies it.
+    HostyCoreRuntimeConfig? runtimeConfig = null) : BackgroundService
 {
+    // The root's instance identity; empty = the default instance, which also matches containers
+    // that predate the hosty.instance label.
+    private readonly string instanceId = runtimeConfig?.InstanceId ?? "";
+
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(10);
 
     // Longest a cached owner map may be trusted. Container names are derived, and derivation is not
@@ -158,10 +166,15 @@ internal sealed class DockerStatsExposition(
 
     private async Task<IReadOnlyDictionary<string, ContainerStatOwner>> LoadContainerOwnersAsync(CancellationToken cancellationToken)
     {
-        var loaded = ParseContainerOwners(await RunDockerOrEmptyAsync(
-            ["ps", "--no-trunc", "--filter", "label=hosty.app.id", "--format",
-                "{{.Names}}\t{{.Label \"hosty.app.id\"}}\t{{.Label \"hosty.app.service\"}}"],
-            cancellationToken));
+        // The instance is a post-filter on the printed label (docker ps cannot filter on "label
+        // absent", which is what the default instance's containers look like): a secondary-root Core
+        // must not attribute the default root's containers to its own apps.
+        var loaded = ParseContainerOwners(
+            await RunDockerOrEmptyAsync(
+                ["ps", "--no-trunc", "--filter", "label=hosty.app.id", "--format",
+                    "{{.Names}}\t{{.Label \"hosty.app.id\"}}\t{{.Label \"hosty.app.service\"}}\t{{.Label \"hosty.instance\"}}"],
+                cancellationToken),
+            instanceId);
         ownersLoadedAt = clock.UtcNow;
         return loaded;
     }
@@ -185,8 +198,10 @@ internal sealed class DockerStatsExposition(
         => value.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n");
 
     // container name → owner, read back from the `hosty.app.*` docker labels. Falls back to app id for
-    // the service when the service label is absent.
-    internal static IReadOnlyDictionary<string, ContainerStatOwner> ParseContainerOwners(string? output)
+    // the service when the service label is absent. Rows of a different instance are dropped — an
+    // absent hosty.instance label (the 4th field, and every pre-label container) reads as the default
+    // instance's empty id.
+    internal static IReadOnlyDictionary<string, ContainerStatOwner> ParseContainerOwners(string? output, string instanceId = "")
     {
         var owners = new Dictionary<string, ContainerStatOwner>(StringComparer.Ordinal);
         if (string.IsNullOrWhiteSpace(output))
@@ -198,6 +213,12 @@ internal sealed class DockerStatsExposition(
         {
             var fields = rawLine.Trim().Split('\t');
             if (fields.Length < 2 || string.IsNullOrWhiteSpace(fields[0]) || string.IsNullOrWhiteSpace(fields[1]))
+            {
+                continue;
+            }
+
+            var rowInstance = fields.Length > 3 ? fields[3].Trim() : string.Empty;
+            if (!string.Equals(rowInstance, instanceId, StringComparison.Ordinal))
             {
                 continue;
             }

@@ -1,6 +1,6 @@
 # Core Runtime Parameters — Two Launch Flags, Everything Else Lives Inside
 
-Status: Ready
+Status: In Progress
 Created: 2026-09-01
 Updated: 2026-09-01
 
@@ -92,7 +92,7 @@ A diff against [cli-bootstrap.md](../cli-bootstrap.md).
 - [ ] Per-root exclusivity: an exclusive lock held for the process lifetime, stale-lock recovery via
       the discovery file's PID, and a refused second start — same root on **any** port — that names
       the live instance (root, PID) instead of binding or failing with a bare bind error.
-- [ ] Instance identity on docker resources: id in the root, `hosty.instance` label, instance-scoped
+- [x] Instance identity on docker resources: id in the root, `hosty.instance` label, instance-scoped
       names and `ps` filters; the default root keeps unscoped names (zero-churn migration).
 - [ ] `hosty core settings list|get|set|reset` over `/control/v1/settings`, with the same validation
       the admin endpoint applies.
