@@ -12,7 +12,7 @@ edits every other host setting, and publish it through Cloudflare the way an app
 The value is `HOSTY_CORE_PUBLIC_ORIGIN`. It is a CLI launch setting in `~/.hosty/config/launch.env`
 ([cli-bootstrap.md](../cli-bootstrap.md)) — a file Core neither owns nor holds a reference to. Shell shows
 the resolved value read-only on the Dashboard, saying `not configured` when it is unset
-([dashboard-page.tsx:489](../../../apps/shell/src/app/shell/pages/dashboard-page.tsx)); there is nowhere
+([dashboard-page.tsx:504](../../../apps/shell/src/app/shell/pages/dashboard-page.tsx)); there is nowhere
 in any UI to change it.
 
 ## Why this is its own feature
@@ -21,13 +21,13 @@ It arrived as a deliverable inside [cloudflare-ingress/plan.md](../cloudflare-in
 moved out, because publishing the hostname is the easy half and not the risky one.
 
 **This value is how an operator gets back in.** Its readers are the login pages
-([HostyCoreApplication.cs:398](../../../apps/core/src/Haas.Hosty.Core/HostyCoreApplication.cs)), the
+([HostyCoreApplication.cs:543](../../../apps/core/src/Haas.Hosty.Core/HostyCoreApplication.cs)), the
 bootstrap and invitation links
 ([AuthBootstrapService.cs:301](../../../apps/core/src/Haas.Hosty.Core/AuthBootstrapService.cs),
 [UserManagementService.cs:490](../../../apps/core/src/Haas.Hosty.Core/UserManagementService.cs)), and the
 environment of every runtime app
-([RuntimeAppManifest.cs:2556](../../../apps/core/src/Haas.Hosty.Core/RuntimeAppManifest.cs),
-[LocalCommandRuntimeAdapter.cs:587](../../../apps/core/src/Haas.Hosty.Core/LocalCommandRuntimeAdapter.cs)).
+([RuntimeAppManifest.cs:3035](../../../apps/core/src/Haas.Hosty.Core/RuntimeAppManifest.cs),
+[LocalCommandRuntimeAdapter.cs:687](../../../apps/core/src/Haas.Hosty.Core/LocalCommandRuntimeAdapter.cs)).
 A wrong value does not degrade a feature — it points the sign-in flow at a host that does not answer.
 Every other live Core setting can be fixed from the UI it broke; this one can break that UI.
 
@@ -81,7 +81,10 @@ already keys ownership on `(app id, endpoint key)`, so this needs a reserved pai
 endpoint key) rather than a second store — but no synthetic app record: the service layer forks (a
 `PublishCoreAsync` beside the app path) and writes the result into the Core settings store instead of an
 app's settings. The setting is written last, only after the reconciler's read-back confirms route and
-DNS; unpublish reverses it and restores the previous value, which the publication record itself carries.
+DNS. Unpublish reverses it and restores the previous value, which the publication record itself
+carries — but only while the current setting still equals the published origin: an administrator who
+edited the value after publishing has made a newer choice, and unpublish must not overwrite it with a
+stale one.
 
 This replaces the read-only hint the ingress work shipped: diagnostics currently reports Core's address
 with `not_configured` / `external` plus the CNAME target and service to create by hand
@@ -137,7 +140,8 @@ The three original questions are answered:
 - [ ] Shell field in the Settings → Core tab, replacing the read-only Dashboard display as the place to
       change it.
 - [ ] Publication of Core's hostname through the Cloudflare API provider, with unpublish restoring the
-      previous value.
+      previous value only while the setting still equals the published origin (a newer manual edit
+      wins).
 - [ ] The ingress diagnostics hint narrowed to the providers that cannot publish it.
 - [ ] Platform minor bump; `apps/shell` minor bump.
 - [ ] `feature.md` for this folder; `cli-bootstrap.md` updated to say the CLI setting is now a baseline;
@@ -167,7 +171,8 @@ The three original questions are answered:
 - Live: set an origin, confirm a fresh invitation link carries it while a running app still reports the
   old one until restarted; set a deliberately unreachable origin and confirm sign-in over the listen URL
   still works and the setting can be cleared from there; with Cloudflare connected, publish and unpublish
-  Core's hostname and confirm the previous value returns.
+  Core's hostname and confirm the previous value returns; edit the setting after publishing, unpublish,
+  and confirm the manual edit survives.
 
 ## Links
 

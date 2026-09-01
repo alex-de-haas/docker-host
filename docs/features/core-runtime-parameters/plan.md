@@ -55,8 +55,13 @@ A diff against [cli-bootstrap.md](../cli-bootstrap.md).
 - No `launch.env`, and no `hosty config` over it. The CLI's client commands accept the same
   `--data-root` (and env var) to select an environment, then read its `control.json` for the
   endpoint.
-- A start that loses the port to a live instance fails by **naming that instance** — root, PID and
-  endpoint from its discovery file — not with a bare bind error.
+- **One process per root, enforced.** Ports do not guard this: a second start against a live root
+  with a different `--port` would bind happily and then share the root's databases, settings and
+  instance identity — container labels isolate roots from each other, not a root from itself. A
+  start therefore takes a per-root exclusive lock (an OS file lock held for the process lifetime;
+  the discovery file's PID answers for a stale lock after a hard kill), and a refused start —
+  whether it lost the lock or the port — fails by **naming the live instance**: root, PID and
+  endpoint from its discovery file, not a bare bind error.
 - Docker resources carry the instance: an instance id stored in the root at first start, a
   `hosty.instance` label on containers, instance-scoped container names, and every `docker ps`
   filter scoped to the instance. The default root keeps today's unscoped names, so existing hosts
@@ -87,13 +92,15 @@ A diff against [cli-bootstrap.md](../cli-bootstrap.md).
       per-root settings store with flag-wins-for-the-run semantics.
 - [ ] `launch.env` retired: the CLI stops reading and writing it; `hosty config` removed or reduced
       accordingly; migration per question 1.
-- [ ] Second-start collision reported by naming the live instance (root, PID) instead of a bind
-      error.
+- [ ] Per-root exclusivity: an exclusive lock held for the process lifetime, stale-lock recovery via
+      the discovery file's PID, and a refused second start — same root on **any** port — that names
+      the live instance (root, PID) instead of binding or failing with a bare bind error.
 - [ ] Instance identity on docker resources: id in the root, `hosty.instance` label, instance-scoped
       names and `ps` filters; the default root keeps unscoped names (zero-churn migration).
 - [ ] `hosty core settings list|get|set|reset` over `/control/v1/settings`, with the same validation
       the admin endpoint applies.
-- [ ] Tests: root/port resolution order; the collision message; adoption/recreate never crosses
+- [ ] Tests: root/port resolution order; the collision message; a second start on a live root with
+      a **different** free port is refused; adoption/recreate never crosses
       instances (a second-root Core must not match a default-root container); a settings round-trip
       over the control plane.
 - [ ] Platform minor bump.
