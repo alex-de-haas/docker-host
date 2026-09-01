@@ -243,6 +243,77 @@ describe("gateway", () => {
     expect((await manager.getSession(record.id))?.title).toBe("chosen");
   });
 
+  it("deletes a session, its transcript, and the run producing it", async () => {
+    const created = await call("/api/sessions", { method: "POST", body: JSON.stringify({}) });
+    const record = (await created.json()) as { id: string };
+    await call(`/api/sessions/${record.id}/messages`, { method: "POST", body: JSON.stringify({ text: "hello" }) });
+    await waitFor(async () => {
+      const stored = await store.readEvents(record.id);
+      return stored.some((event) => event.type === "result") ? stored : null;
+    }, "result event");
+
+    const deleted = await call(`/api/sessions/${record.id}`, { method: "DELETE" });
+    expect(deleted.status).toBe(200);
+
+    expect(await manager.getSession(record.id)).toBeNull();
+    // The transcript is gone from disk, not merely unlisted: a deleted conversation that a later
+    // read could still recover would make the button a lie.
+    expect(await store.readEvents(record.id)).toEqual([]);
+    expect((await call("/api/sessions", { method: "GET" }).then((r) => r.json())) as { sessions: unknown[] }).toEqual({
+      sessions: [],
+    });
+    expect((await call(`/api/sessions/${record.id}`, { method: "DELETE" })).status).toBe(404);
+    // A stream opened for a session that is gone must refuse before committing a 200: the client
+    // treats a clean EOF as a dropped connection and reconnects, so an empty 200 would loop.
+    const stream = await fetch(`${origin}/api/sessions/${record.id}/events`, {
+      headers: { authorization: `Bearer ${mintToken("host.admin")}` },
+    });
+    expect(stream.status).toBe(404);
+    await stream.body?.cancel();
+  });
+
+  it("attributes a deletion to the administrator who asked for it", async () => {
+    const reports: { action: string; details: Record<string, string> }[] = [];
+    const reporting = new SessionManager(
+      store,
+      new FakeHarnessAdapter(),
+      { report: (action: string, details: Record<string, string>) => reports.push({ action, details }) } as unknown as AuditReporter,
+      dataDir,
+    );
+    const record = await reporting.createSession({ createdBy: "user_author" });
+
+    await reporting.deleteSession(record.id, "user_deleter");
+
+    const deletion = reports.find((entry) => entry.action === "ai_session_deleted");
+    // Both, deliberately: the transcript is unrecoverable afterwards, and "who removed it" is a
+    // different question from "whose session was it".
+    expect(deletion?.details).toMatchObject({ sessionId: record.id, deletedBy: "user_deleter", createdBy: "user_author" });
+  });
+
+  it("ends the event stream of a session that is deleted under it", async () => {
+    const created = await call("/api/sessions", { method: "POST", body: JSON.stringify({}) });
+    const record = (await created.json()) as { id: string };
+
+    const stream = await fetch(`${origin}/api/sessions/${record.id}/events`, {
+      headers: { authorization: `Bearer ${mintToken("host.admin")}` },
+    });
+    const reader = stream.body!.getReader();
+
+    await call(`/api/sessions/${record.id}`, { method: "DELETE" });
+
+    // Read to the end: the subscriber is told before the record goes, and the connection closes —
+    // otherwise another tab sits on a stream that has stopped meaning anything.
+    let received = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      received += new TextDecoder().decode(value);
+    }
+    expect(received).toContain("session_deleted");
+  });
+
   it("refuses a rename without a title, and 404s an unknown session", async () => {
     const created = await call("/api/sessions", { method: "POST", body: JSON.stringify({}) });
     const record = (await created.json()) as { id: string };

@@ -105,6 +105,11 @@ export async function renameSession(sessionId: string, title: string): Promise<A
   ).json() as Promise<AssistantSession>;
 }
 
+/** Deletes a session and everything it kept: its record, its transcript, and any run still going. */
+export async function deleteSession(sessionId: string): Promise<void> {
+  await call(`/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+}
+
 export async function getSession(sessionId: string): Promise<AssistantSession> {
   return (await call(`/sessions/${encodeURIComponent(sessionId)}`)).json() as Promise<AssistantSession>;
 }
@@ -227,6 +232,12 @@ export async function streamEvents(
               lastSeq = event.seq;
             }
             onEvent(event);
+            // Terminal, unlike every other end of this stream: the session is gone, so the EOF that
+            // follows is not a dropped connection to retry. Reconnecting would fetch a 404 and put
+            // an error in a transcript the operator has already deleted.
+            if (event.type === "session_deleted") {
+              return;
+            }
           } catch {
             // A torn frame is dropped; the seq cursor makes the reconnect self-healing.
           }
