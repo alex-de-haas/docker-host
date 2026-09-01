@@ -243,6 +243,52 @@ describe("gateway", () => {
     expect((await manager.getSession(record.id))?.title).toBe("chosen");
   });
 
+  it("deletes a session, its transcript, and the run producing it", async () => {
+    const created = await call("/api/sessions", { method: "POST", body: JSON.stringify({}) });
+    const record = (await created.json()) as { id: string };
+    await call(`/api/sessions/${record.id}/messages`, { method: "POST", body: JSON.stringify({ text: "hello" }) });
+    await waitFor(async () => {
+      const stored = await store.readEvents(record.id);
+      return stored.some((event) => event.type === "result") ? stored : null;
+    }, "result event");
+
+    const deleted = await call(`/api/sessions/${record.id}`, { method: "DELETE" });
+    expect(deleted.status).toBe(200);
+
+    expect(await manager.getSession(record.id)).toBeNull();
+    // The transcript is gone from disk, not merely unlisted: a deleted conversation that a later
+    // read could still recover would make the button a lie.
+    expect(await store.readEvents(record.id)).toEqual([]);
+    expect((await call("/api/sessions", { method: "GET" }).then((r) => r.json())) as { sessions: unknown[] }).toEqual({
+      sessions: [],
+    });
+    expect((await call(`/api/sessions/${record.id}`, { method: "DELETE" })).status).toBe(404);
+  });
+
+  it("ends the event stream of a session that is deleted under it", async () => {
+    const created = await call("/api/sessions", { method: "POST", body: JSON.stringify({}) });
+    const record = (await created.json()) as { id: string };
+
+    const stream = await fetch(`${origin}/api/sessions/${record.id}/events`, {
+      headers: { authorization: `Bearer ${mintToken("host.admin")}` },
+    });
+    const reader = stream.body!.getReader();
+
+    await call(`/api/sessions/${record.id}`, { method: "DELETE" });
+
+    // Read to the end: the subscriber is told before the record goes, and the connection closes —
+    // otherwise another tab sits on a stream that has stopped meaning anything.
+    let received = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      received += new TextDecoder().decode(value);
+    }
+    expect(received).toContain("session_deleted");
+  });
+
   it("refuses a rename without a title, and 404s an unknown session", async () => {
     const created = await call("/api/sessions", { method: "POST", body: JSON.stringify({}) });
     const record = (await created.json()) as { id: string };

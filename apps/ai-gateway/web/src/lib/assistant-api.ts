@@ -105,6 +105,11 @@ export async function renameSession(sessionId: string, title: string): Promise<A
   ).json() as Promise<AssistantSession>;
 }
 
+/** Deletes a session and everything it kept: its record, its transcript, and any run still going. */
+export async function deleteSession(sessionId: string): Promise<void> {
+  await call(`/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+}
+
 export async function getSession(sessionId: string): Promise<AssistantSession> {
   return (await call(`/sessions/${encodeURIComponent(sessionId)}`)).json() as Promise<AssistantSession>;
 }

@@ -358,6 +358,16 @@ async function route(
     return;
   }
 
+  if (rest === "" && method === "DELETE") {
+    const deleted = await manager.deleteSession(sessionId);
+    if (!deleted) {
+      sendJson(response, 404, { code: "session_not_found", message: "Session not found." });
+      return;
+    }
+    sendJson(response, 200, { deleted: true });
+    return;
+  }
+
   if (rest === "/events" && method === "GET") {
     // An app-session caller carries no token expiry, so the stream is bounded by the session
     // cookie's own maximum instead of running unbounded — the delegated-token panel keeps its exact
@@ -454,6 +464,11 @@ async function streamEvents(
 
   const write = (event: unknown): void => {
     response.write(`data: ${JSON.stringify(event)}\n\n`);
+    // The session this stream belongs to has been deleted; there is nothing further to send, and
+    // holding the connection open would leave the client reconnecting into a 404.
+    if ((event as { type?: string }).type === "session_deleted") {
+      response.end();
+    }
   };
 
   const { replay, unsubscribe } = await manager.subscribe(sessionId, afterSeq, write);
@@ -548,7 +563,7 @@ function applyCors(request: IncomingMessage, response: ServerResponse): void {
     // PATCH and PUT are listed because routes use them (rename, settings). A preflight for a method
     // the server answers but does not advertise fails in the browser and nowhere else, which reads
     // as the request never having been made.
-    response.setHeader("access-control-allow-methods", "GET, POST, PATCH, PUT, OPTIONS");
+    response.setHeader("access-control-allow-methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS");
     response.setHeader("access-control-allow-headers", "authorization, content-type");
     response.setHeader("access-control-max-age", "600");
   }

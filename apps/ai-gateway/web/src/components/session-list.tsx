@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Pencil } from "lucide-react";
+import { Check, Pencil, Trash2, X } from "lucide-react";
 import { isWaiting } from "@/lib/attention";
 import { cn } from "@/lib/utils";
 import type { AssistantSession } from "@/lib/assistant-api";
@@ -14,15 +14,20 @@ export function SessionList({
   activeId,
   onPick,
   onRename,
+  onDelete,
 }: {
   sessions: AssistantSession[];
   activeId: string | null;
   onPick: (session: AssistantSession) => void;
   onRename: (sessionId: string, title: string) => Promise<void>;
+  onDelete: (sessionId: string) => Promise<void>;
 }) {
   // Which row is being renamed, not what it says: the input owns its own text, so a reordering of
   // the list mid-edit cannot move someone's half-typed name onto another session.
   const [editingId, setEditingId] = useState<string | null>(null);
+  // Deleting takes the transcript with it and nothing brings it back, so it asks first — in the row
+  // rather than in a modal, which keeps the name of what is about to go next to the confirmation.
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
 
   if (sessions.length === 0) {
     return <p className="p-3 text-xs text-muted-foreground">No sessions yet.</p>;
@@ -38,7 +43,32 @@ export function SessionList({
             record.id === activeId && "bg-muted",
           )}
         >
-          {editingId === record.id ? (
+          {confirmingId === record.id ? (
+            <div className="flex min-w-0 flex-1 items-center gap-1 px-2 py-1.5">
+              <span className="min-w-0 flex-1 truncate text-sm">
+                Delete “{record.title || "Untitled session"}”?
+              </span>
+              <button
+                type="button"
+                aria-label="Confirm delete"
+                onClick={() => {
+                  setConfirmingId(null);
+                  void onDelete(record.id);
+                }}
+                className="shrink-0 rounded-md p-1.5 text-destructive hover:bg-destructive/10"
+              >
+                <Check className="h-3.5 w-3.5" aria-hidden />
+              </button>
+              <button
+                type="button"
+                aria-label="Keep session"
+                onClick={() => setConfirmingId(null)}
+                className="shrink-0 rounded-md p-1.5 text-muted-foreground hover:text-foreground"
+              >
+                <X className="h-3.5 w-3.5" aria-hidden />
+              </button>
+            </div>
+          ) : editingId === record.id ? (
             <SessionTitleInput
               title={record.title ?? ""}
               onCommit={async (title) => {
@@ -78,6 +108,14 @@ export function SessionList({
                 className="shrink-0 rounded-md p-1.5 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
               >
                 <Pencil className="h-3.5 w-3.5" aria-hidden />
+              </button>
+              <button
+                type="button"
+                aria-label={`Delete ${record.title || "session"}`}
+                onClick={() => setConfirmingId(record.id)}
+                className="shrink-0 rounded-md p-1.5 text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+              >
+                <Trash2 className="h-3.5 w-3.5" aria-hidden />
               </button>
             </>
           )}

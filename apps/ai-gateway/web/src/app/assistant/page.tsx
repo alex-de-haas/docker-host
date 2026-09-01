@@ -15,6 +15,7 @@ import { orderSessions, publishAttention, waitingCount } from "@/lib/attention";
 import { startThemeSync } from "@/lib/shell-theme";
 import {
   createSession,
+  deleteSession,
   getHealth,
   getSession,
   listSessions,
@@ -303,6 +304,34 @@ export default function AssistantPage() {
     }
   }, [input, sending, session]);
 
+  const remove = useCallback(
+    async (sessionId: string) => {
+      setError(null);
+      try {
+        await deleteSession(sessionId);
+        // The draft belonged to a session that no longer exists; leaving it behind would resurrect
+        // someone's half-written message under a future session's id.
+        clearDraft(sessionId);
+        setSessions((current) => current.filter((entry) => entry.id !== sessionId));
+        if (session?.id === sessionId) {
+          // The open session was the one deleted: drop its stream and start a fresh one, rather
+          // than leaving the panel attached to a transcript that is gone.
+          streamAbortRef.current?.abort();
+          try {
+            window.localStorage.removeItem(SESSION_STORAGE_KEY);
+          } catch {
+            // Private-mode storage can refuse writes; the reattach path already tolerates a stored
+            // id that no longer resolves.
+          }
+          await startNew();
+        }
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      }
+    },
+    [session, startNew],
+  );
+
   const rename = useCallback(async (sessionId: string, title: string) => {
     setError(null);
     try {
@@ -410,6 +439,7 @@ export default function AssistantPage() {
             attach(record);
           }}
           onRename={rename}
+          onDelete={remove}
         />
       ) : (
         <>

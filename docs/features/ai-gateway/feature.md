@@ -301,6 +301,13 @@ gateway restart.
     being derived, rather than pinning it to the empty string. An edit ends exactly once: Enter,
     Escape and blur are three ways into the same ending, so a discarded edit cannot commit and a
     confirmed one cannot send twice.
+  - A session can be **deleted** (`DELETE /api/sessions/:id`), which removes its record and its
+    transcript from disk and stops any run still producing one — by the same route a cancel takes,
+    so a harness is never left minting app tokens for a conversation nobody can read. Subscribers
+    are sent `session_deleted` and their stream is closed, rather than being left to reconnect into
+    a 404. The row asks for confirmation first, naming what is about to go: nothing restores a
+    deleted transcript. Core is told a session was deleted, with its id and the actor — never with
+    any of what was said.
   - Titles stay in the gateway's store. They are derived from transcript text, and transcript
     content does not reach Core (decision 2026-08-08 — Core audits lifecycle and approvals only).
 - "Ask assistant" on an app's details appends to the composer draft of the open session, prefixed
@@ -335,6 +342,10 @@ gateway restart.
   message, and a rename carrying `null`, a number, or a body that is valid JSON but not an object
   must be a 400 with the existing title intact — reading a field off a non-object body would
   otherwise be a 500 for the client's mistake.
+- Deletion: the HTTP suite covers a session removed with its transcript (the event log reads empty
+  afterwards, not merely unlisted), a second delete answering 404, and — the case that would
+  otherwise only show up as a hung browser tab — an open event stream being ended when the session
+  it follows is deleted under it. That test hangs and fails if the stream is left open.
 - Markdown (vitest over the two pure policies — `web/src/lib` suites run in the gateway's own
   vitest project; the library itself is not re-tested here): the allowed schemes, and refusal of
   `javascript:`, `data:`, `file:`, credentials in the authority, and relative references. Soft

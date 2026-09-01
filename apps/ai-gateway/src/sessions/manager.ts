@@ -129,6 +129,48 @@ export class SessionManager {
   }
 
   /**
+   * Deletes a session: its record, its transcript, and the run still producing one.
+   *
+   * The run is stopped first and by the same route a cancel takes — proxy routes unregistered,
+   * refresh timer cleared — because a harness left running against a deleted session would keep
+   * minting app tokens for a conversation nobody can read any more.
+   *
+   * Subscribers are told before the record goes: another tab with this session open would otherwise
+   * sit on a stream that has stopped meaning anything, and reconnect into a 404 it cannot explain.
+   */
+  async deleteSession(id: string): Promise<boolean> {
+    const record = this.live.get(id)?.record ?? (await this.store.readRecord(id));
+    if (!record) {
+      return false;
+    }
+
+    const session = this.live.get(id);
+    if (session) {
+      if (session.run) {
+        await session.run.stop().catch(() => undefined);
+        session.run = null;
+      }
+      session.pendingApprovals.clear();
+      session.pendingQuestions.clear();
+      this.clearRefresh(session);
+      this.fanOut(session, {
+        seq: session.record.lastEventSeq,
+        ts: new Date().toISOString(),
+        type: "session_deleted",
+      });
+      session.listeners.clear();
+      this.live.delete(id);
+    }
+    this.proxy?.unregister(id);
+    await this.store.deleteSession(id);
+    // Reported like every other lifecycle transition: the deletion is the operator's action, and the
+    // transcript it removed is exactly what an audit trail cannot recover afterwards. The id and the
+    // actor go to Core; nothing of what was said does.
+    this.audit.report("ai_session_deleted", { sessionId: id });
+    return true;
+  }
+
+  /**
    * The text of the earliest stored `user_message`, or null when the log holds none.
    *
    * Read once per session: the only caller runs when a session has no title, and it has one
