@@ -49,13 +49,20 @@ internal sealed class CoreLifecycleService(
     // Cloudflare publications, so an app's lifecycle can clean up the hostnames it published and clear the
     // pending-restart flag when it starts. Optional only for unit fixtures; production DI supplies it.
     // Every use is best-effort: an unreachable Cloudflare must never fail a start, an update, or a removal.
-    CloudflarePublicationService? cloudflarePublications = null)
+    CloudflarePublicationService? cloudflarePublications = null,
+    // Runtime config, for the instance id that scopes docker container names in change previews.
+    // Optional only for unit fixtures, which then preview the default instance's unscoped names;
+    // production DI always supplies it.
+    HostyCoreRuntimeConfig? runtimeConfig = null)
 {
     private static readonly Regex BackupReasonPattern = new("^[a-z0-9][a-z0-9-]{0,30}$", RegexOptions.Compiled);
     private static readonly Regex MountLabelPattern = new("^[a-z0-9][a-z0-9._-]{0,62}$", RegexOptions.Compiled);
 
     // Optional in tests (which exercise lifecycle, not telemetry); DI always supplies the singletons.
     private readonly IClock clock = clock ?? new SystemClock();
+
+    // The root's instance identity for docker-name previews; empty = the default instance.
+    private readonly string instanceId = runtimeConfig?.InstanceId ?? "";
     // Host-level shared-mounts library and the shared host-path policy. Default-constructed in tests
     // (both only need CoreDataPaths); DI supplies the singletons.
     private readonly GlobalMountStore globalMounts = globalMounts ?? new GlobalMountStore(paths);
@@ -5033,7 +5040,7 @@ internal sealed class CoreLifecycleService(
             ? $"runtimeType:{targetSelection.RuntimeProfile.Type}"
             : $"runtimeType:{currentSelection.RuntimeProfile.Type}->{targetSelection.RuntimeProfile.Type}");
 
-        AddServiceChanges(changes, app.Id, currentSelection, targetSelection);
+        AddServiceChanges(changes, app.Id, instanceId, currentSelection, targetSelection);
         AddSettingChanges(changes, app.Settings, BuildSettingDefinitions(targetSelection));
         AddDependencyChanges(changes, app.Dependencies, targetSelection.Manifest.Dependencies);
         AddEndpointChanges(changes, app.Endpoints, BuildEndpointContracts(targetSelection));
@@ -5045,6 +5052,7 @@ internal sealed class CoreLifecycleService(
     private static void AddServiceChanges(
         List<string> changes,
         string appId,
+        string instanceId,
         RuntimeAppManifestSelection currentSelection,
         RuntimeAppManifestSelection targetSelection)
     {
@@ -5072,7 +5080,7 @@ internal sealed class CoreLifecycleService(
                 AddEnvironmentChanges(changes, key, current.Runtime.Environment, target.Runtime.Environment);
             }
 
-            AddContainerNameChanges(changes, appId, key, current, target);
+            AddContainerNameChanges(changes, appId, instanceId, key, current, target);
         }
     }
 
@@ -5214,6 +5222,7 @@ internal sealed class CoreLifecycleService(
     private static void AddContainerNameChanges(
         List<string> changes,
         string appId,
+        string instanceId,
         string serviceKey,
         RuntimeSelectedService? current,
         RuntimeSelectedService? target)
@@ -5225,7 +5234,7 @@ internal sealed class CoreLifecycleService(
             return;
         }
 
-        var containerName = DockerRuntimeAdapter.BuildContainerName(appId, serviceKey);
+        var containerName = DockerRuntimeAdapter.BuildContainerName(instanceId, appId, serviceKey);
         if (currentIsDocker && targetIsDocker)
         {
             changes.Add($"container:{serviceKey}:preserved:{containerName}");

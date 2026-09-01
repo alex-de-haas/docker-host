@@ -135,16 +135,14 @@ public sealed class UninstallCommandTests : IDisposable
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithConfiguredExternalDataRoot_DeletesResolvedDataRoot()
+    public async Task ExecuteAsync_WithExplicitDataRoot_DeletesThatRoot()
     {
-        var environment = HostyEnvironment.Current();
+        // launch.env is retired: an external root is addressed the way every command addresses an
+        // environment — by resolving HostyEnvironment at that root (--data-root / HOSTY_DATA_ROOT).
         var externalDataRoot = Path.Combine(Path.GetTempPath(), $"hosty-data-exec-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(environment.BinDirectory);
-        Directory.CreateDirectory(environment.ConfigDirectory);
+        var environment = HostyEnvironment.Current(externalDataRoot);
         Directory.CreateDirectory(Path.Combine(externalDataRoot, "apps"));
         File.WriteAllText(Path.Combine(externalDataRoot, "apps.json"), "{}");
-        // The data root lives in launch.env, not in RootDirectory — the command must resolve it.
-        File.WriteAllText(environment.LaunchConfigPath, $"{LaunchSettingDefinitions.HostyDataRoot}={externalDataRoot}\n");
         var context = CreateContext(environment);
 
         try
@@ -177,8 +175,7 @@ public sealed class UninstallCommandTests : IDisposable
     private static CommandContext CreateContext(HostyEnvironment environment)
         => new(
             CreateConsole(),
-            environment,
-            new LaunchSettingsStore(environment));
+            environment);
 
     private static IAnsiConsole CreateConsole()
     {

@@ -29,6 +29,7 @@ internal static class CliJson
             UsersCommand.UsersJsonContext.Default,
             SetupCommand.SetupJsonContext.Default,
             McpCommand.McpJsonContext.Default,
+            CoreSettingsCommand.SettingsJsonContext.Default,
             CoreControlClient.ControlJsonContext.Default),
     };
 

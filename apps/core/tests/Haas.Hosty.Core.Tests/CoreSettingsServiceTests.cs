@@ -425,6 +425,69 @@ public sealed class CoreSettingsServiceTests : IDisposable
         Assert.Equal("core_setting_invalid", error.Code);
     }
 
+    [Fact]
+    public async Task UpdateAsync_ServerPort_PersistsAndClears()
+    {
+        var service = CreateService();
+
+        // No override: the row shows the built-in default and startup finds no stored port.
+        Assert.Equal(ServerSettings.DefaultPort, service.GetServerRow().StoredOrDefaultPort);
+        Assert.False(service.GetServerRow().Overridden);
+        Assert.Null(CoreSettingsStore.TryReadStoredPort(Paths.CoreRoot));
+
+        await service.UpdateAsync(new Dictionary<string, string?> { [ServerSettings.PortKey] = " 7171 " });
+
+        // The row reports the persisted next-start value; startup reads the same file directly.
+        Assert.Equal(7171, service.GetServerRow().StoredOrDefaultPort);
+        Assert.True(service.GetServerRow().Overridden);
+        Assert.Equal(7171, CoreSettingsStore.TryReadStoredPort(Paths.CoreRoot));
+
+        // A fresh service over the same root reads the override back; blank clears it.
+        var reloaded = CreateService();
+        Assert.Equal(7171, reloaded.GetServerRow().StoredOrDefaultPort);
+        await reloaded.UpdateAsync(new Dictionary<string, string?> { [ServerSettings.PortKey] = "" });
+        Assert.Equal(ServerSettings.DefaultPort, reloaded.GetServerRow().StoredOrDefaultPort);
+        Assert.False(reloaded.GetServerRow().Overridden);
+        Assert.Null(CoreSettingsStore.TryReadStoredPort(Paths.CoreRoot));
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("65536")]
+    [InlineData("-7070")]
+    [InlineData("port")]
+    [InlineData("70.70")]
+    public async Task UpdateAsync_ServerPort_RejectsInvalidPorts(string port)
+    {
+        var service = CreateService();
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            service.UpdateAsync(new Dictionary<string, string?> { [ServerSettings.PortKey] = port }));
+        Assert.Equal("core_setting_invalid", error.Code);
+    }
+
+    [Fact]
+    public void TryReadStoredPort_ToleratesMissingCorruptAndForeignFiles()
+    {
+        // Startup must never crash on the settings file: absent, unparsable, wrong schema, or a
+        // hand-edited bad value all mean "no stored port".
+        Assert.Null(CoreSettingsStore.TryReadStoredPort(Paths.CoreRoot));
+
+        Directory.CreateDirectory(Paths.CoreRoot);
+        var path = Path.Combine(Paths.CoreRoot, CoreSettingsSchema.FileName);
+
+        File.WriteAllText(path, "{not json");
+        Assert.Null(CoreSettingsStore.TryReadStoredPort(Paths.CoreRoot));
+
+        File.WriteAllText(path, """{"schemaVersion":"core-settings.9.9","server":{"HOSTY_CORE_PORT":"7171"}}""");
+        Assert.Null(CoreSettingsStore.TryReadStoredPort(Paths.CoreRoot));
+
+        File.WriteAllText(path, """{"schemaVersion":"core-settings.0.1","server":{"HOSTY_CORE_PORT":"70000"}}""");
+        Assert.Null(CoreSettingsStore.TryReadStoredPort(Paths.CoreRoot));
+
+        File.WriteAllText(path, """{"schemaVersion":"core-settings.0.1","server":{"HOSTY_CORE_PORT":"7171"}}""");
+        Assert.Equal(7171, CoreSettingsStore.TryReadStoredPort(Paths.CoreRoot));
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(root))

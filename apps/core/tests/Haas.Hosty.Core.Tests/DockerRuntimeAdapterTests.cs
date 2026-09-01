@@ -225,8 +225,26 @@ public sealed class DockerRuntimeAdapterTests
         => Assert.Equal(expected, LinuxCapabilities.Normalize(input));
 
     [Fact]
-    public void BuildNetworkName_DerivesStableDockerSafeName()
-        => Assert.Equal("hosty-com-example-app-net", DockerRuntimeAdapter.BuildNetworkName("com.example.app"));
+    public void BuildNetworkName_DefaultInstance_DerivesStableDockerSafeName()
+        => Assert.Equal("hosty-com-example-app-net", DockerRuntimeAdapter.BuildNetworkName("", "com.example.app"));
+
+    [Fact]
+    public void BuildNetworkName_ScopedInstance_PrefixesTheInstanceScope()
+        => Assert.Equal(
+            "hosty-0123456789ab-com-example-app-net",
+            DockerRuntimeAdapter.BuildNetworkName("0123456789abcdef0123456789abcdef", "com.example.app"));
+
+    [Fact]
+    public void BuildContainerName_DefaultInstance_KeepsLegacyUnscopedName()
+        => Assert.Equal(
+            "hosty-com-example-app-web",
+            DockerRuntimeAdapter.BuildContainerName("", "com.example.app", "web"));
+
+    [Fact]
+    public void BuildContainerName_ScopedInstance_PrefixesTheInstanceScope()
+        => Assert.Equal(
+            "hosty-0123456789ab-com-example-app-web",
+            DockerRuntimeAdapter.BuildContainerName("0123456789abcdef0123456789abcdef", "com.example.app", "web"));
 
     [Fact]
     public void RequiresUserNetwork_OnlyWhenAServiceDependsOnAnother()
@@ -744,9 +762,10 @@ public sealed class DockerRuntimeAdapterTests
         ILogger<DockerRuntimeAdapter>? logger = null,
         AppServiceTokenService? serviceTokens = null,
         TimeSpan? digestProbeTimeout = null,
-        IRegistryDigestResolver? registryDigestResolver = null)
+        IRegistryDigestResolver? registryDigestResolver = null,
+        string instanceId = "")
         => new(
-            CreateConfig(corePort: 7070, listenUrl: "http://localhost:7070", corePublicOrigin: null),
+            CreateConfig(corePort: 7070, listenUrl: "http://localhost:7070", corePublicOrigin: null, instanceId),
             serviceTokens ?? CreateTokenService(),
             logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<DockerRuntimeAdapter>.Instance,
             runner,
@@ -887,7 +906,7 @@ public sealed class DockerRuntimeAdapterTests
         var token = serviceTokens.CreateToken("com.example.app");
         var runner = new FakeDockerCommandRunner(args =>
             args is ["inspect", "--format", var fmt, ..] && fmt.Contains("State.Running", StringComparison.Ordinal)
-                ? new DockerCommandResult(0, $"true::com.example.app::ghcr.io/example/app@{digest}::HOSTY_APP_ID=com.example.app\nHOSTY_APP_SERVICE_TOKEN={token}\nPATH=/usr/bin\n", "")
+                ? new DockerCommandResult(0, $"true::com.example.app::::ghcr.io/example/app@{digest}::HOSTY_APP_ID=com.example.app\nHOSTY_APP_SERVICE_TOKEN={token}\nPATH=/usr/bin\n", "")
                 : new DockerCommandResult(0, "", ""));
 
         var result = await CreateAdapter(runner, serviceTokens: serviceTokens)
@@ -898,6 +917,127 @@ public sealed class DockerRuntimeAdapterTests
         Assert.Equal("running", result.RuntimeState);
         // The lock is preserved (adoption reuses the existing one; it never re-resolves the tag).
         Assert.Equal(digest, result.ArtifactLocks?["app"].ImageDigest);
+    }
+
+    [Fact]
+    public async Task StartAsync_ScopedInstance_AdoptsItsOwnLabelledContainer()
+    {
+        // A non-default instance adopts a running container that carries ITS hosty.instance label —
+        // keep-apps restarts stay non-disruptive for secondary roots too.
+        const string instanceId = "aabbccddeeff00112233445566778899";
+        var digest = "sha256:" + new string('a', 64);
+        var serviceTokens = CreateTokenService();
+        var token = serviceTokens.CreateToken("com.example.app");
+        var runner = new FakeDockerCommandRunner(args =>
+            args is ["inspect", "--format", var fmt, ..] && fmt.Contains("State.Running", StringComparison.Ordinal)
+                ? new DockerCommandResult(0, $"true::com.example.app::{instanceId}::ghcr.io/example/app@{digest}::HOSTY_APP_SERVICE_TOKEN={token}\n", "")
+                : new DockerCommandResult(0, "", ""));
+
+        var result = await CreateAdapter(runner, serviceTokens: serviceTokens, instanceId: instanceId)
+            .StartAsync(CreateDockerContext(CreateDockerAppRecord("pinned", LockMap(digest))));
+
+        Assert.DoesNotContain(runner.Commands, command => command[0] is "run" or "pull" or "rm");
+        Assert.Equal("running", result.RuntimeState);
+        // The adopt inspect went to the instance-scoped name.
+        Assert.Contains("hosty-aabbccddeeff-com-example-app-app", runner.Find("inspect")!);
+    }
+
+    [Fact]
+    public async Task StartAsync_ContainerOfAnotherInstance_IsNeitherAdoptedNorRemoved()
+    {
+        // The cross-instance guard: whatever answers to this adapter's container name carries the
+        // DEFAULT instance's labels (empty hosty.instance), while this adapter runs a scoped
+        // instance. Adoption must fall through AND the recreate path must refuse the rm -f — a
+        // second-root Core adopting or destroying the default root's container is the disaster
+        // instance identity exists to prevent.
+        const string instanceId = "aabbccddeeff00112233445566778899";
+        var digest = "sha256:" + new string('a', 64);
+        var serviceTokens = CreateTokenService();
+        var token = serviceTokens.CreateToken("com.example.app");
+        var runner = new FakeDockerCommandRunner(args =>
+        {
+            if (args is ["inspect", "--format", var fmt, ..])
+            {
+                if (fmt.Contains("State.Running", StringComparison.Ordinal))
+                {
+                    return new DockerCommandResult(0, $"true::com.example.app::::ghcr.io/example/app@{digest}::HOSTY_APP_SERVICE_TOKEN={token}\n", "");
+                }
+
+                if (fmt.Contains("hosty.app.id", StringComparison.Ordinal))
+                {
+                    return new DockerCommandResult(0, "com.example.app\t\n", "");
+                }
+            }
+
+            return args is ["image", "inspect", ..]
+                ? new DockerCommandResult(0, "[{}]", "")
+                : new DockerCommandResult(0, "", "");
+        });
+
+        await CreateAdapter(runner, serviceTokens: serviceTokens, instanceId: instanceId)
+            .StartAsync(CreateDockerContext(CreateDockerAppRecord("pinned", LockMap(digest))));
+
+        Assert.DoesNotContain(runner.Commands, command => command[0] == "rm");
+        // The recreate targets the scoped name and stamps the instance label, so the foreign
+        // container stays untouched (docker itself surfaces the name conflict).
+        var run = runner.Find("run")!;
+        Assert.Contains("hosty-aabbccddeeff-com-example-app-app", run);
+        Assert.Contains($"hosty.instance={instanceId}", run);
+    }
+
+    [Fact]
+    public async Task StartAsync_DefaultInstance_DoesNotRemoveAnotherInstancesContainer()
+    {
+        // The reverse direction: the default root's Core meets a container labelled for a secondary
+        // instance under its (unscoped) name. Same rule — leave it alone.
+        var digest = "sha256:" + new string('a', 64);
+        var serviceTokens = CreateTokenService();
+        var token = serviceTokens.CreateToken("com.example.app");
+        var runner = new FakeDockerCommandRunner(args =>
+        {
+            if (args is ["inspect", "--format", var fmt, ..])
+            {
+                if (fmt.Contains("State.Running", StringComparison.Ordinal))
+                {
+                    return new DockerCommandResult(0, $"true::com.example.app::bbbb::ghcr.io/example/app@{digest}::HOSTY_APP_SERVICE_TOKEN={token}\n", "");
+                }
+
+                if (fmt.Contains("hosty.app.id", StringComparison.Ordinal))
+                {
+                    return new DockerCommandResult(0, "com.example.app\tbbbb\n", "");
+                }
+            }
+
+            return args is ["image", "inspect", ..]
+                ? new DockerCommandResult(0, "[{}]", "")
+                : new DockerCommandResult(0, "", "");
+        });
+
+        await CreateAdapter(runner, serviceTokens: serviceTokens)
+            .StartAsync(CreateDockerContext(CreateDockerAppRecord("pinned", LockMap(digest))));
+
+        Assert.DoesNotContain(runner.Commands, command => command[0] == "rm");
+        // The default instance stamps no hosty.instance label — its containers must stay
+        // byte-for-byte what earlier Cores produced.
+        Assert.DoesNotContain(runner.Find("run")!, argument => argument.StartsWith("hosty.instance=", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ListRunningAppIdsAsync_ReportsOnlyTheOwnInstancesContainers()
+    {
+        // docker ps cannot filter on "label absent" (the default instance's containers), so the
+        // instance is a post-filter on the printed label. A second-root Core must not see the
+        // default root's apps as its own — the reconcile sweep would flip their records.
+        var runner = new FakeDockerCommandRunner(args =>
+            args is ["ps", ..]
+                ? new DockerCommandResult(0, "com.example.app\t\ncom.other.app\tbbbb\n", "")
+                : new DockerCommandResult(0, "", ""));
+
+        var defaultInstance = await CreateAdapter(runner).ListRunningAppIdsAsync();
+        Assert.Equal(["com.example.app"], defaultInstance.Order());
+
+        var scopedInstance = await CreateAdapter(runner, instanceId: "bbbb").ListRunningAppIdsAsync();
+        Assert.Equal(["com.other.app"], scopedInstance.Order());
     }
 
     [Fact]
@@ -914,7 +1054,7 @@ public sealed class DockerRuntimeAdapterTests
             {
                 if (fmt.Contains("State.Running", StringComparison.Ordinal))
                 {
-                    return new DockerCommandResult(0, $"true::com.example.app::ghcr.io/example/app@{digest}::HOSTY_APP_SERVICE_TOKEN={staleToken}\n", "");
+                    return new DockerCommandResult(0, $"true::com.example.app::::ghcr.io/example/app@{digest}::HOSTY_APP_SERVICE_TOKEN={staleToken}\n", "");
                 }
 
                 if (fmt.Contains("hosty.app.id", StringComparison.Ordinal))
@@ -950,7 +1090,7 @@ public sealed class DockerRuntimeAdapterTests
             {
                 if (fmt.Contains("State.Running", StringComparison.Ordinal))
                 {
-                    return new DockerCommandResult(0, $"true::com.example.app::ghcr.io/example/app@{otherDigest}::HOSTY_APP_SERVICE_TOKEN={token}\n", "");
+                    return new DockerCommandResult(0, $"true::com.example.app::::ghcr.io/example/app@{otherDigest}::HOSTY_APP_SERVICE_TOKEN={token}\n", "");
                 }
 
                 if (fmt.Contains("hosty.app.id", StringComparison.Ordinal))
@@ -982,7 +1122,7 @@ public sealed class DockerRuntimeAdapterTests
             {
                 if (fmt.Contains("State.Running", StringComparison.Ordinal))
                 {
-                    return new DockerCommandResult(0, $"false::com.example.app::ghcr.io/example/app@{digest}::HOSTY_APP_SERVICE_TOKEN={token}\n", "");
+                    return new DockerCommandResult(0, $"false::com.example.app::::ghcr.io/example/app@{digest}::HOSTY_APP_SERVICE_TOKEN={token}\n", "");
                 }
 
                 if (fmt.Contains("hosty.app.id", StringComparison.Ordinal))
@@ -1294,7 +1434,7 @@ public sealed class DockerRuntimeAdapterTests
             => prefix.Length <= command.Count && !prefix.Where((part, index) => command[index] != part).Any();
     }
 
-    private static HostyCoreRuntimeConfig CreateConfig(int corePort, string listenUrl, string? corePublicOrigin)
+    private static HostyCoreRuntimeConfig CreateConfig(int corePort, string listenUrl, string? corePublicOrigin, string instanceId = "")
         => new(
             DataRoot: "/tmp/hosty",
             RunDirectory: "/tmp/hosty/core/run",
@@ -1304,5 +1444,6 @@ public sealed class DockerRuntimeAdapterTests
             CorePublicOrigin: corePublicOrigin,
             RuntimePublicHost: "localhost",
             ShellSourceOverridePath: null,
-            ShellAutostart: false);
+            ShellAutostart: false,
+            InstanceId: instanceId);
 }

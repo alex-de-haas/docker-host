@@ -101,6 +101,9 @@ internal sealed partial class CoreControlClient : IDisposable
     public async Task<T?> PostAsync<T>(string path, object? body = null, CancellationToken cancellationToken = default)
         => await SendAsync<T>(HttpMethod.Post, path, body, operationTimeout, cancellationToken);
 
+    public async Task<T?> PutAsync<T>(string path, object? body = null, CancellationToken cancellationToken = default)
+        => await SendAsync<T>(HttpMethod.Put, path, body, operationTimeout, cancellationToken);
+
     public async Task<T?> DeleteAsync<T>(string path, CancellationToken cancellationToken = default)
         => await SendAsync<T>(HttpMethod.Delete, path, body: null, operationTimeout, cancellationToken);
 

@@ -31,5 +31,5 @@ installed instance.
 
 ## Links
 
-- [core-runtime-parameters](../core-runtime-parameters/plan.md) — the plan this was split out of;
+- [core-runtime-parameters](../core-runtime-parameters/feature.md) — the plan this was split out of;
   its launch-parameter model is what a unit would encode.

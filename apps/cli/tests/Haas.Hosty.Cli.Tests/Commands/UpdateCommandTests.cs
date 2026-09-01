@@ -11,8 +11,7 @@ public sealed class UpdateCommandTests
     {
         var context = new CommandContext(
             CreateConsole(),
-            HostyEnvironment.Current(),
-            new LaunchSettingsStore(HostyEnvironment.Current()));
+            HostyEnvironment.Current());
 
         var exception = await Assert.ThrowsAsync<CommandUsageException>(
             async () => await new UpdateCommand(context).ExecuteAsync(["--host-only"]));

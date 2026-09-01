@@ -42,7 +42,7 @@ instance — or stay two artifacts with the same client/server contract.
    artifact — at which point what was merged?
 2. What do release artifacts and the install/update layout look like after a merge?
 3. Sequencing: does this wait for
-   [core-runtime-parameters](../core-runtime-parameters/plan.md) to land? (It should — that plan
+   [core-runtime-parameters](../core-runtime-parameters/feature.md) to land? (It should — that plan
    settles the addressing model the subcommands would use.)
 
 ## Deliverables
@@ -53,5 +53,5 @@ instance — or stay two artifacts with the same client/server contract.
 
 ## Links
 
-- [core-runtime-parameters](../core-runtime-parameters/plan.md) — the plan this question was split
+- [core-runtime-parameters](../core-runtime-parameters/feature.md) — the plan this question was split
   out of.

@@ -1,10 +1,34 @@
 using Haas.Hosty.Cli;
+using Haas.Hosty.Cli.Commands;
 using Spectre.Console;
 
 namespace Haas.Hosty.Cli.Tests;
 
-public sealed class CommandLineTests
+public sealed class CommandLineTests : IDisposable
 {
+    // Every dispatched command resolves the environment (and runs the one-shot launch.env
+    // migration), so these tests must never address the developer's real ~/.hosty.
+    private const string RootVariable = "HOSTY_HOME";
+    private readonly string? previousRoot;
+    private readonly string rootDirectory;
+
+    public CommandLineTests()
+    {
+        previousRoot = Environment.GetEnvironmentVariable(RootVariable);
+        rootDirectory = Path.Combine(Path.GetTempPath(), $"hosty-command-line-tests-{Guid.NewGuid():N}");
+        Environment.SetEnvironmentVariable(RootVariable, rootDirectory);
+    }
+
+    public void Dispose()
+    {
+        Environment.SetEnvironmentVariable(RootVariable, previousRoot);
+
+        if (Directory.Exists(rootDirectory))
+        {
+            Directory.Delete(rootDirectory, recursive: true);
+        }
+    }
+
     [Theory]
     [InlineData("--help")]
     [InlineData("-h")]
@@ -28,12 +52,37 @@ public sealed class CommandLineTests
     }
 
     [Fact]
-    public async Task RunAsync_ConfigHelpCommand_RoutesToConfigCommand()
+    public async Task RunAsync_ConfigCommand_IsGoneWithLaunchEnv()
     {
+        // `hosty config` managed launch.env; both are retired. Core settings are edited with
+        // `hosty core settings` against the running instance instead.
         var exitCode = await CommandLine.RunAsync(["config", "--help"]);
 
-        Assert.Equal(0, exitCode);
+        Assert.Equal(2, exitCode);
     }
+
+    [Fact]
+    public void ExtractDataRootFlag_StripsTheFlagWhereverItAppears()
+    {
+        var (dataRoot, remaining) = CommandLine.ExtractDataRootFlag(
+            ["core", "--data-root", "/tmp/env-a", "start", "--foreground"]);
+
+        Assert.Equal("/tmp/env-a", dataRoot);
+        Assert.Equal(["core", "start", "--foreground"], remaining);
+    }
+
+    [Fact]
+    public void ExtractDataRootFlag_SupportsTheEqualsForm()
+    {
+        var (dataRoot, remaining) = CommandLine.ExtractDataRootFlag(["--data-root=/tmp/env-b", "status"]);
+
+        Assert.Equal("/tmp/env-b", dataRoot);
+        Assert.Equal(["status"], remaining);
+    }
+
+    [Fact]
+    public void ExtractDataRootFlag_RequiresAPath()
+        => Assert.Throws<CommandUsageException>(() => CommandLine.ExtractDataRootFlag(["core", "start", "--data-root"]));
 
     [Fact]
     public async Task RunAsync_CoreHelpCommand_RoutesToCoreCommand()

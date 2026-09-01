@@ -36,37 +36,61 @@ internal static class CoreSettingsEndpoints
                 request,
                 users,
                 clock,
-                async () =>
-                {
-                    if (input?.Settings is not { Count: > 0 } submitted)
-                    {
-                        return CoreJson.Json(
-                            new ErrorResponse("core_setting_invalid", "settings is required and must not be empty."),
-                            statusCode: StatusCodes.Status400BadRequest);
-                    }
-
-                    // The service does the per-key parse/validate (auth hours vs ingress strings); the
-                    // endpoint just forwards the raw values and maps a validation failure to 400.
-                    try
-                    {
-                        await settings.UpdateAsync(submitted, cancellationToken);
-                    }
-                    catch (AppLifecycleException ex)
-                    {
-                        return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: StatusCodes.Status400BadRequest);
-                    }
-
-                    // Live-apply ingress: an ingress change re-renders the tunnel config immediately from
-                    // the running-app set (best-effort; never fails the save). Auth-only saves skip this.
-                    if (CoreSettingsService.TouchesIngress(submitted))
-                    {
-                        await lifecycle.ReconcileIngressAsync(cancellationToken);
-                    }
-
-                    return CoreJson.Json(Build(settings));
-                },
+                () => ApplyUpdateAsync(settings, lifecycle, input, cancellationToken),
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
+
+        // The same settings over the loopback control plane, for `hosty core settings`: on a headless
+        // host (Shell optional, no admin browser session) this is the only way to edit a Core setting
+        // at all — and the recovery path for a value that broke the UI. Same Build/ApplyUpdateAsync as
+        // the admin surface, so the two can never diverge in shape or validation.
+        app.MapGet("/control/v1/settings", (HttpRequest request, ControlSecret secret, CoreSettingsService settings) =>
+            HostyCoreApplication.RequireControlSecret(request, secret, () => CoreJson.Json(Build(settings))));
+        app.MapPut("/control/v1/settings", async (
+            HttpRequest request,
+            ControlSecret secret,
+            CoreSettingsService settings,
+            CoreLifecycleService lifecycle,
+            CoreSettingsUpdateRequest? input,
+            CancellationToken cancellationToken) =>
+            await HostyCoreApplication.RequireControlSecret(
+                request,
+                secret,
+                () => ApplyUpdateAsync(settings, lifecycle, input, cancellationToken)));
+    }
+
+    // One apply path for both surfaces (admin PUT and the control plane): the service does the
+    // per-key parse/validate; this forwards the raw values, maps a validation failure to 400, and
+    // live-applies ingress — an ingress change re-renders the tunnel config immediately from the
+    // running-app set (best-effort; never fails the save). Non-ingress saves skip that.
+    private static async Task<IResult> ApplyUpdateAsync(
+        CoreSettingsService settings,
+        CoreLifecycleService lifecycle,
+        CoreSettingsUpdateRequest? input,
+        CancellationToken cancellationToken)
+    {
+        if (input?.Settings is not { Count: > 0 } submitted)
+        {
+            return CoreJson.Json(
+                new ErrorResponse("core_setting_invalid", "settings is required and must not be empty."),
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        try
+        {
+            await settings.UpdateAsync(submitted, cancellationToken);
+        }
+        catch (AppLifecycleException ex)
+        {
+            return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        if (CoreSettingsService.TouchesIngress(submitted))
+        {
+            await lifecycle.ReconcileIngressAsync(cancellationToken);
+        }
+
+        return CoreJson.Json(Build(settings));
     }
 
     private static CoreSettingsResponse Build(CoreSettingsService settings)
@@ -126,6 +150,19 @@ internal static class CoreSettingsEndpoints
             Description: CoreUserRetentionSettings.RetentionDescription,
             Overridden: userRetention.Overridden,
             Unit: "day",
+            Options: null));
+
+        var server = settings.GetServerRow();
+        rows.Add(new CoreSettingSummary(
+            ServerSettings.PortKey,
+            Type: "number",
+            Value: server.StoredOrDefaultPort.ToString(CultureInfo.InvariantCulture),
+            Default: ServerSettings.DefaultPort.ToString(CultureInfo.InvariantCulture),
+            Group: CoreServerSettings.Group,
+            Label: CoreServerSettings.PortLabel,
+            Description: CoreServerSettings.PortDescription,
+            Overridden: server.Overridden,
+            Unit: null,
             Options: null));
 
         var oauth = settings.GetOAuthRow();

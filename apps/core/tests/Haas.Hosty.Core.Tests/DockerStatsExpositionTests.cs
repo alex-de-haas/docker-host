@@ -45,6 +45,21 @@ public sealed class DockerStatsExpositionTests
     }
 
     [Fact]
+    public void ParseContainerOwners_DropsRowsOfOtherInstances()
+    {
+        // The 4th field is the hosty.instance label; absent (pre-label containers, and every default
+        // instance container) reads as the default's empty id. A secondary-root Core must not
+        // attribute — and double-report — the default root's containers, and vice versa.
+        const string output = "cont-a\tcom.acme.app\tweb\t\ncont-b\tcom.acme.other\tapi\tbbbb\n";
+
+        var defaultOwners = DockerStatsExposition.ParseContainerOwners(output);
+        Assert.Equal("cont-a", Assert.Single(defaultOwners).Key);
+
+        var scopedOwners = DockerStatsExposition.ParseContainerOwners(output, "bbbb");
+        Assert.Equal("cont-b", Assert.Single(scopedOwners).Key);
+    }
+
+    [Fact]
     public async Task BuildSnapshotAsync_ReadsContainerOwnersOnceAcrossTicks()
     {
         // `docker ps` answers a question that changes when an app starts or stops, not every ten

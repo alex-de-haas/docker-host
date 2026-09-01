@@ -315,6 +315,141 @@ public sealed class HostyCoreRuntimeConfigTests
         Assert.Equal(7070, harness.Services.GetRequiredService<HostyCoreRuntimeConfig>().CorePort);
     }
 
+    [Fact]
+    public void FromEnvironment_PortFlagBeatsEnvironmentStoredAndDefault()
+    {
+        var dataRoot = CreateRootWithStoredPort(9003);
+        using var dataRootEnv = TemporaryEnvironment.With("HOSTY_DATA_ROOT", dataRoot);
+        using var coreUrlEnv = TemporaryEnvironment.With("HOSTY_CORE_URL", null);
+        using var aspNetUrlsEnv = TemporaryEnvironment.With("ASPNETCORE_URLS", null);
+        using var corePortEnv = TemporaryEnvironment.With("HOSTY_CORE_PORT", "9002");
+
+        try
+        {
+            var config = HostyCoreRuntimeConfig.FromEnvironment(
+                new TestHostEnvironment(Environments.Production), ["--port", "9001"]);
+
+            Assert.Equal(9001, config.CorePort);
+            Assert.Equal("http://localhost:9001", config.ListenUrl);
+        }
+        finally
+        {
+            Directory.Delete(dataRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void FromEnvironment_EnvironmentPortBeatsTheStoredPort()
+    {
+        var dataRoot = CreateRootWithStoredPort(9003);
+        using var dataRootEnv = TemporaryEnvironment.With("HOSTY_DATA_ROOT", dataRoot);
+        using var coreUrlEnv = TemporaryEnvironment.With("HOSTY_CORE_URL", null);
+        using var aspNetUrlsEnv = TemporaryEnvironment.With("ASPNETCORE_URLS", null);
+        using var corePortEnv = TemporaryEnvironment.With("HOSTY_CORE_PORT", "9002");
+
+        try
+        {
+            var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Production));
+
+            // Flag and env are this-run-only overrides of the stored value.
+            Assert.Equal(9002, config.CorePort);
+        }
+        finally
+        {
+            Directory.Delete(dataRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void FromEnvironment_StoredPortBeatsTheDefault()
+    {
+        var dataRoot = CreateRootWithStoredPort(9003);
+        using var dataRootEnv = TemporaryEnvironment.With("HOSTY_DATA_ROOT", dataRoot);
+        using var coreUrlEnv = TemporaryEnvironment.With("HOSTY_CORE_URL", null);
+        using var aspNetUrlsEnv = TemporaryEnvironment.With("ASPNETCORE_URLS", null);
+        using var corePortEnv = TemporaryEnvironment.With("HOSTY_CORE_PORT", null);
+
+        try
+        {
+            var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Production));
+
+            // The root's persisted value (hosty core settings set HOSTY_CORE_PORT) drives a plain start.
+            Assert.Equal(9003, config.CorePort);
+            Assert.Equal("http://localhost:9003", config.ListenUrl);
+        }
+        finally
+        {
+            Directory.Delete(dataRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void FromEnvironment_DataRootFlagBeatsTheEnvironment()
+    {
+        var flagRoot = Path.Combine(Path.GetTempPath(), $"hosty-core-flag-root-{Guid.NewGuid():N}");
+        using var dataRootEnv = TemporaryEnvironment.With(
+            "HOSTY_DATA_ROOT", Path.Combine(Path.GetTempPath(), "hosty-core-env-root"));
+
+        var config = HostyCoreRuntimeConfig.FromEnvironment(
+            new TestHostEnvironment(Environments.Production), ["--data-root", flagRoot]);
+
+        Assert.Equal(Path.GetFullPath(flagRoot), config.DataRoot);
+    }
+
+    [Fact]
+    public void CoreStartArguments_ParsesSpaceSeparatedOptions()
+    {
+        var parsed = CoreStartArguments.Parse(["--port", "9001", "--data-root", "/tmp/x"]);
+
+        Assert.Equal(9001, parsed.Port);
+        Assert.Equal("/tmp/x", parsed.DataRoot);
+    }
+
+    [Fact]
+    public void CoreStartArguments_ParsesEqualsSeparatedOptions()
+    {
+        var parsed = CoreStartArguments.Parse(["--port=9001", "--data-root=/tmp/x"]);
+
+        Assert.Equal(9001, parsed.Port);
+        Assert.Equal("/tmp/x", parsed.DataRoot);
+    }
+
+    [Fact]
+    public void CoreStartArguments_IgnoresUnknownArguments()
+    {
+        var parsed = CoreStartArguments.Parse(["--urls", "http://localhost:5000", "--port", "9001"]);
+
+        Assert.Equal(9001, parsed.Port);
+        Assert.Null(parsed.DataRoot);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("65536")]
+    [InlineData("port")]
+    public void CoreStartArguments_RejectsInvalidPorts(string port)
+    {
+        var exception = Assert.Throws<InvalidOperationException>(() => CoreStartArguments.Parse(["--port", port]));
+
+        Assert.Contains("--port must be an integer", exception.Message);
+    }
+
+    [Fact]
+    public void CoreStartArguments_RequiresAValueAfterTheOptionName()
+        => Assert.Throws<InvalidOperationException>(() => CoreStartArguments.Parse(["--data-root"]));
+
+    private static string CreateRootWithStoredPort(int port)
+    {
+        var dataRoot = Path.Combine(Path.GetTempPath(), $"hosty-core-stored-port-{Guid.NewGuid():N}");
+        var coreRoot = Path.Combine(dataRoot, "core");
+        Directory.CreateDirectory(coreRoot);
+        File.WriteAllText(
+            Path.Combine(coreRoot, CoreSettingsSchema.FileName),
+            """{"schemaVersion":"core-settings.0.1","server":{"HOSTY_CORE_PORT":"@value@"}}"""
+                .Replace("@value@", port.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        return dataRoot;
+    }
+
     private sealed class TestHostEnvironment(string environmentName) : IHostEnvironment
     {
         public string EnvironmentName { get; set; } = environmentName;

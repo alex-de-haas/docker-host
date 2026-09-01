@@ -40,6 +40,7 @@ internal sealed partial class CoreCommand(CommandContext context)
             "stop" => await StopAsync(args[1..]),
             "restart" => await RestartAsync(args[1..]),
             "logs" => await LogsAsync(args[1..]),
+            "settings" => await new CoreSettingsCommand(context).ExecuteAsync(args[1..]),
             _ => throw new CommandUsageException($"Unknown core command '{args[0]}'.", Usage),
         };
     }
@@ -48,16 +49,25 @@ internal sealed partial class CoreCommand(CommandContext context)
     {
         var options = ParseStartOptions(args);
         Directory.CreateDirectory(context.Environment.RootDirectory);
-        var settings = context.SettingsStore.Load();
-        settings.Validate(context.Environment);
-        var url = options.Url ?? BuildDefaultCoreUrl(settings);
 
-        // Idempotent start: if a Core already answers /healthz on this URL, reuse it
-        // instead of spawning a duplicate that would fail to bind the port and leave
-        // the caller staring at a control-discovery timeout.
-        if (await IsCoreHealthyAsync(url))
+        // One Core process per data root. The root's control.json names the live instance (a stale
+        // file pointing at a dead PID is cleaned inside TryCreateAsync), so a live discovery makes
+        // this start one of two things: idempotent (no conflicting intent — report the running
+        // Core) or a refused second instance (a different --port/--url — name the live instance).
+        // Core enforces the same rule with its per-root lock for starts that bypass the CLI; this
+        // preflight just fails earlier and friendlier.
+        var liveRefusal = await PreflightLiveInstanceAsync(options);
+        if (liveRefusal is int exitCode)
         {
-            return ReportAlreadyRunning(url, await ReadCoreStatusAsync(suppressErrors: true));
+            return exitCode;
+        }
+
+        // No discovery: an explicitly targeted URL can still host a healthy Core (one whose
+        // discovery write failed), so keep the idempotent reuse for that case instead of spawning a
+        // duplicate that would lose the bind and the root lock.
+        if (options.Url is { } probeUrl && await IsCoreHealthyAsync(probeUrl))
+        {
+            return ReportAlreadyRunning(probeUrl, await ReadCoreStatusAsync(suppressErrors: true));
         }
 
         CoreStartTarget target;
@@ -73,27 +83,89 @@ internal sealed partial class CoreCommand(CommandContext context)
 
         if (options.Foreground)
         {
-            var process = StartForeground(target, url, settings);
-            context.Console.MarkupLine($"[green]Hosty Core starting.[/] PID {process.Id}, URL {Markup.Escape(url)}");
+            var process = StartForeground(target, options);
+            context.Console.MarkupLine($"[green]Hosty Core starting.[/] PID {process.Id}{DescribeUrl(options)}");
             await process.WaitForExitAsync();
             return process.ExitCode;
         }
 
-        var logPath = StartBackground(target, url, settings);
-        context.Console.MarkupLine($"[green]Hosty Core starting.[/] URL {Markup.Escape(url)}");
+        var logPath = StartBackground(target, options);
+        context.Console.MarkupLine($"[green]Hosty Core starting.[/]{DescribeUrl(options)}");
         context.Console.MarkupLine($"[grey]Log:[/] {Markup.Escape(logPath)}");
 
         var status = await WaitForStatusAsync();
         if (status is null)
         {
             context.Error.MarkupLine("[yellow]Hosty Core process started, but local control discovery was not ready before the timeout.[/]");
-            context.Error.MarkupLine($"[grey]Check status with [white]hosty core status[/].[/]");
+            context.Error.MarkupLine($"[grey]Check status with [white]hosty core status[/] and the log with [white]hosty core logs[/].[/]");
             return 1;
         }
 
         RenderStatus(status);
         return 0;
     }
+
+    // Null when starting may proceed; an exit code when a live Core on this root already answers for
+    // it (0: idempotent "already running", 1: refused conflicting second start).
+    private async Task<int?> PreflightLiveInstanceAsync(StartOptions options)
+    {
+        int? processId;
+        string? endpoint;
+        using (var live = await CoreControlClient.TryCreateAsync(context, probeTimeout: ControlProbeTimeout))
+        {
+            if (live is null)
+            {
+                return null;
+            }
+
+            processId = live.CoreProcessId;
+            endpoint = TryGetOrigin(live.ControlBaseUrl);
+        }
+
+        // Conflicting intent is judged against the FULL requested binding, not its port alone: a
+        // --url naming another scheme or host on the live port is still a binding this start was
+        // asked for and did not get, and calling that an idempotent reuse would silently drop it.
+        string? refusedRequest = null;
+        if (options.Url is { } requestedUrl &&
+            Uri.TryCreate(requestedUrl, UriKind.Absolute, out var requestedUri) &&
+            endpoint is not null &&
+            Uri.TryCreate(endpoint, UriKind.Absolute, out var liveUri))
+        {
+            if (!string.Equals(requestedUri.Scheme, liveUri.Scheme, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(requestedUri.Host, liveUri.Host, StringComparison.OrdinalIgnoreCase) ||
+                requestedUri.Port != liveUri.Port)
+            {
+                refusedRequest = $"URL {requestedUrl}";
+            }
+        }
+        else if ((options.Port ?? TryGetUrlPort(options.Url)) is int requested &&
+            TryGetUrlPort(endpoint) is int running && requested != running)
+        {
+            refusedRequest = $"port {requested}";
+        }
+
+        if (refusedRequest is not null)
+        {
+            context.Error.MarkupLine(
+                $"[red]Hosty Core is already running for data root[/] {Markup.Escape(context.Environment.RootDirectory)} " +
+                $"[red](PID {processId?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unknown"}, endpoint {Markup.Escape(endpoint ?? "unknown")}).[/]");
+            context.Error.MarkupLine(
+                $"[red]One Core process per data root — a second start requesting {Markup.Escape(refusedRequest)} was refused; the requested binding was not applied.[/]");
+            context.Error.MarkupLine(
+                "[grey]Stop it with [white]hosty core stop[/], persist a port change with [white]hosty core settings set HOSTY_CORE_PORT <port>[/] and restart, or address another environment with [white]--data-root[/].[/]");
+            return 1;
+        }
+
+        return ReportAlreadyRunning(endpoint ?? context.Environment.RootDirectory, await ReadCoreStatusAsync(suppressErrors: true));
+    }
+
+    private static string DescribeUrl(StartOptions options)
+        => options.Url is { } url ? $" URL {Markup.Escape(url)}" : string.Empty;
+
+    private static int? TryGetUrlPort(string? url)
+        => url is not null && Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Port > 0
+            ? uri.Port
+            : null;
 
     private async Task<CoreStartTarget> ResolveStartTargetAsync(StartOptions options)
     {
@@ -160,14 +232,14 @@ internal sealed partial class CoreCommand(CommandContext context)
         }
     }
 
-    private Process StartForeground(CoreStartTarget target, string url, LaunchSettings settings)
+    private Process StartForeground(CoreStartTarget target, StartOptions options)
     {
-        var startInfo = CreateCoreStartInfo(target, url, settings);
+        var startInfo = CreateCoreStartInfo(target, options);
         startInfo.CreateNoWindow = false;
         return Process.Start(startInfo) ?? throw new InvalidOperationException("Unable to start Hosty Core process.");
     }
 
-    private string StartBackground(CoreStartTarget target, string url, LaunchSettings settings)
+    private string StartBackground(CoreStartTarget target, StartOptions options)
     {
         var logDirectory = Path.Combine(context.Environment.RootDirectory, "core", "logs");
         Directory.CreateDirectory(logDirectory);
@@ -176,13 +248,13 @@ internal sealed partial class CoreCommand(CommandContext context)
 
         if (OperatingSystem.IsWindows())
         {
-            var windowsStartInfo = CreateWindowsBackgroundStartInfo(target, url, settings, logPath);
+            var windowsStartInfo = CreateWindowsBackgroundStartInfo(target, options, logPath);
             using var windowsProcess = Process.Start(windowsStartInfo) ??
                 throw new InvalidOperationException("Unable to start Hosty Core process.");
             return logPath;
         }
 
-        var environment = BuildCoreEnvironment(url, settings)
+        var environment = BuildCoreEnvironment(options)
             .Select(pair => $"{pair.Key}={ShellQuote(pair.Value)}");
         var command = string.Join(" ", [
             .. environment,
@@ -214,7 +286,7 @@ internal sealed partial class CoreCommand(CommandContext context)
         return logPath;
     }
 
-    private ProcessStartInfo CreateWindowsBackgroundStartInfo(CoreStartTarget target, string url, LaunchSettings settings, string logPath)
+    private ProcessStartInfo CreateWindowsBackgroundStartInfo(CoreStartTarget target, StartOptions options, string logPath)
     {
         var command = string.Join(" ", [
             .. target.GetCmdShellCommand(),
@@ -232,7 +304,7 @@ internal sealed partial class CoreCommand(CommandContext context)
             WorkingDirectory = target.WorkingDirectory,
         };
 
-        foreach (var pair in BuildCoreEnvironment(url, settings))
+        foreach (var pair in BuildCoreEnvironment(options))
         {
             startInfo.Environment[pair.Key] = pair.Value;
         }
@@ -240,7 +312,7 @@ internal sealed partial class CoreCommand(CommandContext context)
         return startInfo;
     }
 
-    private ProcessStartInfo CreateCoreStartInfo(CoreStartTarget target, string url, LaunchSettings settings)
+    private ProcessStartInfo CreateCoreStartInfo(CoreStartTarget target, StartOptions options)
     {
         var startInfo = new ProcessStartInfo
         {
@@ -253,7 +325,7 @@ internal sealed partial class CoreCommand(CommandContext context)
             startInfo.ArgumentList.Add(argument);
         }
 
-        foreach (var pair in BuildCoreEnvironment(url, settings))
+        foreach (var pair in BuildCoreEnvironment(options))
         {
             startInfo.Environment[pair.Key] = pair.Value;
         }
@@ -261,17 +333,32 @@ internal sealed partial class CoreCommand(CommandContext context)
         return startInfo;
     }
 
-    internal IReadOnlyDictionary<string, string> BuildCoreEnvironment(string url, LaunchSettings settings)
+    internal IReadOnlyDictionary<string, string> BuildCoreEnvironment(StartOptions options)
     {
         var environment = new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            [LaunchSettingDefinitions.HostyDataRoot] = settings.ResolveHostDataRoot(context.Environment),
-            [LaunchSettingDefinitions.HostyCorePort] = ResolveCorePort(url, settings.HostyCorePort),
-            ["HOSTY_CORE_URL"] = url,
-            ["ASPNETCORE_URLS"] = url,
+            // The CLI's resolved root IS the environment (--data-root / HOSTY_DATA_ROOT / default).
+            // Core resolves the same default on its own, but pinning it here guarantees the spawned
+            // Core lands on exactly the root this CLI will discover and control.
+            ["HOSTY_DATA_ROOT"] = context.Environment.RootDirectory,
         };
 
-        AddOptional(environment, LaunchSettingDefinitions.HostyCorePublicOrigin, settings.HostyCorePublicOrigin);
+        // --port is forwarded as the this-run-only override (inside Core: flag/env outranks the
+        // root's stored value for that run). Without it the CLI passes nothing: Core resolves
+        // stored → 7070 itself — the CLI no longer computes or owns the port. Likewise
+        // HOSTY_CORE_PUBLIC_ORIGIN is no longer injected; it stays a plain env var Core reads, so
+        // an operator export reaches Core through ordinary environment inheritance.
+        if (options.Port is int port)
+        {
+            environment["HOSTY_CORE_PORT"] = port.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        if (options.Url is { } url)
+        {
+            environment["HOSTY_CORE_URL"] = url;
+            environment["ASPNETCORE_URLS"] = url;
+        }
+
         // Hand Core the path to this managed CLI so its admin restart endpoint (used by the Shell platform
         // panel) can spawn `hosty core restart --keep-apps` to light-restart Core without an external
         // supervisor. Only when we are the installed `hosty` binary — a source/dev CLI (dotnet host) has
@@ -286,22 +373,6 @@ internal sealed partial class CoreCommand(CommandContext context)
         // system app (Shell, Telemetry, Marketplace) is a normal per-app choice: the manifest default
         // on first install, switchable afterwards with `hosty apps switch-runtime` — not a launch setting.
         return environment;
-    }
-
-    private static string BuildDefaultCoreUrl(LaunchSettings settings)
-        => $"http://localhost:{settings.HostyCorePort}";
-
-    private static string ResolveCorePort(string url, string fallback)
-        => Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Port > 0
-            ? uri.Port.ToString(System.Globalization.CultureInfo.InvariantCulture)
-            : fallback;
-
-    private static void AddOptional(IDictionary<string, string> environment, string key, string value)
-    {
-        if (!string.IsNullOrWhiteSpace(value))
-        {
-            environment[key] = value;
-        }
     }
 
 
@@ -663,6 +734,7 @@ internal sealed partial class CoreCommand(CommandContext context)
     {
         string? projectPath = null;
         string? url = null;
+        int? port = null;
         var foreground = false;
 
         for (var index = 0; index < args.Length; index++)
@@ -679,12 +751,31 @@ internal sealed partial class CoreCommand(CommandContext context)
                 case "--url":
                     url = RequireOptionValue(args, ref index, "--url");
                     break;
+                case "--port":
+                    var rawPort = RequireOptionValue(args, ref index, "--port");
+                    if (!int.TryParse(rawPort.Trim(), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var parsedPort) ||
+                        parsedPort is not (> 0 and <= 65535))
+                    {
+                        throw new CommandUsageException("--port must be an integer between 1 and 65535.", Usage);
+                    }
+
+                    port = parsedPort;
+                    break;
                 default:
                     throw new CommandUsageException($"Unknown core start option '{arg}'.", Usage);
             }
         }
 
-        return new StartOptions(projectPath, url, foreground);
+        // A port that contradicts the URL's own port is two requests in one command; refuse it
+        // rather than letting one silently win.
+        if (url is not null && port is int chosenPort &&
+            TryGetUrlPort(url) is int urlPort && urlPort != chosenPort)
+        {
+            throw new CommandUsageException(
+                $"--port {chosenPort} contradicts --url {url} (which binds port {urlPort}).", Usage);
+        }
+
+        return new StartOptions(projectPath, url, foreground, port);
     }
 
     private static string RequireOptionValue(string[] args, ref int index, string option)
@@ -734,7 +825,7 @@ internal sealed partial class CoreCommand(CommandContext context)
         }
     }
 
-    internal sealed record StartOptions(string? ProjectPath, string? Url, bool Foreground);
+    internal sealed record StartOptions(string? ProjectPath, string? Url, bool Foreground, int? Port = null);
 
     internal sealed record CoreStartTarget(
         string FileName,
@@ -786,17 +877,21 @@ internal sealed partial class CoreCommand(CommandContext context)
         hosty core
 
         Usage:
-          hosty core <command> [options]
+          hosty [--data-root <path>] core <command> [options]
 
         Commands:
-          start [--project <csproj-path>] [--url <url>] [--foreground]
+          start [--port <port>] [--project <csproj-path>] [--url <url>] [--foreground]
           status
           stop [--keep-apps]
-          restart [--keep-apps] [--project <csproj-path>] [--url <url>] [--foreground]
+          restart [--keep-apps] [--port <port>] [--project <csproj-path>] [--url <url>] [--foreground]
           logs [--tail <count>]
+          settings list|get|set|reset
 
         Description:
           Manages the installed Hosty Core process. Pass --project for explicit source mode.
+          --data-root selects the environment (default ~/.hosty); one Core process runs per root.
+          --port overrides the listen port for that run only — persist it with
+          `hosty core settings set HOSTY_CORE_PORT <port>`.
           --keep-apps stops/restarts Core WITHOUT stopping running apps (light restart), leaving
           their containers up to be re-adopted when Core starts again.
         """;
