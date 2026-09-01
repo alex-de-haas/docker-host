@@ -28,8 +28,8 @@ import {
   normalizeShellPath,
   readCanonicalRedirect,
   readShellRoute,
-  SIDEBAR_COMPACT_STORAGE_KEY,
-  RIGHT_PANEL_OPEN_STORAGE_KEY,
+  SIDEBAR_COMPACT_PREF_KEY,
+  RIGHT_PANEL_OPEN_PREF_KEY,
   SHELL_VIEW_LABELS,
   readAssistantSessionParam,
   shellViewRequiresAdmin,
@@ -119,13 +119,26 @@ async function waitForOwnOrigin(timeoutMs = 90_000): Promise<boolean> {
   return false;
 }
 
+// Chrome preferences live in cookies, not localStorage, so the server can read them and render the
+// first paint already expanded/collapsed — see the pref-key constants in shell-routes.ts. Not
+// Secure: the Shell also serves over plain http (localhost, LAN), and the value is a layout bit.
+function persistChromePref(name: string, value: boolean) {
+  document.cookie = `${name}=${value}; path=/; max-age=31536000; samesite=lax`;
+}
+
 export function ShellClient({
   coreOrigin,
   shellAppId,
+  // Chrome preferences as the server read them from cookies, so the first paint is already in the
+  // stored state. null = no cookie: the mount effect then migrates the legacy localStorage value.
+  initialSidebarCompact,
+  initialRightPanelOpen,
   children,
 }: {
   coreOrigin: string;
   shellAppId: string;
+  initialSidebarCompact: boolean | null;
+  initialRightPanelOpen: boolean | null;
   children: ReactNode;
 }) {
   const router = useRouter();
@@ -169,8 +182,12 @@ export function ShellClient({
   const [updateStatusInvalidations, setUpdateStatusInvalidations] = useState<Record<string, number>>({});
   const [workspace, setWorkspace] = useState<EmbeddedWorkspace | null>(null);
   const [optimisticWorkspaceRoute, setOptimisticWorkspaceRoute] = useState<WorkspaceRoute | null>(null);
-  const [sidebarCompact, setSidebarCompact] = useState(false);
-  const [rightPanelOpen, setRightPanelOpen] = useState(false);
+  const [sidebarCompact, setSidebarCompact] = useState(initialSidebarCompact ?? false);
+  const [rightPanelOpen, setRightPanelOpen] = useState(initialRightPanelOpen ?? false);
+  // Gates the chrome grid's column transition. Off during the initial settle: the right panel
+  // column can only appear once /api/apps names a panel-capable app, and animating that data
+  // arrival reads as the panel opening by itself on load.
+  const [chromeTransitions, setChromeTransitions] = useState(false);
   // Which panel tab was last chosen. A key rather than an index: an app being stopped or removed
   // reorders the strip, and an index would then point at somebody else's tool.
   const [activePanelKey, setActivePanelKey] = useState<string | null>(null);
@@ -207,10 +224,30 @@ export function ShellClient({
   const assistantGateway = useMemo(() => findAssistantGateway(state.apps), [state.apps]);
   const assistantAvailable = Boolean(canManageApps && assistantGateway);
 
+  // Migration only: with a cookie present the server already rendered the stored state and this
+  // does nothing. Without one (pre-cookie builds), the legacy localStorage value is adopted and
+  // re-persisted as the cookie — a one-time post-mount correction instead of one on every load.
   useEffect(() => {
-    setSidebarCompact(window.localStorage.getItem(SIDEBAR_COMPACT_STORAGE_KEY) === "true");
-    setRightPanelOpen(window.localStorage.getItem(RIGHT_PANEL_OPEN_STORAGE_KEY) === "true");
-  }, []);
+    if (initialSidebarCompact === null) {
+      const compact = window.localStorage.getItem(SIDEBAR_COMPACT_PREF_KEY) === "true";
+      setSidebarCompact(compact);
+      persistChromePref(SIDEBAR_COMPACT_PREF_KEY, compact);
+    }
+    if (initialRightPanelOpen === null) {
+      const open = window.localStorage.getItem(RIGHT_PANEL_OPEN_PREF_KEY) === "true";
+      setRightPanelOpen(open);
+      persistChromePref(RIGHT_PANEL_OPEN_PREF_KEY, open);
+    }
+  }, [initialSidebarCompact, initialRightPanelOpen]);
+
+  // One frame after the first load settles (success or error — `loading` starts true and drops on
+  // either), so the settled layout paints before transitions can animate; user toggles from then on
+  // animate normally.
+  useEffect(() => {
+    if (chromeTransitions || state.loading) return;
+    const frame = window.requestAnimationFrame(() => setChromeTransitions(true));
+    return () => window.cancelAnimationFrame(frame);
+  }, [chromeTransitions, state.loading]);
 
   const refresh = useCallback(async () => {
     const requestToken = ++refreshRequestRef.current;
@@ -1768,12 +1805,12 @@ export function ShellClient({
 
   function setCompact(compact: boolean) {
     setSidebarCompact(compact);
-    window.localStorage.setItem(SIDEBAR_COMPACT_STORAGE_KEY, String(compact));
+    persistChromePref(SIDEBAR_COMPACT_PREF_KEY, compact);
   }
 
   function setPanelOpen(open: boolean) {
     setRightPanelOpen(open);
-    window.localStorage.setItem(RIGHT_PANEL_OPEN_STORAGE_KEY, String(open));
+    persistChromePref(RIGHT_PANEL_OPEN_PREF_KEY, open);
   }
 
   const openInstallDialog = useCallback((manifestPath?: string) => {
@@ -2161,7 +2198,8 @@ export function ShellClient({
 
       <div
         className={cn(
-          "grid min-h-0 flex-1 transition-[grid-template-columns] duration-200",
+          "grid min-h-0 flex-1",
+          chromeTransitions && "transition-[grid-template-columns] duration-200",
           rightPanelVisible
             ? sidebarCompact
               ? "grid-cols-[72px_minmax(0,1fr)_360px]"

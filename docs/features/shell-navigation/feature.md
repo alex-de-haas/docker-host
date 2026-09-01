@@ -1,7 +1,7 @@
 # Shell Navigation
 
 Created: 2026-07-30
-Updated: 2026-08-17
+Updated: 2026-09-01
 
 The browser Shell has three top-level destinations: **Dashboard**, the host you manage; **Settings**,
 the host you configure; and **Apps**, the apps you use. This document owns the route table and the
@@ -69,6 +69,15 @@ The **Apps heading is a link to `/apps`**: the heading is the overview, the rows
 Collapsed, the sidebar renders no headings, so the rail carries an equivalent control with its own
 icon — deliberately not the one app rows fall back to, which an icon-less app would be
 indistinguishable from.
+
+Collapsed, an app row is only its icon, so a running app with more than one page makes that icon a
+flyout trigger instead of a direct launcher: a menu beside the rail lists the app's pages and the
+standalone-open link — both of which the expanded sidebar shows inline and the rail has no room
+for. The menu opens on click (which also covers keyboard and touch) and, for a mouse, on hover
+after a short delay; it is non-modal so sliding along the rail previews one app after another. A
+hover open never takes focus and a hover close never returns it to the trigger — pointing at the
+rail must not pull focus out of the embedded app. A single-page app and an app that is not running
+keep the plain icon behavior: direct launch, or the disabled state tooltip.
 
 The footer carries the account block only. Core's version, the shortcut into `/settings?tab=core`,
 and the Core update action are not repeated there: the Dashboard's Core row already states the
@@ -139,3 +148,6 @@ theme bridges — depends on the Shell **origin** alone.
   of it the command emitted a URL the Shell has never served.
 - Visual verification covers the merged Dashboard, all three settings tabs, the collapsed sidebar
   reaching `/apps`, and each legacy path landing on its canonical URL.
+- Visual verification of the collapsed rail covers the multi-page app flyout: opening by click and
+  by hover, page navigation and the standalone link from it, and that hovering the rail does not
+  steal focus from an embedded workspace.

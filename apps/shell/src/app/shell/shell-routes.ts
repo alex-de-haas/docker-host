@@ -6,10 +6,15 @@ import type {
   WorkspaceRoute,
 } from "./types";
 
-export const SIDEBAR_COMPACT_STORAGE_KEY = "hosty.shell.sidebar.compact";
-// The right rail's collapsed state, remembered like the left rail's: an operator who docked a tool
+// UI chrome preferences, persisted as cookies rather than localStorage so the server can render
+// the first paint already in the stored state — a mount-time client read repainted the default
+// chrome and animated the correction (the left rail collapsing by itself on every reload). The
+// same names were localStorage keys before; the client still reads those once as a migration
+// source when the cookie is absent.
+export const SIDEBAR_COMPACT_PREF_KEY = "hosty.shell.sidebar.compact";
+// The right rail's docked state, remembered like the left rail's: an operator who docked a tool
 // beside their work expects it still docked after a reload.
-export const RIGHT_PANEL_OPEN_STORAGE_KEY = "hosty.shell.panel.open";
+export const RIGHT_PANEL_OPEN_PREF_KEY = "hosty.shell.panel.open";
 
 const SHELL_VIEW_HREFS: Record<ShellView, string> = {
   dashboard: "/dashboard",
