@@ -35,7 +35,12 @@ function DropdownMenuContent({
   className,
   sideOffset = 4,
   ...props
-}: React.ComponentProps<typeof DropdownMenuPrimitive.Content>) {
+}: React.ComponentProps<typeof DropdownMenuPrimitive.Content> & {
+  // Radix omits onOpenAutoFocus from DropdownMenu.Content's public type, but the runtime forwards
+  // it to the underlying Menu content, whose composeEventHandlers honors preventDefault. Exposed
+  // here so a hover-opened menu (compact sidebar flyout) can decline the focus grab on open.
+  onOpenAutoFocus?: (event: Event) => void;
+}) {
   return (
     <DropdownMenuPrimitive.Portal>
       <DropdownMenuPrimitive.Content
