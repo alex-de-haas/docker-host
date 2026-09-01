@@ -1,11 +1,11 @@
 # CLI Bootstrap
 
 Created: 2026-05-13
-Updated: 2026-07-11
+Updated: 2026-09-01
 
 ## Description
 
-The Hosty CLI is exposed as `hosty`. It installs and updates the local CLI executable, bootstraps the installed Core executable, discovers the Core control API, and manages runtime apps through `hosty apps`.
+The Hosty CLI is exposed as `hosty`. It installs and updates the local CLI executable, bootstraps the installed Core executable, discovers the Core control API, and manages runtime apps through `hosty apps`. The CLI is not a configuration store: a client addresses an instance by its data root alone and discovers everything else from the instance itself (see [core-runtime-parameters](../core-runtime-parameters/feature.md)).
 
 ## Commands
 
@@ -14,8 +14,10 @@ hosty install
 hosty update
 hosty uninstall
 hosty core start
+hosty core start --port 7171
 hosty core start --project apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj
 hosty core stop
+hosty core settings list
 hosty auth setup-token
 hosty auth recovery-token
 hosty apps list
@@ -24,11 +26,12 @@ hosty apps install apps/demo-app --runtime dev
 
 ## Root Selection
 
-`HOSTY_HOME` can override the local Hosty root for tests and isolated runs. The default root is:
+Every command addresses one Hosty environment — a data root. Resolution order:
 
-```text
-~/.hosty
-```
+1. the global `--data-root <path>` flag (accepted before or after the command name),
+2. `HOSTY_DATA_ROOT`,
+3. `HOSTY_HOME` (the legacy override; Core still honors it too),
+4. the hardcoded per-platform default `~/.hosty`.
 
 The installer places the CLI in:
 
@@ -50,27 +53,22 @@ The installed Core executable is not placed on `PATH`. The CLI owns it under:
 
 On Windows the executable names use `.exe`.
 
-The managed Core launch settings have these defaults:
+There is no launch config file and no `hosty config` command. The listen port is a per-environment
+value in the instance's own settings store (`hosty core settings set HOSTY_CORE_PORT <port>`, effective
+on the next start; `hosty core start --port` overrides it for a single run). `HOSTY_CORE_PUBLIC_ORIGIN`
+is a plain environment variable Core reads; the CLI neither stores nor injects it.
 
-```text
-HOSTY_DATA_ROOT=$HOME/.hosty
-HOSTY_CORE_PORT=7070
-HOSTY_SHELL_PORT=7171
-HOSTY_CORE_PUBLIC_ORIGIN=
-HOSTY_SHELL_PUBLIC_ORIGIN=
-```
+A legacy `~/.hosty/config/launch.env` is migrated read-and-delete on the CLI's first contact: a
+non-default `HOSTY_CORE_PORT` is folded into the target root's settings store, a non-default
+`HOSTY_DATA_ROOT` produces a notice pointing at `--data-root`/`HOSTY_DATA_ROOT` (the pointer cannot
+live inside the root it points to), a set `HOSTY_CORE_PUBLIC_ORIGIN` is echoed as an
+export-it-yourself notice, and the file is deleted.
 
-`hosty core start` reads these defaults directly when `launch.env` has not been written yet.
-`hosty config list`, `hosty config set`, and `hosty config reset` create or rewrite
-`~/.hosty/config/launch.env` with the managed settings.
+Which first-party apps a brand-new host is seeded with — and where their manifests and feeds live — comes from the release-owned distribution catalog (`distribution-apps.0.1`, embedded in the Core binary; a source tree's repo-root `distribution-apps.json` wins). Seeding happens once; afterwards `hosty setup` installs and uninstalls catalog entries as ordinary lifecycle operations against a running Core. See [removable-system-apps](../removable-system-apps/feature.md).
 
-`HOSTY_DATA_ROOT` defines the Hosty state root used by Core. `HOSTY_CORE_PORT` and `HOSTY_SHELL_PORT` define the local ports for installed CLI launches. Public origins are unset by default; configure `HOSTY_CORE_PUBLIC_ORIGIN` and `HOSTY_SHELL_PUBLIC_ORIGIN` only when the browser-facing origin differs from the local launch port or must be explicit for deployment.
+The per-app manifest-path overrides `HOSTY_SHELL_MANIFEST_PATH`, `HOSTY_COLLECTOR_MANIFEST_PATH`, and `HOSTY_MARKETPLACE_MANIFEST_PATH` are not CLI concerns: manifest locations come from the distribution catalog, and `hosty setup` decides which apps are installed. Core still honors these as raw ambient environment variables during its own deprecation window, so an air-gapped fork can still export one directly for the Core process, but the CLI neither persists nor injects them.
 
-Which first-party apps a brand-new host is seeded with — and where their manifests and feeds live — comes from the release-owned distribution catalog (`distribution-apps.0.1`, embedded in the Core binary; a source tree's repo-root `distribution-apps.json` wins). Seeding happens once; afterwards `hosty setup` installs and uninstalls catalog entries as ordinary lifecycle operations against a running Core. See [removable-system-apps](removable-system-apps/feature.md).
-
-The per-app manifest-path overrides `HOSTY_SHELL_MANIFEST_PATH`, `HOSTY_COLLECTOR_MANIFEST_PATH`, and `HOSTY_MARKETPLACE_MANIFEST_PATH` have been **removed** from the CLI: manifest locations come from the distribution catalog, and `hosty setup` decides which apps are installed. The keys are no longer valid for `hosty config set`, and a stale value left in an older `launch.env` is ignored on load and dropped on the next save. (Core still honors these as raw ambient environment variables during its own deprecation window, so an air-gapped fork can still export one directly for the Core process, but the CLI neither persists nor injects them.)
-
-`HOSTY_SHELL_BOOTSTRAP_RUNTIME` has also been **removed** from `hosty config`: a system app's runtime profile is a normal per-app choice — the manifest's `defaultRuntime` on first install (`docker` for Shell, Telemetry, and Marketplace), switchable afterwards with `hosty apps switch-runtime`, and preserved across reconciles and updates like any other app. A stale `HOSTY_SHELL_BOOTSTRAP_RUNTIME` line in an older `launch.env` is ignored on load and dropped on the next save. Core still honors `HOSTY_SHELL_BOOTSTRAP_RUNTIME` and `HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME` as **ambient dev/fork-only overrides** (the CLI never sets them): unset, the runtime is the manifest default; a source tree or air-gapped fork can export one to pin a non-default profile at first install. This is the mechanism the `npm run dev` orchestrator uses to run Shell from the working tree's `dev` localCommand profile.
+A system app's runtime profile is likewise a normal per-app choice — the manifest's `defaultRuntime` on first install (`docker` for Shell, Telemetry, and Marketplace), switchable afterwards with `hosty apps switch-runtime`, and preserved across reconciles and updates like any other app. Core honors `HOSTY_SHELL_BOOTSTRAP_RUNTIME` and `HOSTY_COLLECTOR_BOOTSTRAP_RUNTIME` as **ambient dev/fork-only overrides** (the CLI never sets them): unset, the runtime is the manifest default; a source tree or air-gapped fork can export one to pin a non-default profile at first install. This is the mechanism the `npm run dev` orchestrator uses to run Shell from the working tree's `dev` localCommand profile.
 
 `HOSTY_RUNTIME_PUBLIC_HOST` (optional, default `127.0.0.1`) is the host Core advertises and dials for a runtime app's published loopback port. It defaults to the IPv4 loopback literal on purpose: docker publishes these ports on `127.0.0.1` only, and on hosts where `localhost` resolves to `::1` first (Windows, dual-stack Linux) .NET's `HttpClient` stalls on the unbound `::1` until the request times out, so telemetry and health reads silently return empty. Override it only for a deployment that publishes runtime-app ports on a different address.
 
@@ -79,6 +77,8 @@ Legacy `HOST_DATA_ROOT_HOST`, `HOSTY_CORE_DATA_ROOT`, `HOST_CORE_PUBLIC_ORIGIN`,
 ## Core Bootstrap
 
 `hosty start` and `hosty core start` start the installed Core executable by default. If `~/.hosty/core/bin/hosty-core` is missing, the CLI downloads the platform Core artifact from the rolling release, verifies `SHA256SUMS` when available, installs it into `core/bin`, and starts it.
+
+One Core process runs per data root. `core start` preflights the root's `control.json`: a live Core with no conflicting intent is reported as already running; a conflicting `--port`/`--url` is refused by naming the live instance (root, PID, endpoint). Core enforces the same rule itself with a per-root file lock, so a direct `dotnet run` second start is refused identically.
 
 Start does not check for newer Core builds when Core is already installed. Freshness checks and replacement are owned by `hosty update`.
 
@@ -96,7 +96,7 @@ hosty setup --with hosty.shell       # reinstall a removed Shell
 
 The checkboxes are the host's actual installed state: ticking an entry installs it, unticking an installed entry uninstalls it. Both are real lifecycle operations against a running Core — an install is `POST /control/v1/core/bootstrap/{appId}/install` (Core resolves the manifest or feed from the catalog, so no location reaches the CLI), an uninstall is the ordinary app remove. There is no intent file: `hosty setup` requires Core to be running and fails with a `hosty core start` hint when it is not. Uninstalls keep app data unless `--delete-data` is passed, so a reinstall picks up where it left off. Core's own telemetry producers follow the telemetry app itself (installed = active), so there is no observability flag to keep in step.
 
-`hosty open` opens `HOSTY_SHELL_PUBLIC_ORIGIN` when it is configured. Otherwise it opens the local Shell URL derived from `HOSTY_SHELL_PORT`.
+`hosty open` asks the running Core for Shell's origin (resolved from Shell's own app record) and opens it; a host without Shell installed has nothing to open and the command says so.
 
 For a fresh installed data root, create the first administrator through Core-owned local setup:
 
@@ -132,4 +132,16 @@ If Core rejects a control request with HTTP 401, the CLI treats the discovery as
 
 ## Uninstall
 
-`hosty uninstall` requests Core shutdown when local control discovery is available, then removes Hosty-owned state while preserving the CLI executable directory.
+`hosty uninstall` requests Core shutdown when local control discovery is available, then removes Hosty-owned state while preserving the CLI executable directory. The resolved root is the data root it cleans; an external root is addressed with `--data-root` like any other command.
+
+## Testing Expectations
+
+- Root resolution order (flag → `HOSTY_DATA_ROOT` → `HOSTY_HOME` → default) and the global
+  `--data-root` extraction, including the `--data-root=<path>` form.
+- The launch.env migration: fold-in of a non-default port, the non-default-root and public-origin
+  notices, and the delete (plus the file surviving a failed fold).
+- `core start` preflight: refusal of a conflicting second start naming the live instance; the
+  idempotent already-running report through discovery.
+- `hosty core settings` round-trips (list/get/set/reset) over `/control/v1/settings`, including the
+  down-Core failure mode.
+- Uninstall against both the default root and an explicitly addressed external root.

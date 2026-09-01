@@ -10,7 +10,7 @@ Let an administrator set the address Core tells the world it lives at, from the 
 edits every other host setting, and publish it through Cloudflare the way an app endpoint is published.
 
 The value is `HOSTY_CORE_PUBLIC_ORIGIN`. It is a CLI launch setting in `~/.hosty/config/launch.env`
-([cli-bootstrap.md](../cli-bootstrap.md)) — a file Core neither owns nor holds a reference to. Shell shows
+([cli-bootstrap.md](../cli-bootstrap/feature.md)) — a file Core neither owns nor holds a reference to. Shell shows
 the resolved value read-only on the Dashboard, saying `not configured` when it is unset
 ([dashboard-page.tsx:504](../../../apps/shell/src/app/shell/pages/dashboard-page.tsx)); there is nowhere
 in any UI to change it.
@@ -43,14 +43,14 @@ which is an argument for the smallest design that is safe, not for skipping it.
 
 ## Target behavior
 
-A diff against [cli-bootstrap.md](../cli-bootstrap.md) and
+A diff against [cli-bootstrap.md](../cli-bootstrap/feature.md) and
 [cloudflare-ingress/feature.md](../cloudflare-ingress/feature.md).
 
 **`HOSTY_CORE_PUBLIC_ORIGIN` becomes a live Core setting with the environment variable as its baseline**,
 exactly the move the ingress provider already made: a persisted value wins over the env var, and clearing
 it falls back. This adds an override; where the baseline env var comes from is not this plan's
 concern — today the CLI writes it from `launch.env`, and once
-[core-runtime-parameters](../core-runtime-parameters/plan.md) retires that file the variable remains
+[core-runtime-parameters](../core-runtime-parameters/feature.md) retires that file the variable remains
 an ambient override with the same semantics. The two plans do not wait for each other.
 
 Correcting the earlier claim in the ingress plan, which said this needs no restart because every reader
@@ -72,7 +72,7 @@ rather than intent — the session cookie's `Secure` flag follows the request sc
 both the public origin and the listen URL — so the work is to pin it with tests before a refactor
 quietly unifies it away. The headless escape hatch is
 `hosty core settings reset HOSTY_CORE_PUBLIC_ORIGIN`, owned by
-[core-runtime-parameters](../core-runtime-parameters/plan.md).
+[core-runtime-parameters](../core-runtime-parameters/feature.md).
 
 **Publication through the Cloudflare workflow.** With the API provider connected, the operator publishes
 Core's hostname under a label the same way an app endpoint is published: one proxied `CNAME`, one tunnel
@@ -151,7 +151,7 @@ The three original questions are answered:
 
 - **Taking `launch.env` away from the CLI — here.** Core gains an override, not ownership. Retiring
   `launch.env` itself is real and decided, but it belongs to
-  [core-runtime-parameters](../core-runtime-parameters/plan.md); this plan works identically before and
+  [core-runtime-parameters](../core-runtime-parameters/feature.md); this plan works identically before and
   after it lands.
 - **Deriving the origin by probing interfaces or trusting the request `Host` header.** The header is
   chosen by the sender, and an allowlist derived from it lets a request name its own redirect target —
@@ -178,8 +178,8 @@ The three original questions are answered:
 
 - [Cloudflare Ingress](../cloudflare-ingress/feature.md) — where this deliverable came from, and the
   diagnostics hint it replaces.
-- [CLI Bootstrap](../cli-bootstrap.md) — `launch.env` and the CLI settings this makes a baseline.
-- [Core Runtime Parameters](../core-runtime-parameters/plan.md) — retires `launch.env` and supplies
+- [CLI Bootstrap](../cli-bootstrap/feature.md) — `launch.env` and the CLI settings this makes a baseline.
+- [Core Runtime Parameters](../core-runtime-parameters/feature.md) — retires `launch.env` and supplies
   the `hosty core settings` recovery path decision 2 relies on.
 - [Advertised App Origins](../advertised-app-origins/plan.md) — the adjacent "what address do we tell
   clients" problem, for LAN endpoints rather than Core itself.

@@ -24,7 +24,7 @@ What is left uncovered is one case: **a LAN with no proxy in front**. There, `Ru
 answers two different questions with one value — how Core dials an app, and what address Core tells a
 client the app lives at. The first must stay a loopback IPv4 literal, because docker publishes these
 ports on `127.0.0.1` and `localhost` resolving to `::1` first stalls `HttpClient` until timeout
-([cli-bootstrap.md](../cli-bootstrap.md)). The second is wrong for every client that is not on the
+([cli-bootstrap.md](../cli-bootstrap/feature.md)). The second is wrong for every client that is not on the
 host, and today the only fix is a per-endpoint public origin, which is the right shape for one
 published hostname and the wrong shape for "this host is at 192.168.1.10, tell everyone".
 
