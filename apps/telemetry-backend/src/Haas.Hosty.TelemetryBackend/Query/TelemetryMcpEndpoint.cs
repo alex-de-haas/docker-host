@@ -80,6 +80,22 @@ internal static class TelemetryMcpEndpoint
             "Returns every span of one trace, merged across the apps that took part in it.",
             new JsonObject { ["trace_id"] = Prop("string", "The trace id, as returned by list_traces.") },
             required: "trace_id"),
+        Tool(
+            "get_metrics",
+            "Summarises one app's stored metrics: CPU, memory, and whatever meters the app itself "
+            + "exports. Use this when the question is about load or resource use rather than events "
+            + "\u2014 `container.cpu.percent`, `container.memory.bytes` and `container.memory.percent` "
+            + "come from docker stats. Repeated identical values are dropped on ingest and re-recorded "
+            + "only once a minute, so a flat series has far fewer points than scrapes: a low point "
+            + "count means the value was steady, never that collection is broken.",
+            new JsonObject
+            {
+                ["app"] = Prop("string", "The app id to read. Metrics are stored per app, so this is required."),
+                ["range_seconds"] = Prop("integer", "How far back to look, in seconds. Capped at 3600 (1 hour)."),
+                ["names"] = Prop("string", "Comma-separated metric names to restrict to. Omit for every series."),
+                ["limit"] = Prop("integer", "Maximum series. Capped at 500; the default is 100."),
+            },
+            required: "app"),
     ];
 
     private static IResult Call(JsonNode? id, JsonNode? parameters, TelemetryQueryService query)
@@ -94,6 +110,7 @@ internal static class TelemetryMcpEndpoint
                 "search_logs" => Content(id, SearchLogs(arguments, query)),
                 "list_traces" => Content(id, ListTraces(arguments, query)),
                 "get_trace" => Content(id, GetTrace(arguments, query)),
+                "get_metrics" => Content(id, GetMetrics(arguments, query)),
                 _ => Failure(id, $"Unknown tool: {name}"),
             };
         }
@@ -113,7 +130,7 @@ internal static class TelemetryMcpEndpoint
             requestedRange,
             Int(arguments, "min_severity"),
             requestedLimit,
-            ParseApps(Str(arguments, "apps")),
+            ParseCsv(Str(arguments, "apps")),
             Str(arguments, "query"));
 
         var rows = new JsonArray();
@@ -137,7 +154,7 @@ internal static class TelemetryMcpEndpoint
         var requestedRange = Int(arguments, "range_seconds");
         var requestedLimit = Int(arguments, "limit");
         var result = query.GetFleetTraces(
-            requestedRange, requestedLimit, ParseApps(Str(arguments, "apps")), Str(arguments, "query"));
+            requestedRange, requestedLimit, ParseCsv(Str(arguments, "apps")), Str(arguments, "query"));
 
         var rows = new JsonArray();
         foreach (var trace in result.Traces)
@@ -180,6 +197,167 @@ internal static class TelemetryMcpEndpoint
         return new JsonObject { ["traceId"] = traceId, ["spans"] = spans };
     }
 
+    // The three series `docker stats` produces, copied from Core's DockerStatsExposition because the
+    // backend is a separate app and cannot reference it. Matched exactly rather than by a `container.`
+    // prefix: an app is free to export its own `container.something` meter, and letting that stand in
+    // for docker stats would suppress the very note this exists for.
+    private static readonly string[] DockerStatsMetrics =
+        ["container.cpu.percent", "container.memory.bytes", "container.memory.percent"];
+
+    // The default and ceiling on how many series come back. Uncapped output is a real failure here in
+    // a way it is not for the other tools: those read stores that clamp themselves, this one gets
+    // every series in range, and one app with high-cardinality labels would hand the client megabytes.
+    private const int DefaultMetricsSeries = 100;
+    private const int MaxMetricsSeries = 500;
+
+    // The one metrics answer an agent is most likely to misread, so it is stated rather than left as
+    // an empty list to interpret. Docker stats come from an app's container, which an app that runs
+    // no container simply does not have.
+    private const string ContainerAbsenceNote =
+        "Docker stats \u2014 container.cpu.percent, container.memory.bytes, container.memory.percent "
+        + "\u2014 are absent when the app runs without a container (a localCommand runtime produces "
+        + "none), or when docker stats were unavailable; never because CPU or memory use was zero.";
+
+    /// <summary>
+    /// Summarises one app's stored series over the window, rather than returning raw points.
+    /// </summary>
+    /// <remarks>
+    /// Aggregates because the alternative does not fit: a 1-hour window over a few dozen series is
+    /// thousands of points, and the question this answers — "how loaded was it" — is answered by
+    /// the shape, not the samples. What the summary must not do is let absence read as zero, which is
+    /// why a result missing docker stats carries a note saying which kind of nothing it is.
+    /// </remarks>
+    private static JsonObject GetMetrics(JsonNode? arguments, TelemetryQueryService query)
+    {
+        var appId = Str(arguments, "app")
+            ?? throw new InvalidOperationException("app is required.");
+        var requestedRange = Int(arguments, "range_seconds");
+        var requestedLimit = Int(arguments, "limit");
+        var names = ParseCsv(Str(arguments, "names"));
+        var result = query.GetMetrics(appId, requestedRange);
+
+        var matched = new List<MetricSeriesSnapshot>();
+        foreach (var snapshot in result.Series)
+        {
+            if (snapshot.Points.Count == 0 ||
+                (names is not null && !names.Contains(snapshot.Name, StringComparer.Ordinal)))
+            {
+                continue;
+            }
+
+            matched.Add(snapshot);
+        }
+
+        // Docker stats first, so the cap can never be what hides CPU and memory: an app exporting
+        // hundreds of its own series would otherwise push them out of the window, and the result
+        // would then truthfully report truncation while still reading as "no container metrics".
+        var effectiveLimit = Math.Clamp(requestedLimit ?? DefaultMetricsSeries, 1, MaxMetricsSeries);
+        var ordered = matched
+            .OrderByDescending(IsDockerStat)
+            .ThenBy(snapshot => snapshot.Name, StringComparer.Ordinal)
+            .Take(effectiveLimit)
+            .ToList();
+
+        var rows = new JsonArray();
+        var sawDockerStats = false;
+        foreach (var snapshot in ordered)
+        {
+            var points = snapshot.Points;
+            sawDockerStats |= IsDockerStat(snapshot);
+
+            var min = double.MaxValue;
+            var max = double.MinValue;
+            var sum = 0d;
+            foreach (var point in points)
+            {
+                min = Math.Min(min, point.Value);
+                max = Math.Max(max, point.Value);
+                sum += point.Value;
+            }
+
+            var labels = new JsonObject();
+            foreach (var label in snapshot.Labels)
+            {
+                labels[label.Key] = label.Value;
+            }
+
+            rows.Add(new JsonObject
+            {
+                ["name"] = snapshot.Name,
+                ["labels"] = labels,
+                ["latest"] = points[^1].Value,
+                ["min"] = min,
+                ["max"] = max,
+                ["average"] = Math.Round(sum / points.Count, 3),
+                // Sample count, not a health signal: ingest drops unchanged values and re-records a
+                // flat series only once a minute, so "few points" usually means "steady".
+                ["points"] = points.Count,
+                ["firstAt"] = DateTimeOffset.FromUnixTimeMilliseconds(points[0].TimestampUnixMs).ToString("O"),
+                ["latestAt"] = DateTimeOffset.FromUnixTimeMilliseconds(points[^1].TimestampUnixMs).ToString("O"),
+            });
+        }
+
+        var payload = new JsonObject { ["app"] = appId, ["series"] = rows };
+        var note = Note(rows.Count, sawDockerStats, names);
+        if (note is not null)
+        {
+            payload["note"] = note;
+        }
+
+        payload["window"] = new JsonObject
+        {
+            // Read back from the response rather than re-clamped here. The trace tool already shipped
+            // a window whose reported default disagreed with the store's, which recreated the silent
+            // truncation this contract exists to prevent — inside the contract itself.
+            ["rangeSeconds"] = result.RangeSeconds,
+            ["rangeClamped"] = requestedRange is int r && r != result.RangeSeconds,
+            ["limit"] = effectiveLimit,
+            ["limitClamped"] = requestedLimit is int l && l != effectiveLimit,
+            ["returned"] = rows.Count,
+            // Exact, not the "may be" the other tools report: their stores clamp before returning, so
+            // a full page is all they can see. This cap is applied here, over the whole matched set,
+            // so the number left behind is known.
+            ["truncated"] = matched.Count > rows.Count,
+        };
+        return payload;
+    }
+
+    private static bool IsDockerStat(MetricSeriesSnapshot snapshot)
+        => DockerStatsMetrics.Contains(snapshot.Name, StringComparer.Ordinal);
+
+    /// <summary>Says which kind of "nothing" a result without docker stats is.</summary>
+    private static string? Note(int returned, bool sawDockerStats, IReadOnlyCollection<string>? names)
+    {
+        if (sawDockerStats)
+        {
+            return null;
+        }
+
+        // An unfiltered read always wanted them. A filtered one wanted them only if it named one —
+        // a caller who asked for their own meter is owed no theory about containers.
+        var askedForDockerStats = names is null
+            || names.Any(name => DockerStatsMetrics.Contains(name, StringComparer.Ordinal));
+
+        if (returned > 0)
+        {
+            // The gap that made the first cut of this note useless: filtering for CPU *and* an app
+            // meter, and getting the meter, suppressed the note entirely — the empty half of a
+            // half-answered question read as "no CPU pressure".
+            return askedForDockerStats
+                ? "No docker stats among the returned series. " + ContainerAbsenceNote
+                : null;
+        }
+
+        if (names is null)
+        {
+            return "Nothing is stored for this app in this window. That means nothing was collected, "
+                + "not that the app was idle. " + ContainerAbsenceNote;
+        }
+
+        return "No stored series matched those names in this window."
+            + (askedForDockerStats ? " " + ContainerAbsenceNote : string.Empty);
+    }
+
     /// <summary>
     /// Stamps every result with the window and cap that produced it, and says when it was truncated.
     /// </summary>
@@ -213,15 +391,15 @@ internal static class TelemetryMcpEndpoint
         return payload;
     }
 
-    private static IReadOnlyCollection<string>? ParseApps(string? apps)
+    private static IReadOnlyCollection<string>? ParseCsv(string? values)
     {
-        if (string.IsNullOrWhiteSpace(apps))
+        if (string.IsNullOrWhiteSpace(values))
         {
             return null;
         }
 
-        var ids = apps.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        return ids.Length > 0 ? ids : null;
+        var items = values.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return items.Length > 0 ? items : null;
     }
 
     private static JsonObject Prop(string type, string description)
