@@ -341,6 +341,21 @@ async function route(
     return;
   }
 
+  if (rest === "" && method === "PATCH") {
+    const body = await readJson(request);
+    if (!("title" in body)) {
+      sendJson(response, 400, { code: "invalid_request", message: "A title is required." });
+      return;
+    }
+    const record = await manager.renameSession(sessionId, body.title);
+    if (!record) {
+      sendJson(response, 404, { code: "session_not_found", message: "Session not found." });
+      return;
+    }
+    sendJson(response, 200, record);
+    return;
+  }
+
   if (rest === "/events" && method === "GET") {
     // An app-session caller carries no token expiry, so the stream is bounded by the session
     // cookie's own maximum instead of running unbounded — the delegated-token panel keeps its exact
@@ -528,7 +543,10 @@ function applyCors(request: IncomingMessage, response: ServerResponse): void {
   if (typeof origin === "string" && origin) {
     response.setHeader("access-control-allow-origin", origin);
     response.setHeader("vary", "origin");
-    response.setHeader("access-control-allow-methods", "GET, POST, OPTIONS");
+    // PATCH and PUT are listed because routes use them (rename, settings). A preflight for a method
+    // the server answers but does not advertise fails in the browser and nowhere else, which reads
+    // as the request never having been made.
+    response.setHeader("access-control-allow-methods", "GET, POST, PATCH, PUT, OPTIONS");
     response.setHeader("access-control-allow-headers", "authorization, content-type");
     response.setHeader("access-control-max-age", "600");
   }

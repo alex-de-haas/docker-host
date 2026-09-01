@@ -1,7 +1,7 @@
 # AI Gateway
 
 Created: 2026-08-09
-Updated: 2026-08-31
+Updated: 2026-09-01
 
 The Hosty assistant: an optional, removable system app (`hosty.ai-gateway`) hosting admin-only
 operator chat sessions on a host-resident agent harness, plus the Shell surface that renders them.
@@ -284,9 +284,21 @@ gateway restart.
   there is never a question of which of two texts the harness received.
 - Closing the panel only drops the SSE connection — the harness run keeps working. Reopening
   reattaches by the kept session id and the stream replay rebuilds pending approval cards.
-  Contextual entries ("Ask assistant" on an app's details) always start a fresh session seeded with
-  `{app, page}`: stored structured on the record, and prefixed once as a plain header line on the
-  first message — the prompt itself stays free-form.
+- **Sessions are named**, so the list can be scanned rather than only used to reach the newest row:
+  - The gateway names an unnamed session from the **first message that says anything** — its opening
+    line, collapsed and bounded to 80 characters at a word boundary. The first line rather than the
+    first sentence: an ask is typically one line with a pasted log under it, and a sentence rule
+    would name the session after a stack trace. Naming happens on the server, so it is identical for
+    every client and survives a reload; it never calls a model, because a title that costs a round
+    trip is missing exactly when the harness is down and the operator is scrolling this list.
+  - The operator can **rename** a session from its row (`PATCH /api/sessions/:id`). A name they
+    chose is recorded as such and no derived title overwrites it. Emptying the box clears the name
+    and returns the session to being derived, rather than pinning it to the empty string.
+  - Titles stay in the gateway's store. They are derived from transcript text, and transcript
+    content does not reach Core (decision 2026-08-08 — Core audits lifecycle and approvals only).
+- "Ask assistant" on an app's details appends to the composer draft of the open session, prefixed
+  `From <app id>:` — it does not open a session of its own. The record still carries an optional
+  `context` field that a client may set at creation; no client sends one today, and nothing reads it.
 
 ## Testing Expectations
 
@@ -305,6 +317,13 @@ gateway restart.
 - Settings: defaults (empty prompt, every provider off), round trip surviving a restart, rejection
   of malformed writes without storing them, pruning of toggles for uninstalled apps, the admin gate,
   and the unauthenticated page shell.
+- Session titles: the derivation is unit-tested (opening line rather than first sentence, blank and
+  punctuation-only lines skipped, word-boundary truncation, and a bounded cut when there is no
+  boundary to use), and the HTTP suite covers the round trip — a session named by its first message,
+  an operator's name surviving a turn without being re-derived over, a rename, an emptied title
+  becoming derivable again, a 400 without a title and a 404 for an unknown session. The preflight
+  test asserts `PATCH` is advertised: a method the server answers but does not advertise fails in
+  the browser and nowhere else.
 - Markdown (vitest over the two pure policies — `web/src/lib` suites run in the gateway's own
   vitest project; the library itself is not re-tested here): the allowed schemes, and refusal of
   `javascript:`, `data:`, `file:`, credentials in the authority, and relative references. Soft

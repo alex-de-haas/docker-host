@@ -147,6 +147,79 @@ describe("gateway", () => {
     expect(session.harnessSessionId).toContain("fake-");
   });
 
+  it("names an unnamed session after its first message", async () => {
+    const created = await call("/api/sessions", { method: "POST", body: JSON.stringify({}) });
+    const record = (await created.json()) as { id: string; title: string | null };
+    expect(record.title).toBeNull();
+
+    await call(`/api/sessions/${record.id}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ text: "Why did telemetry stop?\n\nfatal: bind EADDRINUSE" }),
+    });
+
+    const named = await waitFor(async () => {
+      const current = await manager.getSession(record.id);
+      return current?.title ? current : null;
+    }, "derived title");
+    expect(named.title).toBe("Why did telemetry stop?");
+  });
+
+  it("keeps a name the operator chose, and never re-derives over it", async () => {
+    const created = await call("/api/sessions", { method: "POST", body: JSON.stringify({ title: "disk pressure" }) });
+    const record = (await created.json()) as { id: string; title: string };
+    expect(record.title).toBe("disk pressure");
+
+    await call(`/api/sessions/${record.id}/messages`, { method: "POST", body: JSON.stringify({ text: "anything else" }) });
+    await waitFor(async () => {
+      const current = await manager.getSession(record.id);
+      return current?.status === "idle" ? current : null;
+    }, "idle status");
+
+    // The point of the test: a turn ran, and the session is still called what the operator called it.
+    expect((await manager.getSession(record.id))?.title).toBe("disk pressure");
+  });
+
+  it("renames a session, and an emptied title returns it to being derived", async () => {
+    const created = await call("/api/sessions", { method: "POST", body: JSON.stringify({}) });
+    const record = (await created.json()) as { id: string };
+
+    const renamed = await call(`/api/sessions/${record.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title: "  collector  restart " }),
+    });
+    expect(renamed.status).toBe(200);
+    expect(((await renamed.json()) as { title: string }).title).toBe("collector restart");
+
+    const cleared = await call(`/api/sessions/${record.id}`, { method: "PATCH", body: JSON.stringify({ title: "" }) });
+    expect(((await cleared.json()) as { title: string | null }).title).toBeNull();
+
+    // Cleared means derivable again — the alternative is a session pinned to no name for good.
+    await call(`/api/sessions/${record.id}/messages`, { method: "POST", body: JSON.stringify({ text: "restart it" }) });
+    const named = await waitFor(async () => {
+      const current = await manager.getSession(record.id);
+      return current?.title ? current : null;
+    }, "re-derived title");
+    expect(named.title).toBe("restart it");
+  });
+
+  it("refuses a rename without a title, and 404s an unknown session", async () => {
+    const created = await call("/api/sessions", { method: "POST", body: JSON.stringify({}) });
+    const record = (await created.json()) as { id: string };
+
+    expect((await call(`/api/sessions/${record.id}`, { method: "PATCH", body: JSON.stringify({}) })).status).toBe(400);
+    expect(
+      (await call("/api/sessions/does-not-exist", { method: "PATCH", body: JSON.stringify({ title: "x" }) })).status,
+    ).toBe(404);
+  });
+
+  it("advertises the methods its routes answer, so a preflight does not fail alone", async () => {
+    const preflight = await fetch(`${origin}/api/sessions/any`, {
+      method: "OPTIONS",
+      headers: { origin: "http://shell.local:7171" },
+    });
+    expect(preflight.headers.get("access-control-allow-methods")).toContain("PATCH");
+  });
+
   it("pauses a proposed write until approval and resumes on allow", async () => {
     const record = (await (
       await call("/api/sessions", { method: "POST", body: "{}" })

@@ -5,12 +5,13 @@ import { History, Loader2, MessageSquarePlus, Send, Sparkles } from "lucide-reac
 import { Button } from "@/components/ui/button";
 import { Alert, InlineError, StatusBadge } from "@/components/status";
 import { Markdown } from "@/components/markdown";
+import { SessionList } from "@/components/session-list";
 import { TranscriptEvent } from "@/components/transcript";
 import { cn } from "@/lib/utils";
 import { establishSession } from "@/lib/api";
 import { composeAskDraft } from "@/lib/ask-draft";
 import { clearDraft, pruneDrafts, readDraft, writeDraft } from "@/lib/draft-store";
-import { isWaiting, orderSessions, publishAttention, waitingCount } from "@/lib/attention";
+import { orderSessions, publishAttention, waitingCount } from "@/lib/attention";
 import { startThemeSync } from "@/lib/shell-theme";
 import {
   createSession,
@@ -18,6 +19,7 @@ import {
   getSession,
   listSessions,
   postMessage,
+  renameSession,
   resolveApproval,
   resolveQuestion,
   streamEvents,
@@ -284,12 +286,33 @@ export default function AssistantPage() {
       // Cleared only once the gateway has it: clearing before the round trip would lose the text on
       // exactly the failure the operator most wants it kept for.
       clearDraft(session.id);
+      // The gateway names an unnamed session from its first message, so the record the list holds is
+      // stale the moment that message lands. Re-read rather than deriving the same title here: two
+      // implementations of one rule drift, and the server's is the one that is stored.
+      if (!session.title) {
+        const named = await getSession(session.id).catch(() => null);
+        if (named?.title) {
+          setSession(named);
+          setSessions((current) => current.map((record) => (record.id === named.id ? named : record)));
+        }
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setSending(false);
     }
   }, [input, sending, session]);
+
+  const rename = useCallback(async (sessionId: string, title: string) => {
+    setError(null);
+    try {
+      const record = await renameSession(sessionId, title);
+      setSessions((current) => current.map((entry) => (entry.id === record.id ? record : entry)));
+      setSession((current) => (current?.id === record.id ? record : current));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }, []);
 
   const decide = useCallback(
     async (approvalId: string, decision: "allow" | "deny") => {
@@ -356,7 +379,19 @@ export default function AssistantPage() {
             aria-label="Recent sessions"
             aria-pressed={showSessions}
             className={cn(showSessions && "bg-muted")}
-            onClick={() => setShowSessions((open) => !open)}
+            onClick={() => {
+              // Re-read on open: titles and statuses move on the server — another client's session
+              // was named by its first message, one of them is now waiting — and a list that only
+              // ever reflects this tab's own actions is a list the operator learns not to trust.
+              setShowSessions((open) => {
+                if (!open) {
+                  void listSessions()
+                    .then(setSessions)
+                    .catch(() => undefined);
+                }
+                return !open;
+              });
+            }}
           >
             <History className="h-4 w-4" />
           </Button>
@@ -374,6 +409,7 @@ export default function AssistantPage() {
             setShowSessions(false);
             attach(record);
           }}
+          onRename={rename}
         />
       ) : (
         <>
@@ -443,46 +479,3 @@ export default function AssistantPage() {
 
 // The history the Shell panel never had: closing it used to be the only way back to a previous
 // conversation, and there was no way back at all.
-function SessionList({
-  sessions,
-  activeId,
-  onPick,
-}: {
-  sessions: AssistantSession[];
-  activeId: string | null;
-  onPick: (session: AssistantSession) => void;
-}) {
-  if (sessions.length === 0) {
-    return <p className="p-3 text-xs text-muted-foreground">No sessions yet.</p>;
-  }
-
-  return (
-    <div className="min-h-0 flex-1 overflow-y-auto p-2">
-      {sessions.map((record) => (
-        <button
-          key={record.id}
-          type="button"
-          onClick={() => onPick(record)}
-          className={cn(
-            "block w-full rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted",
-            record.id === activeId && "bg-muted",
-          )}
-        >
-          <div className="truncate text-sm">{record.title || "Untitled session"}</div>
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            {isWaiting(record.status) && (
-              // Marked as well as ordered: ordering alone is invisible to someone who has not seen the
-              // list before, and the row has to say *why* it is first.
-              <span className="inline-flex size-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden />
-            )}
-            <span>{new Date(record.createdAt).toLocaleString()}</span>
-            <span aria-hidden>·</span>
-            <span className={cn(isWaiting(record.status) && "font-medium text-amber-600 dark:text-amber-500")}>
-              {isWaiting(record.status) ? "waiting for you" : record.status}
-            </span>
-          </div>
-        </button>
-      ))}
-    </div>
-  );
-}
