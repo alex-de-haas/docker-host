@@ -83,6 +83,18 @@ The conversation survives the reclamation. The transcript is kept — an operato
 session gone would have lost the very question it was asking — and the next message starts a fresh
 harness that resumes it.
 
+## Shutting Down Is Not Just Stopping
+
+A harness run pushes events at the manager through a synchronous callback, so each one is handled on
+a promise nobody awaits — blocking there would stall the run. `shutdown` therefore stops the runs and
+then waits for the handlers already dispatched, because `main.ts` calls it and immediately
+`process.exit(0)`: an untracked handler could be between its two writes, `appendEvent` and
+`saveRecord`, when the process goes, leaving the event log ahead of the record that indexes it.
+
+The wait is bounded rather than open-ended. A handler that somehow kept feeding more work would
+otherwise leave the gateway unable to exit, and a process that will not stop is a worse failure than
+one torn write.
+
 ## Testing Expectations
 
 - **The draft as a set**: per session rather than global, an emptied box treated as a decision,
@@ -100,6 +112,10 @@ harness that resumes it.
   asserted beside it: a second unreachable publish warns no further. That check must outlast the
   rejection it observes, not the call that starts it — waiting only for the second request passed
   with the muting deleted.
+- **Shutdown waits for a write it did not start**: a closing event held mid-write is finished before
+  `shutdown` resolves, asserted through the flag that write sets rather than through timing. Paired
+  with a shutdown that has nothing in flight and must still resolve — a drain that waited on
+  something unsettling would hang the process, which is the worse of the two failures.
 - **Abandonment as a pair**: left alone before the deadline, stopped after it, and a merely running
   session untouched however long it runs — reclaiming that one on a clock would kill live work.
 - **The Swift payload**: what a banner needs decoded, fields it cannot use ignored, an unreadable

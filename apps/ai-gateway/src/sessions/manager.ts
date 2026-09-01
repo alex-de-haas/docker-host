@@ -52,6 +52,12 @@ interface LiveSession {
 export class SessionManager {
   private readonly live = new Map<string, LiveSession>();
 
+  // Harness events are dispatched without being awaited — the adapter's callback is synchronous and
+  // must not block the run. Holding each handler here is what makes `shutdown` mean "no more writes":
+  // `main.ts` calls it and then `process.exit(0)`, so an untracked handler could be halfway through
+  // `saveRecord` when the process goes, leaving a session record torn on disk.
+  private readonly inFlightEvents = new Set<Promise<void>>();
+
   constructor(
     private readonly store: SessionStore,
     private readonly adapter: HarnessAdapter,
@@ -222,7 +228,7 @@ export class SessionManager {
         // A gateway restart loses the process but not the record: resume the harness-native
         // session when one was captured, per the reattach/resume decision in the plan.
         resumeHarnessSessionId: session.record.harnessSessionId ?? undefined,
-        onEvent: (event) => void this.onHarnessEvent(id, event),
+        onEvent: (event) => this.dispatchHarnessEvent(id, event),
       });
     }
     this.scheduleMcpRefresh(id);
@@ -615,6 +621,18 @@ export class SessionManager {
       this.clearRefresh(session);
       this.proxy?.unregister(session.record.id);
     }
+
+    await this.drainHarnessEvents();
+  }
+
+  /** Waits for handlers already dispatched, after the runs that feed them have stopped. */
+  private async drainHarnessEvents(): Promise<void> {
+    // Bounded rather than `while`: a handler that somehow keeps the set fed would otherwise make
+    // shutdown unable to finish, and a gateway that cannot exit is worse than one torn write. In
+    // practice one pass settles it — the runs are already stopped, so nothing new arrives.
+    for (let pass = 0; pass < 3 && this.inFlightEvents.size > 0; pass++) {
+      await Promise.allSettled([...this.inFlightEvents]);
+    }
   }
 
   private clearRefresh(session: LiveSession): void {
@@ -650,6 +668,13 @@ export class SessionManager {
     };
     this.live.set(id, session);
     return session;
+  }
+
+  /** Starts an event handler and keeps it, so `shutdown` can wait for it. */
+  private dispatchHarnessEvent(id: string, event: HarnessEvent): void {
+    const handled = this.onHarnessEvent(id, event);
+    this.inFlightEvents.add(handled);
+    void handled.finally(() => this.inFlightEvents.delete(handled));
   }
 
   private async onHarnessEvent(id: string, event: HarnessEvent): Promise<void> {
