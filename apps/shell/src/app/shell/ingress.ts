@@ -17,6 +17,11 @@ export const INGRESS_SETTINGS_GROUP = "Public ingress";
 
 export const INGRESS_PROVIDER_SETTING_KEY = "HOSTY_INGRESS_PROVIDER";
 
+// Core's own public origin. It lives in the Core process group rather than the ingress one — it is a
+// Core setting an operator can always type by hand — but the Ingress tab needs the key to tell whether a
+// pending edit is the one whose effect arrives in two stages.
+export const CORE_PUBLIC_ORIGIN_SETTING_KEY = "HOSTY_CORE_PUBLIC_ORIGIN";
+
 // The settings that only mean something under the local-config provider: a remotely managed tunnel is
 // discovered by connecting, and its zone supplies the base domain.
 const LOCAL_CONFIG_SETTING_KEYS = new Set([

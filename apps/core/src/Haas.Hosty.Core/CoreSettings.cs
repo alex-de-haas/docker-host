@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net;
 using System.Text.Json;
 
 namespace Haas.Hosty.Core;
@@ -33,10 +34,10 @@ internal sealed class CoreSettingsDocument
     // OAuth overrides (currently just the dynamic-client-registration toggle). String-valued like the
     // groups above; additive, so the schema version is NOT bumped.
     public IReadOnlyDictionary<string, string> OAuth { get => field ?? EmptyOAuth; init; } = EmptyOAuth;
-    // Core process overrides (currently just the persisted listen port). String-valued like the
-    // groups above; additive, so the schema version is NOT bumped. Unlike the other groups this one
-    // is also read directly at startup (CoreSettingsStore.TryReadStoredPort), before any service
-    // exists — a port change can only ever apply on the next start.
+    // Core process overrides: the persisted listen port and the public origin Core advertises for
+    // itself. String-valued like the groups above; additive, so the schema version is NOT bumped. The
+    // port alone is also read directly at startup (CoreSettingsStore.TryReadStoredPort), before any
+    // service exists, and can only ever apply on the next start; the public origin is read live.
     public IReadOnlyDictionary<string, string> Server { get => field ?? EmptyServer; init; } = EmptyServer;
 
     private static readonly IReadOnlyDictionary<string, double> EmptyAuth =
@@ -370,6 +371,44 @@ internal sealed record ServerSettings(int Port)
     }
 }
 
+// The address Core tells the world it lives at. Unlike the port this is read live, on every request that
+// builds a link or a metadata document, so the store layers over the HOSTY_CORE_PUBLIC_ORIGIN environment
+// baseline the ingress way round: a persisted value wins, and clearing it falls back to the variable and
+// then to Core's listen URL. The port's opposite precedence (a flag or env var wins for that run) would be
+// wrong here — an origin that only applied after a restart would leave the operator's own invitation links
+// pointing at the old host for as long as they put off restarting.
+//
+// Core answers on its listen URL no matter what this says. That is what makes a wrong value survivable
+// (see CorePublicOriginResolver), and why validation refuses only what is wrong by form.
+internal static class CoreOriginSettings
+{
+    public const string PublicOriginKey = "HOSTY_CORE_PUBLIC_ORIGIN";
+
+    // Refuses what cannot work as an origin: a value that is not an absolute http(s) URL, one carrying a
+    // path, query, fragment or userinfo, and the unspecified addresses (0.0.0.0, [::]) — a bind address,
+    // never somewhere a browser can be sent. A loopback value is accepted: it is the default state and the
+    // right answer for a single-machine host. Whether the host actually answers there is never judged —
+    // reachability is reported by the ingress diagnostics, never a refusal.
+    public static bool TryNormalize(string? raw, out string origin)
+    {
+        origin = "";
+        if (!PublicOriginSettings.TryNormalizeOrigin(raw, out var candidate))
+        {
+            return false;
+        }
+
+        var host = new Uri(candidate).Host;
+        if (IPAddress.TryParse(host.Trim('[', ']'), out var address) &&
+            (address.Equals(IPAddress.Any) || address.Equals(IPAddress.IPv6Any)))
+        {
+            return false;
+        }
+
+        origin = candidate;
+        return true;
+    }
+}
+
 internal static class CoreServerSettings
 {
     public const string Group = "Core process";
@@ -381,12 +420,27 @@ internal static class CoreServerSettings
         + "running Core keeps its current port until then. A `hosty core start --port` flag or a "
         + "HOSTY_CORE_PORT environment variable overrides the stored value for that run only.";
 
+    public const string PublicOriginLabel = "Public origin";
+
+    public const string PublicOriginDescription =
+        "The address Core tells the world it lives at: the origin in invitation and setup links, in the "
+        + "OAuth metadata agent clients read, and in the native client's sign-in. Saving applies "
+        + "immediately to everything Core hands a browser; installed apps receive it in their environment "
+        + "and keep the old value until they restart. Core always keeps answering on its own listen URL, "
+        + "so a wrong value here can be corrected from a loopback browser or with "
+        + "`hosty core settings reset HOSTY_CORE_PUBLIC_ORIGIN`. Leave it empty to advertise the listen URL.";
+
     public static bool IsKnown(string key)
-        => string.Equals(key, ServerSettings.PortKey, StringComparison.Ordinal);
+        => string.Equals(key, ServerSettings.PortKey, StringComparison.Ordinal) ||
+            string.Equals(key, CoreOriginSettings.PublicOriginKey, StringComparison.Ordinal);
 }
 
 // The server equivalent of CoreSettingRow: the port the next plain start uses.
 internal sealed record CoreServerSettingRow(int StoredOrDefaultPort, bool Overridden);
+
+// The public-origin row: the effective origin, what a reset would fall back to, and whether a persisted
+// value is what is driving it. Assembled by CorePublicOriginResolver, which owns the layering.
+internal sealed record CorePublicOriginSettingRow(string EffectiveOrigin, string BaselineOrigin, bool Overridden);
 
 internal static class CoreOAuthSettings
 {
@@ -576,7 +630,9 @@ internal sealed class CoreSettingsService
     private Dictionary<string, string> userRetentionOverrides;
     private Dictionary<string, string> oauthOverrides;
     // No "current" ServerSettings alongside these: nothing reads the port live — startup reads the
-    // file directly (TryReadStoredPort) and a change only ever applies on the next start.
+    // file directly (TryReadStoredPort) and a change only ever applies on the next start. The public
+    // origin shares this group but IS read live, through CorePublicOriginResolver, which layers the
+    // persisted value below over Core's startup env baseline.
     private Dictionary<string, string> serverOverrides;
     private volatile AuthLifetimes current;
     private volatile IngressSettings currentIngress;
@@ -663,6 +719,12 @@ internal sealed class CoreSettingsService
                 ? port
                 : ServerSettings.DefaultPort,
             Overridden: serverOverrides.ContainsKey(ServerSettings.PortKey));
+
+    // The persisted public origin, or null when none is stored. Deliberately not layered with the env
+    // baseline here: CorePublicOriginResolver owns that, because the fallback chain ends at Core's listen
+    // URL, which lives on the runtime config rather than in this store.
+    public string? StoredCorePublicOrigin
+        => serverOverrides.TryGetValue(CoreOriginSettings.PublicOriginKey, out var origin) ? origin : null;
 
     // True when at least one of the submitted keys is an ingress setting — the endpoint uses this to
     // decide whether a save must re-render the tunnel config.
@@ -1061,25 +1123,55 @@ internal sealed class CoreSettingsService
         foreach (var (key, value) in document.Server)
         {
             // Same per-entry tolerance as the other sections: skip unknown keys and hand-edited
-            // values that do not parse rather than crashing startup.
-            if (!CoreServerSettings.IsKnown(key) || !ServerSettings.TryParsePort(value, out _))
+            // values that do not parse rather than crashing startup. The group holds two keys of
+            // different shapes, so each is checked against its own parser — and each is stored as
+            // that parser's CANONICAL form, not as it was written. A hand-edited file is the one
+            // path into the store that never went through NormalizeServerValue, so normalizing on
+            // the way in is what keeps "stored values are canonical" true for every reader: an
+            // origin with a trailing slash or stray whitespace would otherwise reach OAuth metadata
+            // and invitation links verbatim.
+            string? canonical = key switch
+            {
+                ServerSettings.PortKey => ServerSettings.TryParsePort(value, out var port)
+                    ? port.ToString(CultureInfo.InvariantCulture)
+                    : null,
+                CoreOriginSettings.PublicOriginKey => CoreOriginSettings.TryNormalize(value, out var origin)
+                    ? origin
+                    : null,
+                _ => null,
+            };
+            if (canonical is null)
             {
                 continue;
             }
 
-            loaded[key] = value;
+            loaded[key] = canonical;
         }
 
         return loaded;
     }
 
-    // Validates a listen-port value for persistence, or null to clear. Stored as the canonical
-    // integer string so the document stays culture-stable.
+    // Validates a Core-process value for persistence, or null to clear. Both keys are stored
+    // canonically — the port as an invariant integer string, the origin as its normalized authority —
+    // so the document stays stable however the value arrived.
     private static string? NormalizeServerValue(string key, string? raw)
     {
         if (string.IsNullOrWhiteSpace(raw))
         {
             return null;
+        }
+
+        if (string.Equals(key, CoreOriginSettings.PublicOriginKey, StringComparison.Ordinal))
+        {
+            if (!CoreOriginSettings.TryNormalize(raw, out var origin))
+            {
+                throw new AppLifecycleException(
+                    "core_setting_invalid",
+                    $"'{key}' must be an absolute http(s) origin without a path, query, fragment, or credentials, "
+                    + "and cannot be an unspecified address. A loopback origin is allowed.");
+            }
+
+            return origin;
         }
 
         if (!ServerSettings.TryParsePort(raw, out var port))

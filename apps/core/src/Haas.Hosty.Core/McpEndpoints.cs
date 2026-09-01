@@ -42,8 +42,8 @@ internal static class McpEndpoints
             {
                 if (http.Response.StatusCode == StatusCodes.Status401Unauthorized)
                 {
-                    var origin = http.RequestServices.GetRequiredService<HostyCoreRuntimeConfig>()
-                        .EffectiveCorePublicOrigin.TrimEnd('/');
+                    var origin = http.RequestServices.GetRequiredService<CorePublicOriginResolver>()
+                        .Effective.TrimEnd('/');
                     http.Response.Headers.WWWAuthenticate =
                         $"Bearer resource_metadata=\"{origin}/.well-known/oauth-protected-resource/api/mcp\"";
                 }

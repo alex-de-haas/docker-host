@@ -5,6 +5,24 @@ namespace Haas.Hosty.Core.Tests;
 
 public sealed class UserManagementServiceTests
 {
+    // As with setup tokens: the invitation carries the origin as it is now, not as it was when Core booted.
+    [Fact]
+    public async Task CreateInvitationAsync_BuildsTheLinkFromTheLivePublicOrigin()
+    {
+        var fixture = await UserManagementFixture.CreateAsync();
+        var actor = CreateUser("admin_1", "host.admin");
+        await fixture.Users.WriteAsync(new UserDirectoryState(1, [actor], [], [], []));
+        await CoreOriginTestFactory.SetAsync(fixture.Settings, "https://core.example.test");
+
+        var result = await fixture.Service.CreateInvitationAsync(new UserInvitationCreateRequest(
+            Email: "user@example.test",
+            DisplayName: "User",
+            Role: "host.user",
+            AssignedAppIds: []), actor);
+
+        Assert.StartsWith("https://core.example.test/setup/invite?setupToken=", result.SetupUrl, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task CreateInvitationAsync_ReturnsCoreOwnedSetupUrlAndStoresOnlyTokenHash()
     {
@@ -284,16 +302,24 @@ public sealed class UserManagementServiceTests
 
     private sealed class UserManagementFixture
     {
-        private UserManagementFixture(UserDirectoryStore users, UserManagementService service, FakeClock clock)
+        private UserManagementFixture(
+            UserDirectoryStore users,
+            UserManagementService service,
+            CoreSettingsService settings,
+            FakeClock clock)
         {
             Users = users;
             Service = service;
+            Settings = settings;
             Clock = clock;
         }
 
         public UserDirectoryStore Users { get; }
 
         public UserManagementService Service { get; }
+
+        // The store behind the live public origin, so a test can change it mid-flight.
+        public CoreSettingsService Settings { get; }
 
         public FakeClock Clock { get; }
 
@@ -324,9 +350,10 @@ public sealed class UserManagementServiceTests
                 RuntimePublicHost: "localhost",
                 ShellSourceOverridePath: null,
                 ShellAutostart: false);
-            var service = new UserManagementService(users, apps, audit, passwords, config, clock);
+            var (origins, settings) = CoreOriginTestFactory.Create(config, paths);
+            var service = new UserManagementService(users, apps, audit, passwords, origins, clock);
             await users.WriteAsync(new UserDirectoryState(1, [], [], [], []));
-            return new UserManagementFixture(users, service, clock);
+            return new UserManagementFixture(users, service, settings, clock);
         }
     }
 

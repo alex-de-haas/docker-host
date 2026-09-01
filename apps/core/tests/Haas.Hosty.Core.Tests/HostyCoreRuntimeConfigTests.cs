@@ -125,7 +125,12 @@ public sealed class HostyCoreRuntimeConfigTests
         using var shellOriginEnv = TemporaryEnvironment.With("HOSTY_SHELL_PUBLIC_ORIGIN", null);
 
         var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Production));
-        var response = CoreStatusResponse.From(config, IngressSettings.FromEnvironment(), shellPublicOrigin: null, cloudflareConnected: false);
+        var response = CoreStatusResponse.From(
+            config,
+            IngressSettings.FromEnvironment(),
+            CoreOriginTestFactory.CreateEnvironmentOnly(config),
+            shellPublicOrigin: null,
+            cloudflareConnected: false);
 
         Assert.Equal("http://localhost:7070", response.CorePublicOrigin);
         // Reported straight from the resolver: null here stands for "this host has no Shell installed".
@@ -155,7 +160,7 @@ public sealed class HostyCoreRuntimeConfigTests
 
         var config = HostyCoreRuntimeConfig.FromEnvironment(new TestHostEnvironment(Environments.Production));
 
-        var warning = Assert.Single(config.BuildPublicOriginWarnings());
+        var warning = Assert.Single(HostyCoreRuntimeConfig.BuildPublicOriginWarnings(config.CorePublicOrigin));
         Assert.Contains("Core public origin uses insecure HTTP", warning);
     }
 

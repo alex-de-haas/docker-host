@@ -235,6 +235,73 @@ public sealed class CloudflareDiagnosticsServiceTests : IDisposable
         Assert.Null(diagnostics.Core.ExpectedDnsContent);
     }
 
+    // Core's own publication is stored beside the apps' but is not one of them. Classifying it against the
+    // app registry would report `app_missing` for a host that is working perfectly, so it is answered by
+    // the Core section instead — and, being Hosty-written, it is the one Core route whose target can be
+    // compared exactly.
+    [Fact]
+    public async Task InspectAsync_CoresOwnPublication_IsReportedAsCoreRatherThanAsAMissingApp()
+    {
+        var (service, api, _) = await CreateAsync(publish: false);
+        await SeedCorePublicationAsync();
+        api.Config = Config();
+        AddRoute(api, "core.example.test", "http://localhost:7070");
+        api.Dns.Add(new CloudflareDnsRecord("rec-core", "CNAME", "core.example.test", "tunnel-123.cfargotunnel.com", true, 1));
+
+        var diagnostics = await service.InspectAsync();
+
+        Assert.Empty(diagnostics.Publications);
+        Assert.Equal(CloudflareDiagnosticStates.Ok, diagnostics.Core.State);
+        Assert.True(diagnostics.Core.Managed);
+    }
+
+    [Fact]
+    public async Task InspectAsync_CoresRouteMovedOffItsPort_ReportsRouteStale()
+    {
+        var (service, api, _) = await CreateAsync(publish: false);
+        await SeedCorePublicationAsync();
+        api.Config = Config();
+        AddRoute(api, "core.example.test", "http://localhost:7171");
+        api.Dns.Add(new CloudflareDnsRecord("rec-core", "CNAME", "core.example.test", "tunnel-123.cfargotunnel.com", true, 1));
+
+        var diagnostics = await service.InspectAsync();
+
+        Assert.Equal(CloudflareDiagnosticStates.RouteStale, diagnostics.Core.State);
+    }
+
+    // A hand-written rule may spell Core's port differently (127.0.0.1 where this expects localhost), so
+    // presence is all that can be verified without inventing drift.
+    [Fact]
+    public async Task InspectAsync_AHandWrittenCoreRoute_IsNotJudgedOnItsTarget()
+    {
+        var (service, api, _) = await CreateAsync(publish: false);
+        api.Config = Config();
+        AddRoute(api, "core.example.test", "http://127.0.0.1:7070");
+        api.Dns.Add(new CloudflareDnsRecord("rec-core", "CNAME", "core.example.test", "tunnel-123.cfargotunnel.com", true, 1));
+
+        var diagnostics = await service.InspectAsync();
+
+        Assert.Equal(CloudflareDiagnosticStates.Ok, diagnostics.Core.State);
+        Assert.False(diagnostics.Core.Managed);
+    }
+
+    private Task SeedCorePublicationAsync()
+        => new CloudflarePublicationStore(Paths).UpsertAsync(new CloudflarePublication(
+            CorePublication.AppId,
+            CorePublication.EndpointKey,
+            "core",
+            "core.example.test",
+            "rec-core",
+            "http://localhost:7070",
+            CloudflareOwnershipStates.Owned,
+            DateTimeOffset.UnixEpoch));
+
+    private static void AddRoute(StatefulApi api, string hostname, string service)
+    {
+        var ingress = (JsonArray)api.Config["ingress"]!;
+        ingress.Insert(0, new JsonObject { ["hostname"] = hostname, ["service"] = service });
+    }
+
     private async Task<(CloudflareDiagnosticsService, StatefulApi, AppRegistryStore)> CreateAsync(
         bool connected = true,
         bool publish = true,
@@ -282,7 +349,8 @@ public sealed class CloudflareDiagnosticsServiceTests : IDisposable
             ShellAutostart: false);
 
         var service = new CloudflareDiagnosticsService(
-            settings, integration, credentials, publications, apps, config, api, NullLogger<CloudflareDiagnosticsService>.Instance);
+            settings, integration, credentials, publications, apps, config, new CorePublicOriginResolver(config, settings), api,
+            NullLogger<CloudflareDiagnosticsService>.Instance);
         return (service, api, apps);
     }
 

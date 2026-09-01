@@ -24,17 +24,20 @@ instance itself (`{root}/core/run/control.json`).
   `--port`/`--url` as this-run overrides when given) and discovers the live endpoint from
   `control.json`.
 
-`HOSTY_CORE_PUBLIC_ORIGIN` is not a launch parameter and not a stored setting yet: it is a plain
-environment variable Core reads. Its move into the settings store is
-[core-public-origin](../core-public-origin/plan.md).
+`HOSTY_CORE_PUBLIC_ORIGIN` is not a launch parameter either: it is a live setting in the same store,
+with the environment variable surviving as a baseline the stored value wins over. See
+[core-public-origin](../core-public-origin/feature.md).
 
 ## Port in the Settings Store
 
 `{root}/core/settings.json` carries an additive `Server` group (same `core-settings.0.1` schema)
-holding `HOSTY_CORE_PORT`. The admin surface (`/api/core/settings`) lists it as a "Listen port" row
-whose description states that a change applies on the next start; validation is 1–65535. At startup
-Core reads the stored value directly from the file, leniently — an absent file, foreign schema
-version, or unparsable value falls back to the default.
+holding `HOSTY_CORE_PORT` and `HOSTY_CORE_PUBLIC_ORIGIN`. The admin surface (`/api/core/settings`)
+lists the port as a "Listen port" row whose description states that a change applies on the next start;
+validation is 1–65535. At startup Core reads the stored value directly from the file, leniently — an
+absent file, foreign schema version, or unparsable value falls back to the default. The two keys share
+the group but not the precedence: a flag or env var outranks the stored port for one run, while the
+stored public origin outranks its environment variable (see
+[core-public-origin](../core-public-origin/feature.md)).
 
 ## Per-Root Exclusivity
 
@@ -84,7 +87,8 @@ On first contact the CLI migrates a legacy `{root}/config/launch.env` read-and-d
 non-default `HOSTY_CORE_PORT` is folded into the target root's settings store (merging into an
 existing `settings.json` without disturbing other groups), a non-default `HOSTY_DATA_ROOT` becomes
 a notice pointing at `--data-root`/`HOSTY_DATA_ROOT` (the pointer cannot live inside the root it
-points to), a set `HOSTY_CORE_PUBLIC_ORIGIN` is echoed as an export-it-yourself notice, and the
+points to), a set `HOSTY_CORE_PUBLIC_ORIGIN` is echoed as a notice pointing at
+`hosty core settings set`, and the
 file is deleted. If the fold itself fails, the file is left in place with instructions.
 
 ## Testing Expectations

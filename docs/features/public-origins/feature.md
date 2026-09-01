@@ -163,4 +163,4 @@ and saying to update the upstream. A standing "broken" badge would claim knowled
 - [Cloudflare Ingress](../cloudflare-ingress/feature.md) — the two Cloudflare providers in full.
 - [Automatic Runtime App Ports](../automatic-runtime-app-ports/feature.md) — the local port an origin
   points at, and the boot pass that moves it.
-- [Core Public Origin](../core-public-origin/plan.md) — Core's own hostname, deliberately separate.
+- [Core Public Origin](../core-public-origin/feature.md) — Core's own hostname, deliberately separate.

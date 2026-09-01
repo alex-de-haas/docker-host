@@ -10,7 +10,7 @@ public sealed class DockerRuntimeAdapterTests
     {
         var config = CreateConfig(corePort: 7070, listenUrl: "http://localhost:7070", corePublicOrigin: null);
 
-        var result = DockerRuntimeAdapter.BuildDockerCoreEnvironment(config);
+        var result = DockerRuntimeAdapter.BuildDockerCoreEnvironment(config, "http://localhost:7070");
 
         Assert.Contains("HOSTY_CORE_PORT=7070", result);
         Assert.Contains("HOSTY_CORE_PUBLIC_ORIGIN=http://localhost:7070", result);
@@ -18,11 +18,43 @@ public sealed class DockerRuntimeAdapterTests
         Assert.DoesNotContain("HOSTY_CORE_PUBLIC_ORIGIN=http://host.docker.internal:7070", result);
     }
 
+    // The decoupling: the container's route to Core is derived from the listen URL, so a public origin
+    // never sends app-to-Core traffic out through the tunnel and back. The browser-facing value still
+    // carries it, which is the whole point of keeping the two variables apart.
+    [Fact]
+    public void BuildDockerCoreEnvironment_DoesNotRouteContainerTrafficThroughThePublicOrigin()
+    {
+        var config = CreateConfig(corePort: 7070, listenUrl: "http://localhost:7070", corePublicOrigin: "https://core.example.test");
+
+        var result = DockerRuntimeAdapter.BuildDockerCoreEnvironment(config, "https://core.example.test");
+
+        Assert.Contains("HOSTY_CORE_PUBLIC_ORIGIN=https://core.example.test", result);
+        Assert.Contains("HOSTY_CORE_ORIGIN=http://host.docker.internal:7070", result);
+        Assert.DoesNotContain("HOSTY_CORE_ORIGIN=https://core.example.test", result);
+    }
+
+    // A listen URL that is already non-loopback (a host binding to a LAN address) is passed through
+    // unchanged, exactly as a non-loopback value always was — the change is where the value comes from,
+    // not how it is rewritten.
+    [Fact]
+    public void BuildDockerCoreEnvironment_DerivesTheContainerOriginFromTheListenUrl()
+    {
+        var config = CreateConfig(corePort: 7171, listenUrl: "http://192.168.1.10:7171", corePublicOrigin: "https://core.example.test");
+
+        var result = DockerRuntimeAdapter.BuildDockerCoreEnvironment(config, "https://core.example.test");
+
+        Assert.Contains("HOSTY_CORE_ORIGIN=http://192.168.1.10:7171", result);
+    }
+
     [Theory]
     [InlineData("http://localhost:7070", "http://host.docker.internal:7070")]
     [InlineData("http://127.0.0.1:7070", "http://host.docker.internal:7070")]
     [InlineData("http://[::1]:7070", "http://host.docker.internal:7070")]
     [InlineData("https://localhost:7443", "https://host.docker.internal:7443")]
+    // An all-interface binding names the CONTAINER once it is inside one, so it has to be rewritten
+    // like loopback — otherwise every app-to-Core call from a container dials itself.
+    [InlineData("http://0.0.0.0:7070", "http://host.docker.internal:7070")]
+    [InlineData("http://[::]:7070", "http://host.docker.internal:7070")]
     public void BuildDockerCoreOrigin_RewritesLoopbackOriginsForContainerAccess(
         string coreOrigin,
         string expected)

@@ -44,7 +44,7 @@ Core injects app environment into each service:
 - `HOSTY_PORT_{KEY}`
 - `HOSTY_DEPENDENCY_{KEY}_URL`
 
-`HOSTY_CORE_PUBLIC_ORIGIN` is the browser-facing Core origin. `HOSTY_CORE_ORIGIN` is the runtime process-to-Core origin. For Docker services, `HOSTY_CORE_ORIGIN` is rewritten from loopback Core origins such as `http://localhost:7070` to the container-reachable `host.docker.internal` host while preserving the scheme and port. For local command services, `HOSTY_CORE_ORIGIN` uses Core's listen URL. Browser-facing app endpoint URLs still use the configured runtime public host, normally `localhost`.
+`HOSTY_CORE_PUBLIC_ORIGIN` is the browser-facing Core origin, injected when the service starts. `HOSTY_CORE_ORIGIN` is the runtime process-to-Core origin and is derived from Core's listen URL, never from the public origin: for Docker services a loopback listen URL such as `http://localhost:7070` is rewritten to the container-reachable `host.docker.internal` host while preserving the scheme and port, and for local command services the listen URL is used unchanged. Browser-facing app endpoint URLs still use the configured runtime public host, normally `localhost`.
 
 For runtime services, Core assigns available host ports when `localPort` / `hostPort` are omitted, stores the resulting endpoint URLs, and reuses those stored ports on later start/restart operations. Single-port local command services also receive `PORT=<assigned-port>` unless the app explicitly configured `PORT`.
 

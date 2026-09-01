@@ -113,6 +113,22 @@ export type CloudflarePublicationSummary = {
   state: CloudflarePublicationState;
 };
 export type CloudflareAppPublications = { publications: CloudflarePublicationSummary[] };
+
+// GET /api/core/public-origin — Core's own publication, plus the origin it advertises either way.
+// `configured` is true when anything at all names Core's public address, published or not: a host can
+// have one from an operator's own proxy, which publishing must not silently replace.
+export type CloudflareCorePublication = {
+  publication: CloudflarePublicationSummary | null;
+  origin: string;
+  configured: boolean;
+};
+// POST /api/core/public-origin/publish | unpublish. No `restartRequired`: Core builds its links per
+// request, so a new origin is in effect immediately.
+export type CloudflareCorePublicationResult = {
+  hostname?: string | null;
+  origin: string;
+  locality?: string | null;
+};
 // POST /api/apps/{id}/public-origins/publish | unpublish
 export type CloudflarePublicationResult = {
   appId: string;
@@ -150,6 +166,9 @@ export type CloudflareCoreDiagnostic = {
   state: CloudflareDiagnosticState;
   expectedDnsContent: string | null;
   expectedService: string;
+  // True when Hosty published this hostname itself, which decides the remedy offered: re-publish from
+  // the Ingress tab, or create the CNAME and the tunnel rule by hand.
+  managed: boolean;
 };
 export type CloudflareDiagnostics = {
   checked: boolean;

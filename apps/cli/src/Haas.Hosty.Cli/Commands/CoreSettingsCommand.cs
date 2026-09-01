@@ -97,6 +97,15 @@ internal sealed partial class CoreSettingsCommand(CommandContext context)
             context.Console.MarkupLine("[grey]The port change takes effect on the next Core start.[/]");
         }
 
+        // The one setting whose effect arrives in two stages, said here for the same reason Shell says
+        // it: a headless operator who changes the origin and sees "set" would otherwise assume every app
+        // is already using it.
+        if (string.Equals(key, "HOSTY_CORE_PUBLIC_ORIGIN", StringComparison.Ordinal))
+        {
+            context.Console.MarkupLine(
+                "[grey]Sign-in links and agent-client metadata use it now; installed apps keep the old value until they restart.[/]");
+        }
+
         return 0;
     }
 

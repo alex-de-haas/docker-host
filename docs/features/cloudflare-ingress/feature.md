@@ -296,25 +296,29 @@ answered under every provider. Shell renders both on the Ingress tab.
 #### Core's own address
 
 The response also reports Core's own hostname, under the same state vocabulary plus `not_configured` (no
-`HOSTY_CORE_PUBLIC_ORIGIN`, so Core answers on loopback) and `external` (a hostname outside the connected
-zone — someone else's proxy fronts it, which this tunnel has nothing to say about). It carries the two
-objects the operator must create by hand: the proxied `CNAME` target `{tunnelId}.cfargotunnel.com`, and the
-tunnel rule's service `http://localhost:{corePort}`.
+public origin, so Core answers on loopback) and `external` (a hostname outside the connected zone — someone
+else's proxy fronts it, which this tunnel has nothing to say about). Core's own publication is kept out of
+the app list and answered here instead: classifying it against the app registry would report `app_missing`
+for a host that is working perfectly.
 
-This is a hint, not a publication. Nothing in Hosty creates or owns Core's route or DNS record — the
-publication endpoints are app-scoped and Core is not an app — so every verdict here ends in something the
-operator does themselves. It exists because that gap was previously invisible: an operator publishes every
-app in two clicks and is never told that the host's own address, which invitation links and the native
-client are built from, is the one thing left to do by hand. There is deliberately no `route_stale` check for
-Core: its port is a launch setting rather than something the allocator moves, and `http://127.0.0.1:7070`
-against an expected `http://localhost:7070` would report drift that is not drift.
+A `managed` flag says whether Hosty published the hostname itself, which decides the remedy. For a
+hostname Hosty owns the answer is to reapply it from the Ingress tab, and the route is compared against
+the exact service string Hosty wrote, so a Core port that moved reads as `route_stale`. For a hand-made
+one the response carries the two objects the operator must create themselves — the proxied `CNAME` target
+`{tunnelId}.cfargotunnel.com` and the tunnel rule's service `http://localhost:{corePort}` — and the route
+is judged on presence alone: the operator may have spelled the port as `127.0.0.1` where this expects
+`localhost`, and calling that drift would send them chasing a problem they do not have. Shell shows the
+by-hand recipe only under the providers that cannot publish Core's address.
+
+See [core-public-origin](../core-public-origin/feature.md) for the value itself and for publishing it.
 
 ## Platform origins
 
-Core's own public origin is a CLI launch setting (`HOSTY_CORE_PUBLIC_ORIGIN`), displayed read-only in Shell.
-It cannot be published through the API path: the publication endpoints are app-scoped and Core is not an app.
-See [plan.md](plan.md) for why that is still open and what it is blocked on. The local provider does seed a
-`core.{baseDomain}` route into `config.yml`, but that creates no DNS record and persists no launch setting.
+Core's own public origin is a live Core setting, editable in Shell and publishable through the API provider
+under the reserved `(hosty.core, core)` publication pair — the same reconciler, read-back and rollback as an
+app endpoint, with no synthetic app record. See [core-public-origin](../core-public-origin/feature.md). The
+local provider still seeds a `core.{baseDomain}` route into `config.yml`, but that creates no DNS record and
+persists no setting.
 
 Shell is publishable, but only because it is an ordinary app whose `web` endpoint is `public: true` — there
 is no special handling for publishing the Shell you are currently using.
@@ -387,8 +391,10 @@ The `hosty` CLI has no ingress or Cloudflare commands.
   provider switch
   ([CloudflareDiagnosticsServiceTests.cs](../../../apps/core/tests/Haas.Hosty.Core.Tests/CloudflareDiagnosticsServiceTests.cs)).
 - Core's own address reports `ok` when routed and resolving, `not_configured` with both halves of the recipe
-  when `HOSTY_CORE_PUBLIC_ORIGIN` is unset, `route_missing` when the tunnel has no rule for it, `external`
-  for a hostname outside the connected zone, and still answers the not-configured case with no connection.
+  when no public origin is set, `route_missing` when the tunnel has no rule for it, `external` for a hostname
+  outside the connected zone, and still answers the not-configured case with no connection. Its publication
+  is reported as Core rather than as a missing app, a Hosty-written route that moved off Core's port reads as
+  `route_stale`, and a hand-written route is not judged on its target.
 - Cleanup survives a provider switch: publishing is refused afterwards, while unpublish and the app-scoped
   removal still remove the route, the DNS record, and the setting.
 - Shell: the publish control renders only under the API provider, the ingress predicates hold for all three

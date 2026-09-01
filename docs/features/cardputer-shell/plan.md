@@ -134,7 +134,7 @@ Both transports are supported, and the operator picks by typing an origin:
 - **HTTPS with validated certificates**, for a Core reachable over the public
   internet — through [`cloudflare-ingress`](../cloudflare-ingress/feature.md)
   today, or the user-managed origin
-  [`core-public-origin`](../core-public-origin/plan.md) plans. Required for any
+  [`core-public-origin`](../core-public-origin/feature.md) carries. Required for any
   origin outside the local network.
 - **Plain HTTP on a local network**, which is what
   [`advertised-app-origins`](../advertised-app-origins/plan.md) already leaves

@@ -12,6 +12,7 @@ public sealed class CloudflarePublicationServiceTests : IDisposable
     // memory, so a second instance over the same file would write the provider without the service seeing
     // it — which is exactly the trap a test for "cleanup survives a provider switch" must not fall into.
     private CoreSettingsService? coreSettings;
+    private CorePublicOriginResolver? coreOrigins;
 
     [Fact]
     public async Task PublishAsync_SyncsRouteAndDns_WritesPublicOriginSetting_AndFlagsRestart()
@@ -47,6 +48,184 @@ public sealed class CloudflarePublicationServiceTests : IDisposable
         Assert.False(app!.Settings.ContainsKey(PublicOriginSettings.BuildSettingKey("web.http")));
         Assert.DoesNotContain("media.example.test", CloudflareTunnelConfigPatcher.IngressHostnames(api.Config));
         Assert.Empty(api.Dns);
+    }
+
+    // --- Core's own hostname ------------------------------------------------------------------
+
+    [Fact]
+    public async Task PublishCoreAsync_SyncsRouteAndDns_AndWritesTheCoreSetting()
+    {
+        var api = new StatefulApi();
+        var (service, _) = await CreateConnectedAsync(api, appRunning: false);
+
+        var result = await service.PublishCoreAsync("core");
+
+        Assert.Equal("core.example.test", result.Hostname);
+        Assert.Equal("https://core.example.test", result.Origin);
+        Assert.Equal("https://core.example.test", coreOrigins!.Effective);
+        Assert.Contains("core.example.test", CloudflareTunnelConfigPatcher.IngressHostnames(api.Config));
+        Assert.Single(api.Dns);
+        // The route points at Core's own local port, not at an app's.
+        Assert.Equal(
+            "http://localhost:7070",
+            (string?)CloudflareTunnelConfigPatcher.FindIngress(api.Config, "core.example.test")!["service"]);
+    }
+
+    // The setting is the last thing written. If the reconciler fails, Core must not be left advertising a
+    // hostname that resolves to nothing.
+    [Fact]
+    public async Task PublishCoreAsync_WhenTheMutationFails_LeavesTheSettingAlone()
+    {
+        var api = new StatefulApi { FailDnsCreate = true };
+        var (service, _) = await CreateConnectedAsync(api, appRunning: false);
+
+        await Assert.ThrowsAnyAsync<Exception>(() => service.PublishCoreAsync("core"));
+
+        Assert.Null(coreSettings!.StoredCorePublicOrigin);
+        Assert.Equal("http://localhost:7070", coreOrigins!.Effective);
+    }
+
+    [Fact]
+    public async Task UnpublishCoreAsync_RestoresThePreviousOrigin()
+    {
+        var api = new StatefulApi();
+        var (service, _) = await CreateConnectedAsync(api, appRunning: false);
+        await CoreOriginTestFactory.SetAsync(coreSettings!, "https://old.example.test");
+        await service.PublishCoreAsync("core");
+        Assert.Equal("https://core.example.test", coreOrigins!.Effective);
+
+        await service.UnpublishCoreAsync();
+
+        Assert.Equal("https://old.example.test", coreOrigins.Effective);
+        Assert.DoesNotContain("core.example.test", CloudflareTunnelConfigPatcher.IngressHostnames(api.Config));
+        Assert.Empty(api.Dns);
+    }
+
+    // Nothing was configured before the publish, so unpublish clears the override rather than inventing a
+    // value: Core goes back to advertising its listen URL.
+    [Fact]
+    public async Task UnpublishCoreAsync_WithNoPreviousOrigin_ClearsTheOverride()
+    {
+        var api = new StatefulApi();
+        var (service, _) = await CreateConnectedAsync(api, appRunning: false);
+        await service.PublishCoreAsync("core");
+
+        await service.UnpublishCoreAsync();
+
+        Assert.Null(coreSettings!.StoredCorePublicOrigin);
+        Assert.Equal("http://localhost:7070", coreOrigins!.Effective);
+    }
+
+    // The rule the plan singles out: an administrator who edited the origin after publishing has made a
+    // newer choice, and unpublish must not undo it with a value from before the publish.
+    [Fact]
+    public async Task UnpublishCoreAsync_DoesNotOverwriteANewerManualEdit()
+    {
+        var api = new StatefulApi();
+        var (service, _) = await CreateConnectedAsync(api, appRunning: false);
+        await CoreOriginTestFactory.SetAsync(coreSettings!, "https://old.example.test");
+        await service.PublishCoreAsync("core");
+        await CoreOriginTestFactory.SetAsync(coreSettings!, "https://manual.example.test");
+
+        await service.UnpublishCoreAsync();
+
+        Assert.Equal("https://manual.example.test", coreOrigins!.Effective);
+        // The Cloudflare objects still go: the operator asked for the hostname to be retracted, and only
+        // the setting is theirs to keep.
+        Assert.DoesNotContain("core.example.test", CloudflareTunnelConfigPatcher.IngressHostnames(api.Config));
+    }
+
+    // Ordering: the publication record is the ONLY carrier of the value to restore, and the reconciler
+    // deletes it. Restoring after the removal would mean a failed or cancelled write leaves Core
+    // advertising a hostname whose route and record are gone, with the value needed to undo that
+    // destroyed in the same breath. The setting must therefore already be back before Cloudflare is
+    // touched — and a retry must still converge.
+    [Fact]
+    public async Task UnpublishCoreAsync_WhenTheCloudflareRemovalFails_TheOriginIsAlreadyRestored()
+    {
+        var api = new StatefulApi();
+        var (service, _) = await CreateConnectedAsync(api, appRunning: false);
+        await CoreOriginTestFactory.SetAsync(coreSettings!, "https://old.example.test");
+        await service.PublishCoreAsync("core");
+        api.Failure = new CloudflareApiException(500, ["Internal error"]);
+
+        await Assert.ThrowsAnyAsync<Exception>(() => service.UnpublishCoreAsync());
+
+        // Core is not left pointing at a hostname it just asked to have retracted.
+        Assert.Equal("https://old.example.test", coreOrigins!.Effective);
+
+        // And the retry finishes the job: the restore is a no-op the second time (the origin no longer
+        // names the hostname), while the Cloudflare objects finally go.
+        api.Failure = null;
+        await service.UnpublishCoreAsync();
+
+        Assert.Equal("https://old.example.test", coreOrigins.Effective);
+        Assert.DoesNotContain("core.example.test", CloudflareTunnelConfigPatcher.IngressHostnames(api.Config));
+    }
+
+    // A rename must not record the hostname Hosty itself wrote as the value to restore, or unpublish
+    // would put back a name it has just removed.
+    [Fact]
+    public async Task PublishCoreAsync_RenamingKeepsTheOriginalPreviousOrigin()
+    {
+        var api = new StatefulApi();
+        var (service, _) = await CreateConnectedAsync(api, appRunning: false);
+        await CoreOriginTestFactory.SetAsync(coreSettings!, "https://old.example.test");
+        await service.PublishCoreAsync("core");
+
+        await service.PublishCoreAsync("admin");
+        Assert.Equal("https://admin.example.test", coreOrigins!.Effective);
+        await service.UnpublishCoreAsync();
+
+        Assert.Equal("https://old.example.test", coreOrigins.Effective);
+    }
+
+    // The bulk cleanup behind "disconnect and remove" walks every stored publication, Core's included.
+    [Fact]
+    public async Task RemoveAllAsync_TakesCoresOwnPublicationWithIt()
+    {
+        var api = new StatefulApi();
+        var (service, _) = await CreateConnectedAsync(api, appRunning: false);
+        await service.PublishAsync("com.example.media", "web.http", "media");
+        await service.PublishCoreAsync("core");
+
+        var leftBehind = await service.RemoveAllAsync();
+
+        Assert.Equal(0, leftBehind);
+        Assert.Null(coreSettings!.StoredCorePublicOrigin);
+        Assert.Empty(CloudflareTunnelConfigPatcher.IngressHostnames(api.Config));
+        Assert.Null((await service.GetCoreAsync()).Publication);
+    }
+
+    [Fact]
+    public async Task GetCoreAsync_ReportsTheOriginWithAndWithoutAPublication()
+    {
+        var api = new StatefulApi();
+        var (service, _) = await CreateConnectedAsync(api, appRunning: false);
+
+        var before = await service.GetCoreAsync();
+        Assert.Null(before.Publication);
+        Assert.False(before.Configured);
+        Assert.Equal("http://localhost:7070", before.Origin);
+
+        await service.PublishCoreAsync("core");
+
+        var after = await service.GetCoreAsync();
+        Assert.NotNull(after.Publication);
+        Assert.Equal("core", after.Publication!.Label);
+        Assert.Equal(CloudflarePublicationStates.Active, after.Publication.State);
+        Assert.True(after.Configured);
+        Assert.Equal("https://core.example.test", after.Origin);
+    }
+
+    [Fact]
+    public async Task PublishCoreAsync_WhenNotConnected_Throws()
+    {
+        var (service, _) = await CreateAsync(new StatefulApi(), connected: false, appRunning: false);
+
+        var error = await Assert.ThrowsAsync<CloudflareConnectionException>(() => service.PublishCoreAsync("core"));
+
+        Assert.Equal("cloudflare_not_connected", error.Code);
     }
 
     [Fact]
@@ -288,12 +467,27 @@ public sealed class CloudflarePublicationServiceTests : IDisposable
         var settings = new CoreSettingsService(new CoreSettingsStore(paths, NullLogger<CoreSettingsStore>.Instance));
         await settings.UpdateAsync(new Dictionary<string, string?> { ["HOSTY_INGRESS_PROVIDER"] = provider });
         coreSettings = settings;
+        var config = new HostyCoreRuntimeConfig(
+            DataRoot: root,
+            RunDirectory: Path.Combine(root, "core", "run"),
+            ControlDiscoveryPath: Path.Combine(root, "core", "run", "control.json"),
+            CorePort: 7070,
+            ListenUrl: "http://localhost:7070",
+            CorePublicOrigin: null,
+            RuntimePublicHost: "127.0.0.1",
+            ShellSourceOverridePath: null,
+            ShellAutostart: false);
+        coreOrigins = new CorePublicOriginResolver(config, settings);
 
         var connection = new CloudflareConnectionService(
             api, credentials, integration, NullLogger<CloudflareConnectionService>.Instance);
 
         await apps.UpsertAppAsync(SeedApp("com.example.media", appRunning));
-        return (new CloudflarePublicationService(settings, integration, credentials, connection, reconciler, publications, apps, api, NullLogger<CloudflarePublicationService>.Instance), apps);
+        return (
+            new CloudflarePublicationService(
+                settings, config, coreOrigins, integration, credentials, connection, reconciler, publications, apps, api,
+                NullLogger<CloudflarePublicationService>.Instance),
+            apps);
     }
 
     private static AppRecord SeedApp(string id, bool running)
@@ -328,6 +522,10 @@ public sealed class CloudflarePublicationServiceTests : IDisposable
         // Set to make every tunnel/DNS call fail the way a revoked or permission-reduced token does.
         public CloudflareApiException? Failure { get; set; }
 
+        // Fails only the DNS create, so a publish gets past the tunnel route and dies on the second
+        // mutation — the case where a value written before the read-back would already be wrong.
+        public bool FailDnsCreate { get; init; }
+
         public Task<CloudflareTunnelConfigResult?> GetTunnelConfigurationAsync(string token, string accountId, string tunnelId, CancellationToken cancellationToken = default)
             => Failure is not null
                 ? throw Failure
@@ -344,6 +542,11 @@ public sealed class CloudflarePublicationServiceTests : IDisposable
 
         public Task<CloudflareDnsRecord?> CreateCnameAsync(string token, string zoneId, string name, string content, bool proxied, CancellationToken cancellationToken = default)
         {
+            if (FailDnsCreate)
+            {
+                throw new CloudflareApiException(500, ["The DNS record could not be created."]);
+            }
+
             var record = new CloudflareDnsRecord($"rec-{nextId++}", "CNAME", name, content, proxied, 1);
             Dns.Add(record);
             return Task.FromResult<CloudflareDnsRecord?>(record);

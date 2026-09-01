@@ -262,6 +262,25 @@ public sealed class CoreSettingsServiceTests : IDisposable
     }
 
     [Fact]
+    public void Load_HandEditedNonCanonicalServerValues_AreCanonicalizedOnTheWayIn()
+    {
+        // A hand-edited file is the one path into the store that never went through the save-side
+        // normalizer, so the read path must canonicalize too. Otherwise a stray trailing slash or
+        // surrounding whitespace would reach OAuth metadata and invitation links verbatim.
+        Directory.CreateDirectory(Path.Combine(root, "core"));
+        File.WriteAllText(
+            Path.Combine(root, "core", CoreSettingsSchema.FileName),
+            "{\"schemaVersion\":\"" + CoreSettingsSchema.Version + "\",\"server\":{" +
+            "\"HOSTY_CORE_PUBLIC_ORIGIN\":\"  HTTPS://Core.Example.Test/  \"," +
+            "\"HOSTY_CORE_PORT\":\" 7171 \"}}");
+
+        var service = CreateService();
+
+        Assert.Equal("https://core.example.test", service.StoredCorePublicOrigin);
+        Assert.Equal(7171, service.GetServerRow().StoredOrDefaultPort);
+    }
+
+    [Fact]
     public void Load_HandEditedInvalidProvider_IsSkippedNotCrash()
     {
         // An unrecognized provider in a hand-edited file is dropped per-entry, so the provider follows

@@ -1,5 +1,8 @@
 namespace Haas.Hosty.Core;
 
+using System.Globalization;
+using System.Net;
+
 // Cloudflare ingress: the ownership authority for Hosty-published hostnames. Each
 // publication records exactly which app endpoint owns which hostname, the DNS record id, and the last applied
 // local service URL, so reconciliation mutates and cleans up only what Hosty created (or explicitly adopted)
@@ -135,6 +138,9 @@ internal sealed class CloudflarePublicationStore(CoreDataPaths paths)
 // `ServiceUrl`, which no longer exists, so the publication is broken until a reconcile succeeds. Recording
 // it is what lets boot reconciliation be honest without retrying on the startup path: the next successful
 // reconcile clears it, and until then the state projection reports the drift. Null means no drift.
+// `PreviousPublicOrigin` is Core's own publication only: the persisted public-origin setting as it was
+// before Hosty took the value over, so unpublish can put it back. Null means there was none and unpublish
+// clears the setting instead.
 internal sealed record CloudflarePublication(
     string AppId,
     string EndpointKey,
@@ -145,7 +151,50 @@ internal sealed record CloudflarePublication(
     string OwnershipState,
     DateTimeOffset UpdatedAt,
     bool PendingRestart = false,
-    string? DriftedServiceUrl = null);
+    string? DriftedServiceUrl = null,
+    string? PreviousPublicOrigin = null);
+
+// The reserved pair Core's own hostname is published under. Core is not an app and has no registry
+// record, but the store and the reconciler key ownership on (app id, endpoint key) — so reserving one pair
+// is what lets Core's hostname ride the exact same publish, read-back, rollback and cleanup path as an
+// app's, with no synthetic app record to keep consistent with a registry it is not in. The cost is that
+// every sweep which walks publications expecting an installed app has to skip it, which is why this lives
+// here rather than inside the publication service: the skip is the store's contract, not one caller's.
+internal static class CorePublication
+{
+    public const string AppId = "hosty.core";
+    public const string EndpointKey = "core";
+
+    // The full pair, never the app id alone: ownership is keyed on both, and matching on the id would
+    // sweep every publication of an app that happened to carry it — deleting Core's hostname when that
+    // app is uninstalled while leaving the app's own route behind. Manifest validation refuses the id,
+    // so this is defence in depth rather than the only guard.
+    public static bool IsCore(string appId, string endpointKey)
+        => string.Equals(appId, AppId, StringComparison.Ordinal) &&
+            string.Equals(endpointKey, EndpointKey, StringComparison.Ordinal);
+
+    // The URL the tunnel connector must dial to reach this Core. Derived from the ACTIVE listener
+    // rather than assumed to be http://localhost:{port}: Core may be bound over HTTPS or to one
+    // specific address, and a rule pointing at a port nothing serves would publish cleanly and then
+    // fail every request through the hostname. A loopback or all-interface binding is reachable as
+    // localhost; a specific address is dialled as itself.
+    public static string ServiceUrl(string listenUrl, int corePort)
+    {
+        if (!Uri.TryCreate(listenUrl, UriKind.Absolute, out var uri) ||
+            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        {
+            return $"http://localhost:{corePort.ToString(CultureInfo.InvariantCulture)}";
+        }
+
+        var host = uri.Host;
+        var wildcard = IPAddress.TryParse(host, out var address) &&
+            (IPAddress.IsLoopback(address) || address.Equals(IPAddress.Any) || address.Equals(IPAddress.IPv6Any));
+        var target = wildcard || string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase)
+            ? "localhost"
+            : host;
+        return $"{uri.Scheme}://{target}:{uri.Port.ToString(CultureInfo.InvariantCulture)}";
+    }
+}
 
 internal static class CloudflareOwnershipStates
 {
