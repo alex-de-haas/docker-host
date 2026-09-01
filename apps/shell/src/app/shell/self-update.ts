@@ -24,13 +24,20 @@ export type SubscribeToAppChanges = (onSync: () => void | Promise<void>) => () =
 const SETTLE_TIMEOUT_MS = 10 * 60_000;
 
 /**
- * Waits for Core to finish the detached apply of the Shell's own app.
+ * Waits for Core to finish the detached apply of the Shell's own app, restart included.
  *
  * `POST /api/apps/{id}/update` returns as soon as the `"updating"` marker is persisted; the apply
- * (pull, stop, recreate) then runs on Core's lifetime. So the origin serving this page keeps
- * answering — from the *old* Shell — for as long as that takes, and "our origin responds" is not
- * evidence of anything. The record leaving `"updating"` is the completion signal; only after it does
- * probing our own origin mean "the new Shell is listening".
+ * (stop, swap the manifest, restart) then runs on Core's lifetime. So the origin serving this page
+ * keeps answering — from the *old* Shell — for as long as that takes, and "our origin responds" is
+ * not evidence of anything. The record is the signal, and only once it settles does probing our own
+ * origin mean "the new Shell is listening".
+ *
+ * Which status settles it depends on whether a restart is coming. Core commits `"updated"` once the
+ * new manifest is in place and *then* starts the app — a step that carries the image pull, the mount
+ * and capability preparation, and the container start, any of which can still fail. For a Shell that
+ * was running (the usual case: it is serving this page) `"updated"` is therefore an intermediate
+ * status, and the outcome is the restart's own `"started"` or `"failed"`. Only an app that was
+ * already down ends at `"updated"`, because Core skips the restart entirely.
  *
  * No poll is needed. Every app-record commit publishes an `app.changed` hint, and Core stays up
  * across the Shell swap, so the event stream this page already holds is the one transport that
@@ -40,9 +47,11 @@ export function waitForShellUpdateToSettle(options: {
   coreOrigin: string;
   shellAppId: string;
   subscribe: SubscribeToAppChanges;
+  /** Whether the Shell was up when the apply was enqueued, i.e. whether Core will restart it. */
+  expectRestart: boolean;
   timeoutMs?: number;
 }): Promise<ShellUpdateOutcome> {
-  const { coreOrigin, shellAppId, subscribe } = options;
+  const { coreOrigin, shellAppId, subscribe, expectRestart } = options;
   return new Promise<ShellUpdateOutcome>((resolve) => {
     let unsubscribe: (() => void) | null = null;
     let settled = false;
@@ -78,15 +87,19 @@ export function waitForShellUpdateToSettle(options: {
           return;
         }
 
-        if (shellApp.operationStatus === "updating") {
+        if (shellApp.operationStatus === "failed") {
+          finish({ kind: "failed", message: shellApp.lastError || "The Shell update failed on the host." });
           return;
         }
 
-        finish(
-          shellApp.operationStatus === "failed"
-            ? { kind: "failed", message: shellApp.lastError || "The Shell update failed on the host." }
-            : { kind: "settled" },
-        );
+        // "updating" is the apply; "updated" with a restart still to report is the start Core runs
+        // right after it. Settling on either would hand the caller an origin probe against a Shell
+        // that is not coming up yet — and would drop the wait before a failing start could report.
+        if (shellApp.operationStatus === "updating" || (expectRestart && shellApp.operationStatus === "updated")) {
+          return;
+        }
+
+        finish({ kind: "settled" });
       } catch {
         // A failed read is not an outcome: the next hint, reconnect or visibility change re-reads.
         // Resolving here would reload the tab into a half-swapped Shell.

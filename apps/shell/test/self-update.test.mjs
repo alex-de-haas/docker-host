@@ -58,35 +58,44 @@ function outcomeOrPending(promise) {
   return Promise.race([promise, new Promise((resolve) => setImmediate(() => resolve("pending")))]);
 }
 
-test("stays pending while Core still reports the apply as updating", async () => {
-  const stub = stubFetch([{ apps: [shell()] }, { apps: [shell()] }, { apps: [shell({ operationStatus: "started" })] }]);
+test("stays pending through the apply and the restart it hands off to", async () => {
+  // Core commits "updated" before starting the app, so only the restart's own status settles this.
+  const stub = stubFetch([
+    { apps: [shell()] },
+    { apps: [shell({ operationStatus: "updated", runtimeState: "stopped" })] },
+    { apps: [shell({ operationStatus: "updated", runtimeState: "starting" })] },
+    { apps: [shell({ operationStatus: "started" })] },
+  ]);
   const stream = fakeStream();
   try {
-    const wait = waitForShellUpdateToSettle({ coreOrigin: CORE_ORIGIN, shellAppId: SHELL_ID, subscribe: stream.subscribe, timeoutMs: 5_000 });
+    const wait = waitForShellUpdateToSettle({ coreOrigin: CORE_ORIGIN, shellAppId: SHELL_ID, subscribe: stream.subscribe, expectRestart: true, timeoutMs: 5_000 });
     await stream.connected();
     assert.equal(await outcomeOrPending(wait), "pending");
 
-    // A hint that carries no flip (another app committing) must not resolve it either.
+    // The manifest is in place but the restart has not reported yet.
+    await stream.hint();
+    assert.equal(await outcomeOrPending(wait), "pending");
+
     await stream.hint();
     assert.equal(await outcomeOrPending(wait), "pending");
 
     await stream.hint();
     assert.deepEqual(await wait, { kind: "settled" });
     assert.equal(stream.unsubscribes(), 1);
-    assert.deepEqual(stub.calls, Array(3).fill(`${CORE_ORIGIN}/api/apps`));
+    assert.deepEqual(stub.calls, Array(4).fill(`${CORE_ORIGIN}/api/apps`));
   } finally {
     stub.restore();
   }
 });
 
-test("reports the record's error when the apply failed", async () => {
+test("reports the record's error when the post-update start failed", async () => {
   const stub = stubFetch([
-    { apps: [shell()] },
-    { apps: [shell({ operationStatus: "failed", lastError: "pull failed: no such image" })] },
+    { apps: [shell({ operationStatus: "updated", runtimeState: "starting" })] },
+    { apps: [shell({ operationStatus: "failed", runtimeState: "stopped", lastError: "pull failed: no such image" })] },
   ]);
   const stream = fakeStream();
   try {
-    const wait = waitForShellUpdateToSettle({ coreOrigin: CORE_ORIGIN, shellAppId: SHELL_ID, subscribe: stream.subscribe, timeoutMs: 5_000 });
+    const wait = waitForShellUpdateToSettle({ coreOrigin: CORE_ORIGIN, shellAppId: SHELL_ID, subscribe: stream.subscribe, expectRestart: true, timeoutMs: 5_000 });
     await stream.connected();
     await stream.hint();
     assert.deepEqual(await wait, { kind: "failed", message: "pull failed: no such image" });
@@ -99,11 +108,11 @@ test("a failed read is not an outcome; the next hint decides", async () => {
   const stub = stubFetch([
     new Error("network down"),
     503,
-    { apps: [shell({ operationStatus: "updated" })] },
+    { apps: [shell({ operationStatus: "started" })] },
   ]);
   const stream = fakeStream();
   try {
-    const wait = waitForShellUpdateToSettle({ coreOrigin: CORE_ORIGIN, shellAppId: SHELL_ID, subscribe: stream.subscribe, timeoutMs: 5_000 });
+    const wait = waitForShellUpdateToSettle({ coreOrigin: CORE_ORIGIN, shellAppId: SHELL_ID, subscribe: stream.subscribe, expectRestart: true, timeoutMs: 5_000 });
     await stream.connected();
     assert.equal(await outcomeOrPending(wait), "pending");
     await stream.hint();
@@ -115,11 +124,22 @@ test("a failed read is not an outcome; the next hint decides", async () => {
   }
 });
 
+test("settles on \"updated\" when no restart is coming", async () => {
+  const stub = stubFetch([{ apps: [shell({ operationStatus: "updated", runtimeState: "stopped" })] }]);
+  const stream = fakeStream();
+  try {
+    const wait = waitForShellUpdateToSettle({ coreOrigin: CORE_ORIGIN, shellAppId: SHELL_ID, subscribe: stream.subscribe, expectRestart: false, timeoutMs: 5_000 });
+    assert.deepEqual(await wait, { kind: "settled" });
+  } finally {
+    stub.restore();
+  }
+});
+
 test("stops waiting when the Shell app is gone from the list", async () => {
   const stub = stubFetch([{ apps: [] }]);
   const stream = fakeStream();
   try {
-    const wait = waitForShellUpdateToSettle({ coreOrigin: CORE_ORIGIN, shellAppId: SHELL_ID, subscribe: stream.subscribe, timeoutMs: 5_000 });
+    const wait = waitForShellUpdateToSettle({ coreOrigin: CORE_ORIGIN, shellAppId: SHELL_ID, subscribe: stream.subscribe, expectRestart: true, timeoutMs: 5_000 });
     assert.deepEqual(await wait, { kind: "unresolved" });
     assert.equal(stream.unsubscribes(), 1);
   } finally {
@@ -131,7 +151,7 @@ test("gives up on the deadline without reloading, and unsubscribes", async () =>
   const stub = stubFetch([{ apps: [shell()] }]);
   const stream = fakeStream();
   try {
-    const wait = waitForShellUpdateToSettle({ coreOrigin: CORE_ORIGIN, shellAppId: SHELL_ID, subscribe: stream.subscribe, timeoutMs: 20 });
+    const wait = waitForShellUpdateToSettle({ coreOrigin: CORE_ORIGIN, shellAppId: SHELL_ID, subscribe: stream.subscribe, expectRestart: true, timeoutMs: 20 });
     assert.deepEqual(await wait, { kind: "unresolved" });
     assert.equal(stream.unsubscribes(), 1);
   } finally {

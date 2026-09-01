@@ -11,6 +11,7 @@ import { findAppPageLink, getAppPageLinks } from "./shell/app-helpers";
 import { CoreRequestError, isAuthRequiredRedirectError, readCoreError, readCoreErrorDetail, redirectToCoreLogin, redirectToCoreLoginIfAuthRequired } from "./shell/core-api";
 import { createReissueRateLimiter } from "@hosty-sdk/app/embedder";
 import { CoreEventNames, subscribeToCoreEvents } from "./shell/events/core-event-stream";
+import { isAppUp } from "./shell/runtime-states";
 import { waitForShellUpdateToSettle } from "./shell/self-update";
 import { AppDetailsDialog } from "./shell/dialogs/app-details-dialog";
 import { InstallReviewDialog } from "./shell/dialogs/install-review-dialog";
@@ -1282,6 +1283,9 @@ export function ShellClient({
             coreOrigin,
             shellAppId,
             subscribe: (onSync) => subscribeToCoreEvents(coreOrigin, { names: [CoreEventNames.appChanged], onSync }),
+            // A running Shell is restarted by the apply, so its "updated" commit lands before the
+            // start this page is actually waiting for. One that is already down ends at "updated".
+            expectRestart: isAppUp(app.runtimeState),
           });
           if (outcome.kind === "failed") {
             toast.error("Shell update failed", { description: outcome.message });
