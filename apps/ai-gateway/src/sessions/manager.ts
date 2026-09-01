@@ -154,7 +154,10 @@ export class SessionManager {
       session.pendingQuestions.clear();
       this.clearRefresh(session);
       this.fanOut(session, {
-        seq: session.record.lastEventSeq,
+        // Negative, like the client's own stream errors: this event is never persisted, and reusing
+        // the last stored seq would hand subscribers a cursor value that already belongs to a real
+        // event. Nothing can reconnect with it anyway — the session it points at is being removed.
+        seq: -1,
         ts: new Date().toISOString(),
         type: "session_deleted",
       });

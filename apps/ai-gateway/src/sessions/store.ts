@@ -142,12 +142,12 @@ export class SessionStore {
     return events;
   }
 
-  /** Deletes sessions whose last activity is older than the retention window. Returns deleted ids. */
   /** Removes one session's directory — its record, transcript and everything else it kept. */
   async deleteSession(id: string): Promise<void> {
     await rm(this.sessionDir(id), { recursive: true, force: true });
   }
 
+  /** Deletes sessions whose last activity is older than the retention window. Returns deleted ids. */
   async sweepRetention(retentionDays: number, now = new Date()): Promise<string[]> {
     const cutoff = now.getTime() - retentionDays * 24 * 60 * 60 * 1000;
     const deleted: string[] = [];

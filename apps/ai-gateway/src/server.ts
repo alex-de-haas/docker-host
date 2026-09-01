@@ -502,11 +502,17 @@ async function streamEvents(
     () => response.end(),
     Math.max(0, tokenExpSeconds * 1000 - Date.now()),
   );
-  request.on("close", () => {
+  // Bound to the response as well as the request: this stream can be ended from the server side
+  // (a deletion, the token deadline), and waiting only on the request's own close would leave the
+  // heartbeat writing into a finished response — which throws rather than being ignored.
+  // Idempotent, so being called from both is harmless.
+  const cleanup = (): void => {
     clearInterval(heartbeat);
     clearTimeout(tokenDeadline);
     unsubscribe();
-  });
+  };
+  response.on("close", cleanup);
+  request.on("close", cleanup);
 }
 
 /**
