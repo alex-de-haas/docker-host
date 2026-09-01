@@ -54,7 +54,7 @@ internal sealed class AuthBootstrapService(
     AuthBootstrapTokenStore tokens,
     AuditStore audit,
     LocalPasswordAuthService passwords,
-    HostyCoreRuntimeConfig config,
+    CorePublicOriginResolver coreOrigins,
     IClock clock)
 {
     private static readonly TimeSpan TokenTtl = TimeSpan.FromMinutes(15);
@@ -297,8 +297,10 @@ internal sealed class AuthBootstrapService(
             CreatedAt: clock.UtcNow,
             Details: details), cancellationToken);
 
+    // Read per link rather than captured at startup: a setup or recovery link minted after the operator
+    // corrected the public origin must carry the corrected one.
     private string ResolveCoreOrigin()
-        => config.EffectiveCorePublicOrigin;
+        => coreOrigins.Effective;
 
     private static string GetTokenStatus(AuthBootstrapTokenRecord token, DateTimeOffset now)
     {

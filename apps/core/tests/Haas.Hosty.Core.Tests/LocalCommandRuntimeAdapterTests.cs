@@ -12,7 +12,7 @@ public sealed class LocalCommandRuntimeAdapterTests
             listenUrl: "http://localhost:7070",
             corePublicOrigin: "https://core.example");
 
-        var result = LocalCommandRuntimeAdapter.BuildCoreEnvironment(config);
+        var result = LocalCommandRuntimeAdapter.BuildCoreEnvironment(config, "https://core.example");
 
         Assert.Equal("7070", result["HOSTY_CORE_PORT"]);
         Assert.Equal("https://core.example", result["HOSTY_CORE_PUBLIC_ORIGIN"]);

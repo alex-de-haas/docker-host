@@ -16,12 +16,13 @@ internal static class CoreSettingsEndpoints
             UserDirectoryStore users,
             IClock clock,
             CoreSettingsService settings,
+            CorePublicOriginResolver origins,
             CancellationToken cancellationToken) =>
             await CoreSessionAuthorization.RequireAdminSessionAsync(
                 request,
                 users,
                 clock,
-                () => Task.FromResult(CoreJson.Json(Build(settings))),
+                () => Task.FromResult(CoreJson.Json(Build(settings, origins))),
                 cancellationToken: cancellationToken));
 
         app.MapPut("/api/core/settings", async (
@@ -29,6 +30,7 @@ internal static class CoreSettingsEndpoints
             UserDirectoryStore users,
             IClock clock,
             CoreSettingsService settings,
+            CorePublicOriginResolver origins,
             CoreLifecycleService lifecycle,
             CoreSettingsUpdateRequest? input,
             CancellationToken cancellationToken) =>
@@ -36,7 +38,7 @@ internal static class CoreSettingsEndpoints
                 request,
                 users,
                 clock,
-                () => ApplyUpdateAsync(settings, lifecycle, input, cancellationToken),
+                () => ApplyUpdateAsync(settings, origins, lifecycle, input, cancellationToken),
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
@@ -44,19 +46,20 @@ internal static class CoreSettingsEndpoints
         // host (Shell optional, no admin browser session) this is the only way to edit a Core setting
         // at all — and the recovery path for a value that broke the UI. Same Build/ApplyUpdateAsync as
         // the admin surface, so the two can never diverge in shape or validation.
-        app.MapGet("/control/v1/settings", (HttpRequest request, ControlSecret secret, CoreSettingsService settings) =>
-            HostyCoreApplication.RequireControlSecret(request, secret, () => CoreJson.Json(Build(settings))));
+        app.MapGet("/control/v1/settings", (HttpRequest request, ControlSecret secret, CoreSettingsService settings, CorePublicOriginResolver origins) =>
+            HostyCoreApplication.RequireControlSecret(request, secret, () => CoreJson.Json(Build(settings, origins))));
         app.MapPut("/control/v1/settings", async (
             HttpRequest request,
             ControlSecret secret,
             CoreSettingsService settings,
+            CorePublicOriginResolver origins,
             CoreLifecycleService lifecycle,
             CoreSettingsUpdateRequest? input,
             CancellationToken cancellationToken) =>
             await HostyCoreApplication.RequireControlSecret(
                 request,
                 secret,
-                () => ApplyUpdateAsync(settings, lifecycle, input, cancellationToken)));
+                () => ApplyUpdateAsync(settings, origins, lifecycle, input, cancellationToken)));
     }
 
     // One apply path for both surfaces (admin PUT and the control plane): the service does the
@@ -65,6 +68,7 @@ internal static class CoreSettingsEndpoints
     // running-app set (best-effort; never fails the save). Non-ingress saves skip that.
     private static async Task<IResult> ApplyUpdateAsync(
         CoreSettingsService settings,
+        CorePublicOriginResolver origins,
         CoreLifecycleService lifecycle,
         CoreSettingsUpdateRequest? input,
         CancellationToken cancellationToken)
@@ -90,10 +94,10 @@ internal static class CoreSettingsEndpoints
             await lifecycle.ReconcileIngressAsync(cancellationToken);
         }
 
-        return CoreJson.Json(Build(settings));
+        return CoreJson.Json(Build(settings, origins));
     }
 
-    private static CoreSettingsResponse Build(CoreSettingsService settings)
+    private static CoreSettingsResponse Build(CoreSettingsService settings, CorePublicOriginResolver origins)
     {
         var rows = new List<CoreSettingSummary>();
         foreach (var row in settings.GetAuthRows())
@@ -162,6 +166,22 @@ internal static class CoreSettingsEndpoints
             Label: CoreServerSettings.PortLabel,
             Description: CoreServerSettings.PortDescription,
             Overridden: server.Overridden,
+            Unit: null,
+            Options: null));
+
+        // `Default` is what a reset lands on rather than a constant: clearing this falls back to the
+        // environment baseline and only then to the listen URL, so a host launched with the variable set
+        // must not be offered "reset to http://localhost:7070".
+        var publicOrigin = origins.GetRow();
+        rows.Add(new CoreSettingSummary(
+            CoreOriginSettings.PublicOriginKey,
+            Type: "url",
+            Value: publicOrigin.EffectiveOrigin,
+            Default: publicOrigin.BaselineOrigin,
+            Group: CoreServerSettings.Group,
+            Label: CoreServerSettings.PublicOriginLabel,
+            Description: CoreServerSettings.PublicOriginDescription,
+            Overridden: publicOrigin.Overridden,
             Unit: null,
             Options: null));
 

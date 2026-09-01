@@ -38,9 +38,9 @@ internal static class OAuthEndpoints
         // AS metadata. Issuer and endpoints use the browser-reachable origin: the flow's whole point
         // is a remote client and a browser completing it, and a loopback URL in this document would
         // send both to the wrong machine.
-        app.MapGet("/.well-known/oauth-authorization-server", (HostyCoreRuntimeConfig config) =>
+        app.MapGet("/.well-known/oauth-authorization-server", (CorePublicOriginResolver coreOrigins) =>
         {
-            var origin = config.EffectiveCorePublicOrigin.TrimEnd('/');
+            var origin = coreOrigins.Effective.TrimEnd('/');
             return CoreJson.Json(new OAuthServerMetadata(
                 Issuer: origin,
                 AuthorizationEndpoint: $"{origin}/api/auth/oauth/authorize",
@@ -55,9 +55,9 @@ internal static class OAuthEndpoints
 
         // Core MCP's own resource metadata, at the RFC 9728 path for the resource `/api/mcp`. Apps
         // and the facade serve their equivalents through the SDK helpers.
-        app.MapGet("/.well-known/oauth-protected-resource/api/mcp", (HostyCoreRuntimeConfig config) =>
+        app.MapGet("/.well-known/oauth-protected-resource/api/mcp", (CorePublicOriginResolver coreOrigins) =>
         {
-            var origin = config.EffectiveCorePublicOrigin.TrimEnd('/');
+            var origin = coreOrigins.Effective.TrimEnd('/');
             return CoreJson.Json(new OAuthProtectedResourceMetadata(
                 Resource: $"{origin}/api/mcp",
                 AuthorizationServers: [origin],
@@ -79,6 +79,7 @@ internal static class OAuthEndpoints
             OAuthAuthorizationStore pending,
             CoreLifecycleService lifecycle,
             HostyCoreRuntimeConfig config,
+            CorePublicOriginResolver coreOrigins,
             ShellPublicOriginResolver shellOrigin,
             CancellationToken cancellationToken) =>
         {
@@ -136,7 +137,7 @@ internal static class OAuthEndpoints
                 return Results.Redirect(RedirectError("invalid_target", "A resource parameter naming the MCP endpoint is required."));
             }
 
-            var resolved = await ResolveResourceAsync(resource, lifecycle, config, cancellationToken);
+            var resolved = await ResolveResourceAsync(resource, lifecycle, coreOrigins, config.ListenUrl, cancellationToken);
             if (resolved is null)
             {
                 return Results.Redirect(RedirectError("invalid_target", "The resource does not name an MCP endpoint on this host."));
@@ -641,7 +642,8 @@ internal static class OAuthEndpoints
     internal static async Task<(string Audience, string DisplayName)?> ResolveResourceAsync(
         string resource,
         CoreLifecycleService lifecycle,
-        HostyCoreRuntimeConfig config,
+        CorePublicOriginResolver coreOrigins,
+        string listenUrl,
         CancellationToken cancellationToken)
     {
         if (!Uri.TryCreate(resource.Trim(), UriKind.Absolute, out var target))
@@ -649,7 +651,10 @@ internal static class OAuthEndpoints
             return null;
         }
 
-        foreach (var origin in new[] { config.EffectiveCorePublicOrigin, config.ListenUrl })
+        // Both spellings of Core's own MCP endpoint, deliberately. The listen URL is not a convenience
+        // here: it is the half of this pair that keeps working when the public origin names a host that
+        // does not answer, so an operator recovering over loopback can still complete the flow.
+        foreach (var origin in new[] { coreOrigins.Effective, listenUrl })
         {
             if (SameResource(target, origin, "/api/mcp"))
             {

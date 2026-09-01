@@ -1727,8 +1727,16 @@ internal sealed class DockerRuntimeAdapter(
     DelegatedTokenSigningKey? delegatedTokenKey = null,
     // Mints the app's own identity token, so a sibling app can verify who is calling it with the
     // public key above. Optional for the same reason as that key; DI supplies it.
-    AppIdentityTokenService? appIdentityTokens = null) : IAppRuntimeAdapter, IImageDigestResolver, IRunningContainerProbe
+    AppIdentityTokenService? appIdentityTokens = null,
+    // The live public origin, injected into every app's environment when its container is created.
+    // Optional so existing direct constructions stay valid; DI supplies it, and without it the startup
+    // env baseline stands in.
+    CorePublicOriginResolver? corePublicOrigin = null) : IAppRuntimeAdapter, IImageDigestResolver, IRunningContainerProbe
 {
+    // Resolved per container create rather than once: a saved origin must reach the next app that starts,
+    // not only the apps started after the next Core restart.
+    private string CorePublicOrigin => corePublicOrigin?.Effective ?? config.EffectiveCorePublicOrigin;
+
     // App ids already advised about WSL2 P2P throttling, so the warning is logged once per app
     // per Core process rather than on every (health-driven) restart. Instance field on the DI
     // singleton: its lifetime is the process, and it is bounded by the number of distinct apps
@@ -1873,7 +1881,7 @@ internal sealed class DockerRuntimeAdapter(
             runArgs.AddRange(BuildPrivilegedArguments(service.Runtime));
             runArgs.AddRange(BuildHealthcheckArguments(service.Runtime));
 
-            foreach (var environment in BuildDockerCoreEnvironment(config))
+            foreach (var environment in BuildDockerCoreEnvironment(config, CorePublicOrigin))
             {
                 runArgs.Add("-e");
                 runArgs.Add(environment);
@@ -3090,11 +3098,23 @@ internal sealed class DockerRuntimeAdapter(
         return args;
     }
 
-    internal static IReadOnlyList<string> BuildDockerCoreEnvironment(HostyCoreRuntimeConfig config)
+    // The two Core origins a container is given, and they are deliberately different values.
+    //
+    // HOSTY_CORE_PUBLIC_ORIGIN is browser-facing: the app puts it in links and redirects it sends a user
+    // to. It is the live setting read at container-create time, which is why a change reaches a running
+    // app only when it restarts.
+    //
+    // HOSTY_CORE_ORIGIN is how the app's own server process dials Core, and it is derived from the listen
+    // URL — never from the public origin. Deriving it from the public origin sent container traffic out
+    // through the tunnel and back for no reason once an origin was set, and tied app-to-Core calls to a
+    // value whose whole purpose is to be edited. The loopback rewrite to host.docker.internal is what
+    // makes the host reachable from inside the container; localCommand apps, running on the host, use the
+    // listen URL unchanged.
+    internal static IReadOnlyList<string> BuildDockerCoreEnvironment(HostyCoreRuntimeConfig config, string corePublicOrigin)
         => [
             $"HOSTY_CORE_PORT={config.CorePort.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
-            $"HOSTY_CORE_PUBLIC_ORIGIN={config.EffectiveCorePublicOrigin}",
-            $"HOSTY_CORE_ORIGIN={BuildDockerCoreOrigin(config.EffectiveCorePublicOrigin)}",
+            $"HOSTY_CORE_PUBLIC_ORIGIN={corePublicOrigin}",
+            $"HOSTY_CORE_ORIGIN={BuildDockerCoreOrigin(config.ListenUrl)}",
         ];
 
     // OTEL_* `-e KEY=VALUE` run args for a docker service whose manifest opts into telemetry, when a

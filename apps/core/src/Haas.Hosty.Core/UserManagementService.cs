@@ -8,7 +8,7 @@ internal sealed class UserManagementService(
     AppRegistryStore apps,
     AuditStore audit,
     LocalPasswordAuthService passwords,
-    HostyCoreRuntimeConfig config,
+    CorePublicOriginResolver coreOrigins,
     IClock clock)
 {
     private const long InviteMinTtlMs = 15 * 60 * 1000;
@@ -486,8 +486,10 @@ internal sealed class UserManagementService(
             CreatedAt: clock.UtcNow,
             Details: details), cancellationToken);
 
+    // Read per invitation rather than captured at startup: a link minted after the operator corrected the
+    // public origin must carry the corrected one.
     private string ResolveCoreOrigin()
-        => config.EffectiveCorePublicOrigin;
+        => coreOrigins.Effective;
 
     private static IReadOnlyList<AuthSessionRecord> RevokeSessions(
         IReadOnlyList<AuthSessionRecord> sessions,

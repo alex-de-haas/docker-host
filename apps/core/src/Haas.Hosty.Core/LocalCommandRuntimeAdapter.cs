@@ -17,8 +17,14 @@ internal sealed class LocalCommandRuntimeAdapter(
     DelegatedTokenSigningKey? delegatedTokenKey = null,
     // Mints the app's own identity token, so a sibling app can verify who is calling it with the
     // public key above. Optional for the same reason as that key; DI supplies it.
-    AppIdentityTokenService? appIdentityTokens = null) : IAppRuntimeAdapter
+    AppIdentityTokenService? appIdentityTokens = null,
+    // The live public origin, injected into a service's environment when its process starts. Optional so
+    // existing direct constructions stay valid; DI supplies it, and without it the env baseline stands in.
+    CorePublicOriginResolver? corePublicOrigin = null) : IAppRuntimeAdapter
 {
+    // Resolved per process start rather than once, so a saved origin reaches the next app that starts.
+    private string CorePublicOrigin => corePublicOrigin?.Effective ?? config.EffectiveCorePublicOrigin;
+
     // Upper bound on how long a stop waits for a killed service's redirected output to reach EOF.
     private static readonly TimeSpan LogDrainTimeout = TimeSpan.FromSeconds(5);
 
@@ -507,7 +513,7 @@ internal sealed class LocalCommandRuntimeAdapter(
     {
         startInfo.Environment["HOSTY_APP_ID"] = context.App.Id;
         startInfo.Environment["HOSTY_APP_SERVICE_KEY"] = service.Key;
-        foreach (var environment in BuildCoreEnvironment(config))
+        foreach (var environment in BuildCoreEnvironment(config, CorePublicOrigin))
         {
             startInfo.Environment[environment.Key] = environment.Value;
         }
@@ -680,11 +686,14 @@ internal sealed class LocalCommandRuntimeAdapter(
         }
     }
 
-    internal static IReadOnlyDictionary<string, string> BuildCoreEnvironment(HostyCoreRuntimeConfig config)
+    // The same split the docker adapter makes: HOSTY_CORE_PUBLIC_ORIGIN is the live browser-facing
+    // setting, read when the process starts, and HOSTY_CORE_ORIGIN is the listen URL the process dials
+    // Core on. No rewrite here — a localCommand service runs on the host, so loopback already reaches it.
+    internal static IReadOnlyDictionary<string, string> BuildCoreEnvironment(HostyCoreRuntimeConfig config, string corePublicOrigin)
         => new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["HOSTY_CORE_PORT"] = config.CorePort.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            ["HOSTY_CORE_PUBLIC_ORIGIN"] = config.EffectiveCorePublicOrigin,
+            ["HOSTY_CORE_PUBLIC_ORIGIN"] = corePublicOrigin,
             ["HOSTY_CORE_ORIGIN"] = config.ListenUrl,
         };
 

@@ -69,6 +69,9 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<AppRegistryStore>();
         builder.Services.AddSingleton<AppSecretsStore>();
         builder.Services.AddSingleton<ShellPublicOriginResolver>();
+        // Where Core says it lives, layered live over the startup env baseline. Registered next to the
+        // Shell resolver because they answer the same question for the two origins Core hands out.
+        builder.Services.AddSingleton<CorePublicOriginResolver>();
         builder.Services.AddSingleton<MountPathPolicy>();
         builder.Services.AddSingleton<GlobalMountStore>();
         builder.Services.AddSingleton<GlobalMountService>();
@@ -197,6 +200,7 @@ internal static class HostyCoreApplication
             HttpRequest request,
             HostyCoreRuntimeConfig config,
             CoreSettingsService settings,
+            CorePublicOriginResolver coreOrigins,
             ShellPublicOriginResolver shellOrigins,
             CloudflareIntegrationStore cloudflare,
             UserDirectoryStore users,
@@ -210,14 +214,16 @@ internal static class HostyCoreApplication
                 ? CoreStatusResponse.From(
                     config,
                     settings.Ingress,
+                    coreOrigins,
                     await shellOrigins.ResolveAsync(cancellationToken),
                     await cloudflare.IsConnectedAsync(cancellationToken))
                 : CoreStatusResponse.Public());
         });
-        app.MapGet("/control/v1/core/status", async (HttpRequest request, HostyCoreRuntimeConfig config, CoreSettingsService settings, ShellPublicOriginResolver shellOrigins, CloudflareIntegrationStore cloudflare, ControlSecret secret, CancellationToken cancellationToken) =>
+        app.MapGet("/control/v1/core/status", async (HttpRequest request, HostyCoreRuntimeConfig config, CoreSettingsService settings, CorePublicOriginResolver coreOrigins, ShellPublicOriginResolver shellOrigins, CloudflareIntegrationStore cloudflare, ControlSecret secret, CancellationToken cancellationToken) =>
             await RequireControlSecret(request, secret, async () => CoreJson.Json(CoreStatusResponse.From(
                 config,
                 settings.Ingress,
+                coreOrigins,
                 await shellOrigins.ResolveAsync(cancellationToken),
                 await cloudflare.IsConnectedAsync(cancellationToken)))));
         app.MapPost("/control/v1/core/stop", (HttpRequest request, ControlSecret secret, IHostApplicationLifetime lifetime, CoreShutdownOptions shutdownOptions) =>
@@ -242,7 +248,7 @@ internal static class HostyCoreApplication
             app.MapPost("/login", async (
                 HttpRequest request,
                 HttpResponse response,
-                HostyCoreRuntimeConfig config,
+                CorePublicOriginResolver coreOrigins,
                 ShellPublicOriginResolver shellOrigins,
                 UserDirectoryStore users,
                 IClock clock,
@@ -263,7 +269,7 @@ internal static class HostyCoreApplication
                 var shellOrigin = await shellOrigins.ResolveAsync(cancellationToken);
                 if (result.Succeeded)
                 {
-                    return RedirectAfterLogin(returnTo, shellOrigin, config);
+                    return RedirectAfterLogin(returnTo, shellOrigin, coreOrigins.Effective);
                 }
 
                 var state = await users.ReadAsync(cancellationToken);
@@ -282,7 +288,7 @@ internal static class HostyCoreApplication
             app.MapPost("/login", async (
                 HttpRequest request,
                 HttpResponse response,
-                HostyCoreRuntimeConfig config,
+                CorePublicOriginResolver coreOrigins,
                 ShellPublicOriginResolver shellOrigins,
                 LocalPasswordAuthService passwords,
                 UserDirectoryStore users,
@@ -311,7 +317,7 @@ internal static class HostyCoreApplication
                         cancellationToken);
 
                     return result.Succeeded
-                        ? RedirectAfterLogin(returnTo, shellOrigin, config)
+                        ? RedirectAfterLogin(returnTo, shellOrigin, coreOrigins.Effective)
                         : Results.Content(
                             RenderPasswordLoginPage("Email or password is invalid.", returnTo),
                             "text/html",
@@ -365,12 +371,12 @@ internal static class HostyCoreApplication
             return Results.Redirect("/login");
         });
         app.MapGet("/api/auth/callback/oidc", async (
-            HostyCoreRuntimeConfig config,
+            CorePublicOriginResolver coreOrigins,
             ShellPublicOriginResolver shellOrigins,
             CancellationToken cancellationToken) => Results.Content(RenderCorePage(
             "Hosty Core OIDC Callback",
             "Hosty Core owns external auth callbacks.",
-            config,
+            coreOrigins.Effective,
             await shellOrigins.ResolveAsync(cancellationToken)), "text/html"));
 
         DomainEndpoints.Map(app);
@@ -508,7 +514,7 @@ internal static class HostyCoreApplication
       .error { margin: 0 0 1.25rem; padding: .625rem .75rem; border: 1px solid color-mix(in srgb, #e5484d 45%, transparent); border-radius: 8px; background: color-mix(in srgb, #e5484d 12%, Canvas); font-weight: 600; }
       """;
 
-    private static string RenderCorePage(string title, string message, HostyCoreRuntimeConfig config, string? shellOrigin)
+    private static string RenderCorePage(string title, string message, string coreOrigin, string? shellOrigin)
     {
         var encodedTitle = HtmlEncoder.Default.Encode(title);
         var encodedMessage = HtmlEncoder.Default.Encode(message);
@@ -528,7 +534,7 @@ internal static class HostyCoreApplication
             <main>
               <h1>{{encodedTitle}}</h1>
               <p>{{encodedMessage}}</p>
-          {{RenderOriginMeta(config, shellOrigin)}}
+          {{RenderOriginMeta(coreOrigin, shellOrigin)}}
             </main>
           </body>
           </html>
@@ -538,9 +544,9 @@ internal static class HostyCoreApplication
     // The two origins a signed-in operator is shown: which Core answered, and where its web UI lives.
     // Not on `/login` — that page is reachable by anyone who can reach the host, and what it says about
     // the deployment should be nothing.
-    private static string RenderOriginMeta(HostyCoreRuntimeConfig config, string? shellOrigin, string? hint = null)
+    private static string RenderOriginMeta(string coreOrigin, string? shellOrigin, string? hint = null)
     {
-        var encodedCoreOrigin = HtmlEncoder.Default.Encode(config.EffectiveCorePublicOrigin);
+        var encodedCoreOrigin = HtmlEncoder.Default.Encode(coreOrigin);
         var encodedShellOrigin = RenderShellOriginText(shellOrigin);
         var hintLine = hint is null ? string.Empty : $"{Environment.NewLine}  <p>{HtmlEncoder.Default.Encode(hint)}</p>";
 
@@ -660,11 +666,11 @@ internal static class HostyCoreApplication
     // Where a freshly signed-in browser goes. A Core-relative app-open continuation wins; otherwise Shell.
     // With no Shell installed there is no destination at all, so say that on Core's own page rather than
     // bouncing to a dead origin — Core serves no UI of its own beyond these auth pages by design.
-    private static IResult RedirectAfterLogin(string? returnTo, string? shellOrigin, HostyCoreRuntimeConfig config)
+    private static IResult RedirectAfterLogin(string? returnTo, string? shellOrigin, string coreOrigin)
         => AuthEndpoints.ResolveLoginRedirect(returnTo, shellOrigin) is { } target
             ? Results.Redirect(target)
             : Results.Content(
-                RenderCorePage("Hosty Core", "Signed in. This host has no web UI installed.", config, shellOrigin),
+                RenderCorePage("Hosty Core", "Signed in. This host has no web UI installed.", coreOrigin, shellOrigin),
                 "text/html");
 
     // The Shell origin as a JavaScript literal: a quoted string, or `null` when this host has no Shell
@@ -961,6 +967,9 @@ internal sealed record HostyCoreRuntimeConfig(
     // config directly (tests) keep the unscoped default.
     string InstanceId = "")
 {
+    // The env baseline resolved against the listen URL, and nothing more. It is NOT what Core advertises:
+    // the persisted setting layers over this, so every reader goes through CorePublicOriginResolver and
+    // only a fixture without one falls back here.
     public string EffectiveCorePublicOrigin => CorePublicOrigin ?? ListenUrl;
 
     // No EffectiveShellPublicOrigin: where Shell is reachable is resolved from Shell's own app record
@@ -1113,10 +1122,14 @@ internal sealed record HostyCoreRuntimeConfig(
             ? null
             : ReadBoolean(name, defaultValue: false);
 
-    public IReadOnlyList<string> BuildPublicOriginWarnings()
+    // Advisory only, and evaluated against the live configured origin rather than this startup snapshot.
+    // The store refuses a malformed value outright, so what survives to be warned about is an environment
+    // baseline nobody validated, plus the one judgment that is a caution rather than a refusal: plain HTTP
+    // on a non-loopback host.
+    public static IReadOnlyList<string> BuildPublicOriginWarnings(string? corePublicOrigin)
     {
         var warnings = new List<string>();
-        AddPublicOriginWarnings(warnings, "Core", CorePublicOrigin);
+        AddPublicOriginWarnings(warnings, "Core", corePublicOrigin);
         return warnings;
     }
 
@@ -2119,6 +2132,7 @@ internal sealed record CoreStatusResponse(
     public static CoreStatusResponse From(
         HostyCoreRuntimeConfig config,
         IngressSettings ingress,
+        CorePublicOriginResolver coreOrigins,
         string? shellPublicOrigin,
         bool cloudflareConnected)
         => new(
@@ -2128,7 +2142,9 @@ internal sealed record CoreStatusResponse(
             config.DataRoot,
             config.ListenUrl,
             config.CorePort,
-            config.EffectiveCorePublicOrigin,
+            // The live setting, not the startup snapshot: Dashboard reports what links are being built
+            // from right now, which is what an operator who just saved a new origin comes here to check.
+            coreOrigins.Effective,
             // Resolved from Shell's app record, not Core config: null when this host has no Shell.
             shellPublicOrigin,
             config.RuntimePublicHost,
@@ -2138,7 +2154,7 @@ internal sealed record CoreStatusResponse(
             config.ShellAutostart,
             ingress.Provider,
             ingress.DerivesPublicOrigins ? config.EffectiveIngressConfigPath : null,
-            [.. config.BuildPublicOriginWarnings(), .. ingress.BuildWarnings(cloudflareConnected)],
+            [.. HostyCoreRuntimeConfig.BuildPublicOriginWarnings(coreOrigins.Configured), .. ingress.BuildWarnings(cloudflareConnected)],
             DateTimeOffset.UtcNow);
 
     // Public liveness payload. `/api/core/status` is unauthenticated and, under cloudflared, published at

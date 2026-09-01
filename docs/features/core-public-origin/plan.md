@@ -1,6 +1,6 @@
 # Core's Own Public Origin — Editable Where Every Other Origin Is
 
-Status: Ready
+Status: In Progress
 Created: 2026-07-30
 Updated: 2026-09-01
 
@@ -126,13 +126,13 @@ The three original questions are answered:
 - [x] Answer the original open questions — decided 2026-09-01, recorded above; the answer to the
       publication question makes the target behavior final.
 - [x] Decide the `HOSTY_CORE_ORIGIN` decoupling — decided 2026-09-01 (decision 4): it decouples.
-- [ ] Implement the decoupling: `BuildDockerCoreOrigin` derives from `ListenUrl`, with the adapter
+- [x] Implement the decoupling: `BuildDockerCoreOrigin` derives from `ListenUrl`, with the adapter
       tests pinning that a non-loopback public origin no longer reaches `HOSTY_CORE_ORIGIN`.
-- [ ] `HOSTY_CORE_PUBLIC_ORIGIN` as a live Core setting: definition, group, validation, env baseline,
+- [x] `HOSTY_CORE_PUBLIC_ORIGIN` as a live Core setting: definition, group, validation, env baseline,
       persisted-wins-over-env, reset semantics, `/api/core/settings` exposure.
-- [ ] Readers moved off the startup snapshot onto the live value, with the app-environment readers left
+- [x] Readers moved off the startup snapshot onto the live value, with the app-environment readers left
       explicitly on start-time injection and documented as such.
-- [ ] Loopback recovery verified as a property: sign-in over the listen URL keeps working while the
+- [x] Loopback recovery verified as a property: sign-in over the listen URL keeps working while the
       setting names an unreachable host.
 - [ ] Two-stage effect surfaced in Shell: immediate for browser-facing links, on next start for apps.
 - [ ] Shell field in the Settings → Core tab, replacing the read-only Dashboard display as the place to

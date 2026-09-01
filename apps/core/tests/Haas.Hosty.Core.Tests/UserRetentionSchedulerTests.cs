@@ -109,8 +109,9 @@ public sealed class UserRetentionSchedulerTests
                 RuntimePublicHost: "localhost",
                 ShellSourceOverridePath: null,
                 ShellAutostart: false);
-            var management = new UserManagementService(users, apps, audit, passwords, config, clock);
             var settings = new CoreSettingsService(new CoreSettingsStore(paths, NullLogger<CoreSettingsStore>.Instance));
+            var management = new UserManagementService(
+                users, apps, audit, passwords, new CorePublicOriginResolver(config, settings), clock);
             await users.WriteAsync(new UserDirectoryState(1, [], [], [], []));
             var scheduler = new UserRetentionScheduler(management, settings, audit, clock, NullLogger<UserRetentionScheduler>.Instance);
             return new Fixture(paths, users, settings, scheduler, clock);

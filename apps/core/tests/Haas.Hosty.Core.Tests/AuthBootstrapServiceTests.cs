@@ -4,6 +4,19 @@ namespace Haas.Hosty.Core.Tests;
 
 public sealed class AuthBootstrapServiceTests
 {
+    // The link is built from the live setting, not from Core's startup snapshot: an operator who has just
+    // corrected the public origin must get a working link out of the very next token, without a restart.
+    [Fact]
+    public async Task CreateSetupTokenAsync_BuildsTheLinkFromTheLivePublicOrigin()
+    {
+        var fixture = await AuthBootstrapFixture.CreateAsync();
+        await CoreOriginTestFactory.SetAsync(fixture.Settings, "https://core.example.test");
+
+        var result = await fixture.Service.CreateSetupTokenAsync();
+
+        Assert.StartsWith("https://core.example.test/setup?setupToken=", result.SetupUrl, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task CreateSetupTokenAsync_StoresOnlyTokenHash()
     {
@@ -217,12 +230,14 @@ public sealed class AuthBootstrapServiceTests
             UserDirectoryStore users,
             AuthBootstrapTokenStore tokens,
             AuthBootstrapService service,
+            CoreSettingsService settings,
             FakeClock clock,
             string tokenStatePath)
         {
             Users = users;
             Tokens = tokens;
             Service = service;
+            Settings = settings;
             Clock = clock;
             TokenStatePath = tokenStatePath;
         }
@@ -232,6 +247,9 @@ public sealed class AuthBootstrapServiceTests
         public AuthBootstrapTokenStore Tokens { get; }
 
         public AuthBootstrapService Service { get; }
+
+        // The store behind the live public origin, so a test can change it mid-flight.
+        public CoreSettingsService Settings { get; }
 
         public FakeClock Clock { get; }
 
@@ -264,9 +282,10 @@ public sealed class AuthBootstrapServiceTests
                 ShellSourceOverridePath: null,
                 ShellAutostart: false);
             var passwords = new LocalPasswordAuthService(users, audit, clock);
-            var service = new AuthBootstrapService(users, tokens, audit, passwords, config, clock);
+            var (origins, settings) = CoreOriginTestFactory.Create(config, paths);
+            var service = new AuthBootstrapService(users, tokens, audit, passwords, origins, clock);
             await users.WriteAsync(new UserDirectoryState(1, [], [], [], []));
-            return new AuthBootstrapFixture(users, tokens, service, clock, Path.Combine(paths.AuthRoot, "bootstrap-tokens.json"));
+            return new AuthBootstrapFixture(users, tokens, service, settings, clock, Path.Combine(paths.AuthRoot, "bootstrap-tokens.json"));
         }
     }
 
