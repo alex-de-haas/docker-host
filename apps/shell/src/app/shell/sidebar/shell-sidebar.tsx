@@ -421,7 +421,11 @@ function CompactAppMenu({
   const handleHoverEnd = (event: ReactPointerEvent) => {
     if (event.pointerType !== "mouse") return;
     cancelOpenTimer();
-    if (!open || closeTimerRef.current !== null) return;
+    // Only a hover-opened menu closes on hover-out. A click-opened or pinned one behaves like a
+    // normal dropdown — outside click, Escape, or a selection closes it — and it took focus on
+    // open, so an auto-close here would also strand that focus (the hover-close path suppresses
+    // the focus return, which is only correct when the menu never had it).
+    if (!open || !hoverOpenedRef.current || closeTimerRef.current !== null) return;
     closeTimerRef.current = window.setTimeout(() => {
       closeTimerRef.current = null;
       hoverOpenedRef.current = false;
@@ -460,7 +464,8 @@ function CompactAppMenu({
           onPointerDown={(event) => {
             // preventDefault stops Radix's trigger toggle (composeEventHandlers honors it):
             // without this, hover opens the menu and the click the user was already making
-            // immediately closes it again.
+            // immediately closes it again. Clearing the hover flag pins the menu — from here on
+            // it ignores hover-out and closes like a click-opened one.
             if (open && hoverOpenedRef.current) {
               event.preventDefault();
               hoverOpenedRef.current = false;
