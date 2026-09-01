@@ -1,6 +1,6 @@
 # Core Runtime Parameters — Two Launch Flags, Everything Else Lives Inside
 
-Status: Draft
+Status: Ready
 Created: 2026-09-01
 Updated: 2026-09-01
 
@@ -44,6 +44,16 @@ instance itself.
    Nothing here depends on that decision.
 5. **Boot-time startup via an OS service unit is deferred** — parked in
    [core-service-unit](../core-service-unit/plan.md).
+6. **`launch.env` migration is read-and-delete.** On first contact the new CLI folds the file's
+   values into the per-root store and deletes it. If the file carried a non-default
+   `HOSTY_DATA_ROOT`, the CLI prints a clear notice that the root is now selected via
+   `--data-root`/`HOSTY_DATA_ROOT` — the pointer cannot live inside the root it points to, so no
+   file remembers it anymore.
+7. **The instance id is a GUID generated at first start and stored in the data root**, so it stays
+   stable when the folder moves. The default root uses a reserved empty id, which produces today's
+   unscoped container names — existing hosts migrate with zero container churn.
+8. **No instance registry in v1.** `hosty core instances` is a deferred convenience — see
+   Deliberately Not Doing.
 
 ## Target Behavior
 
@@ -72,22 +82,9 @@ A diff against [cli-bootstrap.md](../cli-bootstrap.md).
   core-public-origin needs: `hosty core settings reset HOSTY_CORE_PUBLIC_ORIGIN` on a host whose
   UI a wrong origin broke.
 
-## Open Questions
-
-1. **Migration for hosts carrying `launch.env`.** Honor the legacy file as a read-only fallback for
-   a release or two, or fold its values into the per-root store on first contact and delete it? A
-   non-default root recorded there is the case that matters — the file is the only thing that
-   remembers it.
-2. **Instance id derivation.** A GUID written into the root at first start (stable if the folder
-   moves) versus a path hash (no state, but a moved root becomes a different instance). And how the
-   default root's legacy unscoped naming is expressed — an empty id, or a reserved one.
-3. **Does a best-effort instance registry ship here?** Each start could record its root under the
-   default root, giving `hosty core instances` an answer to "what runs on this machine"; liveness
-   comes from each root's own `control.json` PID. Convenience, not a requirement — v1 or later?
-
 ## Deliverables
 
-- [ ] Answer open questions 1–3.
+- [x] Answer open questions 1–3 (decisions 6–8 above).
 - [ ] Hardcoded default data root; `--data-root`/`--port` start flags; port persisted in the
       per-root settings store with flag-wins-for-the-run semantics.
 - [ ] `launch.env` retired: the CLI stops reading and writing it; `hosty config` removed or reduced
@@ -112,6 +109,9 @@ A diff against [cli-bootstrap.md](../cli-bootstrap.md).
 - **A machine-wide instance lock.** Considered and rejected 2026-09-01: it would kill the agent-test
   and dev-mode workflows for a rule no current scenario needs. Container-level isolation replaces
   it.
+- **An instance registry (`hosty core instances`).** Deferred convenience (decision 8): each start
+  could record its root under the default root to answer "what runs on this machine", but nothing
+  in v1 needs it — whoever creates a secondary environment knows its path.
 - **Deciding the single-binary question here.** See
   [core-single-binary](../core-single-binary/plan.md).
 - **Boot-time supervision.** See [core-service-unit](../core-service-unit/plan.md).
