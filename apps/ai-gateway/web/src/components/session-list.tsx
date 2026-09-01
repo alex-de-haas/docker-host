@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Pencil } from "lucide-react";
 import { isWaiting } from "@/lib/attention";
 import { cn } from "@/lib/utils";
@@ -97,6 +97,18 @@ function SessionTitleInput({
   onCancel: () => void;
 }) {
   const [value, setValue] = useState(title);
+  // An edit ends exactly once. Enter, Escape and blur are three ways into the same ending, and
+  // whether a browser also fires blur while the input is being removed is not something to depend
+  // on: without this, Escape could still commit what it discarded, and Enter could send the rename
+  // twice.
+  const settled = useRef(false);
+  const settle = (end: () => void) => {
+    if (settled.current) {
+      return;
+    }
+    settled.current = true;
+    end();
+  };
 
   return (
     <input
@@ -106,16 +118,16 @@ function SessionTitleInput({
       onKeyDown={(event) => {
         if (event.key === "Enter") {
           event.preventDefault();
-          void onCommit(value);
+          settle(() => void onCommit(value));
         }
         if (event.key === "Escape") {
           event.preventDefault();
-          onCancel();
+          settle(onCancel);
         }
       }}
       // Blur commits rather than discards: clicking away from a name you just typed reads as
       // finishing, and losing it would be the same theft as dropping a draft.
-      onBlur={() => void onCommit(value)}
+      onBlur={() => settle(() => void onCommit(value))}
       placeholder="Name this session…"
       className="min-w-0 flex-1 rounded-md border bg-background px-2 py-1.5 text-sm outline-none focus-visible:border-ring"
     />

@@ -129,6 +129,19 @@ export class SessionManager {
   }
 
   /**
+   * The text of the earliest stored `user_message`, or null when the log holds none.
+   *
+   * Read once per session: the only caller runs when a session has no title, and it has one
+   * immediately afterwards. A session whose log was swept keeps no opening message, and naming it
+   * after the current turn is then the best available answer rather than a wrong one.
+   */
+  private async firstUserMessage(id: string): Promise<string | null> {
+    const events = await this.store.readEvents(id).catch(() => []);
+    const opening = events.find((event) => event.type === "user_message");
+    return typeof opening?.text === "string" ? opening.text : null;
+  }
+
+  /**
    * Renames a session. An empty title clears the name and returns it to `auto`, so the next message
    * derives one again — an emptied box is a decision, not a session pinned to the empty string.
    *
@@ -170,7 +183,11 @@ export class SessionManager {
     // what the operator will recognise the session by later, and re-deriving on each turn would
     // rename a session out from under someone mid-conversation.
     if (!session.record.title && session.record.titleSource !== "operator") {
-      const derived = deriveTitleFromMessage(text);
+      // Every session that existed before titles did is unnamed *and* already has a conversation.
+      // Naming those after the message being typed now would call a session about a failed restart
+      // "and now try again" — so the log is asked what this conversation opened with.
+      const opening = session.record.lastEventSeq > 0 ? await this.firstUserMessage(id) : null;
+      const derived = deriveTitleFromMessage(opening ?? text);
       if (derived) {
         session.record.title = derived;
         session.record.updatedAt = new Date().toISOString();

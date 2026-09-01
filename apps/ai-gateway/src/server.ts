@@ -343,8 +343,10 @@ async function route(
 
   if (rest === "" && method === "PATCH") {
     const body = await readJson(request);
-    if (!("title" in body)) {
-      sendJson(response, 400, { code: "invalid_request", message: "A title is required." });
+    // A string, specifically: `null` would otherwise reach `normalizeTitle` and clear a name the
+    // operator chose, which only the empty string is meant to do.
+    if (typeof body.title !== "string") {
+      sendJson(response, 400, { code: "invalid_request", message: "A title string is required." });
       return;
     }
     const record = await manager.renameSession(sessionId, body.title);
@@ -573,7 +575,14 @@ async function readJson(request: IncomingMessage): Promise<Record<string, unknow
   }
 
   try {
-    return JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
+    const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    // `null`, `[]` and bare primitives are valid JSON and not bodies. Every caller reads named
+    // fields off what this returns, so handing back a non-object turns a malformed request into a
+    // TypeError — a 500 for something the client got wrong. An empty body says the same thing and
+    // each route already rejects it on its own terms.
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
   } catch {
     return {};
   }
