@@ -223,19 +223,90 @@ public class TelemetryMcpEndpointTests
     }
 
     [Fact]
-    public void MetricsReportTheirClampedWindowAndClaimNoRowCapTheyDoNotApply()
+    public void MetricsReportTheRangeTheStoreActuallyUsedRatherThanReClampingIt()
     {
-        // Same disclosure the log tools make, minus the fields that would be fiction: the metric query
-        // caps the range but not the row count, and inventing limit/truncated here would report a
-        // clamp that never ran.
+        // Read back from the response, not recomputed here. The trace tool already shipped a window
+        // whose reported default disagreed with the store's, which recreated the silent truncation
+        // this contract exists to prevent — inside the contract itself.
         using var fixture = new StoreFixture();
 
         var window = Payload(CallMetrics(fixture.Query, "app", rangeSeconds: 86_400))["window"]!;
 
         Assert.Equal(3600, window["rangeSeconds"]!.GetValue<int>());
         Assert.True(window["rangeClamped"]!.GetValue<bool>());
-        Assert.Null(window["limit"]);
-        Assert.Null(window["truncated"]);
+    }
+
+    [Fact]
+    public void TooManySeriesAreCappedAndTheResultSaysSoExactly()
+    {
+        // An app with high-cardinality labels would otherwise hand the client every series it has.
+        // Unlike the log and trace stores, this one returns everything in range, so the cap lives here
+        // — and because it does, the count left behind is known rather than guessed at.
+        using var fixture = new StoreFixture();
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        fixture.Store.RecordMetrics([.. Enumerable.Range(0, 6).Select(i => Sample("app", $"meter.{i}", i, nowMs))]);
+
+        var capped = Payload(CallMetrics(fixture.Query, "app", limit: 2));
+        Assert.Equal(2, ((JsonArray)capped["series"]!).Count);
+        Assert.True(capped["window"]!["truncated"]!.GetValue<bool>());
+
+        var whole = Payload(CallMetrics(fixture.Query, "app", limit: 50));
+        Assert.Equal(6, ((JsonArray)whole["series"]!).Count);
+        Assert.False(whole["window"]!["truncated"]!.GetValue<bool>());
+    }
+
+    [Fact]
+    public void TheCapNeverHidesCpuAndMemoryBehindAnAppsOwnMeters()
+    {
+        // The failure a plain cap would introduce: a truncated result that honestly reports truncation
+        // and still reads as "no container metrics". Docker stats sort first so the cap cannot reach
+        // them — which is also why the note stays trustworthy under truncation.
+        using var fixture = new StoreFixture();
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        fixture.Store.RecordMetrics([
+            .. Enumerable.Range(0, 20).Select(i => Sample("app", $"a.meter.{i}", i, nowMs)),
+            Sample("app", "container.cpu.percent", 42, nowMs),
+        ]);
+
+        var payload = Payload(CallMetrics(fixture.Query, "app", limit: 3));
+
+        var names = ((JsonArray)payload["series"]!).Select(row => row!["name"]!.GetValue<string>());
+        Assert.Contains("container.cpu.percent", names);
+        Assert.Null(payload["note"]);
+    }
+
+    [Fact]
+    public void AskingForCpuAlongsideAnAppMeterAndGettingOnlyTheMeterIsStillTold()
+    {
+        // The gap in the first cut: the note was suppressed whenever anything came back, so a filter
+        // naming CPU *and* an app meter answered half the question and stayed silent about the half
+        // it could not answer — exactly the "no CPU pressure" misreading the note exists to stop.
+        using var fixture = new StoreFixture();
+        fixture.Store.RecordMetrics([
+            Sample("app", "requests.total", 7, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()),
+        ]);
+
+        var payload = Payload(
+            CallMetrics(fixture.Query, "app", names: "container.cpu.percent,requests.total"));
+
+        Assert.Single((JsonArray)payload["series"]!);
+        Assert.Contains("No docker stats", payload["note"]!.GetValue<string>(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnAppsOwnContainerNamedMeterIsNotMistakenForDockerStats()
+    {
+        // A prefix test would accept this as evidence and drop the note. Core produces exactly three
+        // names; anything else under `container.` is the app's own and says nothing about the runtime.
+        using var fixture = new StoreFixture();
+        fixture.Store.RecordMetrics([
+            Sample("app", "container.queue.depth", 3, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()),
+        ]);
+
+        var payload = Payload(CallMetrics(fixture.Query, "app"));
+
+        Assert.Single((JsonArray)payload["series"]!);
+        Assert.Contains("localCommand", payload["note"]!.GetValue<string>(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -285,10 +356,12 @@ public class TelemetryMcpEndpointTests
         => new(appId, name, new Dictionary<string, string>(StringComparer.Ordinal), value, timestampMs);
 
     private static JsonNode CallMetrics(
-        TelemetryQueryService query, string app, int? rangeSeconds = null, string? names = null)
+        TelemetryQueryService query, string app, int? rangeSeconds = null, string? names = null,
+        int? limit = null)
     {
         var arguments = $@"""app"":""{app}"""
             + (rangeSeconds is int range ? $@",""range_seconds"":{range}" : string.Empty)
+            + (limit is int cap ? $@",""limit"":{cap}" : string.Empty)
             + (names is not null ? $@",""names"":""{names}""" : string.Empty);
         return Handle(
             @"{""jsonrpc"":""2.0"",""id"":11,""method"":""tools/call"",""params"":{""name"":""get_metrics"","

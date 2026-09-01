@@ -87,15 +87,25 @@ Each series comes back **summarised** — `latest`, `min`, `max`, `average`, the
 first and last timestamps — rather than as raw points. An hour of a few dozen series is thousands of
 samples, and the question is answered by the shape.
 
-Two things about the store would otherwise be misread, so the tool states them:
+Three things about the store would otherwise be misread, so the tool states them:
 
 - **Absence is never zero.** `container.cpu.percent`, `container.memory.bytes` and
   `container.memory.percent` come from `docker stats`, so an app running under `localCommand` has no
   container and produces none of them. An empty list left to interpret invites "this app uses no
-  CPU"; a result with no `container.*` series carries a `note` saying which kind of nothing it is.
+  CPU"; a result carrying none of those three gets a `note` saying which kind of nothing it is. The
+  three names are matched exactly, not by a `container.` prefix — an app may export its own meter
+  under that namespace, and accepting it as evidence would suppress the note. The note also fires
+  when a *filtered* read asked for CPU and got only the app's own meters back: answering half the
+  question in silence is the same misreading, arrived at differently.
 - **A low sample count means steady, not broken.** Ingest drops unchanged values and re-records a
   flat series only once a minute, so five points over five minutes is a quiet series, not a failing
   collector.
+- **The series list is capped**, at 100 by default and 500 at most. Unlike the log and trace stores,
+  this query returns everything in range, so one app with high-cardinality labels would otherwise
+  hand the client megabytes. Because the cap is applied here rather than in the store, `truncated` is
+  exact instead of the "a full page may mean more" the other tools report. Docker stats sort ahead of
+  everything else so the cap can never be what hides CPU and memory — a truncated result that
+  honestly reported truncation would still have read as "no container metrics".
 
 A failed call comes back as a normal result carrying `isError`, the protocol's own signal, so the
 model can read why and choose something else; an unimplemented *method* is a JSON-RPC error, because
@@ -166,10 +176,12 @@ the connector then exports these tools like any other app's.
   aggregates; a store with nothing in it says so rather than returning a bare empty list; an app with
   only its own meters is told why there is no `container.*` series, **beside** a containerised app
   that correctly gets no such note; and a name filter that matches nothing says "no series matched"
-  instead of blaming the runtime. The metrics window reports its range clamp and deliberately carries
-  no `limit`/`truncated`, since that query applies no row cap — asserted, so the missing fields read
-  as a decision rather than an omission.
+  instead of blaming the runtime, while a filter naming CPU alongside an app meter still gets the
+  note. The cap is asserted in both directions — a capped result reports `truncated`, a whole one
+  does not — and paired with the case that matters most: docker stats survive a cap tight enough to
+  drop twenty other series.
 - **Not yet verified live.** No agent has called these tools against a running host, and the telemetry
   UI has not been loaded against the authenticated backend. `get_metrics` adds a third: no reading has
-  been taken from real `docker stats` data, so the `container.*` names are asserted only against
-  Core's own constants. All three are ordinary checks that need a host running this version.
+  been taken from real `docker stats` data, so the three metric names are asserted only against
+  Core's own constants in `DockerStatsExposition`, which this app copies because it cannot reference
+  Core. All three are ordinary checks that need a host running this version.
