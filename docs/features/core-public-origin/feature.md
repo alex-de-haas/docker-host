@@ -62,7 +62,9 @@ value survivable rather than fatal, and it is held by three separate mechanisms:
 
 So an operator who saves an unreachable origin signs in over `http://localhost:{corePort}` and corrects
 it from the Settings page they arrived at. On a headless host the same repair is
-`hosty core settings reset HOSTY_CORE_PUBLIC_ORIGIN` over the loopback control plane.
+`hosty core settings reset HOSTY_CORE_PUBLIC_ORIGIN` over the loopback control plane; setting it there
+prints the same two-stage note Shell shows, so an operator with no browser is told what still needs a
+restart.
 
 ## Browser-Only
 
