@@ -1,6 +1,7 @@
 "use client";
 
-import { INGRESS_SETTINGS_GROUP } from "../ingress";
+import { useState } from "react";
+import { CORE_PUBLIC_ORIGIN_SETTING_KEY, INGRESS_SETTINGS_GROUP } from "../ingress";
 import type { CoreSettingsState } from "../types";
 import { CoreSettingsForm } from "./core-settings-form";
 
@@ -24,6 +25,12 @@ export function SettingsCoreSection({
   settingsError: string | null;
   onSaveSettings: (values: Record<string, string>) => Promise<void>;
 }) {
+  // Tracks the form's draft so the two-stage warning appears while the operator is typing the new
+  // origin, not after they have already saved it and moved on.
+  const [draftOrigin, setDraftOrigin] = useState<string | null>(null);
+  const savedOrigin = settings?.settings.find((item) => item.key === CORE_PUBLIC_ORIGIN_SETTING_KEY)?.value ?? null;
+  const originChanged = draftOrigin !== null && savedOrigin !== null && draftOrigin.trim() !== savedOrigin;
+
   return (
     <div className="space-y-3">
       <div>
@@ -34,11 +41,26 @@ export function SettingsCoreSection({
         </p>
       </div>
 
+      {/* The public origin is the one setting on this page whose effect arrives in two stages, so it is
+          said here, next to the field, at the moment it is being changed. "Changes apply live" above is
+          true of everything Core itself does with the value; it is not true of the copy each installed
+          app was handed when it started. */}
+      {originChanged && (
+        <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400">
+          <p className="font-medium">Saving the public origin takes effect in two stages</p>
+          <p>
+            Sign-in and invitation links, and the metadata agent clients read, use the new address as soon as you
+            save. Installed apps were handed the old one when they started and keep using it until they restart.
+          </p>
+        </div>
+      )}
+
       <CoreSettingsForm
         settings={settings}
         error={settingsError}
         onSave={onSaveSettings}
         visible={(item) => item.group !== INGRESS_SETTINGS_GROUP}
+        onDraftChange={(draft) => setDraftOrigin(draft[CORE_PUBLIC_ORIGIN_SETTING_KEY] ?? null)}
       />
     </div>
   );

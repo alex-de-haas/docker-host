@@ -134,14 +134,14 @@ The three original questions are answered:
       explicitly on start-time injection and documented as such.
 - [x] Loopback recovery verified as a property: sign-in over the listen URL keeps working while the
       setting names an unreachable host.
-- [ ] Two-stage effect surfaced in Shell: immediate for browser-facing links, on next start for apps.
-- [ ] Shell field in the Settings → Core tab, replacing the read-only Dashboard display as the place to
+- [x] Two-stage effect surfaced in Shell: immediate for browser-facing links, on next start for apps.
+- [x] Shell field in the Settings → Core tab, replacing the read-only Dashboard display as the place to
       change it.
-- [ ] Publication of Core's hostname through the Cloudflare API provider, with unpublish restoring the
+- [x] Publication of Core's hostname through the Cloudflare API provider, with unpublish restoring the
       previous value only while the setting still equals the published origin (a newer manual edit
       wins).
-- [ ] The ingress diagnostics hint narrowed to the providers that cannot publish it.
-- [ ] Platform minor bump; `apps/shell` minor bump.
+- [x] The ingress diagnostics hint narrowed to the providers that cannot publish it.
+- [x] Platform minor bump (0.95.0 → 0.96.0); `apps/shell` minor bump (0.67.0 → 0.68.0).
 - [ ] `feature.md` for this folder; `cli-bootstrap/feature.md` updated where it still calls this an
       export-it-yourself variable; `cloudflare-ingress/feature.md` updated where the hint changes; docs
       index regenerated.
