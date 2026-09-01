@@ -1,5 +1,8 @@
 namespace Haas.Hosty.Core;
 
+using System.Globalization;
+using System.Net;
+
 // Cloudflare ingress: the ownership authority for Hosty-published hostnames. Each
 // publication records exactly which app endpoint owns which hostname, the DNS record id, and the last applied
 // local service URL, so reconciliation mutates and cleans up only what Hosty created (or explicitly adopted)
@@ -162,7 +165,35 @@ internal static class CorePublication
     public const string AppId = "hosty.core";
     public const string EndpointKey = "core";
 
-    public static bool IsCore(string appId) => string.Equals(appId, AppId, StringComparison.Ordinal);
+    // The full pair, never the app id alone: ownership is keyed on both, and matching on the id would
+    // sweep every publication of an app that happened to carry it — deleting Core's hostname when that
+    // app is uninstalled while leaving the app's own route behind. Manifest validation refuses the id,
+    // so this is defence in depth rather than the only guard.
+    public static bool IsCore(string appId, string endpointKey)
+        => string.Equals(appId, AppId, StringComparison.Ordinal) &&
+            string.Equals(endpointKey, EndpointKey, StringComparison.Ordinal);
+
+    // The URL the tunnel connector must dial to reach this Core. Derived from the ACTIVE listener
+    // rather than assumed to be http://localhost:{port}: Core may be bound over HTTPS or to one
+    // specific address, and a rule pointing at a port nothing serves would publish cleanly and then
+    // fail every request through the hostname. A loopback or all-interface binding is reachable as
+    // localhost; a specific address is dialled as itself.
+    public static string ServiceUrl(string listenUrl, int corePort)
+    {
+        if (!Uri.TryCreate(listenUrl, UriKind.Absolute, out var uri) ||
+            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        {
+            return $"http://localhost:{corePort.ToString(CultureInfo.InvariantCulture)}";
+        }
+
+        var host = uri.Host;
+        var wildcard = IPAddress.TryParse(host, out var address) &&
+            (IPAddress.IsLoopback(address) || address.Equals(IPAddress.Any) || address.Equals(IPAddress.IPv6Any));
+        var target = wildcard || string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase)
+            ? "localhost"
+            : host;
+        return $"{uri.Scheme}://{target}:{uri.Port.ToString(CultureInfo.InvariantCulture)}";
+    }
 }
 
 internal static class CloudflareOwnershipStates

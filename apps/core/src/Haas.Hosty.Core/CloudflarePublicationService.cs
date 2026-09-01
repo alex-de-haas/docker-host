@@ -97,7 +97,7 @@ internal sealed class CloudflarePublicationService(
     {
         var (token, target) = await RequireConnectionAsync(cancellationToken);
         var locality = await RefreshLocalityAsync(token, target, cancellationToken);
-        var serviceUrl = $"http://localhost:{config.CorePort.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+        var serviceUrl = CorePublication.ServiceUrl(config.ListenUrl, config.CorePort);
         var existing = await publications.GetAsync(CorePublication.AppId, CorePublication.EndpointKey, cancellationToken);
         // What unpublish will put back. The stored override rather than the effective origin: restoring
         // means clearing back to whatever the environment baseline says, so a null here has to stay a null.
@@ -152,21 +152,16 @@ internal sealed class CloudflarePublicationService(
     public async Task<CloudflareCorePublicationResult> UnpublishCoreAsync(CancellationToken cancellationToken = default)
     {
         var (token, target) = await RequireConnectionAsync(cancellationToken, requireActiveProvider: false);
-        // Read before the reconciler removes the record: it carries the value to restore.
         var publication = await publications.GetAsync(CorePublication.AppId, CorePublication.EndpointKey, cancellationToken);
-        await WithReconnectDetectionAsync(
-            async () =>
-            {
-                await reconciler.UnpublishAsync(token, target, CorePublication.AppId, CorePublication.EndpointKey, cancellationToken);
-                return true;
-            },
-            cancellationToken);
-        if (publication is null)
-        {
-            return new CloudflareCorePublicationResult(null, coreOrigins.Effective, null);
-        }
 
-        if (OriginEquals(coreOrigins.Configured, publication.Hostname))
+        // The setting is restored FIRST, because the publication record is the only thing that carries
+        // PreviousPublicOrigin and the reconciler deletes it. Restoring afterwards means a cancelled or
+        // failed write leaves Core advertising a hostname whose route and record are already gone, with
+        // the value needed to undo that destroyed in the same breath. This order fails the other way:
+        // at worst a stale route survives while Core advertises the correct origin, which the retry
+        // sweep clears and which breaks nothing meanwhile. Re-running is safe — the origin no longer
+        // names the hostname, so the restore below simply does not fire a second time.
+        if (publication is not null && OriginEquals(coreOrigins.Configured, publication.Hostname))
         {
             await settings.UpdateAsync(
                 new Dictionary<string, string?>(StringComparer.Ordinal)
@@ -175,6 +170,14 @@ internal sealed class CloudflarePublicationService(
                 },
                 cancellationToken);
         }
+
+        await WithReconnectDetectionAsync(
+            async () =>
+            {
+                await reconciler.UnpublishAsync(token, target, CorePublication.AppId, CorePublication.EndpointKey, cancellationToken);
+                return true;
+            },
+            cancellationToken);
 
         return new CloudflareCorePublicationResult(null, coreOrigins.Effective, null);
     }
@@ -225,7 +228,7 @@ internal sealed class CloudflarePublicationService(
         // publication, and Core's is one of them. Route it to the path that also restores the setting,
         // rather than letting it fall through to an app lookup that finds nothing and silently leaves
         // Core advertising a hostname whose route and record have just been deleted.
-        if (CorePublication.IsCore(appId))
+        if (CorePublication.IsCore(appId, endpointKey))
         {
             await UnpublishCoreAsync(cancellationToken);
             return new CloudflarePublicationResult(appId, endpointKey, null, null, false, null);

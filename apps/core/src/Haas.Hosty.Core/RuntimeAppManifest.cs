@@ -507,6 +507,15 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
             errors.Add(new("app_manifest_id_invalid", "App id must match ^[a-z0-9][a-z0-9._-]{0,62}$ and must not be a path segment such as '.' or '..'.", "$.id"));
         }
 
+        // Core publishes its own hostname under this id (it is not an app and has no registry record),
+        // so an app carrying it would share an ingress namespace with the host itself. Ownership is
+        // keyed on the full (app id, endpoint key) pair, which keeps the two apart even here — this
+        // refusal exists so the collision never has to be reasoned about at all.
+        if (string.Equals(manifest.Id, CorePublication.AppId, StringComparison.Ordinal))
+        {
+            errors.Add(new("app_manifest_id_reserved", $"App id '{CorePublication.AppId}' is reserved for Hosty Core itself.", "$.id"));
+        }
+
         if (manifest.RuntimeProfiles.Count == 0)
         {
             errors.Add(new("app_manifest_runtime_profile_required", "runtimeProfiles must be a non-empty array.", "$.runtimeProfiles"));
@@ -3138,7 +3147,7 @@ internal sealed class DockerRuntimeAdapter(
     {
         if (!Uri.TryCreate(coreOrigin, UriKind.Absolute, out var uri) ||
             (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) ||
-            !IsLoopbackHost(uri.Host))
+            !IsHostLocalBinding(uri.Host))
         {
             return coreOrigin;
         }
@@ -3159,14 +3168,22 @@ internal sealed class DockerRuntimeAdapter(
         return string.IsNullOrWhiteSpace(normalized) ? "app" : normalized.Trim('-');
     }
 
-    private static bool IsLoopbackHost(string host)
+    // Hosts that name "this machine" from Core's own perspective and therefore mean the CONTAINER
+    // when handed to one unchanged. Loopback is the obvious case; the unspecified addresses are the
+    // one that bites, because `http://0.0.0.0:7070` is a perfectly ordinary all-interface binding
+    // that reads as a valid absolute origin — injected verbatim it resolves inside the container to
+    // the container itself, and every app-to-Core call fails with nothing to point at.
+    private static bool IsHostLocalBinding(string host)
     {
         if (string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase))
         {
             return true;
         }
 
-        return IPAddress.TryParse(host, out var address) && IPAddress.IsLoopback(address);
+        return IPAddress.TryParse(host, out var address) &&
+            (IPAddress.IsLoopback(address) ||
+                address.Equals(IPAddress.Any) ||
+                address.Equals(IPAddress.IPv6Any));
     }
 
 }

@@ -45,8 +45,10 @@ internal sealed class CloudflareDiagnosticsService(
         // It is answered by the Core section below instead, which is the only place that knows what to
         // compare it against.
         var all = await publications.ListAsync(cancellationToken);
-        var core = all.FirstOrDefault(publication => CorePublication.IsCore(publication.AppId));
-        IReadOnlyList<CloudflarePublication> stored = all.Where(publication => !CorePublication.IsCore(publication.AppId)).ToArray();
+        var core = all.FirstOrDefault(publication => CorePublication.IsCore(publication.AppId, publication.EndpointKey));
+        IReadOnlyList<CloudflarePublication> stored = all
+            .Where(publication => !CorePublication.IsCore(publication.AppId, publication.EndpointKey))
+            .ToArray();
         if (!settings.Ingress.PublishesThroughApi || !connected)
         {
             // Nothing to compare against. The stored publications are still reported, with the state that
@@ -124,7 +126,9 @@ internal sealed class CloudflareDiagnosticsService(
     {
         var configured = coreOrigins.Configured;
         var origin = coreOrigins.Effective;
-        var expectedService = $"http://localhost:{config.CorePort.ToString(CultureInfo.InvariantCulture)}";
+        // The same derivation the publisher uses, so the by-hand recipe names the target Hosty would
+        // have written rather than an assumed http://localhost that a non-default binding does not serve.
+        var expectedService = CorePublication.ServiceUrl(config.ListenUrl, config.CorePort);
         // Carried even when no origin is configured: that is exactly the case where the operator needs the
         // full recipe, and half of it ("point a CNAME at *what*?") is the half they cannot guess.
         var expectedDns = target is null ? null : $"{target.TunnelId}.cfargotunnel.com";

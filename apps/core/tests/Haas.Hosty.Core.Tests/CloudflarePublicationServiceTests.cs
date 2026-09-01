@@ -135,6 +135,34 @@ public sealed class CloudflarePublicationServiceTests : IDisposable
         Assert.DoesNotContain("core.example.test", CloudflareTunnelConfigPatcher.IngressHostnames(api.Config));
     }
 
+    // Ordering: the publication record is the ONLY carrier of the value to restore, and the reconciler
+    // deletes it. Restoring after the removal would mean a failed or cancelled write leaves Core
+    // advertising a hostname whose route and record are gone, with the value needed to undo that
+    // destroyed in the same breath. The setting must therefore already be back before Cloudflare is
+    // touched — and a retry must still converge.
+    [Fact]
+    public async Task UnpublishCoreAsync_WhenTheCloudflareRemovalFails_TheOriginIsAlreadyRestored()
+    {
+        var api = new StatefulApi();
+        var (service, _) = await CreateConnectedAsync(api, appRunning: false);
+        await CoreOriginTestFactory.SetAsync(coreSettings!, "https://old.example.test");
+        await service.PublishCoreAsync("core");
+        api.Failure = new CloudflareApiException(500, ["Internal error"]);
+
+        await Assert.ThrowsAnyAsync<Exception>(() => service.UnpublishCoreAsync());
+
+        // Core is not left pointing at a hostname it just asked to have retracted.
+        Assert.Equal("https://old.example.test", coreOrigins!.Effective);
+
+        // And the retry finishes the job: the restore is a no-op the second time (the origin no longer
+        // names the hostname), while the Cloudflare objects finally go.
+        api.Failure = null;
+        await service.UnpublishCoreAsync();
+
+        Assert.Equal("https://old.example.test", coreOrigins.Effective);
+        Assert.DoesNotContain("core.example.test", CloudflareTunnelConfigPatcher.IngressHostnames(api.Config));
+    }
+
     // A rename must not record the hostname Hosty itself wrote as the value to restore, or unpublish
     // would put back a name it has just removed.
     [Fact]

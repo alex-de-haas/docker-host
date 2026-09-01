@@ -51,6 +51,10 @@ public sealed class DockerRuntimeAdapterTests
     [InlineData("http://127.0.0.1:7070", "http://host.docker.internal:7070")]
     [InlineData("http://[::1]:7070", "http://host.docker.internal:7070")]
     [InlineData("https://localhost:7443", "https://host.docker.internal:7443")]
+    // An all-interface binding names the CONTAINER once it is inside one, so it has to be rewritten
+    // like loopback — otherwise every app-to-Core call from a container dials itself.
+    [InlineData("http://0.0.0.0:7070", "http://host.docker.internal:7070")]
+    [InlineData("http://[::]:7070", "http://host.docker.internal:7070")]
     public void BuildDockerCoreOrigin_RewritesLoopbackOriginsForContainerAccess(
         string coreOrigin,
         string expected)
