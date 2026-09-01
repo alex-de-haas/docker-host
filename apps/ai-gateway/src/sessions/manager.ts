@@ -12,6 +12,15 @@ import { TokenExchange, toMcpServerConfig, serverName, TOKEN_REFRESH_MARGIN_MS }
 import { readOnlyToolNames } from "../mcp/readonly.js";
 import type { McpProxy, MintedToken } from "../mcp/proxy.js";
 
+/**
+ * How long `shutdown` waits for event writes already under way before giving up on them.
+ *
+ * Between one torn record and a gateway that cannot exit, the torn record is the lesser failure:
+ * this is the exit path, and a store that has stopped responding must not be able to hold the
+ * process open indefinitely.
+ */
+const DRAIN_DEADLINE_MS = 2_000;
+
 // Owns session lifecycle: one harness run per live session, an append-only event log with a
 // monotonic seq (the SSE reattach cursor), and status transitions driven by harness events.
 // Deltas fan out live but are not persisted — the final assistant_text is the transcript record.
@@ -51,6 +60,20 @@ interface LiveSession {
 
 export class SessionManager {
   private readonly live = new Map<string, LiveSession>();
+
+  // Harness events are dispatched without being awaited — the adapter's callback is synchronous and
+  // must not block the run. Holding each handler here is what makes `shutdown` mean "no more writes":
+  // `main.ts` calls it and then `process.exit(0)`, so an untracked handler could be halfway through
+  // `saveRecord` when the process goes, leaving a session record torn on disk.
+  private readonly inFlightEvents = new Set<Promise<void>>();
+
+  // Set once `shutdown` begins and never cleared — shutdown is terminal in both callers, the process
+  // exit path and a test's teardown. It closes event intake, which the drain depends on: stopping a
+  // run does not stop its callbacks. `CodexRun.stop` sends SIGTERM and returns while the stdout
+  // listener stays attached, so buffered output can still parse into an event. Without this barrier
+  // the drain can find the set empty, return, and have that late event dispatch into a process that
+  // is already exiting.
+  private stopping = false;
 
   constructor(
     private readonly store: SessionStore,
@@ -126,6 +149,52 @@ export class SessionManager {
 
   async getSession(id: string): Promise<SessionRecord | null> {
     return this.live.get(id)?.record ?? this.store.readRecord(id);
+  }
+
+  /**
+   * Deletes a session: its record, its transcript, and the run still producing one.
+   *
+   * The run is stopped first and by the same route a cancel takes — proxy routes unregistered,
+   * refresh timer cleared — because a harness left running against a deleted session would keep
+   * minting app tokens for a conversation nobody can read any more.
+   *
+   * Subscribers are told before the record goes: another tab with this session open would otherwise
+   * sit on a stream that has stopped meaning anything, and reconnect into a 404 it cannot explain.
+   */
+  async deleteSession(id: string, deletedBy: string): Promise<boolean> {
+    const record = this.live.get(id)?.record ?? (await this.store.readRecord(id));
+    if (!record) {
+      return false;
+    }
+
+    const session = this.live.get(id);
+    if (session) {
+      if (session.run) {
+        await session.run.stop().catch(() => undefined);
+        session.run = null;
+      }
+      session.pendingApprovals.clear();
+      session.pendingQuestions.clear();
+      this.clearRefresh(session);
+      this.fanOut(session, {
+        // Negative, like the client's own stream errors: this event is never persisted, and reusing
+        // the last stored seq would hand subscribers a cursor value that already belongs to a real
+        // event. Nothing can reconnect with it anyway — the session it points at is being removed.
+        seq: -1,
+        ts: new Date().toISOString(),
+        type: "session_deleted",
+      });
+      session.listeners.clear();
+      this.live.delete(id);
+    }
+    this.proxy?.unregister(id);
+    await this.store.deleteSession(id);
+    // Reported like every other lifecycle transition, and with the administrator who asked for it:
+    // the transcript this removed is exactly what an audit trail cannot recover afterwards, so an
+    // unattributable deletion would be the one entry that matters least. The deleter is recorded
+    // separately from the session's creator, which is a different person often enough to matter.
+    this.audit.report("ai_session_deleted", { sessionId: id, deletedBy, createdBy: record.createdBy });
+    return true;
   }
 
   /**
@@ -222,7 +291,7 @@ export class SessionManager {
         // A gateway restart loses the process but not the record: resume the harness-native
         // session when one was captured, per the reattach/resume decision in the plan.
         resumeHarnessSessionId: session.record.harnessSessionId ?? undefined,
-        onEvent: (event) => void this.onHarnessEvent(id, event),
+        onEvent: (event) => this.dispatchHarnessEvent(id, event),
       });
     }
     this.scheduleMcpRefresh(id);
@@ -607,6 +676,7 @@ export class SessionManager {
   }
 
   async shutdown(): Promise<void> {
+    this.stopping = true;
     for (const session of this.live.values()) {
       if (session.run) {
         await session.run.stop().catch(() => undefined);
@@ -614,6 +684,38 @@ export class SessionManager {
       }
       this.clearRefresh(session);
       this.proxy?.unregister(session.record.id);
+    }
+
+    await this.drainHarnessEvents();
+  }
+
+  /** Waits for handlers already dispatched, after the runs that feed them have stopped. */
+  private async drainHarnessEvents(): Promise<void> {
+    if (this.inFlightEvents.size === 0) {
+      return;
+    }
+
+    // One pass suffices because intake is closed: the set cannot grow while `stopping` is set.
+    const settled = Promise.allSettled([...this.inFlightEvents]).then(() => "drained" as const);
+
+    // A deadline, not a pass count. Capping passes bounded nothing — the first `allSettled` waits as
+    // long as its slowest write, so a data mount that stopped responding would hold the process open
+    // forever while the code claimed to be bounded.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<"timeout">((resolve) => {
+      timer = setTimeout(() => resolve("timeout"), DRAIN_DEADLINE_MS);
+      timer.unref?.();
+    });
+
+    try {
+      if ((await Promise.race([settled, expired])) === "timeout") {
+        console.warn(
+          `[sessions] shutdown gave up on ${this.inFlightEvents.size} unfinished event write(s)`
+          + ` after ${DRAIN_DEADLINE_MS}ms`,
+        );
+      }
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -650,6 +752,19 @@ export class SessionManager {
     };
     this.live.set(id, session);
     return session;
+  }
+
+  /** Starts an event handler and keeps it, so `shutdown` can wait for it. */
+  private dispatchHarnessEvent(id: string, event: HarnessEvent): void {
+    if (this.stopping) {
+      // Dropped deliberately. The harness that produced it has been killed and the process is going;
+      // a write started here could not finish anyway, and starting it is how a record ends up torn.
+      return;
+    }
+
+    const handled = this.onHarnessEvent(id, event);
+    this.inFlightEvents.add(handled);
+    void handled.finally(() => this.inFlightEvents.delete(handled));
   }
 
   private async onHarnessEvent(id: string, event: HarnessEvent): Promise<void> {
