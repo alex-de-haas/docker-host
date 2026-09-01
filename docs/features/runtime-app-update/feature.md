@@ -1,7 +1,7 @@
 # Runtime App Update
 
 Created: 2026-06-04
-Updated: 2026-08-14
+Updated: 2026-09-01
 
 ## Description
 
@@ -120,13 +120,13 @@ Rows render from the app summary's `updateCheck` verdict, so the affordances sur
 
 The header "Check updates" triggers or joins the fleet sweep. "Update all (N)" applies every routine verdict, leaving review-class ones on their rows and counting them in the summary toast; the Shell's own app goes last, because its apply restarts the Shell serving the page.
 
-Applying closes the dialog immediately. A rejected enqueue (stale, expired, consumed, or already updating) toasts the error and refreshes so the row corrects itself rather than resending a dead digest. The update dialog opens over the cached pending plan, rebuilding only for an explicitly supplied source or after a feed change. A light poll runs only while a sweep or an apply is in flight.
+Applying closes the dialog immediately. A rejected enqueue (stale, expired, consumed, or already updating) toasts the error and refreshes so the row corrects itself rather than resending a dead digest. The update dialog opens over the cached pending plan, rebuilding only for an explicitly supplied source or after a feed change. Progress needs no poll: every app-record commit publishes a hint on Core's event stream, and the page re-reads the list from it.
 
 ## System Apps
 
 System apps (Shell, Telemetry, Marketplace) update through this same reviewed flow, gated on `host.admin` alone. Lifecycle operations are inherent to Core managing an app and are authorized on the endpoint, never by the manifest `capabilities` list — an app cannot opt out of being updated by omitting a token (see [Core App Shell](../core-app-shell/feature.md)).
 
-Core startup never applies updates: the boot reconcile installs missing distribution apps, re-applies Hosty-owned provisioning, and migrates a moved http(s) distribution manifest reference (pointer only — no content change, no restart). A Shell self-update briefly restarts the Shell serving the page; the apply now survives the tab, so the UI warns, keeps the tab alive through the swap, and reloads once the new Shell answers. See [On-Demand System App Updates](../../ideas/system-app-updates.md) for the design and its deferred hardening (readiness gate, automatic rollback).
+Core startup never applies updates: the boot reconcile installs missing distribution apps, re-applies Hosty-owned provisioning, and migrates a moved http(s) distribution manifest reference (pointer only — no content change, no restart). A Shell self-update briefly restarts the Shell serving the page; the apply survives the tab, so the UI warns, keeps the tab alive through the swap, and reloads into the new build — after two signals, in this order: Core's record for the Shell leaving `operationStatus: "updating"` (the apply finished), and then the page's own document URL answering again (the new server is listening). Both are needed because the enqueue returns before anything is torn down — the old Shell keeps serving its origin for the whole pull, so an origin probe on its own resolves immediately and reloads the old bundle. The record flip arrives on the event stream the page already holds (Core stays up across the swap), so no poll is involved; a flip to `failed` toasts the error instead of reloading, and a flip that never arrives leaves the operator on the working old page with a note to reload once the Shell answers. See [On-Demand System App Updates](../../ideas/system-app-updates.md) for the design and its deferred hardening (readiness gate, automatic rollback).
 
 ## Live Source Runtimes
 
@@ -149,6 +149,7 @@ Failed updates leave enough state for diagnosis and retry. Runtime state and app
 
 - **Plan and classification** — change detection per contract category, `requiresReview` routine/review split (including `role: system` escalation and a cross-repository `image` move), `updateAvailable` treating `->unknown` as "cannot tell", and plan-digest stability across a rebuild.
 - **Apply** — digest mismatch, expiry, and stale-base rejection; verbatim consumption of the cached plan; `update_in_progress`; the interrupted-apply boot sweep.
+- **Shell self-update wait** — the page stays put while the record still reads `"updating"`, settles on the flip away from it, reports a `failed` flip with the record's error, treats a failed read as no outcome at all, and gives up on its deadline (and when the app is gone) without reloading.
 - **Fleet check** — availability projected into summaries, live-source apps skipped and an earlier verdict suppressed, per-app failures captured without failing the sweep, per-app timeout recorded as that app's error while the rest of the fleet still completes, shutdown not recorded as timeouts, single-flight joining, and the finish announced only once the run no longer reports running.
 - **Digest resolution** — reference parsing (Docker Hub defaults, `library/` normalization, host detection) and rejection of references that cannot be turned into a URL unambiguously; bearer-challenge handling with token reuse and one re-challenge when a cached token stops working; the hash-the-manifest path when the digest header is absent; fallback to the docker CLI on every unclean answer (auth, redirect, malformed digest, transport failure); cancellation propagating rather than being swallowed as a fallback.
 
