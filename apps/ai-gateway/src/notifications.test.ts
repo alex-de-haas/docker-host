@@ -46,11 +46,30 @@ describe("waiting notifications", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("never throws when Core is unreachable", async () => {
-    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("down"));
+  it("never throws when Core is unreachable, and says so exactly once", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("down"));
+    // Captured rather than left to escape. `waiting` is fire-and-forget, so the swallowed rejection
+    // warns on a later microtask — after this test returns. An unwatched warning then lands at an
+    // unpredictable moment, sometimes while the vitest worker is already closing its RPC, which
+    // fails an otherwise green run as an EnvironmentTeardownError. This suite has had that failure
+    // on CI. Waiting for the warning is what the test above already does for the fetch itself.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const notifier = new WaitingNotifier("http://core.test", "service-token", "hosty.ai-gateway");
     // A missed notification costs a slower reply; a session that failed because one could not be
     // delivered would be a far worse trade.
     expect(() => notifier.waiting("s1", "awaiting_question", "user_admin")).not.toThrow();
+
+    await vi.waitFor(() => expect(warn).toHaveBeenCalledTimes(1));
+    expect(String(warn.mock.calls[0]?.[0])).toContain("Core unreachable");
+
+    // The muting was the untested half: a gateway that cannot reach Core keeps trying on every
+    // wait, and a warning per attempt would bury the log it is meant to explain.
+    notifier.waiting("s2", "awaiting_question", "user_admin");
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    // A macrotask, so every microtask the second rejection settles on has already run. Without this
+    // the check passed with the muting deleted — it was outrunning the warning, not observing its
+    // absence, which is the same race this test exists to remove.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 });

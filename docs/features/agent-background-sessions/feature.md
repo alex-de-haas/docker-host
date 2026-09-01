@@ -1,7 +1,7 @@
 # Agent Background Sessions
 
 Created: 2026-08-24
-Updated: 2026-08-24
+Updated: 2026-09-01
 
 Leaving an agent working while you close the tab is a feature rather than a way to lose work: the
 session is findable when you come back, and it reaches you when it needs you.
@@ -43,7 +43,9 @@ Entering a waiting status publishes one notification to the operator who started
   crafted link cannot smuggle anything into the message.
 
 Publishing is fire-and-forget. A missed notification costs a slower reply; a session that failed
-because a notification could not be delivered would be a far worse trade.
+because a notification could not be delivered would be a far worse trade. A Core that cannot be
+reached is reported once and then muted: the gateway retries on every wait, and a line per attempt
+would bury the log the warning exists to explain.
 
 **On the Mac**, the same event raises a banner — the only thing this client can do that a browser tab
 cannot. Permission is asked on the first notification rather than at launch: a prompt shown before the
@@ -92,7 +94,12 @@ harness that resumes it.
 - **The attention message is sender-verified** and its count clamped: a wrong badge is a small harm,
   and a wrong badge any page could set is how an operator learns to ignore the badge that matters.
 - **Notifications**: only statuses that need a person, deduped per session, targeted at the session's
-  owner, silent when there is no owner to tell, and never throwing when Core is unreachable.
+  owner, silent when there is no owner to tell, and never throwing when Core is unreachable — with
+  the warning *awaited* rather than left to escape, since publishing is fire-and-forget and a log
+  emitted after the test has returned failed a green CI run as a worker teardown error. The muting is
+  asserted beside it: a second unreachable publish warns no further. That check must outlast the
+  rejection it observes, not the call that starts it — waiting only for the second request passed
+  with the muting deleted.
 - **Abandonment as a pair**: left alone before the deadline, stopped after it, and a merely running
   session untouched however long it runs — reclaiming that one on a clock would kill live work.
 - **The Swift payload**: what a banner needs decoded, fields it cannot use ignored, an unreadable
