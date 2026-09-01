@@ -10,6 +10,8 @@ namespace Haas.Hosty.Core;
 // so a stopped app can be published. See docs/features/cloudflare-ingress/feature.md.
 internal sealed class CloudflarePublicationService(
     CoreSettingsService settings,
+    HostyCoreRuntimeConfig config,
+    CorePublicOriginResolver coreOrigins,
     CloudflareIntegrationStore integration,
     CloudflareCredentialStore credentials,
     CloudflareConnectionService connection,
@@ -78,11 +80,157 @@ internal sealed class CloudflarePublicationService(
         return new CloudflarePublicationResult(appId, endpointKey, publication.Hostname, publicOrigin, restartRequired, locality);
     }
 
+    // Core's own hostname, published through the same reconciler as an app endpoint under the reserved
+    // (hosty.core, core) pair — one proxied CNAME and one tunnel rule to Core's local port.
+    //
+    // It forks from PublishAsync rather than sharing it because everything either side of the reconciler
+    // call differs: there is no app record to look up, no endpoint to require a reserved port for, no
+    // restart to prompt (Core builds these links per request, so the new origin is live the moment it is
+    // written), and the result lands in the Core settings store instead of an app's settings. What is
+    // shared is the part that must never diverge — ownership, conflict and adoption handling, the
+    // read-back, and the rollback.
+    //
+    // The setting is written LAST, after the reconciler's read-back has confirmed both the route and the
+    // DNS record. Writing it first would leave Core advertising a hostname that resolves to nothing if
+    // either mutation failed, which is precisely the state this value must never be in.
+    public async Task<CloudflareCorePublicationResult> PublishCoreAsync(string label, bool adopt = false, CancellationToken cancellationToken = default)
+    {
+        var (token, target) = await RequireConnectionAsync(cancellationToken);
+        var locality = await RefreshLocalityAsync(token, target, cancellationToken);
+        var serviceUrl = $"http://localhost:{config.CorePort.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+        var existing = await publications.GetAsync(CorePublication.AppId, CorePublication.EndpointKey, cancellationToken);
+        // What unpublish will put back. The stored override rather than the effective origin: restoring
+        // means clearing back to whatever the environment baseline says, so a null here has to stay a null.
+        // A re-publish or rename reads through to the value from before the first publish — recording the
+        // hostname Hosty itself wrote would make unpublish "restore" a name it had just removed — while a
+        // manual edit made since is a newer choice and becomes the value to return to.
+        var stored = settings.StoredCorePublicOrigin;
+        var previous = existing is not null && OriginEquals(stored, existing.Hostname)
+            ? existing.PreviousPublicOrigin
+            : stored;
+
+        CloudflarePublication publication;
+        try
+        {
+            publication = await WithReconnectDetectionAsync(
+                () => reconciler.PublishAsync(
+                    token, target, CorePublication.AppId, CorePublication.EndpointKey, label, serviceUrl, adopt, cancellationToken),
+                cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            await NotifyAsync(
+                "error",
+                "Publishing Core's own address failed",
+                exception.Message,
+                "cloudflare-publish-failed:hosty.core",
+                cancellationToken);
+            throw;
+        }
+
+        var publicOrigin = $"https://{publication.Hostname}";
+        await settings.UpdateAsync(
+            new Dictionary<string, string?>(StringComparer.Ordinal) { [CoreOriginSettings.PublicOriginKey] = publicOrigin },
+            cancellationToken);
+        await publications.UpdateAsync(
+            CorePublication.AppId,
+            CorePublication.EndpointKey,
+            entry => entry with { PreviousPublicOrigin = previous },
+            cancellationToken);
+        await NotifyAsync(
+            "success",
+            $"Core is published at {publication.Hostname}",
+            "Invitation links and agent-client metadata use it from now on. Installed apps receive it when they next start.",
+            "cloudflare-published:hosty.core",
+            cancellationToken);
+        return new CloudflareCorePublicationResult(publication.Hostname, publicOrigin, locality);
+    }
+
+    // The reverse. The setting is restored only while it still names what was published: an administrator
+    // who edited it afterwards has made a newer choice, and putting a stale value back over it would be
+    // this feature undoing the operator's own decision.
+    public async Task<CloudflareCorePublicationResult> UnpublishCoreAsync(CancellationToken cancellationToken = default)
+    {
+        var (token, target) = await RequireConnectionAsync(cancellationToken, requireActiveProvider: false);
+        // Read before the reconciler removes the record: it carries the value to restore.
+        var publication = await publications.GetAsync(CorePublication.AppId, CorePublication.EndpointKey, cancellationToken);
+        await WithReconnectDetectionAsync(
+            async () =>
+            {
+                await reconciler.UnpublishAsync(token, target, CorePublication.AppId, CorePublication.EndpointKey, cancellationToken);
+                return true;
+            },
+            cancellationToken);
+        if (publication is null)
+        {
+            return new CloudflareCorePublicationResult(null, coreOrigins.Effective, null);
+        }
+
+        if (OriginEquals(coreOrigins.Configured, publication.Hostname))
+        {
+            await settings.UpdateAsync(
+                new Dictionary<string, string?>(StringComparer.Ordinal)
+                {
+                    [CoreOriginSettings.PublicOriginKey] = publication.PreviousPublicOrigin,
+                },
+                cancellationToken);
+        }
+
+        return new CloudflareCorePublicationResult(null, coreOrigins.Effective, null);
+    }
+
+    // Core's publication as the Shell reads it, or null when Core is not published. Its state vocabulary is
+    // narrower than an app's: Core is never stopped and never needs a restart to serve a new origin, so
+    // only the connection and route drift can be wrong.
+    public async Task<CloudflareCorePublication> GetCoreAsync(CancellationToken cancellationToken = default)
+    {
+        var publication = await publications.GetAsync(CorePublication.AppId, CorePublication.EndpointKey, cancellationToken);
+        if (publication is null)
+        {
+            return new CloudflareCorePublication(null, coreOrigins.Effective, coreOrigins.Configured is not null);
+        }
+
+        var state = await integration.LoadAsync(cancellationToken);
+        var reconnectRequired = state is not null &&
+            string.Equals(state.Status, CloudflareConnectionStatuses.ReconnectRequired, StringComparison.Ordinal);
+        return new CloudflareCorePublication(
+            new CloudflarePublicationSummary(
+                publication.EndpointKey,
+                publication.Label,
+                publication.Hostname,
+                $"https://{publication.Hostname}",
+                publication.OwnershipState,
+                reconnectRequired
+                    ? CloudflarePublicationStates.Error
+                    : string.IsNullOrWhiteSpace(publication.DriftedServiceUrl)
+                        ? CloudflarePublicationStates.Active
+                        : CloudflarePublicationStates.OriginDrifted),
+            coreOrigins.Effective,
+            Configured: true);
+    }
+
+    // Whether the configured origin is the one published for `hostname`. Compared as origins rather than
+    // as strings so a trailing slash or a case difference in the host does not read as "the administrator
+    // changed it".
+    private static bool OriginEquals(string? configured, string hostname)
+        => PublicOriginSettings.TryNormalizeOrigin(configured, out var origin) &&
+            string.Equals(origin, $"https://{hostname}", StringComparison.OrdinalIgnoreCase);
+
     // Not gated on the active provider: a stored publication outlives a provider change, and the operator
     // who switched to "none" still needs its route and DNS record to go away. Only the connection is
     // required, because removing them is what the token is for.
     public async Task<CloudflarePublicationResult> UnpublishAsync(string appId, string endpointKey, CancellationToken cancellationToken = default)
     {
+        // The bulk cleanups (disconnect with Remove, and the retry sweep behind it) walk every stored
+        // publication, and Core's is one of them. Route it to the path that also restores the setting,
+        // rather than letting it fall through to an app lookup that finds nothing and silently leaves
+        // Core advertising a hostname whose route and record have just been deleted.
+        if (CorePublication.IsCore(appId))
+        {
+            await UnpublishCoreAsync(cancellationToken);
+            return new CloudflarePublicationResult(appId, endpointKey, null, null, false, null);
+        }
+
         if (string.IsNullOrWhiteSpace(endpointKey))
         {
             throw new CloudflareConnectionException("cloudflare_endpoint_invalid", "An endpoint key is required.");
@@ -411,3 +559,16 @@ internal static class CloudflarePublicationStates
 }
 
 internal sealed record CloudflareAppPublications(IReadOnlyList<CloudflarePublicationSummary> Publications);
+
+// Core's own publication, plus the origin it currently advertises either way. `Configured` says whether
+// anything at all names Core's public address — a host can have one without publishing it (an operator's
+// own proxy), which is the case the publish affordance must not offer to overwrite silently.
+internal sealed record CloudflareCorePublication(
+    CloudflarePublicationSummary? Publication,
+    string Origin,
+    bool Configured);
+
+// The outcome of publishing or unpublishing Core's hostname. No `RestartRequired`: Core builds every link
+// and metadata document from the live setting per request, so a new origin is in effect immediately.
+// `Hostname`/`Locality` are null for an unpublish, which performs no hostname mutation of its own.
+internal sealed record CloudflareCorePublicationResult(string? Hostname, string Origin, string? Locality);

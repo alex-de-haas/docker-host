@@ -135,6 +135,9 @@ internal sealed class CloudflarePublicationStore(CoreDataPaths paths)
 // `ServiceUrl`, which no longer exists, so the publication is broken until a reconcile succeeds. Recording
 // it is what lets boot reconciliation be honest without retrying on the startup path: the next successful
 // reconcile clears it, and until then the state projection reports the drift. Null means no drift.
+// `PreviousPublicOrigin` is Core's own publication only: the persisted public-origin setting as it was
+// before Hosty took the value over, so unpublish can put it back. Null means there was none and unpublish
+// clears the setting instead.
 internal sealed record CloudflarePublication(
     string AppId,
     string EndpointKey,
@@ -145,7 +148,22 @@ internal sealed record CloudflarePublication(
     string OwnershipState,
     DateTimeOffset UpdatedAt,
     bool PendingRestart = false,
-    string? DriftedServiceUrl = null);
+    string? DriftedServiceUrl = null,
+    string? PreviousPublicOrigin = null);
+
+// The reserved pair Core's own hostname is published under. Core is not an app and has no registry
+// record, but the store and the reconciler key ownership on (app id, endpoint key) — so reserving one pair
+// is what lets Core's hostname ride the exact same publish, read-back, rollback and cleanup path as an
+// app's, with no synthetic app record to keep consistent with a registry it is not in. The cost is that
+// every sweep which walks publications expecting an installed app has to skip it, which is why this lives
+// here rather than inside the publication service: the skip is the store's contract, not one caller's.
+internal static class CorePublication
+{
+    public const string AppId = "hosty.core";
+    public const string EndpointKey = "core";
+
+    public static bool IsCore(string appId) => string.Equals(appId, AppId, StringComparison.Ordinal);
+}
 
 internal static class CloudflareOwnershipStates
 {
