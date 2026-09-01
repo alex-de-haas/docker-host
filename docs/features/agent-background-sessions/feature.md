@@ -83,6 +83,23 @@ The conversation survives the reclamation. The transcript is kept — an operato
 session gone would have lost the very question it was asking — and the next message starts a fresh
 harness that resumes it.
 
+## Shutting Down Is Not Just Stopping
+
+A harness run pushes events at the manager through a synchronous callback, so each one is handled on
+a promise nobody awaits — blocking there would stall the run. `shutdown` therefore stops the runs and
+then waits for the handlers already dispatched, because `main.ts` calls it and immediately
+`process.exit(0)`: an untracked handler could be between its two writes, `appendEvent` and
+`saveRecord`, when the process goes, leaving the event log ahead of the record that indexes it.
+
+Two things make that wait safe. **Event intake closes first**: stopping a run does not stop its
+callbacks — Codex's `stop` sends SIGTERM and returns while its stdout listener stays attached, so
+buffered output can still parse into an event — and without a barrier the drain could find nothing
+in flight, return, and have that late event dispatch into an exiting process. Events arriving after
+shutdown begins are dropped on purpose; a write started then could not finish anyway. **And the wait
+has a deadline** of two seconds, after which it says what it abandoned and lets the process go. A
+store that has stopped answering must not be able to hold the gateway open: between one torn record
+and a process that will not exit, the torn record is the lesser failure.
+
 ## Testing Expectations
 
 - **The draft as a set**: per session rather than global, an emptied box treated as a decision,
@@ -100,6 +117,13 @@ harness that resumes it.
   asserted beside it: a second unreachable publish warns no further. That check must outlast the
   rejection it observes, not the call that starts it — waiting only for the second request passed
   with the muting deleted.
+- **Shutdown waits for a write it did not start**: a closing event held mid-write is finished before
+  `shutdown` resolves, asserted through the flag that write sets rather than through timing. Paired
+  with a shutdown that has nothing in flight and must still resolve.
+- **And knows when to stop waiting**: a write that never settles is abandoned at the deadline rather
+  than holding the process open, and an event fired after shutdown began is not written at all. Both
+  are asserted, because both were wrong in the first cut of this change — capping the number of
+  drain passes bounded nothing, since the first pass waits as long as its slowest write.
 - **Abandonment as a pair**: left alone before the deadline, stopped after it, and a merely running
   session untouched however long it runs — reclaiming that one on a clock would kill live work.
 - **The Swift payload**: what a banner needs decoded, fields it cannot use ignored, an unreadable
