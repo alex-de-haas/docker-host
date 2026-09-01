@@ -12,6 +12,15 @@ import { TokenExchange, toMcpServerConfig, serverName, TOKEN_REFRESH_MARGIN_MS }
 import { readOnlyToolNames } from "../mcp/readonly.js";
 import type { McpProxy, MintedToken } from "../mcp/proxy.js";
 
+/**
+ * How long `shutdown` waits for event writes already under way before giving up on them.
+ *
+ * Between one torn record and a gateway that cannot exit, the torn record is the lesser failure:
+ * this is the exit path, and a store that has stopped responding must not be able to hold the
+ * process open indefinitely.
+ */
+const DRAIN_DEADLINE_MS = 2_000;
+
 // Owns session lifecycle: one harness run per live session, an append-only event log with a
 // monotonic seq (the SSE reattach cursor), and status transitions driven by harness events.
 // Deltas fan out live but are not persisted — the final assistant_text is the transcript record.
@@ -57,6 +66,14 @@ export class SessionManager {
   // `main.ts` calls it and then `process.exit(0)`, so an untracked handler could be halfway through
   // `saveRecord` when the process goes, leaving a session record torn on disk.
   private readonly inFlightEvents = new Set<Promise<void>>();
+
+  // Set once `shutdown` begins and never cleared — shutdown is terminal in both callers, the process
+  // exit path and a test's teardown. It closes event intake, which the drain depends on: stopping a
+  // run does not stop its callbacks. `CodexRun.stop` sends SIGTERM and returns while the stdout
+  // listener stays attached, so buffered output can still parse into an event. Without this barrier
+  // the drain can find the set empty, return, and have that late event dispatch into a process that
+  // is already exiting.
+  private stopping = false;
 
   constructor(
     private readonly store: SessionStore,
@@ -613,6 +630,7 @@ export class SessionManager {
   }
 
   async shutdown(): Promise<void> {
+    this.stopping = true;
     for (const session of this.live.values()) {
       if (session.run) {
         await session.run.stop().catch(() => undefined);
@@ -627,11 +645,31 @@ export class SessionManager {
 
   /** Waits for handlers already dispatched, after the runs that feed them have stopped. */
   private async drainHarnessEvents(): Promise<void> {
-    // Bounded rather than `while`: a handler that somehow keeps the set fed would otherwise make
-    // shutdown unable to finish, and a gateway that cannot exit is worse than one torn write. In
-    // practice one pass settles it — the runs are already stopped, so nothing new arrives.
-    for (let pass = 0; pass < 3 && this.inFlightEvents.size > 0; pass++) {
-      await Promise.allSettled([...this.inFlightEvents]);
+    if (this.inFlightEvents.size === 0) {
+      return;
+    }
+
+    // One pass suffices because intake is closed: the set cannot grow while `stopping` is set.
+    const settled = Promise.allSettled([...this.inFlightEvents]).then(() => "drained" as const);
+
+    // A deadline, not a pass count. Capping passes bounded nothing — the first `allSettled` waits as
+    // long as its slowest write, so a data mount that stopped responding would hold the process open
+    // forever while the code claimed to be bounded.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<"timeout">((resolve) => {
+      timer = setTimeout(() => resolve("timeout"), DRAIN_DEADLINE_MS);
+      timer.unref?.();
+    });
+
+    try {
+      if ((await Promise.race([settled, expired])) === "timeout") {
+        console.warn(
+          `[sessions] shutdown gave up on ${this.inFlightEvents.size} unfinished event write(s)`
+          + ` after ${DRAIN_DEADLINE_MS}ms`,
+        );
+      }
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -672,6 +710,12 @@ export class SessionManager {
 
   /** Starts an event handler and keeps it, so `shutdown` can wait for it. */
   private dispatchHarnessEvent(id: string, event: HarnessEvent): void {
+    if (this.stopping) {
+      // Dropped deliberately. The harness that produced it has been killed and the process is going;
+      // a write started here could not finish anyway, and starting it is how a record ends up torn.
+      return;
+    }
+
     const handled = this.onHarnessEvent(id, event);
     this.inFlightEvents.add(handled);
     void handled.finally(() => this.inFlightEvents.delete(handled));

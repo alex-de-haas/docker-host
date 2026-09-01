@@ -91,9 +91,14 @@ then waits for the handlers already dispatched, because `main.ts` calls it and i
 `process.exit(0)`: an untracked handler could be between its two writes, `appendEvent` and
 `saveRecord`, when the process goes, leaving the event log ahead of the record that indexes it.
 
-The wait is bounded rather than open-ended. A handler that somehow kept feeding more work would
-otherwise leave the gateway unable to exit, and a process that will not stop is a worse failure than
-one torn write.
+Two things make that wait safe. **Event intake closes first**: stopping a run does not stop its
+callbacks — Codex's `stop` sends SIGTERM and returns while its stdout listener stays attached, so
+buffered output can still parse into an event — and without a barrier the drain could find nothing
+in flight, return, and have that late event dispatch into an exiting process. Events arriving after
+shutdown begins are dropped on purpose; a write started then could not finish anyway. **And the wait
+has a deadline** of two seconds, after which it says what it abandoned and lets the process go. A
+store that has stopped answering must not be able to hold the gateway open: between one torn record
+and a process that will not exit, the torn record is the lesser failure.
 
 ## Testing Expectations
 
@@ -114,8 +119,11 @@ one torn write.
   with the muting deleted.
 - **Shutdown waits for a write it did not start**: a closing event held mid-write is finished before
   `shutdown` resolves, asserted through the flag that write sets rather than through timing. Paired
-  with a shutdown that has nothing in flight and must still resolve — a drain that waited on
-  something unsettling would hang the process, which is the worse of the two failures.
+  with a shutdown that has nothing in flight and must still resolve.
+- **And knows when to stop waiting**: a write that never settles is abandoned at the deadline rather
+  than holding the process open, and an event fired after shutdown began is not written at all. Both
+  are asserted, because both were wrong in the first cut of this change — capping the number of
+  drain passes bounded nothing, since the first pass waits as long as its slowest write.
 - **Abandonment as a pair**: left alone before the deadline, stopped after it, and a merely running
   session untouched however long it runs — reclaiming that one on a clock would kill live work.
 - **The Swift payload**: what a banner needs decoded, fields it cannot use ignored, an unreadable
