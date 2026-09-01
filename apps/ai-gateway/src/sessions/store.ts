@@ -27,6 +27,12 @@ export type SessionStatus =
 export interface SessionRecord {
   id: string;
   title: string | null;
+  /**
+   * Who chose the title. An operator's own name is never overwritten by a derived one — a session
+   * renamed to "disk pressure" must not become the first line of the next message. Absent on records
+   * written before titles existed, which read as `auto`: nobody had typed one.
+   */
+  titleSource?: "auto" | "operator";
   /** Structured page context from the client (app id, route) — seeds the first prompt, never parsed. */
   context: Record<string, string> | null;
   status: SessionStatus;

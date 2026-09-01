@@ -2,6 +2,7 @@ import { isWaitingStatus, WaitingNotifier } from "../notifications.js";
 import { composeSystemPrompt, partitionSkills, type AppSkill } from "../mcp/skills.js";
 import { HOST_SYSTEM_PROMPT } from "./host-prompt.js";
 import { randomUUID } from "node:crypto";
+import { deriveTitleFromMessage, normalizeTitle } from "./title.js";
 import type { HarnessAdapter, HarnessEvent, HarnessRun } from "../harness/adapter.js";
 import type { SessionRecord, SessionStatus, SessionStore, StoredEvent } from "./store.js";
 import type { AuditReporter } from "../audit.js";
@@ -89,9 +90,11 @@ export class SessionManager {
     createdBy: string;
   }): Promise<SessionRecord> {
     const now = new Date().toISOString();
+    const title = normalizeTitle(input.title);
     const record: SessionRecord = {
       id: randomUUID(),
-      title: input.title?.trim() || null,
+      title,
+      titleSource: title ? "operator" : "auto",
       context: input.context ?? null,
       status: "idle",
       createdAt: now,
@@ -126,6 +129,39 @@ export class SessionManager {
   }
 
   /**
+   * The text of the earliest stored `user_message`, or null when the log holds none.
+   *
+   * Read once per session: the only caller runs when a session has no title, and it has one
+   * immediately afterwards. A session whose log was swept keeps no opening message, and naming it
+   * after the current turn is then the best available answer rather than a wrong one.
+   */
+  private async firstUserMessage(id: string): Promise<string | null> {
+    const events = await this.store.readEvents(id).catch(() => []);
+    const opening = events.find((event) => event.type === "user_message");
+    return typeof opening?.text === "string" ? opening.text : null;
+  }
+
+  /**
+   * Renames a session. An empty title clears the name and returns it to `auto`, so the next message
+   * derives one again — an emptied box is a decision, not a session pinned to the empty string.
+   *
+   * The title stays in the gateway's own store: it is derived from transcript text, and transcript
+   * content does not reach Core (decision 2026-08-08 — Core audits lifecycle and approvals only).
+   */
+  async renameSession(id: string, title: unknown): Promise<SessionRecord | null> {
+    const record = this.live.get(id)?.record ?? (await this.store.readRecord(id));
+    if (!record) {
+      return null;
+    }
+    const normalized = normalizeTitle(title);
+    record.title = normalized;
+    record.titleSource = normalized ? "operator" : "auto";
+    record.updatedAt = new Date().toISOString();
+    await this.store.saveRecord(record);
+    return record;
+  }
+
+  /**
    * `credential` is the delegated token the operator's client presented. It is the session's seed for
    * reaching app MCP endpoints: the gateway self-refreshes it to stay alive through a long turn and
    * branches off it for each enabled provider. Every message replaces it, so an active conversation
@@ -141,6 +177,21 @@ export class SessionManager {
       session.credential = credential;
       if (recovering) {
         await this.refreshMcpServers(session);
+      }
+    }
+    // Named from the first message that says anything, not from every message: the opening ask is
+    // what the operator will recognise the session by later, and re-deriving on each turn would
+    // rename a session out from under someone mid-conversation.
+    if (!session.record.title && session.record.titleSource !== "operator") {
+      // Every session that existed before titles did is unnamed *and* already has a conversation.
+      // Naming those after the message being typed now would call a session about a failed restart
+      // "and now try again" — so the log is asked what this conversation opened with.
+      const opening = session.record.lastEventSeq > 0 ? await this.firstUserMessage(id) : null;
+      const derived = deriveTitleFromMessage(opening ?? text);
+      if (derived) {
+        session.record.title = derived;
+        session.record.updatedAt = new Date().toISOString();
+        await this.store.saveRecord(session.record);
       }
     }
     await this.append(id, { type: "user_message", text });

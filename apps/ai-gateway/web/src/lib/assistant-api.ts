@@ -95,6 +95,16 @@ export async function createSession(input: { title?: string; context?: Record<st
   return (await call("/sessions", { method: "POST", body: JSON.stringify(input) })).json() as Promise<AssistantSession>;
 }
 
+/** Renames a session. An empty title clears the name, and the next message derives one again. */
+export async function renameSession(sessionId: string, title: string): Promise<AssistantSession> {
+  return (
+    await call(`/sessions/${encodeURIComponent(sessionId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    })
+  ).json() as Promise<AssistantSession>;
+}
+
 export async function getSession(sessionId: string): Promise<AssistantSession> {
   return (await call(`/sessions/${encodeURIComponent(sessionId)}`)).json() as Promise<AssistantSession>;
 }

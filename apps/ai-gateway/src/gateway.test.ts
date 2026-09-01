@@ -147,6 +147,120 @@ describe("gateway", () => {
     expect(session.harnessSessionId).toContain("fake-");
   });
 
+  it("names an unnamed session after its first message", async () => {
+    const created = await call("/api/sessions", { method: "POST", body: JSON.stringify({}) });
+    const record = (await created.json()) as { id: string; title: string | null };
+    expect(record.title).toBeNull();
+
+    await call(`/api/sessions/${record.id}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ text: "Why did telemetry stop?\n\nfatal: bind EADDRINUSE" }),
+    });
+
+    const named = await waitFor(async () => {
+      const current = await manager.getSession(record.id);
+      return current?.title ? current : null;
+    }, "derived title");
+    expect(named.title).toBe("Why did telemetry stop?");
+  });
+
+  it("keeps a name the operator chose, and never re-derives over it", async () => {
+    const created = await call("/api/sessions", { method: "POST", body: JSON.stringify({ title: "disk pressure" }) });
+    const record = (await created.json()) as { id: string; title: string };
+    expect(record.title).toBe("disk pressure");
+
+    await call(`/api/sessions/${record.id}/messages`, { method: "POST", body: JSON.stringify({ text: "anything else" }) });
+    await waitFor(async () => {
+      const current = await manager.getSession(record.id);
+      return current?.status === "idle" ? current : null;
+    }, "idle status");
+
+    // The point of the test: a turn ran, and the session is still called what the operator called it.
+    expect((await manager.getSession(record.id))?.title).toBe("disk pressure");
+  });
+
+  it("renames a session, and an emptied title returns it to being derived", async () => {
+    const created = await call("/api/sessions", { method: "POST", body: JSON.stringify({}) });
+    const record = (await created.json()) as { id: string };
+
+    const renamed = await call(`/api/sessions/${record.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title: "  collector  restart " }),
+    });
+    expect(renamed.status).toBe(200);
+    expect(((await renamed.json()) as { title: string }).title).toBe("collector restart");
+
+    const cleared = await call(`/api/sessions/${record.id}`, { method: "PATCH", body: JSON.stringify({ title: "" }) });
+    expect(((await cleared.json()) as { title: string | null }).title).toBeNull();
+
+    // Cleared means derivable again — the alternative is a session pinned to no name for good.
+    await call(`/api/sessions/${record.id}/messages`, { method: "POST", body: JSON.stringify({ text: "restart it" }) });
+    const named = await waitFor(async () => {
+      const current = await manager.getSession(record.id);
+      return current?.title ? current : null;
+    }, "re-derived title");
+    expect(named.title).toBe("restart it");
+  });
+
+  it("names a session that predates titles after the message it opened with", async () => {
+    const created = await call("/api/sessions", { method: "POST", body: JSON.stringify({}) });
+    const record = (await created.json()) as { id: string };
+    await call(`/api/sessions/${record.id}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ text: "Why did telemetry stop?" }),
+    });
+    await waitFor(async () => {
+      const current = await manager.getSession(record.id);
+      return current?.status === "idle" ? current : null;
+    }, "idle status");
+
+    // Exactly the shape upgrading leaves behind: a conversation in the log, no title on the record.
+    const stored = (await manager.getSession(record.id))!;
+    stored.title = null;
+    delete stored.titleSource;
+    await store.saveRecord(stored);
+
+    await call(`/api/sessions/${record.id}/messages`, { method: "POST", body: JSON.stringify({ text: "and now?" }) });
+    const named = await waitFor(async () => {
+      const current = await manager.getSession(record.id);
+      return current?.title ? current : null;
+    }, "backfilled title");
+    // Not "and now?" — a session is named after what it is about, not after its latest turn.
+    expect(named.title).toBe("Why did telemetry stop?");
+  });
+
+  it("refuses a rename whose title is not a string, and survives a body that is not an object", async () => {
+    const created = await call("/api/sessions", { method: "POST", body: JSON.stringify({ title: "chosen" }) });
+    const record = (await created.json()) as { id: string };
+
+    // `null` reads as "clear it" only if nobody checks; clearing is the empty string's job, and an
+    // operator's chosen name must not fall to a client sending the wrong type.
+    expect((await call(`/api/sessions/${record.id}`, { method: "PATCH", body: JSON.stringify({ title: null }) })).status).toBe(400);
+    expect((await call(`/api/sessions/${record.id}`, { method: "PATCH", body: JSON.stringify({ title: 7 }) })).status).toBe(400);
+    // Valid JSON, not a body. Reading a field off it must not become a 500.
+    expect((await call(`/api/sessions/${record.id}`, { method: "PATCH", body: "null" })).status).toBe(400);
+    expect((await call(`/api/sessions/${record.id}`, { method: "PATCH", body: "[1,2]" })).status).toBe(400);
+    expect((await manager.getSession(record.id))?.title).toBe("chosen");
+  });
+
+  it("refuses a rename without a title, and 404s an unknown session", async () => {
+    const created = await call("/api/sessions", { method: "POST", body: JSON.stringify({}) });
+    const record = (await created.json()) as { id: string };
+
+    expect((await call(`/api/sessions/${record.id}`, { method: "PATCH", body: JSON.stringify({}) })).status).toBe(400);
+    expect(
+      (await call("/api/sessions/does-not-exist", { method: "PATCH", body: JSON.stringify({ title: "x" }) })).status,
+    ).toBe(404);
+  });
+
+  it("advertises the methods its routes answer, so a preflight does not fail alone", async () => {
+    const preflight = await fetch(`${origin}/api/sessions/any`, {
+      method: "OPTIONS",
+      headers: { origin: "http://shell.local:7171" },
+    });
+    expect(preflight.headers.get("access-control-allow-methods")).toContain("PATCH");
+  });
+
   it("pauses a proposed write until approval and resumes on allow", async () => {
     const record = (await (
       await call("/api/sessions", { method: "POST", body: "{}" })

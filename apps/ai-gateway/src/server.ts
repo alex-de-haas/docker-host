@@ -341,6 +341,23 @@ async function route(
     return;
   }
 
+  if (rest === "" && method === "PATCH") {
+    const body = await readJson(request);
+    // A string, specifically: `null` would otherwise reach `normalizeTitle` and clear a name the
+    // operator chose, which only the empty string is meant to do.
+    if (typeof body.title !== "string") {
+      sendJson(response, 400, { code: "invalid_request", message: "A title string is required." });
+      return;
+    }
+    const record = await manager.renameSession(sessionId, body.title);
+    if (!record) {
+      sendJson(response, 404, { code: "session_not_found", message: "Session not found." });
+      return;
+    }
+    sendJson(response, 200, record);
+    return;
+  }
+
   if (rest === "/events" && method === "GET") {
     // An app-session caller carries no token expiry, so the stream is bounded by the session
     // cookie's own maximum instead of running unbounded — the delegated-token panel keeps its exact
@@ -528,7 +545,10 @@ function applyCors(request: IncomingMessage, response: ServerResponse): void {
   if (typeof origin === "string" && origin) {
     response.setHeader("access-control-allow-origin", origin);
     response.setHeader("vary", "origin");
-    response.setHeader("access-control-allow-methods", "GET, POST, OPTIONS");
+    // PATCH and PUT are listed because routes use them (rename, settings). A preflight for a method
+    // the server answers but does not advertise fails in the browser and nowhere else, which reads
+    // as the request never having been made.
+    response.setHeader("access-control-allow-methods", "GET, POST, PATCH, PUT, OPTIONS");
     response.setHeader("access-control-allow-headers", "authorization, content-type");
     response.setHeader("access-control-max-age", "600");
   }
@@ -555,7 +575,14 @@ async function readJson(request: IncomingMessage): Promise<Record<string, unknow
   }
 
   try {
-    return JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
+    const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    // `null`, `[]` and bare primitives are valid JSON and not bodies. Every caller reads named
+    // fields off what this returns, so handing back a non-object turns a malformed request into a
+    // TypeError — a 500 for something the client got wrong. An empty body says the same thing and
+    // each route already rejects it on its own terms.
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
   } catch {
     return {};
   }
