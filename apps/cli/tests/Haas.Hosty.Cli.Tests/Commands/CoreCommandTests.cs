@@ -72,23 +72,146 @@ public sealed class CoreCommandTests : IDisposable
     }
 
     [Fact]
-    public void BuildCoreEnvironment_OmitsRemovedManifestPathAndRuntimeReferences()
+    public async Task StartAsync_LiveRootWithDifferentPort_IsRefusedNamingTheLiveInstance()
     {
-        // Manifest locations come from Core's distribution list now, and a system app's runtime
-        // profile is a normal per-app choice (manifest default, then `hosty apps switch-runtime`).
-        // The CLI no longer injects the removed per-app manifest-path overrides or the Shell bootstrap
-        // runtime into Core's environment.
-        var environment = HostyEnvironment.Current();
-        var settings = new LaunchSettingsStore(environment).Load();
+        // The root's discovery names a live Core (this test process's PID) on port 7070; a second
+        // start asking for another port is a second instance on the same root and must be refused
+        // by NAMING the live instance — not by binding, and not with a bare bind error.
+        WriteCoreDiscovery("http://127.0.0.1:7070/control/v1", processId: Environment.ProcessId);
+        var (console, output) = CreateConsole();
+
+        var exitCode = await CommandLine.RunAsync(["core", "start", "--port", "9999"], console);
+
+        Assert.Equal(1, exitCode);
+        var text = output.ToString();
+        Assert.Contains("already running for data root", text);
+        Assert.Contains($"PID {Environment.ProcessId}", text);
+        Assert.Contains("http://127.0.0.1:7070", text);
+        Assert.Contains("refused", text);
+    }
+
+    [Fact]
+    public async Task StartAsync_LiveRootWithoutConflictingIntent_ReportsAlreadyRunning()
+    {
+        using var server = new FakeCoreServer(
+            HttpStatusCode.OK,
+            """{"status":"running","component":"hosty-core","dataRoot":"/tmp/hosty","listenUrl":"http://127.0.0.1:7070","corePort":7070,"warnings":[]}""");
+        WriteCoreDiscovery(server.ControlBaseUrl, processId: Environment.ProcessId);
+        var (console, output) = CreateConsole();
+
+        var exitCode = await CommandLine.RunAsync(["core", "start"], console);
+        await server.WaitForRequestAsync();
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal("GET", server.Method);
+        Assert.Equal("/control/v1/core/status", server.PathAndQuery);
+        Assert.Contains("already running", output.ToString());
+    }
+
+    private const string SettingsResponse =
+        """
+        {"settings":[{"key":"HOSTY_CORE_PORT","type":"number","value":"7171","default":"7070","group":"Core process","label":"Listen port","description":"The port.","overridden":true}]}
+        """;
+
+    [Fact]
+    public async Task CoreSettingsGet_ReadsTheRowOverTheControlPlane()
+    {
+        using var server = new FakeCoreServer(HttpStatusCode.OK, SettingsResponse);
+        WriteCoreDiscovery(server.ControlBaseUrl, processId: Environment.ProcessId);
+        var (console, output) = CreateConsole();
+
+        var exitCode = await CommandLine.RunAsync(["core", "settings", "get", "HOSTY_CORE_PORT"], console);
+        await server.WaitForRequestAsync();
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal("GET", server.Method);
+        Assert.Equal("/control/v1/settings", server.PathAndQuery);
+        Assert.Equal("test-secret", server.Headers["X-Hosty-Test-Control"]);
+        Assert.Contains("7171", output.ToString());
+    }
+
+    [Fact]
+    public async Task CoreSettingsSet_PutsTheUpdateOverTheControlPlane()
+    {
+        using var server = new FakeCoreServer(HttpStatusCode.OK, SettingsResponse);
+        WriteCoreDiscovery(server.ControlBaseUrl, processId: Environment.ProcessId);
+        var (console, output) = CreateConsole();
+
+        var exitCode = await CommandLine.RunAsync(["core", "settings", "set", "HOSTY_CORE_PORT", "7171"], console);
+        await server.WaitForRequestAsync();
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal("PUT", server.Method);
+        Assert.Equal("/control/v1/settings", server.PathAndQuery);
+        Assert.Contains("\"HOSTY_CORE_PORT\":\"7171\"", server.Body);
+        // The port note: the change applies on the next start, and the operator should know.
+        Assert.Contains("next Core start", output.ToString());
+    }
+
+    [Fact]
+    public async Task CoreSettingsReset_SendsANullValueToClearTheOverride()
+    {
+        using var server = new FakeCoreServer(HttpStatusCode.OK, SettingsResponse);
+        WriteCoreDiscovery(server.ControlBaseUrl, processId: Environment.ProcessId);
         var (console, _) = CreateConsole();
-        var command = new CoreCommand(new CommandContext(console, environment, new LaunchSettingsStore(environment)));
 
-        var coreEnvironment = command.BuildCoreEnvironment("http://localhost:7070", settings);
+        var exitCode = await CommandLine.RunAsync(["core", "settings", "reset", "HOSTY_CORE_PORT"], console);
+        await server.WaitForRequestAsync();
 
+        Assert.Equal(0, exitCode);
+        Assert.Equal("PUT", server.Method);
+        Assert.Contains("\"HOSTY_CORE_PORT\":null", server.Body);
+    }
+
+    [Fact]
+    public async Task CoreSettings_WithoutARunningCore_FailsWithTheCoreDownMessage()
+    {
+        var (console, output) = CreateConsole();
+
+        var exitCode = await CommandLine.RunAsync(["core", "settings", "list"], console);
+
+        // The settings live in the addressed instance, so a down Core is an environment state
+        // (exit 1), not a usage error.
+        Assert.Equal(1, exitCode);
+        Assert.Contains("not running", output.ToString());
+    }
+
+    [Fact]
+    public void BuildCoreEnvironment_PassesOnlyTheDataRootByDefault()
+    {
+        // The CLI stops computing or owning the port and stops injecting the public origin: Core
+        // resolves the port itself (flag/env → the root's stored value → 7070) and reads
+        // HOSTY_CORE_PUBLIC_ORIGIN as a plain ambient env var. Only the resolved data root is pinned
+        // so the spawned Core lands on the environment this CLI addresses.
+        var environment = HostyEnvironment.Current();
+        var (console, _) = CreateConsole();
+        var command = new CoreCommand(new CommandContext(console, environment));
+
+        var coreEnvironment = command.BuildCoreEnvironment(new CoreCommand.StartOptions(null, null, false));
+
+        Assert.Equal(environment.RootDirectory, coreEnvironment["HOSTY_DATA_ROOT"]);
+        Assert.DoesNotContain("HOSTY_CORE_PORT", coreEnvironment.Keys);
+        Assert.DoesNotContain("HOSTY_CORE_URL", coreEnvironment.Keys);
+        Assert.DoesNotContain("HOSTY_CORE_PUBLIC_ORIGIN", coreEnvironment.Keys);
         Assert.DoesNotContain("HOSTY_SHELL_MANIFEST_PATH", coreEnvironment.Keys);
         Assert.DoesNotContain("HOSTY_COLLECTOR_MANIFEST_PATH", coreEnvironment.Keys);
         Assert.DoesNotContain("HOSTY_MARKETPLACE_MANIFEST_PATH", coreEnvironment.Keys);
         Assert.DoesNotContain("HOSTY_SHELL_BOOTSTRAP_RUNTIME", coreEnvironment.Keys);
+    }
+
+    [Fact]
+    public void BuildCoreEnvironment_ForwardsPortAndUrlAsThisRunOverrides()
+    {
+        var environment = HostyEnvironment.Current();
+        var (console, _) = CreateConsole();
+        var command = new CoreCommand(new CommandContext(console, environment));
+
+        var coreEnvironment = command.BuildCoreEnvironment(
+            new CoreCommand.StartOptions(null, "http://localhost:7171", false, Port: 7171));
+
+        Assert.Equal("7171", coreEnvironment["HOSTY_CORE_PORT"]);
+        Assert.Equal("http://localhost:7171", coreEnvironment["HOSTY_CORE_URL"]);
+        Assert.Equal("http://localhost:7171", coreEnvironment["ASPNETCORE_URLS"]);
     }
 
     public void Dispose()
@@ -162,6 +285,8 @@ public sealed class CoreCommandTests : IDisposable
 
         public string PathAndQuery { get; private set; } = "";
 
+        public string Body { get; private set; } = "";
+
         public Dictionary<string, string> Headers { get; } = new(StringComparer.OrdinalIgnoreCase);
 
         public async Task WaitForRequestAsync()
@@ -203,6 +328,27 @@ public sealed class CoreCommandTests : IDisposable
                     }
 
                     Headers[line[..separator].Trim()] = line[(separator + 1)..].Trim();
+                }
+
+                if (Headers.TryGetValue("Content-Length", out var rawLength) &&
+                    int.TryParse(rawLength, out var contentLength) &&
+                    contentLength > 0)
+                {
+                    // Chars == bytes for the ASCII JSON these tests send; enough to assert on the payload.
+                    var buffer = new char[contentLength];
+                    var read = 0;
+                    while (read < contentLength)
+                    {
+                        var chunk = await reader.ReadAsync(buffer.AsMemory(read, contentLength - read));
+                        if (chunk <= 0)
+                        {
+                            break;
+                        }
+
+                        read += chunk;
+                    }
+
+                    Body = new string(buffer, 0, read);
                 }
 
                 var payload = Encoding.UTF8.GetBytes(responseBody);

@@ -108,7 +108,7 @@ public sealed class CoreControlClientTests : IDisposable
             Interactive = InteractionSupport.No,
         });
         var environment = HostyEnvironment.Current();
-        return new CommandContext(console, environment, new LaunchSettingsStore(environment));
+        return new CommandContext(console, environment);
     }
 
     private string WriteCoreDiscovery(string controlBaseUrl, int? processId = null)

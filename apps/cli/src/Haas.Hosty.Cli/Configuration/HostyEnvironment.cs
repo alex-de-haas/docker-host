@@ -2,9 +2,15 @@ namespace Haas.Hosty.Cli.Configuration;
 
 using System.Runtime.InteropServices;
 
+// The CLI's view of one Hosty environment: a data root and the paths derived from it. The root IS
+// the environment's identity — a client addresses an instance by its data root alone and discovers
+// everything else (endpoint, PID) from the root's own control.json. Resolution: the global
+// `--data-root` flag → HOSTY_DATA_ROOT → HOSTY_HOME (the legacy override Core also still honors) →
+// the hardcoded per-platform default ~/.hosty.
 internal sealed class HostyEnvironment
 {
-    private const string OverrideRootVariable = "HOSTY_HOME";
+    private const string DataRootVariable = "HOSTY_DATA_ROOT";
+    private const string LegacyOverrideRootVariable = "HOSTY_HOME";
     private const string PreferredRootDirectoryName = ".hosty";
 
     private HostyEnvironment(
@@ -46,7 +52,7 @@ internal sealed class HostyEnvironment
 
     public bool HasRootOverride { get; }
 
-    public static HostyEnvironment Current()
+    public static HostyEnvironment Current(string? dataRootOverride = null)
     {
         var homeDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         if (string.IsNullOrWhiteSpace(homeDirectory))
@@ -56,9 +62,11 @@ internal sealed class HostyEnvironment
         }
 
         var preferredRootDirectory = Path.GetFullPath(Path.Combine(homeDirectory, PreferredRootDirectoryName));
-        var rootOverride = Environment.GetEnvironmentVariable(OverrideRootVariable);
-        var hasRootOverride = !string.IsNullOrWhiteSpace(rootOverride);
-        var rootDirectory = hasRootOverride ? rootOverride! : preferredRootDirectory;
+        var rootOverride = NormalizeOptional(dataRootOverride) ??
+            NormalizeOptional(Environment.GetEnvironmentVariable(DataRootVariable)) ??
+            NormalizeOptional(Environment.GetEnvironmentVariable(LegacyOverrideRootVariable));
+        var hasRootOverride = rootOverride is not null;
+        var rootDirectory = rootOverride ?? preferredRootDirectory;
         var resolvedRootDirectory = Path.GetFullPath(ExpandHome(rootDirectory, homeDirectory));
 
         return new HostyEnvironment(
@@ -68,6 +76,9 @@ internal sealed class HostyEnvironment
             RuntimeInformation.IsOSPlatform(OSPlatform.Windows),
             hasRootOverride);
     }
+
+    private static string? NormalizeOptional(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     public string ResolvePath(string value)
     {

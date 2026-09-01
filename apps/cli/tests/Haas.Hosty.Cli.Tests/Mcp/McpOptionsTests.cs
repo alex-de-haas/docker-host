@@ -6,8 +6,31 @@ using Haas.Hosty.Cli.Mcp;
 using Spectre.Console;
 
 // Argument handling, including the help path the root command advertises.
-public class McpOptionsTests
+public sealed class McpOptionsTests : IDisposable
 {
+    // CommandLine.RunAsync resolves the environment (and runs the one-shot launch.env migration),
+    // so these tests must never address the developer's real ~/.hosty.
+    private const string RootVariable = "HOSTY_HOME";
+    private readonly string? previousRoot;
+    private readonly string rootDirectory;
+
+    public McpOptionsTests()
+    {
+        previousRoot = Environment.GetEnvironmentVariable(RootVariable);
+        rootDirectory = Path.Combine(Path.GetTempPath(), $"hosty-mcp-options-tests-{Guid.NewGuid():N}");
+        Environment.SetEnvironmentVariable(RootVariable, rootDirectory);
+    }
+
+    public void Dispose()
+    {
+        Environment.SetEnvironmentVariable(RootVariable, previousRoot);
+
+        if (Directory.Exists(rootDirectory))
+        {
+            Directory.Delete(rootDirectory, recursive: true);
+        }
+    }
+
     [Fact]
     public async Task HelpIsAnsweredRatherThanRejectedAsAnUnknownArgument()
     {

@@ -85,22 +85,22 @@ A diff against [cli-bootstrap.md](../cli-bootstrap.md).
 ## Deliverables
 
 - [x] Answer open questions 1–3 (decisions 6–8 above).
-- [ ] Hardcoded default data root; `--data-root`/`--port` start flags; port persisted in the
+- [x] Hardcoded default data root; `--data-root`/`--port` start flags; port persisted in the
       per-root settings store with flag-wins-for-the-run semantics.
-- [ ] `launch.env` retired: the CLI stops reading and writing it; `hosty config` removed or reduced
+- [x] `launch.env` retired: the CLI stops reading and writing it; `hosty config` removed or reduced
       accordingly; migration per question 1.
-- [ ] Per-root exclusivity: an exclusive lock held for the process lifetime, stale-lock recovery via
+- [x] Per-root exclusivity: an exclusive lock held for the process lifetime, stale-lock recovery via
       the discovery file's PID, and a refused second start — same root on **any** port — that names
       the live instance (root, PID) instead of binding or failing with a bare bind error.
 - [x] Instance identity on docker resources: id in the root, `hosty.instance` label, instance-scoped
       names and `ps` filters; the default root keeps unscoped names (zero-churn migration).
-- [ ] `hosty core settings list|get|set|reset` over `/control/v1/settings`, with the same validation
+- [x] `hosty core settings list|get|set|reset` over `/control/v1/settings`, with the same validation
       the admin endpoint applies.
-- [ ] Tests: root/port resolution order; the collision message; a second start on a live root with
+- [x] Tests: root/port resolution order; the collision message; a second start on a live root with
       a **different** free port is refused; adoption/recreate never crosses
       instances (a second-root Core must not match a default-root container); a settings round-trip
       over the control plane.
-- [ ] Platform minor bump.
+- [x] Platform minor bump.
 - [ ] Docs: `feature.md` for this folder; [cli-bootstrap.md](../cli-bootstrap.md) updated (and
       migrated into a feature folder per the lazy-migration rule); index regenerated.
 

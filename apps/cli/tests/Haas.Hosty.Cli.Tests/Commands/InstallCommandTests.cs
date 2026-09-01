@@ -57,8 +57,7 @@ public sealed class InstallCommandTests : IDisposable
     private static CommandContext CreateContext(HostyEnvironment environment)
         => new(
             CreateConsole(),
-            environment,
-            new LaunchSettingsStore(environment));
+            environment);
 
     private static IAnsiConsole CreateConsole()
     {

@@ -22,26 +22,36 @@ public static class CommandLine
             return 0;
         }
 
-        if (args.Length == 0 || args is ["--help"] or ["-h"] or ["help"])
-        {
-            WriteHelp(console);
-            return 0;
-        }
-
-        var environment = HostyEnvironment.Current();
-        var settingsStore = new LaunchSettingsStore(environment);
-        var commandContext = new CommandContext(console, environment, settingsStore, error);
-
-        // One-shot, and silent on every machine that never signed in. `hosty login` is gone, and with
-        // it the only way to remove what it saved — so the credential is cleaned up here rather than
-        // left on disk with no supported way to get rid of it.
-        if (LegacyCredentialPurge.Run(environment.ConfigDirectory) is { } purged)
-        {
-            error.MarkupLine($"[yellow]{Markup.Escape(purged)}[/]");
-        }
-
         try
         {
+            // `--data-root` selects the environment for ANY command (the same override
+            // HOSTY_DATA_ROOT provides), so it is extracted globally before dispatch.
+            string? dataRootOverride;
+            (dataRootOverride, args) = ExtractDataRootFlag(args);
+            if (args.Length == 0 || args is ["--help"] or ["-h"] or ["help"])
+            {
+                WriteHelp(console);
+                return 0;
+            }
+
+            var environment = HostyEnvironment.Current(dataRootOverride);
+            var commandContext = new CommandContext(console, environment, error);
+
+            // One-shot, and silent on every machine that never signed in. `hosty login` is gone, and with
+            // it the only way to remove what it saved — so the credential is cleaned up here rather than
+            // left on disk with no supported way to get rid of it.
+            if (LegacyCredentialPurge.Run(environment.ConfigDirectory) is { } purged)
+            {
+                error.MarkupLine($"[yellow]{Markup.Escape(purged)}[/]");
+            }
+
+            // launch.env retirement (read-and-delete): fold what can be folded into the per-root store,
+            // surface everything else as a notice. One-shot, and silent once the file is gone.
+            foreach (var notice in LaunchEnvMigration.Run(environment))
+            {
+                error.MarkupLine($"[yellow]{Markup.Escape(notice)}[/]");
+            }
+
             return args[0] switch
             {
                 "install" => await new InstallCommand(commandContext).ExecuteAsync(args[1..]),
@@ -55,7 +65,6 @@ public static class CommandLine
                 "logs" => await new CoreCommand(commandContext).ExecuteAsync(["logs", .. args[1..]]),
                 "open" => await new OpenCommand(commandContext).ExecuteAsync(args[1..]),
                 "core" => await new CoreCommand(commandContext).ExecuteAsync(args[1..]),
-                "config" => await new ConfigCommand(commandContext).ExecuteAsync(args[1..]),
                 "apps" => await new AppsCommand(commandContext).ExecuteAsync(args[1..]),
                 "mcp" => await new McpCommand(commandContext).ExecuteAsync(args[1..]),
                 "storage" => await new StorageCommand(commandContext).ExecuteAsync(args[1..]),
@@ -123,6 +132,39 @@ public static class CommandLine
         }
     }
 
+    // Strips the global `--data-root PATH` (or `--data-root=PATH`) wherever it appears on the
+    // command line and returns the remaining arguments. The last occurrence wins, mirroring env-var
+    // semantics.
+    internal static (string? DataRoot, string[] Remaining) ExtractDataRootFlag(string[] args)
+    {
+        string? dataRoot = null;
+        var remaining = new List<string>(args.Length);
+        for (var index = 0; index < args.Length; index++)
+        {
+            var arg = args[index];
+            if (arg == "--data-root")
+            {
+                if (index + 1 >= args.Length)
+                {
+                    throw new CommandUsageException("--data-root requires a path.", "Usage: hosty [--data-root <path>] <command> [options]");
+                }
+
+                index++;
+                dataRoot = args[index];
+            }
+            else if (arg.StartsWith("--data-root=", StringComparison.Ordinal))
+            {
+                dataRoot = arg["--data-root=".Length..];
+            }
+            else
+            {
+                remaining.Add(arg);
+            }
+        }
+
+        return (dataRoot, remaining.ToArray());
+    }
+
     private static IAnsiConsole CreateErrorConsole()
         => AnsiConsole.Create(new AnsiConsoleSettings
         {
@@ -154,7 +196,9 @@ public static class CommandLine
     {
         console.MarkupLine("[bold]hosty[/] — manage Hosty Core, Shell, and apps");
         console.WriteLine();
-        console.MarkupLine("[grey]Usage:[/] hosty <command> [[options]]");
+        console.MarkupLine("[grey]Usage:[/] hosty [[--data-root <path>]] <command> [[options]]");
+        console.WriteLine();
+        console.MarkupLine("[grey]--data-root selects the Hosty environment (default ~/.hosty; HOSTY_DATA_ROOT works too).[/]");
         console.WriteLine();
 
         WriteCommandGroup(console, "Lifecycle",
@@ -182,8 +226,7 @@ public static class CommandLine
 
         WriteCommandGroup(console, "Configuration",
         [
-            ("config", "Read and write launch settings"),
-            ("core", "Manage the local Core process directly"),
+            ("core", "Manage the local Core process and its settings"),
         ]);
 
         console.MarkupLine("Run [grey]hosty <command> --help[/] for command-specific options.");

@@ -6,7 +6,6 @@ using Spectre.Console;
 internal sealed record CommandContext(
     IAnsiConsole Console,
     HostyEnvironment Environment,
-    LaunchSettingsStore SettingsStore,
     IAnsiConsole? ErrorConsole = null)
 {
     /// <summary>

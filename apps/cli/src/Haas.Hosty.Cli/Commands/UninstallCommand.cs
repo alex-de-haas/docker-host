@@ -13,9 +13,10 @@ internal sealed class UninstallCommand(CommandContext context)
 
         await TryStopCoreAsync();
 
-        // Resolve the real data root (an operator may have pointed HOSTY_DATA_ROOT outside ~/.hosty);
-        // always passing RootDirectory would silently orphan an external data root while claiming success.
-        var dataRoot = context.SettingsStore.Load().ResolveHostDataRoot(context.Environment);
+        // The CLI's resolved root IS the data root now (--data-root / HOSTY_DATA_ROOT / default) —
+        // launch.env, the only thing that used to remember a different one, is retired. An operator
+        // uninstalling an external root selects it the same way every other command addresses it.
+        var dataRoot = context.Environment.RootDirectory;
 
         var fileCleanup = HostUninstallFileCleanup.Delete(context.Environment, dataRoot, options.DeleteData);
         foreach (var path in fileCleanup.DeletedPaths)
