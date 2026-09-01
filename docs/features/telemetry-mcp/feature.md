@@ -1,10 +1,10 @@
 # Telemetry Over MCP
 
 Created: 2026-08-17
-Updated: 2026-08-18
+Updated: 2026-09-01
 
-The fleet's **stored** telemetry — searchable logs and traces — is an MCP interface an agent can call,
-behind a credential the query API did not have before this shipped.
+The fleet's **stored** telemetry — searchable logs, traces, and resource metrics — is an MCP
+interface an agent can call, behind a credential the query API did not have before this shipped.
 
 It closes a gap Core MCP states in its own tool description: `tail_app_logs` is *"a live tail, not a
 searchable log store — ask for more lines rather than expecting to filter"*. This is the other half.
@@ -68,12 +68,34 @@ of that rule here is the copy that would go stale.
 
 ## The Tools
 
-`interfaces.mcp` points at `/api/mcp` on the backend's query endpoint. Three tools, all declaring
+`interfaces.mcp` points at `/api/mcp` on the backend's query endpoint. Four tools, all declaring
 `readOnlyHint: true` — without it the connector's fail-closed filter would export nothing at all.
 
 - **`search_logs`** — time range, minimum severity, app set, substring.
 - **`list_traces`** — recent traces, newest first.
 - **`get_trace`** — every span of one trace, merged across the apps that took part.
+- **`get_metrics`** — one app's series, summarised over the window.
+
+## Metrics Answer "How Loaded", Not "What Happened"
+
+`get_metrics` exists because the other three answer questions about events, and an agent asked about
+CPU or memory pressure had nothing to call — the data was already stored and already drawn in the
+telemetry UI, reachable over HTTP at `/api/apps/{appId}/metrics`, but no tool exposed it. It is
+app-scoped for the same reason that endpoint is: metrics are stored per app.
+
+Each series comes back **summarised** — `latest`, `min`, `max`, `average`, the sample count, and the
+first and last timestamps — rather than as raw points. An hour of a few dozen series is thousands of
+samples, and the question is answered by the shape.
+
+Two things about the store would otherwise be misread, so the tool states them:
+
+- **Absence is never zero.** `container.cpu.percent`, `container.memory.bytes` and
+  `container.memory.percent` come from `docker stats`, so an app running under `localCommand` has no
+  container and produces none of them. An empty list left to interpret invites "this app uses no
+  CPU"; a result with no `container.*` series carries a `note` saying which kind of nothing it is.
+- **A low sample count means steady, not broken.** Ingest drops unchanged values and re-records a
+  flat series only once a minute, so five points over five minutes is a quiet series, not a failing
+  collector.
 
 A failed call comes back as a normal result carrying `isError`, the protocol's own signal, so the
 model can read why and choose something else; an unimplemented *method* is a JSON-RPC error, because
@@ -137,9 +159,17 @@ the connector then exports these tools like any other app's.
   and a request *below* the minimum reports them too. A flag that is always true says nothing. The
   reported trace default is asserted against the store's own, since a mismatch there hides truncation
   inside the very contract that exists to reveal it.
-- **Tool metadata**: every tool declares `readOnlyHint`, the names are the three above, and
+- **Tool metadata**: every tool declares `readOnlyHint`, the names are the four above, and
   `search_logs` says when to prefer it over a console tail — the model has to be able to tell this
   interface from Core's.
+- **Metrics summarise and explain their own emptiness.** A recorded series is asserted through its
+  aggregates; a store with nothing in it says so rather than returning a bare empty list; an app with
+  only its own meters is told why there is no `container.*` series, **beside** a containerised app
+  that correctly gets no such note; and a name filter that matches nothing says "no series matched"
+  instead of blaming the runtime. The metrics window reports its range clamp and deliberately carries
+  no `limit`/`truncated`, since that query applies no row cap — asserted, so the missing fields read
+  as a decision rather than an omission.
 - **Not yet verified live.** No agent has called these tools against a running host, and the telemetry
-  UI has not been loaded against the authenticated backend. Both are ordinary checks that need a host
-  running this version.
+  UI has not been loaded against the authenticated backend. `get_metrics` adds a third: no reading has
+  been taken from real `docker stats` data, so the `container.*` names are asserted only against
+  Core's own constants. All three are ordinary checks that need a host running this version.

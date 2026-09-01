@@ -27,11 +27,11 @@ public class TelemetryMcpEndpointTests
     }
 
     [Fact]
-    public void ToolsCoverLogsAndTracesAndAreNamedForWhatTheyDo()
+    public void ToolsCoverLogsAndTracesAndMetricsAndAreNamedForWhatTheyDo()
     {
         var names = Tools().Select(tool => tool!["name"]!.GetValue<string>()).ToArray();
 
-        Assert.Equal(["search_logs", "list_traces", "get_trace"], names);
+        Assert.Equal(["search_logs", "list_traces", "get_trace", "get_metrics"], names);
     }
 
     [Fact]
@@ -157,6 +157,148 @@ public class TelemetryMcpEndpointTests
 
         Assert.Equal(50, window["limit"]!.GetValue<int>());
     }
+
+    [Fact]
+    public void MetricsSummariseEachSeriesRatherThanReturningEverySample()
+    {
+        // The shape of the window is the answer to "how loaded was it"; a thousand raw points is the
+        // same answer at a price no context window should pay.
+        using var fixture = new StoreFixture();
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        fixture.Store.RecordMetrics([
+            Sample("app", "container.cpu.percent", 10, nowMs - 20_000),
+            Sample("app", "container.cpu.percent", 50, nowMs - 10_000),
+            Sample("app", "container.cpu.percent", 30, nowMs),
+        ]);
+
+        var series = (JsonArray)Payload(CallMetrics(fixture.Query, "app"))["series"]!;
+
+        var cpu = Assert.Single(series);
+        Assert.Equal("container.cpu.percent", cpu!["name"]!.GetValue<string>());
+        Assert.Equal(30, cpu["latest"]!.GetValue<double>());
+        Assert.Equal(10, cpu["min"]!.GetValue<double>());
+        Assert.Equal(50, cpu["max"]!.GetValue<double>());
+        Assert.Equal(30, cpu["average"]!.GetValue<double>());
+        Assert.Equal(3, cpu["points"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public void NoStoredMetricsSaysSoRatherThanReadingAsIdle()
+    {
+        // The failure this tool exists to prevent, and the one an empty array invites: an agent asked
+        // about memory pressure reporting "no load" when the truth is "nothing was collected".
+        using var fixture = new StoreFixture();
+
+        var payload = Payload(CallMetrics(fixture.Query, "app"));
+
+        Assert.Empty((JsonArray)payload["series"]!);
+        var note = payload["note"]!.GetValue<string>();
+        Assert.Contains("not that the app was idle", note, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnAppWithNoContainerIsToldWhyRatherThanShownAnAbsence()
+    {
+        // A localCommand app has no container, so `docker stats` never reports it and container.*
+        // simply is not there. Without the note that reads as "this app uses no CPU".
+        using var fixture = new StoreFixture();
+        fixture.Store.RecordMetrics([Sample("app", "requests.total", 7, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())]);
+
+        var payload = Payload(CallMetrics(fixture.Query, "app"));
+
+        Assert.Single((JsonArray)payload["series"]!);
+        Assert.Contains("localCommand", payload["note"]!.GetValue<string>(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AContainerisedAppGetsNoSuchNote()
+    {
+        // Paired with the case above: a note attached to every answer would train the model to skip it.
+        using var fixture = new StoreFixture();
+        fixture.Store.RecordMetrics([
+            Sample("app", "container.memory.bytes", 1024, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()),
+        ]);
+
+        Assert.Null(Payload(CallMetrics(fixture.Query, "app"))["note"]);
+    }
+
+    [Fact]
+    public void MetricsReportTheirClampedWindowAndClaimNoRowCapTheyDoNotApply()
+    {
+        // Same disclosure the log tools make, minus the fields that would be fiction: the metric query
+        // caps the range but not the row count, and inventing limit/truncated here would report a
+        // clamp that never ran.
+        using var fixture = new StoreFixture();
+
+        var window = Payload(CallMetrics(fixture.Query, "app", rangeSeconds: 86_400))["window"]!;
+
+        Assert.Equal(3600, window["rangeSeconds"]!.GetValue<int>());
+        Assert.True(window["rangeClamped"]!.GetValue<bool>());
+        Assert.Null(window["limit"]);
+        Assert.Null(window["truncated"]);
+    }
+
+    [Fact]
+    public void AnUnclampedMetricsWindowDoesNotClaimItWasClamped()
+    {
+        using var fixture = new StoreFixture();
+
+        var window = Payload(CallMetrics(fixture.Query, "app", rangeSeconds: 60))["window"]!;
+
+        Assert.Equal(60, window["rangeSeconds"]!.GetValue<int>());
+        Assert.False(window["rangeClamped"]!.GetValue<bool>());
+    }
+
+    [Fact]
+    public void MetricsWithoutAnAppFailAsAResultTheModelCanCorrect()
+    {
+        // Metrics are stored per app, so there is no fleet-wide reading to fall back to. Reported as a
+        // tool failure rather than an empty answer, which would look like "this host has no metrics".
+        using var fixture = new StoreFixture();
+
+        var result = Handle(
+            @"{""jsonrpc"":""2.0"",""id"":10,""method"":""tools/call"",""params"":{""name"":""get_metrics"",""arguments"":{}}}",
+            fixture.Query);
+
+        Assert.True(result["result"]!["isError"]!.GetValue<bool>());
+    }
+
+    [Fact]
+    public void AskingForNamesThatAreNotThereDoesNotBlameTheRuntime()
+    {
+        // The container note is for an unfiltered read. A caller who asked for one meter and got
+        // nothing is owed "no series matched", not a theory about containers.
+        using var fixture = new StoreFixture();
+        fixture.Store.RecordMetrics([
+            Sample("app", "container.cpu.percent", 5, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()),
+        ]);
+
+        var payload = Payload(CallMetrics(fixture.Query, "app", names: "requests.total"));
+
+        Assert.Empty((JsonArray)payload["series"]!);
+        var note = payload["note"]!.GetValue<string>();
+        Assert.Contains("No stored series matched", note, StringComparison.Ordinal);
+        Assert.DoesNotContain("localCommand", note, StringComparison.Ordinal);
+    }
+
+    private static MetricSample Sample(string appId, string name, double value, long timestampMs)
+        => new(appId, name, new Dictionary<string, string>(StringComparer.Ordinal), value, timestampMs);
+
+    private static JsonNode CallMetrics(
+        TelemetryQueryService query, string app, int? rangeSeconds = null, string? names = null)
+    {
+        var arguments = $@"""app"":""{app}"""
+            + (rangeSeconds is int range ? $@",""range_seconds"":{range}" : string.Empty)
+            + (names is not null ? $@",""names"":""{names}""" : string.Empty);
+        return Handle(
+            @"{""jsonrpc"":""2.0"",""id"":11,""method"":""tools/call"",""params"":{""name"":""get_metrics"","
+            + "\"arguments\":{" + arguments + "}}}",
+            query);
+    }
+
+    /// <summary>The whole tool payload, not just its window.</summary>
+    private static JsonNode Payload(JsonNode result)
+        => JsonNode.Parse(result["result"]!["content"]![0]!["text"]!.GetValue<string>())!;
 
     private static JsonNode Call(TelemetryQueryService query, int limit, int rangeSeconds = 300)
         => Handle(

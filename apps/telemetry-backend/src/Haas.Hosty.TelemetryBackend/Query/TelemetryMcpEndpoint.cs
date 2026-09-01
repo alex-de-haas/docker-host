@@ -80,6 +80,21 @@ internal static class TelemetryMcpEndpoint
             "Returns every span of one trace, merged across the apps that took part in it.",
             new JsonObject { ["trace_id"] = Prop("string", "The trace id, as returned by list_traces.") },
             required: "trace_id"),
+        Tool(
+            "get_metrics",
+            "Summarises one app's stored metrics: CPU, memory, and whatever meters the app itself "
+            + "exports. Use this when the question is about load or resource use rather than events "
+            + "\u2014 `container.cpu.percent`, `container.memory.bytes` and `container.memory.percent` "
+            + "come from docker stats. Repeated identical values are dropped on ingest and re-recorded "
+            + "only once a minute, so a flat series has far fewer points than scrapes: a low point "
+            + "count means the value was steady, never that collection is broken.",
+            new JsonObject
+            {
+                ["app"] = Prop("string", "The app id to read. Metrics are stored per app, so this is required."),
+                ["range_seconds"] = Prop("integer", "How far back to look, in seconds. Capped at 3600 (1 hour)."),
+                ["names"] = Prop("string", "Comma-separated metric names to restrict to. Omit for every series."),
+            },
+            required: "app"),
     ];
 
     private static IResult Call(JsonNode? id, JsonNode? parameters, TelemetryQueryService query)
@@ -94,6 +109,7 @@ internal static class TelemetryMcpEndpoint
                 "search_logs" => Content(id, SearchLogs(arguments, query)),
                 "list_traces" => Content(id, ListTraces(arguments, query)),
                 "get_trace" => Content(id, GetTrace(arguments, query)),
+                "get_metrics" => Content(id, GetMetrics(arguments, query)),
                 _ => Failure(id, $"Unknown tool: {name}"),
             };
         }
@@ -113,7 +129,7 @@ internal static class TelemetryMcpEndpoint
             requestedRange,
             Int(arguments, "min_severity"),
             requestedLimit,
-            ParseApps(Str(arguments, "apps")),
+            ParseCsv(Str(arguments, "apps")),
             Str(arguments, "query"));
 
         var rows = new JsonArray();
@@ -137,7 +153,7 @@ internal static class TelemetryMcpEndpoint
         var requestedRange = Int(arguments, "range_seconds");
         var requestedLimit = Int(arguments, "limit");
         var result = query.GetFleetTraces(
-            requestedRange, requestedLimit, ParseApps(Str(arguments, "apps")), Str(arguments, "query"));
+            requestedRange, requestedLimit, ParseCsv(Str(arguments, "apps")), Str(arguments, "query"));
 
         var rows = new JsonArray();
         foreach (var trace in result.Traces)
@@ -180,6 +196,123 @@ internal static class TelemetryMcpEndpoint
         return new JsonObject { ["traceId"] = traceId, ["spans"] = spans };
     }
 
+    // The one metrics answer an agent is most likely to misread, so it is stated rather than left as
+    // an empty list to interpret. `container.*` comes from `docker stats`, which an app that runs no
+    // container never appears in.
+    private const string ContainerAbsenceNote =
+        "A container.* series is missing when the app runs without a container (a localCommand runtime "
+        + "produces no docker stats), or when docker stats were unavailable \u2014 never because CPU or "
+        + "memory use was zero.";
+
+    /// <summary>
+    /// Summarises one app's stored series over the window, rather than returning raw points.
+    /// </summary>
+    /// <remarks>
+    /// Aggregates because the alternative does not fit: a 1-hour window over a few dozen series is
+    /// thousands of points, and the question this answers — "how loaded was it" — is answered by
+    /// the shape, not the samples. What the summary must not do is let absence read as zero, which is
+    /// why an empty or container-less result carries a note saying which of the two it is.
+    /// </remarks>
+    private static JsonObject GetMetrics(JsonNode? arguments, TelemetryQueryService query)
+    {
+        var appId = Str(arguments, "app")
+            ?? throw new InvalidOperationException("app is required.");
+        var requestedRange = Int(arguments, "range_seconds");
+        var names = ParseCsv(Str(arguments, "names"));
+        var result = query.GetMetrics(appId, requestedRange);
+
+        var rows = new JsonArray();
+        var sawContainerSeries = false;
+        foreach (var snapshot in result.Series)
+        {
+            if (names is not null && !names.Contains(snapshot.Name, StringComparer.Ordinal))
+            {
+                continue;
+            }
+
+            var points = snapshot.Points;
+            if (points.Count == 0)
+            {
+                continue;
+            }
+
+            sawContainerSeries |= snapshot.Name.StartsWith("container.", StringComparison.Ordinal);
+
+            var min = double.MaxValue;
+            var max = double.MinValue;
+            var sum = 0d;
+            foreach (var point in points)
+            {
+                min = Math.Min(min, point.Value);
+                max = Math.Max(max, point.Value);
+                sum += point.Value;
+            }
+
+            var labels = new JsonObject();
+            foreach (var label in snapshot.Labels)
+            {
+                labels[label.Key] = label.Value;
+            }
+
+            rows.Add(new JsonObject
+            {
+                ["name"] = snapshot.Name,
+                ["labels"] = labels,
+                ["latest"] = points[^1].Value,
+                ["min"] = min,
+                ["max"] = max,
+                ["average"] = Math.Round(sum / points.Count, 3),
+                // Sample count, not a health signal: ingest drops unchanged values and re-records a
+                // flat series only once a minute, so "few points" usually means "steady".
+                ["points"] = points.Count,
+                ["firstAt"] = DateTimeOffset.FromUnixTimeMilliseconds(points[0].TimestampUnixMs).ToString("O"),
+                ["latestAt"] = DateTimeOffset.FromUnixTimeMilliseconds(points[^1].TimestampUnixMs).ToString("O"),
+            });
+        }
+
+        var payload = new JsonObject { ["app"] = appId, ["series"] = rows };
+        var note = Note(rows.Count, sawContainerSeries, names);
+        if (note is not null)
+        {
+            payload["note"] = note;
+        }
+
+        var effectiveRange = Math.Clamp(requestedRange ?? 300, 1, 3600);
+        payload["window"] = new JsonObject
+        {
+            ["rangeSeconds"] = effectiveRange,
+            ["rangeClamped"] = requestedRange is int r && r != effectiveRange,
+            // No limit or truncated here, unlike every other tool: the metric query applies no row
+            // cap, so there is no clamp to disclose. Their absence is the honest report, not an
+            // oversight — what the window can still hide is retention, which prunes old points.
+            ["series"] = rows.Count,
+        };
+        return payload;
+    }
+
+    /// <summary>Says which kind of "nothing" an empty or container-less result is.</summary>
+    private static string? Note(int returned, bool sawContainerSeries, IReadOnlyCollection<string>? names)
+    {
+        if (returned > 0)
+        {
+            // Only meaningful for an unfiltered read: a caller who asked for specific names and got
+            // them has no missing container series to explain.
+            return names is null && !sawContainerSeries
+                ? "This app has stored metrics, but no container.* series among them. " + ContainerAbsenceNote
+                : null;
+        }
+
+        if (names is null)
+        {
+            return "Nothing is stored for this app in this window. That means nothing was collected, "
+                + "not that the app was idle. " + ContainerAbsenceNote;
+        }
+
+        var askedForContainer = names.Any(name => name.StartsWith("container.", StringComparison.Ordinal));
+        return "No stored series matched those names in this window."
+            + (askedForContainer ? " " + ContainerAbsenceNote : string.Empty);
+    }
+
     /// <summary>
     /// Stamps every result with the window and cap that produced it, and says when it was truncated.
     /// </summary>
@@ -213,15 +346,15 @@ internal static class TelemetryMcpEndpoint
         return payload;
     }
 
-    private static IReadOnlyCollection<string>? ParseApps(string? apps)
+    private static IReadOnlyCollection<string>? ParseCsv(string? values)
     {
-        if (string.IsNullOrWhiteSpace(apps))
+        if (string.IsNullOrWhiteSpace(values))
         {
             return null;
         }
 
-        var ids = apps.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        return ids.Length > 0 ? ids : null;
+        var items = values.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return items.Length > 0 ? items : null;
     }
 
     private static JsonObject Prop(string type, string description)
