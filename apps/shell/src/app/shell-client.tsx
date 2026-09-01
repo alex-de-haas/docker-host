@@ -11,6 +11,8 @@ import { findAppPageLink, getAppPageLinks } from "./shell/app-helpers";
 import { CoreRequestError, isAuthRequiredRedirectError, readCoreError, readCoreErrorDetail, redirectToCoreLogin, redirectToCoreLoginIfAuthRequired } from "./shell/core-api";
 import { createReissueRateLimiter } from "@hosty-sdk/app/embedder";
 import { CoreEventNames, subscribeToCoreEvents } from "./shell/events/core-event-stream";
+import { isAppUp } from "./shell/runtime-states";
+import { waitForShellUpdateToSettle } from "./shell/self-update";
 import { AppDetailsDialog } from "./shell/dialogs/app-details-dialog";
 import { InstallReviewDialog } from "./shell/dialogs/install-review-dialog";
 import { findAssistantGateway } from "./shell/assistant/assistant-client";
@@ -88,11 +90,16 @@ const AUTH_REISSUE_MIN_INTERVAL_MS = 3_000;
 /** Per app. A human clicking rows never reaches this; a loop is stopped by it. */
 const ASK_MIN_INTERVAL_MS = 1_000;
 
-// Polls this page's own document URL until the restarted Shell answers again. Used after a Shell
-// self-update: the already-loaded bundle keeps working against Core while the Shell container
-// swaps, but the new build only reaches the browser via a reload — which must wait until the new
-// Shell is actually up. Resolves false on timeout so the caller keeps the old page alive instead
-// of reloading into a connection error.
+// Polls this page's own document URL until the restarted Shell answers again. The already-loaded
+// bundle keeps working against Core while the Shell container swaps, but the new build only reaches
+// the browser via a reload — which must wait until the new Shell is actually listening. Resolves
+// false on timeout so the caller keeps the old page alive instead of reloading into a connection
+// error.
+//
+// This answers "is a server accepting connections again", never "is the update done": the old Shell
+// answers exactly the same way. After a self-update it is reached only once Core's record says the
+// apply settled (waitForShellUpdateToSettle); after a synchronous restart the container is already
+// swapped by the time the request returns.
 async function waitForOwnOrigin(timeoutMs = 90_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -1250,11 +1257,11 @@ export function ShellClient({
   );
 
   // Enqueues the update on Core (plan-first updates): the request returns as soon as the apply is
-  // accepted, progress lives on the record (operationStatus "updating" drives the row spinner via
-  // the update-work poll), and the outcome arrives as a record flip plus a host-admin notification.
-  // A rejected enqueue (the plan moved, expired, was consumed, or an apply is already running)
-  // answers with an actionable error — surface it and refresh so the row's affordance corrects
-  // itself instead of resending a dead digest.
+  // accepted, progress lives on the record (operationStatus "updating" drives the row spinner), and
+  // the outcome arrives as a record flip, hinted on the event stream. A rejected enqueue (the plan
+  // moved, expired, was consumed, or an apply is already running) answers with an actionable error —
+  // surface it and refresh so the row's affordance corrects itself instead of resending a dead
+  // digest.
   const enqueueUpdate = useCallback(
     async (app: CoreApp, planDigest: string) => {
       const actionKey = `${app.id}:update`;
@@ -1264,12 +1271,41 @@ export function ShellClient({
         // Close this app's dialog if it is the one open; another app's panel is left alone.
         setActivePanel((current) => (current?.appId === app.id ? null : current));
 
-        // Shell self-update: the apply now runs detached on Core, so it survives this page going
-        // away. Wait for the new Shell to answer on our own origin, then reload so the browser
-        // loads the new assets. On timeout keep the (still functional) old page alive.
+        // Shell self-update: the apply runs detached on Core, so it survives this page going away —
+        // and the origin serving us keeps answering from the OLD Shell until the swap happens. Wait
+        // for Core's record to leave "updating" (on the event stream, no poll), and only then probe
+        // our own origin for the new server before reloading into its assets. Probing first would
+        // reload the old bundle within milliseconds of the click, and take the wait down with it.
         if (app.id === shellAppId) {
           toast.success("Shell update started", { description: "Waiting for the new Shell, then reloading this page…" });
           void refresh();
+          const outcome = await waitForShellUpdateToSettle({
+            coreOrigin,
+            shellAppId,
+            // app.removed too: a removal mid-apply is one of the ways this wait ends, and without
+            // it the record would only be re-read on the next unrelated commit or the deadline.
+            subscribe: (onSync) =>
+              subscribeToCoreEvents(coreOrigin, { names: [CoreEventNames.appChanged, CoreEventNames.appRemoved], onSync }),
+            // A running Shell is restarted by the apply, so its "updated" commit lands before the
+            // start this page is actually waiting for. One that is already down ends at "updated".
+            expectRestart: isAppUp(app.runtimeState),
+          });
+          if (outcome.kind === "failed") {
+            toast.error("Shell update failed", { description: outcome.message });
+            void refresh();
+            return;
+          }
+
+          // Deliberately vague: this is every way the record failed to settle — an apply still
+          // running past the deadline, the app removed, a flip the page never saw. The row renders
+          // whichever it was, so point at it rather than assert one.
+          if (outcome.kind === "unresolved") {
+            toast.warning("Shell update not confirmed", {
+              description: "The page stopped waiting for the outcome — check the app row, and reload once the Shell answers again.",
+            });
+            return;
+          }
+
           if (await waitForOwnOrigin()) {
             window.location.reload();
           } else {
@@ -1296,7 +1332,7 @@ export function ShellClient({
         setBusyAction((current) => (current === actionKey ? null : current));
       }
     },
-    [appEndpoint, refresh, sendCsrfJson, shellAppId],
+    [appEndpoint, coreOrigin, refresh, sendCsrfJson, shellAppId],
   );
 
   const applyUpdate = useCallback(
