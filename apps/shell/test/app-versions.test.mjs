@@ -73,6 +73,19 @@ test("an update that does not move the version shows the short target revision i
   );
 });
 
+// The inline label and the tooltip must never name different revisions, and they now reach that value
+// by two different code paths — so pin them together rather than trusting the two orderings to agree.
+test("the inline label shows the first revision the tooltip lists", () => {
+  for (const v of [
+    verdict({ targetVersion: "1.0.0", targetSourceCommit: commit, targetArtifactDigests: { ui: digest } }),
+    verdict({ targetVersion: "1.0.0", targetArtifactDigests: { ui: digest, backend: commit } }),
+    verdict({ targetVersion: "1.0.0", targetArtifactDigests: { ui: digest, backend: null } }),
+  ]) {
+    const head = collectTargetRevisions(v)[0]?.value ?? null;
+    assert.equal(resolveAvailableVersionLabel("1.0.0", v)?.label ?? null, shortRevision(head));
+  }
+});
+
 test("a verdict naming neither a new version nor a revision shows nothing under the installed one", () => {
   assert.equal(resolveAvailableVersionLabel("1.0.0", verdict({ targetVersion: "1.0.0" })), null);
   assert.equal(resolveAvailableVersionLabel("1.0.0", null), null);

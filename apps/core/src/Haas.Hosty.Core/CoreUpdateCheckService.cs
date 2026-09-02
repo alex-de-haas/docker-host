@@ -79,9 +79,13 @@ internal sealed class CoreUpdateCheckService(
             timeout.CancelAfter(FetchTimeout);
 
             // Both files come from the same release; fetching them back to back would spend two
-            // round-trips of the same short budget on what is one look at the channel.
+            // round-trips of the same short budget on what is one look at the channel. The marker
+            // runs on the caller's token rather than this timeout, and owns its deadline: sharing
+            // the budget let a marker request that outlived a completed checksum fetch cancel into
+            // the outer catch and report "Update check failed" for a comparison that had already
+            // succeeded. An optional field must not be able to suppress the verdict.
             var checksumsTask = DownloadChecksumsAsync(releaseTag, timeout.Token);
-            var availableVersionTask = DownloadAvailableVersionAsync(releaseTag, timeout.Token);
+            var availableVersionTask = DownloadAvailableVersionAsync(releaseTag, cancellationToken);
             await Task.WhenAll(checksumsTask, availableVersionTask);
             var checksums = await checksumsTask;
             var availableVersion = await availableVersionTask;
@@ -112,11 +116,17 @@ internal sealed class CoreUpdateCheckService(
     // rendered, and a client must never be handed a megabyte of prose as a "version".
     private async Task<string?> DownloadAvailableVersionAsync(string releaseTag, CancellationToken cancellationToken)
     {
+        // Its own deadline, linked to the caller only. The filter below then reads unambiguously: an
+        // OperationCanceledException while the caller's token is still live is this deadline firing,
+        // which is a marker we could not read; a cancelled caller (the request went away) is not, and
+        // propagates like any other.
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(FetchTimeout);
         try
         {
             var baseUrl = string.Format(System.Globalization.CultureInfo.InvariantCulture, ReleaseBaseUrlFormat, releaseTag);
             var client = httpClientFactory.CreateClient(HttpClientName);
-            using var response = await client.GetAsync($"{baseUrl}/VERSION", HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            using var response = await client.GetAsync($"{baseUrl}/VERSION", HttpCompletionOption.ResponseHeadersRead, timeout.Token);
             if (!response.IsSuccessStatusCode)
             {
                 return null;
@@ -124,9 +134,9 @@ internal sealed class CoreUpdateCheckService(
 
             // Bounded read rather than ReadAsStringAsync: the cap is only worth anything if it is
             // applied to the transfer, not to a string that has already been materialized.
-            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            await using var stream = await response.Content.ReadAsStreamAsync(timeout.Token);
             var buffer = new byte[MaxVersionMarkerLength];
-            var read = await stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: false, cancellationToken);
+            var read = await stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: false, timeout.Token);
             return SanitizeVersion(System.Text.Encoding.UTF8.GetString(buffer, 0, read));
         }
         catch (Exception ex) when (
@@ -138,16 +148,22 @@ internal sealed class CoreUpdateCheckService(
         }
     }
 
-    // Accepts only what a released platform version can look like: one short line of digits, dots,
-    // and the letters/hyphens a prerelease suffix uses. Anything else — an error page, a body long
-    // enough to have been truncated by the read cap, a file that is simply not this one — is not a
-    // version and is reported as none.
+    // Accepts only what a released platform version can look like: one short line starting with a
+    // digit, then digits, dots, and the letters/hyphens a prerelease suffix uses. Anything else — an
+    // error page, a body long enough to have been truncated by the read cap, a file that is simply
+    // not this one — is not a version and is reported as none.
+    //
+    // The leading digit is load-bearing, not decoration: clients render this next to a version they
+    // prefix themselves, so a marker written as `v0.97.0` would reach the Shell's platform row as
+    // `vv0.97.0`. The marker carries the bare version; a `v` belongs to whoever displays it.
     internal static string? SanitizeVersion(string body)
     {
         var version = body.Trim();
-        return version.Length is > 0 and <= 64 && version.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '-' or '+')
-            ? version
-            : null;
+        return version.Length is > 0 and <= 64 &&
+            char.IsAsciiDigit(version[0]) &&
+            version.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '-' or '+')
+                ? version
+                : null;
     }
 
     private async Task<string?> DownloadChecksumsAsync(string releaseTag, CancellationToken cancellationToken)

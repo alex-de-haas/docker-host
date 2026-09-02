@@ -32,6 +32,10 @@ export function collectInstalledRevisions(app: CoreApp): AppRevision[] {
 // Revisions of the build the pending update resolves to, projected onto the verdict by the same plan
 // build. Empty for a Core that predates the projection, and for an update whose inputs are entirely
 // manifest-side (a settings or port change carries no artifact of its own).
+//
+// Order is part of the contract, not incidental: the source commit first, then services by name. The
+// inline label below shows the first of these, so a reader hovering it must find that same revision
+// at the top of the tooltip.
 export function collectTargetRevisions(verdict: AppUpdateAvailability | null | undefined): AppRevision[] {
   if (!verdict) {
     return [];
@@ -51,6 +55,28 @@ export function collectTargetRevisions(verdict: AppUpdateAvailability | null | u
   }
 
   return revisions;
+}
+
+// The revision the inline label falls back to — the first one collectTargetRevisions would list.
+// Derived directly rather than by building and sorting that whole list for its head: this runs on
+// every row of every render, and the label only ever needs one value.
+function firstTargetRevision(verdict: AppUpdateAvailability | null | undefined): string | null {
+  const sourceCommit = verdict?.targetSourceCommit?.trim();
+  if (sourceCommit) {
+    return sourceCommit;
+  }
+
+  let firstService: string | null = null;
+  let firstDigest: string | null = null;
+  for (const [service, digest] of Object.entries(verdict?.targetArtifactDigests ?? {})) {
+    const trimmed = digest?.trim();
+    if (trimmed && (firstService === null || service.localeCompare(firstService) < 0)) {
+      firstService = service;
+      firstDigest = trimmed;
+    }
+  }
+
+  return firstDigest;
 }
 
 // Abbreviates a sha256 image digest to `sha256:` + the first 12 hex chars for compact display.
@@ -95,7 +121,7 @@ export function resolveAvailableVersionLabel(
     return { label: targetVersion, isVersion: true };
   }
 
-  const revision = shortRevision(collectTargetRevisions(verdict)[0]?.value);
+  const revision = shortRevision(firstTargetRevision(verdict));
   return revision ? { label: revision, isVersion: false } : null;
 }
 

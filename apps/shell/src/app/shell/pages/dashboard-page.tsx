@@ -1340,9 +1340,10 @@ function AppVersionCell({
   );
 }
 
-// One version line and the revisions it stands for. The trigger is a span, not a button: this is a
-// hover/focus disclosure, not an action, and wrapping every version in a button would put two more
-// tab stops in front of the row's real controls — tabIndex keeps it keyboard-reachable without them.
+// One version line and the revisions it stands for. The trigger is a span with tabIndex rather than a
+// button: it does take a tab stop — a keyboard reader must be able to reach a tooltip that is the only
+// place the exact revision appears — but it is a disclosure, not an action, and a button would have
+// assistive technology announce each version in the table as something to press.
 function VersionLine({
   value,
   title,

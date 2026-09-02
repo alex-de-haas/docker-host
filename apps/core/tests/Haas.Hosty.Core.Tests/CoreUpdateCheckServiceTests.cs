@@ -24,6 +24,10 @@ public sealed class CoreUpdateCheckServiceTests
     [InlineData("<!doctype html><html><body>Not Found</body></html>")]
     [InlineData("0.97.0 (build 12)")]
     [InlineData("../../etc/passwd")]
+    // A marker written with a `v` prefix would reach a client that adds its own as "vv0.97.0", so the
+    // bare version is the only accepted spelling.
+    [InlineData("v0.97.0")]
+    [InlineData("release-0.97.0")]
     // A body long enough that the read cap truncated it is not a version by definition.
     [InlineData("00000000001111111111222222222233333333334444444444555555555566666")]
     public void SanitizeVersion_RejectsAnythingThatIsNotPlainlyAVersion(string body)
