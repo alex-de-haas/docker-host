@@ -188,9 +188,12 @@ function SidebarButton({
           : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
       )}
       title={compact ? label : undefined}
+      // Compact rows render no text, so the accessible name has to come from aria-label: a title
+      // attribute is a tooltip, not a name assistive tech can be relied on to announce.
+      aria-label={compact ? label : undefined}
       onClick={onClick}
     >
-      <Icon className="h-4 w-4 shrink-0" />
+      <Icon className="h-5 w-5 shrink-0" />
       {!compact && <span className="truncate">{label}</span>}
     </button>
   );
@@ -199,7 +202,7 @@ function SidebarButton({
 function NavigationPlaceholder({ compact, icon: Icon, label }: { compact: boolean; icon: LucideIcon; label: string }) {
   return (
     <div className={cn("flex min-h-9 min-w-0 items-center gap-2 rounded-md px-2 text-sm text-muted-foreground", compact && "justify-center px-0")} title={label}>
-      <Icon className="h-4 w-4 shrink-0" />
+      <Icon className="h-5 w-5 shrink-0" />
       {!compact && <span className="truncate">{label}</span>}
     </div>
   );
@@ -231,6 +234,8 @@ function AppNavigationItem({
   const active = workspace?.appId === app.id;
   const canOpen = running && primaryPage !== null;
   const canOpenStandalone = canOpen;
+  // Tooltip text, and — collapsed, where the row is only its icon — its accessible name too.
+  const rowLabel = canOpen ? app.displayName : `${app.displayName} is ${app.runtimeState || app.operationStatus}`;
 
   // Auto-expand the active app's page list when it becomes active, while still
   // letting the user collapse it. Adjust during render instead of in an effect.
@@ -274,14 +279,15 @@ function AppNavigationItem({
                 : "cursor-not-allowed text-muted-foreground opacity-70",
           )}
           disabled={!canOpen}
-          title={canOpen ? app.displayName : `${app.displayName} is ${app.runtimeState || app.operationStatus}`}
+          title={rowLabel}
+          aria-label={compact ? rowLabel : undefined}
           onClick={() => {
             if (primaryPage) {
               void onLaunch(app, primaryPage, "workspace");
             }
           }}
         >
-          <AppIcon src={resolveAssetSrc(coreOrigin, app.iconUrl)} fallback={LayoutGrid} className="h-4 w-4 rounded-sm" alt="" />
+          <AppIcon src={resolveAssetSrc(coreOrigin, app.iconUrl)} fallback={LayoutGrid} className="h-5 w-5 rounded-sm" alt="" />
           {!compact && (
             <span className="min-w-0 flex-1 truncate text-left">{app.displayName}</span>
           )}
@@ -333,9 +339,9 @@ function AppNavigationItem({
               onClick={() => void onLaunch(app, page, "workspace")}
             >
               {busyAction === `${app.id}:open` ? (
-                <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                <LoaderCircle className="h-4 w-4 animate-spin" />
               ) : (
-                <AppIcon src={resolveAssetSrc(coreOrigin, page.iconUrl)} fallback={Home} className="h-3.5 w-3.5 rounded-sm" alt="" />
+                <AppIcon src={resolveAssetSrc(coreOrigin, page.iconUrl)} fallback={Home} className="h-4 w-4 rounded-sm" alt="" />
               )}
               <span className="truncate">{page.label}</span>
             </button>
@@ -459,6 +465,7 @@ function CompactAppMenu({
               : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
           )}
           title={app.displayName}
+          aria-label={app.displayName}
           onPointerEnter={handleHoverStart}
           onPointerLeave={handleHoverEnd}
           onPointerDown={(event) => {
@@ -472,7 +479,7 @@ function CompactAppMenu({
             }
           }}
         >
-          <AppIcon src={resolveAssetSrc(coreOrigin, app.iconUrl)} fallback={LayoutGrid} className="h-4 w-4 rounded-sm" alt="" />
+          <AppIcon src={resolveAssetSrc(coreOrigin, app.iconUrl)} fallback={LayoutGrid} className="h-5 w-5 rounded-sm" alt="" />
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent

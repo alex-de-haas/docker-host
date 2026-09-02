@@ -5,7 +5,6 @@ import {
   collectTargetRevisions,
   resolveAvailableCoreVersion,
   resolveAvailableVersionLabel,
-  shortRevision,
 } from "../src/app/shell/app-versions.ts";
 
 const commit = "d2ab178826672cd96f0a96fc34dd6e2364ff2979";
@@ -51,44 +50,20 @@ test("a Core that predates the projection yields no target revisions", () => {
   assert.deepEqual(collectTargetRevisions(null), []);
 });
 
-test("shortRevision abbreviates a git commit to seven characters and a digest to the sha256 short form", () => {
-  assert.equal(shortRevision(commit), "d2ab178");
-  assert.equal(shortRevision(digest), "sha256:111111111111");
-  assert.equal(shortRevision(null), null);
-});
-
 test("a version-advancing update shows the target version", () => {
-  assert.deepEqual(
-    resolveAvailableVersionLabel("1.0.0", verdict({ targetVersion: "1.1.0", targetSourceCommit: commit })),
-    { label: "1.1.0", isVersion: true },
-  );
+  assert.equal(resolveAvailableVersionLabel(verdict({ targetVersion: "1.1.0", targetSourceCommit: commit })), "1.1.0");
 });
 
-// The case that motivated the whole projection: Core reports 0.23.1 -> 0.23.1 with a moved source
-// commit, and repeating the installed number in the update's colour would read as a broken row.
-test("an update that does not move the version shows the short target revision instead", () => {
-  assert.deepEqual(
-    resolveAvailableVersionLabel("0.23.1", verdict({ targetVersion: "0.23.1", targetSourceCommit: commit })),
-    { label: "d2ab178", isVersion: false },
-  );
+// An update that keeps its version is the normal shape for a source app tracking a branch: the row
+// still names the version it would install, and the tooltip carries the commit that tells the two
+// builds apart. Showing a bare hash here instead was rejected on review of the live dashboard.
+test("an update that does not move the version still names that version", () => {
+  assert.equal(resolveAvailableVersionLabel(verdict({ targetVersion: "0.23.1", targetSourceCommit: commit })), "0.23.1");
 });
 
-// The inline label and the tooltip must never name different revisions, and they now reach that value
-// by two different code paths — so pin them together rather than trusting the two orderings to agree.
-test("the inline label shows the first revision the tooltip lists", () => {
-  for (const v of [
-    verdict({ targetVersion: "1.0.0", targetSourceCommit: commit, targetArtifactDigests: { ui: digest } }),
-    verdict({ targetVersion: "1.0.0", targetArtifactDigests: { ui: digest, backend: commit } }),
-    verdict({ targetVersion: "1.0.0", targetArtifactDigests: { ui: digest, backend: null } }),
-  ]) {
-    const head = collectTargetRevisions(v)[0]?.value ?? null;
-    assert.equal(resolveAvailableVersionLabel("1.0.0", v)?.label ?? null, shortRevision(head));
-  }
-});
-
-test("a verdict naming neither a new version nor a revision shows nothing under the installed one", () => {
-  assert.equal(resolveAvailableVersionLabel("1.0.0", verdict({ targetVersion: "1.0.0" })), null);
-  assert.equal(resolveAvailableVersionLabel("1.0.0", null), null);
+test("a verdict naming no version shows nothing under the installed one", () => {
+  assert.equal(resolveAvailableVersionLabel(verdict()), null);
+  assert.equal(resolveAvailableVersionLabel(null), null);
 });
 
 function coreUpdate(overrides = {}) {
@@ -102,23 +77,23 @@ function coreUpdate(overrides = {}) {
 }
 
 test("the platform row names the version the release channel publishes", () => {
-  assert.equal(resolveAvailableCoreVersion("0.97.0", coreUpdate({ availableVersion: "0.98.0" })), "0.98.0");
+  assert.equal(resolveAvailableCoreVersion(coreUpdate({ availableVersion: "0.98.0" })), "0.98.0");
 });
 
 // The release published before the VERSION marker existed, or a Core build that predates the field:
 // the hash comparison still says an update exists, but nothing can name it.
 test("a verdict with no version marker names no version", () => {
-  assert.equal(resolveAvailableCoreVersion("0.97.0", coreUpdate({ availableVersion: null })), null);
-  assert.equal(resolveAvailableCoreVersion("0.97.0", coreUpdate()), null);
+  assert.equal(resolveAvailableCoreVersion(coreUpdate({ availableVersion: null })), null);
+  assert.equal(resolveAvailableCoreVersion(coreUpdate()), null);
 });
 
-// A rebuild that did not move the version. Core has no revision to fall back on, so the row says
-// nothing rather than printing the installed number twice.
-test("a republished build of the installed version names no version", () => {
-  assert.equal(resolveAvailableCoreVersion("0.97.0", coreUpdate({ availableVersion: " 0.97.0 " })), null);
+// A rolling channel republishes the same version routinely; the row names it anyway, the same way an
+// app row does, because it is still the answer to "which version would I get".
+test("a republished build of the installed version is still named", () => {
+  assert.equal(resolveAvailableCoreVersion(coreUpdate({ availableVersion: " 0.97.0 " })), "0.97.0");
 });
 
 test("no update means no second line, whatever the marker says", () => {
-  assert.equal(resolveAvailableCoreVersion("0.97.0", coreUpdate({ updateAvailable: false, availableVersion: "0.98.0" })), null);
-  assert.equal(resolveAvailableCoreVersion("0.97.0", null), null);
+  assert.equal(resolveAvailableCoreVersion(coreUpdate({ updateAvailable: false, availableVersion: "0.98.0" })), null);
+  assert.equal(resolveAvailableCoreVersion(null), null);
 });
