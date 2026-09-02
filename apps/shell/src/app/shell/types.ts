@@ -22,6 +22,11 @@ export type CoreUpdateStatus = {
   releaseTag: string;
   checkedAt: string;
   error?: string | null;
+  // The version the release channel publishes, from the release's own VERSION marker. Display only —
+  // `updateAvailable` is the binary-hash comparison either way. Absent against a release published
+  // before the marker existed, and from Core builds that predate the field; the platform row then
+  // names no version, exactly as it did before.
+  availableVersion?: string | null;
 };
 
 // A choice for a select-typed setting: the stored value and its display label.
@@ -295,6 +300,9 @@ export type CoreApp = {
   supportsSource?: boolean | null;
   sourceOverridePath?: string | null;
   sourceManagedPath?: string | null;
+  // The reviewed source pin: the exact commit the installed build was reviewed at. Shown as the
+  // current revision behind the dashboard's version tooltip. Null for apps with no source pin.
+  sourceCommit?: string | null;
   // The folder a live source app actually runs from (override folder, else the original folder
   // install); shown in the "Live" badge tooltip. Null when the app is not running live from source.
   sourceLivePath?: string | null;
@@ -373,6 +381,14 @@ export type AppUpdateAvailability = {
   planDigest?: string | null;
   checkedAt: string;
   error?: string | null;
+  // What the update resolves to, projected from the same plan build as the verdict so a row can name
+  // the update without fetching its plan. `targetVersion` equals the installed version whenever the
+  // update advances the build rather than the version — which is why the revisions travel with it:
+  // the target source commit, and each compiled service's candidate image digest. Absent on a failed
+  // check, on a verdict with nothing available, and from Core builds that predate the projection.
+  targetVersion?: string | null;
+  targetSourceCommit?: string | null;
+  targetArtifactDigests?: Record<string, string> | null;
 };
 
 export type AppUpdateCheckStatus = {

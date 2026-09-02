@@ -1,7 +1,7 @@
 # Runtime App Update
 
 Created: 2026-06-04
-Updated: 2026-09-01
+Updated: 2026-09-02
 
 ## Description
 
@@ -90,7 +90,11 @@ The reference is parsed the way docker's own parser does: a first path component
 
 The contract is the same either way: an unresolvable digest is reported as `unknown` and never fails the plan.
 
-Each app's summary then carries the last-known verdict as `updateCheck`: `{ updateAvailable, requiresReview, planDigest, checkedAt, error }` — null until a check has run for it, and suppressed for a live-source runtime so a verdict from before the app went live cannot keep offering an update the plan flow would refuse. Because caching a plan overwrites the app's pending slot, a fleet check also refreshes what a one-click apply would apply.
+Each app's summary then carries the last-known verdict as `updateCheck`: `{ updateAvailable, requiresReview, planDigest, checkedAt, error, targetVersion, targetSourceCommit, targetArtifactDigests }` — null until a check has run for it, and suppressed for a live-source runtime so a verdict from before the app went live cannot keep offering an update the plan flow would refuse. Because caching a plan overwrites the app's pending slot, a fleet check also refreshes what a one-click apply would apply.
+
+The last three fields name the target the verdict refers to, projected from the same plan build so a client can say *what* the update is without fetching its plan: the candidate manifest's version, the commit the source probe resolved, and the candidate image digest per service key. `targetVersion` equals the installed version whenever the update advances the build rather than the version — a source app tracking a branch, or a re-pushed image tag — which is why the revisions travel with it. Probes that did not resolve contribute nothing rather than a placeholder, so an unreachable registry is never rendered as a revision the operator would get.
+
+Alongside them, `AppSummary.sourceCommit` reports the *installed* reviewed source pin, so the current build's revision is readable from the list without opening the app's Source tab.
 
 A background scheduler runs the same sweep on an interval (`HOSTY_UPDATE_CHECK_INTERVAL_MINUTES`, default 60, `0` disables; first run 2 minutes after startup so autostart settles). The interval is re-read every cycle, so a change from the Core settings panel applies without a restart. With the scheduler on, pending plans are effectively never expired — each sweep replaces them.
 
@@ -113,10 +117,14 @@ Progress and outcome live on the app record, not in a client:
 
 Rows render from the app summary's `updateCheck` verdict, so the affordances survive navigation and reloads without re-probing:
 
-- **routine** — a blue "Update" split-button applies the cached plan by digest with no dialog; its dropdown offers "Review changes" for the curious;
-- **review-required** — a yellow "Review" button opens the plan; there is no silent path;
+- **routine** — a blue update icon applies the cached plan by digest with no dialog; the row's actions menu offers "Review and update" for the curious;
+- **review-required** — an amber update icon opens the plan; there is no silent path;
 - **check failed** — an amber icon carrying the error;
 - **applying** — an "Updating" chip driven by `operationStatus`.
+
+The update icon and the versions share the **Version** cell, because "an update exists" and "which version" are one statement. The cell stacks the installed version over what the update resolves to, in the icon's own colour, with the icon after them. The second line is the target version — or, when the update does not move the version, the short target revision instead, since repeating the installed number in the update's colour reads as a rendering bug rather than as "same version, newer build". A verdict naming neither (an older Core, or a manifest-only change) leaves the installed version alone with the icon.
+
+Both version lines are tooltip triggers, marked with a dotted underline rather than an icon, and spell out the exact revisions that version identifies — the reviewed source commit, each service's image digest — in full. The installed line carries its tooltip whether or not an update exists: a version string alone cannot separate two builds of the same version, which is exactly what a source app tracking a branch ships.
 
 The header "Check updates" triggers or joins the fleet sweep. "Update all (N)" applies every routine verdict, leaving review-class ones on their rows and counting them in the summary toast; the Shell's own app goes last, because its apply restarts the Shell serving the page.
 
@@ -150,7 +158,8 @@ Failed updates leave enough state for diagnosis and retry. Runtime state and app
 - **Plan and classification** — change detection per contract category, `requiresReview` routine/review split (including `role: system` escalation and a cross-repository `image` move), `updateAvailable` treating `->unknown` as "cannot tell", and plan-digest stability across a rebuild.
 - **Apply** — digest mismatch, expiry, and stale-base rejection; verbatim consumption of the cached plan; `update_in_progress`; the interrupted-apply boot sweep.
 - **Shell self-update wait** — the page stays put through `"updating"` and through the intermediate `"updated"` while the restart is still to report, settles on that restart's `"started"` (and on `"updated"` when no restart is coming), reports a `"failed"` record with its error, treats a failed read as no outcome at all, and gives up on its deadline (and when the app is gone) without reloading.
-- **Fleet check** — availability projected into summaries, live-source apps skipped and an earlier verdict suppressed, per-app failures captured without failing the sweep, per-app timeout recorded as that app's error while the rest of the fleet still completes, shutdown not recorded as timeouts, single-flight joining, and the finish announced only once the run no longer reports running.
+- **Fleet check** — availability projected into summaries (target version and revisions alongside the verdict, and nothing named for a probe that did not resolve), live-source apps skipped and an earlier verdict suppressed, per-app failures captured without failing the sweep, per-app timeout recorded as that app's error while the rest of the fleet still completes, shutdown not recorded as timeouts, single-flight joining, and the finish announced only once the run no longer reports running.
+- **Version cell** — the target version shown when the update advances it, the short target revision when it does not, and neither when the verdict names no target; installed revisions read from the app record alone, so the tooltip stands without an update.
 - **Digest resolution** — reference parsing (Docker Hub defaults, `library/` normalization, host detection) and rejection of references that cannot be turned into a URL unambiguously; bearer-challenge handling with token reuse and one re-challenge when a cached token stops working; the hash-the-manifest path when the digest header is absent; fallback to the docker CLI on every unclean answer (auth, redirect, malformed digest, transport failure); cancellation propagating rather than being swallowed as a fallback.
 
 Digest resolution is covered offline against a stub transport — the suite must not depend on reaching a registry. Agreement with `docker buildx imagetools inspect` on real registries is verified out of band when the resolver changes.

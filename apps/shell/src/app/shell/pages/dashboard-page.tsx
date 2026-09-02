@@ -41,6 +41,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import {
   appSupportsReviewedUpdate,
@@ -53,6 +54,13 @@ import {
   shortDigest,
 } from "../app-helpers";
 import { collectAppProblems } from "../app-problems";
+import {
+  collectInstalledRevisions,
+  collectTargetRevisions,
+  resolveAvailableCoreVersion,
+  resolveAvailableVersionLabel,
+  type AppRevision,
+} from "../app-versions";
 import { isAppBusy, isAppUp } from "../runtime-states";
 import { AppIcon } from "../app-icon";
 import { copyTextToClipboard } from "../clipboard";
@@ -63,6 +71,7 @@ import type {
   AppAction,
   AppHealthResponse,
   AppProblem,
+  AppUpdateAvailability,
   AppUpdateCheckStatus,
   AppUpdateStatusResponse,
   CoreApp,
@@ -467,7 +476,7 @@ function CoreSection({
         </div>
 
         <div className="flex shrink-0 items-center gap-3">
-          <span className="text-sm text-muted-foreground">{status?.version ? `v${status.version}` : "version unknown"}</span>
+          <CoreVersionBlock status={status} coreUpdate={coreUpdate} />
           <StatusBadge value={status ? status.status : "offline"} />
           {/* Every installed app has its console logs one click away in the row menu below; Core is
               not an installed app and had nowhere to show its own. */}
@@ -1103,7 +1112,17 @@ function InstalledAppRow({
           onSwitchRuntime={onSwitchRuntime}
         />
       </TableCell>
-      <TableCell>{app.version}</TableCell>
+      <TableCell>
+        <AppVersionCell
+          app={app}
+          verdict={verdict}
+          updateVisible={updateVisible}
+          needsReview={needsReview}
+          applying={isBusy("update")}
+          onApply={() => onUpdateApp(app)}
+          onReview={() => onOpenPanel(app, "update")}
+        />
+      </TableCell>
       <TableCell><Badge variant={autostartEnabled ? "outline" : "secondary"}>{autostartEnabled ? "On" : "Off"}</Badge></TableCell>
       <TableCell>
         <div className="flex flex-wrap items-center gap-1.5">
@@ -1140,32 +1159,6 @@ function InstalledAppRow({
               <CircleAlert className="h-4 w-4 text-amber-500" aria-label="Update check failed" />
             </span>
           )}
-          {updateVisible && (needsReview ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              className="text-amber-600 hover:bg-amber-500/10 hover:text-amber-600 dark:text-amber-500 dark:hover:text-amber-500"
-              title="Update available — changes more than the app's build, so review it before applying"
-              aria-label="Update available — review before applying"
-              onClick={() => onOpenPanel(app, "update")}
-            >
-              <ArrowUpCircle className="h-4 w-4" />
-            </Button>
-          ) : (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              className="text-sky-600 hover:bg-sky-500/10 hover:text-sky-600 dark:text-sky-400 dark:hover:text-sky-400"
-              title="Routine update available — apply it (use the actions menu to review the changes first)"
-              aria-label="Routine update available — apply"
-              disabled={isBusy("update")}
-              onClick={() => onUpdateApp(app)}
-            >
-              {isBusy("update") ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ArrowUpCircle className="h-4 w-4" />}
-            </Button>
-          ))}
           {canControl && (transitioning ? (
             // Neither Start nor Stop is the right offer while the server is mid-verb: this toggle was
             // binary before intermediate states existed, so a starting app showed a Start button that
@@ -1217,6 +1210,185 @@ function InstalledAppRow({
 // glyph reads better at a glance, but does not scale: an app with a failed start, an unbound port, and
 // missing settings would carry three icons and stop being scannable. The tooltip carries the specifics,
 // and the panel's alerts carry the full explanation.
+// Core's version, and — when the release channel publishes a newer one — that version under it, in
+// the same shape the app rows use. Core's own check is a binary-hash comparison, so it can only name
+// a version when the release carries the marker: an older release, or a rebuild that did not move the
+// version, leaves the installed version alone and the "Update Core" button to say the rest. The
+// tooltips name what Core actually knows here — the release channel and when it last looked — rather
+// than a revision, because no hash of the published binary is exposed to a client.
+function CoreVersionBlock({ status, coreUpdate }: { status: CoreStatus | null; coreUpdate: CoreUpdateStatus | null }) {
+  if (!status?.version) {
+    return <span className="text-sm text-muted-foreground">version unknown</span>;
+  }
+
+  const channel: AppRevision[] = coreUpdate ? [{ label: "Release channel", value: coreUpdate.releaseTag }] : [];
+  const available = resolveAvailableCoreVersion(status.version, coreUpdate);
+
+  return (
+    <TooltipProvider delayDuration={150}>
+      <div className="space-y-0.5 text-right text-sm leading-tight text-muted-foreground">
+        <div>
+          <VersionLine
+            value={`v${status.version}`}
+            title={`Installed v${status.version}`}
+            revisions={channel}
+            empty="Core has not checked its release channel yet."
+          />
+        </div>
+        {available && (
+          <div>
+            <VersionLine
+              value={`v${available}`}
+              className="text-sky-600 decoration-sky-600/50 dark:text-sky-400 dark:decoration-sky-400/50"
+              title={`Update to v${available}`}
+              revisions={channel}
+              empty="Core has not checked its release channel yet."
+            />
+          </div>
+        )}
+      </div>
+    </TooltipProvider>
+  );
+}
+
+// The Version cell carries the whole update story for a row: the installed version, what the pending
+// update resolves to underneath it in the update affordance's own colour, and the affordance itself
+// after them. Both version lines are tooltip triggers — marked by a dotted underline rather than an
+// icon, so the cell stays a cell — naming the exact revisions that version identifies (the reviewed
+// source commit, each service's image digest). Version strings alone cannot separate two builds of
+// the same version, which is precisely what a source app tracking a branch ships.
+function AppVersionCell({
+  app,
+  verdict,
+  updateVisible,
+  needsReview,
+  applying,
+  onApply,
+  onReview,
+}: {
+  app: CoreApp;
+  verdict: AppUpdateAvailability | null | undefined;
+  updateVisible: boolean;
+  needsReview: boolean;
+  applying: boolean;
+  onApply: () => void;
+  onReview: () => void;
+}) {
+  const installedRevisions = collectInstalledRevisions(app);
+  // Only ever read when an update is actually available, so a stale verdict's target never shows up
+  // under a row that has nothing to apply.
+  const available = updateVisible ? resolveAvailableVersionLabel(app.version, verdict) : null;
+  const targetRevisions = updateVisible ? collectTargetRevisions(verdict) : [];
+  // The available version takes the affordance's colour, so the two read as one statement: amber when
+  // the plan must be reviewed first, sky when it is a one-click apply.
+  const accent = needsReview
+    ? "text-amber-600 decoration-amber-600/50 dark:text-amber-500 dark:decoration-amber-500/50"
+    : "text-sky-600 decoration-sky-600/50 dark:text-sky-400 dark:decoration-sky-400/50";
+
+  return (
+    <TooltipProvider delayDuration={150}>
+      <div className="flex items-center gap-1.5">
+        <div className="min-w-0 space-y-0.5 leading-tight">
+          <div>
+            <VersionLine
+              value={app.version}
+              title={`Installed ${app.version}`}
+              revisions={installedRevisions}
+              empty="No pinned revision recorded for this build."
+            />
+          </div>
+          {available && (
+            <div>
+              <VersionLine
+                value={available.label}
+                className={cn(accent, available.isVersion ? undefined : "font-mono text-[11px]")}
+                title={available.isVersion ? `Update to ${available.label}` : `New build of ${app.version}`}
+                revisions={targetRevisions}
+                empty="This update changes the app's manifest, not a compiled artifact."
+              />
+            </div>
+          )}
+        </div>
+        {updateVisible && (needsReview ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="shrink-0 text-amber-600 hover:bg-amber-500/10 hover:text-amber-600 dark:text-amber-500 dark:hover:text-amber-500"
+            title="Update available — changes more than the app's build, so review it before applying"
+            aria-label="Update available — review before applying"
+            onClick={onReview}
+          >
+            <ArrowUpCircle className="h-4 w-4" />
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="shrink-0 text-sky-600 hover:bg-sky-500/10 hover:text-sky-600 dark:text-sky-400 dark:hover:text-sky-400"
+            title="Routine update available — apply it (use the actions menu to review the changes first)"
+            aria-label="Routine update available — apply"
+            disabled={applying}
+            onClick={onApply}
+          >
+            {applying ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ArrowUpCircle className="h-4 w-4" />}
+          </Button>
+        ))}
+      </div>
+    </TooltipProvider>
+  );
+}
+
+// One version line and the revisions it stands for. The trigger is a span with tabIndex rather than a
+// button: it does take a tab stop — a keyboard reader must be able to reach a tooltip that is the only
+// place the exact revision appears — but it is a disclosure, not an action, and a button would have
+// assistive technology announce each version in the table as something to press.
+function VersionLine({
+  value,
+  title,
+  revisions,
+  empty,
+  className,
+}: {
+  value: string;
+  title: string;
+  revisions: AppRevision[];
+  empty: string;
+  className?: string;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          tabIndex={0}
+          className={cn(
+            "inline-block cursor-help underline decoration-dotted underline-offset-4 focus-visible:outline-none",
+            className ?? "decoration-muted-foreground/70",
+          )}
+        >
+          {value}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-sm">
+        <div className="space-y-1">
+          <div className="font-medium">{title}</div>
+          {revisions.length === 0 ? (
+            <div className="opacity-80">{empty}</div>
+          ) : (
+            revisions.map((revision) => (
+              <div key={`${revision.label}:${revision.value}`}>
+                <span className="opacity-70">{revision.label}: </span>
+                <span className="font-mono break-all">{revision.value}</span>
+              </div>
+            ))
+          )}
+        </div>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 function AppProblemIcons({ problems }: { problems: AppProblem[] }) {
   const errors = problems.filter((problem) => problem.severity === "error");
   const warnings = problems.filter((problem) => problem.severity === "warning");

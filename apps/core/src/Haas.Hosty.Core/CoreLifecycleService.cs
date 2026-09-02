@@ -1577,12 +1577,20 @@ internal sealed class CoreLifecycleService(
         reviewedUpdatePlans[appId] = cached;
         // Every successful plan build — sweep, dialog open, status probe — refreshes the app's
         // availability projection, so the apps-list verdict and the plan cache never disagree.
+        // The target the verdict refers to travels with it, so a client can name the update without
+        // re-fetching the plan: the candidate version, plus the revisions that identify the build it
+        // resolves to (the probed source commit, and each service's candidate image digest). Probes
+        // that could not resolve contribute nothing rather than a placeholder — an unreachable
+        // registry must not be rendered as a revision the operator would get.
         SetUpdateAvailability(appId, new AppUpdateAvailability(
             UpdateAvailable: PlanIndicatesUpdateAvailable(changes),
             RequiresReview: plan.RequiresReview,
             PlanDigest: plan.PlanDigest,
             CheckedAt: clock.UtcNow,
-            Error: null));
+            Error: null,
+            TargetVersion: plan.TargetVersion,
+            TargetSourceCommit: resolvedSourceCommit,
+            TargetArtifactDigests: BuildTargetArtifactDigests(artifactProbes)));
         return cached;
     }
 
@@ -1843,6 +1851,17 @@ internal sealed class CoreLifecycleService(
         {
             events?.PublishAppEvent(CoreEventHub.AppUpdateCheckChanged, appId);
         }
+    }
+
+    // Service key -> the digest that service would run after the update, for the availability
+    // projection. Only probes that actually resolved a candidate are included, so an empty result
+    // means "no compiled artifact to name" rather than "unchanged".
+    private static IReadOnlyDictionary<string, string>? BuildTargetArtifactDigests(IReadOnlyList<AppServiceArtifactProbe> probes)
+    {
+        var digests = probes
+            .Where(probe => !string.IsNullOrWhiteSpace(probe.CandidateDigest))
+            .ToDictionary(probe => probe.Service, probe => probe.CandidateDigest!, StringComparer.Ordinal);
+        return digests.Count == 0 ? null : digests;
     }
 
     // Sweep hook: a plan build failed for this app, so its row shows "check failed" instead of a

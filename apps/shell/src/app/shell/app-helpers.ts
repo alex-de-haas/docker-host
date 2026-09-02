@@ -8,8 +8,11 @@ import type {
   RuntimeServiceRow,
   SessionResponse,
 } from "./types";
+import { shortDigest } from "./app-versions";
 import { normalizeAppPath } from "./shell-routes";
 import { buildPublicOriginSettingKey } from "./settings";
+
+export { shortDigest };
 
 // Resolve a Core asset URL (iconUrl / descriptionUrl / page iconUrl) to something loadable: an
 // absolute https URL passes through; a Core-origin-relative path is prefixed with the Core origin so
@@ -204,23 +207,6 @@ function formatArrowValue(value: string): string {
   }
 
   return `${value.slice(0, separator)} to ${value.slice(separator + 2)}`;
-}
-
-// Abbreviates a sha256 image digest to `sha256:` + the first 12 hex chars for compact display.
-// Only real digests (`sha256:`-prefixed or a bare 64-hex string) are shortened; any other token is
-// returned unchanged so non-digest identifiers are never mis-rendered with a fake `sha256:` prefix.
-export function shortDigest(digest?: string | null): string | null {
-  const trimmed = digest?.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  const hex = trimmed.startsWith("sha256:") ? trimmed.slice("sha256:".length) : trimmed;
-  if (!/^[0-9a-f]{64}$/i.test(hex)) {
-    return trimmed;
-  }
-
-  return `sha256:${hex.slice(0, 12)}`;
 }
 
 // Renders one side of an artifact-digest diff: the literal `none`/`unknown`/empty markers verbatim,
