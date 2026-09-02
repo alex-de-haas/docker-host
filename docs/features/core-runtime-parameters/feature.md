@@ -1,7 +1,7 @@
 # Core Runtime Parameters — Two Launch Flags, Everything Else Lives Inside
 
 Created: 2026-09-01
-Updated: 2026-09-01
+Updated: 2026-09-02
 
 Core's launch surface is two process parameters — the data root and the port — with hardcoded
 defaults. Everything else an operator tunes lives in the instance's own settings store. There is no
@@ -75,6 +75,11 @@ second root can no longer touch the live host's apps.
 
 ## Settings over the Control Plane
 
+A save merges onto what `settings.json` holds at that moment rather than onto the snapshot the
+process loaded at startup — a save rewrites the whole document, so merging onto stale state would
+erase anything written to the file since (a hand edit, or the launch.env migration folding values in
+behind a running Core).
+
 `GET`/`PUT /control/v1/settings` serve the same rows and apply the same validation as the admin
 `/api/core/settings` (the two surfaces share the build and apply code), gated by the loopback
 control secret. `hosty core settings list|get|set|reset <KEY>` is the CLI over it — on a headless
@@ -83,13 +88,24 @@ UI. A down instance fails with the ordinary "Core is not running" error.
 
 ## launch.env Migration
 
-On first contact the CLI migrates a legacy `{root}/config/launch.env` read-and-delete: a
-non-default `HOSTY_CORE_PORT` is folded into the target root's settings store (merging into an
-existing `settings.json` without disturbing other groups), a non-default `HOSTY_DATA_ROOT` becomes
-a notice pointing at `--data-root`/`HOSTY_DATA_ROOT` (the pointer cannot live inside the root it
-points to), a set `HOSTY_CORE_PUBLIC_ORIGIN` is echoed as a notice pointing at
-`hosty core settings set`, and the
-file is deleted. If the fold itself fails, the file is left in place with instructions.
+On first contact the CLI migrates a legacy `{root}/config/launch.env` read-and-delete. A non-default
+`HOSTY_CORE_PORT` and a set `HOSTY_CORE_PUBLIC_ORIGIN` are folded into the target root's settings
+store — gathered first and written in one pass, merging into an existing `settings.json` without
+disturbing other groups — and a non-default `HOSTY_DATA_ROOT` becomes a notice pointing at
+`--data-root`/`HOSTY_DATA_ROOT`, the pointer being the one value that cannot live inside the root it
+points to. Then the file is deleted.
+
+Three rules hold the fold together. The origin is stored canonically and validated the way Core
+validates it, so an unusable one is reported while the file that records it still exists rather than
+being accepted here and dropped by Core's read path. A key the store already carries is never
+overwritten — the operator set it after the fact, and that choice is newer than the retired file's.
+And any value that cannot be folded leaves the file in place with instructions, so a migration is
+never half-applied.
+
+The origin's inclusion is a correction, not an original behavior: it was echoed as a notice and
+deleted with the file while the store had no slot for it, which cost a live host its public origin —
+Core fell back to its listen URL and handed `http://localhost:{port}` to every app, so Shell's
+browser dialled loopback and sign-in links pointed somewhere unreachable from outside the machine.
 
 ## Testing Expectations
 
@@ -103,8 +119,13 @@ file is deleted. If the fold itself fails, the file is left in place with instru
 - Cross-instance isolation in the docker adapter: adoption and owned-removal refuse a container of
   another instance in both directions, the reconcile probe and stats owner map filter to the own
   instance, and the default instance's names/labels stay byte-for-byte legacy.
+- A save preserves a value written to `settings.json` after startup instead of overwriting it with
+  the loaded snapshot.
 - The settings store: server-port round-trip and validation through `CoreSettingsService`, the
   lenient startup read, and a full HTTP round-trip over `/control/v1/settings` including the
   control-secret gate.
 - CLI: the global `--data-root` extraction, the launch.env migration cases, the refused conflicting
   start, and `hosty core settings` get/set/reset against the control plane.
+- The migration folds both the port and the public origin, stores the origin canonically, keeps a
+  value the store already holds, and leaves the file in place — writing nothing — when a value is
+  unusable.

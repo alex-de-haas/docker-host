@@ -11,10 +11,17 @@ using System.Text.Json.Nodes;
 //
 // - HOSTY_CORE_PORT != 7070 is written into {data root}/core/settings.json (the store Core reads
 //   the port from at startup).
+// - HOSTY_CORE_PUBLIC_ORIGIN is written into the same store. An earlier revision only echoed it,
+//   because the store had no slot for it yet; that shipped, and on a host that carried a public
+//   origin the value went with the deleted file. Core then fell back to its listen URL and handed
+//   `http://localhost:{port}` to every app, so Shell's browser dialled loopback and sign-in links
+//   pointed at a host nobody outside the machine can reach. The slot exists now, so the value moves
+//   with everything else.
 // - A non-default HOSTY_DATA_ROOT cannot be folded anywhere — the pointer cannot live inside the
 //   root it points to — so the operator is told to select it via --data-root/HOSTY_DATA_ROOT.
-// - HOSTY_CORE_PUBLIC_ORIGIN remains a plain environment variable Core reads; its store move is a
-//   separate plan (core-public-origin), so its value is echoed for the operator to re-apply.
+//
+// A value the store already carries is never overwritten: the operator set it after the fact (quite
+// possibly to recover from the loss above), and that choice is newer than the retired file's.
 internal static class LaunchEnvMigration
 {
     public static IReadOnlyList<string> Run(HostyEnvironment environment)
@@ -66,25 +73,70 @@ internal static class LaunchEnvMigration
             return [];
         }
 
-        var folded = true;
+        // Everything the store can hold, gathered before a single write so one unusable value never
+        // leaves the file half-migrated.
+        var fold = new Dictionary<string, string>(StringComparer.Ordinal);
+        var blocked = false;
         if (values.GetValueOrDefault("HOSTY_CORE_PORT") is { } rawPort &&
             int.TryParse(rawPort.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var port) &&
             port is > 0 and <= 65535 &&
             port != 7070)
         {
-            if (TryFoldPortIntoSettings(environment.RootDirectory, port, out var settingsPath, out var foldError))
+            fold["HOSTY_CORE_PORT"] = port.ToString(CultureInfo.InvariantCulture);
+        }
+
+        if (values.GetValueOrDefault("HOSTY_CORE_PUBLIC_ORIGIN") is { } rawOrigin &&
+            !string.IsNullOrWhiteSpace(rawOrigin))
+        {
+            if (TryNormalizeOrigin(rawOrigin, out var origin))
             {
+                fold["HOSTY_CORE_PUBLIC_ORIGIN"] = origin;
+            }
+            else
+            {
+                // Not foldable and not silently droppable: this is the value an operator signs in
+                // through, so say so and keep the file as the record of it. The value itself is NOT
+                // echoed — one of the ways it can be invalid is carrying userinfo, and a notice is
+                // console output that lands in scrollback and logs. The file holds it; point there.
+                blocked = true;
                 notices.Add(
-                    $"launch.env is retired: moved HOSTY_CORE_PORT={port} into the data root's settings store " +
-                    $"({settingsPath}). Change it later with `hosty core settings set HOSTY_CORE_PORT <port>`.");
+                    $"launch.env ('{path}') carries a HOSTY_CORE_PUBLIC_ORIGIN that is not a usable origin: " +
+                    "it must be an absolute http(s) address with no path, query, fragment or userinfo, and " +
+                    "not an unspecified address (0.0.0.0, [::]). The file is left in place so the value is " +
+                    "not lost — read it there, set a valid one with " +
+                    "`hosty core settings set HOSTY_CORE_PUBLIC_ORIGIN <origin>`, and delete the file.");
+            }
+        }
+
+        var folded = !blocked;
+        if (folded && fold.Count > 0)
+        {
+            if (TryFoldIntoSettings(environment.RootDirectory, fold, out var settingsPath, out var kept, out var foldError))
+            {
+                var moved = fold.Keys.Where(key => !kept.Contains(key)).ToArray();
+                if (moved.Length > 0)
+                {
+                    notices.Add(
+                        $"launch.env is retired: moved {string.Join(" and ", moved.Select(key => $"{key}={fold[key]}"))} " +
+                        $"into the data root's settings store ({settingsPath}). Change them later with " +
+                        "`hosty core settings set <KEY> <value>`.");
+                }
+
+                foreach (var key in kept)
+                {
+                    notices.Add(
+                        $"launch.env also carried {key}={fold[key]}, but the settings store already has a value " +
+                        "for it — the store's value is newer and was kept. Check it with " +
+                        $"`hosty core settings get {key}`.");
+                }
             }
             else
             {
                 folded = false;
                 notices.Add(
-                    $"launch.env carries HOSTY_CORE_PORT={port}, which could not be moved into " +
-                    $"'{settingsPath}' ({foldError}). The file is left in place; move the port with " +
-                    "`hosty core settings set HOSTY_CORE_PORT <port>` and delete it.");
+                    $"launch.env carries {string.Join(", ", fold.Keys)}, which could not be moved into " +
+                    $"'{settingsPath}' ({foldError}). The file is left in place; move the values with " +
+                    "`hosty core settings set <KEY> <value>` and delete it.");
             }
         }
 
@@ -98,13 +150,6 @@ internal static class LaunchEnvMigration
                 $"launch.env pointed the data root at '{pointerRoot}'. The CLI no longer stores this pointer " +
                 "(it cannot live inside the root it points to): keep selecting the environment with " +
                 $"--data-root '{pointerRoot}', or export HOSTY_DATA_ROOT.");
-        }
-
-        if (values.GetValueOrDefault("HOSTY_CORE_PUBLIC_ORIGIN") is { } origin && !string.IsNullOrWhiteSpace(origin))
-        {
-            notices.Add(
-                $"launch.env carried HOSTY_CORE_PUBLIC_ORIGIN={origin.Trim()}. The CLI no longer injects it: " +
-                "export it as a plain environment variable when starting Core.");
         }
 
         if (folded)
@@ -123,15 +168,51 @@ internal static class LaunchEnvMigration
         return notices;
     }
 
-    // Merges the port into {dataRoot}/core/settings.json without disturbing anything else the file
-    // holds — the store is Core-owned, so this writes the minimum: server.HOSTY_CORE_PORT (plus the
-    // schema version when creating the file). JsonNode keeps unknown groups intact byte-for-byte
-    // semantically; Core rewrites the file in its own shape on its next settings save.
-    private static bool TryFoldPortIntoSettings(string dataRoot, int port, out string settingsPath, out string error)
+    // Mirrors Core's CoreOriginSettings.TryNormalize so the operator hears about an unusable origin
+    // here, while the file that records it still exists, instead of having it accepted and then
+    // dropped by Core's own read path. Canonical form is the authority — scheme, host and port — which
+    // is the shape Core stores.
+    private static bool TryNormalizeOrigin(string? raw, out string origin)
+    {
+        origin = "";
+        if (string.IsNullOrWhiteSpace(raw) ||
+            !Uri.TryCreate(raw.Trim(), UriKind.Absolute, out var uri) ||
+            uri.Scheme is not ("http" or "https") ||
+            !string.IsNullOrWhiteSpace(uri.UserInfo) ||
+            !string.IsNullOrEmpty(uri.PathAndQuery.Trim('/')) ||
+            !string.IsNullOrWhiteSpace(uri.Fragment))
+        {
+            return false;
+        }
+
+        // A bind address, never somewhere a browser can be sent.
+        if (System.Net.IPAddress.TryParse(uri.Host.Trim('[', ']'), out var address) &&
+            (address.Equals(System.Net.IPAddress.Any) || address.Equals(System.Net.IPAddress.IPv6Any)))
+        {
+            return false;
+        }
+
+        origin = uri.GetLeftPart(UriPartial.Authority);
+        return true;
+    }
+
+    // Merges the gathered values into {dataRoot}/core/settings.json without disturbing anything else
+    // the file holds — the store is Core-owned, so this writes the minimum: the `server` group (plus
+    // the schema version when creating the file). JsonNode keeps unknown groups intact byte-for-byte
+    // semantically; Core rewrites the file in its own shape on its next settings save. Keys the store
+    // already carries are reported through `kept` and left untouched.
+    private static bool TryFoldIntoSettings(
+        string dataRoot,
+        IReadOnlyDictionary<string, string> values,
+        out string settingsPath,
+        out IReadOnlyCollection<string> kept,
+        out string error)
     {
         var coreRoot = Path.Combine(dataRoot, "core");
         settingsPath = Path.Combine(coreRoot, "settings.json");
         error = string.Empty;
+        var alreadyStored = new List<string>();
+        kept = alreadyStored;
         try
         {
             JsonObject document;
@@ -156,7 +237,16 @@ internal static class LaunchEnvMigration
                 document["server"] = server;
             }
 
-            server["HOSTY_CORE_PORT"] = port.ToString(CultureInfo.InvariantCulture);
+            foreach (var (key, value) in values)
+            {
+                if (server[key] is not null)
+                {
+                    alreadyStored.Add(key);
+                    continue;
+                }
+
+                server[key] = value;
+            }
 
             Directory.CreateDirectory(coreRoot);
             var temporaryPath = settingsPath + ".tmp";
