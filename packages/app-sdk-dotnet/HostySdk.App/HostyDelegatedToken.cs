@@ -87,9 +87,14 @@ public static class HostyDelegatedToken
             using var ecdsa = ECDsa.Create();
             ecdsa.ImportSubjectPublicKeyInfo(Convert.FromBase64String(key), out _);
 
-            // VerifyData's default signature format is IEEE P1363 (raw r||s), which is what Core emits;
-            // asking for the DER sequence here would reject every genuine token.
-            if (!ecdsa.VerifyData(signingInput, FromBase64Url(parts[3]), HashAlgorithmName.SHA256))
+            // Stated, not inherited. Core emits IEEE P1363 (raw r||s) and the format is part of the
+            // token contract, so naming it here keeps verification from depending on what a framework
+            // default happens to be — a default that changed would reject every genuine token.
+            if (!ecdsa.VerifyData(
+                    signingInput,
+                    FromBase64Url(parts[3]),
+                    HashAlgorithmName.SHA256,
+                    DSASignatureFormat.IeeeP1363FixedFieldConcatenation))
             {
                 return null;
             }

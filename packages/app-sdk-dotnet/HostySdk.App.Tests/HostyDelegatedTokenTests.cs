@@ -65,6 +65,30 @@ public sealed class HostyDelegatedTokenTests
     }
 
     [Fact]
+    public void A_signature_in_the_other_encoding_is_refused()
+    {
+        // The encoding is part of the contract, not an implementation detail: the same key over the
+        // same bytes produces a DER sequence or a raw r||s pair depending on which is asked for, and
+        // only one of them is a Hosty token. Asserted so neither side can drift onto a framework
+        // default without a test noticing.
+        var now = DateTimeOffset.UtcNow;
+        var payloadPart = Base64UrlEncode(JsonSerializer.SerializeToUtf8Bytes(new Dictionary<string, object?>
+        {
+            ["sub"] = "user_admin",
+            ["role"] = "host.admin",
+            ["aud"] = AppId,
+            ["exp"] = now.AddMinutes(5).ToUnixTimeSeconds(),
+        }));
+        var signingInput = $"hosty_delegated.1.{payloadPart}";
+        var der = _core.SignData(
+            Encoding.UTF8.GetBytes(signingInput),
+            HashAlgorithmName.SHA256,
+            DSASignatureFormat.Rfc3279DerSequence);
+
+        Assert.Null(HostyDelegatedToken.Validate($"{signingInput}.{Base64UrlEncode(der)}", AppId, PublicKey()));
+    }
+
+    [Fact]
     public void A_token_signed_by_a_different_key_is_refused()
     {
         using var impostor = ECDsa.Create(ECCurve.NamedCurves.nistP256);
@@ -140,7 +164,9 @@ public sealed class HostyDelegatedTokenTests
         var payloadPart = Base64UrlEncode(JsonSerializer.SerializeToUtf8Bytes(payload));
         var signingInput = $"hosty_delegated.1.{payloadPart}";
         var signature = (signer ?? _core).SignData(
-            Encoding.UTF8.GetBytes(signingInput), HashAlgorithmName.SHA256);
+            Encoding.UTF8.GetBytes(signingInput),
+            HashAlgorithmName.SHA256,
+            DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
         return $"{signingInput}.{Base64UrlEncode(signature)}";
     }
 
