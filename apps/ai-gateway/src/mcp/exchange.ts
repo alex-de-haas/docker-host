@@ -12,8 +12,11 @@
 //     before the agent can reach apps again. That is the bound, not a bug to work around.
 
 import { createHash } from "node:crypto";
-import type { McpProvider } from "../settings/providers.js";
+import { CORE_PROVIDER_ID, type McpProvider } from "../settings/providers.js";
 import { PROXY_PATH_PREFIX } from "./proxy.js";
+
+/** The server Core's tools appear under, so a call reads as `mcp__hosty-core__list_apps`. */
+export const CORE_SERVER_NAME = "hosty-core";
 
 /** Refreshed a little before the five-minute token actually expires, so no call lands on a dead one. */
 export const TOKEN_REFRESH_MARGIN_MS = 60_000;
@@ -119,8 +122,13 @@ export class TokenExchange {
  * distinct apps stay distinct while an already-safe id keeps its plain name.
  */
 export function serverName(appId: string): string {
+  if (appId === CORE_PROVIDER_ID) {
+    return CORE_SERVER_NAME;
+  }
   const safe = appId.replace(/[^a-zA-Z0-9_-]/g, "-");
-  if (safe === appId) {
+  // An already-safe id keeps its plain name — unless it spells the one name reserved above, which an
+  // app id legally can and must not be able to take: the grant set is keyed on these names.
+  if (safe === appId && safe !== CORE_SERVER_NAME) {
     return safe;
   }
   return `${safe}-${createHash("sha256").update(appId).digest("hex").slice(0, 6)}`;

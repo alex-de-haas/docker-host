@@ -11,10 +11,16 @@ import type {
 // harness credentials (HOSTY_AI_GATEWAY_HARNESS=fake). Behavior: echoes every message; a message
 // containing "write" first pauses on an approval exactly like a real proposed write, one containing
 // "ask" pauses on a question, and one containing "apptool" calls an app MCP tool — which pauses or
-// not depending on whether the operator trusted that app's read-only declarations.
+// not depending on whether the operator trusted that app's read-only declarations. "coretool" is the
+// same call aimed at Core's server, so a suite can tell Core's default grant from an app's opt-in.
 export class FakeHarnessAdapter implements HarnessAdapter {
   readonly name = "fake";
-  readonly capabilities: HarnessCapabilities = { questions: true, appMcp: true, liveReconfigure: true };
+  readonly capabilities: HarnessCapabilities = {
+    questions: true,
+    appMcp: true,
+    liveReconfigure: true,
+    autoAllow: true,
+  };
 
   /** The options of the most recent start, so a suite can assert what a session was actually given. */
   lastStart: HarnessStartOptions | null = null;
@@ -66,9 +72,11 @@ class FakeRun implements HarnessRun {
         return;
       }
 
-      if (text.includes("apptool")) {
+      if (text.includes("apptool") || text.includes("coretool")) {
         // The name shape a client produces for an app tool, which is what the predicate is keyed on.
-        const toolName = "mcp__com-example-notes__list_people";
+        const toolName = text.includes("coretool")
+          ? "mcp__hosty-core__list_apps"
+          : "mcp__com-example-notes__list_people";
         if (this.isAutoAllowed?.(toolName) === true) {
           this.onEvent({ type: "assistant_text", text: `called ${toolName}` });
           this.onEvent({ type: "result", status: "success" });

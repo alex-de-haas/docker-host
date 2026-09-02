@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Alert, InlineError, StatusBadge } from "@/components/status";
 import { Markdown } from "@/components/markdown";
 import { SessionList } from "@/components/session-list";
-import { TranscriptEvent } from "@/components/transcript";
+import { TranscriptEvent, type ApprovalDecision } from "@/components/transcript";
 import { cn } from "@/lib/utils";
 import { establishSession } from "@/lib/api";
 import { composeAskDraft } from "@/lib/ask-draft";
@@ -388,12 +388,12 @@ export default function AssistantPage() {
   }, []);
 
   const decide = useCallback(
-    async (approvalId: string, decision: "allow" | "deny") => {
+    async (approvalId: string, decision: "allow" | "deny", message?: string) => {
       if (!session) {
         return;
       }
       try {
-        await resolveApproval(session.id, approvalId, decision);
+        await resolveApproval(session.id, approvalId, decision, message);
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : String(cause));
       }
@@ -416,10 +416,15 @@ export default function AssistantPage() {
   );
 
   const decidedApprovals = useMemo(() => {
-    const decisions = new Map<string, string>();
+    const decisions = new Map<string, ApprovalDecision>();
     for (const event of events) {
       if (event.type === "approval_decision") {
-        decisions.set(String(event.approvalId), String(event.decision));
+        decisions.set(String(event.approvalId), {
+          decision: String(event.decision),
+          // The operator's reason rides on the decision event, so a replayed transcript shows why a
+          // card was refused and not only that it was.
+          message: typeof event.message === "string" && event.message ? event.message : null,
+        });
       }
     }
     return decisions;

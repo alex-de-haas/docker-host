@@ -20,56 +20,69 @@ import type { ProviderDirectory } from "../settings/providers.js";
 
 const APP = "com-example-notes";
 const TOOL = `mcp__${APP}__list_people`;
+const CORE_URL = "http://core.test/api/mcp";
+const CORE_TOOL = "mcp__hosty-core__list_apps";
+
+// Shared by both suites below: the directory stubs and the network stub they run against.
+const providers = {
+  read: async () => ({
+    providers: [{ appId: APP, displayName: "Notes", url: `http://${APP}/api/mcp`, running: true }],
+    installedAppIds: [APP],
+  }),
+  // No Core row here: these tests are about an app the operator has to vouch for, and Core's
+  // default grant would put a second, unasked-for name into every grant set they inspect.
+  core: () => null,
+  // Declares no skill: these tests are about the approval gate, and a skill would only add prose to
+  // a system prompt none of them read.
+  readSkill: async () => null,
+} as unknown as ProviderDirectory;
+
+/** The same directory with Core offered beside the app, for the default-grant suite below. */
+const providersWithCore = {
+  ...providers,
+  core: () => ({
+    appId: "hosty:core",
+    displayName: "Hosty Core",
+    url: CORE_URL,
+    running: true,
+    interfaces: [{ key: "default", url: CORE_URL }],
+  }),
+} as unknown as ProviderDirectory;
+
+/** Core issues tokens; the app lists one read-only tool and one that declares nothing, and Core's
+ * own endpoint lists one read-only tool — told apart by URL, as the real servers would be. */
+function stubNetwork(): void {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url.includes("/delegated-token")) {
+      return new Response(
+        JSON.stringify({ token: "app-token", expiresAt: new Date(Date.now() + 300_000).toISOString() }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+
+    const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
+    if (body.method === "tools/list") {
+      const tools = url.startsWith(CORE_URL)
+        ? [{ name: "list_apps", annotations: { readOnlyHint: true } }, { name: "stop_app" }]
+        : [{ name: "list_people", annotations: { readOnlyHint: true } }, { name: "delete_person" }];
+      return new Response(
+        JSON.stringify({ jsonrpc: "2.0", id: 1, result: { tools } }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  });
+}
 
 describe("per-app auto-allow", () => {
   let dataDir: string;
   let store: SessionStore;
   let settings: SettingsStore;
   let manager: SessionManager;
-
-  const providers = {
-    read: async () => ({
-      providers: [{ appId: APP, displayName: "Notes", url: `http://${APP}/api/mcp`, running: true }],
-      installedAppIds: [APP],
-    }),
-    // Declares no skill: these tests are about the approval gate, and a skill would only add prose to
-    // a system prompt none of them read.
-    readSkill: async () => null,
-  } as unknown as ProviderDirectory;
-
-  /** Core issues tokens; the app lists one read-only tool and one that declares nothing. */
-  function stubNetwork(): void {
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      const url = String(input);
-      if (url.includes("/delegated-token")) {
-        return new Response(
-          JSON.stringify({ token: "app-token", expiresAt: new Date(Date.now() + 300_000).toISOString() }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
-      }
-
-      const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
-      if (body.method === "tools/list") {
-        return new Response(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            id: 1,
-            result: {
-              tools: [
-                { name: "list_people", annotations: { readOnlyHint: true } },
-                { name: "delete_person" },
-              ],
-            },
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
-      }
-      return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
-    });
-  }
 
   beforeEach(async () => {
     dataDir = mkdtempSync(path.join(os.tmpdir(), "hosty-auto-allow-"));
@@ -183,5 +196,69 @@ describe("per-app auto-allow", () => {
     );
 
     expect(await run("apptool please")).toContain("approval_request");
+  });
+});
+
+describe("Core's default grant", () => {
+  // The pair with the suite above: the same shape of call, aimed at Core instead of an app, runs
+  // with no operator decision on record at all. Core's annotations are the platform's own word about
+  // its own tools, which is the standing the gateway's built-in read-only set already has.
+  let dataDir: string;
+  let store: SessionStore;
+  let settings: SettingsStore;
+  let manager: SessionManager;
+
+  beforeEach(async () => {
+    dataDir = mkdtempSync(path.join(os.tmpdir(), "hosty-auto-allow-core-"));
+    store = new SessionStore(dataDir);
+    settings = new SettingsStore(dataDir);
+    const exchange = new TokenExchange("http://core.test", "hosty.ai-gateway");
+    const proxy = new McpProxy((sessionId, appId) => manager.mintAppToken(sessionId, appId));
+    manager = new SessionManager(
+      store,
+      new FakeHarnessAdapter(),
+      new AuditReporter(null, null, "hosty.ai-gateway"),
+      dataDir,
+      settings,
+      providersWithCore,
+      exchange,
+      proxy,
+      "http://127.0.0.1:3400",
+    );
+    stubNetwork();
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await manager.shutdown();
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  function granted(sessionId: string): Set<string> {
+    return (manager as unknown as { live: Map<string, { autoAllowed: Set<string> }> })
+      .live.get(sessionId)!.autoAllowed;
+  }
+
+  it("runs Core's read-only tools unprompted with nothing written to settings", async () => {
+    const record = await manager.createSession({ createdBy: "user_admin" });
+    await manager.postMessage(record.id, "coretool please", "seed-credential");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const events = (await store.readEvents(record.id)).map((event) => event.type);
+    expect(events).not.toContain("approval_request");
+    expect(events).toContain("assistant_text");
+    // Only what Core declared read-only: `stop_app` declares nothing and stays behind the card, the
+    // app's tools are absent because the app was never enabled.
+    expect([...granted(record.id)]).toEqual([CORE_TOOL]);
+  });
+
+  it("asks once the operator sets Core to ask, like any other provider", async () => {
+    await settings.update({ mcpAutoAllow: { "hosty:core": false } });
+
+    const record = await manager.createSession({ createdBy: "user_admin" });
+    await manager.postMessage(record.id, "coretool please", "seed-credential");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect((await store.readEvents(record.id)).map((event) => event.type)).toContain("approval_request");
   });
 });

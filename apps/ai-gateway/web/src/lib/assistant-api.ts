@@ -121,10 +121,16 @@ export async function postMessage(sessionId: string, text: string): Promise<void
   });
 }
 
-export async function resolveApproval(sessionId: string, approvalId: string, decision: "allow" | "deny"): Promise<void> {
+/** Decides a pending approval. A deny may carry the operator's reason, which reaches the model. */
+export async function resolveApproval(
+  sessionId: string,
+  approvalId: string,
+  decision: "allow" | "deny",
+  message?: string,
+): Promise<void> {
   await call(`/sessions/${encodeURIComponent(sessionId)}/approvals/${encodeURIComponent(approvalId)}`, {
     method: "POST",
-    body: JSON.stringify({ decision }),
+    body: JSON.stringify({ decision, ...(message ? { message } : {}) }),
   });
 }
 

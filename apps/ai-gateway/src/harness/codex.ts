@@ -43,7 +43,14 @@ export class CodexHarnessAdapter implements HarnessAdapter {
   // inferable from binary symbols — see REQUEST_USER_INPUT_METHOD in codex-protocol.ts. No live
   // reconfiguration either: the protocol has no setMcpServers equivalent, so a settings change here
   // takes effect at the next session and the UI must say so.
-  readonly capabilities: HarnessCapabilities = { questions: false, appMcp: true, liveReconfigure: false };
+  // autoAllow is false because nothing here consults the gateway's predicate: Codex raises approvals
+  // by its own sandbox rules (below), and an app tool call never passes through this adapter's hands.
+  readonly capabilities: HarnessCapabilities = {
+    questions: false,
+    appMcp: true,
+    liveReconfigure: false,
+    autoAllow: false,
+  };
 
   constructor(private readonly auth: CodexAuthConfig) {}
 
@@ -340,7 +347,15 @@ class CodexRun implements HarnessRun {
           method: message.method,
         });
         const { toolName, input } = describeApproval(message.method, params);
-        this.emit({ type: "approval_request", approvalId, toolName, input });
+        this.emit({
+          type: "approval_request",
+          approvalId,
+          toolName,
+          input,
+          // Codex sends its own reason for needing to escalate; the card shows it where the Claude
+          // side shows the SDK's decision reason.
+          ...(typeof params.reason === "string" && params.reason ? { reason: params.reason } : {}),
+        });
       } else {
         this.respond(message.id, {});
       }

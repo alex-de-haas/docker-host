@@ -561,7 +561,12 @@ describe("gateway", () => {
     const body = (await health.json()) as {
       harness: { capabilities: { questions: boolean; liveReconfigure: boolean } };
     };
-    expect(body.harness.capabilities).toEqual({ questions: true, appMcp: true, liveReconfigure: true });
+    expect(body.harness.capabilities).toEqual({
+      questions: true,
+      appMcp: true,
+      liveReconfigure: true,
+      autoAllow: true,
+    });
   });
 
   it("defaults every MCP provider to off and round-trips settings", async () => {
@@ -571,8 +576,9 @@ describe("gateway", () => {
       limits: { systemPromptChars: number };
     };
     // Off by default is the security-relevant part: an app that appears in the fleet must not gain a
-    // channel into the model's context by being installed.
-    expect(initial.settings.mcpProviders).toEqual({});
+    // channel into the model's context by being installed. Core is the one exception — its tools are
+    // the platform's own — and it is the only key a fresh store answers with.
+    expect(initial.settings.mcpProviders).toEqual({ "hosty:core": true });
     expect(initial.settings.systemPrompt).toBe("");
     expect(initial.harness.capabilities.questions).toBe(true);
 
@@ -588,7 +594,7 @@ describe("gateway", () => {
     // Survives a restart: a fresh store over the same directory reads what was written.
     const reread = await new SettingsStore(dataDir).read();
     expect(reread.systemPrompt).toBe("Prefer the hosty CLI.");
-    expect(reread.mcpProviders).toEqual({ "com.example.notes": true });
+    expect(reread.mcpProviders).toEqual({ "hosty:core": true, "com.example.notes": true });
     expect(initial.limits.systemPromptChars).toBeGreaterThan(0);
   });
 
@@ -618,7 +624,7 @@ describe("gateway", () => {
     await settings.update({ mcpProviders: { "com.example.kept": true, "com.example.gone": true } });
     const pruned = await settings.prune(["com.example.kept"]);
     // Otherwise an uninstall/reinstall cycle would silently resurrect an enabled provider.
-    expect(pruned.mcpProviders).toEqual({ "com.example.kept": true });
+    expect(pruned.mcpProviders).toEqual({ "hosty:core": true, "com.example.kept": true });
   });
 
   it("requires a token for settings like every other /api route", async () => {
@@ -876,9 +882,59 @@ describe("gateway", () => {
           interfaces: [{ key: "default", url: "http://127.0.0.1:3101/api/mcp" }],
         },
       ]);
-      expect(body.settings.mcpProviders).toEqual({});
+      expect(body.settings.mcpProviders).toEqual({ "hosty:core": true });
     } finally {
       await new Promise((resolve) => withProviders.close(resolve));
+      await new Promise((resolve) => core.close(resolve));
+    }
+  });
+
+  it("offers Core as the first provider when its MCP URL is configured, on by default and never pruned", async () => {
+    // Core is not an app: it is not in the roster Core lists, so it has to be added by the surface
+    // that wants it and kept out of the pruning that roster drives. Both halves are asserted — the
+    // row being present, and an explicit "off" surviving the read that prunes.
+    const core = createServer((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ apps: [] }));
+    });
+    await new Promise<void>((resolve) => core.listen(0, resolve));
+    const coreOrigin = `http://127.0.0.1:${(core.address() as AddressInfo).port}`;
+
+    const directory = new ProviderDirectory(coreOrigin, "service-token", "hosty.ai-gateway", `${coreOrigin}/api/mcp`);
+    const withCore = createGatewayServer(manager, new FakeHarnessAdapter(), settings, directory);
+    await new Promise<void>((resolve) => withCore.listen(0, resolve));
+    const coreGateway = `http://127.0.0.1:${(withCore.address() as AddressInfo).port}`;
+    const headers = { authorization: `Bearer ${mintToken("host.admin")}` };
+
+    try {
+      const initial = (await (await fetch(`${coreGateway}/api/settings`, { headers })).json()) as {
+        providers: Array<{ appId: string; displayName: string; url: string | null; running: boolean }>;
+        settings: { mcpProviders: Record<string, boolean>; mcpAutoAllow: Record<string, boolean> };
+      };
+      expect(initial.providers).toEqual([
+        {
+          appId: "hosty:core",
+          displayName: "Hosty Core",
+          url: `${coreOrigin}/api/mcp`,
+          running: true,
+          interfaces: [{ key: "default", url: `${coreOrigin}/api/mcp` }],
+        },
+      ]);
+      expect(initial.settings.mcpProviders).toEqual({ "hosty:core": true });
+      expect(initial.settings.mcpAutoAllow).toEqual({ "hosty:core": true });
+
+      // Switched off, then read again — the read prunes against a roster Core is never in.
+      await fetch(`${coreGateway}/api/settings`, {
+        method: "PUT",
+        headers: { ...headers, "content-type": "application/json" },
+        body: JSON.stringify({ mcpProviders: { "hosty:core": false } }),
+      });
+      const reread = (await (await fetch(`${coreGateway}/api/settings`, { headers })).json()) as {
+        settings: { mcpProviders: Record<string, boolean> };
+      };
+      expect(reread.settings.mcpProviders).toEqual({ "hosty:core": false });
+    } finally {
+      await new Promise((resolve) => withCore.close(resolve));
       await new Promise((resolve) => core.close(resolve));
     }
   });
@@ -928,7 +984,7 @@ describe("gateway", () => {
         settings: { mcpProviders: Record<string, boolean> };
       };
       expect(body.discovery).toBe("unavailable");
-      expect(body.settings.mcpProviders).toEqual({ "com.example.notes": true });
+      expect(body.settings.mcpProviders).toEqual({ "hosty:core": true, "com.example.notes": true });
     } finally {
       await new Promise((resolve) => server3.close(resolve));
       await new Promise((resolve) => core.close(resolve));
@@ -939,7 +995,7 @@ describe("gateway", () => {
     let starts = 0;
     const failing: import("./harness/adapter.js").HarnessAdapter = {
       name: "failing",
-      capabilities: { questions: false, appMcp: false, liveReconfigure: false },
+      capabilities: { questions: false, appMcp: false, liveReconfigure: false, autoAllow: false },
       probe: async () => ({ available: true }),
       start: (options) => {
         starts += 1;

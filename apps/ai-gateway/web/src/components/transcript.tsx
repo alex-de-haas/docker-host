@@ -1,12 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { HelpCircle, Loader2, Wrench } from "lucide-react";
+import { Fragment, useMemo, useState } from "react";
+import { ChevronDown, ChevronRight, HelpCircle, Loader2, Wrench } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { InlineError } from "@/components/status";
 import { Markdown } from "@/components/markdown";
 import { cn } from "@/lib/utils";
+import { describeApproval, summarizeToolUse, type ApprovalView, type FileChangeView } from "@/lib/tool-display";
 import type { AssistantEvent, AssistantQuestion } from "@/lib/assistant-api";
 
 // The transcript, moved out of Shell with the rest of the panel. The gateway's event log is the
@@ -16,6 +17,9 @@ import type { AssistantEvent, AssistantQuestion } from "@/lib/assistant-api";
 // them exactly as they typed it — a message that reformatted itself on send would leave them unsure
 // which of the two texts the harness actually received.
 
+/** How a card was resolved: the verdict, and the operator's reason when a deny carried one. */
+export type ApprovalDecision = { decision: string; message: string | null };
+
 export function TranscriptEvent({
   event,
   decision,
@@ -24,9 +28,9 @@ export function TranscriptEvent({
   onAnswer,
 }: {
   event: AssistantEvent;
-  decision: string | null;
+  decision: ApprovalDecision | null;
   answers: Record<string, string> | null;
-  onDecide: (approvalId: string, decision: "allow" | "deny") => Promise<void>;
+  onDecide: (approvalId: string, decision: "allow" | "deny", message?: string) => Promise<void>;
   onAnswer: (questionId: string, answers: Record<string, string>) => Promise<void>;
 }) {
   switch (event.type) {
@@ -43,37 +47,19 @@ export function TranscriptEvent({
         </div>
       );
     case "tool_use":
+      return <ToolRow toolName={String(event.toolName ?? "tool")} input={event.input} />;
+    case "approval_request":
       return (
-        <div className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
-          <Wrench className="h-3 w-3" aria-hidden />
-          {String(event.toolName ?? "tool")}
-        </div>
+        <ApprovalCard
+          approvalId={String(event.approvalId)}
+          toolName={String(event.toolName ?? "action")}
+          input={event.input}
+          title={typeof event.title === "string" ? event.title : null}
+          reason={typeof event.reason === "string" ? event.reason : null}
+          decision={decision}
+          onDecide={onDecide}
+        />
       );
-    case "approval_request": {
-      const approvalId = String(event.approvalId);
-      return (
-        <div className="space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm">
-          <div className="font-medium">Approve {String(event.toolName ?? "action")}?</div>
-          <pre className="max-h-32 overflow-auto rounded bg-background/60 p-2 text-xs whitespace-pre-wrap">
-            {JSON.stringify(event.input ?? {}, null, 2)}
-          </pre>
-          {decision ? (
-            <Badge variant="outline" className={cn(decision === "allow" ? "text-emerald-700" : "text-destructive")}>
-              {decision === "allow" ? "Allowed" : "Denied"}
-            </Badge>
-          ) : (
-            <div className="flex gap-2">
-              <Button type="button" size="sm" onClick={() => void onDecide(approvalId, "allow")}>
-                Allow
-              </Button>
-              <Button type="button" size="sm" variant="outline" onClick={() => void onDecide(approvalId, "deny")}>
-                Deny
-              </Button>
-            </div>
-          )}
-        </div>
-      );
-    }
     case "question_request":
       return (
         <QuestionCard
@@ -96,6 +82,211 @@ export function TranscriptEvent({
     default:
       return null;
   }
+}
+
+// One line per tool call: what it was for, not what it was called. A run that reads thirty files is
+// thirty rows, so the row carries the model's own description (or the path, the pattern, the query)
+// and the raw input waits behind a click — a transcript that showed every input would be a wall of
+// JSON with the conversation somewhere inside it.
+function ToolRow({ toolName, input }: { toolName: string; input: unknown }) {
+  const [open, setOpen] = useState(false);
+  const summary = useMemo(() => summarizeToolUse(toolName, input), [toolName, input]);
+  const Chevron = open ? ChevronDown : ChevronRight;
+
+  return (
+    <div className="px-1 text-xs text-muted-foreground">
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        aria-expanded={open}
+        className="flex w-full min-w-0 items-center gap-1.5 text-left hover:text-foreground"
+      >
+        <Wrench className="h-3 w-3 shrink-0" aria-hidden />
+        <span className="shrink-0 font-medium">{summary.label}</span>
+        {summary.detail && <span className="min-w-0 truncate">{summary.detail}</span>}
+        <Chevron className="ml-auto h-3 w-3 shrink-0" aria-hidden />
+      </button>
+      {open && (
+        <pre className="mt-1 max-h-48 overflow-auto rounded bg-muted/60 p-2 break-all whitespace-pre-wrap">
+          {JSON.stringify(input ?? {}, null, 2)}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+// The card is typed by what is being asked, because an operator approves consequences, not JSON: a
+// command shows its description over the command, an edit shows what leaves and what arrives, an
+// app tool shows which app and which arguments. The fallback is the JSON the card always showed.
+//
+// A deny may carry a reason. It goes to the model behind a fixed prefix, so a refusal stays a
+// refusal whatever was typed, and it is kept on the decision so a replayed transcript shows not only
+// that a card was refused but why — which is the half a later reader actually wants.
+function ApprovalCard({
+  approvalId,
+  toolName,
+  input,
+  title,
+  reason,
+  decision,
+  onDecide,
+}: {
+  approvalId: string;
+  toolName: string;
+  input: unknown;
+  /** The harness's own sentence for the prompt, when it sent one. */
+  title: string | null;
+  /** Why the harness raised the request, when it said. */
+  reason: string | null;
+  decision: ApprovalDecision | null;
+  onDecide: (approvalId: string, decision: "allow" | "deny", message?: string) => Promise<void>;
+}) {
+  const view = useMemo(() => describeApproval(toolName, input), [toolName, input]);
+  const [why, setWhy] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const category =
+    view.kind === "mcp"
+      ? `App tool · ${view.server}`
+      : view.kind === "command"
+        ? "Shell"
+        : view.kind === "file"
+          ? "Files"
+          : toolName;
+
+  const decide = (verdict: "allow" | "deny") => {
+    setBusy(true);
+    const message = verdict === "deny" && why.trim() ? why.trim() : undefined;
+    void onDecide(approvalId, verdict, message).finally(() => setBusy(false));
+  };
+
+  return (
+    <div className="space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm">
+      <div className="text-[11px] tracking-wide text-muted-foreground uppercase">Approve · {category}</div>
+      <div className="font-medium">{view.heading}</div>
+      {title && title !== view.heading && <div className="text-xs text-muted-foreground">{title}</div>}
+      <ApprovalBody view={view} />
+      {reason && <div className="text-xs text-muted-foreground">{reason}</div>}
+      {decision ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge
+            variant="outline"
+            className={cn(decision.decision === "allow" ? "text-emerald-700" : "text-destructive")}
+          >
+            {decision.decision === "allow" ? "Allowed" : "Denied"}
+          </Badge>
+          {decision.message && <span className="text-xs text-muted-foreground">{decision.message}</span>}
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="button" size="sm" disabled={busy} onClick={() => decide("allow")}>
+            Allow
+          </Button>
+          <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => decide("deny")}>
+            Deny
+          </Button>
+          {/* Enter here is a deny: typing a reason is already the decision, and a reason that had to
+              be followed by a second click would be the one nobody types. */}
+          <input
+            value={why}
+            disabled={busy}
+            onChange={(event) => setWhy(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                decide("deny");
+              }
+            }}
+            placeholder="Why not? Sent to the assistant with a deny"
+            aria-label="Reason for denying"
+            className="min-w-40 flex-1 rounded-md border bg-transparent px-2 py-1 text-xs outline-none focus-visible:border-ring"
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ApprovalBody({ view }: { view: ApprovalView }) {
+  switch (view.kind) {
+    case "command":
+      return (
+        <div className="space-y-1">
+          {/* No wrapping on purpose: a command is read left to right, and a digest or a long path
+              broken across lines is a command the operator has to reassemble before approving. */}
+          <pre className="max-h-48 overflow-auto rounded bg-background/60 p-2 font-mono text-xs whitespace-pre">
+            {view.command}
+          </pre>
+          {view.cwd && <div className="text-xs text-muted-foreground">in {view.cwd}</div>}
+        </div>
+      );
+    case "file":
+      return (
+        <div className="space-y-2">
+          {view.changes.map((change, index) => (
+            <FileChange key={index} change={change} />
+          ))}
+        </div>
+      );
+    case "mcp":
+      return view.args.length === 0 ? (
+        <div className="text-xs text-muted-foreground">No arguments.</div>
+      ) : (
+        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+          {view.args.map(([key, value]) => (
+            <Fragment key={key}>
+              <dt className="font-mono text-muted-foreground">{key}</dt>
+              <dd className="min-w-0 break-all whitespace-pre-wrap">{value}</dd>
+            </Fragment>
+          ))}
+        </dl>
+      );
+    default:
+      return (
+        <pre className="max-h-48 overflow-auto rounded bg-background/60 p-2 text-xs break-all whitespace-pre-wrap">
+          {view.json}
+        </pre>
+      );
+  }
+}
+
+/** Longest preview of file content a card shows; a whole written file is not what is being decided. */
+const MAX_PREVIEW_CHARS = 4_000;
+
+function FileChange({ change }: { change: FileChangeView }) {
+  return (
+    <div className="space-y-1">
+      <div className="flex flex-wrap items-baseline gap-2 text-xs">
+        <span className="font-mono break-all">{change.path ?? "(unnamed file)"}</span>
+        {change.kind && (
+          <Badge variant="outline" className="font-normal">
+            {change.kind}
+          </Badge>
+        )}
+      </div>
+      {change.diff !== null && (
+        <pre className="max-h-48 overflow-auto rounded bg-background/60 p-2 font-mono text-xs whitespace-pre">
+          {clip(change.diff)}
+        </pre>
+      )}
+      {change.before !== null && (
+        <pre className="max-h-40 overflow-auto rounded border-l-2 border-destructive/60 bg-destructive/5 p-2 font-mono text-xs break-all whitespace-pre-wrap">
+          {clip(change.before)}
+        </pre>
+      )}
+      {change.after !== null && (
+        <pre className="max-h-40 overflow-auto rounded border-l-2 border-emerald-500/60 bg-emerald-500/5 p-2 font-mono text-xs break-all whitespace-pre-wrap">
+          {clip(change.after)}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+function clip(content: string): string {
+  return content.length > MAX_PREVIEW_CHARS
+    ? `${content.slice(0, MAX_PREVIEW_CHARS)}\n… ${content.length - MAX_PREVIEW_CHARS} more characters`
+    : content;
 }
 
 // Deliberately not styled like the amber approval card: an approval asks the operator to authorize

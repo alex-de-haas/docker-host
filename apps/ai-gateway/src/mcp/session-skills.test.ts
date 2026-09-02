@@ -29,6 +29,8 @@ describe("app skills in a session", () => {
       providers: [{ appId: APP, displayName: "Notes", url: `http://${APP}/api/mcp`, running: true }],
       installedAppIds: [APP],
     }),
+    // No Core row: these tests are about app skills, and Core declares none.
+    core: () => null,
     readSkill: async (appId: string) =>
       appId === APP ? { appId: APP, displayName: "Notes", markdown: "Call list_people first." } : null,
   } as unknown as ProviderDirectory;

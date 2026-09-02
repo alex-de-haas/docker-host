@@ -2,6 +2,9 @@
 
 export type Provider = { appId: string; displayName: string; url: string | null; running: boolean };
 
+/** The provider id Core's own tools are offered under — the gateway's constant, mirrored here. */
+export const CORE_PROVIDER_ID = "hosty:core";
+
 export type Settings = {
   systemPrompt: string;
   mcpProviders: Record<string, boolean>;
@@ -22,7 +25,7 @@ export type SettingsResponse = {
   providers: Provider[];
   pendingSkills?: PendingSkill[];
   discovery: string;
-  harness?: { name?: string; capabilities?: { liveReconfigure?: boolean } };
+  harness?: { name?: string; capabilities?: { liveReconfigure?: boolean; autoAllow?: boolean } };
 };
 
 /**

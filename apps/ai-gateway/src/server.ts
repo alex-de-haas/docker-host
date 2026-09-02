@@ -14,6 +14,9 @@ import type { ProviderDirectory } from "./settings/providers.js";
 import type { McpProxy } from "./mcp/proxy.js";
 import type { McpFacade } from "./facade/facade.js";
 
+/** Cap on the reason an operator may attach to a denied approval. */
+const MAX_DENY_REASON_CHARS = 500;
+
 // Plain node:http — the API is a handful of JSON routes plus one SSE stream; a framework would be
 // the largest dependency in the app for no gain.
 //
@@ -287,6 +290,10 @@ async function route(
     if (discovered) {
       await settings.prune(discovered.installedAppIds);
     }
+    // Core first, as its own row with the same two controls as the apps. It rides on the configured
+    // Core origin rather than on the roster read, so it is offered even while discovery reports the
+    // apps unavailable — and `discovery` keeps describing the apps, which is what it always meant.
+    const core = providers?.core() ?? null;
 
     const current = await settings.read();
     // Withheld skills travel with the settings, because withholding silently would be the worst of
@@ -298,7 +305,7 @@ async function route(
     sendJson(response, 200, {
       settings: current,
       pendingSkills,
-      providers: discovered?.providers ?? [],
+      providers: [...(core ? [core] : []), ...(discovered?.providers ?? [])],
       discovery: discovered ? "ok" : "unavailable",
       harness: { name: adapter.name, capabilities: adapter.capabilities },
       limits: { systemPromptChars: MAX_SYSTEM_PROMPT_CHARS },
@@ -396,12 +403,10 @@ async function route(
       sendJson(response, 400, { code: "decision_invalid", message: "decision must be 'allow' or 'deny'." });
       return;
     }
-    const resolved = await manager.resolveApproval(
-      sessionId,
-      approvalMatch[1]!,
-      body.decision,
-      typeof body.message === "string" ? body.message : undefined,
-    );
+    // The operator's reason for a deny, bounded like every other operator-typed field: it lands in
+    // the transcript and in the model's context, and neither wants a pasted log by mistake.
+    const reason = typeof body.message === "string" ? body.message.trim().slice(0, MAX_DENY_REASON_CHARS) : "";
+    const resolved = await manager.resolveApproval(sessionId, approvalMatch[1]!, body.decision, reason || undefined);
     if (!resolved) {
       sendJson(response, 409, {
         code: "approval_not_pending",

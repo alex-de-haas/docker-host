@@ -32,7 +32,10 @@ const store = new SessionStore(config.dataDir);
 const audit = new AuditReporter(config.coreOrigin, config.serviceToken, config.appId);
 const notifier = new WaitingNotifier(config.coreOrigin, config.serviceToken, config.appId);
 const settings = new SettingsStore(config.dataDir);
-const providers = new ProviderDirectory(config.coreOrigin, config.serviceToken, config.appId);
+// Core's MCP endpoint, resolved once for both consumers: the facade lists it beside the apps for
+// external clients, and the provider directory offers it to the assistant's own sessions.
+const coreMcpUrl = config.coreOrigin ? `${config.coreOrigin.replace(/\/$/, "")}/api/mcp` : null;
+const providers = new ProviderDirectory(config.coreOrigin, config.serviceToken, config.appId, coreMcpUrl);
 const exchange = new TokenExchange(config.coreOrigin, config.appId);
 // The proxy and the manager need each other: the proxy mints through the manager's live session
 // credential, and the manager registers routes on the proxy. Declared first with a late-bound
@@ -96,7 +99,7 @@ const facade = new McpFacade(
     coreOrigin: config.coreOrigin,
     serviceToken: config.serviceToken,
     appId: config.appId,
-    coreMcpUrl: config.coreOrigin ? `${config.coreOrigin.replace(/\/$/, "")}/api/mcp` : null,
+    coreMcpUrl,
   },
   providers,
   settings,

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -194,6 +195,45 @@ public sealed class DelegatedTokenExchangeHttpTests
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         Assert.Equal("app_not_found", (await ReadJsonAsync(response)).GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public async Task SystemCallerExchangesForCoreAsAnAdministrator_WhileAMemberIsRefused()
+    {
+        // Core's own MCP endpoint as a target: the assistant panel reaches Core's read-only tools
+        // through the same exchange it uses for the apps. There is no app record for `hosty:core`, so
+        // the gate is the one that surface has always had — administrators only — and the pair is what
+        // tells that gate apart from a route that refuses everything.
+        await using var harness = await StartAsync();
+        using var client = harness.CreateClient();
+
+        using var admin = await ExchangeAsync(client, "hosty:core", Mint(harness, Gateway));
+        Assert.Equal(HttpStatusCode.OK, admin.StatusCode);
+        var issued = await ReadJsonAsync(admin);
+        Assert.Equal("hosty:core", issued.GetProperty("appId").GetString());
+        var coreToken = issued.GetProperty("token").GetString()!;
+
+        // Accepted by the surface it was minted for. Reads only — the MCP suite pins that a delegated
+        // token never carries lifecycle; this checks that the token reaches the surface at all.
+        using var list = new HttpRequestMessage(HttpMethod.Post, "/api/mcp");
+        list.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        list.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
+        list.Headers.Authorization = new AuthenticationHeaderValue("Bearer", coreToken);
+        list.Content = new StringContent(
+            """{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}""", Encoding.UTF8, "application/json");
+        using var listed = await client.SendAsync(list);
+        Assert.Equal(HttpStatusCode.OK, listed.StatusCode);
+
+        // A Core-audience token is a dead end for the exchange, like a token branched to a domain app:
+        // `hosty:core` is not a system app, so it may not exchange — not even to refresh itself.
+        using var refresh = await ExchangeAsync(client, "hosty:core", coreToken);
+        Assert.Equal(HttpStatusCode.Forbidden, refresh.StatusCode);
+        Assert.Equal("exchange_forbidden", (await ReadJsonAsync(refresh)).GetProperty("code").GetString());
+
+        using var member = await ExchangeAsync(
+            client, "hosty:core", Mint(harness, Gateway, sub: "user_member", role: "host.member"));
+        Assert.Equal(HttpStatusCode.Forbidden, member.StatusCode);
+        Assert.Equal("admin_required", (await ReadJsonAsync(member)).GetProperty("code").GetString());
     }
 
     [Fact]
