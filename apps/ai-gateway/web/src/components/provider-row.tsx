@@ -1,6 +1,6 @@
 "use client";
 
-import type { Provider } from "@/lib/api";
+import { CORE_PROVIDER_ID, type Provider } from "@/lib/api";
 
 // Both controls say what they DO, not what they are. A button labelled "Disabled" reads equally as
 // "this is off" and "click to disable", and the operator cannot tell which without clicking — which
@@ -10,6 +10,8 @@ export function ProviderRow({
   provider,
   enabled,
   autoAllow,
+  autoAllowSupported,
+  harnessName,
   busy,
   onToggle,
   onApprovalChange,
@@ -17,29 +19,42 @@ export function ProviderRow({
   provider: Provider;
   enabled: boolean;
   autoAllow: boolean;
+  /** Whether the selected harness consults the approval mode at all; false greys the select out. */
+  autoAllowSupported: boolean;
+  harnessName: string;
   busy: boolean;
   onToggle: (next: boolean) => void;
   onApprovalChange: (autoAllow: boolean) => void;
 }) {
   const name = provider.displayName || provider.appId;
+  const isCore = provider.appId === CORE_PROVIDER_ID;
+
+  // Three different things the select can be saying, and the tooltip has to say the right one: the
+  // harness ignores it, Core's own annotations are being trusted, or an app's word is.
+  const approvalTitle = !autoAllowSupported
+    ? `The ${harnessName} harness decides on its own which calls pause; this choice has no effect there.`
+    : isCore
+      ? "Core annotates its own tools, so running the read-only ones unprompted trusts the platform rather than a third party. Lifecycle and update tools always ask."
+      : "The app declares which of its tools are read-only. Choosing to run them unprompted means trusting that declaration: a tool the app mislabels would then run without asking you.";
+
   return (
     <div className="flex items-start gap-3 rounded-lg border p-3">
       <div className="min-w-0 flex-1">
         <div className="text-sm font-medium">{name}</div>
         <div className="truncate text-xs text-muted-foreground">
-          {provider.appId}
-          {provider.url ? ` · ${provider.url}` : " · no reachable URL"}
-          {provider.running ? "" : " · stopped"}
+          {isCore
+            ? "Core's own control-plane tools · read-only for the assistant; lifecycle and updates stay on the CLI"
+            : `${provider.appId}${provider.url ? ` · ${provider.url}` : " · no reachable URL"}${provider.running ? "" : " · stopped"}`}
         </div>
       </div>
 
       <select
         className="rounded-md border bg-muted/40 px-2 py-1.5 text-sm disabled:opacity-50"
         value={autoAllow ? "auto" : "ask"}
-        // Meaningless while the app cannot be reached at all, so it is not offered then.
-        disabled={!enabled || busy}
+        // Meaningless while the app cannot be reached at all, or on a harness that never asks.
+        disabled={!enabled || busy || !autoAllowSupported}
         aria-label={`Approval for ${name}`}
-        title="The app declares which of its tools are read-only. Choosing to run them unprompted means trusting that declaration: a tool the app mislabels would then run without asking you."
+        title={approvalTitle}
         onChange={(event) => onApprovalChange(event.target.value === "auto")}
       >
         <option value="ask">Ask before every tool</option>

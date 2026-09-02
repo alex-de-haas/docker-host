@@ -11,6 +11,14 @@ import { readAppSkill, type AppSkill } from "../mcp/skills.js";
 
 export const MCP_INTERFACE = "mcp";
 
+/**
+ * Core's own MCP endpoint, offered to the assistant as one provider beside the apps.
+ *
+ * Not an app id: it is the audience Core mints delegated tokens for its own surface under, and the
+ * name the facade already lists Core's tools under — one string names Core wherever a target is named.
+ */
+export const CORE_PROVIDER_ID = "hosty:core";
+
 export interface McpProvider {
   appId: string;
   displayName: string;
@@ -46,7 +54,31 @@ export class ProviderDirectory {
     private readonly coreOrigin: string | null,
     private readonly serviceToken: string | null,
     private readonly appId: string,
+    /** Core's MCP endpoint, when the assistant's sessions may be offered it; null keeps Core out. */
+    private readonly coreMcpUrl: string | null = null,
   ) {}
+
+  /**
+   * Core as a provider for the assistant's own sessions, or null when no Core MCP URL was given.
+   *
+   * Kept out of `read()` on purpose. That roster is what the facade builds its catalog from, and the
+   * facade carries Core on its own terms — always offered, never subject to the panel's toggle, and
+   * still reachable while an app-directory read fails. The panel is the surface that wants Core as
+   * one provider among the apps, with the same switch and approval mode, so the panel's callers add
+   * it. Reported running unconditionally: the gateway only exists while Core does.
+   */
+  core(): McpProvider | null {
+    if (!this.coreMcpUrl) {
+      return null;
+    }
+    return {
+      appId: CORE_PROVIDER_ID,
+      displayName: "Hosty Core",
+      url: this.coreMcpUrl,
+      running: true,
+      interfaces: [{ key: "default", url: this.coreMcpUrl }],
+    };
+  }
 
   /**
    * One app's agent skill, read as this app.

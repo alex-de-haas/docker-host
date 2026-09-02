@@ -7,7 +7,7 @@ import type { HarnessAdapter, HarnessEvent, HarnessRun } from "../harness/adapte
 import type { SessionRecord, SessionStatus, SessionStore, StoredEvent } from "./store.js";
 import type { AuditReporter } from "../audit.js";
 import type { SettingsStore } from "../settings/store.js";
-import type { ProviderDirectory } from "../settings/providers.js";
+import { CORE_PROVIDER_ID, type McpProvider, type ProviderDirectory } from "../settings/providers.js";
 import { TokenExchange, toMcpServerConfig, serverName, TOKEN_REFRESH_MARGIN_MS } from "../mcp/exchange.js";
 import { readOnlyToolNames } from "../mcp/readonly.js";
 import type { McpProxy, MintedToken } from "../mcp/proxy.js";
@@ -324,18 +324,14 @@ export class SessionManager {
       return undefined;
     }
 
-    const [discovered, policy] = await Promise.all([this.providers.read(), this.settings.read()]);
-    if (!discovered) {
+    const [candidates, policy] = await Promise.all([this.discoverProviders(), this.settings.read()]);
+    if (!candidates) {
       session.autoAllowed.clear();
       session.mcpAppIds = [];
       return undefined;
     }
 
-    const servers = await this.exchange.buildServers(
-      session.credential,
-      discovered.providers,
-      policy.mcpProviders,
-    );
+    const servers = await this.exchange.buildServers(session.credential, candidates, policy.mcpProviders);
     if (servers.length === 0) {
       session.autoAllowed.clear();
       session.mcpAppIds = [];
@@ -359,6 +355,25 @@ export class SessionManager {
   }
 
   /**
+   * What a session may be offered: Core first, then the apps Core lists.
+   *
+   * Null only when there is nothing to offer at all. Core rides on the gateway's configured origin
+   * rather than on the app-directory read, so a failed read costs the apps and leaves Core — the
+   * surface an operator needs most while the fleet is misbehaving.
+   */
+  private async discoverProviders(): Promise<McpProvider[] | null> {
+    if (!this.providers) {
+      return null;
+    }
+    const core = this.providers.core();
+    const discovered = await this.providers.read();
+    if (!discovered && !core) {
+      return null;
+    }
+    return [...(core ? [core] : []), ...(discovered?.providers ?? [])];
+  }
+
+  /**
    * The skills of the providers this session actually got, in the order they were offered.
    *
    * Keyed off `session.mcpAppIds` rather than the policy, so a provider that is enabled but
@@ -370,7 +385,10 @@ export class SessionManager {
       return [];
     }
 
-    const skills = await Promise.all(session.mcpAppIds.map((appId) => this.providers!.readSkill(appId)));
+    // Core declares no skill: its guidance reaches the harness through the operator's own instruction
+    // sources, and asking Core's app-directory for a skill about itself would only be a 404 per start.
+    const appIds = session.mcpAppIds.filter((appId) => appId !== CORE_PROVIDER_ID);
+    const skills = await Promise.all(appIds.map((appId) => this.providers!.readSkill(appId)));
     return skills.filter((skill): skill is AppSkill => skill !== null);
   }
 
@@ -408,8 +426,8 @@ export class SessionManager {
       return;
     }
 
-    const discovered = await this.providers.read();
-    if (!discovered) {
+    const candidates = await this.discoverProviders();
+    if (!candidates) {
       // An unreachable Core is not an empty policy. Keeping the previous grants would be the stale
       // case this exists to bound, so they go — the cost is approval cards until Core answers again,
       // which is the right way round.
@@ -417,11 +435,7 @@ export class SessionManager {
       return;
     }
 
-    const servers = await this.exchange.buildServers(
-      session.credential,
-      discovered.providers,
-      policy.mcpProviders,
-    );
+    const servers = await this.exchange.buildServers(session.credential, candidates, policy.mcpProviders);
     await this.refreshAutoAllowed(session, servers, policy.mcpAutoAllow);
   }
 
@@ -557,13 +571,28 @@ export class SessionManager {
     // verified live not to work — a paused call is bound to the connection it was prepared on, so new
     // configuration reaches the next call and never that one. The proxy solves it at the right layer:
     // the released call carries a session key, and its token is minted as the request goes out.
-    const resolved = session.run.resolveApproval(approvalId, decision, message);
+    // A reason only ever accompanies a deny, and it reaches the model behind a fixed prefix so the
+    // reply reads as a refusal whatever was typed — a bare "use the other host" could pass for an
+    // instruction the operator never gave as one. Collapsed to one line first: the prefix guards the
+    // line it is on, and a second line would arrive unprefixed, reading like a separate instruction.
+    const reason = decision === "deny" && message ? message.replace(/\s+/g, " ").trim() || undefined : undefined;
+    const resolved = session.run.resolveApproval(
+      approvalId,
+      decision,
+      reason ? `Denied by the operator in Hosty: ${reason}` : undefined,
+    );
     if (!resolved) {
       return false;
     }
 
     session.pendingApprovals.delete(approvalId);
-    await this.append(id, { type: "approval_decision", approvalId, toolName, decision });
+    await this.append(id, {
+      type: "approval_decision",
+      approvalId,
+      toolName,
+      decision,
+      ...(reason ? { message: reason } : {}),
+    });
     await this.setStatus(id, "running");
     if (decision === "allow") {
       // Approved actions are the one transcript-adjacent fact Core audit does receive —

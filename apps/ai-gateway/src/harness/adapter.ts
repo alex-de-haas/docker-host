@@ -27,6 +27,18 @@ export interface HarnessCapabilities {
    * takes effect at the next session and the settings UI must say so rather than imply immediacy.
    */
   liveReconfigure: boolean;
+  /**
+   * App tool calls pass through the gateway's auto-allow predicate before an approval is raised.
+   * False means the per-provider approval mode has no effect on this harness — it pauses or runs
+   * by its own rules — so the settings UI must say so rather than offer a choice that does nothing.
+   */
+  autoAllow: boolean;
+  /**
+   * A denied approval can carry the operator's reason to the model. False means the harness's
+   * decline carries nothing — the reason would be recorded and never delivered — so the card must
+   * not offer to send one and the API refuses one rather than storing a message nobody received.
+   */
+  denyReason: boolean;
 }
 
 // One question the harness wants answered. Mirrors the Claude SDK's AskUserQuestionInput shape
@@ -46,8 +58,21 @@ export type HarnessEvent =
   | { type: "assistant_delta"; text: string }
   | { type: "assistant_text"; text: string }
   | { type: "tool_use"; toolName: string; input: unknown }
-  /** A proposed write is paused inside the harness until resolveApproval is called. */
-  | { type: "approval_request"; approvalId: string; toolName: string; input: unknown }
+  /**
+   * A proposed write is paused inside the harness until resolveApproval is called.
+   *
+   * `title` is the harness's own sentence for the prompt and `reason` its explanation for raising
+   * it, each only when the harness offers one; the card shows them over anything reconstructed from
+   * name and input, and falls back to that reconstruction when they are absent.
+   */
+  | {
+      type: "approval_request";
+      approvalId: string;
+      toolName: string;
+      input: unknown;
+      title?: string;
+      reason?: string;
+    }
   /**
    * The harness is asking the operator, paused until resolveQuestion is called. Deliberately not an
    * approval: approving the act of being asked a question is nonsense, and the resolution carries

@@ -38,9 +38,25 @@ const AUTO_ALLOWED_TOOLS = new Set(["Read", "Glob", "Grep", "WebFetch", "WebSear
 
 const ASK_USER_QUESTION = "AskUserQuestion";
 
+/**
+ * The part of the SDK's third `canUseTool` argument the card can use. A structural subset rather
+ * than the SDK's own type, because the query options are handed over untyped (see runLoop) and the
+ * two fields read here are documented as optional on every version this adapter has run against.
+ */
+interface ApprovalContext {
+  title?: string;
+  decisionReason?: string;
+}
+
 export class ClaudeHarnessAdapter implements HarnessAdapter {
   readonly name = "claude-agent-sdk";
-  readonly capabilities: HarnessCapabilities = { questions: true, appMcp: true, liveReconfigure: true };
+  readonly capabilities: HarnessCapabilities = {
+    questions: true,
+    appMcp: true,
+    liveReconfigure: true,
+    autoAllow: true,
+    denyReason: true,
+  };
 
   async probe(): Promise<HarnessAvailability> {
     if (!AUTH_ENV_KEYS.some((key) => process.env[key]?.trim())) {
@@ -189,8 +205,8 @@ class ClaudeRun implements HarnessRun {
           // (CLAUDE.md, skills), exactly like an admin running Claude Code by hand.
           settingSources: ["user", "project"],
           ...(this.options.mcpServers ? { mcpServers: this.options.mcpServers } : {}),
-          canUseTool: (toolName: string, input: Record<string, unknown>) =>
-            this.requestApproval(toolName, input),
+          canUseTool: (toolName: string, input: Record<string, unknown>, context?: ApprovalContext) =>
+            this.requestApproval(toolName, input, context),
         },
       } as never) as AsyncIterable<Record<string, never>> & { interrupt(): Promise<unknown>; close(): void };
       this.query = query;
@@ -208,7 +224,11 @@ class ClaudeRun implements HarnessRun {
     }
   }
 
-  private requestApproval(toolName: string, input: Record<string, unknown>): Promise<unknown> {
+  private requestApproval(
+    toolName: string,
+    input: Record<string, unknown>,
+    context?: ApprovalContext,
+  ): Promise<unknown> {
     if (toolName === ASK_USER_QUESTION) {
       const questions = readQuestions(input);
       // A malformed question set is answered rather than parked: parking it would hang the run on a
@@ -236,7 +256,17 @@ class ClaudeRun implements HarnessRun {
     return new Promise((resolve) => {
       const approvalId = randomUUID();
       this.pending.set(approvalId, { toolName, resolve });
-      this.options.onEvent({ type: "approval_request", approvalId, toolName, input });
+      this.options.onEvent({
+        type: "approval_request",
+        approvalId,
+        toolName,
+        input,
+        // The SDK's own prompt sentence and its reason for raising the request, when it supplies
+        // them — its documentation asks that the sentence be preferred over a reconstruction from
+        // name and input. Spread conditionally so an absent value is absent, not a stored undefined.
+        ...(context?.title ? { title: context.title } : {}),
+        ...(context?.decisionReason ? { reason: context.decisionReason } : {}),
+      });
     });
   }
 

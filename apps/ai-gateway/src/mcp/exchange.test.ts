@@ -158,4 +158,12 @@ describe("token exchange", () => {
     );
     expect(Object.keys(config)).toHaveLength(2);
   });
+
+  it("reserves Core's server name so no app can take it", () => {
+    // Core's tools are granted under this name, so an app whose id happens to spell it must land
+    // somewhere else — and Core's own target, which is not a valid app id, must land exactly here.
+    expect(serverName("hosty:core")).toBe("hosty-core");
+    expect(serverName("hosty-core")).not.toBe("hosty-core");
+    expect(serverName("hosty-core").startsWith("hosty-core-")).toBe(true);
+  });
 });

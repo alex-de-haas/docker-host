@@ -1,7 +1,7 @@
 # Delegated Token Exchange
 
 Created: 2026-08-15
-Updated: 2026-08-17
+Updated: 2026-09-02
 
 A system app trades the delegated token it holds for one scoped to another app, so an agent session
 can call app MCP endpoints on behalf of the user currently talking to it — without Core entering the
@@ -36,6 +36,15 @@ are read without pinning an audience, unlike ordinary validation.
   does not cover both.
 - **Nothing about the target's interfaces is checked.** Gating on "declares `mcp`" would be theatre:
   the access policy is the real gate, and the check would break non-MCP uses for no security gain.
+- **Core is a target.** `hosty:core` — the audience Core mints tokens for its own MCP surface under —
+  may be named as the target, so the assistant's session carries Core's tools beside the apps'
+  through one mechanism. There is no app record to resolve access against, so the rule is that
+  surface's own: administrators only, re-read from the directory rather than taken from the claims.
+  The token it mints is accepted by `/api/mcp` as read-only whatever the actor's role — a delegated
+  token never carries scopes, so it cannot prove a standing grant (see
+  [core-mcp](../core-mcp/feature.md)). A Core-audience token is a dead end for the exchange, like
+  one branched to a domain app: `hosty:core` is not a system app, so it may not exchange even to
+  refresh itself.
 
 Two claims carry this: `chainOrigin` (absent on a session-minted token, whose own `iat` is the
 origin) and `branched` (absent rather than false, so an unexchanged payload is byte-identical to what
@@ -131,6 +140,12 @@ trickery — but an honest mislabelled annotation on a mutating tool, which woul
 card at all. A single global switch would have been the rejected "just trust the hint" wearing a
 checkbox.
 
+Core is the one provider whose grant is on by default, and the distinction above is exactly why:
+Core's annotations are the platform's own word about its own tools, asserted by its test suite, which
+is the standing the harness's built-in read-only set already has. The operator can still set Core to
+ask, and the grant is computed the same way — from Core's `tools/list` — so only the tools Core
+declares read-only are ever covered.
+
 Mechanically: for a trusted, enabled provider the gateway runs `initialize` then `tools/list` against
 the app, following `nextCursor` to the end, and keeps the names declaring `readOnlyHint: true`. **An
 unreadable list — or an unreadable later page — grants nothing**: "we do not know" and "it offers
@@ -175,13 +190,16 @@ session — and one optional provider must not do that to a session that still h
   system caller succeeds / domain caller refused; branched token refreshes / cannot reach a third
   app; self-refresh keeps the right to branch; a chain inside the hour works / past it is refused;
   a permitted user succeeds / one who may not reach the target is refused; a live token works /
-  an expired one does not.
+  an expired one does not; a system caller exchanges for `hosty:core` as an administrator and the
+  token reaches `/api/mcp` / a member is refused and the Core-audience token cannot exchange at all.
 - The session path is covered too, including that a token it mints is still branchable — otherwise
   Shell's tokens would be dead ends.
 - Auto-allow, as pairs: an enabled but unvouched-for app still raises a card, while the same call on
   the same tool runs unprompted once the operator vouches — the only difference being their decision;
   a tool the app declared nothing about stays out of the grant even for a trusted app; revoking trust
   empties the grant on the running session; and an app whose tool list cannot be read grants nothing.
+  Core's own pair: the same call aimed at Core's server runs unprompted with nothing written to
+  settings, covering only what Core declared read-only, and asks once the operator sets Core to ask.
   The read-only discovery is covered on its own too: only a literal `true` counts, the MCP lifecycle
   runs before the listing with the session id carried, an SSE-framed answer is understood, and an
   unreachable or wrong-shaped answer returns null rather than an empty set.

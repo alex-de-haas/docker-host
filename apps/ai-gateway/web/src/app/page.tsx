@@ -3,7 +3,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ProviderRow } from "@/components/provider-row";
-import { approveSkill, establishSession, loadSettings, saveSettings, type Settings, type SettingsResponse } from "@/lib/api";
+import {
+  approveSkill,
+  CORE_PROVIDER_ID,
+  establishSession,
+  loadSettings,
+  saveSettings,
+  type Settings,
+  type SettingsResponse,
+} from "@/lib/api";
 import { startThemeSync } from "@/lib/shell-theme";
 
 export default function SettingsPage() {
@@ -78,6 +86,10 @@ export default function SettingsPage() {
   }
 
   const { settings, providers, discovery } = data;
+  // Absent on an older gateway means "assume it works": the flag exists to say when it does not.
+  const autoAllowSupported = data.harness?.capabilities?.autoAllow !== false;
+  const harnessName = data.harness?.name ?? "harness";
+  const apps = providers.filter((provider) => provider.appId !== CORE_PROVIDER_ID);
 
   return (
     <main className="hosty-page-padding grid gap-7">
@@ -134,22 +146,26 @@ export default function SettingsPage() {
       <section>
         <h2 className="text-[15px] font-semibold">MCP providers</h2>
         <p className="mb-3 text-[13px] text-muted-foreground">
-          Installed apps that expose an MCP interface. New apps arrive switched off on purpose: tool
-          names and descriptions are text written by the app and land in the context of a model that
-          has shell access on this host, so reaching one is a decision rather than a side effect of
-          installing it.
+          Hosty Core and the installed apps that expose an MCP interface. Core starts on, with its
+          read-only tools running unprompted, because its tools and their annotations are the
+          platform&apos;s own. New apps arrive switched off on purpose: tool names and descriptions
+          are text written by the app and land in the context of a model that has shell access on
+          this host, so reaching one is a decision rather than a side effect of installing it.
         </p>
+        {!autoAllowSupported && (
+          <p className="mb-3 rounded-md border p-3 text-[13px] text-muted-foreground">
+            The {harnessName} harness decides on its own which calls pause, so the approval mode below
+            has no effect on it — every provider asks by that harness&apos;s rules.
+          </p>
+        )}
 
-        {discovery !== "ok" ? (
-          <p className="rounded-md border p-3 text-[13px] text-muted-foreground">
+        {discovery !== "ok" && (
+          <p className="mb-2 rounded-md border p-3 text-[13px] text-muted-foreground">
             Could not reach Core, so the app list could not be loaded. Providers you have already
             enabled are unchanged and still in effect.
           </p>
-        ) : providers.length === 0 ? (
-          <p className="text-[13px] text-muted-foreground">
-            No installed app declares an MCP interface yet. Apps appear here once they do, switched off.
-          </p>
-        ) : (
+        )}
+        {providers.length > 0 && (
           <div className="grid gap-2">
             {providers.map((provider) => (
               <ProviderRow
@@ -157,6 +173,8 @@ export default function SettingsPage() {
                 provider={provider}
                 enabled={settings.mcpProviders[provider.appId] === true}
                 autoAllow={settings.mcpAutoAllow[provider.appId] === true}
+                autoAllowSupported={autoAllowSupported}
+                harnessName={harnessName}
                 busy={busy}
                 onToggle={(next) =>
                   void save({ mcpProviders: { ...settings.mcpProviders, [provider.appId]: next } })
@@ -167,6 +185,11 @@ export default function SettingsPage() {
               />
             ))}
           </div>
+        )}
+        {discovery === "ok" && apps.length === 0 && (
+          <p className="mt-2 text-[13px] text-muted-foreground">
+            No installed app declares an MCP interface yet. Apps appear here once they do, switched off.
+          </p>
         )}
       </section>
     </main>

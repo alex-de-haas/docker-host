@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
+import { CORE_PROVIDER_ID } from "./providers.js";
 
 // Operator-owned assistant policy, living in the gateway's own data directory.
 //
@@ -58,6 +59,24 @@ export interface AssistantSettings {
 
 const DEFAULTS: AssistantSettings = { systemPrompt: "", mcpProviders: {}, mcpAutoAllow: {}, mcpSkillDigests: {} };
 
+/**
+ * Core is the one provider that defaults to on, with its read-only tools unprompted.
+ *
+ * The opt-in rule on `mcpProviders` exists because an app's tool text is third-party prose and its
+ * `readOnlyHint` is the app's own word about itself. Neither holds for Core: the platform wrote both,
+ * its read tools are asserted read-only by its own test suite, and an assistant whose purpose is
+ * operating the host has no reason to start blind to it. Absent means on, so a settings file from
+ * before the row existed gains it without being rewritten, and an operator's explicit off survives
+ * every read.
+ */
+function withCoreDefaults(settings: AssistantSettings): AssistantSettings {
+  return {
+    ...settings,
+    mcpProviders: { [CORE_PROVIDER_ID]: true, ...settings.mcpProviders },
+    mcpAutoAllow: { [CORE_PROVIDER_ID]: true, ...settings.mcpAutoAllow },
+  };
+}
+
 /** Cap on the operator prompt. Generous for instructions, small enough not to crowd the context. */
 export const MAX_SYSTEM_PROMPT_CHARS = 8_000;
 
@@ -85,16 +104,16 @@ export class SettingsStore {
 
     try {
       const parsed = JSON.parse(await readFile(this.file, "utf8")) as Partial<AssistantSettings>;
-      this.cached = {
+      this.cached = withCoreDefaults({
         systemPrompt: typeof parsed.systemPrompt === "string" ? parsed.systemPrompt : "",
         mcpProviders: isBooleanRecord(parsed.mcpProviders) ? parsed.mcpProviders : {},
         mcpAutoAllow: isBooleanRecord(parsed.mcpAutoAllow) ? parsed.mcpAutoAllow : {},
         mcpSkillDigests: isStringRecord(parsed.mcpSkillDigests) ? parsed.mcpSkillDigests : {},
-      };
+      });
     } catch {
       // Missing or unreadable settings must not take the assistant down — an operator with a broken
       // file still gets a working chat, just with defaults.
-      this.cached = { ...DEFAULTS };
+      this.cached = withCoreDefaults({ ...DEFAULTS });
     }
 
     return this.cached;
@@ -148,8 +167,8 @@ export class SettingsStore {
     const temporary = `${this.file}.${process.pid}.${randomUUID()}.tmp`;
     await writeFile(temporary, JSON.stringify(next, null, 2), "utf8");
     await rename(temporary, this.file);
-    this.cached = next;
-    return next;
+    this.cached = withCoreDefaults(next);
+    return this.cached;
   }
 
   /**
@@ -159,8 +178,12 @@ export class SettingsStore {
   async prune(installedAppIds: readonly string[]): Promise<AssistantSettings> {
     const current = await this.read();
     const installed = new Set(installedAppIds);
+    // Core is never in the installed roster and is never pruned: dropping an explicit "off" here
+    // would have the default put it straight back on at the next read.
     const keep = (source: Record<string, boolean>): Record<string, boolean> =>
-      Object.fromEntries(Object.entries(source).filter(([appId]) => installed.has(appId)));
+      Object.fromEntries(
+        Object.entries(source).filter(([appId]) => appId === CORE_PROVIDER_ID || installed.has(appId)),
+      );
 
     const kept = keep(current.mcpProviders);
     // Pruned together, and this half matters more: a stale auto-allow row is a standing grant to an

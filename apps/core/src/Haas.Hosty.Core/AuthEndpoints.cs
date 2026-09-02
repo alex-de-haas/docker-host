@@ -197,7 +197,7 @@ internal static class AuthEndpoints
             if (!string.IsNullOrWhiteSpace(presented) && delegatedTokens.ReadClaims(presented) is { } claims)
             {
                 return await ExchangeDelegatedTokenAsync(
-                    appId, claims, identity, delegatedTokens, apps, audit, clock, cancellationToken);
+                    appId, claims, identity, delegatedTokens, apps, users, audit, clock, cancellationToken);
             }
 
             return await CoreSessionAuthorization.RequireSessionAsync(
@@ -272,6 +272,7 @@ internal static class AuthEndpoints
         AppIdentityService identity,
         DelegatedTokenService delegatedTokens,
         AppRegistryStore apps,
+        UserDirectoryStore users,
         AuditStore audit,
         IClock clock,
         CancellationToken cancellationToken)
@@ -310,6 +311,37 @@ internal static class AuthEndpoints
                 "exchange_chain_expired",
                 "This delegation chain is older than the maximum lifetime; the user must interact again.",
                 StatusCodes.Status403Forbidden);
+        }
+
+        // Core's own MCP endpoint as a target, for the reason the on-behalf-of route accepts it: the
+        // assistant panel reaches Core's tools through the same exchange it uses for the apps, so one
+        // session carries the control plane beside them. No app record exists to resolve access
+        // against, so the rule is the one that surface has always had — administrators only, re-read
+        // from the directory rather than taken from the claims, because a role downgrade must reach a
+        // chain that is still alive. What the token may do there is the MCP endpoint's decision, and
+        // it is reads only: a delegated token never carries scopes, so it cannot prove a standing
+        // grant, whoever the actor is.
+        if (string.Equals(target, AccessTokenScopes.CoreAudience, StringComparison.Ordinal))
+        {
+            var state = await users.ReadAsync(cancellationToken);
+            var actor = state.Users.FirstOrDefault(candidate =>
+                string.Equals(candidate.Id, claims.Sub, StringComparison.Ordinal));
+            if (actor is null || actor.Disabled || !AppAccessPolicy.IsAdmin(actor))
+            {
+                return await DenyAsync(
+                    "admin_required",
+                    "Core MCP requires a Host administrator.",
+                    StatusCodes.Status403Forbidden);
+            }
+
+            var coreToken = delegatedTokens.CreateToken(
+                AccessTokenScopes.CoreAudience,
+                actor.Id,
+                actor.Role,
+                chainOrigin: origin,
+                branched: claims.Branched == true || branching);
+            await AppendExchangeAuditAsync(audit, claims, callerAppId, target, "succeeded", clock, cancellationToken);
+            return CoreJson.Json(coreToken);
         }
 
         // The access-policy refusals — an unassigned member, a disabled user, an uninstalled target —

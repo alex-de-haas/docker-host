@@ -1,7 +1,7 @@
 # AI Gateway
 
 Created: 2026-08-09
-Updated: 2026-09-01
+Updated: 2026-09-02
 
 The Hosty assistant: an optional, removable system app (`hosty.ai-gateway`) hosting admin-only
 operator chat sessions on a host-resident agent harness, plus the Shell surface that renders them.
@@ -113,6 +113,30 @@ this feature.
   default to off.** Tool names and descriptions are third-party text landing in the context of a
   model that holds host shell, so reaching an app is a decision, not a side effect of installing it.
   Toggles for uninstalled apps are pruned, so an uninstall/reinstall cycle cannot resurrect one.
+- **Hosty Core is the first row.** Core's own MCP endpoint is offered to the assistant's sessions as
+  a provider under the id `hosty:core` — the audience Core mints delegated tokens for its surface
+  under, and the name the facade already lists it by — with the same switch and approval select as
+  an app. It rides on the gateway's configured Core origin rather than on the app-directory read, so
+  the row is there while discovery reports the apps unavailable, and it is never pruned: Core is not
+  in the roster pruning runs against, and dropping an explicit "off" would have the default put it
+  back on. **Core defaults to on, with its read-only tools unprompted** — the one exception to the
+  opt-in rule, because that rule guards against third-party prose and an app's own word about its
+  annotations, and neither applies to the platform's own tools, whose read-only annotations its own
+  test suite asserts. Absent means on, so a settings file from before the row existed gains it
+  without being rewritten and an explicit off survives every read. The row governs the panel only:
+  the facade keeps offering Core to external clients on its own terms.
+- What Core contributes to a session is **the read-only half of its surface** — `list_apps`,
+  `get_app`, `get_host_status`, `tail_app_logs`, `search_audit` — under the reserved server name
+  `hosty-core` (an app id that spells the same string is given a digest suffix instead, since the
+  grant set is keyed on these names). The session reaches Core with a delegated token branched from
+  the operator's own, and a delegated token never carries scopes, so Core refuses its lifecycle and
+  update tools on that credential whatever the operator's role — the rule the facade's path already
+  lives under (see [core-mcp](../core-mcp/feature.md)). The host preamble says so and points the
+  model at the CLI for those, so it does not spend a turn discovering the refusal.
+- **The approval select is greyed out on a harness that never consults it.** Each harness reports an
+  `autoAllow` capability; Codex reports false, because it raises approvals by its own sandbox rules
+  and an app tool call never passes through the adapter's hands. The page says so in a note rather
+  than offering a control that does nothing, and the select's tooltip names the harness.
   Each provider carries two controls, shaped so neither can be read two ways: a **switch** for
   enable/disable — its position is the state, after a button labelled "Disabled" proved equally
   readable as "this is off" and "click to disable" — and a **select** for the approval mode ("Ask
@@ -148,7 +172,13 @@ gateway restart.
   Code by hand, their instructions and skills included.
 - `permissionMode: "default"` with read-only tools (Read, Glob, Grep, WebFetch, WebSearch,
   TodoWrite, Task) auto-allowed; every other tool pauses inside `canUseTool` until the operator
-  decides in Shell. A deny unblocks the harness with a message.
+  decides in Shell. A deny unblocks the harness with a message. The SDK's third `canUseTool`
+  argument is read for its `title` (the SDK's own prompt sentence) and `decisionReason`; both ride on
+  the `approval_request` event when present and the card shows them under its own heading. A deny
+  carrying the operator's reason reaches the model as `Denied by the operator in Hosty: <reason>` —
+  behind a fixed prefix, so a refusal stays a refusal whatever was typed. The reason is collapsed to
+  one line first: the prefix guards the line it is on, and a second line would arrive unprefixed,
+  reading like an instruction of its own.
 - Credential: the Agent SDK does not read an interactive `claude login` — it needs an environment
   credential (`ANTHROPIC_API_KEY`, a `claude setup-token` OAuth token, or a provider
   `CLAUDE_CODE_USE_*` configuration), offered as optional secret app settings.
@@ -217,6 +247,14 @@ gateway restart.
   indistinguishable from one it never received. The capability flag reports `questions: false`, and
   the generic empty reply to unimplemented server requests is safe here because the binary carries
   "failed to deserialize ToolRequestUserInputResponse" — a wrong reply fails loudly.
+- **No deny reasons.** The current `item/*` approval reply is a bare `decline`; only the legacy
+  methods carry a rejection text, and a capability that held for some requests and not others would
+  have the card promising delivery it cannot keep. The flag reports `denyReason: false`, the panel
+  hides the reason box, and the API answers `400 deny_reason_unsupported` to a reason it cannot
+  deliver rather than storing a message nobody received.
+- A `fileChange` approval request names the item and, often, the root Codex wants write access
+  under; the change list belongs to the item and is not on the request. The card shows that root
+  as the entry, and falls back to the raw payload when the request names neither.
 - The operator system prompt rides in once as a header on the first message, since the protocol
   exposes no per-session instruction channel; Codex's own instruction sources are untouched.
 - Three protocol properties are load-bearing and easy to get wrong, so they are pinned in
@@ -244,8 +282,29 @@ gateway restart.
 ## Shell Surface
 
 - The panel is a right-anchored dialog: streaming deltas with a typing indicator, the transcript
-  rebuilt from the event log, inline approval cards showing the proposed tool input with
-  Allow/Deny (resolved ones collapse to a badge), a status chip, and a New-session reset.
+  rebuilt from the event log, inline approval cards with Allow/Deny (resolved ones collapse to a
+  badge), a status chip, and a New-session reset.
+- **Approval cards are typed by what is being asked**, because an operator approves consequences,
+  not JSON. A shell command shows the model's own description as its heading over the command in a
+  non-wrapping block — a digest or a long path broken across lines is a command the operator would
+  have to reassemble before approving — and a Codex command adds its working directory. An edit
+  shows the text that leaves and the text that arrives, a write its content, a Codex file change its
+  paths and diff — or the root it asks write access under, when the request carries no change list.
+  An app tool names the app's server and the tool, with its arguments listed by name
+  (strings verbatim, anything else as JSON). Anything the card does not recognize falls back to the
+  JSON it always showed. The harness's own prompt sentence and its reason for asking appear under
+  the heading when the harness sent them. The description of a call is a pure module
+  (`web/src/lib/tool-display.ts`), unit-tested apart from rendering.
+- **A deny may carry a reason** on a harness whose decline can deliver one (the `denyReason`
+  capability; the box is absent otherwise). The card has a one-line box beside its buttons; Enter
+  there is a deny, since typing a reason is already the decision. The gateway bounds the reason at
+  500 characters, collapses it to one line, stores it on the decision event so a replayed transcript
+  shows why a card was refused, and delivers it to the model behind a fixed prefix.
+- **Tool rows say what a call was for**, not what it was called: a shell row carries the model's
+  description (or the command's first line), a read its path, a search its pattern, an app tool its
+  server, tool and scalar arguments. The raw input is one click away behind the row — a run that
+  reads thirty files is thirty rows, and a transcript that showed every input would be a wall of
+  JSON with the conversation somewhere inside it.
 - **Question cards** are deliberately styled apart from approval cards — options with labels and
   descriptions, single or multi select, and a free-text "other" (part of the tool contract: the
   model is told an Other option is supplied automatically, so it never lists one). An approval asks
@@ -336,7 +395,7 @@ gateway restart.
   the answer comes back as `{behavior: "allow", updatedInput: {...input, answers}}` — a deny carrying
   the answer would pass every UI-level check and still reproduce the original loop. The
   malformed-ask decline and the "non-question writes still pause" branch order are covered too.
-- Settings: defaults (empty prompt, every provider off), round trip surviving a restart, rejection
+- Settings: defaults (empty prompt, every app provider off, Core on), round trip surviving a restart, rejection
   of malformed writes without storing them, pruning of toggles for uninstalled apps, the admin gate,
   and the unauthenticated page shell.
 - Session titles: the derivation is unit-tested (opening line rather than first sentence, blank and
@@ -387,3 +446,23 @@ gateway restart.
   write pauses on an approval card and executes only after Allow.
 - Display assets have no automated coverage: a changed icon is checked by rendering it and looking
   at it at both card and sidebar size, and by confirming the manifest path resolves.
+- Core as a provider: the settings suite pins the Core row first with its URL and interface, on and
+  read-only-unprompted by default with nothing written, and an explicit off surviving the read that
+  prunes; the store suite pins the same defaults and the prune exemption on their own; the exchange
+  suite pins the reserved server name (Core's target maps to it, an app id spelling it does not).
+  The auto-allow suite's Core pair: the same call aimed at Core's server runs unprompted with no
+  operator decision on record, covering only the tools Core declared read-only, and asks again once
+  the operator sets Core to ask.
+- Tool display (`web/src/lib` suite): a shell row prefers the description to the command and takes
+  only the command's first line; an app tool is named by server and tool with scalar arguments; a
+  long line is bounded; an unknown tool or a non-object input degrades without throwing. Cards: a
+  shell command under its description with the command intact, Codex's working directory carried,
+  an edit as removed and inserted text, Codex's change list with a tagged kind and a diff, an app
+  tool's arguments by name, and the JSON fallback.
+- Deny reasons: a deny with a multi-line reason is stored and delivered to the harness as one
+  prefixed line (the fake harness echoes what it was told, so the assertion is on delivery, not on
+  the card closing); on a harness reporting `denyReason: false` a reason is refused with 400 while
+  the bare deny goes through. Tool display: a Codex file-change request without a change list shows
+  the root it names, and one naming neither falls back to JSON.
+- Capabilities: every harness reports `autoAllow` and `denyReason`, asserted on health alongside
+  the other flags.

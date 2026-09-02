@@ -1,7 +1,7 @@
 # Core MCP
 
 Created: 2026-08-09
-Updated: 2026-08-25
+Updated: 2026-09-02
 
 An embedded Model Context Protocol endpoint on Core, giving agent clients typed tools for the things
 Core already knows — which apps exist, what state they are in, what their logs say — instead of
@@ -93,13 +93,15 @@ lifecycle authority — and the tools consult it:
 | administrator session | yes | yes — the full-role credential, by role, as on every `/api` lifecycle route |
 | `hosty:core` token with `mcp:read` | yes | refused, naming the scope |
 | `hosty:core` token with `mcp:lifecycle` | yes | yes |
-| delegated token (the facade's path) | yes | **never** |
+| delegated token (the facade's path, and the assistant panel's) | yes | **never** |
 
 The last row is deliberate and role does not override it: a delegated token carries sub, role and
 audience — never the scopes of the credential it descends from — so it cannot *prove* a standing
 grant, and inferring one from the admin role would let a facade client holding a read-only token
 reach mutations around the grant. Nothing visible is lost: the facade exports only
-`readOnlyHint: true` tools anyway. Issuance also binds `mcp:lifecycle` to the `hosty:core` audience
+`readOnlyHint: true` tools anyway, and the assistant panel — which reaches this surface with a token
+the [exchange](../delegated-token-exchange/feature.md) branches for `hosty:core` — is told in its
+host preamble which tools are refused on that credential and to use the CLI for them. Issuance also binds `mcp:lifecycle` to the `hosty:core` audience
 (`scope_invalid_for_audience` otherwise) and requires `mcp:read` alongside it
 (`scope_requires_read`): `mcp:read` is the entry to the surface, so a lifecycle-only credential
 would be minted cleanly and refused on every call — unable to invoke the very tools it names. Both

@@ -38,7 +38,7 @@ export type HarnessHealth = {
   available: boolean;
   reason?: string;
   /** Absent on an older gateway; treated as "cannot", so nothing is over-promised. */
-  capabilities?: { questions?: boolean; liveReconfigure?: boolean };
+  capabilities?: { questions?: boolean; liveReconfigure?: boolean; denyReason?: boolean };
 };
 
 /** Terminal for a stream: retrying cannot fix a revoked role or a session that is gone. */
@@ -121,10 +121,16 @@ export async function postMessage(sessionId: string, text: string): Promise<void
   });
 }
 
-export async function resolveApproval(sessionId: string, approvalId: string, decision: "allow" | "deny"): Promise<void> {
+/** Decides a pending approval. A deny may carry the operator's reason, which reaches the model. */
+export async function resolveApproval(
+  sessionId: string,
+  approvalId: string,
+  decision: "allow" | "deny",
+  message?: string,
+): Promise<void> {
   await call(`/sessions/${encodeURIComponent(sessionId)}/approvals/${encodeURIComponent(approvalId)}`, {
     method: "POST",
-    body: JSON.stringify({ decision }),
+    body: JSON.stringify({ decision, ...(message ? { message } : {}) }),
   });
 }
 
