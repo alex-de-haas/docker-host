@@ -32,10 +32,6 @@ export function collectInstalledRevisions(app: CoreApp): AppRevision[] {
 // Revisions of the build the pending update resolves to, projected onto the verdict by the same plan
 // build. Empty for a Core that predates the projection, and for an update whose inputs are entirely
 // manifest-side (a settings or port change carries no artifact of its own).
-//
-// Order is part of the contract, not incidental: the source commit first, then services by name. The
-// inline label below shows the first of these, so a reader hovering it must find that same revision
-// at the top of the tooltip.
 export function collectTargetRevisions(verdict: AppUpdateAvailability | null | undefined): AppRevision[] {
   if (!verdict) {
     return [];
@@ -57,28 +53,6 @@ export function collectTargetRevisions(verdict: AppUpdateAvailability | null | u
   return revisions;
 }
 
-// The revision the inline label falls back to — the first one collectTargetRevisions would list.
-// Derived directly rather than by building and sorting that whole list for its head: this runs on
-// every row of every render, and the label only ever needs one value.
-function firstTargetRevision(verdict: AppUpdateAvailability | null | undefined): string | null {
-  const sourceCommit = verdict?.targetSourceCommit?.trim();
-  if (sourceCommit) {
-    return sourceCommit;
-  }
-
-  let firstService: string | null = null;
-  let firstDigest: string | null = null;
-  for (const [service, digest] of Object.entries(verdict?.targetArtifactDigests ?? {})) {
-    const trimmed = digest?.trim();
-    if (trimmed && (firstService === null || service.localeCompare(firstService) < 0)) {
-      firstService = service;
-      firstDigest = trimmed;
-    }
-  }
-
-  return firstDigest;
-}
-
 // Abbreviates a sha256 image digest to `sha256:` + the first 12 hex chars for compact display.
 // Only real digests (`sha256:`-prefixed or a bare 64-hex string) are shortened; any other token is
 // returned unchanged so non-digest identifiers are never mis-rendered with a fake `sha256:` prefix.
@@ -96,52 +70,25 @@ export function shortDigest(digest?: string | null): string | null {
   return `sha256:${hex.slice(0, 12)}`;
 }
 
-// Abbreviates one revision for inline display: a git commit to its familiar 7-character prefix, an
-// image digest to the `sha256:` short form the rest of the UI uses, anything else verbatim.
-export function shortRevision(value?: string | null): string | null {
-  const trimmed = value?.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  return /^[0-9a-f]{40}$/i.test(trimmed) ? trimmed.slice(0, 7) : shortDigest(trimmed);
-}
-
-// What the row shows under the installed version. Normally the version the update advances to; when
-// the update does not move the version — the common case for a source app tracking a branch — the
-// short target revision instead, because repeating the installed number in the update's colour reads
-// as a rendering bug rather than as "same version, newer build". Null when the verdict names neither,
-// which is what an older Core sends: the row then falls back to the installed version alone.
-export function resolveAvailableVersionLabel(
-  installedVersion: string,
-  verdict: AppUpdateAvailability | null | undefined,
-): { label: string; isVersion: boolean } | null {
-  const targetVersion = verdict?.targetVersion?.trim();
-  if (targetVersion && targetVersion !== installedVersion.trim()) {
-    return { label: targetVersion, isVersion: true };
-  }
-
-  const revision = shortRevision(firstTargetRevision(verdict));
-  return revision ? { label: revision, isVersion: false } : null;
+// The version the row shows under the installed one: whatever the update resolves to, including when
+// that equals the installed version. An update that keeps its version is the normal shape for a source
+// app tracking a branch, and the row still has to answer "which version am I getting" — the tooltip
+// carries the commit that separates the two builds. Null only when the verdict names no version at
+// all, which is what a Core predating the projection sends: the row then shows the installed version
+// alone with its update affordance.
+export function resolveAvailableVersionLabel(verdict: AppUpdateAvailability | null | undefined): string | null {
+  return verdict?.targetVersion?.trim() || null;
 }
 
 function sortedEntries<T>(source: Record<string, T> | null | undefined): [string, T][] {
   return Object.entries(source ?? {}).sort(([left], [right]) => left.localeCompare(right));
 }
 
-// The platform row's counterpart to resolveAvailableVersionLabel. Core's check is a binary-hash
-// comparison, so unlike an app it has no revision to fall back on: when the release publishes no
-// version marker (an older release, or a Core that predates the field), or republishes the version
-// already installed, there is nothing truthful to put under the installed version and the "Update
-// Core" button carries the news alone.
-export function resolveAvailableCoreVersion(
-  installedVersion: string,
-  coreUpdate: CoreUpdateStatus | null | undefined,
-): string | null {
-  if (coreUpdate?.updateAvailable !== true) {
-    return null;
-  }
-
-  const available = coreUpdate.availableVersion?.trim();
-  return available && available !== installedVersion.trim() ? available : null;
+// The platform row's counterpart to resolveAvailableVersionLabel, and it answers the same way: the
+// version the channel publishes, including when it matches the installed one — a rolling channel
+// republishes the same version routinely, and "0.97.0 is what you would get" is still the answer to
+// the question the row asks. Null when no update is offered, or when the release carries no version
+// marker (an older release, or a Core that predates the field) and nothing can be named.
+export function resolveAvailableCoreVersion(coreUpdate: CoreUpdateStatus | null | undefined): string | null {
+  return coreUpdate?.updateAvailable === true ? coreUpdate.availableVersion?.trim() || null : null;
 }

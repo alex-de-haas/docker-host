@@ -1210,19 +1210,23 @@ function InstalledAppRow({
 // glyph reads better at a glance, but does not scale: an app with a failed start, an unbound port, and
 // missing settings would carry three icons and stop being scannable. The tooltip carries the specifics,
 // and the panel's alerts carry the full explanation.
-// Core's version, and — when the release channel publishes a newer one — that version under it, in
-// the same shape the app rows use. Core's own check is a binary-hash comparison, so it can only name
-// a version when the release carries the marker: an older release, or a rebuild that did not move the
-// version, leaves the installed version alone and the "Update Core" button to say the rest. The
-// tooltips name what Core actually knows here — the release channel and when it last looked — rather
-// than a revision, because no hash of the published binary is exposed to a client.
+// Core's version, and — when an update is offered — the version the channel publishes under it, in the
+// same shape the app rows use. That includes a rebuild of the version already installed, which on a
+// rolling channel is the ordinary case: the line answers "which version would I get", and the tooltip
+// title separates "New build of v0.97.0" from "Update to v0.98.0". Core's own check is a binary-hash
+// comparison, so it can name a version only when the release carries the marker; an older release
+// leaves the installed version alone with the "Update Core" button to say the rest.
+//
+// The tooltips name the release channel, and only that. Unlike an app row there is no revision to
+// show — no hash of the published binary is exposed to a client — and `checkedAt` is deliberately left
+// out: a timestamp that moves on its own would make the tooltip look like it were reporting progress.
 function CoreVersionBlock({ status, coreUpdate }: { status: CoreStatus | null; coreUpdate: CoreUpdateStatus | null }) {
   if (!status?.version) {
     return <span className="text-sm text-muted-foreground">version unknown</span>;
   }
 
   const channel: AppRevision[] = coreUpdate ? [{ label: "Release channel", value: coreUpdate.releaseTag }] : [];
-  const available = resolveAvailableCoreVersion(status.version, coreUpdate);
+  const available = resolveAvailableCoreVersion(coreUpdate);
 
   return (
     <TooltipProvider delayDuration={150}>
@@ -1240,7 +1244,7 @@ function CoreVersionBlock({ status, coreUpdate }: { status: CoreStatus | null; c
             <VersionLine
               value={`v${available}`}
               className="text-sky-600 decoration-sky-600/50 dark:text-sky-400 dark:decoration-sky-400/50"
-              title={`Update to v${available}`}
+              title={available === status.version ? `New build of v${available}` : `Update to v${available}`}
               revisions={channel}
               empty="Core has not checked its release channel yet."
             />
@@ -1277,7 +1281,7 @@ function AppVersionCell({
   const installedRevisions = collectInstalledRevisions(app);
   // Only ever read when an update is actually available, so a stale verdict's target never shows up
   // under a row that has nothing to apply.
-  const available = updateVisible ? resolveAvailableVersionLabel(app.version, verdict) : null;
+  const available = updateVisible ? resolveAvailableVersionLabel(verdict) : null;
   const targetRevisions = updateVisible ? collectTargetRevisions(verdict) : [];
   // The available version takes the affordance's colour, so the two read as one statement: amber when
   // the plan must be reviewed first, sky when it is a one-click apply.
@@ -1300,9 +1304,9 @@ function AppVersionCell({
           {available && (
             <div>
               <VersionLine
-                value={available.label}
-                className={cn(accent, available.isVersion ? undefined : "font-mono text-[11px]")}
-                title={available.isVersion ? `Update to ${available.label}` : `New build of ${app.version}`}
+                value={available}
+                className={accent}
+                title={available === app.version ? `New build of ${available}` : `Update to ${available}`}
                 revisions={targetRevisions}
                 empty="This update changes the app's manifest, not a compiled artifact."
               />
