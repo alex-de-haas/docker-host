@@ -1,10 +1,10 @@
 # Hosty App SDK
 
 Created: 2026-07-15
-Updated: 2026-08-17
+Updated: 2026-09-02
 
 Shared Host integration for runtime apps, in two published packages: **`@hosty-sdk/app`** on npmjs
-(TypeScript, 0.7.0) and **`HostySdk.App`** on NuGet (.NET, 0.3.0). They own the app half of the
+(TypeScript, 0.7.0) and **`HostySdk.App`** on NuGet (.NET, 0.6.0). They own the app half of the
 [auth session lifecycle](../auth-session-lifecycle/feature.md) contract — session classification,
 recovery, Core revalidation, launch-mode awareness — plus the app secrets client and delegated-token
 validation.
@@ -59,7 +59,13 @@ What each slice holds:
   `createReissueRateLimiter`.
 - **`HostySdk.App`:** `HostyAuthenticationHandler` (identity token from bearer, cookie, or inbound
   header), `CoreIdentityValidator` behind `CachingIdentityValidator`, `HostyAppOptions` binding of the
-  `HOSTY_*` environment, `HostySession`, and `HostySecretsClient` (`AddHostySecrets`).
+  `HOSTY_*` environment, `HostySession`, `HostySecretsClient` (`AddHostySecrets`),
+  `HostyScopedTokenClient`, and `HostyDelegatedToken` (local ECDSA validation).
+
+**The two packages are not interchangeable, and the summary above once implied they were.** Delegated
+validation was listed as something "the packages" own while only the TypeScript one had it — which is
+why a C# app could authenticate a browser and refuse every agent, and why nothing said so until an
+operator hit it. Where a capability exists on one side only, this document names the side.
 
 ## Session State Machine
 
