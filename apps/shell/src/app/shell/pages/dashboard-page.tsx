@@ -1210,12 +1210,16 @@ function InstalledAppRow({
 // glyph reads better at a glance, but does not scale: an app with a failed start, an unbound port, and
 // missing settings would carry three icons and stop being scannable. The tooltip carries the specifics,
 // and the panel's alerts carry the full explanation.
-// Core's version, and — when the release channel publishes a newer one — that version under it, in
-// the same shape the app rows use. Core's own check is a binary-hash comparison, so it can only name
-// a version when the release carries the marker: an older release, or a rebuild that did not move the
-// version, leaves the installed version alone and the "Update Core" button to say the rest. The
-// tooltips name what Core actually knows here — the release channel and when it last looked — rather
-// than a revision, because no hash of the published binary is exposed to a client.
+// Core's version, and — when an update is offered — the version the channel publishes under it, in the
+// same shape the app rows use. That includes a rebuild of the version already installed, which on a
+// rolling channel is the ordinary case: the line answers "which version would I get", and the tooltip
+// title separates "New build of v0.97.0" from "Update to v0.98.0". Core's own check is a binary-hash
+// comparison, so it can name a version only when the release carries the marker; an older release
+// leaves the installed version alone with the "Update Core" button to say the rest.
+//
+// The tooltips name the release channel, and only that. Unlike an app row there is no revision to
+// show — no hash of the published binary is exposed to a client — and `checkedAt` is deliberately left
+// out: a timestamp that moves on its own would make the tooltip look like it were reporting progress.
 function CoreVersionBlock({ status, coreUpdate }: { status: CoreStatus | null; coreUpdate: CoreUpdateStatus | null }) {
   if (!status?.version) {
     return <span className="text-sm text-muted-foreground">version unknown</span>;
