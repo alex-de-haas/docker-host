@@ -45,11 +45,15 @@ export class CodexHarnessAdapter implements HarnessAdapter {
   // takes effect at the next session and the UI must say so.
   // autoAllow is false because nothing here consults the gateway's predicate: Codex raises approvals
   // by its own sandbox rules (below), and an app tool call never passes through this adapter's hands.
+  // denyReason is false because the current `item/*` approval reply is a bare "decline" — only the
+  // legacy methods carry a rejection text — and a capability that held for some requests and not
+  // others would have the card promising delivery it cannot keep.
   readonly capabilities: HarnessCapabilities = {
     questions: false,
     appMcp: true,
     liveReconfigure: false,
     autoAllow: false,
+    denyReason: false,
   };
 
   constructor(private readonly auth: CodexAuthConfig) {}

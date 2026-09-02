@@ -509,6 +509,9 @@ export default function AssistantPage() {
                 event={event}
                 decision={event.type === "approval_request" ? decidedApprovals.get(String(event.approvalId)) ?? null : null}
                 answers={event.type === "question_request" ? answeredQuestions.get(String(event.questionId)) ?? null : null}
+                // Absent reads as "cannot": a reason box on a harness whose decline carries nothing
+                // would promise delivery the gateway then refuses.
+                denyReason={health?.capabilities?.denyReason === true}
                 onDecide={decide}
                 onAnswer={answer}
               />

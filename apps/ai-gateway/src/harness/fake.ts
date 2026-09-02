@@ -20,6 +20,7 @@ export class FakeHarnessAdapter implements HarnessAdapter {
     appMcp: true,
     liveReconfigure: true,
     autoAllow: true,
+    denyReason: true,
   };
 
   /** The options of the most recent start, so a suite can assert what a session was actually given. */
@@ -106,7 +107,7 @@ class FakeRun implements HarnessRun {
     });
   }
 
-  resolveApproval(approvalId: string, decision: "allow" | "deny"): boolean {
+  resolveApproval(approvalId: string, decision: "allow" | "deny", message?: string): boolean {
     const pending = this.pending.get(approvalId);
     if (!pending) {
       return false;
@@ -118,7 +119,9 @@ class FakeRun implements HarnessRun {
         this.onEvent({ type: "tool_use", toolName: pending.toolName, input: {} });
         this.onEvent({ type: "assistant_text", text: "written" });
       } else {
-        this.onEvent({ type: "assistant_text", text: "skipped" });
+        // The deny message echoed back, for the same reason the question answer is below: a test
+        // can then assert what the harness was actually told, not only that the card closed.
+        this.onEvent({ type: "assistant_text", text: message ? `skipped: ${message}` : "skipped" });
       }
       this.onEvent({ type: "result", status: "success" });
     });

@@ -406,6 +406,15 @@ async function route(
     // The operator's reason for a deny, bounded like every other operator-typed field: it lands in
     // the transcript and in the model's context, and neither wants a pasted log by mistake.
     const reason = typeof body.message === "string" ? body.message.trim().slice(0, MAX_DENY_REASON_CHARS) : "";
+    if (reason && !adapter.capabilities.denyReason) {
+      // Refused rather than stored: a reason the harness cannot deliver would sit in the transcript
+      // looking delivered. The panel hides the box on such a harness; this covers every other client.
+      sendJson(response, 400, {
+        code: "deny_reason_unsupported",
+        message: `The ${adapter.name} harness cannot deliver a reason with a deny.`,
+      });
+      return;
+    }
     const resolved = await manager.resolveApproval(sessionId, approvalMatch[1]!, body.decision, reason || undefined);
     if (!resolved) {
       sendJson(response, 409, {

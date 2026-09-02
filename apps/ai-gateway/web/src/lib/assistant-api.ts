@@ -38,7 +38,7 @@ export type HarnessHealth = {
   available: boolean;
   reason?: string;
   /** Absent on an older gateway; treated as "cannot", so nothing is over-promised. */
-  capabilities?: { questions?: boolean; liveReconfigure?: boolean };
+  capabilities?: { questions?: boolean; liveReconfigure?: boolean; denyReason?: boolean };
 };
 
 /** Terminal for a stream: retrying cannot fix a revoked role or a session that is gone. */

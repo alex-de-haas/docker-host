@@ -573,8 +573,9 @@ export class SessionManager {
     // the released call carries a session key, and its token is minted as the request goes out.
     // A reason only ever accompanies a deny, and it reaches the model behind a fixed prefix so the
     // reply reads as a refusal whatever was typed — a bare "use the other host" could pass for an
-    // instruction the operator never gave as one.
-    const reason = decision === "deny" && message ? message : undefined;
+    // instruction the operator never gave as one. Collapsed to one line first: the prefix guards the
+    // line it is on, and a second line would arrive unprefixed, reading like a separate instruction.
+    const reason = decision === "deny" && message ? message.replace(/\s+/g, " ").trim() || undefined : undefined;
     const resolved = session.run.resolveApproval(
       approvalId,
       decision,

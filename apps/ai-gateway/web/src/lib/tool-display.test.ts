@@ -72,6 +72,18 @@ describe("describeApproval", () => {
     });
   });
 
+  it("shows the root a Codex file change asks for when the request carries no change list", () => {
+    // The request names the item and the root; the changes live on the item. An empty "Change files"
+    // card would hide the only thing the request says about where it is going to write.
+    expect(describeApproval("FileChange", { changes: null, grantRoot: "/srv/app", reason: "needs write access" })).toEqual({
+      kind: "file",
+      heading: "Write under a directory",
+      changes: [{ path: "/srv/app", kind: "write access", before: null, after: null, diff: null }],
+    });
+    // Neither a list nor a root: the raw payload, never a heading over nothing.
+    expect(describeApproval("FileChange", { changes: null, grantRoot: null })).toMatchObject({ kind: "generic" });
+  });
+
   it("reads Codex's change list, including a tagged kind and a ready-made diff", () => {
     const view = describeApproval("FileChange", {
       changes: [{ path: "/srv/a.txt", kind: { type: "update" }, diff: "-old\n+new" }],

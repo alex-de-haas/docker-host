@@ -137,8 +137,21 @@ export function describeApproval(toolName: string, input: unknown): ApprovalView
         heading: "Edit a notebook",
         changes: [change(text(fields.notebook_path), text(fields.edit_mode) ?? "edit", null, text(fields.new_source))],
       };
-    case "FileChange":
-      return { kind: "file", heading: "Change files", changes: fileChanges(fields.changes) };
+    case "FileChange": {
+      // Codex's approval request names the item and, often, the root it wants write access under;
+      // the change list belongs to the item and is not on the request. An empty card would hide the
+      // one thing the request does say, so the root becomes the entry — and with neither, the raw
+      // payload is still better than a heading over nothing.
+      const changes = fileChanges(fields.changes);
+      if (changes.length > 0) {
+        return { kind: "file", heading: "Change files", changes };
+      }
+      const root = text(fields.grantRoot);
+      if (root !== null) {
+        return { kind: "file", heading: "Write under a directory", changes: [change(root, "write access", null, null)] };
+      }
+      break;
+    }
     default:
       break;
   }

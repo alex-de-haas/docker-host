@@ -55,6 +55,7 @@ export class ClaudeHarnessAdapter implements HarnessAdapter {
     appMcp: true,
     liveReconfigure: true,
     autoAllow: true,
+    denyReason: true,
   };
 
   async probe(): Promise<HarnessAvailability> {

@@ -33,6 +33,12 @@ export interface HarnessCapabilities {
    * by its own rules — so the settings UI must say so rather than offer a choice that does nothing.
    */
   autoAllow: boolean;
+  /**
+   * A denied approval can carry the operator's reason to the model. False means the harness's
+   * decline carries nothing — the reason would be recorded and never delivered — so the card must
+   * not offer to send one and the API refuses one rather than storing a message nobody received.
+   */
+  denyReason: boolean;
 }
 
 // One question the harness wants answered. Mirrors the Claude SDK's AskUserQuestionInput shape

@@ -388,7 +388,7 @@ describe("gateway", () => {
 
     await call(`/api/sessions/${record.id}/approvals/${approval.approvalId as string}`, {
       method: "POST",
-      body: JSON.stringify({ decision: "deny" }),
+      body: JSON.stringify({ decision: "deny", message: "  use the other host\nand take a backup first  " }),
     });
 
     const events = await waitFor(async () => {
@@ -396,9 +396,51 @@ describe("gateway", () => {
       return stored.some((event) => event.type === "result") ? stored : null;
     }, "result after denial");
     expect(events.some((event) => event.type === "tool_use")).toBe(false);
+    // The reason reaches the harness behind the fixed prefix and on one line: a second line would
+    // arrive unprefixed and read like an instruction of its own. The stored copy is the same line.
     expect(events.filter((event) => event.type === "assistant_text").map((event) => event.text)).toContain(
-      "skipped",
+      "skipped: Denied by the operator in Hosty: use the other host and take a backup first",
     );
+    expect(events.find((event) => event.type === "approval_decision")?.message).toBe(
+      "use the other host and take a backup first",
+    );
+  });
+
+  it("refuses a deny reason on a harness whose decline cannot carry one", async () => {
+    // Stored-but-undelivered would be the worst outcome: the transcript would show a reason the
+    // model never saw. The panel hides the box on such a harness; this covers every other client.
+    const declineOnly: import("./harness/adapter.js").HarnessAdapter = {
+      name: "decline-only",
+      capabilities: { questions: false, appMcp: true, liveReconfigure: false, autoAllow: false, denyReason: false },
+      probe: async () => ({ available: true }),
+      start: () => {
+        throw new Error("the route under test never starts a run");
+      },
+    };
+    const strict = createGatewayServer(manager, declineOnly, settings);
+    await new Promise<void>((resolve) => strict.listen(0, resolve));
+    const strictOrigin = `http://127.0.0.1:${(strict.address() as AddressInfo).port}`;
+    const headers = { authorization: `Bearer ${mintToken("host.admin")}`, "content-type": "application/json" };
+
+    try {
+      const record = (await (await call("/api/sessions", { method: "POST", body: "{}" })).json()) as { id: string };
+      await call(`/api/sessions/${record.id}/messages`, { method: "POST", body: JSON.stringify({ text: "write it" }) });
+      const approval = await waitFor(async () => {
+        const events = await store.readEvents(record.id);
+        return events.find((event) => event.type === "approval_request") ?? null;
+      }, "approval request");
+      const path = `${strictOrigin}/api/sessions/${record.id}/approvals/${approval.approvalId as string}`;
+
+      const refused = await fetch(path, { method: "POST", headers, body: JSON.stringify({ decision: "deny", message: "why" }) });
+      expect(refused.status).toBe(400);
+      expect(((await refused.json()) as { code: string }).code).toBe("deny_reason_unsupported");
+
+      // The refusal is about the reason, not the deny: the same decision without one goes through.
+      const plain = await fetch(path, { method: "POST", headers, body: JSON.stringify({ decision: "deny" }) });
+      expect(plain.status).toBe(200);
+    } finally {
+      await new Promise((resolve) => strict.close(resolve));
+    }
   });
 
   it("replays persisted events to a late subscriber from a cursor", async () => {
@@ -566,6 +608,7 @@ describe("gateway", () => {
       appMcp: true,
       liveReconfigure: true,
       autoAllow: true,
+      denyReason: true,
     });
   });
 
@@ -995,7 +1038,7 @@ describe("gateway", () => {
     let starts = 0;
     const failing: import("./harness/adapter.js").HarnessAdapter = {
       name: "failing",
-      capabilities: { questions: false, appMcp: false, liveReconfigure: false, autoAllow: false },
+      capabilities: { questions: false, appMcp: false, liveReconfigure: false, autoAllow: false, denyReason: false },
       probe: async () => ({ available: true }),
       start: (options) => {
         starts += 1;

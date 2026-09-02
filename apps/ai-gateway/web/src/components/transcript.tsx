@@ -24,12 +24,15 @@ export function TranscriptEvent({
   event,
   decision,
   answers,
+  denyReason,
   onDecide,
   onAnswer,
 }: {
   event: AssistantEvent;
   decision: ApprovalDecision | null;
   answers: Record<string, string> | null;
+  /** Whether the harness can deliver a deny reason; the card offers the box only when it can. */
+  denyReason: boolean;
   onDecide: (approvalId: string, decision: "allow" | "deny", message?: string) => Promise<void>;
   onAnswer: (questionId: string, answers: Record<string, string>) => Promise<void>;
 }) {
@@ -57,6 +60,7 @@ export function TranscriptEvent({
           title={typeof event.title === "string" ? event.title : null}
           reason={typeof event.reason === "string" ? event.reason : null}
           decision={decision}
+          reasonBox={denyReason}
           onDecide={onDecide}
         />
       );
@@ -129,6 +133,7 @@ function ApprovalCard({
   title,
   reason,
   decision,
+  reasonBox,
   onDecide,
 }: {
   approvalId: string;
@@ -139,6 +144,8 @@ function ApprovalCard({
   /** Why the harness raised the request, when it said. */
   reason: string | null;
   decision: ApprovalDecision | null;
+  /** Offer a reason with a deny — only on a harness whose decline can carry one. */
+  reasonBox: boolean;
   onDecide: (approvalId: string, decision: "allow" | "deny", message?: string) => Promise<void>;
 }) {
   const view = useMemo(() => describeApproval(toolName, input), [toolName, input]);
@@ -187,20 +194,22 @@ function ApprovalCard({
           </Button>
           {/* Enter here is a deny: typing a reason is already the decision, and a reason that had to
               be followed by a second click would be the one nobody types. */}
-          <input
-            value={why}
-            disabled={busy}
-            onChange={(event) => setWhy(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                decide("deny");
-              }
-            }}
-            placeholder="Why not? Sent to the assistant with a deny"
-            aria-label="Reason for denying"
-            className="min-w-40 flex-1 rounded-md border bg-transparent px-2 py-1 text-xs outline-none focus-visible:border-ring"
-          />
+          {reasonBox && (
+            <input
+              value={why}
+              disabled={busy}
+              onChange={(event) => setWhy(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  decide("deny");
+                }
+              }}
+              placeholder="Why not? Sent to the assistant with a deny"
+              aria-label="Reason for denying"
+              className="min-w-40 flex-1 rounded-md border bg-transparent px-2 py-1 text-xs outline-none focus-visible:border-ring"
+            />
+          )}
         </div>
       )}
     </div>
