@@ -1222,7 +1222,7 @@ function CoreVersionBlock({ status, coreUpdate }: { status: CoreStatus | null; c
   }
 
   const channel: AppRevision[] = coreUpdate ? [{ label: "Release channel", value: coreUpdate.releaseTag }] : [];
-  const available = resolveAvailableCoreVersion(status.version, coreUpdate);
+  const available = resolveAvailableCoreVersion(coreUpdate);
 
   return (
     <TooltipProvider delayDuration={150}>
@@ -1240,7 +1240,7 @@ function CoreVersionBlock({ status, coreUpdate }: { status: CoreStatus | null; c
             <VersionLine
               value={`v${available}`}
               className="text-sky-600 decoration-sky-600/50 dark:text-sky-400 dark:decoration-sky-400/50"
-              title={`Update to v${available}`}
+              title={available === status.version ? `New build of v${available}` : `Update to v${available}`}
               revisions={channel}
               empty="Core has not checked its release channel yet."
             />
@@ -1277,7 +1277,7 @@ function AppVersionCell({
   const installedRevisions = collectInstalledRevisions(app);
   // Only ever read when an update is actually available, so a stale verdict's target never shows up
   // under a row that has nothing to apply.
-  const available = updateVisible ? resolveAvailableVersionLabel(app.version, verdict) : null;
+  const available = updateVisible ? resolveAvailableVersionLabel(verdict) : null;
   const targetRevisions = updateVisible ? collectTargetRevisions(verdict) : [];
   // The available version takes the affordance's colour, so the two read as one statement: amber when
   // the plan must be reviewed first, sky when it is a one-click apply.
@@ -1300,9 +1300,9 @@ function AppVersionCell({
           {available && (
             <div>
               <VersionLine
-                value={available.label}
-                className={cn(accent, available.isVersion ? undefined : "font-mono text-[11px]")}
-                title={available.isVersion ? `Update to ${available.label}` : `New build of ${app.version}`}
+                value={available}
+                className={accent}
+                title={available === app.version ? `New build of ${available}` : `Update to ${available}`}
                 revisions={targetRevisions}
                 empty="This update changes the app's manifest, not a compiled artifact."
               />
