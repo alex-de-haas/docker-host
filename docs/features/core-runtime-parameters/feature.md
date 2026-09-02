@@ -75,6 +75,11 @@ second root can no longer touch the live host's apps.
 
 ## Settings over the Control Plane
 
+A save merges onto what `settings.json` holds at that moment rather than onto the snapshot the
+process loaded at startup — a save rewrites the whole document, so merging onto stale state would
+erase anything written to the file since (a hand edit, or the launch.env migration folding values in
+behind a running Core).
+
 `GET`/`PUT /control/v1/settings` serve the same rows and apply the same validation as the admin
 `/api/core/settings` (the two surfaces share the build and apply code), gated by the loopback
 control secret. `hosty core settings list|get|set|reset <KEY>` is the CLI over it — on a headless
@@ -114,6 +119,8 @@ browser dialled loopback and sign-in links pointed somewhere unreachable from ou
 - Cross-instance isolation in the docker adapter: adoption and owned-removal refuse a container of
   another instance in both directions, the reconcile probe and stats owner map filter to the own
   instance, and the default instance's names/labels stay byte-for-byte legacy.
+- A save preserves a value written to `settings.json` after startup instead of overwriting it with
+  the loaded snapshot.
 - The settings store: server-port round-trip and validation through `CoreSettingsService`, the
   lenient startup read, and a full HTTP round-trip over `/control/v1/settings` including the
   control-secret gate.
