@@ -780,12 +780,22 @@ internal sealed class CoreSettingsService
         await gate.WaitAsync(cancellationToken);
         try
         {
-            var mergedAuth = Apply(overrides, authChanges);
-            var mergedIngress = Apply(ingressOverrides, ingressChanges);
-            var mergedUpdateCheck = Apply(updateCheckOverrides, updateCheckChanges);
-            var mergedUserRetention = Apply(userRetentionOverrides, userRetentionChanges);
-            var mergedOAuth = Apply(oauthOverrides, oauthChanges);
-            var mergedServer = Apply(serverOverrides, serverChanges);
+            // Merge onto what the file holds NOW, not onto the snapshot taken at construction. A save
+            // rewrites the whole document, so merging onto stale state silently erases anything
+            // written to settings.json since this process started — a hand edit, or the launch.env
+            // migration folding values in behind a running Core. That last one is how a migrated
+            // public origin could disappear on the next unrelated `hosty core settings set`, after
+            // the file that used to hold it had already been deleted.
+            //
+            // The file is the state, so a re-read is also the honest answer when it was emptied or
+            // removed out from under us: the next save reflects the file, not a memory of it.
+            var persisted = store.Load();
+            var mergedAuth = Apply(LoadOverrides(persisted), authChanges);
+            var mergedIngress = Apply(LoadIngressOverrides(persisted), ingressChanges);
+            var mergedUpdateCheck = Apply(LoadUpdateCheckOverrides(persisted), updateCheckChanges);
+            var mergedUserRetention = Apply(LoadUserRetentionOverrides(persisted), userRetentionChanges);
+            var mergedOAuth = Apply(LoadOAuthOverrides(persisted), oauthChanges);
+            var mergedServer = Apply(LoadServerOverrides(persisted), serverChanges);
 
             await store.SaveAsync(
                 new CoreSettingsDocument

@@ -262,6 +262,32 @@ public sealed class CoreSettingsServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task UpdateAsync_PreservesAValueWrittenToTheFileAfterStartup()
+    {
+        // The launch.env migration folds values straight into settings.json, and it runs whenever the
+        // upgraded CLI first executes — quite possibly behind an already-running Core. A save rewrites
+        // the whole document, so merging onto the startup snapshot would erase the migrated value on
+        // the next unrelated set, after launch.env had already been deleted. Same story for any hand
+        // edit. The file is the state; a save must merge onto it.
+        var service = CreateService();
+        var coreRoot = Path.Combine(root, "core");
+        Directory.CreateDirectory(coreRoot);
+        File.WriteAllText(
+            Path.Combine(coreRoot, CoreSettingsSchema.FileName),
+            "{\"schemaVersion\":\"" + CoreSettingsSchema.Version + "\",\"server\":{" +
+            "\"HOSTY_CORE_PUBLIC_ORIGIN\":\"https://core.example\"}}");
+
+        // An unrelated key, through the same path the CLI and the admin endpoint use.
+        await service.UpdateAsync(new Dictionary<string, string?> { [ServerSettings.PortKey] = "7171" });
+
+        using var document = JsonDocument.Parse(File.ReadAllText(Path.Combine(coreRoot, CoreSettingsSchema.FileName)));
+        var server = document.RootElement.GetProperty("server");
+        Assert.Equal("7171", server.GetProperty("HOSTY_CORE_PORT").GetString());
+        Assert.Equal("https://core.example", server.GetProperty("HOSTY_CORE_PUBLIC_ORIGIN").GetString());
+        Assert.Equal("https://core.example", service.StoredCorePublicOrigin);
+    }
+
+    [Fact]
     public void Load_HandEditedNonCanonicalServerValues_AreCanonicalizedOnTheWayIn()
     {
         // A hand-edited file is the one path into the store that never went through the save-side
