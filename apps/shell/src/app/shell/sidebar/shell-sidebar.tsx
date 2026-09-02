@@ -188,6 +188,9 @@ function SidebarButton({
           : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
       )}
       title={compact ? label : undefined}
+      // Compact rows render no text, so the accessible name has to come from aria-label: a title
+      // attribute is a tooltip, not a name assistive tech can be relied on to announce.
+      aria-label={compact ? label : undefined}
       onClick={onClick}
     >
       <Icon className="h-5 w-5 shrink-0" />
@@ -231,6 +234,8 @@ function AppNavigationItem({
   const active = workspace?.appId === app.id;
   const canOpen = running && primaryPage !== null;
   const canOpenStandalone = canOpen;
+  // Tooltip text, and — collapsed, where the row is only its icon — its accessible name too.
+  const rowLabel = canOpen ? app.displayName : `${app.displayName} is ${app.runtimeState || app.operationStatus}`;
 
   // Auto-expand the active app's page list when it becomes active, while still
   // letting the user collapse it. Adjust during render instead of in an effect.
@@ -274,7 +279,8 @@ function AppNavigationItem({
                 : "cursor-not-allowed text-muted-foreground opacity-70",
           )}
           disabled={!canOpen}
-          title={canOpen ? app.displayName : `${app.displayName} is ${app.runtimeState || app.operationStatus}`}
+          title={rowLabel}
+          aria-label={compact ? rowLabel : undefined}
           onClick={() => {
             if (primaryPage) {
               void onLaunch(app, primaryPage, "workspace");
@@ -459,6 +465,7 @@ function CompactAppMenu({
               : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
           )}
           title={app.displayName}
+          aria-label={app.displayName}
           onPointerEnter={handleHoverStart}
           onPointerLeave={handleHoverEnd}
           onPointerDown={(event) => {

@@ -1,7 +1,7 @@
 # Shell Navigation
 
 Created: 2026-07-30
-Updated: 2026-09-01
+Updated: 2026-09-02
 
 The browser Shell has three top-level destinations: **Dashboard**, the host you manage; **Settings**,
 the host you configure; and **Apps**, the apps you use. This document owns the route table and the
@@ -79,6 +79,13 @@ hover open never takes focus and a hover close never returns it to the trigger �
 rail must not pull focus out of the embedded app. A single-page app and an app that is not running
 keep the plain icon behavior: direct launch, or the disabled state tooltip.
 
+Navigation rows carry a 20px icon and the page links nested under an expanded app row a 16px one,
+so the second level reads as subordinate without a second indent doing all the work. The controls on
+a row — the expand chevron, the standalone-open link — stay at 16px: they belong to the row rather
+than naming it, and matching the row's own icon would put them on equal footing with it. Collapsed,
+a row is only that icon, so every icon-only control names itself with `aria-label` as well as a
+tooltip; a title attribute is a tooltip and not an accessible name.
+
 The footer carries the account block only. Core's version, the shortcut into `/settings?tab=core`,
 and the Core update action are not repeated there: the Dashboard's Core row already states the
 version and carries the update button, and Settings is a row in the Host group above.
@@ -148,6 +155,8 @@ theme bridges — depends on the Shell **origin** alone.
   of it the command emitted a URL the Shell has never served.
 - Visual verification covers the merged Dashboard, all three settings tabs, the collapsed sidebar
   reaching `/apps`, and each legacy path landing on its canonical URL.
+- Visual verification covers the two icon tiers — row icons against the page links nested under an
+  expanded app row — and that every collapsed rail control is announced by name.
 - Visual verification of the collapsed rail covers the multi-page app flyout: opening by click and
   by hover, page navigation and the standalone link from it, and that hovering the rail does not
   steal focus from an embedded workspace.
