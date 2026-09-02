@@ -95,13 +95,16 @@ internal static class LaunchEnvMigration
             else
             {
                 // Not foldable and not silently droppable: this is the value an operator signs in
-                // through, so say it plainly and keep the file as the record of it.
+                // through, so say so and keep the file as the record of it. The value itself is NOT
+                // echoed — one of the ways it can be invalid is carrying userinfo, and a notice is
+                // console output that lands in scrollback and logs. The file holds it; point there.
                 blocked = true;
                 notices.Add(
-                    $"launch.env carries HOSTY_CORE_PUBLIC_ORIGIN={rawOrigin.Trim()}, which is not a usable " +
-                    "origin (an absolute http(s) address, no path, query, fragment or userinfo, and not an " +
-                    "unspecified address). The file is left in place; set a valid value with " +
-                    "`hosty core settings set HOSTY_CORE_PUBLIC_ORIGIN <origin>` and delete it.");
+                    $"launch.env ('{path}') carries a HOSTY_CORE_PUBLIC_ORIGIN that is not a usable origin: " +
+                    "it must be an absolute http(s) address with no path, query, fragment or userinfo, and " +
+                    "not an unspecified address (0.0.0.0, [::]). The file is left in place so the value is " +
+                    "not lost — read it there, set a valid one with " +
+                    "`hosty core settings set HOSTY_CORE_PUBLIC_ORIGIN <origin>`, and delete the file.");
             }
         }
 

@@ -226,6 +226,10 @@ public sealed class LaunchEnvMigrationTests : IDisposable
         Assert.True(File.Exists(environment.LaunchConfigPath));
         Assert.False(File.Exists(Path.Combine(environment.RootDirectory, "core", "settings.json")));
         Assert.Contains(notices, notice => notice.Contains("not a usable origin"));
+        // The value is never echoed: one way to be invalid is carrying userinfo, and a notice lands
+        // in scrollback and logs. The kept file is where the operator reads it.
+        Assert.DoesNotContain(notices, notice => notice.Contains(origin, StringComparison.Ordinal));
+        Assert.Contains(notices, notice => notice.Contains(environment.LaunchConfigPath, StringComparison.Ordinal));
     }
 
     private static void WriteLaunchEnv(HostyEnvironment environment, string content)
