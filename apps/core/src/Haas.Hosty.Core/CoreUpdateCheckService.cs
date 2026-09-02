@@ -20,6 +20,9 @@ internal sealed class CoreUpdateCheckService(
     // (the Shell forces one when the admin opens the platform panel, so no CLI trip is needed).
     private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan FetchTimeout = TimeSpan.FromSeconds(6);
+    // Enough for any version line with room to spare, small enough that a wrong file is discarded
+    // rather than read into memory.
+    private const int MaxVersionMarkerLength = 256;
 
     private readonly SemaphoreSlim gate = new(1, 1);
     private CoreUpdateStatus? cached;
@@ -75,15 +78,21 @@ internal sealed class CoreUpdateCheckService(
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(FetchTimeout);
 
-            var checksums = await DownloadChecksumsAsync(releaseTag, timeout.Token);
+            // Both files come from the same release; fetching them back to back would spend two
+            // round-trips of the same short budget on what is one look at the channel.
+            var checksumsTask = DownloadChecksumsAsync(releaseTag, timeout.Token);
+            var availableVersionTask = DownloadAvailableVersionAsync(releaseTag, timeout.Token);
+            await Task.WhenAll(checksumsTask, availableVersionTask);
+            var checksums = await checksumsTask;
+            var availableVersion = await availableVersionTask;
             if (checksums is null || !TryFindChecksum(checksums, artifactName, out var expected))
             {
-                return new CoreUpdateStatus(currentVersion, false, releaseTag, DateTimeOffset.UtcNow, "Release checksums were unavailable.");
+                return new CoreUpdateStatus(currentVersion, false, releaseTag, DateTimeOffset.UtcNow, "Release checksums were unavailable.", availableVersion);
             }
 
             var installed = await GetInstalledExeSha256Async(exePath, timeout.Token);
             var updateAvailable = !string.Equals(installed, expected, StringComparison.OrdinalIgnoreCase);
-            return new CoreUpdateStatus(currentVersion, updateAvailable, releaseTag, DateTimeOffset.UtcNow, null);
+            return new CoreUpdateStatus(currentVersion, updateAvailable, releaseTag, DateTimeOffset.UtcNow, null, availableVersion);
         }
         catch (Exception ex) when (
             ex is HttpRequestException or IOException or InvalidOperationException ||
@@ -94,6 +103,51 @@ internal sealed class CoreUpdateCheckService(
             logger.LogDebug(ex, "Core update check against release tag {ReleaseTag} did not complete.", releaseTag);
             return new CoreUpdateStatus(currentVersion, false, releaseTag, DateTimeOffset.UtcNow, "Update check failed.");
         }
+    }
+
+    // The release's VERSION marker: the version an update from this channel would install. Purely
+    // additive to the verdict, so every failure mode ends at null — a release published before the
+    // marker existed (404), an unreachable host, or a body that does not read like a version at all.
+    // The body is length-capped before parsing: this is an untrusted download whose only job is to be
+    // rendered, and a client must never be handed a megabyte of prose as a "version".
+    private async Task<string?> DownloadAvailableVersionAsync(string releaseTag, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var baseUrl = string.Format(System.Globalization.CultureInfo.InvariantCulture, ReleaseBaseUrlFormat, releaseTag);
+            var client = httpClientFactory.CreateClient(HttpClientName);
+            using var response = await client.GetAsync($"{baseUrl}/VERSION", HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            // Bounded read rather than ReadAsStringAsync: the cap is only worth anything if it is
+            // applied to the transfer, not to a string that has already been materialized.
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            var buffer = new byte[MaxVersionMarkerLength];
+            var read = await stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: false, cancellationToken);
+            return SanitizeVersion(System.Text.Encoding.UTF8.GetString(buffer, 0, read));
+        }
+        catch (Exception ex) when (
+            ex is HttpRequestException or IOException or InvalidOperationException ||
+            (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested))
+        {
+            logger.LogDebug(ex, "Core release version marker for tag {ReleaseTag} was not readable.", releaseTag);
+            return null;
+        }
+    }
+
+    // Accepts only what a released platform version can look like: one short line of digits, dots,
+    // and the letters/hyphens a prerelease suffix uses. Anything else — an error page, a body long
+    // enough to have been truncated by the read cap, a file that is simply not this one — is not a
+    // version and is reported as none.
+    internal static string? SanitizeVersion(string body)
+    {
+        var version = body.Trim();
+        return version.Length is > 0 and <= 64 && version.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '-' or '+')
+            ? version
+            : null;
     }
 
     private async Task<string?> DownloadChecksumsAsync(string releaseTag, CancellationToken cancellationToken)
@@ -231,7 +285,13 @@ internal sealed record CoreUpdateStatus(
     bool UpdateAvailable,
     string ReleaseTag,
     DateTimeOffset CheckedAt,
-    string? Error);
+    string? Error,
+    // The version the release channel is publishing, from the release's own VERSION marker. Display
+    // only: `UpdateAvailable` is and stays the hash comparison, so a missing, unreadable, or
+    // implausible marker degrades to null rather than changing the verdict. Null is expected against
+    // a release published before the marker existed — a client then names no version, exactly as it
+    // did before this field. Additive — older clients ignore it.
+    string? AvailableVersion = null);
 
 // Minimal view over {DataRoot}/core/product-channel.json (written by the CLI); only the release tag is read.
 internal sealed record CoreProductChannelRef(string? ReleaseTag);

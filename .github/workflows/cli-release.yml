@@ -234,6 +234,23 @@ jobs:
             cp "${source}" "dist/${artifact}"
           done
 
+          # Display-only version marker for the release. Core's update check compares binary hashes
+          # against SHA256SUMS and keeps doing so — this file only lets a client name the version an
+          # update would install, which a hash comparison cannot. It stays out of SHA256SUMS
+          # deliberately: tampering with it can mislabel a version, never smuggle a binary past the
+          # checksum gate, and a client that never sees it degrades to naming no version at all.
+          #
+          # Read from Directory.Build.props here rather than carried over from publish-artifacts'
+          # `product_version`: that output belongs to a different job. The guard above has already
+          # established that this checkout is still main's tip, so it is the same commit the matrix
+          # job stamped its binaries from.
+          version=$(grep -oE '<Version>[^<]+</Version>' Directory.Build.props | sed -E 's#</?Version>##g')
+          if [[ -z "$version" ]]; then
+            echo "Could not resolve <Version> from Directory.Build.props" >&2
+            exit 1
+          fi
+          printf '%s\n' "$version" > dist/VERSION
+
           (
             cd dist
             sha256sum "${expected[@]}" > SHA256SUMS

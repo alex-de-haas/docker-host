@@ -12,7 +12,16 @@ internal sealed record AppUpdateAvailability(
     bool RequiresReview,
     string? PlanDigest,
     DateTimeOffset CheckedAt,
-    string? Error);
+    string? Error,
+    // What the operator would actually get, projected from the same plan build that set the verdict so
+    // the apps list can name the update instead of only asserting one exists. `TargetVersion` is the
+    // candidate manifest's version — equal to the installed one whenever the update advances the build
+    // rather than the version, which is why the revisions below travel with it: for a source app the
+    // target commit, for compiled services the candidate image digest per service key. All null on a
+    // failed check or a verdict with nothing available. Additive — older clients ignore them.
+    string? TargetVersion = null,
+    string? TargetSourceCommit = null,
+    IReadOnlyDictionary<string, string>? TargetArtifactDigests = null);
 
 // Fleet update-check state for the apps list: whether a sweep is running right now (drives the
 // "Check updates" spinner from server state) and when one last finished.

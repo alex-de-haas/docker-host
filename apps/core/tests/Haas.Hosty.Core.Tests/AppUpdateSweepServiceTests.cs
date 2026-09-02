@@ -35,6 +35,15 @@ public sealed class AppUpdateSweepServiceTests
         var pending = (await fixture.Lifecycle.GetPendingUpdatePlanAsync("com.example.notes")).Plan;
         Assert.Equal(pending?.PlanDigest, summary.UpdateCheck.PlanDigest);
 
+        // It also names the target that plan resolves to, so a client can say *which* version is
+        // available without fetching the plan. These manifests declare no compiled artifact and no
+        // source, so there is nothing to name beyond the version — and a probe that resolved nothing
+        // must leave the field absent rather than fill it with a placeholder.
+        Assert.Equal("1.1.0", summary.UpdateCheck.TargetVersion);
+        Assert.Equal(pending?.TargetVersion, summary.UpdateCheck.TargetVersion);
+        Assert.Null(summary.UpdateCheck.TargetSourceCommit);
+        Assert.Null(summary.UpdateCheck.TargetArtifactDigests);
+
         var status = fixture.Sweep.Status;
         Assert.False(status.Running);
         Assert.NotNull(status.LastCompletedAt);
@@ -88,6 +97,9 @@ public sealed class AppUpdateSweepServiceTests
         Assert.NotNull(broken.UpdateCheck);
         Assert.NotNull(broken.UpdateCheck!.Error);
         Assert.False(broken.UpdateCheck.UpdateAvailable);
+        // A failed check knows of no target, so it names none: a row must not show a version the
+        // check could not confirm.
+        Assert.Null(broken.UpdateCheck.TargetVersion);
 
         var healthy = summaries.Single(app => app.Id == "com.example.healthy");
         Assert.NotNull(healthy.UpdateCheck);

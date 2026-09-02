@@ -941,6 +941,11 @@ internal sealed record AppSummary(
     // second round-trip. Additive/nullable; older clients ignore them.
     string? SourceOverridePath = null,
     string? SourceManagedPath = null,
+    // The reviewed source pin (AppSourceState.Commit): the exact commit the installed build was
+    // reviewed at, so a client can name the revision an app is currently running without opening its
+    // Source tab. Null for apps with no source pin (image installs, or a source never resolved).
+    // Additive/nullable; older clients ignore it.
+    string? SourceCommit = null,
     // The folder a live source app actually runs from (the override folder, else the original external
     // folder install), or null when not live. Computed by the lifecycle service (needs the internal-path
     // guard), so it is passed in rather than derived here. Clients show it in the "Live" badge tooltip.
@@ -1082,6 +1087,7 @@ internal sealed record AppSummary(
             supportsSource,
             app.SourceState?.LocalOverridePath,
             app.SourceState?.ManagedCheckoutPath,
+            app.SourceState?.Commit,
             liveSourcePath,
             app.CatalogMetadata,
             ResolveIconUrl(app.CatalogMetadata?.Icon, app.Id, assetVersion),

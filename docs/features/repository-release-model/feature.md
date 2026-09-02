@@ -1,7 +1,7 @@
 # Repository And Release Model
 
 Created: 2026-05-12
-Updated: 2026-08-31
+Updated: 2026-09-02
 
 This document records the current repository layout and release artifact boundaries after the Core/Shell split and retirement of the legacy combined Host package.
 
@@ -341,7 +341,17 @@ hosty-core-linux-arm64
 hosty-core-linux-x64
 hosty-core-windows-x64.exe
 SHA256SUMS
+VERSION
 ```
+
+`VERSION` holds the platform version this release publishes, read from `Directory.Build.props` in the
+same commit the binaries were stamped from. It exists so a client can name the version an update would
+install — the update check itself compares binary hashes against `SHA256SUMS` and cannot. Core reads it
+during its own update check and reports it as `availableVersion` on `GET /api/core/update-status`, next
+to the unchanged hash-derived `updateAvailable`. It is
+deliberately **not** covered by `SHA256SUMS`: tampering with it can mislabel a version in a UI, never
+smuggle a binary past the checksum gate, and every consumer treats an absent, unreadable, or
+implausible marker as "no version named" rather than as a failure.
 
 Cardputer development firmware artifacts:
 
