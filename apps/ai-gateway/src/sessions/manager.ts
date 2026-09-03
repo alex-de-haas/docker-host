@@ -67,6 +67,10 @@ export class SessionManager {
   // `saveRecord` when the process goes, leaving a session record torn on disk.
   private readonly inFlightEvents = new Set<Promise<void>>();
 
+  // Said once, not per run: a gateway outside Core has no cache directory, every session shares
+  // `workDir`, and a warning per message would bury the one line that explains the shared cwd.
+  private warnedSharedWorkDir = false;
+
   // Set once `shutdown` begins and never cleared — shutdown is terminal in both callers, the process
   // exit path and a test's teardown. It closes event intake, which the drain depends on: stopping a
   // run does not stop its callbacks. `CodexRun.stop` sends SIGTERM and returns while the stdout
@@ -280,9 +284,18 @@ export class SessionManager {
       const systemPrompt = composeSystemPrompt(
         [HOST_SYSTEM_PROMPT, operatorPrompt?.trim()].filter(Boolean).join("\n\n"),
         await this.readDeliverableSkills(session));
+      // The session's own directory, not the shared one. Every session used to start in the same
+      // `workDir`, which defaulted to the home directory — a file placed "next to the session" was
+      // visible to all of them at once.
+      const workspace = await this.store.ensureWorkspace(id);
+      if (workspace === null && !this.warnedSharedWorkDir) {
+        this.warnedSharedWorkDir = true;
+        console.warn(`[sessions] no cache directory injected; every session shares ${this.workDir}`);
+      }
+
       session.run = this.adapter.start({
         sessionId: id,
-        cwd: this.workDir,
+        cwd: workspace ?? this.workDir,
         systemPrompt,
         ...(mcpServers ? { mcpServers } : {}),
         // Read live rather than captured: a provider toggled off mid-session must stop being

@@ -1,6 +1,6 @@
 # Assistant Attachments — plan
 
-Status: Ready
+Status: In Progress
 Created: 2026-09-03
 Updated: 2026-09-03
 
@@ -91,12 +91,12 @@ being built is between *sessions*, not between privilege levels.
 
 ## Deliverables
 
-- [ ] **A workspace per session.** `cache` declared in the manifest; `<cache>/sessions/<id>/workspace`
+- [x] **A workspace per session.** `cache` declared in the manifest; `<cache>/sessions/<id>/workspace`
       created on session start and handed to the harness as `cwd` instead of the shared `workDir`.
       The shared value stays as the fallback only when no cache directory was injected — a gateway
       started outside Core — and the log says so once. Its default should move off the home directory
       at the same time: it is a `cwd` for an agent, and a home directory is the last place to run one.
-- [ ] **Removal follows the session — and only the session's end.** `deleteSession` removes the
+- [x] **Removal follows the session — and only the session's end.** `deleteSession` removes the
       workspace, and the retention sweep removes it with the sessions it expires. The abandon sweep
       does **not**: abandonment stops a session and keeps its transcript so the next message can
       resume it, and a workspace removed there would take the files a resumed turn still refers to.

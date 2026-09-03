@@ -44,8 +44,11 @@ this feature.
 - `apps/ai-gateway`: headless Node/TypeScript system app, single localCommand runtime profile
   ("local") — it spawns harness processes on the host, so it never runs in a container. Distributed
   with `defaultEnabled: false`: the assistant is opt-in and removable. Port comes from
-  `HOSTY_PORT_HTTP`, data lives in `HOSTY_APP_DATA_DIR`, harness sessions start in the operator's
-  home (`HOSTY_AI_GATEWAY_WORKDIR` overrides).
+  `HOSTY_PORT_HTTP`, data lives in `HOSTY_APP_DATA_DIR`, and each harness session starts in a
+  workspace of its own under `HOSTY_APP_CACHE_DIR` — see
+  [assistant-attachments](../assistant-attachments/plan.md). Outside Core, with no cache directory
+  injected, every session shares `HOSTY_AI_GATEWAY_WORKDIR` (a temp directory by default, no longer
+  the home directory) and the gateway warns once that it does.
 - Session API, admin delegated token required on every `/api` route: create session (optional
   `title` and structured `context`), list, get, `GET .../events` (SSE with an `?after=<seq>`
   reattach cursor; the connection ends at the token's expiry and the client reconnects with a
