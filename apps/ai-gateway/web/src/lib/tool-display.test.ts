@@ -1,5 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { describeApproval, parseMcpToolName, summarizeToolUse } from "./tool-display";
+import { describeApproval, isListedToolUse, parseMcpToolName, summarizeToolUse } from "./tool-display";
+
+describe("isListedToolUse", () => {
+  it("hides the harness's own deferred-tool lookup and nothing else", () => {
+    // ToolSearch fetches the schema of a tool the model is about to call — plumbing for the next
+    // row, not an act on the host. Everything else stays: the list is a named exception, not a
+    // filter that could quietly swallow a real call.
+    expect(isListedToolUse("ToolSearch")).toBe(false);
+    expect(isListedToolUse("Bash")).toBe(true);
+    expect(isListedToolUse("mcp__hosty-core__list_apps")).toBe(true);
+    expect(isListedToolUse("Task")).toBe(true);
+  });
+});
 
 describe("summarizeToolUse", () => {
   it("prefers the model's description of a shell command to the command itself", () => {

@@ -7,7 +7,13 @@ import { Button } from "@/components/ui/button";
 import { InlineError } from "@/components/status";
 import { Markdown } from "@/components/markdown";
 import { cn } from "@/lib/utils";
-import { describeApproval, summarizeToolUse, type ApprovalView, type FileChangeView } from "@/lib/tool-display";
+import {
+  describeApproval,
+  isListedToolUse,
+  summarizeToolUse,
+  type ApprovalView,
+  type FileChangeView,
+} from "@/lib/tool-display";
 import type { AssistantEvent, AssistantQuestion } from "@/lib/assistant-api";
 
 // The transcript, moved out of Shell with the rest of the panel. The gateway's event log is the
@@ -49,8 +55,10 @@ export function TranscriptEvent({
           <Markdown text={String(event.text ?? "")} />
         </div>
       );
-    case "tool_use":
-      return <ToolRow toolName={String(event.toolName ?? "tool")} input={event.input} />;
+    case "tool_use": {
+      const toolName = String(event.toolName ?? "tool");
+      return isListedToolUse(toolName) ? <ToolRow toolName={toolName} input={event.input} /> : null;
+    }
     case "approval_request":
       return (
         <ApprovalCard
@@ -205,7 +213,11 @@ function ApprovalCard({
                   decide("deny");
                 }
               }}
-              placeholder="Why not? Sent to the assistant with a deny"
+              // Short enough to survive the panel at its narrowest — the sentence that was here
+              // truncated to "Sent to the assist…", which told the operator less than nothing. What
+              // it was saying, that these words reach the model, moves to the tooltip.
+              placeholder="Why not? (optional)"
+              title="Sent to the assistant with your denial."
               aria-label="Reason for denying"
               className="min-w-40 flex-1 rounded-md border bg-transparent px-2 py-1 text-xs outline-none focus-visible:border-ring"
             />

@@ -299,12 +299,19 @@ gateway restart.
   capability; the box is absent otherwise). The card has a one-line box beside its buttons; Enter
   there is a deny, since typing a reason is already the decision. The gateway bounds the reason at
   500 characters, collapses it to one line, stores it on the decision event so a replayed transcript
-  shows why a card was refused, and delivers it to the model behind a fixed prefix.
+  shows why a card was refused, and delivers it to the model behind a fixed prefix. The box's
+  placeholder is short enough to survive the panel at its narrowest; that these words reach the model
+  is said in its tooltip, after the sentence that said it inline truncated to "Sent to the assist…".
 - **Tool rows say what a call was for**, not what it was called: a shell row carries the model's
   description (or the command's first line), a read its path, a search its pattern, an app tool its
   server, tool and scalar arguments. The raw input is one click away behind the row — a run that
   reads thirty files is thirty rows, and a transcript that showed every input would be a wall of
-  JSON with the conversation somewhere inside it.
+  JSON with the conversation somewhere inside it. `ToolSearch` gets no row at all: it is how the
+  Claude harness fetches the schema of a deferred tool before calling it, so its row said nothing
+  the next row did not say better. It is hidden in the panel rather than dropped in the adapter,
+  which is the other place a tool event can be suppressed — `AskUserQuestion` is dropped there
+  because the question card replaces it in the record, while this one has no replacement and the
+  event log is the record.
 - **Question cards** are deliberately styled apart from approval cards — options with labels and
   descriptions, single or multi select, and a free-text "other" (part of the tool contract: the
   model is told an Other option is supplied automatically, so it never lists one). An approval asks
@@ -458,7 +465,8 @@ gateway restart.
   long line is bounded; an unknown tool or a non-object input degrades without throwing. Cards: a
   shell command under its description with the command intact, Codex's working directory carried,
   an edit as removed and inserted text, Codex's change list with a tagged kind and a diff, an app
-  tool's arguments by name, and the JSON fallback.
+  tool's arguments by name, and the JSON fallback. Row suppression is pinned as a named exception:
+  `ToolSearch` is unlisted, every other tool — including `Task` and an app tool — still draws a row.
 - Deny reasons: a deny with a multi-line reason is stored and delivered to the harness as one
   prefixed line (the fake harness echoes what it was told, so the assertion is on delivery, not on
   the card closing); on a harness reporting `denyReason: false` a reason is refused with 400 while
