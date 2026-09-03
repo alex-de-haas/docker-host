@@ -1,7 +1,7 @@
 # AI Gateway
 
 Created: 2026-08-09
-Updated: 2026-09-02
+Updated: 2026-09-03
 
 The Hosty assistant: an optional, removable system app (`hosty.ai-gateway`) hosting admin-only
 operator chat sessions on a host-resident agent harness, plus the Shell surface that renders them.
@@ -300,8 +300,11 @@ gateway restart.
   there is a deny, since typing a reason is already the decision. The gateway bounds the reason at
   500 characters, collapses it to one line, stores it on the decision event so a replayed transcript
   shows why a card was refused, and delivers it to the model behind a fixed prefix. The box's
-  placeholder is short enough to survive the panel at its narrowest; that these words reach the model
-  is said in its tooltip, after the sentence that said it inline truncated to "Sent to the assist…".
+  placeholder is short enough to survive the panel at its narrowest, after the sentence that said it
+  inline truncated to "Sent to the assist…". That these words reach the model is carried by the
+  field's accessible description (`aria-describedby`, keyed by the approval so two open cards cannot
+  share an id) as well as its tooltip: a `title` alone reaches a mouse and leaves out the keyboard
+  and the screen reader. It is a description rather than part of the label, which names the field.
 - **Tool rows say what a call was for**, not what it was called: a shell row carries the model's
   description (or the command's first line), a read its path, a search its pattern, an app tool its
   server, tool and scalar arguments. The raw input is one click away behind the row — a run that

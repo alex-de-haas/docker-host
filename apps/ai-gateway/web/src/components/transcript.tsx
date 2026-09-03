@@ -203,24 +203,34 @@ function ApprovalCard({
           {/* Enter here is a deny: typing a reason is already the decision, and a reason that had to
               be followed by a second click would be the one nobody types. */}
           {reasonBox && (
-            <input
-              value={why}
-              disabled={busy}
-              onChange={(event) => setWhy(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  decide("deny");
-                }
-              }}
-              // Short enough to survive the panel at its narrowest — the sentence that was here
-              // truncated to "Sent to the assist…", which told the operator less than nothing. What
-              // it was saying, that these words reach the model, moves to the tooltip.
-              placeholder="Why not? (optional)"
-              title="Sent to the assistant with your denial."
-              aria-label="Reason for denying"
-              className="min-w-40 flex-1 rounded-md border bg-transparent px-2 py-1 text-xs outline-none focus-visible:border-ring"
-            />
+            <>
+              <input
+                value={why}
+                disabled={busy}
+                onChange={(event) => setWhy(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    decide("deny");
+                  }
+                }}
+                // Short enough to survive the panel at its narrowest — the sentence that was here
+                // truncated to "Sent to the assist…", which told the operator less than nothing.
+                // What it was saying moves to the description below, which every reader gets: a
+                // `title` alone reaches a mouse and leaves out the keyboard and the screen reader.
+                placeholder="Why not? (optional)"
+                title="Sent to the assistant with your denial."
+                aria-label="Reason for denying"
+                aria-describedby={`${approvalId}-reason-hint`}
+                className="min-w-40 flex-1 rounded-md border bg-transparent px-2 py-1 text-xs outline-none focus-visible:border-ring"
+              />
+              {/* The accessible description, keyed by the approval so several open cards cannot
+                  share one id. Not the label: the label names the field, this says where the words
+                  go, and folding the two together would have the name read as a sentence. */}
+              <span id={`${approvalId}-reason-hint`} className="sr-only">
+                Sent to the assistant with your denial.
+              </span>
+            </>
           )}
         </div>
       )}
