@@ -7,7 +7,13 @@ import { Button } from "@/components/ui/button";
 import { InlineError } from "@/components/status";
 import { Markdown } from "@/components/markdown";
 import { cn } from "@/lib/utils";
-import { describeApproval, summarizeToolUse, type ApprovalView, type FileChangeView } from "@/lib/tool-display";
+import {
+  describeApproval,
+  isListedToolUse,
+  summarizeToolUse,
+  type ApprovalView,
+  type FileChangeView,
+} from "@/lib/tool-display";
 import type { AssistantEvent, AssistantQuestion } from "@/lib/assistant-api";
 
 // The transcript, moved out of Shell with the rest of the panel. The gateway's event log is the
@@ -49,8 +55,10 @@ export function TranscriptEvent({
           <Markdown text={String(event.text ?? "")} />
         </div>
       );
-    case "tool_use":
-      return <ToolRow toolName={String(event.toolName ?? "tool")} input={event.input} />;
+    case "tool_use": {
+      const toolName = String(event.toolName ?? "tool");
+      return isListedToolUse(toolName) ? <ToolRow toolName={toolName} input={event.input} /> : null;
+    }
     case "approval_request":
       return (
         <ApprovalCard
@@ -195,20 +203,34 @@ function ApprovalCard({
           {/* Enter here is a deny: typing a reason is already the decision, and a reason that had to
               be followed by a second click would be the one nobody types. */}
           {reasonBox && (
-            <input
-              value={why}
-              disabled={busy}
-              onChange={(event) => setWhy(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  decide("deny");
-                }
-              }}
-              placeholder="Why not? Sent to the assistant with a deny"
-              aria-label="Reason for denying"
-              className="min-w-40 flex-1 rounded-md border bg-transparent px-2 py-1 text-xs outline-none focus-visible:border-ring"
-            />
+            <>
+              <input
+                value={why}
+                disabled={busy}
+                onChange={(event) => setWhy(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    decide("deny");
+                  }
+                }}
+                // Short enough to survive the panel at its narrowest — the sentence that was here
+                // truncated to "Sent to the assist…", which told the operator less than nothing.
+                // What it was saying moves to the description below, which every reader gets: a
+                // `title` alone reaches a mouse and leaves out the keyboard and the screen reader.
+                placeholder="Why not? (optional)"
+                title="Sent to the assistant with your denial."
+                aria-label="Reason for denying"
+                aria-describedby={`${approvalId}-reason-hint`}
+                className="min-w-40 flex-1 rounded-md border bg-transparent px-2 py-1 text-xs outline-none focus-visible:border-ring"
+              />
+              {/* The accessible description, keyed by the approval so several open cards cannot
+                  share one id. Not the label: the label names the field, this says where the words
+                  go, and folding the two together would have the name read as a sentence. */}
+              <span id={`${approvalId}-reason-hint`} className="sr-only">
+                Sent to the assistant with your denial.
+              </span>
+            </>
           )}
         </div>
       )}

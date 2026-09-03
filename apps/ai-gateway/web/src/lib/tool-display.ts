@@ -36,6 +36,25 @@ export type ApprovalView =
   | { kind: "mcp"; heading: string; server: string; tool: string; args: Array<[string, string]> }
   | { kind: "generic"; heading: string; json: string };
 
+/**
+ * Tool calls the transcript draws no row for.
+ *
+ * `ToolSearch` is how the Claude harness fetches the schema of a deferred tool before it can call
+ * it: plumbing for the call that follows rather than an act on the host, and its row said nothing
+ * the next row did not say better.
+ *
+ * Hidden here rather than dropped in the adapter, which is the other place a tool event can be
+ * suppressed. `AskUserQuestion` is dropped there because the question card *replaces* it in the
+ * record; this one has no replacement, and the event log is the record. So the event is kept and the
+ * panel declines to draw it.
+ */
+const UNLISTED_TOOLS = new Set(["ToolSearch"]);
+
+/** Whether the transcript shows a row for this tool call at all. */
+export function isListedToolUse(toolName: string): boolean {
+  return !UNLISTED_TOOLS.has(toolName);
+}
+
 /** Splits `mcp__server__tool` into its parts, or null for a tool that is not an MCP one. */
 export function parseMcpToolName(toolName: string): { server: string; tool: string } | null {
   const prefix = "mcp__";
