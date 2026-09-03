@@ -8,18 +8,20 @@ Let an operator hand the assistant a file — a log, a config, a screenshot, a m
 pasting it into the message box. Cross-cuts [ai-gateway](../ai-gateway/feature.md) (the surface),
 [agent-background-sessions](../agent-background-sessions/feature.md) (the session lifecycle a file
 attaches to), and the runtime-app storage contract in
-[hosty-runtime-app](../hosty-runtime-app/feature.md).
+[runtime-app-manifest](../runtime-app-manifest.md#storage).
 
 ## Goal
 
-A file dropped into the composer lands somewhere the assistant can read it, belongs to that session
-and no other, disappears when the session does, and never ends up copied into a backup archive.
+A file dropped into the composer lands somewhere the assistant can read it, is stored under that
+session's own directory and reclaimed with it, and never ends up copied into a backup archive. What
+that layout does and does not guarantee is stated in its own section below — a scoped directory is
+about lifecycle and tidiness, not confidentiality, and this plan does not let the two blur.
 
 ## Why this is not an upload button
 
 The gateway starts every harness run with the same working directory: `SessionManager` passes its one
-`workDir` to each run (`manager.ts:285`), and that value defaults to the process's **home directory**
-(`config.ts:44`) — the manifest does not override it. A file placed "next to the session" today would
+`workDir` to each run (`src/sessions/manager.ts:285`), and that value defaults to the process's
+**home directory** (`src/config.ts:44`) — the manifest does not override it. A file placed "next to the session" today would
 land in the container's home directory, visible to every session at once.
 
 The per-session place already exists, just not as a workspace: `SessionStore` keeps
@@ -65,7 +67,7 @@ which Hosty does not have and this plan does not add. The feature document will 
 so nobody reads "per-session workspace" as "sandboxed".
 
 The admission rule bounds who this applies to: assistant sessions are admin-only by decision
-(`auth.ts`), so every actor able to reach a workspace is already a host administrator. The isolation
+(`src/auth.ts`), so every actor able to reach a workspace is already a host administrator. The isolation
 being built is between *sessions*, not between privilege levels.
 
 ## Target behaviour
