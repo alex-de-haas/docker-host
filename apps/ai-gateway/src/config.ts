@@ -9,6 +9,11 @@ export interface GatewayConfig {
   /** Directory operator harness sessions start in. Host-wide work is the point of the operator
    * profile, so this defaults to the operator's home rather than the app checkout. */
   workDir: string;
+  /**
+   * Root for per-session workspaces — `HOSTY_APP_CACHE_DIR`, injected by Core. Null outside Core,
+   * in which case every session shares `workDir` and the manager says so once.
+   */
+  cacheDir: string | null;
   appId: string;
   coreOrigin: string | null;
   serviceToken: string | null;
@@ -41,7 +46,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
   return {
     port: Number.parseInt(env.HOSTY_PORT_HTTP ?? env.PORT ?? "3400", 10),
     dataDir: env.HOSTY_APP_DATA_DIR ?? path.join(os.tmpdir(), "hosty-ai-gateway-data"),
-    workDir: env.HOSTY_AI_GATEWAY_WORKDIR ?? os.homedir(),
+    // A fallback cwd for a gateway started outside Core, where no cache directory is injected. It used
+    // to default to the home directory, which is the last place to run an agent that reads files.
+    workDir: env.HOSTY_AI_GATEWAY_WORKDIR ?? path.join(os.tmpdir(), "hosty-ai-gateway-work"),
+    cacheDir: env.HOSTY_APP_CACHE_DIR?.trim() || null,
     appId: env.HOSTY_APP_ID ?? "hosty.ai-gateway",
     coreOrigin: env.HOSTY_CORE_ORIGIN?.trim() || null,
     serviceToken: env.HOSTY_APP_SERVICE_TOKEN?.trim() || null,

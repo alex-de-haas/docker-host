@@ -28,7 +28,7 @@ const adapter: HarnessAdapter =
           dataDir: config.dataDir,
         })
       : new ClaudeHarnessAdapter();
-const store = new SessionStore(config.dataDir);
+const store = new SessionStore(config.dataDir, config.cacheDir);
 const audit = new AuditReporter(config.coreOrigin, config.serviceToken, config.appId);
 const notifier = new WaitingNotifier(config.coreOrigin, config.serviceToken, config.appId);
 const settings = new SettingsStore(config.dataDir);

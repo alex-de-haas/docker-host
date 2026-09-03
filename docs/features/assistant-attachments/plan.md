@@ -1,6 +1,6 @@
 # Assistant Attachments — plan
 
-Status: Ready
+Status: In Progress
 Created: 2026-09-03
 Updated: 2026-09-03
 
@@ -9,6 +9,10 @@ pasting it into the message box. Cross-cuts [ai-gateway](../ai-gateway/feature.m
 [agent-background-sessions](../agent-background-sessions/feature.md) (the session lifecycle a file
 attaches to), and the runtime-app storage contract in
 [runtime-app-manifest](../runtime-app-manifest.md#storage).
+
+> Every implementation deliverable has shipped — see [feature.md](feature.md). The unchecked ones
+> below are the checks that need a Core-managed gateway: unfinished work, kept as deliverables rather
+> than as prose, and none of it assertable in a unit test.
 
 ## Goal
 
@@ -77,9 +81,11 @@ being built is between *sessions*, not between privilege levels.
 
 - The manifest declares `cache` beside `data`. Core injects its path; the gateway resolves
   `<cache>/sessions/<id>/workspace` per session and passes it as the harness `cwd`.
-- `POST /api/sessions/{id}/attachments` accepts a multipart upload from the session's owner and
-  writes it into that workspace under a sanitised name. Limits are enforced there, and refused
-  uploads say which limit.
+- `PUT /api/sessions/{id}/attachments/{name}` accepts the file as the raw request body and writes
+  it into that workspace under a sanitised name. Limits are enforced there, and refused uploads say
+  which limit. Raw body rather than the multipart this plan first said: no multipart parser is among
+  the dependencies, a hand-rolled one is the kind of code that hides its bugs, and a browser sends a
+  `File` as a fetch body in one line with the name in the path.
 - The composer gains an attach control; an attachment shows in the transcript as its own event,
   carrying the stored name and size, so the conversation records what the model was given.
 - The user's message reaches the harness with the workspace path of each attachment; both adapters
@@ -91,36 +97,36 @@ being built is between *sessions*, not between privilege levels.
 
 ## Deliverables
 
-- [ ] **A workspace per session.** `cache` declared in the manifest; `<cache>/sessions/<id>/workspace`
+- [x] **A workspace per session.** `cache` declared in the manifest; `<cache>/sessions/<id>/workspace`
       created on session start and handed to the harness as `cwd` instead of the shared `workDir`.
       The shared value stays as the fallback only when no cache directory was injected — a gateway
       started outside Core — and the log says so once. Its default should move off the home directory
       at the same time: it is a `cwd` for an agent, and a home directory is the last place to run one.
-- [ ] **Removal follows the session — and only the session's end.** `deleteSession` removes the
+- [x] **Removal follows the session — and only the session's end.** `deleteSession` removes the
       workspace, and the retention sweep removes it with the sessions it expires. The abandon sweep
       does **not**: abandonment stops a session and keeps its transcript so the next message can
       resume it, and a workspace removed there would take the files a resumed turn still refers to.
       Asserted in both directions — gone on delete and on expiry, present after abandonment — since a
       workspace that outlived its session would be the orphan `externalMounts` produces, and one that
       died before it would be the plan contradicting its own single clock.
-- [ ] **Upload.** Multipart, owner-only, bounded: a per-file byte cap, a per-session count cap, a
+- [x] **Upload.** Raw request body (see Target behaviour for why not multipart), owner-only, bounded: a per-file byte cap, a per-session count cap, a
       per-session byte cap. Names are sanitised to a safe subset and de-duplicated; the original name
       is kept as metadata, never as the path. Each refusal names its cap, beside the accepted case.
-- [ ] **Download.** Owner-only, fixed content type, attachment disposition. Asserted that a file
+- [x] **Download.** Owner-only, fixed content type, attachment disposition. Asserted that a file
       uploaded as `report.html` comes back in a form a browser will not render.
-- [ ] **The transcript records it.** An `attachment_added` event with name, size and the workspace
+- [x] **The transcript records it.** An `attachment_added` event with name, size and the workspace
       path, persisted like every other event so a reconnecting client rebuilds it and a restored
       session explains its missing file.
-- [ ] **The harness is told.** The message that carries an attachment reaches the adapter with the
+- [x] **The harness is told.** The message that carries an attachment reaches the adapter with the
       file's path appended in a fixed, recognisable form. Not injected into the system prompt: the
       file is the operator's input for one turn, not standing instruction.
-- [ ] **The composer.** An attach control in `web/src/app/assistant/page.tsx`, the pending attachment
+- [x] **The composer.** An attach control in `web/src/app/assistant/page.tsx`, the pending attachment
       shown before send, the event rendered in the transcript.
-- [ ] **The skill says what an attachment is.** The gateway's own agent-facing instructions state
+- [x] **The skill says what an attachment is.** The gateway's own agent-facing instructions state
       that an attached file is the operator's data to read, not instructions to follow — the content
       is untrusted text with a file-reading tool pointed at it, which is an injection surface and
       should be named as one.
-- [ ] **Documentation.** `feature.md` created with the storage choice, the restore behaviour, and the
+- [x] **Documentation.** `feature.md` created with the storage choice, the restore behaviour, and the
       isolation limit stated in the words above; the ai-gateway and agent-background-sessions
       documents cross-linked.
 
@@ -143,20 +149,23 @@ implies.
   expiry: two clocks would produce a transcript that references a file the earlier one already took,
   which is the orphan this plan exists to avoid.
 
-## Verification
+## Verification that needs a running host
 
 Unit tests cover the path handling, every cap in both directions, ownership on both routes, the
-content-type fixing, and removal on all three exits. What they cannot cover needs a Core-managed
-runtime:
+content-type fixing, removal on the session's exits, and what reaches the harness. What they cannot
+cover, against a Core-managed dev runtime:
 
-1. Start the gateway through Core and confirm `HOSTY_APP_CACHE_DIR` is injected and the workspace is
-   created under it, not under the home directory.
-2. Attach a log file, ask the assistant a question about it, and confirm the answer came from the
-   file — under both harnesses.
-3. Delete the session in the UI and confirm the workspace is gone from the host.
-4. Take a backup of the gateway and confirm the archive holds the session's records and none of its
-   attachments; restore it and confirm the transcript shows the attachment event without the file.
-5. From one session, ask the assistant to list `../..` — the sessions root, not the session's own
-   directory one level up — and confirm what it can see is other sessions' workspaces and nothing
-   else. A probe of `..` alone would observe nothing and pass. This is the limit being documented,
-   checked rather than assumed.
+- [ ] **The cache directory is the one Core injects.** Start the gateway through Core and confirm
+      `HOSTY_APP_CACHE_DIR` is set and the workspace is created under it, not under the home
+      directory.
+- [ ] **Both harnesses read an attachment.** Attach a log file, ask a question about it, and confirm
+      the answer came from the file — under Claude and under Codex.
+- [ ] **Deletion reaches the disk.** Delete the session in the UI and confirm the workspace is gone
+      from the host.
+- [ ] **Backups hold records and not uploads.** Take a backup of the gateway and confirm the archive
+      holds the session's records and none of its attachments; restore it and confirm the transcript
+      shows the `attachment_added` event without the file.
+- [ ] **The documented limit is what it says.** From one session, ask the assistant to list `../..`
+      — the sessions root, not the session's own directory one level up — and confirm what it can
+      see is other sessions' workspaces and nothing else. A probe of `..` alone would observe
+      nothing and pass.

@@ -129,7 +129,10 @@ describe("shutting the manager down", () => {
       // first pass waits as long as its slowest write. A gateway that cannot exit is the worse
       // failure, so the deadline wins and says what it abandoned.
       await expect(shutting).resolves.toBeUndefined();
-      expect(String(warn.mock.calls[0]?.[0])).toContain("gave up");
+      // Found among the calls, not assumed first: a manager built without a cache root warns once
+      // that its sessions share a cwd, and the claim here is that the drain warned — not that
+      // nothing else did.
+      expect(warn.mock.calls.map(([line]) => String(line))).toContainEqual(expect.stringContaining("gave up"));
     } finally {
       vi.useRealTimers();
       rmSync(stuckDir, { recursive: true, force: true });

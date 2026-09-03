@@ -51,10 +51,66 @@ export interface StoredEvent {
 }
 
 export class SessionStore {
-  constructor(private readonly dataDir: string) {}
+  /**
+   * @param workspaceRoot Where per-session working directories live — the app's cache directory,
+   * so uploads are never copied into a backup and the harness's cwd is nowhere near a transcript.
+   * Null when nothing was injected; sessions then have no workspace of their own.
+   */
+  constructor(
+    private readonly dataDir: string,
+    private readonly workspaceRoot: string | null = null,
+  ) {}
 
   private sessionsRoot(): string {
     return path.join(this.dataDir, "sessions");
+  }
+
+  /**
+   * The session's working directory, created on demand: `<cache>/sessions/<id>/workspace`. Under a
+   * different root from the records deliberately — from here, `..` is the session's own directory
+   * and `../..` the sessions root, where every sibling is a workspace and none is a transcript.
+   */
+  async ensureWorkspace(id: string): Promise<string | null> {
+    if (this.workspaceRoot === null) {
+      return null;
+    }
+
+    const dir = this.workspaceDir(id);
+    await mkdir(dir, { recursive: true });
+    return dir;
+  }
+
+  private workspaceDir(id: string): string {
+    // The same segment check the records get; the id is trusted nowhere as a path.
+    if (!/^[a-zA-Z0-9-]+$/.test(id)) {
+      throw new Error(`invalid session id: ${id}`);
+    }
+    return path.join(this.workspaceRoot!, "sessions", id, "workspace");
+  }
+
+  /**
+   * A file inside the session's workspace, by its stored name — null when there is no workspace.
+   * The name is required to already be a stored name (see `sanitizeAttachmentName`); a separator or
+   * a parent reference is refused here again rather than trusted to have been cleaned upstream.
+   */
+  attachmentPath(id: string, name: string): string | null {
+    if (this.workspaceRoot === null) {
+      return null;
+    }
+    // A separator or a leading dot is what the sanitiser never produces; an inner `..` it does
+    // (`report..txt`), and refusing that here made a stored file unusable through both routes.
+    // An empty name would resolve to the workspace directory itself.
+    if (!name || name !== path.basename(name) || name.startsWith(".")) {
+      throw new Error(`invalid attachment name: ${name}`);
+    }
+    return path.join(this.workspaceDir(id), name);
+  }
+
+  /** Removes the workspace and the session directory that holds it; a no-op without a root. */
+  private async removeWorkspace(id: string): Promise<void> {
+    if (this.workspaceRoot !== null) {
+      await rm(path.join(this.workspaceRoot, "sessions", id), { recursive: true, force: true });
+    }
   }
 
   private sessionDir(id: string): string {
@@ -145,6 +201,7 @@ export class SessionStore {
   /** Removes one session's directory — its record, transcript and everything else it kept. */
   async deleteSession(id: string): Promise<void> {
     await rm(this.sessionDir(id), { recursive: true, force: true });
+    await this.removeWorkspace(id);
   }
 
   /** Deletes sessions whose last activity is older than the retention window. Returns deleted ids. */
@@ -154,6 +211,9 @@ export class SessionStore {
     for (const record of await this.listRecords()) {
       if (new Date(record.updatedAt).getTime() < cutoff) {
         await rm(this.sessionDir(record.id), { recursive: true, force: true });
+        // The workspace goes with the session here and on delete — and nowhere else. Abandonment
+        // stops a session and keeps it resumable, so its files must stay.
+        await this.removeWorkspace(record.id);
         deleted.push(record.id);
       }
     }

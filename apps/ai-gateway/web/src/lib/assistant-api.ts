@@ -114,11 +114,31 @@ export async function getSession(sessionId: string): Promise<AssistantSession> {
   return (await call(`/sessions/${encodeURIComponent(sessionId)}`)).json() as Promise<AssistantSession>;
 }
 
-export async function postMessage(sessionId: string, text: string): Promise<void> {
+export async function postMessage(sessionId: string, text: string, attachments: string[] = []): Promise<void> {
   await call(`/sessions/${encodeURIComponent(sessionId)}/messages`, {
     method: "POST",
-    body: JSON.stringify({ text }),
+    body: JSON.stringify(attachments.length > 0 ? { text, attachments } : { text }),
   });
+}
+
+export type StoredAttachment = { name: string; size: number };
+
+/**
+ * Hands the gateway a file for this session. The body is the file itself — no multipart, no
+ * encoding — with the operator's name for it in the path; what comes back is the stored name, which
+ * may differ (sanitised, de-duplicated) and is the one a message refers to.
+ */
+export async function uploadAttachment(sessionId: string, file: File): Promise<StoredAttachment> {
+  const response = await call(
+    `/sessions/${encodeURIComponent(sessionId)}/attachments/${encodeURIComponent(file.name)}`,
+    {
+      method: "PUT",
+      body: file,
+      // `call` labels any body as JSON; this one is bytes.
+      headers: { "content-type": "application/octet-stream" },
+    },
+  );
+  return ((await response.json()) as { attachment: StoredAttachment }).attachment;
 }
 
 /** Decides a pending approval. A deny may carry the operator's reason, which reaches the model. */

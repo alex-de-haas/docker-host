@@ -43,10 +43,27 @@ export function TranscriptEvent({
   onAnswer: (questionId: string, answers: Record<string, string>) => Promise<void>;
 }) {
   switch (event.type) {
-    case "user_message":
+    case "user_message": {
+      const attachments = Array.isArray(event.attachments) ? event.attachments.map(String) : [];
       return (
         <div className="ml-8 rounded-lg bg-primary/10 px-3 py-2 text-sm whitespace-pre-wrap">
           {String(event.text ?? "")}
+          {attachments.length > 0 && (
+            <div className="mt-1 flex flex-wrap gap-1 text-xs text-muted-foreground">
+              {attachments.map((name) => (
+                <span key={name} className="rounded border px-1.5 py-0.5">📎 {name}</span>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+    case "attachment_added":
+      // Its own line, so a session restored from a backup — records back, cache not — still shows
+      // that a file was here, even though the file itself is gone.
+      return (
+        <div className="ml-8 text-xs text-muted-foreground">
+          📎 Attached {String(event.name ?? "")} ({formatBytes(Number(event.size ?? 0))})
         </div>
       );
     case "assistant_text":
@@ -446,4 +463,10 @@ function QuestionCard({
       </Button>
     </div>
   );
+}
+
+function formatBytes(size: number): string {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }

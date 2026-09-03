@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { History, Loader2, MessageSquarePlus, Send, Sparkles } from "lucide-react";
+import { History, Loader2, MessageSquarePlus, Paperclip, Send, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, InlineError, StatusBadge } from "@/components/status";
 import { Markdown } from "@/components/markdown";
@@ -20,6 +20,8 @@ import {
   getSession,
   listSessions,
   postMessage,
+  uploadAttachment,
+  type StoredAttachment,
   renameSession,
   resolveApproval,
   resolveQuestion,
@@ -54,6 +56,13 @@ export default function AssistantPage() {
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  // Chosen but not yet sent. Uploaded only when the message goes, so a file picked and then
+  // reconsidered never reaches the gateway.
+  const [pending, setPending] = useState<File[]>([]);
+  // Already stored for this message but not yet sent — kept across a failed send, so a retry names
+  // them instead of uploading them again under de-duplicated names.
+  const [uploaded, setUploaded] = useState<StoredAttachment[]>([]);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [showSessions, setShowSessions] = useState(false);
   const [ready, setReady] = useState(false);
   const streamAbortRef = useRef<AbortController | null>(null);
@@ -77,6 +86,10 @@ export default function AssistantPage() {
     // Whatever was left unsent in this session, put back in the box. Per session, so switching away
     // and back returns your own half-written sentence rather than someone else's.
     setInput(readDraft(record.id));
+    // Files are not a draft: a selection made for one session must not follow the operator into
+    // the next and be uploaded there.
+    setPending([]);
+    setUploaded([]);
     try {
       window.localStorage.setItem(SESSION_STORAGE_KEY, record.id);
     } catch {
@@ -299,7 +312,21 @@ export default function AssistantPage() {
     setSending(true);
     setError(null);
     try {
-      await postMessage(session.id, trimmed);
+      // Files first, then the message that names them by their stored names — which may differ from
+      // what the operator called them. A failed upload stops here with the text kept, so nothing is
+      // sent that refers to a file the gateway does not have.
+      const stored = [...uploaded];
+      for (const file of pending) {
+        const attachment = await uploadAttachment(session.id, file);
+        // Moved as each lands, not after all have: a failure part-way leaves the ones that made it
+        // in `uploaded` and the rest still pending, so the retry sends exactly what is missing.
+        stored.push(attachment);
+        setUploaded((current) => [...current, attachment]);
+        setPending((current) => current.filter((candidate) => candidate !== file));
+      }
+      await postMessage(session.id, trimmed, stored.map((attachment) => attachment.name));
+      setUploaded([]);
+      setPending([]);
       setInput("");
       // Cleared only once the gateway has it: clearing before the round trip would lose the text on
       // exactly the failure the operator most wants it kept for.
@@ -319,7 +346,7 @@ export default function AssistantPage() {
     } finally {
       setSending(false);
     }
-  }, [input, sending, session]);
+  }, [input, pending, sending, session, uploaded]);
 
   const remove = useCallback(
     async (sessionId: string) => {
@@ -527,6 +554,28 @@ export default function AssistantPage() {
             )}
           </div>
 
+          {(pending.length > 0 || uploaded.length > 0) && (
+            <div className="flex shrink-0 flex-wrap gap-1 border-t px-3 pt-2 text-xs">
+              {uploaded.map((attachment) => (
+                <span key={`stored-${attachment.name}`} className="inline-flex items-center rounded border px-1.5 py-0.5">
+                  📎 {attachment.name}
+                </span>
+              ))}
+              {pending.map((file, index) => (
+                <span key={`${file.name}-${index}`} className="inline-flex items-center gap-1 rounded border px-1.5 py-0.5">
+                  📎 {file.name}
+                  <button
+                    type="button"
+                    aria-label={`Remove ${file.name}`}
+                    className="text-muted-foreground hover:text-foreground"
+                    onClick={() => setPending((current) => current.filter((_, i) => i !== index))}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
           <form
             className="flex shrink-0 items-end gap-2 border-t p-3"
             onSubmit={(event) => {
@@ -549,6 +598,26 @@ export default function AssistantPage() {
               disabled={!session || sending}
               className="flex-1 resize-none rounded-md border bg-transparent px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50"
             />
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              hidden
+              onChange={(event) => {
+                setPending((current) => [...current, ...Array.from(event.target.files ?? [])]);
+                event.target.value = "";
+              }}
+            />
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              disabled={!session || sending}
+              aria-label="Attach files"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <Paperclip />
+            </Button>
             <Button type="submit" size="icon" disabled={!session || sending || !input.trim()} aria-label="Send">
               {sending ? <Loader2 className="animate-spin" /> : <Send />}
             </Button>
