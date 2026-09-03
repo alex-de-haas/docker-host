@@ -1,6 +1,6 @@
 # Assistant Attachments — plan
 
-Status: Draft
+Status: Ready
 Created: 2026-09-03
 Updated: 2026-09-03
 
@@ -115,20 +115,23 @@ being built is between *sessions*, not between privilege levels.
       isolation limit stated in the words above; the ai-gateway and agent-background-sessions
       documents cross-linked.
 
-## Open questions
+## Decisions
 
-- **`cache` by properties, or a new storage kind?** `cache` fits on every property and misses on its
-  name. If "app-managed, persistent, never backed up, not rebuildable" is a need that will recur, the
-  platform is the right place for it — a `workspace`/`scratch` kind in the manifest contract, with
-  the same injection shape. Recommendation: ship on `cache` now, note the mismatch in `feature.md`,
-  and open the platform question separately rather than block attachments on it.
-- **Limits.** Proposed: 25 MB per file, 20 files per session, 100 MB per session. The per-session byte
-  cap matters more than the others — `cache` is not backed up, but it is disk on the host, and a
-  session that is never deleted holds it. Needs the operator's number, not mine.
-- **Retention beyond the session.** Should the retention sweep that deletes old sessions be the only
-  thing that reclaims workspace disk, or should attachments have a shorter life than the transcript
-  they belong to? Recommendation: same life as the session, no separate clock — two clocks would
-  mean a transcript that references a file the sweep already took.
+Open when the plan was written; settled by the operator on 2026-09-03, recorded with what each
+implies.
+
+- **`cache`, by its properties, now.** The name mismatch — "rebuildable" for a file that is not — is
+  stated in `feature.md` rather than resolved here. Whether the platform wants a fourth storage kind
+  for "app-managed, persistent, never backed up, not rebuildable" is a question for the manifest
+  contract, raised separately; attachments do not wait on it.
+- **The caps: 25 MB per file, 20 files per session, 100 MB per session.** The per-session byte cap is
+  the one that guards something real — `cache` is not backed up, but it is disk on the host, and a
+  session nobody deletes holds it until the retention sweep does. The other two exist so a single
+  upload cannot spend the whole allowance.
+- **One clock.** Attachments live exactly as long as the session and are reclaimed by the same
+  sweeps — retention and abandonment — and by deletion. No separate expiry: two clocks would produce
+  a transcript that references a file the earlier one already took, which is the orphan this plan
+  exists to avoid.
 
 ## Verification
 
