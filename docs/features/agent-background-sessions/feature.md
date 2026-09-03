@@ -1,7 +1,7 @@
 # Agent Background Sessions
 
 Created: 2026-08-24
-Updated: 2026-09-01
+Updated: 2026-09-03
 
 Leaving an agent working while you close the tab is a feature rather than a way to lose work: the
 session is findable when you come back, and it reaches you when it needs you.
@@ -82,6 +82,10 @@ harness process, its MCP proxy route and its share of the delegation chain for n
 The conversation survives the reclamation. The transcript is kept — an operator returning to find the
 session gone would have lost the very question it was asking — and the next message starts a fresh
 harness that resumes it.
+
+The session's [workspace](../assistant-attachments/feature.md) survives it too, for the same reason:
+a resumed turn may refer to a file the operator attached. The workspace goes only where the session
+itself ends — deletion, and retention expiry.
 
 ## Shutting Down Is Not Just Stopping
 

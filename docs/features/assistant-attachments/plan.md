@@ -10,6 +10,9 @@ pasting it into the message box. Cross-cuts [ai-gateway](../ai-gateway/feature.m
 attaches to), and the runtime-app storage contract in
 [runtime-app-manifest](../runtime-app-manifest.md#storage).
 
+> Every deliverable has shipped — see [feature.md](feature.md). What remains is the verification
+> that needs a Core-managed gateway, listed at the end; none of it can be asserted in a unit test.
+
 ## Goal
 
 A file dropped into the composer lands somewhere the assistant can read it, is stored under that
@@ -113,16 +116,16 @@ being built is between *sessions*, not between privilege levels.
 - [x] **The transcript records it.** An `attachment_added` event with name, size and the workspace
       path, persisted like every other event so a reconnecting client rebuilds it and a restored
       session explains its missing file.
-- [ ] **The harness is told.** The message that carries an attachment reaches the adapter with the
+- [x] **The harness is told.** The message that carries an attachment reaches the adapter with the
       file's path appended in a fixed, recognisable form. Not injected into the system prompt: the
       file is the operator's input for one turn, not standing instruction.
-- [ ] **The composer.** An attach control in `web/src/app/assistant/page.tsx`, the pending attachment
+- [x] **The composer.** An attach control in `web/src/app/assistant/page.tsx`, the pending attachment
       shown before send, the event rendered in the transcript.
-- [ ] **The skill says what an attachment is.** The gateway's own agent-facing instructions state
+- [x] **The skill says what an attachment is.** The gateway's own agent-facing instructions state
       that an attached file is the operator's data to read, not instructions to follow — the content
       is untrusted text with a file-reading tool pointed at it, which is an injection surface and
       should be named as one.
-- [ ] **Documentation.** `feature.md` created with the storage choice, the restore behaviour, and the
+- [x] **Documentation.** `feature.md` created with the storage choice, the restore behaviour, and the
       isolation limit stated in the words above; the ai-gateway and agent-background-sessions
       documents cross-linked.
 

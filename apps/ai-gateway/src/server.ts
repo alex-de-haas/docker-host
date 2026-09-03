@@ -395,8 +395,21 @@ async function route(
       sendJson(response, 400, { code: "text_required", message: "A non-empty text field is required." });
       return;
     }
-    // The presented token seeds the session's delegation chain; see SessionManager.postMessage.
-    await manager.postMessage(sessionId, body.text, readBearer(request));
+    // Stored names only — the manager resolves each to a workspace path and refuses any that is
+    // not one, before the message is written anywhere.
+    const attachments = Array.isArray(body.attachments)
+      ? body.attachments.filter((name): name is string => typeof name === "string").slice(0, 20)
+      : [];
+    try {
+      // The presented token seeds the session's delegation chain; see SessionManager.postMessage.
+      await manager.postMessage(sessionId, body.text, readBearer(request), attachments);
+    } catch (error) {
+      if (error instanceof Error && /invalid attachment name|attachments need a workspace/.test(error.message)) {
+        sendJson(response, 400, { code: "attachment_invalid", message: error.message });
+        return;
+      }
+      throw error;
+    }
     sendJson(response, 202, { accepted: true });
     return;
   }
