@@ -43,8 +43,9 @@ not on capacity.
   attachment, which should die with its session and at the latest with the app. A mount would leave
   orphaned uploads on the host after `hosty apps remove`, and would make the operator bind a path
   before the assistant could accept a file at all.
-- **`cache`** — persists across restarts, updates and runtime switches; never backed up or restored;
-  deleted together with `data` when the app is removed. Every property fits. The one mismatch is the
+- **`cache`** ([app-cache-storage](../app-cache-storage/feature.md)) — persists across restarts,
+  updates and runtime switches; never backed up or restored; deleted together with `data` when the
+  app is removed. Every property fits. The one mismatch is the
   contract's description — "derived, rebuildable data" — and an attachment is not rebuildable. This
   plan uses `cache` by its properties and says so; the alternative is an open question below.
 
@@ -58,7 +59,9 @@ A harness is a process with file-reading tools. Codex runs with `sandbox: "read-
 forbids writes and permits reads anywhere the process can reach; Claude runs with
 `permissionMode: "default"`, where writes pass through an approval and reads do not. **A
 per-session workspace prevents accidental mixing. It does not contain a model that decides to read
-`../`.** Session ids are UUIDs and cannot be guessed, but a directory listing does not need to guess.
+`../..`.** Session ids are UUIDs and cannot be guessed, but a directory listing does not need to
+guess: from `<cache>/sessions/<id>/workspace`, one `..` is the session's own directory and two reach
+the sessions root, where every sibling is listed.
 
 Putting workspaces under `cache` rather than `data` narrows what that listing reaches — other
 sessions' *uploads*, never their transcripts — and that is as far as storage layout can go. Isolating
@@ -93,9 +96,13 @@ being built is between *sessions*, not between privilege levels.
       The shared value stays as the fallback only when no cache directory was injected — a gateway
       started outside Core — and the log says so once. Its default should move off the home directory
       at the same time: it is a `cwd` for an agent, and a home directory is the last place to run one.
-- [ ] **Removal follows the session.** `deleteSession` removes the workspace; the retention sweep and
-      the abandon sweep remove it with the session they end. Asserted for all three, since a
-      workspace that outlived its session is exactly the orphan `externalMounts` would have produced.
+- [ ] **Removal follows the session — and only the session's end.** `deleteSession` removes the
+      workspace, and the retention sweep removes it with the sessions it expires. The abandon sweep
+      does **not**: abandonment stops a session and keeps its transcript so the next message can
+      resume it, and a workspace removed there would take the files a resumed turn still refers to.
+      Asserted in both directions — gone on delete and on expiry, present after abandonment — since a
+      workspace that outlived its session would be the orphan `externalMounts` produces, and one that
+      died before it would be the plan contradicting its own single clock.
 - [ ] **Upload.** Multipart, owner-only, bounded: a per-file byte cap, a per-session count cap, a
       per-session byte cap. Names are sanitised to a safe subset and de-duplicated; the original name
       is kept as metadata, never as the path. Each refusal names its cap, beside the accepted case.
@@ -130,10 +137,11 @@ implies.
   the one that guards something real — `cache` is not backed up, but it is disk on the host, and a
   session nobody deletes holds it until the retention sweep does. The other two exist so a single
   upload cannot spend the whole allowance.
-- **One clock.** Attachments live exactly as long as the session and are reclaimed by the same
-  sweeps — retention and abandonment — and by deletion. No separate expiry: two clocks would produce
-  a transcript that references a file the earlier one already took, which is the orphan this plan
-  exists to avoid.
+- **One clock.** Attachments live exactly as long as the session and are reclaimed only where the
+  session itself ends: deletion, and retention expiry. Abandonment is not an end — it stops the
+  harness and keeps the transcript for resumption — so it leaves the workspace alone. No separate
+  expiry: two clocks would produce a transcript that references a file the earlier one already took,
+  which is the orphan this plan exists to avoid.
 
 ## Verification
 
@@ -148,5 +156,7 @@ runtime:
 3. Delete the session in the UI and confirm the workspace is gone from the host.
 4. Take a backup of the gateway and confirm the archive holds the session's records and none of its
    attachments; restore it and confirm the transcript shows the attachment event without the file.
-5. From one session, ask the assistant to list `..` — and confirm what it can see is other sessions'
-   workspaces and nothing else. This is the limit being documented, checked rather than assumed.
+5. From one session, ask the assistant to list `../..` — the sessions root, not the session's own
+   directory one level up — and confirm what it can see is other sessions' workspaces and nothing
+   else. A probe of `..` alone would observe nothing and pass. This is the limit being documented,
+   checked rather than assumed.
