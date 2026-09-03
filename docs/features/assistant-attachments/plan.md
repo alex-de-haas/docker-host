@@ -109,7 +109,7 @@ being built is between *sessions*, not between privilege levels.
       Asserted in both directions — gone on delete and on expiry, present after abandonment — since a
       workspace that outlived its session would be the orphan `externalMounts` produces, and one that
       died before it would be the plan contradicting its own single clock.
-- [x] **Upload.** Multipart, owner-only, bounded: a per-file byte cap, a per-session count cap, a
+- [x] **Upload.** Raw request body (see Target behaviour for why not multipart), owner-only, bounded: a per-file byte cap, a per-session count cap, a
       per-session byte cap. Names are sanitised to a safe subset and de-duplicated; the original name
       is kept as metadata, never as the path. Each refusal names its cap, beside the accepted case.
 - [x] **Download.** Owner-only, fixed content type, attachment disposition. Asserted that a file

@@ -404,7 +404,12 @@ async function route(
       // The presented token seeds the session's delegation chain; see SessionManager.postMessage.
       await manager.postMessage(sessionId, body.text, readBearer(request), attachments);
     } catch (error) {
-      if (error instanceof Error && /invalid attachment name|attachments need a workspace|attachment not found/.test(error.message)) {
+      if (error instanceof Error && /attachments need a workspace/.test(error.message)) {
+        // The gateway's configuration, not the request: the same answer the upload route gives.
+        sendJson(response, 503, { code: "attachments_unavailable", message: "This gateway has no workspace directory." });
+        return;
+      }
+      if (error instanceof Error && /invalid attachment name|attachment not found/.test(error.message)) {
         sendJson(response, 400, { code: "attachment_invalid", message: error.message });
         return;
       }
@@ -663,14 +668,22 @@ async function handleAttachments(
     return;
   }
 
-  if (rawName !== undefined && method === "PUT") {
+  // Decoded once, up front: `decodeURIComponent` throws on a malformed escape, and an uncaught
+  // throw here is a 500 for a name the client got wrong.
+  const name = rawName === undefined ? undefined : decodeNameOrNull(rawName);
+  if (rawName !== undefined && name === null) {
+    sendJson(response, 400, { code: "attachment_name_invalid", message: "The attachment name is not valid URL encoding." });
+    return;
+  }
+
+  if (name !== undefined && method === "PUT") {
     const declared = Number.parseInt(request.headers["content-length"] ?? "", 10);
     if (!Number.isFinite(declared) || declared < 0) {
       sendJson(response, 411, { code: "length_required", message: "Content-Length is required." });
       return;
     }
     try {
-      const stored = await storeAttachment(workspace, decodeURIComponent(rawName), declared, request);
+      const stored = await storeAttachment(workspace, name!, declared, request);
       await manager.addAttachment(sessionId, { ...stored, path: path.join(workspace, stored.name) });
       sendJson(response, 201, { attachment: stored });
     } catch (error) {
@@ -684,10 +697,10 @@ async function handleAttachments(
     return;
   }
 
-  if (rawName !== undefined && method === "GET") {
+  if (name !== undefined && method === "GET") {
     let file: string | null;
     try {
-      file = manager.attachmentPath(sessionId, decodeURIComponent(rawName));
+      file = manager.attachmentPath(sessionId, name!);
     } catch {
       sendJson(response, 400, { code: "attachment_name_invalid", message: "Not a stored attachment name." });
       return;
@@ -712,6 +725,14 @@ async function handleAttachments(
   }
 
   sendJson(response, 405, { code: "method_not_allowed", message: "Unsupported method for attachments." });
+}
+
+function decodeNameOrNull(raw: string): string | null {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return null;
+  }
 }
 
 function refusalMessage(refusal: AttachmentRefusal): string {

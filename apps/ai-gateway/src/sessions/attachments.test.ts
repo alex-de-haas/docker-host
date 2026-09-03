@@ -137,6 +137,19 @@ describe("session attachments", () => {
     expect(missing.status).toBe(404);
   });
 
+  it("answers a malformed percent-encoding with a 400, not a 500", async () => {
+    // `decodeURIComponent("%E0%A4%A")` throws. Uncaught, that is a 500 for a name the client got
+    // wrong — on the upload and on the download.
+    const id = await session();
+    const headers = { authorization: `Bearer ${adminToken()}` };
+
+    const put = await fetch(`${origin}/api/sessions/${id}/attachments/%E0%A4%A`, { method: "PUT", headers: { ...headers, "content-type": "application/octet-stream" }, body: "x" });
+    const get = await fetch(`${origin}/api/sessions/${id}/attachments/%E0%A4%A`, { headers });
+
+    expect(put.status).toBe(400);
+    expect(get.status).toBe(400);
+  });
+
   it("404s for a session that does not exist, and 503s when the gateway has no workspace root", async () => {
     expect((await upload("00000000-0000-0000-0000-000000000000", "a.txt", "x")).status).toBe(404);
 
@@ -154,6 +167,15 @@ describe("session attachments", () => {
     const id = await session();
 
     expect((await upload(id, "a.txt", "x")).status).toBe(503);
+
+    // The same answer from the message route: a gateway that cannot hold a file cannot be handed
+    // one by name either, and that is its configuration, not the request.
+    const message = await fetch(`${origin}/api/sessions/${id}/messages`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${adminToken()}`, "content-type": "application/json" },
+      body: JSON.stringify({ text: "read this", attachments: ["a.txt"] }),
+    });
+    expect(message.status).toBe(503);
   });
 
   it("reaches the harness by path, appended to the turn and named in the transcript", async () => {
@@ -313,6 +335,11 @@ describe("session attachments", () => {
         rmSync(fresh, { recursive: true, force: true });
       }
     });
+  });
+
+  it("never resolves an empty name to the workspace directory", () => {
+    const store = new SessionStore(dataDir, cacheDir);
+    expect(() => store.attachmentPath("00000000-0000-0000-0000-000000000000", "")).toThrow(/invalid attachment name/);
   });
 
   it("sanitises the way the tests above assume it does", () => {

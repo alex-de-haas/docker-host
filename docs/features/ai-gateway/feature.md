@@ -46,7 +46,7 @@ this feature.
   with `defaultEnabled: false`: the assistant is opt-in and removable. Port comes from
   `HOSTY_PORT_HTTP`, data lives in `HOSTY_APP_DATA_DIR`, and each harness session starts in a
   workspace of its own under `HOSTY_APP_CACHE_DIR` — see
-  [assistant-attachments](../assistant-attachments/plan.md). Outside Core, with no cache directory
+  [assistant-attachments](../assistant-attachments/feature.md). Outside Core, with no cache directory
   injected, every session shares `HOSTY_AI_GATEWAY_WORKDIR` (a temp directory by default, no longer
   the home directory) and the gateway warns once that it does.
 - Session API, admin delegated token required on every `/api` route: create session (optional
