@@ -77,9 +77,11 @@ being built is between *sessions*, not between privilege levels.
 
 - The manifest declares `cache` beside `data`. Core injects its path; the gateway resolves
   `<cache>/sessions/<id>/workspace` per session and passes it as the harness `cwd`.
-- `POST /api/sessions/{id}/attachments` accepts a multipart upload from the session's owner and
-  writes it into that workspace under a sanitised name. Limits are enforced there, and refused
-  uploads say which limit.
+- `PUT /api/sessions/{id}/attachments/{name}` accepts the file as the raw request body and writes
+  it into that workspace under a sanitised name. Limits are enforced there, and refused uploads say
+  which limit. Raw body rather than the multipart this plan first said: no multipart parser is among
+  the dependencies, a hand-rolled one is the kind of code that hides its bugs, and a browser sends a
+  `File` as a fetch body in one line with the name in the path.
 - The composer gains an attach control; an attachment shows in the transcript as its own event,
   carrying the stored name and size, so the conversation records what the model was given.
 - The user's message reaches the harness with the workspace path of each attachment; both adapters
@@ -103,12 +105,12 @@ being built is between *sessions*, not between privilege levels.
       Asserted in both directions — gone on delete and on expiry, present after abandonment — since a
       workspace that outlived its session would be the orphan `externalMounts` produces, and one that
       died before it would be the plan contradicting its own single clock.
-- [ ] **Upload.** Multipart, owner-only, bounded: a per-file byte cap, a per-session count cap, a
+- [x] **Upload.** Multipart, owner-only, bounded: a per-file byte cap, a per-session count cap, a
       per-session byte cap. Names are sanitised to a safe subset and de-duplicated; the original name
       is kept as metadata, never as the path. Each refusal names its cap, beside the accepted case.
-- [ ] **Download.** Owner-only, fixed content type, attachment disposition. Asserted that a file
+- [x] **Download.** Owner-only, fixed content type, attachment disposition. Asserted that a file
       uploaded as `report.html` comes back in a form a browser will not render.
-- [ ] **The transcript records it.** An `attachment_added` event with name, size and the workspace
+- [x] **The transcript records it.** An `attachment_added` event with name, size and the workspace
       path, persisted like every other event so a reconnecting client rebuilds it and a restored
       session explains its missing file.
 - [ ] **The harness is told.** The message that carries an attachment reaches the adapter with the

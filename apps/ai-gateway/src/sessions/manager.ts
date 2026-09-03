@@ -875,6 +875,26 @@ export class SessionManager {
     }
   }
 
+  /** The session's working directory, created on demand; null when this gateway has no cache root. */
+  workspaceFor(id: string): Promise<string | null> {
+    return this.store.ensureWorkspace(id);
+  }
+
+  /** A stored attachment's path; throws for a name that is not a stored name. */
+  attachmentPath(id: string, name: string): string | null {
+    return this.store.attachmentPath(id, name);
+  }
+
+  /**
+   * Records an upload in the transcript. Its own event, persisted like every other, so a
+   * reconnecting client rebuilds it and a session restored from a backup — which brings the
+   * records back and not the cache — explains the file it no longer has.
+   */
+  async addAttachment(id: string, attachment: { name: string; size: number; path: string }): Promise<void> {
+    await this.requireLive(id);
+    await this.append(id, { type: "attachment_added", ...attachment });
+  }
+
   private async append(id: string, payload: Record<string, unknown> & { type: string }): Promise<void> {
     const session = this.live.get(id);
     if (!session) {

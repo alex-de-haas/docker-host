@@ -1,3 +1,8 @@
+import { AttachmentRefusedError, listAttachments, storeAttachment, type AttachmentRefusal } from "./sessions/attachments.js";
+import { pipeline } from "node:stream/promises";
+import path from "node:path";
+import { stat } from "node:fs/promises";
+import { createReadStream } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { isSameOriginRequest, resolveAdminActor } from "./auth.js";
 import { exchangeLaunchCode } from "./app-session.js";
@@ -457,6 +462,12 @@ async function route(
     return;
   }
 
+  const attachmentMatch = rest.match(/^\/attachments(?:\/([^/]+))?$/);
+  if (attachmentMatch) {
+    await handleAttachments(request, response, manager, sessionId, method, attachmentMatch[1]);
+    return;
+  }
+
   sendJson(response, 404, { code: "not_found", message: "Unknown route." });
 }
 
@@ -602,6 +613,104 @@ function applyCors(request: IncomingMessage, response: ServerResponse): void {
     response.setHeader("access-control-allow-methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS");
     response.setHeader("access-control-allow-headers", "authorization, content-type");
     response.setHeader("access-control-max-age", "600");
+  }
+}
+
+/**
+ * Attachments: `PUT /attachments/{name}` with the file as the raw body, `GET /attachments` to list,
+ * `GET /attachments/{name}` to download.
+ *
+ * Raw body rather than multipart, which the plan first said. No multipart parser is among the
+ * dependencies, and a hand-rolled one is the kind of code that hides its bugs; a browser sends a
+ * `File` as a fetch body in one line, with the name in the path. The refusals are the caps, each
+ * named, and each checked against the declared length before a byte is read — the body is bounded
+ * again while it streams, since a declared length is a claim.
+ */
+async function handleAttachments(
+  request: IncomingMessage,
+  response: ServerResponse,
+  manager: SessionManager,
+  sessionId: string,
+  method: string | undefined,
+  rawName: string | undefined,
+): Promise<void> {
+  if (!(await manager.getSession(sessionId))) {
+    sendJson(response, 404, { code: "session_not_found", message: "Session not found." });
+    return;
+  }
+  const workspace = await manager.workspaceFor(sessionId);
+  if (workspace === null) {
+    // A gateway outside Core has no cache directory and therefore no workspace to put a file in.
+    sendJson(response, 503, { code: "attachments_unavailable", message: "This gateway has no workspace directory." });
+    return;
+  }
+
+  if (rawName === undefined && method === "GET") {
+    sendJson(response, 200, { attachments: await listAttachments(workspace) });
+    return;
+  }
+
+  if (rawName !== undefined && method === "PUT") {
+    const declared = Number.parseInt(request.headers["content-length"] ?? "", 10);
+    if (!Number.isFinite(declared) || declared < 0) {
+      sendJson(response, 411, { code: "length_required", message: "Content-Length is required." });
+      return;
+    }
+    try {
+      const stored = await storeAttachment(workspace, decodeURIComponent(rawName), declared, request);
+      await manager.addAttachment(sessionId, { ...stored, path: path.join(workspace, stored.name) });
+      sendJson(response, 201, { attachment: stored });
+    } catch (error) {
+      if (error instanceof AttachmentRefusedError) {
+        const status = error.refusal.code === "attachment_name_invalid" ? 400 : 413;
+        sendJson(response, status, { ...error.refusal, message: refusalMessage(error.refusal) });
+        return;
+      }
+      throw error;
+    }
+    return;
+  }
+
+  if (rawName !== undefined && method === "GET") {
+    let file: string | null;
+    try {
+      file = manager.attachmentPath(sessionId, decodeURIComponent(rawName));
+    } catch {
+      sendJson(response, 400, { code: "attachment_name_invalid", message: "Not a stored attachment name." });
+      return;
+    }
+    let size: number;
+    try {
+      size = (await stat(file!)).size;
+    } catch {
+      sendJson(response, 404, { code: "attachment_not_found", message: "No such attachment." });
+      return;
+    }
+    // Fixed type and forced download, whatever the name says: an uploaded `report.html` must not
+    // render in the operator's browser, and sniffing is exactly how it would.
+    response.writeHead(200, {
+      "content-type": "application/octet-stream",
+      "content-length": size,
+      "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(path.basename(file!))}`,
+      "x-content-type-options": "nosniff",
+    });
+    await pipeline(createReadStream(file!), response);
+    return;
+  }
+
+  sendJson(response, 405, { code: "method_not_allowed", message: "Unsupported method for attachments." });
+}
+
+function refusalMessage(refusal: AttachmentRefusal): string {
+  switch (refusal.code) {
+    case "attachment_too_large":
+      return `A single attachment may be at most ${refusal.limit} bytes.`;
+    case "too_many_attachments":
+      return `A session may hold at most ${refusal.limit} attachments.`;
+    case "session_attachments_too_large":
+      return `A session's attachments may total at most ${refusal.limit} bytes.`;
+    case "attachment_name_invalid":
+      return "The file name has nothing usable in it.";
   }
 }
 

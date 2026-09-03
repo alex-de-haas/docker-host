@@ -88,6 +88,21 @@ export class SessionStore {
     return path.join(this.workspaceRoot!, "sessions", id, "workspace");
   }
 
+  /**
+   * A file inside the session's workspace, by its stored name — null when there is no workspace.
+   * The name is required to already be a stored name (see `sanitizeAttachmentName`); a separator or
+   * a parent reference is refused here again rather than trusted to have been cleaned upstream.
+   */
+  attachmentPath(id: string, name: string): string | null {
+    if (this.workspaceRoot === null) {
+      return null;
+    }
+    if (name !== path.basename(name) || name.startsWith(".") || name.includes("..")) {
+      throw new Error(`invalid attachment name: ${name}`);
+    }
+    return path.join(this.workspaceDir(id), name);
+  }
+
   /** Removes the workspace and the session directory that holds it; a no-op without a root. */
   private async removeWorkspace(id: string): Promise<void> {
     if (this.workspaceRoot !== null) {
