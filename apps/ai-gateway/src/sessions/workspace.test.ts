@@ -62,6 +62,27 @@ describe("a session's workspace", () => {
     await shared.shutdown();
   });
 
+  it("creates the shared fallback directory rather than starting a harness in a missing one", async () => {
+    // The old default was the home directory, which always exists. A temp path does not until
+    // something makes it, and a harness spawned into a missing cwd fails with ENOENT before the
+    // operator has typed a second word.
+    const missing = path.join(os.tmpdir(), `hosty-ws-missing-${process.pid}-${Date.now()}`);
+    expect(existsSync(missing)).toBe(false);
+    const shared = new SessionManager(
+      new SessionStore(dataDir, null), adapter,
+      new AuditReporter(null, null, "hosty.ai-gateway"), missing, new SettingsStore(dataDir));
+    try {
+      const record = await shared.createSession({ createdBy: "user_admin" });
+      await shared.postMessage(record.id, "hello", "seed-credential");
+
+      expect(adapter.lastStart!.cwd).toBe(missing);
+      expect(existsSync(missing)).toBe(true);
+    } finally {
+      await shared.shutdown();
+      rmSync(missing, { recursive: true, force: true });
+    }
+  });
+
   it("is removed when the session is deleted", async () => {
     const id = await start();
     const cwd = adapter.lastStart!.cwd;

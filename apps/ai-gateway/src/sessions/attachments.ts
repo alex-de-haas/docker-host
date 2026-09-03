@@ -96,6 +96,25 @@ export async function listAttachments(workspace: string): Promise<AttachmentInfo
  * only once complete, so a failed upload never leaves a partial file under the name a later turn
  * would read.
  */
+// One upload at a time per workspace. Two concurrent PUTs reading the same listing would pick the
+// same de-duplicated name and rename onto one path — the second silently replacing the first while
+// both returned 201 — and two with different names would both pass the caps from the same stale
+// snapshot. A single process owns each workspace, so a promise chain per path is the whole lock.
+const workspaceLocks = new Map<string, Promise<unknown>>();
+
+async function withWorkspaceLock<T>(workspace: string, work: () => Promise<T>): Promise<T> {
+  const previous = workspaceLocks.get(workspace) ?? Promise.resolve();
+  const run = previous.catch(() => undefined).then(work);
+  workspaceLocks.set(workspace, run);
+  try {
+    return await run;
+  } finally {
+    if (workspaceLocks.get(workspace) === run) {
+      workspaceLocks.delete(workspace);
+    }
+  }
+}
+
 export async function storeAttachment(
   workspace: string,
   originalName: string,
@@ -110,6 +129,15 @@ export async function storeAttachment(
     throw new AttachmentRefusedError({ code: "attachment_too_large", limit: MAX_ATTACHMENT_BYTES });
   }
 
+  return withWorkspaceLock(workspace, () => storeUnderLock(workspace, safe, declaredBytes, body));
+}
+
+async function storeUnderLock(
+  workspace: string,
+  safe: string,
+  declaredBytes: number,
+  body: Readable,
+): Promise<AttachmentInfo> {
   await mkdir(workspace, { recursive: true });
   const existing = await listAttachments(workspace);
   if (existing.length >= MAX_ATTACHMENTS_PER_SESSION) {

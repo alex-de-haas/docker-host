@@ -1,3 +1,4 @@
+import { mkdir, stat } from "node:fs/promises";
 import { isWaitingStatus, WaitingNotifier } from "../notifications.js";
 import { composeSystemPrompt, partitionSkills, type AppSkill } from "../mcp/skills.js";
 import { HOST_SYSTEM_PROMPT } from "./host-prompt.js";
@@ -249,13 +250,21 @@ export class SessionManager {
     const session = await this.requireLive(id);
     // Resolved before anything is written, so a name that is not a stored name fails the whole
     // message rather than leaving a user_message event that names a file the harness never got.
-    const attached = attachments.map((name) => {
+    const attached: Array<{ name: string; path: string }> = [];
+    for (const name of attachments) {
       const file = this.store.attachmentPath(id, name);
       if (file === null) {
         throw new Error("attachments need a workspace, and this gateway has none");
       }
-      return { name, path: file };
-    });
+      // A well-formed name is not a stored file. Without this, `missing.txt` — or any name after
+      // the cache was lost or restored without it — would be written into the transcript and handed
+      // to the harness as a path to read, and the model would report on a file that is not there.
+      const info = await stat(file).catch(() => null);
+      if (info === null || !info.isFile()) {
+        throw new Error(`attachment not found: ${name}`);
+      }
+      attached.push({ name, path: file });
+    }
     if (credential) {
       // A fresh credential is also the documented recovery from a lapsed chain, so an existing run
       // gets its servers rebuilt here rather than waiting for the next timer tick — otherwise
@@ -306,9 +315,14 @@ export class SessionManager {
       // `workDir`, which defaulted to the home directory — a file placed "next to the session" was
       // visible to all of them at once.
       const workspace = await this.store.ensureWorkspace(id);
-      if (workspace === null && !this.warnedSharedWorkDir) {
-        this.warnedSharedWorkDir = true;
-        console.warn(`[sessions] no cache directory injected; every session shares ${this.workDir}`);
+      if (workspace === null) {
+        // The shared fallback used to be the home directory, which always exists; a temp path does
+        // not until something makes it, and a harness spawned into a missing cwd fails with ENOENT.
+        await mkdir(this.workDir, { recursive: true });
+        if (!this.warnedSharedWorkDir) {
+          this.warnedSharedWorkDir = true;
+          console.warn(`[sessions] no cache directory injected; every session shares ${this.workDir}`);
+        }
       }
 
       session.run = this.adapter.start({

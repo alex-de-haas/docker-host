@@ -21,6 +21,7 @@ import {
   listSessions,
   postMessage,
   uploadAttachment,
+  type StoredAttachment,
   renameSession,
   resolveApproval,
   resolveQuestion,
@@ -58,6 +59,9 @@ export default function AssistantPage() {
   // Chosen but not yet sent. Uploaded only when the message goes, so a file picked and then
   // reconsidered never reaches the gateway.
   const [pending, setPending] = useState<File[]>([]);
+  // Already stored for this message but not yet sent — kept across a failed send, so a retry names
+  // them instead of uploading them again under de-duplicated names.
+  const [uploaded, setUploaded] = useState<StoredAttachment[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [showSessions, setShowSessions] = useState(false);
   const [ready, setReady] = useState(false);
@@ -82,6 +86,10 @@ export default function AssistantPage() {
     // Whatever was left unsent in this session, put back in the box. Per session, so switching away
     // and back returns your own half-written sentence rather than someone else's.
     setInput(readDraft(record.id));
+    // Files are not a draft: a selection made for one session must not follow the operator into
+    // the next and be uploaded there.
+    setPending([]);
+    setUploaded([]);
     try {
       window.localStorage.setItem(SESSION_STORAGE_KEY, record.id);
     } catch {
@@ -307,11 +315,17 @@ export default function AssistantPage() {
       // Files first, then the message that names them by their stored names — which may differ from
       // what the operator called them. A failed upload stops here with the text kept, so nothing is
       // sent that refers to a file the gateway does not have.
-      const stored: string[] = [];
+      const stored = [...uploaded];
       for (const file of pending) {
-        stored.push((await uploadAttachment(session.id, file)).name);
+        const attachment = await uploadAttachment(session.id, file);
+        // Moved as each lands, not after all have: a failure part-way leaves the ones that made it
+        // in `uploaded` and the rest still pending, so the retry sends exactly what is missing.
+        stored.push(attachment);
+        setUploaded((current) => [...current, attachment]);
+        setPending((current) => current.filter((candidate) => candidate !== file));
       }
-      await postMessage(session.id, trimmed, stored);
+      await postMessage(session.id, trimmed, stored.map((attachment) => attachment.name));
+      setUploaded([]);
       setPending([]);
       setInput("");
       // Cleared only once the gateway has it: clearing before the round trip would lose the text on
@@ -332,7 +346,7 @@ export default function AssistantPage() {
     } finally {
       setSending(false);
     }
-  }, [input, pending, sending, session]);
+  }, [input, pending, sending, session, uploaded]);
 
   const remove = useCallback(
     async (sessionId: string) => {
@@ -540,8 +554,13 @@ export default function AssistantPage() {
             )}
           </div>
 
-          {pending.length > 0 && (
+          {(pending.length > 0 || uploaded.length > 0) && (
             <div className="flex shrink-0 flex-wrap gap-1 border-t px-3 pt-2 text-xs">
+              {uploaded.map((attachment) => (
+                <span key={`stored-${attachment.name}`} className="inline-flex items-center rounded border px-1.5 py-0.5">
+                  📎 {attachment.name}
+                </span>
+              ))}
               {pending.map((file, index) => (
                 <span key={`${file.name}-${index}`} className="inline-flex items-center gap-1 rounded border px-1.5 py-0.5">
                   📎 {file.name}

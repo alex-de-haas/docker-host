@@ -10,8 +10,9 @@ pasting it into the message box. Cross-cuts [ai-gateway](../ai-gateway/feature.m
 attaches to), and the runtime-app storage contract in
 [runtime-app-manifest](../runtime-app-manifest.md#storage).
 
-> Every deliverable has shipped — see [feature.md](feature.md). What remains is the verification
-> that needs a Core-managed gateway, listed at the end; none of it can be asserted in a unit test.
+> Every implementation deliverable has shipped — see [feature.md](feature.md). The unchecked ones
+> below are the checks that need a Core-managed gateway: unfinished work, kept as deliverables rather
+> than as prose, and none of it assertable in a unit test.
 
 ## Goal
 
@@ -148,20 +149,23 @@ implies.
   expiry: two clocks would produce a transcript that references a file the earlier one already took,
   which is the orphan this plan exists to avoid.
 
-## Verification
+## Verification that needs a running host
 
 Unit tests cover the path handling, every cap in both directions, ownership on both routes, the
-content-type fixing, and removal on all three exits. What they cannot cover needs a Core-managed
-runtime:
+content-type fixing, removal on the session's exits, and what reaches the harness. What they cannot
+cover, against a Core-managed dev runtime:
 
-1. Start the gateway through Core and confirm `HOSTY_APP_CACHE_DIR` is injected and the workspace is
-   created under it, not under the home directory.
-2. Attach a log file, ask the assistant a question about it, and confirm the answer came from the
-   file — under both harnesses.
-3. Delete the session in the UI and confirm the workspace is gone from the host.
-4. Take a backup of the gateway and confirm the archive holds the session's records and none of its
-   attachments; restore it and confirm the transcript shows the attachment event without the file.
-5. From one session, ask the assistant to list `../..` — the sessions root, not the session's own
-   directory one level up — and confirm what it can see is other sessions' workspaces and nothing
-   else. A probe of `..` alone would observe nothing and pass. This is the limit being documented,
-   checked rather than assumed.
+- [ ] **The cache directory is the one Core injects.** Start the gateway through Core and confirm
+      `HOSTY_APP_CACHE_DIR` is set and the workspace is created under it, not under the home
+      directory.
+- [ ] **Both harnesses read an attachment.** Attach a log file, ask a question about it, and confirm
+      the answer came from the file — under Claude and under Codex.
+- [ ] **Deletion reaches the disk.** Delete the session in the UI and confirm the workspace is gone
+      from the host.
+- [ ] **Backups hold records and not uploads.** Take a backup of the gateway and confirm the archive
+      holds the session's records and none of its attachments; restore it and confirm the transcript
+      shows the `attachment_added` event without the file.
+- [ ] **The documented limit is what it says.** From one session, ask the assistant to list `../..`
+      — the sessions root, not the session's own directory one level up — and confirm what it can
+      see is other sessions' workspaces and nothing else. A probe of `..` alone would observe
+      nothing and pass.

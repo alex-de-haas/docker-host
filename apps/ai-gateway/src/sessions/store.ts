@@ -97,7 +97,9 @@ export class SessionStore {
     if (this.workspaceRoot === null) {
       return null;
     }
-    if (name !== path.basename(name) || name.startsWith(".") || name.includes("..")) {
+    // A separator or a leading dot is what the sanitiser never produces; an inner `..` it does
+    // (`report..txt`), and refusing that here made a stored file unusable through both routes.
+    if (name !== path.basename(name) || name.startsWith(".")) {
       throw new Error(`invalid attachment name: ${name}`);
     }
     return path.join(this.workspaceDir(id), name);

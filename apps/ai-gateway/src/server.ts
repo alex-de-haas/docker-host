@@ -404,7 +404,7 @@ async function route(
       // The presented token seeds the session's delegation chain; see SessionManager.postMessage.
       await manager.postMessage(sessionId, body.text, readBearer(request), attachments);
     } catch (error) {
-      if (error instanceof Error && /invalid attachment name|attachments need a workspace/.test(error.message)) {
+      if (error instanceof Error && /invalid attachment name|attachments need a workspace|attachment not found/.test(error.message)) {
         sendJson(response, 400, { code: "attachment_invalid", message: error.message });
         return;
       }

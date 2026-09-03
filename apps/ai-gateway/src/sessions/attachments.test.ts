@@ -197,6 +197,53 @@ describe("session attachments", () => {
     expect((await store.readEvents(id)).map((event) => event.type)).not.toContain("user_message");
   });
 
+  it("refuses a message naming a well-formed name that is not a stored file", async () => {
+    // `missing.txt` is a perfectly safe name and not an attachment. Accepting it would write a
+    // user_message naming it and hand the harness a path to read, and the model would report on a
+    // file that is not there — also the state after the cache is lost or restored without it.
+    const id = await session();
+
+    const response = await fetch(`${origin}/api/sessions/${id}/messages`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${adminToken()}`, "content-type": "application/json" },
+      body: JSON.stringify({ text: "read this", attachments: ["missing.txt"] }),
+    });
+
+    expect(response.status).toBe(400);
+    expect((await store.readEvents(id)).map((event) => event.type)).not.toContain("user_message");
+  });
+
+  it("stores concurrent uploads of the same name as two files, not one", async () => {
+    // Two PUTs reading one listing would pick the same de-duplicated name and rename onto one path,
+    // the second silently replacing the first while both returned 201.
+    const id = await session();
+
+    const [first, second] = await Promise.all([
+      uploaded(id, "same.txt", "one"),
+      uploaded(id, "same.txt", "two"),
+    ]);
+
+    expect(new Set([first.name, second.name]).size).toBe(2);
+    const workspace = path.join(cacheDir, "sessions", id, "workspace");
+    expect(readdirSync(workspace).sort()).toEqual([first.name, second.name].sort());
+    expect(new Set([await readFile(path.join(workspace, first.name), "utf8"), await readFile(path.join(workspace, second.name), "utf8")]))
+      .toEqual(new Set(["one", "two"]));
+  });
+
+  it("round-trips a name with dots inside it", async () => {
+    // The sanitiser allows `report..txt`; the path check used to refuse any `..`, so a file could be
+    // stored and counted against the quota and then be unreachable through both routes.
+    const id = await session();
+    const stored = await uploaded(id, "report..txt", "x");
+    expect(stored.name).toBe("report..txt");
+
+    const response = await fetch(`${origin}/api/sessions/${id}/attachments/report..txt`, {
+      headers: { authorization: `Bearer ${adminToken()}` },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("x");
+  });
+
   it("leaves a message without attachments exactly as typed", () => {
     expect(withAttachedPaths("plain", [])).toBe("plain");
     expect(withAttachedPaths("plain", ["/w/a.txt"])).toMatch(/^plain\n\nAttached files/);
