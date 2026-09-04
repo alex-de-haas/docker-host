@@ -59,22 +59,40 @@ export function sanitizeAttachmentName(original: string): string | null {
   return fitToBytes(cleaned, MAX_ATTACHMENT_NAME_BYTES);
 }
 
-/** Cuts the stem, never the extension, until the whole name fits — by bytes, not characters. */
-function fitToBytes(name: string, maxBytes: number): string {
+/**
+ * Cuts a name to fit `maxBytes`, on character boundaries, keeping the extension when a non-hidden
+ * stem of at least one character fits beside it and dropping it otherwise.
+ *
+ * Two invariants, both asserted: the result is never over the cap, and never dot-prefixed — a
+ * dot-prefixed file is one `listAttachments` treats as hidden, so it would take quota without ever
+ * being listed. An extension long enough to leave no room for a stem is not an extension worth
+ * keeping; the name is cut as a whole instead.
+ */
+export function fitToBytes(name: string, maxBytes: number): string {
   if (Buffer.byteLength(name) <= maxBytes) {
     return name;
   }
   const extension = path.extname(name);
-  const stem = Array.from(name.slice(0, name.length - extension.length));
-  const room = maxBytes - Buffer.byteLength(extension);
+  // Four bytes is the widest single character; the extension stays only if one of those fits too.
+  const keepExtension = extension.length > 0 && Buffer.byteLength(extension) + 4 <= maxBytes;
+  const stem = keepExtension ? name.slice(0, name.length - extension.length) : name;
+  const room = keepExtension ? maxBytes - Buffer.byteLength(extension) : maxBytes;
+  const kept = takeBytes(stem, room).trimEnd().replace(/^\.+/, "");
+  const fitted = `${kept || "attachment"}${keepExtension ? extension : ""}`;
+  // The fallback stem can only overshoot when the extension left less room than its ten bytes.
+  return Buffer.byteLength(fitted) <= maxBytes ? fitted : takeBytes(fitted, maxBytes).replace(/^\.+/, "") || "attachment";
+}
+
+/** The longest prefix of `text` within `maxBytes`, never splitting a character. */
+function takeBytes(text: string, maxBytes: number): string {
   let kept = "";
-  for (const char of stem) {
-    if (Buffer.byteLength(kept + char) > room) {
+  for (const char of Array.from(text)) {
+    if (Buffer.byteLength(kept + char) > maxBytes) {
       break;
     }
     kept += char;
   }
-  return `${kept.trimEnd() || "attachment"}${extension}`;
+  return kept;
 }
 
 /** A name that is not already taken: `report.log`, then `report (2).log`, and so on. */

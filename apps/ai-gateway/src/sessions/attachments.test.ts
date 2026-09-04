@@ -16,6 +16,7 @@ import { createGatewayServer } from "../server.js";
 import {
   MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENT_NAME_BYTES,
+  fitToBytes,
   MAX_ATTACHMENTS_PER_SESSION,
   MAX_SESSION_ATTACHMENT_BYTES,
   AttachmentRefusedError,
@@ -373,6 +374,53 @@ describe("session attachments", () => {
     expect(stored.length).toBeGreaterThan(50);
     // Paired: a name within the cap is untouched.
     expect(sanitizeAttachmentName("short.png")).toBe("short.png");
+  });
+
+  it("holds its invariants when called directly, not only behind the sanitiser", () => {
+    // `fitToBytes` is exported and documents two invariants of its own. The sanitiser strips leading
+    // dots before calling it, which would let a dot-strip inside the function rot unnoticed — so
+    // the function is asserted on inputs the sanitiser never hands it.
+    const dotted = fitToBytes(`.${"x".repeat(50)}`, 10);
+    expect(dotted.startsWith(".")).toBe(false);
+    expect(Buffer.byteLength(dotted)).toBeLessThanOrEqual(10);
+
+    const wideExtension = fitToBytes(`a.${"x".repeat(50)}`, 10);
+    expect(Buffer.byteLength(wideExtension)).toBeLessThanOrEqual(10);
+    expect(wideExtension.startsWith(".")).toBe(false);
+  });
+
+  it("drops an extension that leaves no room for a stem, and never returns a hidden name", () => {
+    // Review found the edge: an extension longer than the cap made `room` non-positive, the loop kept
+    // nothing, and the fallback stem plus that extension overshot the cap — or, with the extension
+    // eating the whole budget, produced a dot-prefixed name that listing treats as hidden, so the
+    // file took quota without ever being listed.
+    const hugeExtension = `report.${"x".repeat(300)}`;
+    const fitted = sanitizeAttachmentName(hugeExtension)!;
+    expect(Buffer.byteLength(fitted)).toBeLessThanOrEqual(MAX_ATTACHMENT_NAME_BYTES);
+    expect(fitted.startsWith(".")).toBe(false);
+
+    // An extension just inside the cap keeps a one-character stem beside it and still fits.
+    const nearCap = `${"я".repeat(50)}.${"x".repeat(MAX_ATTACHMENT_NAME_BYTES - 6)}`;
+    const nearFitted = sanitizeAttachmentName(nearCap)!;
+    expect(Buffer.byteLength(nearFitted)).toBeLessThanOrEqual(MAX_ATTACHMENT_NAME_BYTES);
+    expect(nearFitted.startsWith(".")).toBe(false);
+
+    // The invariant over a spread of shapes, not just the two edges someone thought of.
+    const shapes = [
+      "a".repeat(400),
+      `${"я".repeat(400)}.png`,
+      `.${"x".repeat(400)}`,
+      `x.${"я".repeat(300)}`,
+      `${"😀".repeat(120)}.jpeg`,
+      `${" ".repeat(10)}${"n".repeat(300)}.${"e".repeat(150)}`,
+    ];
+    for (const shape of shapes) {
+      const out = sanitizeAttachmentName(shape);
+      expect(out, shape.slice(0, 20)).not.toBeNull();
+      expect(Buffer.byteLength(out!), shape.slice(0, 20)).toBeLessThanOrEqual(MAX_ATTACHMENT_NAME_BYTES);
+      expect(out!.startsWith("."), shape.slice(0, 20)).toBe(false);
+      expect(out!.length, shape.slice(0, 20)).toBeGreaterThan(0);
+    }
   });
 
   async function session(): Promise<string> {
