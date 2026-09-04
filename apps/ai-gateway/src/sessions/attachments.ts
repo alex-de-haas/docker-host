@@ -29,24 +29,70 @@ export class AttachmentRefusedError extends Error {
 }
 
 /**
- * The stored name for what the operator called the file: a safe subset, never a path.
+ * The longest stored name, in bytes: comfortably under the 255-byte limit common to filesystems,
+ * measured in bytes rather than characters because a Cyrillic or CJK letter is two or three of them
+ * and a character count would let a name through that the filesystem then refuses.
+ */
+export const MAX_ATTACHMENT_NAME_BYTES = 200;
+
+/**
+ * The stored name for what the operator called the file: never a path, and still their name.
  *
- * The original name is metadata the transcript keeps; this is the only form that touches the
- * filesystem. Anything that could be a separator, a parent reference, or a control character is
- * dropped rather than escaped, and a name with nothing left is refused rather than invented.
+ * Letters and digits in any script are kept — an operator whose files are named in Russian must not
+ * get `______.png` back for every one of them, which is what an ASCII-only subset did. What goes is
+ * anything that could be a separator or a parent reference, control characters, and the characters
+ * shells and URLs treat specially. A name that is too long is cut to fit, extension kept, rather
+ * than refused: length is not a reason to lose the file. Refusal is reserved for a name with nothing
+ * usable left, and that was the only case the old message was ever accurate about.
  */
 export function sanitizeAttachmentName(original: string): string | null {
   const base = path.basename(original.replace(/\\/g, "/"));
   const cleaned = base
     .replace(/[\u0000-\u001f\u007f]/g, "")
-    .replace(/[^A-Za-z0-9._ -]/g, "_")
+    .replace(/[^\p{L}\p{M}\p{N}._ \-()]/gu, "_")
     .replace(/\s+/g, " ")
     .trim()
     .replace(/^\.+/, "");
-  if (!cleaned || cleaned.length > 120) {
+  if (!cleaned) {
     return null;
   }
-  return cleaned;
+  return fitToBytes(cleaned, MAX_ATTACHMENT_NAME_BYTES);
+}
+
+/**
+ * Cuts a name to fit `maxBytes`, on character boundaries, keeping the extension when a non-hidden
+ * stem of at least one character fits beside it and dropping it otherwise.
+ *
+ * Two invariants, both asserted: the result is never over the cap, and never dot-prefixed — a
+ * dot-prefixed file is one `listAttachments` treats as hidden, so it would take quota without ever
+ * being listed. An extension long enough to leave no room for a stem is not an extension worth
+ * keeping; the name is cut as a whole instead.
+ */
+export function fitToBytes(name: string, maxBytes: number): string {
+  if (Buffer.byteLength(name) <= maxBytes) {
+    return name;
+  }
+  const extension = path.extname(name);
+  // Four bytes is the widest single character; the extension stays only if one of those fits too.
+  const keepExtension = extension.length > 0 && Buffer.byteLength(extension) + 4 <= maxBytes;
+  const stem = keepExtension ? name.slice(0, name.length - extension.length) : name;
+  const room = keepExtension ? maxBytes - Buffer.byteLength(extension) : maxBytes;
+  const kept = takeBytes(stem, room).trimEnd().replace(/^\.+/, "");
+  const fitted = `${kept || "attachment"}${keepExtension ? extension : ""}`;
+  // The fallback stem can only overshoot when the extension left less room than its ten bytes.
+  return Buffer.byteLength(fitted) <= maxBytes ? fitted : takeBytes(fitted, maxBytes).replace(/^\.+/, "") || "attachment";
+}
+
+/** The longest prefix of `text` within `maxBytes`, never splitting a character. */
+function takeBytes(text: string, maxBytes: number): string {
+  let kept = "";
+  for (const char of Array.from(text)) {
+    if (Buffer.byteLength(kept + char) > maxBytes) {
+      break;
+    }
+    kept += char;
+  }
+  return kept;
 }
 
 /** A name that is not already taken: `report.log`, then `report (2).log`, and so on. */

@@ -15,6 +15,8 @@ import { AuditReporter } from "../audit.js";
 import { createGatewayServer } from "../server.js";
 import {
   MAX_ATTACHMENT_BYTES,
+  MAX_ATTACHMENT_NAME_BYTES,
+  fitToBytes,
   MAX_ATTACHMENTS_PER_SESSION,
   MAX_SESSION_ATTACHMENT_BYTES,
   AttachmentRefusedError,
@@ -350,6 +352,84 @@ describe("session attachments", () => {
     expect(sanitizeAttachmentName("weird\u0000name\u001f.log")).toBe("weirdname.log");
     expect(sanitizeAttachmentName("...")).toBeNull();
     expect(sanitizeAttachmentName("")).toBeNull();
+  });
+
+  it("keeps a name written in another script", () => {
+    // The first live upload came from an operator whose files are named in Russian. An ASCII-only
+    // subset turned every letter into an underscore, and a long name into a refusal that claimed
+    // there was nothing usable in it.
+    expect(sanitizeAttachmentName("Снимок экрана 2026-09-04 в 16.23.03.png"))
+      .toBe("Снимок экрана 2026-09-04 в 16.23.03.png");
+    expect(sanitizeAttachmentName("отчёт (копия).pdf")).toBe("отчёт (копия).pdf");
+  });
+
+  it("cuts a long name to fit rather than refusing it, by bytes and keeping the extension", () => {
+    // Length is not a reason to lose the file. Measured in bytes because a Cyrillic letter is two of
+    // them: a character cap would pass a name the filesystem then rejects.
+    const long = `${"Снимок".repeat(60)}.png`;
+    const stored = sanitizeAttachmentName(long)!;
+
+    expect(stored.endsWith(".png")).toBe(true);
+    expect(Buffer.byteLength(stored)).toBeLessThanOrEqual(MAX_ATTACHMENT_NAME_BYTES);
+    expect(stored.length).toBeGreaterThan(50);
+    // Paired: a name within the cap is untouched.
+    expect(sanitizeAttachmentName("short.png")).toBe("short.png");
+  });
+
+  it("holds its invariants when called directly, not only behind the sanitiser", () => {
+    // `fitToBytes` is exported and documents two invariants of its own. The sanitiser strips leading
+    // dots before calling it, which would let a dot-strip inside the function rot unnoticed — so
+    // the function is asserted on inputs the sanitiser never hands it.
+    const dotted = fitToBytes(`.${"x".repeat(50)}`, 10);
+    expect(dotted.startsWith(".")).toBe(false);
+    expect(Buffer.byteLength(dotted)).toBeLessThanOrEqual(10);
+
+    const wideExtension = fitToBytes(`a.${"x".repeat(50)}`, 10);
+    expect(Buffer.byteLength(wideExtension)).toBeLessThanOrEqual(10);
+    expect(wideExtension.startsWith(".")).toBe(false);
+
+    // Review'"'"'s own example, pinned by name: a 254-byte name Linux accepts whose "extension" is
+    // almost all of it. The first cut kept the extension whole and returned 261 bytes, which the
+    // temp-file create then refused with ENAMETOOLONG — a 500 for a valid file name.
+    const reviewers = `界.${"a".repeat(250)}`;
+    const fitted = sanitizeAttachmentName(reviewers)!;
+    expect(Buffer.byteLength(fitted)).toBeLessThanOrEqual(MAX_ATTACHMENT_NAME_BYTES);
+    expect(fitted.startsWith(".")).toBe(false);
+    expect(fitted.startsWith("界.")).toBe(true);
+  });
+
+  it("drops an extension that leaves no room for a stem, and never returns a hidden name", () => {
+    // Review found the edge: an extension longer than the cap made `room` non-positive, the loop kept
+    // nothing, and the fallback stem plus that extension overshot the cap — or, with the extension
+    // eating the whole budget, produced a dot-prefixed name that listing treats as hidden, so the
+    // file took quota without ever being listed.
+    const hugeExtension = `report.${"x".repeat(300)}`;
+    const fitted = sanitizeAttachmentName(hugeExtension)!;
+    expect(Buffer.byteLength(fitted)).toBeLessThanOrEqual(MAX_ATTACHMENT_NAME_BYTES);
+    expect(fitted.startsWith(".")).toBe(false);
+
+    // An extension just inside the cap keeps a one-character stem beside it and still fits.
+    const nearCap = `${"я".repeat(50)}.${"x".repeat(MAX_ATTACHMENT_NAME_BYTES - 6)}`;
+    const nearFitted = sanitizeAttachmentName(nearCap)!;
+    expect(Buffer.byteLength(nearFitted)).toBeLessThanOrEqual(MAX_ATTACHMENT_NAME_BYTES);
+    expect(nearFitted.startsWith(".")).toBe(false);
+
+    // The invariant over a spread of shapes, not just the two edges someone thought of.
+    const shapes = [
+      "a".repeat(400),
+      `${"я".repeat(400)}.png`,
+      `.${"x".repeat(400)}`,
+      `x.${"я".repeat(300)}`,
+      `${"😀".repeat(120)}.jpeg`,
+      `${" ".repeat(10)}${"n".repeat(300)}.${"e".repeat(150)}`,
+    ];
+    for (const shape of shapes) {
+      const out = sanitizeAttachmentName(shape);
+      expect(out, shape.slice(0, 20)).not.toBeNull();
+      expect(Buffer.byteLength(out!), shape.slice(0, 20)).toBeLessThanOrEqual(MAX_ATTACHMENT_NAME_BYTES);
+      expect(out!.startsWith("."), shape.slice(0, 20)).toBe(false);
+      expect(out!.length, shape.slice(0, 20)).toBeGreaterThan(0);
+    }
   });
 
   async function session(): Promise<string> {
