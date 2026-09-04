@@ -69,6 +69,11 @@ describe("session attachments", () => {
     await new Promise((resolve) => server.close(resolve));
     rmSync(dataDir, { recursive: true, force: true });
     rmSync(cacheDir, { recursive: true, force: true });
+    // The same cleanup gateway.test.ts does, and for the reason vitest.config.ts records: these are
+    // process-wide, and a file that sets them without clearing them leaves the next one running
+    // against a key it did not choose. This file set them and never cleared them.
+    delete process.env.HOSTY_DELEGATED_TOKEN_PUBLIC_KEY;
+    delete process.env.HOSTY_APP_ID;
   });
 
   it("lands in the session's workspace and is recorded in the transcript", async () => {

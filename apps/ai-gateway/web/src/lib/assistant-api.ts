@@ -86,6 +86,12 @@ export async function getHealth(): Promise<HarnessHealth> {
   return body.harness;
 }
 
+/** The display name behind each MCP server name, so a transcript can say "Media Server". */
+export async function listAppNames(): Promise<Record<string, string>> {
+  const body = (await (await call("/apps")).json()) as { apps?: Array<{ server: string; displayName: string }> };
+  return Object.fromEntries((body.apps ?? []).map((app) => [app.server, app.displayName]));
+}
+
 export async function listSessions(): Promise<AssistantSession[]> {
   const body = (await (await call("/sessions")).json()) as { sessions?: AssistantSession[] };
   return body.sessions ?? [];

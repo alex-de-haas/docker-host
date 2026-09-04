@@ -49,6 +49,13 @@ this feature.
   [assistant-attachments](../assistant-attachments/feature.md). Outside Core, with no cache directory
   injected, every session shares `HOSTY_AI_GATEWAY_WORKDIR` (a temp directory by default, no longer
   the home directory) and the gateway warns once that it does.
+- `GET /api/apps` returns the display name behind each MCP server name. A server name is the app id
+  with dots replaced and a hash appended when that changed it — unique on the wire and unreadable in
+  a transcript, where an operator otherwise reads `com-haas-media-server-f9a077 · add_torrent`. The
+  wire name cannot change: the client builds `mcp__<server>__<tool>` from it and the auto-allow
+  grants are keyed on it. So the id stays and the label is translated, in the transcript rows and in
+  the approval card. A gateway that cannot answer, or an app discovery that fails, leaves every label
+  as the wire name.
 - Session API, admin delegated token required on every `/api` route: create session (optional
   `title` and structured `context`), list, get, `GET .../events` (SSE with an `?after=<seq>`
   reattach cursor; the connection ends at the token's expiry and the client reconnects with a

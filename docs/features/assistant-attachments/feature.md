@@ -77,6 +77,18 @@ agents is a harness property — a container or a user per session — which Hos
 this feature does not add. Assistant sessions are admin-only by decision, so the boundary being
 drawn is between sessions, not between privilege levels.
 
+## What The Transcript Shows
+
+One row per attached file, collapsed: a paperclip, the word *Attachment*, and the name truncated to
+the column, opening to the full name and its size. Shaped like the tool-use rows beside it, because
+the transcript already teaches that a small row with a chevron opens and a second idiom for the same
+gesture is one more thing to learn. Operators' file names are long — the one that found the sanitiser
+bug ran to 111 characters — so truncation is the default and the whole name is one click away.
+
+The message bubble no longer repeats them. The `user_message` event still carries the names, and
+drawing both put the same long name on screen twice for every file; the attachment rows sit
+immediately above the message they went with, which is the association a chat already implies.
+
 ## Testing Expectations
 
 - **The workspace, and when it stops existing**: the harness starts in it under the cache root and

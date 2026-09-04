@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, HelpCircle, Loader2, Wrench } from "lucide-react";
+import { ChevronDown, ChevronRight, HelpCircle, Loader2, Paperclip, Wrench } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { InlineError } from "@/components/status";
@@ -33,6 +33,7 @@ export function TranscriptEvent({
   denyReason,
   onDecide,
   onAnswer,
+  appNames,
 }: {
   event: AssistantEvent;
   decision: ApprovalDecision | null;
@@ -41,31 +42,23 @@ export function TranscriptEvent({
   denyReason: boolean;
   onDecide: (approvalId: string, decision: "allow" | "deny", message?: string) => Promise<void>;
   onAnswer: (questionId: string, answers: Record<string, string>) => Promise<void>;
+  /** Display name per MCP server name; absent entries fall back to the wire name. */
+  appNames?: Record<string, string>;
 }) {
   switch (event.type) {
-    case "user_message": {
-      const attachments = Array.isArray(event.attachments) ? event.attachments.map(String) : [];
+    case "user_message":
+      // The attachment names the event also carries are deliberately not drawn here. Each file
+      // already has its own `attachment_added` row immediately above, and printing both put the same
+      // long name on screen twice for every attachment.
       return (
         <div className="ml-8 rounded-lg bg-primary/10 px-3 py-2 text-sm whitespace-pre-wrap">
           {String(event.text ?? "")}
-          {attachments.length > 0 && (
-            <div className="mt-1 flex flex-wrap gap-1 text-xs text-muted-foreground">
-              {attachments.map((name) => (
-                <span key={name} className="rounded border px-1.5 py-0.5">📎 {name}</span>
-              ))}
-            </div>
-          )}
         </div>
       );
-    }
     case "attachment_added":
-      // Its own line, so a session restored from a backup — records back, cache not — still shows
+      // Its own row, so a session restored from a backup — records back, cache not — still shows
       // that a file was here, even though the file itself is gone.
-      return (
-        <div className="ml-8 text-xs text-muted-foreground">
-          📎 Attached {String(event.name ?? "")} ({formatBytes(Number(event.size ?? 0))})
-        </div>
-      );
+      return <AttachmentRow name={String(event.name ?? "")} size={Number(event.size ?? 0)} />;
     case "assistant_text":
       return (
         <div className="rounded-lg bg-muted/60 px-3 py-2">
@@ -74,7 +67,7 @@ export function TranscriptEvent({
       );
     case "tool_use": {
       const toolName = String(event.toolName ?? "tool");
-      return isListedToolUse(toolName) ? <ToolRow toolName={toolName} input={event.input} /> : null;
+      return isListedToolUse(toolName) ? <ToolRow toolName={toolName} input={event.input} appNames={appNames} /> : null;
     }
     case "approval_request":
       return (
@@ -82,6 +75,7 @@ export function TranscriptEvent({
           approvalId={String(event.approvalId)}
           toolName={String(event.toolName ?? "action")}
           input={event.input}
+          appNames={appNames}
           title={typeof event.title === "string" ? event.title : null}
           reason={typeof event.reason === "string" ? event.reason : null}
           decision={decision}
@@ -117,9 +111,43 @@ export function TranscriptEvent({
 // thirty rows, so the row carries the model's own description (or the path, the pattern, the query)
 // and the raw input waits behind a click — a transcript that showed every input would be a wall of
 // JSON with the conversation somewhere inside it.
-function ToolRow({ toolName, input }: { toolName: string; input: unknown }) {
+/**
+ * One attached file, collapsed to a paperclip and a truncated name.
+ *
+ * Shaped like {@link ToolRow} on purpose: the transcript already teaches that a small row with a
+ * chevron opens, and a second idiom for the same gesture would be one more thing to learn. Names
+ * here are the operator's own file names — long, and often longer than the column — so the row
+ * truncates and the full name is one click away, with the size beside it.
+ */
+function AttachmentRow({ name, size }: { name: string; size: number }) {
   const [open, setOpen] = useState(false);
-  const summary = useMemo(() => summarizeToolUse(toolName, input), [toolName, input]);
+  const Chevron = open ? ChevronDown : ChevronRight;
+
+  return (
+    <div className="ml-8 px-1 text-xs text-muted-foreground">
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        aria-expanded={open}
+        className="flex w-full min-w-0 items-center gap-1.5 text-left hover:text-foreground"
+      >
+        <Paperclip className="h-3 w-3 shrink-0" aria-hidden />
+        <span className="shrink-0 font-medium">Attachment</span>
+        <span className="min-w-0 truncate">{name}</span>
+        <Chevron className="ml-auto h-3 w-3 shrink-0" aria-hidden />
+      </button>
+      {open && (
+        <div className="mt-1 rounded bg-muted/60 p-2 break-all">
+          {name} <span className="text-muted-foreground">({formatBytes(size)})</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ToolRow({ toolName, input, appNames }: { toolName: string; input: unknown; appNames?: Record<string, string> }) {
+  const [open, setOpen] = useState(false);
+  const summary = useMemo(() => summarizeToolUse(toolName, input, appNames), [toolName, input, appNames]);
   const Chevron = open ? ChevronDown : ChevronRight;
 
   return (
@@ -160,6 +188,7 @@ function ApprovalCard({
   decision,
   reasonBox,
   onDecide,
+  appNames,
 }: {
   approvalId: string;
   toolName: string;
@@ -172,8 +201,9 @@ function ApprovalCard({
   /** Offer a reason with a deny — only on a harness whose decline can carry one. */
   reasonBox: boolean;
   onDecide: (approvalId: string, decision: "allow" | "deny", message?: string) => Promise<void>;
+  appNames?: Record<string, string>;
 }) {
-  const view = useMemo(() => describeApproval(toolName, input), [toolName, input]);
+  const view = useMemo(() => describeApproval(toolName, input, appNames), [toolName, input, appNames]);
   const [why, setWhy] = useState("");
   const [busy, setBusy] = useState(false);
 
