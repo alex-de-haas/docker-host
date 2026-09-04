@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, HelpCircle, Loader2, Wrench } from "lucide-react";
+import { ChevronDown, ChevronRight, HelpCircle, Loader2, Paperclip, Wrench } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { InlineError } from "@/components/status";
@@ -15,6 +15,7 @@ import {
   type FileChangeView,
 } from "@/lib/tool-display";
 import type { AssistantEvent, AssistantQuestion } from "@/lib/assistant-api";
+import type { AttachmentIndex } from "@/lib/attachments";
 
 // The transcript, moved out of Shell with the rest of the panel. The gateway's event log is the
 // source: every proposed write pauses as an inline approval card until the operator decides.
@@ -33,6 +34,8 @@ export function TranscriptEvent({
   denyReason,
   onDecide,
   onAnswer,
+  appNames,
+  attachments,
 }: {
   event: AssistantEvent;
   decision: ApprovalDecision | null;
@@ -41,31 +44,37 @@ export function TranscriptEvent({
   denyReason: boolean;
   onDecide: (approvalId: string, decision: "allow" | "deny", message?: string) => Promise<void>;
   onAnswer: (questionId: string, answers: Record<string, string>) => Promise<void>;
+  /** Display name per MCP server name; absent entries fall back to the wire name. */
+  appNames?: Record<string, string>;
+  /** Every upload in the log; absent, each upload simply draws its own row. */
+  attachments?: AttachmentIndex;
 }) {
   switch (event.type) {
     case "user_message": {
-      const attachments = Array.isArray(event.attachments) ? event.attachments.map(String) : [];
+      // The files this turn carried are named here, under the message that carried them, because
+      // this event is the only one that knows which message they belong to. Their upload rows draw
+      // nothing in return, so no name reaches the screen twice.
+      const names = (Array.isArray(event.attachments) ? event.attachments : []).map(String);
       return (
-        <div className="ml-8 rounded-lg bg-primary/10 px-3 py-2 text-sm whitespace-pre-wrap">
-          {String(event.text ?? "")}
-          {attachments.length > 0 && (
-            <div className="mt-1 flex flex-wrap gap-1 text-xs text-muted-foreground">
-              {attachments.map((name) => (
-                <span key={name} className="rounded border px-1.5 py-0.5">📎 {name}</span>
-              ))}
-            </div>
+        <div className="space-y-1">
+          <div className="ml-8 rounded-lg bg-primary/10 px-3 py-2 text-sm whitespace-pre-wrap">
+            {String(event.text ?? "")}
+          </div>
+          {names.length > 0 && (
+            <AttachmentRow files={names.map((name) => ({ name, size: attachments?.sizes.get(name) ?? null }))} />
           )}
         </div>
       );
     }
-    case "attachment_added":
-      // Its own line, so a session restored from a backup — records back, cache not — still shows
-      // that a file was here, even though the file itself is gone.
-      return (
-        <div className="ml-8 text-xs text-muted-foreground">
-          📎 Attached {String(event.name ?? "")} ({formatBytes(Number(event.size ?? 0))})
-        </div>
+    case "attachment_added": {
+      // A row of its own for an upload no message claims — it is in the workspace and against the
+      // session's quota either way — and so that a session restored from a backup (records back,
+      // cache not) still shows a file was here, even though the file itself is gone.
+      const name = String(event.name ?? "");
+      return attachments?.claimed.has(name) ? null : (
+        <AttachmentRow files={[{ name, size: Number(event.size ?? 0) }]} />
       );
+    }
     case "assistant_text":
       return (
         <div className="rounded-lg bg-muted/60 px-3 py-2">
@@ -74,7 +83,7 @@ export function TranscriptEvent({
       );
     case "tool_use": {
       const toolName = String(event.toolName ?? "tool");
-      return isListedToolUse(toolName) ? <ToolRow toolName={toolName} input={event.input} /> : null;
+      return isListedToolUse(toolName) ? <ToolRow toolName={toolName} input={event.input} appNames={appNames} /> : null;
     }
     case "approval_request":
       return (
@@ -82,6 +91,7 @@ export function TranscriptEvent({
           approvalId={String(event.approvalId)}
           toolName={String(event.toolName ?? "action")}
           input={event.input}
+          appNames={appNames}
           title={typeof event.title === "string" ? event.title : null}
           reason={typeof event.reason === "string" ? event.reason : null}
           decision={decision}
@@ -113,13 +123,56 @@ export function TranscriptEvent({
   }
 }
 
+/**
+ * Attached files, collapsed to a paperclip and a count.
+ *
+ * Shaped like {@link ToolRow} on purpose: the transcript already teaches that a small row with a
+ * chevron opens, and a second idiom for the same gesture would be one more thing to learn. Names
+ * here are the operator's own file names — long, and often longer than the column — so a lone name
+ * truncates and several collapse to a count, with the full list one click away.
+ *
+ * A size of `null` means the log no longer holds the upload event for that name; the file is still
+ * named, because which file this turn carried is the part worth showing.
+ */
+function AttachmentRow({ files }: { files: { name: string; size: number | null }[] }) {
+  const [open, setOpen] = useState(false);
+  const Chevron = open ? ChevronDown : ChevronRight;
+  const first = files[0];
+
+  return (
+    <div className="ml-8 px-1 text-xs text-muted-foreground">
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        aria-expanded={open}
+        className="flex w-full min-w-0 items-center gap-1.5 text-left hover:text-foreground"
+      >
+        <Paperclip className="h-3 w-3 shrink-0" aria-hidden />
+        <span className="shrink-0 font-medium">{files.length === 1 ? "Attachment" : `${files.length} attachments`}</span>
+        {files.length === 1 && first && <span className="min-w-0 truncate">{first.name}</span>}
+        <Chevron className="ml-auto h-3 w-3 shrink-0" aria-hidden />
+      </button>
+      {open && (
+        <ul className="mt-1 space-y-0.5 rounded bg-muted/60 p-2 break-all">
+          {files.map((file) => (
+            <li key={file.name}>
+              {file.name}
+              {file.size !== null && <span className="text-muted-foreground"> ({formatBytes(file.size)})</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 // One line per tool call: what it was for, not what it was called. A run that reads thirty files is
 // thirty rows, so the row carries the model's own description (or the path, the pattern, the query)
 // and the raw input waits behind a click — a transcript that showed every input would be a wall of
 // JSON with the conversation somewhere inside it.
-function ToolRow({ toolName, input }: { toolName: string; input: unknown }) {
+function ToolRow({ toolName, input, appNames }: { toolName: string; input: unknown; appNames?: Record<string, string> }) {
   const [open, setOpen] = useState(false);
-  const summary = useMemo(() => summarizeToolUse(toolName, input), [toolName, input]);
+  const summary = useMemo(() => summarizeToolUse(toolName, input, appNames), [toolName, input, appNames]);
   const Chevron = open ? ChevronDown : ChevronRight;
 
   return (
@@ -160,6 +213,7 @@ function ApprovalCard({
   decision,
   reasonBox,
   onDecide,
+  appNames,
 }: {
   approvalId: string;
   toolName: string;
@@ -172,8 +226,9 @@ function ApprovalCard({
   /** Offer a reason with a deny — only on a harness whose decline can carry one. */
   reasonBox: boolean;
   onDecide: (approvalId: string, decision: "allow" | "deny", message?: string) => Promise<void>;
+  appNames?: Record<string, string>;
 }) {
-  const view = useMemo(() => describeApproval(toolName, input), [toolName, input]);
+  const view = useMemo(() => describeApproval(toolName, input, appNames), [toolName, input, appNames]);
   const [why, setWhy] = useState("");
   const [busy, setBusy] = useState(false);
 

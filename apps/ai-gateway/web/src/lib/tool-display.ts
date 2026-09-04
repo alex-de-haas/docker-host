@@ -71,11 +71,26 @@ export function parseMcpToolName(toolName: string): { server: string; tool: stri
   return { server: rest.slice(0, seam), tool: rest.slice(seam + 2) };
 }
 
-export function summarizeToolUse(toolName: string, input: unknown): ToolSummary {
+/**
+ * The name to show for an MCP server: the app's own, when the caller knows it.
+ *
+ * Falls back to the wire name, which is what the transcript showed before display names were
+ * fetched — an older gateway, or a discovery that failed, degrades to the unreadable id rather than
+ * to a blank.
+ */
+export function appLabel(server: string, appNames?: Record<string, string>): string {
+  return appNames?.[server] ?? server;
+}
+
+export function summarizeToolUse(
+  toolName: string,
+  input: unknown,
+  appNames?: Record<string, string>,
+): ToolSummary {
   const fields = asFields(input);
   const mcp = parseMcpToolName(toolName);
   if (mcp) {
-    return { label: `${mcp.server} · ${mcp.tool}`, detail: oneLine(summarizeArguments(fields)) };
+    return { label: `${appLabel(mcp.server, appNames)} · ${mcp.tool}`, detail: oneLine(summarizeArguments(fields)) };
   }
 
   switch (toolName) {
@@ -108,11 +123,21 @@ export function summarizeToolUse(toolName: string, input: unknown): ToolSummary 
   }
 }
 
-export function describeApproval(toolName: string, input: unknown): ApprovalView {
+export function describeApproval(
+  toolName: string,
+  input: unknown,
+  appNames?: Record<string, string>,
+): ApprovalView {
   const fields = asFields(input);
   const mcp = parseMcpToolName(toolName);
   if (mcp) {
-    return { kind: "mcp", heading: mcp.tool, server: mcp.server, tool: mcp.tool, args: argumentsOf(fields) };
+    return {
+      kind: "mcp",
+      heading: mcp.tool,
+      server: appLabel(mcp.server, appNames),
+      tool: mcp.tool,
+      args: argumentsOf(fields),
+    };
   }
 
   switch (toolName) {

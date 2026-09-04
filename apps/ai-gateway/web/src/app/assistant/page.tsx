@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Alert, InlineError, StatusBadge } from "@/components/status";
 import { Markdown } from "@/components/markdown";
 import { SessionList } from "@/components/session-list";
-import { takeChosenFiles } from "@/lib/attachments";
+import { indexAttachments, takeChosenFiles } from "@/lib/attachments";
 import { TranscriptEvent, type ApprovalDecision } from "@/components/transcript";
 import { cn } from "@/lib/utils";
 import { establishSession } from "@/lib/api";
@@ -19,6 +19,7 @@ import {
   deleteSession,
   getHealth,
   getSession,
+  listAppNames,
   listSessions,
   postMessage,
   uploadAttachment,
@@ -60,6 +61,9 @@ export default function AssistantPage() {
   // Chosen but not yet sent. Uploaded only when the message goes, so a file picked and then
   // reconsidered never reaches the gateway.
   const [pending, setPending] = useState<File[]>([]);
+  // Fetched once: the roster changes when apps are installed, not between messages, and a failed
+  // read leaves every label as the wire name — which is what the transcript showed before.
+  const [appNames, setAppNames] = useState<Record<string, string>>({});
   // Already stored for this message but not yet sent — kept across a failed send, so a retry names
   // them instead of uploading them again under de-duplicated names.
   const [uploaded, setUploaded] = useState<StoredAttachment[]>([]);
@@ -305,6 +309,23 @@ export default function AssistantPage() {
     publishAttention(waitingCount(sessions));
   }, [sessions]);
 
+  useEffect(() => {
+    let cancelled = false;
+    listAppNames()
+      .then((names) => {
+        if (!cancelled) {
+          setAppNames(names);
+        }
+      })
+      .catch(() => {
+        // Labels stay as the wire names. Not surfaced: an operator cannot act on it, and the
+        // transcript is still readable, just less friendly.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const send = useCallback(async () => {
     const trimmed = input.trim();
     if (!trimmed || !session || sending) {
@@ -470,6 +491,10 @@ export default function AssistantPage() {
     return answers;
   }, [events]);
 
+  // Which message each uploaded file belongs to, so a claimed file is drawn under its message and
+  // nowhere else.
+  const attachmentIndex = useMemo(() => indexAttachments(events), [events]);
+
   return (
     <div className="flex h-dvh min-h-0 flex-col">
       <header className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
@@ -535,6 +560,8 @@ export default function AssistantPage() {
               <TranscriptEvent
                 key={event.seq}
                 event={event}
+                appNames={appNames}
+                attachments={attachmentIndex}
                 decision={event.type === "approval_request" ? decidedApprovals.get(String(event.approvalId)) ?? null : null}
                 answers={event.type === "question_request" ? answeredQuestions.get(String(event.questionId)) ?? null : null}
                 // Absent reads as "cannot": a reason box on a harness whose decline carries nothing
@@ -558,13 +585,15 @@ export default function AssistantPage() {
           {(pending.length > 0 || uploaded.length > 0) && (
             <div className="flex shrink-0 flex-wrap gap-1 border-t px-3 pt-2 text-xs">
               {uploaded.map((attachment) => (
-                <span key={`stored-${attachment.name}`} className="inline-flex items-center rounded border px-1.5 py-0.5">
-                  📎 {attachment.name}
+                <span key={`stored-${attachment.name}`} className="inline-flex max-w-[16rem] items-center gap-1 rounded border px-1.5 py-0.5">
+                  <Paperclip className="h-3 w-3 shrink-0" aria-hidden />
+                  <span className="truncate">{attachment.name}</span>
                 </span>
               ))}
               {pending.map((file, index) => (
-                <span key={`${file.name}-${index}`} className="inline-flex items-center gap-1 rounded border px-1.5 py-0.5">
-                  📎 {file.name}
+                <span key={`${file.name}-${index}`} className="inline-flex max-w-[16rem] items-center gap-1 rounded border px-1.5 py-0.5">
+                  <Paperclip className="h-3 w-3 shrink-0" aria-hidden />
+                  <span className="truncate">{file.name}</span>
                   <button
                     type="button"
                     aria-label={`Remove ${file.name}`}

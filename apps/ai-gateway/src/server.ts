@@ -16,6 +16,7 @@ import type { HarnessAdapter } from "./harness/adapter.js";
 import { MAX_SYSTEM_PROMPT_CHARS, type AssistantSettings, type SettingsStore } from "./settings/store.js";
 import { partitionSkills, skillDigest, type AppSkill, type PendingSkill } from "./mcp/skills.js";
 import type { ProviderDirectory } from "./settings/providers.js";
+import { serverName } from "./mcp/exchange.js";
 import type { McpProxy } from "./mcp/proxy.js";
 import type { McpFacade } from "./facade/facade.js";
 
@@ -178,6 +179,27 @@ async function route(
       code: "cross_site_request_blocked",
       message: "A session cookie may only change state from the gateway's own pages.",
     });
+    return;
+  }
+
+  // The display name behind each MCP server name. A server name is the app id with dots replaced and
+  // a hash appended when that changed it — unique on the wire, and unreadable in a transcript, where
+  // an operator sees `com-haas-media-server-f9a077 · add_torrent`. The wire name cannot change: the
+  // client builds `mcp__<server>__<tool>` from it and the grant set is keyed on it. So the id stays
+  // and the label is translated, here, where the roster already is.
+  if (method === "GET" && url.pathname === "/api/apps") {
+    const discovered = providers ? await providers.read() : null;
+    const core = providers?.core() ?? null;
+    const apps = [
+      ...(core ? [{ server: serverName(core.appId), displayName: core.displayName }] : []),
+      ...(discovered?.providers ?? []).map((provider) => ({
+        server: serverName(provider.appId),
+        displayName: provider.displayName,
+      })),
+    ];
+    // An empty list is honest when discovery failed: every label then falls back to the wire name,
+    // which is what the transcript showed before this route existed.
+    sendJson(response, 200, { apps });
     return;
   }
 

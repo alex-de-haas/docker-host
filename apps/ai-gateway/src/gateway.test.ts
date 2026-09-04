@@ -13,6 +13,7 @@ import { SessionManager } from "./sessions/manager.js";
 import { FakeHarnessAdapter } from "./harness/fake.js";
 import { createGatewayServer } from "./server.js";
 import { AuditReporter } from "./audit.js";
+import { captureEnv } from "./test-env.js";
 
 // One ECDSA key pair for the suite: tokens are minted exactly the way Core mints them, and the
 // public half goes into the env the SDK validator reads.
@@ -56,10 +57,17 @@ describe("gateway", () => {
   let manager: SessionManager;
   let server: Server;
   let origin: string;
+  let restoreEnv: () => void;
 
   beforeEach(async () => {
-    process.env.HOSTY_DELEGATED_TOKEN_PUBLIC_KEY = publicKeyBase64;
-    process.env.HOSTY_APP_ID = "hosty.ai-gateway";
+    // The last two are borrowed rather than set: individual tests point them at a stub Core they
+    // then close, and restoring is what keeps a session from resolving against a dead port.
+    restoreEnv = captureEnv({
+      HOSTY_DELEGATED_TOKEN_PUBLIC_KEY: publicKeyBase64,
+      HOSTY_APP_ID: "hosty.ai-gateway",
+      HOSTY_CORE_ORIGIN: undefined,
+      HOSTY_APP_SERVICE_TOKEN: undefined,
+    });
     dataDir = mkdtempSync(path.join(os.tmpdir(), "ai-gateway-test-"));
     store = new SessionStore(dataDir);
     settings = new SettingsStore(dataDir);
@@ -79,12 +87,7 @@ describe("gateway", () => {
     await manager.shutdown();
     await new Promise((resolve) => server.close(resolve));
     rmSync(dataDir, { recursive: true, force: true });
-    delete process.env.HOSTY_DELEGATED_TOKEN_PUBLIC_KEY;
-    delete process.env.HOSTY_APP_ID;
-    // The session tests point these at a stub Core they then close. Left set, the next test would
-    // resolve sessions against a dead port — a leak that surfaces as an unrelated flaky test.
-    delete process.env.HOSTY_CORE_ORIGIN;
-    delete process.env.HOSTY_APP_SERVICE_TOKEN;
+    restoreEnv();
   });
 
   function call(pathName: string, init: RequestInit = {}, role: string | null = "host.admin"): Promise<Response> {
