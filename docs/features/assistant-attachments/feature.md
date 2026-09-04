@@ -84,8 +84,12 @@ drawn is between sessions, not between privilege levels.
   on delete and on retention expiry; **present after abandonment** — asserted beside the other two,
   or "never remove" would pass.
 - **Names**: a traversal stored as its base name and nothing written outside the workspace; a name
-  with nothing usable refused; a taken name de-duplicated and the original untouched. The sanitiser
-  is pinned on its own so the route tests cannot pass by a different cleaning than the one described.
+  with nothing usable refused; a taken name de-duplicated and the original untouched. Letters and
+  digits in any script are kept — a Russian screenshot name comes back as itself, not as underscores
+  — and a name too long for a filesystem is cut to fit by *bytes*, extension kept, rather than
+  refused. The first live upload hit exactly that refusal, with a message that blamed the name's
+  content for its length. The sanitiser is pinned on its own so the route tests cannot pass by a
+  different cleaning than the one described.
 - **Caps in both directions**: over the per-file cap refused as declared and as streamed, with no
   temp file left; exactly the cap accepted; the count cap at 20 and 21; the session byte cap at
   exactly 100 MB accepted and one byte over refused — asserted with sparse files, since the cap

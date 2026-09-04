@@ -15,6 +15,7 @@ import { AuditReporter } from "../audit.js";
 import { createGatewayServer } from "../server.js";
 import {
   MAX_ATTACHMENT_BYTES,
+  MAX_ATTACHMENT_NAME_BYTES,
   MAX_ATTACHMENTS_PER_SESSION,
   MAX_SESSION_ATTACHMENT_BYTES,
   AttachmentRefusedError,
@@ -350,6 +351,28 @@ describe("session attachments", () => {
     expect(sanitizeAttachmentName("weird\u0000name\u001f.log")).toBe("weirdname.log");
     expect(sanitizeAttachmentName("...")).toBeNull();
     expect(sanitizeAttachmentName("")).toBeNull();
+  });
+
+  it("keeps a name written in another script", () => {
+    // The first live upload came from an operator whose files are named in Russian. An ASCII-only
+    // subset turned every letter into an underscore, and a long name into a refusal that claimed
+    // there was nothing usable in it.
+    expect(sanitizeAttachmentName("Снимок экрана 2026-09-04 в 16.23.03.png"))
+      .toBe("Снимок экрана 2026-09-04 в 16.23.03.png");
+    expect(sanitizeAttachmentName("отчёт (копия).pdf")).toBe("отчёт (копия).pdf");
+  });
+
+  it("cuts a long name to fit rather than refusing it, by bytes and keeping the extension", () => {
+    // Length is not a reason to lose the file. Measured in bytes because a Cyrillic letter is two of
+    // them: a character cap would pass a name the filesystem then rejects.
+    const long = `${"Снимок".repeat(60)}.png`;
+    const stored = sanitizeAttachmentName(long)!;
+
+    expect(stored.endsWith(".png")).toBe(true);
+    expect(Buffer.byteLength(stored)).toBeLessThanOrEqual(MAX_ATTACHMENT_NAME_BYTES);
+    expect(stored.length).toBeGreaterThan(50);
+    // Paired: a name within the cap is untouched.
+    expect(sanitizeAttachmentName("short.png")).toBe("short.png");
   });
 
   async function session(): Promise<string> {
