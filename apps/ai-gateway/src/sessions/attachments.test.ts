@@ -13,6 +13,7 @@ import { SessionManager, withAttachedPaths } from "./manager.js";
 import { FakeHarnessAdapter } from "../harness/fake.js";
 import { AuditReporter } from "../audit.js";
 import { createGatewayServer } from "../server.js";
+import { captureEnv } from "../test-env.js";
 import {
   MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENT_NAME_BYTES,
@@ -49,10 +50,13 @@ describe("session attachments", () => {
   let manager: SessionManager;
   let server: Server;
   let origin: string;
+  let restoreEnv: () => void;
 
   beforeEach(async () => {
-    process.env.HOSTY_DELEGATED_TOKEN_PUBLIC_KEY = publicKeyBase64;
-    process.env.HOSTY_APP_ID = "hosty.ai-gateway";
+    restoreEnv = captureEnv({
+      HOSTY_DELEGATED_TOKEN_PUBLIC_KEY: publicKeyBase64,
+      HOSTY_APP_ID: "hosty.ai-gateway",
+    });
     dataDir = mkdtempSync(path.join(os.tmpdir(), "hosty-att-data-"));
     cacheDir = mkdtempSync(path.join(os.tmpdir(), "hosty-att-cache-"));
     store = new SessionStore(dataDir, cacheDir);
@@ -69,11 +73,10 @@ describe("session attachments", () => {
     await new Promise((resolve) => server.close(resolve));
     rmSync(dataDir, { recursive: true, force: true });
     rmSync(cacheDir, { recursive: true, force: true });
-    // The same cleanup gateway.test.ts does, and for the reason vitest.config.ts records: these are
-    // process-wide, and a file that sets them without clearing them leaves the next one running
-    // against a key it did not choose. This file set them and never cleared them.
-    delete process.env.HOSTY_DELEGATED_TOKEN_PUBLIC_KEY;
-    delete process.env.HOSTY_APP_ID;
+    // Puts back whatever was there, which for this file's own variables means deleting them: they
+    // are process-wide, and a file that sets them without restoring them leaves the next one
+    // running against a key it did not choose. This file set them and restored nothing.
+    restoreEnv();
   });
 
   it("lands in the session's workspace and is recorded in the transcript", async () => {

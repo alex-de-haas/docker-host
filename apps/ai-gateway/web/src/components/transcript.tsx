@@ -15,6 +15,7 @@ import {
   type FileChangeView,
 } from "@/lib/tool-display";
 import type { AssistantEvent, AssistantQuestion } from "@/lib/assistant-api";
+import type { AttachmentIndex } from "@/lib/attachments";
 
 // The transcript, moved out of Shell with the rest of the panel. The gateway's event log is the
 // source: every proposed write pauses as an inline approval card until the operator decides.
@@ -34,6 +35,7 @@ export function TranscriptEvent({
   onDecide,
   onAnswer,
   appNames,
+  attachments,
 }: {
   event: AssistantEvent;
   decision: ApprovalDecision | null;
@@ -44,21 +46,35 @@ export function TranscriptEvent({
   onAnswer: (questionId: string, answers: Record<string, string>) => Promise<void>;
   /** Display name per MCP server name; absent entries fall back to the wire name. */
   appNames?: Record<string, string>;
+  /** Every upload in the log; absent, each upload simply draws its own row. */
+  attachments?: AttachmentIndex;
 }) {
   switch (event.type) {
-    case "user_message":
-      // The attachment names the event also carries are deliberately not drawn here. Each file
-      // already has its own `attachment_added` row immediately above, and printing both put the same
-      // long name on screen twice for every attachment.
+    case "user_message": {
+      // The files this turn carried are named here, under the message that carried them, because
+      // this event is the only one that knows which message they belong to. Their upload rows draw
+      // nothing in return, so no name reaches the screen twice.
+      const names = (Array.isArray(event.attachments) ? event.attachments : []).map(String);
       return (
-        <div className="ml-8 rounded-lg bg-primary/10 px-3 py-2 text-sm whitespace-pre-wrap">
-          {String(event.text ?? "")}
+        <div className="space-y-1">
+          <div className="ml-8 rounded-lg bg-primary/10 px-3 py-2 text-sm whitespace-pre-wrap">
+            {String(event.text ?? "")}
+          </div>
+          {names.length > 0 && (
+            <AttachmentRow files={names.map((name) => ({ name, size: attachments?.sizes.get(name) ?? null }))} />
+          )}
         </div>
       );
-    case "attachment_added":
-      // Its own row, so a session restored from a backup — records back, cache not — still shows
-      // that a file was here, even though the file itself is gone.
-      return <AttachmentRow name={String(event.name ?? "")} size={Number(event.size ?? 0)} />;
+    }
+    case "attachment_added": {
+      // A row of its own for an upload no message claims — it is in the workspace and against the
+      // session's quota either way — and so that a session restored from a backup (records back,
+      // cache not) still shows a file was here, even though the file itself is gone.
+      const name = String(event.name ?? "");
+      return attachments?.claimed.has(name) ? null : (
+        <AttachmentRow files={[{ name, size: Number(event.size ?? 0) }]} />
+      );
+    }
     case "assistant_text":
       return (
         <div className="rounded-lg bg-muted/60 px-3 py-2">
@@ -107,21 +123,21 @@ export function TranscriptEvent({
   }
 }
 
-// One line per tool call: what it was for, not what it was called. A run that reads thirty files is
-// thirty rows, so the row carries the model's own description (or the path, the pattern, the query)
-// and the raw input waits behind a click — a transcript that showed every input would be a wall of
-// JSON with the conversation somewhere inside it.
 /**
- * One attached file, collapsed to a paperclip and a truncated name.
+ * Attached files, collapsed to a paperclip and a count.
  *
  * Shaped like {@link ToolRow} on purpose: the transcript already teaches that a small row with a
  * chevron opens, and a second idiom for the same gesture would be one more thing to learn. Names
- * here are the operator's own file names — long, and often longer than the column — so the row
- * truncates and the full name is one click away, with the size beside it.
+ * here are the operator's own file names — long, and often longer than the column — so a lone name
+ * truncates and several collapse to a count, with the full list one click away.
+ *
+ * A size of `null` means the log no longer holds the upload event for that name; the file is still
+ * named, because which file this turn carried is the part worth showing.
  */
-function AttachmentRow({ name, size }: { name: string; size: number }) {
+function AttachmentRow({ files }: { files: { name: string; size: number | null }[] }) {
   const [open, setOpen] = useState(false);
   const Chevron = open ? ChevronDown : ChevronRight;
+  const first = files[0];
 
   return (
     <div className="ml-8 px-1 text-xs text-muted-foreground">
@@ -132,19 +148,28 @@ function AttachmentRow({ name, size }: { name: string; size: number }) {
         className="flex w-full min-w-0 items-center gap-1.5 text-left hover:text-foreground"
       >
         <Paperclip className="h-3 w-3 shrink-0" aria-hidden />
-        <span className="shrink-0 font-medium">Attachment</span>
-        <span className="min-w-0 truncate">{name}</span>
+        <span className="shrink-0 font-medium">{files.length === 1 ? "Attachment" : `${files.length} attachments`}</span>
+        {files.length === 1 && first && <span className="min-w-0 truncate">{first.name}</span>}
         <Chevron className="ml-auto h-3 w-3 shrink-0" aria-hidden />
       </button>
       {open && (
-        <div className="mt-1 rounded bg-muted/60 p-2 break-all">
-          {name} <span className="text-muted-foreground">({formatBytes(size)})</span>
-        </div>
+        <ul className="mt-1 space-y-0.5 rounded bg-muted/60 p-2 break-all">
+          {files.map((file) => (
+            <li key={file.name}>
+              {file.name}
+              {file.size !== null && <span className="text-muted-foreground"> ({formatBytes(file.size)})</span>}
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );
 }
 
+// One line per tool call: what it was for, not what it was called. A run that reads thirty files is
+// thirty rows, so the row carries the model's own description (or the path, the pattern, the query)
+// and the raw input waits behind a click — a transcript that showed every input would be a wall of
+// JSON with the conversation somewhere inside it.
 function ToolRow({ toolName, input, appNames }: { toolName: string; input: unknown; appNames?: Record<string, string> }) {
   const [open, setOpen] = useState(false);
   const summary = useMemo(() => summarizeToolUse(toolName, input, appNames), [toolName, input, appNames]);

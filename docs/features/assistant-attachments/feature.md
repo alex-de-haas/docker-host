@@ -79,15 +79,21 @@ drawn is between sessions, not between privilege levels.
 
 ## What The Transcript Shows
 
-One row per attached file, collapsed: a paperclip, the word *Attachment*, and the name truncated to
-the column, opening to the full name and its size. Shaped like the tool-use rows beside it, because
-the transcript already teaches that a small row with a chevron opens and a second idiom for the same
-gesture is one more thing to learn. Operators' file names are long — the one that found the sanitiser
-bug ran to 111 characters — so truncation is the default and the whole name is one click away.
+A collapsed row of attached files: a paperclip, then either the word *Attachment* and one name
+truncated to the column, or a count. It opens to the full names and their sizes. Shaped like the
+tool-use rows beside it, because the transcript already teaches that a small row with a chevron
+opens and a second idiom for the same gesture is one more thing to learn. Operators' file names are
+long — the one that found the sanitiser bug ran to 111 characters — so truncation is the default and
+the whole name is one click away.
 
-The message bubble no longer repeats them. The `user_message` event still carries the names, and
-drawing both put the same long name on screen twice for every file; the attachment rows sit
-immediately above the message they went with, which is the association a chat already implies.
+Each file is drawn exactly once, under the message that claimed it. Which message that is comes from
+the log as a whole rather than from what sits next to what: `attachment_added` is written when the
+upload lands, and the message naming the file is a separate request, so the two are neighbours only
+in the usual case — a message POST retried after other events, or a client naming a file an earlier
+turn stored, puts events between them. Ordering alone would then credit the file to the wrong turn,
+or to no turn at all. A `user_message` names its files, so it draws them and their upload rows draw
+nothing; an upload no message ever claimed keeps a row of its own, since it is in the workspace and
+against the session's quota either way.
 
 ## Testing Expectations
 
@@ -112,6 +118,11 @@ immediately above the message they went with, which is the association a chat al
 - **The harness is told**: the transcript's `user_message` carries the names, the echoed turn
   carries the workspace path and the fixed phrasing, and a message naming a non-attachment is
   refused before any event is written.
+- **Each file appears once, under its own message.** `indexAttachments` claims a name for the
+  message that references it however many events separate them, claims it for every message that
+  references it, claims one whose upload event the log no longer holds, and leaves an unreferenced
+  upload unclaimed so it keeps its own row. Association by adjacency was what shipped first and what
+  these pin against: the claim is read from the log, not from the neighbouring event.
 - **The composer reads the selection before it resets the input.** `takeChosenFiles` copies the
   input's file list and then clears its value, in that order, and is tested against a fake input
   whose list empties on reset. The order is the invariant: the first shipped handler read the list

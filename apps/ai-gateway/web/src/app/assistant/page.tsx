@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Alert, InlineError, StatusBadge } from "@/components/status";
 import { Markdown } from "@/components/markdown";
 import { SessionList } from "@/components/session-list";
-import { takeChosenFiles } from "@/lib/attachments";
+import { indexAttachments, takeChosenFiles } from "@/lib/attachments";
 import { TranscriptEvent, type ApprovalDecision } from "@/components/transcript";
 import { cn } from "@/lib/utils";
 import { establishSession } from "@/lib/api";
@@ -491,6 +491,10 @@ export default function AssistantPage() {
     return answers;
   }, [events]);
 
+  // Which message each uploaded file belongs to, so a claimed file is drawn under its message and
+  // nowhere else.
+  const attachmentIndex = useMemo(() => indexAttachments(events), [events]);
+
   return (
     <div className="flex h-dvh min-h-0 flex-col">
       <header className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
@@ -557,6 +561,7 @@ export default function AssistantPage() {
                 key={event.seq}
                 event={event}
                 appNames={appNames}
+                attachments={attachmentIndex}
                 decision={event.type === "approval_request" ? decidedApprovals.get(String(event.approvalId)) ?? null : null}
                 answers={event.type === "question_request" ? answeredQuestions.get(String(event.questionId)) ?? null : null}
                 // Absent reads as "cannot": a reason box on a harness whose decline carries nothing
