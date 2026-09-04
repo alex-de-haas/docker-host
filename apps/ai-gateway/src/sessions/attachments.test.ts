@@ -387,6 +387,15 @@ describe("session attachments", () => {
     const wideExtension = fitToBytes(`a.${"x".repeat(50)}`, 10);
     expect(Buffer.byteLength(wideExtension)).toBeLessThanOrEqual(10);
     expect(wideExtension.startsWith(".")).toBe(false);
+
+    // Review'"'"'s own example, pinned by name: a 254-byte name Linux accepts whose "extension" is
+    // almost all of it. The first cut kept the extension whole and returned 261 bytes, which the
+    // temp-file create then refused with ENAMETOOLONG — a 500 for a valid file name.
+    const reviewers = `界.${"a".repeat(250)}`;
+    const fitted = sanitizeAttachmentName(reviewers)!;
+    expect(Buffer.byteLength(fitted)).toBeLessThanOrEqual(MAX_ATTACHMENT_NAME_BYTES);
+    expect(fitted.startsWith(".")).toBe(false);
+    expect(fitted.startsWith("界.")).toBe(true);
   });
 
   it("drops an extension that leaves no room for a stem, and never returns a hidden name", () => {
