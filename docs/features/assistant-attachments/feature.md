@@ -1,7 +1,7 @@
 # Assistant Attachments
 
 Created: 2026-09-03
-Updated: 2026-09-03
+Updated: 2026-09-04
 
 An operator hands the assistant a file from the composer. It lands in a working directory that
 belongs to the session, the transcript records that it did, and the harness is told where to find
@@ -95,6 +95,13 @@ drawn is between sessions, not between privilege levels.
 - **The harness is told**: the transcript's `user_message` carries the names, the echoed turn
   carries the workspace path and the fixed phrasing, and a message naming a non-attachment is
   refused before any event is written.
-- **Not verified live.** No file has been attached through a Core-managed gateway, no harness has
-  been asked about one, and the backup/restore behaviour is reasoned from the storage contract
-  rather than observed. Those checks are tracked in [plan.md](plan.md).
+- **The composer reads the selection before it resets the input.** `takeChosenFiles` copies the
+  input's file list and then clears its value, in that order, and is tested against a fake input
+  whose list empties on reset. The order is the invariant: the first shipped handler read the list
+  inside a functional state update, which React runs after the handler has returned — after the
+  reset — so every selection appended nothing and the first live attempt sent a message without
+  its file. A property of the function, tested as one; the gateway has no UI harness.
+- **Partly verified live.** The first attempt to attach a file through a Core-managed gateway found
+  the composer bug above and reached nothing else. No harness has yet been asked about an attached
+  file, and the backup/restore behaviour is reasoned from the storage contract rather than
+  observed. Those checks stay open in [plan.md](plan.md).

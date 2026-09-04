@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Alert, InlineError, StatusBadge } from "@/components/status";
 import { Markdown } from "@/components/markdown";
 import { SessionList } from "@/components/session-list";
+import { takeChosenFiles } from "@/lib/attachments";
 import { TranscriptEvent, type ApprovalDecision } from "@/components/transcript";
 import { cn } from "@/lib/utils";
 import { establishSession } from "@/lib/api";
@@ -604,8 +605,12 @@ export default function AssistantPage() {
               multiple
               hidden
               onChange={(event) => {
-                setPending((current) => [...current, ...Array.from(event.target.files ?? [])]);
-                event.target.value = "";
+                // Read before the state update is scheduled. A functional updater runs when React
+                // flushes, after this handler has returned — and by then the reset on the next line
+                // has already emptied `files`. Written that way first, every selection appended
+                // nothing: no chip, no upload, a message sent without the file the operator chose.
+                const chosen = takeChosenFiles(event.target);
+                setPending((current) => [...current, ...chosen]);
               }}
             />
             <Button
