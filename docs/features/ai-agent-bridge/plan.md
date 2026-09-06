@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-06-09
-Updated: 2026-08-31
+Updated: 2026-09-06
 
 The shared model, the boundaries and the decision log live in [feature.md](feature.md) and are in
 force. This document holds only what is **not built**: the rollout checklist, and the design for the
@@ -16,7 +16,7 @@ and [agent-background-sessions](../agent-background-sessions/feature.md) — bot
 [scoped-access-tokens](../scoped-access-tokens/feature.md) (the token scopes and audit callback of open
 question 3 and the step-6 plaintext-admin-token cost), [mcp-facade](../mcp-facade/plan.md) (step-7
 topology 4's deferred "mcp-hub", placed on the existing gateway system app),
-[mcp-oauth](../mcp-oauth/plan.md), and [core-mcp](../core-mcp/feature.md) mutations.
+[mcp-oauth](../mcp-oauth/feature.md), and [core-mcp](../core-mcp/feature.md) mutations.
 
 ## Deliverables
 
@@ -97,8 +97,11 @@ individually, because "a stock client connected" is four different claims and on
       the rule is a Hosty design choice, not general MCP knowledge. What this proves is that a loaded
       skill supplies facts the model otherwise lacks — the assumption
       [app-provided-skills](../app-provided-skills/feature.md) rests on.
-- [ ] **A non-loopback origin.** Everything so far was `127.0.0.1`, so nothing exercises external
-      ingress, TLS, or a proxy in the path.
+- [x] **A non-loopback origin** (2026-09-06). A stock Claude Code reached Core `/api/mcp` at the
+      prod host's public origin — external ingress, TLS and Cloudflare's proxy in the path, the
+      client arriving over IPv6 — and completed the whole OAuth flow with no credential in its
+      config; recorded in [mcp-oauth](../mcp-oauth/feature.md). What this does **not** cover is the
+      facade over such an origin, which [mcp-facade](../mcp-facade/plan.md) still owns and states.
 
 Record what each connection proves in the corresponding feature.md as it lands.
 

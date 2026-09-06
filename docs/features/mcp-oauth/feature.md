@@ -1,7 +1,7 @@
 # MCP OAuth — Automated Issuance For Scoped Tokens
 
 Created: 2026-08-25
-Updated: 2026-08-25
+Updated: 2026-09-06
 
 Core is an OAuth 2.1 authorization server, per the MCP authorization specification, so a capable
 client (Claude Code, an editor) obtains and rotates [scoped access
@@ -15,7 +15,10 @@ same introspection. OAuth replaces issuance only, nothing downstream of it.
 1. A client calls an MCP endpoint without a token and gets `401` with `WWW-Authenticate` pointing at
    RFC 9728 resource metadata naming Core as the authorization server. Core MCP sets the header on
    the response's way out ([McpEndpoints.cs](../../../apps/core/src/Haas.Hosty.Core/McpEndpoints.cs)),
-   so no refusal path can forget it; apps and the facade serve theirs through the SDK helpers.
+   so no `401` can forget it; apps and the facade serve theirs through the SDK helpers. A request
+   carrying no credential at all is refused earlier than that — by the CSRF gate the browser case
+   needs — and answers `403 csrf_invalid` without the challenge, so a stock client picks the flow up
+   from the well-known resource-metadata path instead. That is the route the live run below took.
 2. The client reads `/.well-known/oauth-authorization-server` (RFC 8414) and registers itself via
    Dynamic Client Registration (RFC 7591).
 3. `GET /api/auth/oauth/authorize` validates everything — client, redirect_uri, PKCE (S256 only),
@@ -91,6 +94,21 @@ scenario needs a public origin for Core — and metadata uses `EffectiveCorePubl
 because a loopback URL in that document would send both to the wrong machine. The manual path has no
 such dependency, which is one more reason it is permanent. Apps refuse to build resource metadata
 without a public identity (null, not a guess): no metadata simply means the manual path.
+
+## Verified Live
+
+2026-09-06, against the prod host over its public origin: the perimeter the caveat above describes,
+with Cloudflare's proxy and TLS in the path and the client arriving over IPv6. A stock Claude Code
+whose config entry carried **no credential** registered itself through DCR, sent its operator to the
+consent page, redeemed a token and called a tool. Revoking the grant's one row then stopped the next
+call **inside the same live session** — the property introspection-per-call buys over a token
+validated locally until its TTL runs out.
+
+Two rough edges the run surfaced, neither of them blocking. The AS metadata advertises
+`registration_endpoint` whether or not the breaker is on, so a client meeting a closed door learns
+that only from the `403` it gets back. And a refusal reports `session_invalid` — "missing, expired,
+or revoked" — so an operator watching a client fail cannot tell a revocation from an expiry by the
+message alone; the run above read as "the token expired" when the grant had in fact been revoked.
 
 ## Testing Expectations
 
