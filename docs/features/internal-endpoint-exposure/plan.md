@@ -19,8 +19,9 @@ any future slip in a credential check becomes internet-reachable rather than LAN
 `/api/internal/` surface is by definition never browser-facing, so excluding it costs no
 functionality. The class has already produced one real finding — the docker-stats exposition shipped
 unauthenticated for months on the assumption that "internal" implied a network boundary, which
-Hosty's own ingress never provided (C-M10 in
-[2026-07-10-core-code-review](../../reviews/2026-07-10-core-code-review.md)).
+Hosty's own ingress never provided (C-M10 in the
+2026-07-10 Core review, since fixed and superseded; see
+[the consolidated review](../../reviews/2026-09-06-consolidated-review.md#superseded-reviews)).
 
 **The case against.** Its coverage is structurally capped: managed Cloudflare ingress is only one way
 Core becomes reachable. An operator's own reverse proxy, a port forward, `expose:host` bindings and a
