@@ -1,7 +1,7 @@
 # Auth Session Lifecycle And Recovery
 
 Created: 2026-07-13
-Updated: 2026-08-15
+Updated: 2026-09-06
 
 How a Hosty app session begins, how long it lives, and how a browser that lost one gets back in.
 Two credentials are in scope: the **Core browser session** (`hosty_session`, the signed-in Host user)
@@ -83,6 +83,26 @@ extends the idle window on authenticated use under the same 5-minute write throt
 are pruned on write (revoked ones retained 7 days). The session cookie's `Expires` is the absolute cap,
 so an extension needs no cookie re-issue — the idle window is enforced server-side, which is where the
 implementation deviated from the original design sketch and stayed.
+
+**A refusal says which of those happened**, the way the app-session path always has: `session_revoked`
+("has been revoked"), `session_expired` ("has reached its maximum lifetime" / "has been idle too
+long"), and `session_missing` for a request carrying no credential at all. `session_invalid` is left
+to mean what it can actually prove — no record answers to this id — rather than standing in for all
+three. `IsSessionLive` still makes the decision alone and the explanation is derived from the record
+afterwards, so a liveness rule added there degrades the message to `session_invalid` instead of
+answering a confidently wrong reason. All of them stay 401, which is what clients branch on.
+
+The credential is named for what it is: an access token presented to a `/api` route is refused as an
+access token, not as a Core session it never was — the OAuth case, where "Core session is missing,
+expired, or revoked" read as an expiry against a grant an operator had just revoked
+([mcp-oauth](../mcp-oauth/feature.md)). The answer is as durable as the record: revoked records live
+7 days by the retention above, expired ones are dropped at the next session write, and once a record
+is gone the honest answer is the vague one.
+
+This is not the [introspection](../scoped-access-tokens/feature.md) rule inverted. There, an *app*
+asks Core about a token, and every refusal answers `active: false` alone so an app cannot probe for
+credentials it does not hold. Here the credential is presented by its holder — naming the reason
+tells them something only they could ask about, since asking takes the opaque id itself.
 
 ## Lifetimes
 
@@ -186,6 +206,9 @@ new tab, which `allow-popups` permits.
 - Grant validity in all four dimensions: revoked, absolutely expired, idle-expired, and live; plus the
   policy re-check (disabled user, removed assignment, non-admin against a system app) still refusing a
   structurally valid grant.
+- A Core session refusal names its cause across the same dimensions — revoked, past its cap, idled
+  out, and an id no record answers to — each a distinct code or sentence, and a revoked *access
+  token* refused as an access token rather than as a session.
 - The idle slide is throttled — repeated revalidation inside the throttle window writes once — and a
   grant that keeps being used never crosses its absolute cap.
 - Explicit logout revokes the session's grants; session *expiry* does not.

@@ -239,7 +239,63 @@ public sealed class CoreSessionAuthorizationTests
         var response = Inspect(result);
 
         Assert.Equal(StatusCodes.Status401Unauthorized, response.StatusCode);
-        Assert.Contains("session_invalid", response.Body);
+        Assert.Contains("session_revoked", response.Body);
+    }
+
+    [Fact]
+    public async Task RequireSessionAsync_TellsRevocationApartFromExpiry()
+    {
+        // One message covering "missing, expired, or revoked" reads as an expiry to whoever meets
+        // it, so a revocation looks like a credential that aged out and the operator waits for a
+        // refresh that will never help. Each cause answers its own code and its own sentence; every
+        // one of them is still a 401, which is what clients actually branch on
+        // (docs/features/auth-session-lifecycle/feature.md).
+        var revoked = await RefuseAsync(session => session with { RevokedAt = session.CreatedAt });
+        Assert.Equal(StatusCodes.Status401Unauthorized, revoked.StatusCode);
+        Assert.Contains("session_revoked", revoked.Body);
+        Assert.Contains("Core session has been revoked", revoked.Body);
+
+        // Past its absolute cap, and past its idle window: both are expiry, and they are told apart
+        // by their sentence rather than by their code, because the fix differs only in degree.
+        var capped = await RefuseAsync(session => session with { ExpiresAt = session.CreatedAt.AddMinutes(-1) });
+        Assert.Equal(StatusCodes.Status401Unauthorized, capped.StatusCode);
+        Assert.Contains("session_expired", capped.Body);
+        Assert.Contains("maximum lifetime", capped.Body);
+
+        var idled = await RefuseAsync(session => session with
+        {
+            ExpiresAt = session.CreatedAt.AddDays(30),
+            LastSeenAt = session.CreatedAt.AddDays(-8),
+        });
+        Assert.Equal(StatusCodes.Status401Unauthorized, idled.StatusCode);
+        Assert.Contains("session_expired", idled.Body);
+        Assert.Contains("idle too long", idled.Body);
+
+        // An id no record answers to names nothing — it may never have existed, and the user it
+        // belonged to may since have been deleted — so it keeps the code it always had.
+        var unknown = await RefuseAsync(session => session, bearer: "not_a_session");
+        Assert.Equal(StatusCodes.Status401Unauthorized, unknown.StatusCode);
+        Assert.Contains("session_invalid", unknown.Body);
+    }
+
+    [Fact]
+    public async Task RequireSessionAsync_CallsARevokedAccessTokenWhatItIs()
+    {
+        // The case that prompted the split (docs/features/mcp-oauth/feature.md): a revoked OAuth
+        // access token reaches this path — ScopedCredentials refuses a dead record and falls
+        // through — and its holder never had a Core session at all, so a message about one sent the
+        // operator looking in the wrong place.
+        var response = await RefuseAsync(session => session with
+        {
+            RevokedAt = session.CreatedAt,
+            Kind = AccessTokenKinds.OAuth,
+            Audience = AccessTokenScopes.CoreAudience,
+            Scopes = [AccessTokenScopes.McpRead],
+        });
+
+        Assert.Equal(StatusCodes.Status401Unauthorized, response.StatusCode);
+        Assert.Contains("session_revoked", response.Body);
+        Assert.Contains("This access token has been revoked", response.Body);
     }
 
     [Fact]
@@ -262,6 +318,25 @@ public sealed class CoreSessionAuthorizationTests
         // Precedence, stated once and directly: the cookie is the credential, and the header is ignored.
         Assert.Equal(SessionCredentialSource.Cookie, both.Source);
         Assert.Equal("session_1", both.Value);
+    }
+
+    // Presents one dead credential as a bearer and returns the refusal. The mutation shapes the
+    // record; the clock never moves, so what each case asserts is the reason it wrote, not a timing.
+    private static async Task<(int StatusCode, string Body)> RefuseAsync(
+        Func<AuthSessionRecord, AuthSessionRecord> shape,
+        string bearer = "session_1")
+    {
+        var fixture = await AuthorizationFixture.CreateAsync(role: "host.user");
+        await fixture.Users.UpdateAsync(state => state with
+        {
+            Sessions = [.. state.Sessions.Select(shape)],
+        });
+
+        return Inspect(await CoreSessionAuthorization.RequireSessionAsync(
+            CreateRequest(includeSession: false, includeCsrf: false, bearer: bearer).Request,
+            fixture.Users,
+            fixture.Clock,
+            user => Task.FromResult<IResult>(Results.Ok())));
     }
 
     private static DefaultHttpContext CreateRequest(

@@ -22,6 +22,55 @@ internal static class CoreSessionAuthorization
             session.ExpiresAt > now &&
             (session.LastSeenAt ?? session.CreatedAt).Add(idle) > now;
 
+    // Why a credential that failed IsSessionLive is not live, for the refusal an operator reads.
+    //
+    // The liveness decision stays with IsSessionLive above; this only *explains* one it has already
+    // made, and answers the generic code for anything it cannot name — so a liveness rule added
+    // there degrades this to a vague message rather than to a confidently wrong one. Splitting the
+    // three cases is the point: "expired" and "revoked" send an operator to different places, and
+    // one message covering both sent them to the wrong one (docs/features/mcp-oauth/feature.md).
+    // The same split the app-session path has always made (AppIdentityService.RevalidateAsync).
+    //
+    // Naming the reason tells nobody anything they did not already have: it takes presenting the
+    // exact opaque id, which is the credential itself.
+    private static (string Code, string Message) ExplainDeadCredential(
+        AuthSessionRecord? record,
+        DateTimeOffset now,
+        TimeSpan idle)
+    {
+        // Nothing to name for an id no record answers to, so that case keeps the code it always had.
+        // Which also bounds how long the answers below stay available: AuthEndpoints.PruneSessions
+        // keeps a revoked record for 7 days — retention that existed for diagnostics and now answers
+        // the holder too — and drops an expired one at the next session write. Past that the record
+        // is gone and the honest answer is the vague one; a revocation, the case an operator is most
+        // likely to be staring at, is the one that survives longest.
+        if (record is null)
+        {
+            return ("session_invalid", "Core session is missing, expired, or revoked.");
+        }
+
+        // An access token is not a Core session, and its holder never had one — the OAuth client
+        // whose live run prompted this change reached here with a token and was answered in terms
+        // of sessions, which read as an expiry when the grant had in fact been revoked.
+        var noun = AccessTokenKinds.IsAccessToken(record.Kind) ? "access token" : "Core session";
+        if (record.RevokedAt is not null)
+        {
+            return ("session_revoked", $"This {noun} has been revoked.");
+        }
+
+        if (record.ExpiresAt <= now)
+        {
+            return ("session_expired", $"This {noun} has reached its maximum lifetime.");
+        }
+
+        if ((record.LastSeenAt ?? record.CreatedAt).Add(idle) <= now)
+        {
+            return ("session_expired", $"This {noun} has been idle too long.");
+        }
+
+        return ("session_invalid", "Core session is missing, expired, or revoked.");
+    }
+
     public static async Task<IResult> RequireAdminSessionAsync(
         HttpRequest request,
         UserDirectoryStore users,
@@ -195,15 +244,21 @@ internal static class CoreSessionAuthorization
         var now = clock.UtcNow;
         var lifetimes = ResolveLifetimes(request);
         var state = await users.ReadAsync(cancellationToken);
-        // The idle window depends on the record, so it is resolved per candidate rather than once: a
+        // Found by id first and judged second, so a refusal can say *why*. Revocation is a soft
+        // delete — the record keeps living with RevokedAt set — which is what makes "revoked" a
+        // distinguishable answer rather than a guess about a record that is simply gone.
+        var record = state.Sessions.FirstOrDefault(candidate =>
+            string.Equals(candidate.Id, sessionId, StringComparison.Ordinal));
+        // The idle window depends on the record, so it is resolved per record rather than once: a
         // browser session and an access token live by different clocks and both resolve through here.
-        var session = state.Sessions.FirstOrDefault(candidate =>
-            string.Equals(candidate.Id, sessionId, StringComparison.Ordinal) &&
-            IsSessionLive(candidate, now, lifetimes.IdleFor(candidate.Kind)));
-        if (session is null)
+        var idle = lifetimes.IdleFor(record?.Kind);
+        if (record is null || !IsSessionLive(record, now, idle))
         {
-            return Unauthorized("session_invalid", "Core session is missing, expired, or revoked.");
+            var (code, message) = ExplainDeadCredential(record, now, idle);
+            return Unauthorized(code, message);
         }
+
+        var session = record;
 
         // A scoped credential is not a session, and this is the line that makes that true.
         //
