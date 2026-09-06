@@ -42,7 +42,7 @@ public sealed class EndpointAuthorizationHttpTests
         // loop above, so this lists them exactly rather than opening the /api/auth/device/ prefix.
         "/api/auth/device/code",
         "/api/auth/device/token",
-        // The OAuth flow's public half (docs/features/mcp-oauth/plan.md). /authorize is where an
+        // The OAuth flow's public half (docs/features/mcp-oauth/feature.md). /authorize is where an
         // anonymous browser lands from a client — consent itself is behind Shell's session. /token
         // and /register authenticate by their own protocol means (PKCE / the DCR toggle plus rate
         // limit), not by a session; /api/auth/oauth/requests and /clients are session-gated and

@@ -5,7 +5,7 @@ import { LoaderCircle, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { redirectToCoreLoginIfAuthRequired } from "../../shell/core-api";
 
-// The OAuth consent page (docs/features/mcp-oauth/plan.md). Deliberately standalone: no workspace
+// The OAuth consent page (docs/features/mcp-oauth/feature.md). Deliberately standalone: no workspace
 // chrome, no admin gate — an ordinary user may consent for an app they can reach, and the page is
 // the destination of a browser redirect from outside Shell entirely.
 //
