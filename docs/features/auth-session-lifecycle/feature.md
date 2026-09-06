@@ -88,28 +88,36 @@ A caller that presented nothing at all answers `401 session_missing`, and the me
 accepted forms — the `hosty_session` cookie and the `Authorization: Bearer` header — so a non-browser
 client is told what it failed to send rather than about a mechanism it was never going to use.
 
-A credential that was presented and refused answers `401 session_invalid`, and the **message names
-which of the three conditions killed it**: revoked, past its absolute cap, or idle past its sliding
-window. The record is looked up by id first and judged live second, so the reason survives to the
-refusal instead of being folded into one boolean.
+A credential that was presented and refused **says which condition killed it**: `session_revoked`
+("has been revoked"), or `session_expired` ("has reached its maximum lifetime" / "has been idle too
+long"). The record is looked up by id first and judged live second, so the reason survives to the
+refusal instead of being folded into one boolean — and `IsSessionLive` still makes the decision alone,
+with the explanation derived from the record afterwards, so a liveness rule added there degrades the
+message rather than naming a confidently wrong cause. `session_invalid` is left meaning what it can
+prove: no record answers to this id. Distinct codes rather than one, because the identity table above
+already tells `token_expired` from `token_revoked` for the app-session path, and because these are the
+strings that reach a log search. All of them stay 401, which is what callers branch on.
 
 Two rules decide which cause is named when more than one applies. Revocation is reported ahead of an
 expiry that also holds — it is the deliberate act, and the one an operator is trying to confirm
 landed. Between the two windows the **earlier deadline** wins, compared as deadlines rather than by
 asking which has passed by now: an untouched browser session idles out on day 7 and hits its absolute
 cap on day 30, so a request on day 31 is past both, and naming whichever condition was tested first
-would call every long-abandoned session an absolute expiry. An access token says so in its own words
-rather than calling itself a session, since the credential most likely to die here is an OAuth-issued
-one whose grant was revoked on the [tokens page](../mcp-oauth/feature.md). Only when no record
-survives at all — pruned, or never issued — does the answer stay the vague "missing, expired, or
-revoked", which is then the honest one.
+would call every long-abandoned session an absolute expiry.
 
-The **code stays `session_invalid` for every cause**. Callers classify on the status class and pass the
-code through for logging, exactly as the identity table above requires, and all four causes recover the
-same way, so a distinct code would add a matchable Core HTTP API surface without buying any caller new
-behavior. Naming the cause reveals nothing about another principal either: the caller already holds the
-credential being described, and ids are 256 bits, so "revoked" versus "never existed" is not an oracle
-anything can walk.
+The credential is named for what it is: an access token presented to a `/api` route is refused as an
+access token, not as a Core session it never was — the OAuth case, where "Core session is missing,
+expired, or revoked" read as an expiry against a grant an operator had just revoked
+([mcp-oauth](../mcp-oauth/feature.md)). The answer is as durable as the record: revoked records live
+7 days by the retention above, expired ones are dropped at the next session write, and once no record
+survives — pruned, or never issued — the answer stays the vague "missing, expired, or revoked", which
+is then the honest one.
+
+Naming the cause reveals nothing about another principal. The caller already holds the credential
+being described and ids are 256 bits, so "revoked" versus "never existed" is not an oracle anything
+can walk. Nor is this the [introspection](../scoped-access-tokens/feature.md) rule inverted: there an
+*app* asks Core about a token, and every refusal answers `active: false` alone so an app cannot probe
+for credentials it does not hold.
 
 ## Lifetimes
 
@@ -213,6 +221,9 @@ new tab, which `allow-popups` permits.
 - Grant validity in all four dimensions: revoked, absolutely expired, idle-expired, and live; plus the
   policy re-check (disabled user, removed assignment, non-admin against a system app) still refusing a
   structurally valid grant.
+- A Core session refusal names its cause across the same dimensions — revoked, past its cap, idled
+  out, and an id no record answers to — each a distinct code or sentence, and a revoked *access
+  token* refused as an access token rather than as a session.
 - The idle slide is throttled — repeated revalidation inside the throttle window writes once — and a
   grant that keeps being used never crosses its absolute cap.
 - Explicit logout revokes the session's grants; session *expiry* does not.

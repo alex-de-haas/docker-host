@@ -271,7 +271,11 @@ public sealed class OAuthHttpTests
         Assert.Equal("http://localhost:7070", server.GetProperty("issuer").GetString());
         Assert.Equal("S256", server.GetProperty("code_challenge_methods_supported").EnumerateArray().Single().GetString());
 
-        var resource = await ReadJsonAsync(await client.GetAsync("/.well-known/oauth-protected-resource/api/mcp"));
+        // Both documents are built from the live public origin, which an operator edits, so neither
+        // is storable — a cached one names the machine this host used to be reachable at.
+        using var resourceResponse = await client.GetAsync("/.well-known/oauth-protected-resource/api/mcp");
+        Assert.True(resourceResponse.Headers.CacheControl?.NoStore);
+        var resource = await ReadJsonAsync(resourceResponse);
         Assert.Equal("http://localhost:7070/api/mcp", resource.GetProperty("resource").GetString());
         Assert.Equal("http://localhost:7070", resource.GetProperty("authorization_servers").EnumerateArray().Single().GetString());
 
@@ -282,6 +286,40 @@ public sealed class OAuthHttpTests
         var header = challenge.Headers.WwwAuthenticate.ToString();
         Assert.Contains("resource_metadata=", header, StringComparison.Ordinal);
         Assert.Contains("/.well-known/oauth-protected-resource/api/mcp", header, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TheMetadataAdvertisesRegistrationOnlyWhileTheBreakerIsOn()
+    {
+        // The document must not name a door that answers 403. A client reading a
+        // registration_endpoint it cannot use spends the flow discovering that; a client reading no
+        // registration_endpoint falls back to the manual token path, which is the honest outcome.
+        await using var harness = await CoreHttpHarness.StartAsync();
+        var admin = await SeedSessionAsync(harness, "host.admin");
+        using var client = harness.CreateClient();
+
+        // Off (the default): the key is absent — not null, absent, per RFC 8414's optional field.
+        using var offResponse = await client.GetAsync("/.well-known/oauth-authorization-server");
+        // And the document says not to keep it. A copy held by a client or a proxy is a copy of a
+        // toggle that has since moved, which would hand back the confusion this test exists to end.
+        Assert.True(offResponse.Headers.CacheControl?.NoStore);
+        var off = await ReadJsonAsync(offResponse);
+        Assert.False(off.TryGetProperty("registration_endpoint", out _));
+        // The rest of the document is unaffected: the flow stays discoverable for a client that
+        // already registered while the breaker was on.
+        Assert.Equal("http://localhost:7070/api/auth/oauth/token", off.GetProperty("token_endpoint").GetString());
+
+        await EnableRegistrationAsync(client, admin);
+        var on = await ReadJsonAsync(await client.GetAsync("/.well-known/oauth-authorization-server"));
+        Assert.Equal(
+            "http://localhost:7070/api/auth/oauth/register",
+            on.GetProperty("registration_endpoint").GetString());
+
+        // And it disappears again with the breaker, in the same process — the endpoint reads the
+        // live setting rather than a value captured at startup.
+        await SetRegistrationAsync(client, admin, "false");
+        var offAgain = await ReadJsonAsync(await client.GetAsync("/.well-known/oauth-authorization-server"));
+        Assert.False(offAgain.TryGetProperty("registration_endpoint", out _));
     }
 
     [Fact]
