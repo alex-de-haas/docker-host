@@ -1,7 +1,7 @@
 namespace Haas.Hosty.Core;
 
 // App-callable keychain for runtime-acquired secrets (see AppSecretsStore and
-// docs/planning/app-secrets-store.md). Service-token authenticated only — no session surface, no
+// docs/features/app-secrets-store/feature.md). Service-token authenticated only — no session surface, no
 // Shell/admin read path. The list route returns key names only; values are never enumerable, never
 // logged, and only readable by the owning app's token.
 internal static class AppSecretsEndpoints

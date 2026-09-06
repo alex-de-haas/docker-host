@@ -15,6 +15,8 @@ is shaped and approved.
 
 Diff against [feature.md](feature.md):
 
+- The service token an app presents to the secrets API carries scopes, an expiry, and an install
+  generation; a token minted for a previous install of the same app id is refused.
 - `secrets.json` is encrypted at rest under one Core master key, in the same pass that covers
   `secret: true` settings in `state.json` and the Cloudflare credential store; the document's
   `schemaVersion` bump is the migration.
@@ -25,6 +27,12 @@ Diff against [feature.md](feature.md):
 
 ## Deliverables
 
+- [ ] Service-token hardening reaching the secrets API: scopes, expiry, and a per-install
+      generation on `AppServiceTokenService`, with a compatibility window for running apps, so a
+      token leaked from one install no longer unlocks live third-party credentials after remove and
+      reinstall. A Core-wide token change; tracked here because the secrets store is what made the
+      token worth stealing and no other plan carries it. SEC-4 in the
+      [consolidated review](../../reviews/2026-09-06-consolidated-review.md).
 - [ ] Platform-wide at-rest encryption pass (one Core master key, the durable
       `AppServiceSigningKey` file pattern) covering `state.json` secret settings, the Cloudflare
       credential store, and `secrets.json`.
@@ -37,12 +45,33 @@ Diff against [feature.md](feature.md):
 - Whether at-rest encryption is wanted at all: the design chose plaintext `0600` parity with
   `state.json` on purpose, and a master key on the same disk changes little in the threat model.
 - Whether a Core-state backup will exist; the secrets item depends on it.
+- Whether service-token hardening should become its own feature, since the token also authorizes
+  directory, backup, and notification calls; if so, this plan links to that plan and drops the
+  deliverable.
 
-## Related
+## Implementation Phases
 
-- Service-token scoping, expiry, and per-install generation are SEC-4 in the
-  [consolidated review](../../reviews/2026-09-06-consolidated-review.md). That is a Core-wide
-  change to the token, not a deliverable of this feature, so it is linked rather than listed.
+The streams are independent of each other; the order is by how much each one closes.
+
+### Phase 1: Service-token hardening
+
+Scopes, expiry, and per-install generation on `AppServiceTokenService`; the secrets endpoints are
+the first consumer to require them. Lands before marketplace-era third-party apps.
+
+### Phase 2: At-rest encryption pass
+
+One Core master key covering `state.json` secret settings, the Cloudflare credential store, and
+`secrets.json`; `schemaVersion` 1 → 2 is the lazy migration. Starts only once the first open
+question is answered yes.
+
+### Phase 3: Core-state backup with secrets
+
+Depends on a Core-state backup existing; carries `secrets.json` encrypted with the Phase 2 key.
+
+### Phase 4: Diagnostics and events
+
+`hosty apps secrets list <appId>` (names only) and change events, each only when a consumer asks
+for it.
 
 ## Verification
 

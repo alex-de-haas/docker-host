@@ -13,7 +13,7 @@ namespace Haas.Hosty.Core;
 // that loses the race to a removal from resurrecting credentials the operator asked to delete:
 // state.json existence (covers the default removal, which deletes it) and the registry's per-app
 // data-removal generation (covers `--delete-data --keep-state`, where state.json survives).
-// See docs/planning/app-secrets-store.md.
+// See docs/features/app-secrets-store/feature.md.
 internal sealed class AppSecretsStore(AppRegistryStore apps, CoreDataPaths paths)
 {
     public const int MaxValueBytes = 16 * 1024;
