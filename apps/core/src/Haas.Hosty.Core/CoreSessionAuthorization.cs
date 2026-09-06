@@ -189,7 +189,14 @@ internal static class CoreSessionAuthorization
         var sessionId = ReadSessionCredential(request).Value;
         if (string.IsNullOrWhiteSpace(sessionId))
         {
-            return Unauthorized("session_missing", "Core session cookie is missing.");
+            // Both presentation forms are named, because only one of them is a cookie: an external
+            // client that sent no Authorization header is told what it failed to send, rather than
+            // about a browser mechanism it was never going to use. The cookie name comes from the
+            // constant so the sentence cannot drift from what is actually read.
+            return Unauthorized(
+                "session_missing",
+                $"No Core credential was presented: send the {SessionCookieName} cookie, " +
+                "or an 'Authorization: Bearer <session id>' header.");
         }
 
         var now = clock.UtcNow;

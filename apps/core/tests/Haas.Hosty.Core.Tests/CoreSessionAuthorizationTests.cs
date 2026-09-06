@@ -310,6 +310,25 @@ public sealed class CoreSessionAuthorizationTests
         Assert.Contains("access token was revoked", response.Body);
     }
 
+    // A caller that presented nothing at all is a different refusal from a dead credential, and the
+    // sentence has to work for the client that was never going to send a cookie in the first place.
+    [Fact]
+    public async Task RequireSessionAsync_NamesBothFormsWhenNoCredentialIsPresented()
+    {
+        var fixture = await AuthorizationFixture.CreateAsync(role: "host.user");
+
+        var response = Inspect(await CoreSessionAuthorization.RequireSessionAsync(
+            CreateRequest(includeSession: false, includeCsrf: false).Request,
+            fixture.Users,
+            fixture.Clock,
+            user => Task.FromResult<IResult>(Results.Ok())));
+
+        Assert.Equal(StatusCodes.Status401Unauthorized, response.StatusCode);
+        Assert.Contains("session_missing", response.Body);
+        Assert.Contains(CoreSessionAuthorization.SessionCookieName, response.Body);
+        Assert.Contains("Bearer", response.Body);
+    }
+
     // A credential whose record is gone — pruned, or never issued at all — is the one case the vague
     // sentence is still honest about, and it must stay byte-identical for a cookie and a bearer alike.
     [Fact]
