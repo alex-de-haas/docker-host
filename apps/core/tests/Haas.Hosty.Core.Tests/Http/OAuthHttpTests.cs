@@ -8,7 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Haas.Hosty.Core.Tests.Http;
 
-// The OAuth issuance path over the real pipeline (docs/features/mcp-oauth/plan.md): registration
+// The OAuth issuance path over the real pipeline (docs/features/mcp-oauth/feature.md): registration
 // behind its breaker, the authorization dance with PKCE, redemption, rotation, and the one page
 // that revokes it all. What comes out of the flow is an ordinary scoped access token, so the final
 // authority on every positive case is the surface the token is *for* answering it.

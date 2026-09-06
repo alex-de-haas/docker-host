@@ -5,7 +5,7 @@ using System.Text.Json.Serialization;
 namespace Haas.Hosty.Core;
 
 // Core as an OAuth 2.1 authorization server, per the MCP authorization specification
-// (docs/features/mcp-oauth/plan.md). This is an *issuance* path and nothing more: what comes out of
+// (docs/features/mcp-oauth/feature.md). This is an *issuance* path and nothing more: what comes out of
 // the token endpoint is an ordinary scoped access token — the same record the manual path mints,
 // revoked on the same page, validated by the same introspection. A capable client (Claude Code, an
 // editor) obtains and rotates its own credentials; the manual path stays forever, because it works

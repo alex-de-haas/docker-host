@@ -289,6 +289,15 @@ public sealed class CoreSessionAuthorizationTests
         });
         Assert.Contains("maximum lifetime", bothCapFirst.Body);
 
+        // A revoked credential that has also aged out reports the revocation: it is the deliberate
+        // act, and the one an operator is trying to confirm landed. (Pinned from #453.)
+        var both = await RefuseAsync(session => session with
+        {
+            RevokedAt = session.CreatedAt,
+            ExpiresAt = session.CreatedAt.AddHours(-1),
+        });
+        Assert.Contains("session_revoked", both.Body);
+
         // An id no record answers to names nothing — it may never have existed, and the user it
         // belonged to may since have been deleted — so it keeps the code it always had.
         var unknown = await RefuseAsync(session => session, bearer: "not_a_session");

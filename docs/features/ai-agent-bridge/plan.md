@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-06-09
-Updated: 2026-08-31
+Updated: 2026-09-06
 
 The shared model, the boundaries and the decision log live in [feature.md](feature.md) and are in
 force. This document holds only what is **not built**: the rollout checklist, and the design for the
@@ -16,7 +16,7 @@ and [agent-background-sessions](../agent-background-sessions/feature.md) — bot
 [scoped-access-tokens](../scoped-access-tokens/feature.md) (the token scopes and audit callback of open
 question 3 and the step-6 plaintext-admin-token cost), [mcp-facade](../mcp-facade/plan.md) (step-7
 topology 4's deferred "mcp-hub", placed on the existing gateway system app),
-[mcp-oauth](../mcp-oauth/plan.md), and [core-mcp](../core-mcp/feature.md) mutations.
+[mcp-oauth](../mcp-oauth/feature.md), and [core-mcp](../core-mcp/feature.md) mutations.
 
 ## Deliverables
 
@@ -32,9 +32,8 @@ topology 4's deferred "mcp-hub", placed on the existing gateway system app),
 - [x] 5. Embedded Core MCP: discovery and read-only observability. Shipped 2026-08-09 —
       [core-mcp](../core-mcp/feature.md). Delegated token issuance shipped with
       [ai-gateway](../ai-gateway/feature.md) as a Core HTTP route rather than an MCP tool.
-- [ ] 6. Validate with stock external agent clients — no gateway code. Partially done: Claude Code
-      against Core MCP works (2026-08-15). The rest of the matrix is unchecked below rather than
-      described as follow-up.
+- [x] 6. Validate with stock external agent clients — no gateway code. Every cell of the matrix
+      below is closed, the last two on 2026-09-06.
 - [x] 7. The `hosty mcp` connector and the Claude Code plugin packaging. Shipped 2026-08-15 and
       verified live on 2026-08-16 — [hosty-mcp-connector](../hosty-mcp-connector/feature.md): the
       connector, the Core control route it mints through, and `packages/hosty-claude-plugin`. Claude
@@ -75,14 +74,16 @@ individually, because "a stock client connected" is four different claims and on
       `get_my_app_role` and came back with demo-app's own `host-admin-bootstrap` and its seven
       permissions — values that cannot be guessed, which is why they were the ones asked for.
       Recorded in [hosty-mcp-connector](../hosty-mcp-connector/feature.md).
-- [ ] **Codex → Core `/api/mcp`.** Connects, but every call is refused. `codex exec` discovered the
-      tool names — so `initialize` and `tools/list` succeed over HTTP with an access token — and then
-      answered each call with "user cancelled MCP tool call": non-interactively there is nobody to
-      approve, and Core declared **no `readOnlyHint`** on any tool, so a client must assume they
-      mutate. Fixed in Core (`ReadOnly = true`, asserted on the wire), but this host runs a built
-      binary, so the cell stays open until a Core carrying that fix is deployed — one `codex exec`
-      then closes it. That the annotation was the *only* cause is likely but unproven: the isolating
-      experiment did not converge and was abandoned rather than reported as evidence.
+- [x] **Codex → Core `/api/mcp`** (2026-09-06). A stock `codex exec` with `-c` overrides — no
+      gateway code, and the operator's own `~/.codex/config.toml` untouched — called
+      `get_host_status` over HTTP with a credential scoped to `hosty:core`, and answered with Core
+      `0.97.1` and 9 running, 0 stopped, 0 errored apps: values matching `hosty apps list` and the
+      version `initialize` reports, which is the unguessable standard the Claude cell set. The run
+      carried `approval: never`, the condition the earlier attempt died under with "user cancelled
+      MCP tool call". Core's annotations were confirmed on the wire first — the five read tools
+      carry `readOnlyHint: true`, the five mutating ones `destructiveHint`/`idempotentHint` and no
+      read-only claim. That the annotation was the **only** cause remains unproven: the Codex CLI
+      moved between the two runs as well, and no isolating experiment was made.
 - [x] **Codex → demo-app `/api/mcp`** (2026-08-20), through the connector, exactly as Claude reached
       it. A stock `codex exec` with `-c` overrides — no gateway code, and the operator's own
       `~/.codex/config.toml` untouched — called `com_dhaas_ddemo-app__get_my_app_role` and returned
@@ -97,8 +98,11 @@ individually, because "a stock client connected" is four different claims and on
       the rule is a Hosty design choice, not general MCP knowledge. What this proves is that a loaded
       skill supplies facts the model otherwise lacks — the assumption
       [app-provided-skills](../app-provided-skills/feature.md) rests on.
-- [ ] **A non-loopback origin.** Everything so far was `127.0.0.1`, so nothing exercises external
-      ingress, TLS, or a proxy in the path.
+- [x] **A non-loopback origin** (2026-09-06). A stock Claude Code reached Core `/api/mcp` at the
+      prod host's public origin — external ingress, TLS and Cloudflare's proxy in the path, the
+      client arriving over IPv6 — and completed the whole OAuth flow with no credential in its
+      config; recorded in [mcp-oauth](../mcp-oauth/feature.md). What this does **not** cover is the
+      facade over such an origin, which [mcp-facade](../mcp-facade/plan.md) still owns and states.
 
 Record what each connection proves in the corresponding feature.md as it lands.
 
