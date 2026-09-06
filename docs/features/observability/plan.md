@@ -135,7 +135,7 @@ kernel.
       Served by an admin-session-gated `GET /api/core/logs?ring=&tail=&level=` beside the rest of the
       `/api/core/*` family, returning records and the run id. Admin-only for the same reason the
       per-app console tail is: request paths are in there, and in Development so are secret *key
-      names* ([app-secrets-store](../app-secrets-store.md)). **Not backed by `core.log`,** because the
+      names* ([app-secrets-store](../app-secrets-store/feature.md)). **Not backed by `core.log`,** because the
       file is absent under a foreground or `npm run dev` start, is truncated by the next background
       start, and is never rotated. The rings cost nothing when the telemetry app is absent and need no
       gate: the logging pipeline fills them either way, and nothing reads them until someone looks.

@@ -1,7 +1,7 @@
 # Core API
 
 Created: 2026-05-13
-Updated: 2026-09-01
+Updated: 2026-09-06
 
 ## Description
 
@@ -41,7 +41,7 @@ Mutating browser endpoints are CSRF-protected: `GET /api/auth/csrf` sets the dou
 - `GET /api/internal/apps/{appId}/secrets` - list the app's stored secret **key names** (never values); `HOSTY_APP_SERVICE_TOKEN`.
 - `GET /api/internal/apps/{appId}/secrets/{key}` - read one stored secret; `404` means no secret is stored, an expected reconnect-required state.
 - `PUT /api/internal/apps/{appId}/secrets/{key}` - store or replace a secret (`{ "value": … }`, non-empty UTF-8 ≤ 16 KiB, ≤ 256 keys per app).
-- `DELETE /api/internal/apps/{appId}/secrets/{key}` - delete a secret; idempotent. See [App Secrets Store](../app-secrets-store.md).
+- `DELETE /api/internal/apps/{appId}/secrets/{key}` - delete a secret; idempotent. See [App Secrets Store](../app-secrets-store/feature.md).
 
 Public ingress (see [Cloudflare Ingress](../cloudflare-ingress/feature.md)). The connection endpoints are
 host-admin; the publication ones are app-scoped and also host-admin. Both refuse when the active ingress

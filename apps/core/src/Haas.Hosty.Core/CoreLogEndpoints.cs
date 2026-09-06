@@ -2,7 +2,7 @@ namespace Haas.Hosty.Core;
 
 // Core's own recent log records, for the Dashboard's Core logs dialog. Host-admin only, for the same
 // reason the per-app console tail is: request paths run through here, and in Development so do secret
-// *key names* (see docs/features/app-secrets-store.md).
+// *key names* (see docs/features/app-secrets-store/feature.md).
 //
 // Reads the in-memory rings rather than `core.log`, so it answers on a host where that file does not
 // exist at all — a foreground Core, or `npm run dev`.
