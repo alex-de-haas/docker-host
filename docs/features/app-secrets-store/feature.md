@@ -1,13 +1,16 @@
 # App Secrets Store
 
-Status: Implemented (Core store + API in Core 0.60.0; SDK clients in `HostySdk.App` 0.3.0 and `@hosty-sdk/app` 0.4.0). Verified against a live Core 2026-07-22.
+Created: 2026-07-22
+Updated: 2026-09-06
 
 ## Description
 
 The app secrets store is a **Core-managed keychain for runtime-acquired app secrets**: values an
 app obtains while running and must later present to a third party — OAuth access and refresh
 tokens, API keys issued per user, webhook signing secrets. Unlike the credentials Hosty already
-stores, they cannot be hashed, because the app has to send them verbatim.
+stores, they cannot be hashed, because the app has to send them verbatim. Shipped in Core 0.60.0
+with SDK clients in `HostySdk.App` 0.3.0 and `@hosty-sdk/app` 0.4.0; verified against a live Core
+on 2026-07-22.
 
 Apps reach it only through Core, with the service token they already hold:
 
@@ -79,7 +82,7 @@ persisted document, not to the HTTP layer.
   reach `data/`). `updatedAt` is file-internal diagnostics and is not exposed by the API.
 - A missing file reads as an empty store. A **malformed file fails loud** rather than being
   silently replaced — silent replacement would be silent credential loss.
-- The `schemaVersion` exists so a future at-rest encryption pass is a lazy migration rather than
+- The `schemaVersion` exists so that a change of at-rest format is a lazy migration rather than
   a format break.
 
 ### Locking and the removal fences
@@ -160,8 +163,7 @@ secret", so a broken Core or proxy cannot masquerade as a reconnect-required sta
   `secret: true` settings and the Cloudflare API token. This is a deliberate parity choice: Core
   has no encryption-at-rest anywhere, and a one-file AES special case whose master key sits on
   the same disk would add code without materially changing the threat model. The upgrade path is
-  one platform-wide pass under a single Core master key, tracked in
-  [the design](../ideas/app-secrets-store.md).
+  one platform-wide pass under a single Core master key, tracked in [the plan](plan.md).
 - **Secret values are never logged**, never returned by Shell or admin APIs, and never included
   in app summaries or state payloads. Verified: a stored value appears zero times in Core's log.
 - **Secret key *names* do appear in Core's request log** (in Development, ASP.NET Core logs the
@@ -169,7 +171,7 @@ secret", so a broken Core or proxy cannot masquerade as a reconnect-required sta
   but apps should not encode sensitive data in a key name.
 - **The service token gains reach.** It already authorized directory, backup, and notification
   calls; it now also unlocks live third-party credentials. Its known limits — no expiry, no
-  scopes, no per-install generation ([2026-07-10 review, C-M7](../reviews/2026-07-10-core-code-review.md))
+  scopes, no per-install generation ([consolidated review, SEC-4](../../reviews/2026-09-06-consolidated-review.md); originally 2026-07-10 C-M7)
   — become more pressing, and scoping/expiry should land before marketplace-era third-party apps.
 - **Keeping data on removal keeps working credentials on disk** until reinstall or a delete-data
   removal. This mirrors `retained-config.json` and is the ratified trade-off for working
@@ -185,7 +187,14 @@ secret", so a broken Core or proxy cannot masquerade as a reconnect-required sta
   app's store.
 - No Shell UI, no CLI command, no rate limiting, no change events in v1.
 
-## Verification
+## Links
+
+- [Remaining follow-ups](plan.md)
+- [Core API](../core-api/feature.md)
+- [App data backup retention](../app-data-backup-retention/feature.md)
+- [Hosty App SDK](../hosty-app-sdk/feature.md)
+
+## Testing Expectations
 
 Automated: `dotnet test apps/core/tests/Haas.Hosty.Core.Tests` (store CRUD, bounds, permissions,
 malformed-file, both removal-race interleavings, lifecycle removal for both data choices) plus
@@ -200,11 +209,3 @@ at the limit succeeded; idempotent delete; a backup archive containing the app's
 **not** `secrets.json`; keep-data removal retaining the secret and a reinstall reading it back; a
 write during removal refused with `404` instead of recreating the file; delete-data removal
 removing it.
-
-## Links
-
-- [Promoted design](../ideas/app-secrets-store.md)
-- [Implementation plan](../planning/app-secrets-store.md)
-- [Core API](core-api/feature.md)
-- [App data backup retention](app-data-backup-retention/feature.md)
-- [Hosty App SDK](hosty-app-sdk/feature.md)
