@@ -91,12 +91,18 @@ client is told what it failed to send rather than about a mechanism it was never
 A credential that was presented and refused answers `401 session_invalid`, and the **message names
 which of the three conditions killed it**: revoked, past its absolute cap, or idle past its sliding
 window. The record is looked up by id first and judged live second, so the reason survives to the
-refusal instead of being folded into one boolean. Revocation is reported ahead of an expiry that also applies — it is the
-deliberate act, and the one an operator is trying to confirm landed. An access token says so in its own
-words rather than calling itself a session, since the credential most likely to die here is an
-OAuth-issued one whose grant was revoked on the tokens page
-([mcp-oauth](../mcp-oauth/feature.md)). Only when no record survives at all — pruned, or never issued —
-does the answer stay the vague "missing, expired, or revoked", which is then the honest one.
+refusal instead of being folded into one boolean.
+
+Two rules decide which cause is named when more than one applies. Revocation is reported ahead of an
+expiry that also holds — it is the deliberate act, and the one an operator is trying to confirm
+landed. Between the two windows the **earlier deadline** wins, compared as deadlines rather than by
+asking which has passed by now: an untouched browser session idles out on day 7 and hits its absolute
+cap on day 30, so a request on day 31 is past both, and naming whichever condition was tested first
+would call every long-abandoned session an absolute expiry. An access token says so in its own words
+rather than calling itself a session, since the credential most likely to die here is an OAuth-issued
+one whose grant was revoked on the [tokens page](../mcp-oauth/feature.md). Only when no record
+survives at all — pruned, or never issued — does the answer stay the vague "missing, expired, or
+revoked", which is then the honest one.
 
 The **code stays `session_invalid` for every cause**. Callers classify on the status class and pass the
 code through for logging, exactly as the identity table above requires, and all four causes recover the
@@ -212,8 +218,10 @@ new tab, which `allow-popups` permits.
 - Explicit logout revokes the session's grants; session *expiry* does not.
 - A refused Core credential names its cause: a revoked record and an expired one, refused side by side,
   answer the same `session_invalid` code and different messages — plus revocation winning over a
-  concurrent expiry, the idle window named apart from the absolute cap, an access token called by its
-  own name, and an unknown id still answered vaguely.
+  concurrent expiry, an access token called by its own name, and an unknown id still answered vaguely.
+- The window named is the earlier *deadline*, asserted in both directions: a session past both its idle
+  window and its absolute cap reports the idle window, and a token whose short cap beat its long idle
+  window reports the cap.
 - A request carrying no credential answers `session_missing` and names both accepted forms, so the
   sentence cannot regress to the cookie alone.
 - `/api/apps/{appId}/open` redirects an unauthenticated browser navigation to `/login?returnTo=…`

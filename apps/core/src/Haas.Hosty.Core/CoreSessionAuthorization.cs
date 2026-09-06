@@ -210,7 +210,7 @@ internal static class CoreSessionAuthorization
             string.Equals(candidate.Id, sessionId, StringComparison.Ordinal));
         if (session is null || !IsSessionLive(session, now, lifetimes.IdleFor(session.Kind)))
         {
-            return Unauthorized("session_invalid", DescribeDeadCredential(session, now));
+            return Unauthorized("session_invalid", DescribeDeadCredential(session, lifetimes.IdleFor(session?.Kind)));
         }
 
         // A scoped credential is not a session, and this is the line that makes that true.
@@ -308,7 +308,7 @@ internal static class CoreSessionAuthorization
     // Naming the cause tells the caller nothing about anyone else: it already holds the exact credential
     // being described, and ids are 256 bits of randomness, so "revoked" versus "never existed" is not an
     // oracle anything can walk.
-    private static string DescribeDeadCredential(AuthSessionRecord? session, DateTimeOffset now)
+    private static string DescribeDeadCredential(AuthSessionRecord? session, TimeSpan idle)
     {
         if (session is null)
         {
@@ -329,9 +329,16 @@ internal static class CoreSessionAuthorization
             return $"This {subject} was revoked.";
         }
 
-        // Whichever window ran out is named, because they are tuned by different settings: the absolute
-        // cap versus the sliding idle window (see AuthLifetimes).
-        return session.ExpiresAt <= now
+        // Which window ran out is named, because different settings tune them (see AuthLifetimes) — and
+        // it is decided by comparing the two *deadlines*, not by asking which has passed by now. Both
+        // usually have: a browser session idles out on day 7 and hits its absolute cap on day 30, so a
+        // request on day 31 is past both, and reporting whichever the code happened to test first would
+        // call every long-abandoned session an absolute expiry and defeat the distinction. The earlier
+        // deadline is the one that actually killed the credential. Only one of them can have passed
+        // when they are far apart, and the same comparison still picks it: the elapsed one is the
+        // earlier one. A tie reads as the absolute cap, which is the stricter of the two.
+        var idleDeadline = (session.LastSeenAt ?? session.CreatedAt).Add(idle);
+        return session.ExpiresAt <= idleDeadline
             ? $"This {subject} has expired."
             : $"This {subject} expired after its idle window elapsed.";
     }
