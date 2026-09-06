@@ -72,7 +72,10 @@ application instance) bounds the flood the toggle would otherwise admit.
 
 **The AS metadata says so.** `registration_endpoint` is optional in RFC 8414, and the document omits
 it entirely while the breaker is off — read live per request, so it appears and disappears with the
-toggle in the same process. A client that reads an endpoint it cannot use spends the flow finding
+toggle in the same process. Both well-known documents answer `Cache-Control: no-store` for that
+reason: each is rendered from settings an operator edits live (the breaker, and the public origin
+they are built from), and a copy held by a client or a proxy is a copy of a decision that has since
+changed. Discovery runs once per connection, so the re-fetch costs nothing worth the correctness. A client that reads an endpoint it cannot use spends the flow finding
 that out from a `403`; a client that reads no endpoint falls back to the manual token path, which is
 the answer that was true all along. Nothing already registered depends on the field: registration is
 a one-time step, and the endpoints that carry a registered client through the flow stay advertised.
@@ -108,7 +111,7 @@ without a public identity (null, not a guess): no metadata simply means the manu
   access token and its refresh — asserted from the victim's and the thief's side both.
 - The breaker: registration refused off, working on, refused again when turned back off — with
   already-issued credentials untouched; and the AS metadata's `registration_endpoint` absent, then
-  present, then absent again across those same states.
+  present, then absent again across those same states, with both documents answering `no-store`.
 - PKCE pairs: wrong verifier refused; a code dying on first presentation, valid or not.
 - Resource pairs: absent and unknown refused via redirect; an app resource minting a token active at
   that app's introspection and refused at Core MCP.

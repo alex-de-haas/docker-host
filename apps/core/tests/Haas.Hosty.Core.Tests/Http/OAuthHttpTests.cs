@@ -271,7 +271,11 @@ public sealed class OAuthHttpTests
         Assert.Equal("http://localhost:7070", server.GetProperty("issuer").GetString());
         Assert.Equal("S256", server.GetProperty("code_challenge_methods_supported").EnumerateArray().Single().GetString());
 
-        var resource = await ReadJsonAsync(await client.GetAsync("/.well-known/oauth-protected-resource/api/mcp"));
+        // Both documents are built from the live public origin, which an operator edits, so neither
+        // is storable — a cached one names the machine this host used to be reachable at.
+        using var resourceResponse = await client.GetAsync("/.well-known/oauth-protected-resource/api/mcp");
+        Assert.True(resourceResponse.Headers.CacheControl?.NoStore);
+        var resource = await ReadJsonAsync(resourceResponse);
         Assert.Equal("http://localhost:7070/api/mcp", resource.GetProperty("resource").GetString());
         Assert.Equal("http://localhost:7070", resource.GetProperty("authorization_servers").EnumerateArray().Single().GetString());
 
@@ -295,7 +299,11 @@ public sealed class OAuthHttpTests
         using var client = harness.CreateClient();
 
         // Off (the default): the key is absent — not null, absent, per RFC 8414's optional field.
-        var off = await ReadJsonAsync(await client.GetAsync("/.well-known/oauth-authorization-server"));
+        using var offResponse = await client.GetAsync("/.well-known/oauth-authorization-server");
+        // And the document says not to keep it. A copy held by a client or a proxy is a copy of a
+        // toggle that has since moved, which would hand back the confusion this test exists to end.
+        Assert.True(offResponse.Headers.CacheControl?.NoStore);
+        var off = await ReadJsonAsync(offResponse);
         Assert.False(off.TryGetProperty("registration_endpoint", out _));
         // The rest of the document is unaffected: the flow stays discoverable for a client that
         // already registered while the breaker was on.
