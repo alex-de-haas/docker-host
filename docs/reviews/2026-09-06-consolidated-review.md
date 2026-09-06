@@ -21,7 +21,7 @@ Under the repository's documentation policy a review never carries status. A fin
 | `2026-08-25-core-performance-review.md` (Core performance) | pre-#406 | 27 | 7 | 7 | 13 | 1 |
 | `2026-09-05-code-documentation-simplification-review.md` (never committed; absorbed in full) | `8a7abbc8` | 15 | 0 | 0 | 15 | 0 |
 
-The remediation pattern across all five is the same: the High findings whose ids appear in commit subjects were fixed (`a7f6a7ea` for 2026-07-05; #235–#277 for 2026-07-10; #406–#408 for 2026-08-25), and the Medium/Low tail, the concurrency cluster, and the structural items were never worked. The three items closed from the 2026-08-18 review were side effects of the read-path caching PR and the assistant-panel move, not targeted fixes.
+The remediation pattern across all five is the same: the High findings whose IDs appear in commit subjects were fixed (`a7f6a7ea` for 2026-07-05; #235–#277 for 2026-07-10; #406–#408 for 2026-08-25), and the Medium/Low tail, the concurrency cluster, and the structural items were never worked. The three items closed from the 2026-08-18 review were side effects of the read-path caching PR and the assistant-panel move, not targeted fixes.
 
 The concern that reviews this old no longer describe the code applied to very few items. Code moved (telemetry pages into `apps/telemetry-ui`, the assistant panel into `apps/ai-gateway/web`, the marketplace into `apps/marketplace`) but unfixed defects moved with it and are cited below at their new locations. Only three items became moot through deletion; they are listed under "Obsolete and refuted".
 
@@ -46,7 +46,7 @@ Line anchors are at the baseline commit and drift with every change; locate find
 
 Origin labels map as: Critical/High → High, Medium → Medium, Low → Low, P1 → High, P2 → Medium, P3 → Low. Where the re-verification judged the impact narrower than the origin label, the note says so; the origin label is kept.
 
-**Status:** *Open* means nothing has been done; *Partial* means a named part landed and the rest did not. The "Origin" column keeps the superseding ids so existing plans, memory notes, and pull requests stay traceable.
+**Status:** *Open* means nothing has been done; *Partial* means a named part landed and the rest did not. The "Origin" column keeps the original IDs from the superseded reviews so existing plans, memory notes, and pull requests stay traceable.
 
 ## Executive summary
 
