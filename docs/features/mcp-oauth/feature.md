@@ -106,11 +106,6 @@ consent page, redeemed a token and called a tool. Revoking the grant's one row t
 call **inside the same live session** — the property introspection-per-call buys over a token
 validated locally until its TTL runs out.
 
-One rough edge the run surfaced, not blocking: a refusal reports `session_invalid` — "missing,
-expired, or revoked" — so an operator watching a client fail cannot tell a revocation from an
-expiry by the message alone; the run above read as "the token expired" when the grant had in fact
-been revoked.
-
 ## Testing Expectations
 
 - The whole flow over the real pipeline: register → authorize → consent → redeem → the token
