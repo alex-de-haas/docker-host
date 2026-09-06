@@ -32,9 +32,8 @@ topology 4's deferred "mcp-hub", placed on the existing gateway system app),
 - [x] 5. Embedded Core MCP: discovery and read-only observability. Shipped 2026-08-09 —
       [core-mcp](../core-mcp/feature.md). Delegated token issuance shipped with
       [ai-gateway](../ai-gateway/feature.md) as a Core HTTP route rather than an MCP tool.
-- [ ] 6. Validate with stock external agent clients — no gateway code. Partially done: Claude Code
-      against Core MCP works (2026-08-15). The rest of the matrix is unchecked below rather than
-      described as follow-up.
+- [x] 6. Validate with stock external agent clients — no gateway code. Every cell of the matrix
+      below is closed, the last two on 2026-09-06.
 - [x] 7. The `hosty mcp` connector and the Claude Code plugin packaging. Shipped 2026-08-15 and
       verified live on 2026-08-16 — [hosty-mcp-connector](../hosty-mcp-connector/feature.md): the
       connector, the Core control route it mints through, and `packages/hosty-claude-plugin`. Claude
@@ -75,14 +74,16 @@ individually, because "a stock client connected" is four different claims and on
       `get_my_app_role` and came back with demo-app's own `host-admin-bootstrap` and its seven
       permissions — values that cannot be guessed, which is why they were the ones asked for.
       Recorded in [hosty-mcp-connector](../hosty-mcp-connector/feature.md).
-- [ ] **Codex → Core `/api/mcp`.** Connects, but every call is refused. `codex exec` discovered the
-      tool names — so `initialize` and `tools/list` succeed over HTTP with an access token — and then
-      answered each call with "user cancelled MCP tool call": non-interactively there is nobody to
-      approve, and Core declared **no `readOnlyHint`** on any tool, so a client must assume they
-      mutate. Fixed in Core (`ReadOnly = true`, asserted on the wire), but this host runs a built
-      binary, so the cell stays open until a Core carrying that fix is deployed — one `codex exec`
-      then closes it. That the annotation was the *only* cause is likely but unproven: the isolating
-      experiment did not converge and was abandoned rather than reported as evidence.
+- [x] **Codex → Core `/api/mcp`** (2026-09-06). A stock `codex exec` with `-c` overrides — no
+      gateway code, and the operator's own `~/.codex/config.toml` untouched — called
+      `get_host_status` over HTTP with a credential scoped to `hosty:core`, and answered with Core
+      `0.97.1` and 9 running, 0 stopped, 0 errored apps: values matching `hosty apps list` and the
+      version `initialize` reports, which is the unguessable standard the Claude cell set. The run
+      carried `approval: never`, the condition the earlier attempt died under with "user cancelled
+      MCP tool call". Core's annotations were confirmed on the wire first — the five read tools
+      carry `readOnlyHint: true`, the five mutating ones `destructiveHint`/`idempotentHint` and no
+      read-only claim. That the annotation was the **only** cause remains unproven: the Codex CLI
+      moved between the two runs as well, and no isolating experiment was made.
 - [x] **Codex → demo-app `/api/mcp`** (2026-08-20), through the connector, exactly as Claude reached
       it. A stock `codex exec` with `-c` overrides — no gateway code, and the operator's own
       `~/.codex/config.toml` untouched — called `com_dhaas_ddemo-app__get_my_app_role` and returned
