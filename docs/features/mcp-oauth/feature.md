@@ -12,13 +12,15 @@ same introspection. OAuth replaces issuance only, nothing downstream of it.
 
 ## The Flow
 
-1. A client calls an MCP endpoint without a token and gets `401` with `WWW-Authenticate` pointing at
-   RFC 9728 resource metadata naming Core as the authorization server. Core MCP sets the header on
-   the response's way out ([McpEndpoints.cs](../../../apps/core/src/Haas.Hosty.Core/McpEndpoints.cs)),
-   so no `401` can forget it; apps and the facade serve theirs through the SDK helpers. A request
-   carrying no credential at all is refused earlier than that — by the CSRF gate the browser case
-   needs — and answers `403 csrf_invalid` without the challenge, so a stock client picks the flow up
-   from the well-known resource-metadata path instead. That is the route the live run below took.
+1. A client finds the authorization server through RFC 9728 resource metadata, by one of two routes,
+   and which one it takes depends on what it presented. A call carrying a **rejected** bearer
+   credential is answered `401` with `WWW-Authenticate` naming the resource-metadata URL; Core MCP
+   sets that header on the response's way out
+   ([McpEndpoints.cs](../../../apps/core/src/Haas.Hosty.Core/McpEndpoints.cs)), so no `401` can forget
+   it, and apps and the facade serve theirs through the SDK helpers. A call carrying **no credential
+   at all** never gets that far: the CSRF gate the browser case needs refuses it first with
+   `403 csrf_invalid` and no challenge. A client starting cold therefore reads the well-known
+   resource-metadata path directly, which is the route the live run below took.
 2. The client reads `/.well-known/oauth-authorization-server` (RFC 8414) and registers itself via
    Dynamic Client Registration (RFC 7591).
 3. `GET /api/auth/oauth/authorize` validates everything — client, redirect_uri, PKCE (S256 only),
