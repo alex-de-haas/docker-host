@@ -288,7 +288,7 @@ This is a recommendation for triage into feature plans, not tracked status. Each
 | Check | Result |
 | --- | --- |
 | `git rev-parse HEAD`; `git status --short` | Baseline `8a7abbc8`; clean apart from the uncommitted 2026-09-05 review |
-| Per-finding re-verification of the five superseded reviews against the baseline (read-only: `git log -S`, `git log --grep`, `grep`, `sed`) | 210 items examined; verdict counts in the table above |
+| Per-finding re-verification of the four earlier reviews against the baseline (read-only: `git log -S`, `git log --grep`, `grep`, `sed`) | 210 items examined (108 + 33 + 42 + 27); verdict counts in the table above. The 15 items of the 2026-09-05 review were not re-verified: it was written at this same baseline, so they are absorbed as they stand, which brings the total to 225. Obsolete and refuted entries are counted inside their review's item count, not in addition to it. |
 | Hand re-read of SEC-1, LC-2, LC-3, SEC-7, LC-13, CLI-1, LC-16 | Agreed with the automated verdicts |
 | `node scripts/docs-index.mjs --check` | Passes; does not detect OPS-11 |
 | Build and test status at this baseline | Carried from the 2026-09-05 review, which ran at the same commit: `npm run lint` passed with two Shell navigation warnings; `npm run build` passed for Core, CLI, telemetry backend, Marketplace, telemetry UI, Shell, demo app; `npm run ai-gateway:build-web` passed; `npm test` passed (TypeScript SDK 69, .NET SDK 53, Core 1,754, CLI 217, telemetry backend 115, Marketplace 103, telemetry UI 10, Shell 103, AI Gateway 248); `swift test` for HostyKit passed 157 tests in 24 suites |

@@ -1,7 +1,7 @@
 # Feature: Observability (telemetry collection, storage, and UI)
 
 Created: 2026-06-28
-Updated: 2026-08-31
+Updated: 2026-09-06
 
 Runtime apps export OpenTelemetry to a collector; a Hosty-native **telemetry backend** stores the
 three signals in embedded SQLite and serves a query API; a **telemetry UI** system app renders
