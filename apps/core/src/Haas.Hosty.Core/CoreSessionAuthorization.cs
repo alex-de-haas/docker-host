@@ -189,20 +189,28 @@ internal static class CoreSessionAuthorization
         var sessionId = ReadSessionCredential(request).Value;
         if (string.IsNullOrWhiteSpace(sessionId))
         {
-            return Unauthorized("session_missing", "Core session cookie is missing.");
+            // Both presentation forms are named, because only one of them is a cookie: an external
+            // client that sent no Authorization header is told what it failed to send, rather than
+            // about a browser mechanism it was never going to use. The cookie name comes from the
+            // constant so the sentence cannot drift from what is actually read.
+            return Unauthorized(
+                "session_missing",
+                $"No Core credential was presented: send the {SessionCookieName} cookie, " +
+                "or an 'Authorization: Bearer <session id>' header.");
         }
 
         var now = clock.UtcNow;
         var lifetimes = ResolveLifetimes(request);
         var state = await users.ReadAsync(cancellationToken);
-        // The idle window depends on the record, so it is resolved per candidate rather than once: a
-        // browser session and an access token live by different clocks and both resolve through here.
+        // The record is looked up first and judged second, rather than in one predicate: a dead record
+        // still knows *how* it died, and the refusal below says so. The idle window is resolved from the
+        // record rather than once up front, because a browser session and an access token live by
+        // different clocks and both resolve through here.
         var session = state.Sessions.FirstOrDefault(candidate =>
-            string.Equals(candidate.Id, sessionId, StringComparison.Ordinal) &&
-            IsSessionLive(candidate, now, lifetimes.IdleFor(candidate.Kind)));
-        if (session is null)
+            string.Equals(candidate.Id, sessionId, StringComparison.Ordinal));
+        if (session is null || !IsSessionLive(session, now, lifetimes.IdleFor(session.Kind)))
         {
-            return Unauthorized("session_invalid", "Core session is missing, expired, or revoked.");
+            return Unauthorized("session_invalid", DescribeDeadCredential(session, lifetimes.IdleFor(session?.Kind)));
         }
 
         // A scoped credential is not a session, and this is the line that makes that true.
@@ -285,6 +293,54 @@ internal static class CoreSessionAuthorization
             // Sliding the idle window is advisory; a transient I/O or concurrency failure must not fail the
             // authenticated request. Client cancellation still propagates. The window slides on the next use.
         }
+    }
+
+    // Why the credential was refused, in the words an operator debugging a client needs. IsSessionLive
+    // folds three conditions into one boolean, and revoked-versus-expired is exactly the distinction
+    // someone reads this message to make: on 2026-09-06 a revoked OAuth grant read as an expiry to the
+    // client watching it fail (docs/features/mcp-oauth/feature.md).
+    //
+    // The code stays `session_invalid` for every cause. Callers classify Core's refusals on the status
+    // class and pass the code through for logging (docs/features/auth-session-lifecycle/feature.md), and
+    // all four causes lead to the same recovery — authenticate again — so a new code would add a Core
+    // HTTP API surface callers could match on without buying any of them new behavior.
+    //
+    // Naming the cause tells the caller nothing about anyone else: it already holds the exact credential
+    // being described, and ids are 256 bits of randomness, so "revoked" versus "never existed" is not an
+    // oracle anything can walk.
+    private static string DescribeDeadCredential(AuthSessionRecord? session, TimeSpan idle)
+    {
+        if (session is null)
+        {
+            // Dead records are pruned (revoked ones after 7 days), so an id whose record is gone is
+            // genuinely indistinguishable from one that never existed — the one case where the old
+            // three-way sentence is still the honest answer.
+            return "Core session is missing, expired, or revoked.";
+        }
+
+        // An access token is not a "session" to the person holding it, and the credential most likely to
+        // die here is an OAuth-issued one whose grant was revoked on the tokens page.
+        var subject = AccessTokenKinds.IsAccessToken(session.Kind) ? "access token" : "Core session";
+
+        if (session.RevokedAt is not null)
+        {
+            // Revocation wins over an expiry that also applies: it is the deliberate act, and it is the
+            // one the operator is trying to confirm landed.
+            return $"This {subject} was revoked.";
+        }
+
+        // Which window ran out is named, because different settings tune them (see AuthLifetimes) — and
+        // it is decided by comparing the two *deadlines*, not by asking which has passed by now. Both
+        // usually have: a browser session idles out on day 7 and hits its absolute cap on day 30, so a
+        // request on day 31 is past both, and reporting whichever the code happened to test first would
+        // call every long-abandoned session an absolute expiry and defeat the distinction. The earlier
+        // deadline is the one that actually killed the credential. Only one of them can have passed
+        // when they are far apart, and the same comparison still picks it: the elapsed one is the
+        // earlier one. A tie reads as the absolute cap, which is the stricter of the two.
+        var idleDeadline = (session.LastSeenAt ?? session.CreatedAt).Add(idle);
+        return session.ExpiresAt <= idleDeadline
+            ? $"This {subject} has expired."
+            : $"This {subject} expired after its idle window elapsed.";
     }
 
     private static CoreSessionAuthorizationResult Unauthorized(string code, string message)
