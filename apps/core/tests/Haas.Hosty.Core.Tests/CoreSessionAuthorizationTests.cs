@@ -271,11 +271,46 @@ public sealed class CoreSessionAuthorizationTests
         Assert.Contains("session_expired", idled.Body);
         Assert.Contains("idle too long", idled.Body);
 
+        // Long-abandoned credentials are past *both* windows, which is the ordinary case rather than
+        // an edge one — a browser session idles out on day 7 and hits its cap on day 30. The sentence
+        // names the deadline that elapsed first, so the same record reads as idle or as capped
+        // depending on which one actually killed it, not on which condition is tested first.
+        var bothIdleFirst = await RefuseAsync(session => session with
+        {
+            ExpiresAt = session.CreatedAt.AddHours(-1),
+            LastSeenAt = session.CreatedAt.AddDays(-8),
+        });
+        Assert.Contains("idle too long", bothIdleFirst.Body);
+
+        var bothCapFirst = await RefuseAsync(session => session with
+        {
+            ExpiresAt = session.CreatedAt.AddDays(-10),
+            LastSeenAt = session.CreatedAt.AddDays(-8),
+        });
+        Assert.Contains("maximum lifetime", bothCapFirst.Body);
+
         // An id no record answers to names nothing — it may never have existed, and the user it
         // belonged to may since have been deleted — so it keeps the code it always had.
         var unknown = await RefuseAsync(session => session, bearer: "not_a_session");
         Assert.Equal(StatusCodes.Status401Unauthorized, unknown.StatusCode);
         Assert.Contains("session_invalid", unknown.Body);
+    }
+
+    [Fact]
+    public async Task RequireSessionAsync_NamesBothWaysACredentialCanBePresented()
+    {
+        // A bearer client that sent nothing was told a cookie was missing — a browser mechanism it
+        // was never going to use. Both forms resolve here, so both are named.
+        var response = Inspect(await CoreSessionAuthorization.RequireSessionAsync(
+            CreateRequest(includeSession: false, includeCsrf: false).Request,
+            (await AuthorizationFixture.CreateAsync(role: "host.user")).Users,
+            new FakeClock(DateTimeOffset.Parse("2026-06-02T12:00:00Z")),
+            user => Task.FromResult<IResult>(Results.Ok())));
+
+        Assert.Equal(StatusCodes.Status401Unauthorized, response.StatusCode);
+        Assert.Contains("session_missing", response.Body);
+        Assert.Contains(CoreSessionAuthorization.SessionCookieName, response.Body);
+        Assert.Contains("Authorization: Bearer", response.Body);
     }
 
     [Fact]

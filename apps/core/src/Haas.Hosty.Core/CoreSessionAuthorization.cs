@@ -58,14 +58,19 @@ internal static class CoreSessionAuthorization
             return ("session_revoked", $"This {noun} has been revoked.");
         }
 
-        if (record.ExpiresAt <= now)
+        // Which window ran out is decided by comparing the two *deadlines*, never by asking which one
+        // has passed by now — usually both have. A browser session idles out on day 7 and hits its cap
+        // on day 30, so a request on day 31 is past both, and naming whichever condition was tested
+        // first would call every long-abandoned session an absolute expiry and lose the distinction
+        // this exists to make. The earlier deadline is the one that actually killed the credential;
+        // when only one has elapsed it is still the earlier one, so the same comparison answers both
+        // cases. A tie reads as the cap, the stricter of the two. (Ported from #453.)
+        var idleDeadline = (record.LastSeenAt ?? record.CreatedAt).Add(idle);
+        if (record.ExpiresAt <= now || idleDeadline <= now)
         {
-            return ("session_expired", $"This {noun} has reached its maximum lifetime.");
-        }
-
-        if ((record.LastSeenAt ?? record.CreatedAt).Add(idle) <= now)
-        {
-            return ("session_expired", $"This {noun} has been idle too long.");
+            return ("session_expired", record.ExpiresAt <= idleDeadline
+                ? $"This {noun} has reached its maximum lifetime."
+                : $"This {noun} has been idle too long.");
         }
 
         return ("session_invalid", "Core session is missing, expired, or revoked.");
@@ -238,7 +243,14 @@ internal static class CoreSessionAuthorization
         var sessionId = ReadSessionCredential(request).Value;
         if (string.IsNullOrWhiteSpace(sessionId))
         {
-            return Unauthorized("session_missing", "Core session cookie is missing.");
+            // Both presentation forms are named, because only one of them is a cookie: an external
+            // client that sent no Authorization header is told what it failed to send rather than
+            // about a browser mechanism it was never going to use. The cookie name comes from the
+            // constant, so the sentence cannot drift from what is actually read.
+            return Unauthorized(
+                "session_missing",
+                $"No Core credential was presented: send the {SessionCookieName} cookie, " +
+                "or an 'Authorization: Bearer <session id>' header.");
         }
 
         var now = clock.UtcNow;

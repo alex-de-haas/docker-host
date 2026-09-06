@@ -86,7 +86,10 @@ implementation deviated from the original design sketch and stayed.
 
 **A refusal says which of those happened**, the way the app-session path always has: `session_revoked`
 ("has been revoked"), `session_expired` ("has reached its maximum lifetime" / "has been idle too
-long"), and `session_missing` for a request carrying no credential at all. `session_invalid` is left
+long"), and `session_missing` for a request carrying no credential at all — which names both ways one
+can be presented, since a bearer client was never going to send a cookie. Between the two expiries the
+sentence names the **earlier deadline**, not whichever condition is tested first: a long-abandoned
+session is past both windows, and the one that elapsed first is the one that killed it. `session_invalid` is left
 to mean what it can actually prove — no record answers to this id — rather than standing in for all
 three. `IsSessionLive` still makes the decision alone and the explanation is derived from the record
 afterwards, so a liveness rule added there degrades the message to `session_invalid` instead of
