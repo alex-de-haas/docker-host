@@ -1,7 +1,7 @@
 # MCP OAuth — Automated Issuance For Scoped Tokens
 
 Created: 2026-08-25
-Updated: 2026-08-25
+Updated: 2026-09-06
 
 Core is an OAuth 2.1 authorization server, per the MCP authorization specification, so a capable
 client (Claude Code, an editor) obtains and rotates [scoped access
@@ -12,10 +12,15 @@ same introspection. OAuth replaces issuance only, nothing downstream of it.
 
 ## The Flow
 
-1. A client calls an MCP endpoint without a token and gets `401` with `WWW-Authenticate` pointing at
-   RFC 9728 resource metadata naming Core as the authorization server. Core MCP sets the header on
-   the response's way out ([McpEndpoints.cs](../../../apps/core/src/Haas.Hosty.Core/McpEndpoints.cs)),
-   so no refusal path can forget it; apps and the facade serve theirs through the SDK helpers.
+1. A client finds the authorization server through RFC 9728 resource metadata, by one of two routes,
+   and which one it takes depends on what it presented. A call carrying a **rejected** bearer
+   credential is answered `401` with `WWW-Authenticate` naming the resource-metadata URL; Core MCP
+   sets that header on the response's way out
+   ([McpEndpoints.cs](../../../apps/core/src/Haas.Hosty.Core/McpEndpoints.cs)), so no `401` can forget
+   it, and apps and the facade serve theirs through the SDK helpers. A call carrying **no credential
+   at all** never gets that far: the CSRF gate the browser case needs refuses it first with
+   `403 csrf_invalid` and no challenge. A client starting cold therefore reads the well-known
+   resource-metadata path directly, which is the route the live run below took.
 2. The client reads `/.well-known/oauth-authorization-server` (RFC 8414) and registers itself via
    Dynamic Client Registration (RFC 7591).
 3. `GET /api/auth/oauth/authorize` validates everything — client, redirect_uri, PKCE (S256 only),
@@ -70,6 +75,19 @@ walked through it — registered clients and issued grants keep working. While o
 sliding window (5 per 10 minutes, a DI singleton rather than a static so its state belongs to one
 application instance) bounds the flood the toggle would otherwise admit.
 
+**The AS metadata says so.** `registration_endpoint` is optional in RFC 8414, and the document omits
+it entirely while the breaker is off — read live per request, so it appears and disappears with the
+toggle in the same process. A client that reads an endpoint it cannot use spends the flow finding
+that out from a `403`; a client that reads no endpoint falls back to the manual token path, which is
+the answer that was true all along. Nothing already registered depends on the field: registration is
+a one-time step, and the endpoints that carry a registered client through the flow stay advertised.
+
+Both well-known documents answer `Cache-Control: no-store`, because a live read is only as live as
+the copy the client holds: each is rendered from settings an operator edits (the breaker, and the
+public origin they are built from), so a document stored by a client or by a proxy in the path is a
+copy of a decision that has since changed. Discovery runs once per connection, so the re-fetch costs
+nothing worth trading the correctness for.
+
 Public clients only: no secret is issued (`token_endpoint_auth_method: none`), PKCE is what binds a
 code to the client that requested it. Redirect URIs must be https or loopback-http — a routable
 http URI would carry the code in clear. Registered clients are listed for administrators
@@ -92,6 +110,15 @@ because a loopback URL in that document would send both to the wrong machine. Th
 such dependency, which is one more reason it is permanent. Apps refuse to build resource metadata
 without a public identity (null, not a guess): no metadata simply means the manual path.
 
+## Verified Live
+
+2026-09-06, against the prod host over its public origin: the perimeter the caveat above describes,
+with Cloudflare's proxy and TLS in the path and the client arriving over IPv6. A stock Claude Code
+whose config entry carried **no credential** registered itself through DCR, sent its operator to the
+consent page, redeemed a token and called a tool. Revoking the grant's one row then stopped the next
+call **inside the same live session** — the property introspection-per-call buys over a token
+validated locally until its TTL runs out.
+
 ## Testing Expectations
 
 - The whole flow over the real pipeline: register → authorize → consent → redeem → the token
@@ -100,7 +127,8 @@ without a public identity (null, not a guess): no metadata simply means the manu
 - The theft signal: a replayed spent refresh token killing the whole chain, including the winner's
   access token and its refresh — asserted from the victim's and the thief's side both.
 - The breaker: registration refused off, working on, refused again when turned back off — with
-  already-issued credentials untouched.
+  already-issued credentials untouched; and the AS metadata's `registration_endpoint` absent, then
+  present, then absent again across those same states, with both documents answering `no-store`.
 - PKCE pairs: wrong verifier refused; a code dying on first presentation, valid or not.
 - Resource pairs: absent and unknown refused via redirect; an app resource minting a token active at
   that app's introspection and refused at Core MCP.

@@ -239,7 +239,107 @@ public sealed class CoreSessionAuthorizationTests
         var response = Inspect(result);
 
         Assert.Equal(StatusCodes.Status401Unauthorized, response.StatusCode);
-        Assert.Contains("session_invalid", response.Body);
+        Assert.Contains("session_revoked", response.Body);
+    }
+
+    [Fact]
+    public async Task RequireSessionAsync_TellsRevocationApartFromExpiry()
+    {
+        // One message covering "missing, expired, or revoked" reads as an expiry to whoever meets
+        // it, so a revocation looks like a credential that aged out and the operator waits for a
+        // refresh that will never help. Each cause answers its own code and its own sentence; every
+        // one of them is still a 401, which is what clients actually branch on
+        // (docs/features/auth-session-lifecycle/feature.md).
+        var revoked = await RefuseAsync(session => session with { RevokedAt = session.CreatedAt });
+        Assert.Equal(StatusCodes.Status401Unauthorized, revoked.StatusCode);
+        Assert.Contains("session_revoked", revoked.Body);
+        Assert.Contains("Core session has been revoked", revoked.Body);
+
+        // Past its absolute cap, and past its idle window: both are expiry, and they are told apart
+        // by their sentence rather than by their code, because the fix differs only in degree.
+        var capped = await RefuseAsync(session => session with { ExpiresAt = session.CreatedAt.AddMinutes(-1) });
+        Assert.Equal(StatusCodes.Status401Unauthorized, capped.StatusCode);
+        Assert.Contains("session_expired", capped.Body);
+        Assert.Contains("maximum lifetime", capped.Body);
+
+        var idled = await RefuseAsync(session => session with
+        {
+            ExpiresAt = session.CreatedAt.AddDays(30),
+            LastSeenAt = session.CreatedAt.AddDays(-8),
+        });
+        Assert.Equal(StatusCodes.Status401Unauthorized, idled.StatusCode);
+        Assert.Contains("session_expired", idled.Body);
+        Assert.Contains("idle too long", idled.Body);
+
+        // Long-abandoned credentials are past *both* windows, which is the ordinary case rather than
+        // an edge one — a browser session idles out on day 7 and hits its cap on day 30. The sentence
+        // names the deadline that elapsed first, so the same record reads as idle or as capped
+        // depending on which one actually killed it, not on which condition is tested first.
+        var bothIdleFirst = await RefuseAsync(session => session with
+        {
+            ExpiresAt = session.CreatedAt.AddHours(-1),
+            LastSeenAt = session.CreatedAt.AddDays(-8),
+        });
+        Assert.Contains("idle too long", bothIdleFirst.Body);
+
+        var bothCapFirst = await RefuseAsync(session => session with
+        {
+            ExpiresAt = session.CreatedAt.AddDays(-10),
+            LastSeenAt = session.CreatedAt.AddDays(-8),
+        });
+        Assert.Contains("maximum lifetime", bothCapFirst.Body);
+
+        // A revoked credential that has also aged out reports the revocation: it is the deliberate
+        // act, and the one an operator is trying to confirm landed. (Pinned from #453.)
+        var both = await RefuseAsync(session => session with
+        {
+            RevokedAt = session.CreatedAt,
+            ExpiresAt = session.CreatedAt.AddHours(-1),
+        });
+        Assert.Contains("session_revoked", both.Body);
+
+        // An id no record answers to names nothing — it may never have existed, and the user it
+        // belonged to may since have been deleted — so it keeps the code it always had.
+        var unknown = await RefuseAsync(session => session, bearer: "not_a_session");
+        Assert.Equal(StatusCodes.Status401Unauthorized, unknown.StatusCode);
+        Assert.Contains("session_invalid", unknown.Body);
+    }
+
+    [Fact]
+    public async Task RequireSessionAsync_NamesBothWaysACredentialCanBePresented()
+    {
+        // A bearer client that sent nothing was told a cookie was missing — a browser mechanism it
+        // was never going to use. Both forms resolve here, so both are named.
+        var response = Inspect(await CoreSessionAuthorization.RequireSessionAsync(
+            CreateRequest(includeSession: false, includeCsrf: false).Request,
+            (await AuthorizationFixture.CreateAsync(role: "host.user")).Users,
+            new FakeClock(DateTimeOffset.Parse("2026-06-02T12:00:00Z")),
+            user => Task.FromResult<IResult>(Results.Ok())));
+
+        Assert.Equal(StatusCodes.Status401Unauthorized, response.StatusCode);
+        Assert.Contains("session_missing", response.Body);
+        Assert.Contains(CoreSessionAuthorization.SessionCookieName, response.Body);
+        Assert.Contains("Authorization: Bearer", response.Body);
+    }
+
+    [Fact]
+    public async Task RequireSessionAsync_CallsARevokedAccessTokenWhatItIs()
+    {
+        // The case that prompted the split (docs/features/mcp-oauth/feature.md): a revoked OAuth
+        // access token reaches this path — ScopedCredentials refuses a dead record and falls
+        // through — and its holder never had a Core session at all, so a message about one sent the
+        // operator looking in the wrong place.
+        var response = await RefuseAsync(session => session with
+        {
+            RevokedAt = session.CreatedAt,
+            Kind = AccessTokenKinds.OAuth,
+            Audience = AccessTokenScopes.CoreAudience,
+            Scopes = [AccessTokenScopes.McpRead],
+        });
+
+        Assert.Equal(StatusCodes.Status401Unauthorized, response.StatusCode);
+        Assert.Contains("session_revoked", response.Body);
+        Assert.Contains("This access token has been revoked", response.Body);
     }
 
     [Fact]
@@ -262,6 +362,25 @@ public sealed class CoreSessionAuthorizationTests
         // Precedence, stated once and directly: the cookie is the credential, and the header is ignored.
         Assert.Equal(SessionCredentialSource.Cookie, both.Source);
         Assert.Equal("session_1", both.Value);
+    }
+
+    // Presents one dead credential as a bearer and returns the refusal. The mutation shapes the
+    // record; the clock never moves, so what each case asserts is the reason it wrote, not a timing.
+    private static async Task<(int StatusCode, string Body)> RefuseAsync(
+        Func<AuthSessionRecord, AuthSessionRecord> shape,
+        string bearer = "session_1")
+    {
+        var fixture = await AuthorizationFixture.CreateAsync(role: "host.user");
+        await fixture.Users.UpdateAsync(state => state with
+        {
+            Sessions = [.. state.Sessions.Select(shape)],
+        });
+
+        return Inspect(await CoreSessionAuthorization.RequireSessionAsync(
+            CreateRequest(includeSession: false, includeCsrf: false, bearer: bearer).Request,
+            fixture.Users,
+            fixture.Clock,
+            user => Task.FromResult<IResult>(Results.Ok())));
     }
 
     private static DefaultHttpContext CreateRequest(

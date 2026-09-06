@@ -3,7 +3,7 @@ using System.Text;
 
 namespace Haas.Hosty.Core;
 
-// The durable half of the OAuth authorization server (docs/features/mcp-oauth/plan.md): registered
+// The durable half of the OAuth authorization server (docs/features/mcp-oauth/feature.md): registered
 // clients and the grants (refresh-token chains) issued to them.
 //
 // Access tokens do NOT live here. They are ordinary scoped access tokens on the session record,
