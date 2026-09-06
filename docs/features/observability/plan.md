@@ -164,7 +164,9 @@ kernel.
       (`> core.log`, `CoreCommand.StartBackground` and its Windows twin), so the run that just
       crashed is erased by the restart that follows it — including a restart triggered from the same
       Dashboard the dialog lives on. Rotate to `core.log.1` (keep a small N) instead. Triage of L-L3
-      in the [2026-07-05 review](../../reviews/2026-07-05-code-review.md), pulled in here because it
+      in the 2026-07-05 review (since superseded; see
+      [the consolidated review](../../reviews/2026-09-06-consolidated-review.md#superseded-reviews)),
+      pulled in here because it
       is the post-mortem half of the same story. Reproduced unprompted while this plan was being
       written: a Core update restarted Core mid-session and took the whole previous run's log with it,
       including the run these measurements were taken from. One more one-line gap belongs here:

@@ -1,7 +1,7 @@
 # Feature: Observability (telemetry collection, storage, and UI)
 
 Created: 2026-06-28
-Updated: 2026-08-31
+Updated: 2026-09-06
 
 Runtime apps export OpenTelemetry to a collector; a Hosty-native **telemetry backend** stores the
 three signals in embedded SQLite and serves a query API; a **telemetry UI** system app renders
@@ -175,7 +175,8 @@ app. The backend presents its own `HOSTY_APP_SERVICE_TOKEN`, and only to Core â€
 collector, which is a third-party image. Living under `/api/internal/` also places the route inside
 the endpoint-authorization harness, which enumerates `/api` routes; the older `/internal` path sat in
 that harness's blind spot, which is how it shipped unauthenticated for months (C-M10 in the
-[2026-07-10 Core review](../../reviews/2026-07-10-core-code-review.md)). The related ingress work is
+2026-07-10 Core review, since fixed and superseded; see
+[the consolidated review](../../reviews/2026-09-06-consolidated-review.md#superseded-reviews)). The related ingress work is
 [internal-endpoint-exposure](../internal-endpoint-exposure/plan.md).
 
 **OTLP logs** and **traces** ride the collector's `file` exporters. The backend tails each sink every

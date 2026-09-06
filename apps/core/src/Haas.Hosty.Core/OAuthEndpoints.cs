@@ -38,14 +38,31 @@ internal static class OAuthEndpoints
         // AS metadata. Issuer and endpoints use the browser-reachable origin: the flow's whole point
         // is a remote client and a browser completing it, and a loopback URL in this document would
         // send both to the wrong machine.
-        app.MapGet("/.well-known/oauth-authorization-server", (CorePublicOriginResolver coreOrigins) =>
+        //
+        // Never stored. Both documents here are rendered from settings an operator edits live — the
+        // registration breaker below, and the public origin both of them are built from — so a copy
+        // held by a client or by a proxy in the path is a copy of a decision that has since changed.
+        // Discovery runs once per client connection, so re-fetching a small JSON document costs
+        // nothing worth trading the correctness for.
+        app.MapGet("/.well-known/oauth-authorization-server", (
+            HttpResponse response,
+            CorePublicOriginResolver coreOrigins,
+            CoreSettingsService settings) =>
         {
+            response.Headers.CacheControl = "no-store";
             var origin = coreOrigins.Effective.TrimEnd('/');
             return CoreJson.Json(new OAuthServerMetadata(
                 Issuer: origin,
                 AuthorizationEndpoint: $"{origin}/api/auth/oauth/authorize",
                 TokenEndpoint: $"{origin}/api/auth/oauth/token",
-                RegistrationEndpoint: $"{origin}/api/auth/oauth/register",
+                // registration_endpoint is optional in RFC 8414, and the breaker decides whether it
+                // is true here: advertising a door that answers 403 sends a client into a
+                // registration it cannot complete, while omitting it lets that same client fall back
+                // to the manual token path. Already-registered clients are unaffected — registration
+                // is a one-time step, and everything that walked through the door keeps working.
+                RegistrationEndpoint: settings.OAuth.DynamicRegistrationEnabled
+                    ? $"{origin}/api/auth/oauth/register"
+                    : null,
                 ResponseTypesSupported: ["code"],
                 GrantTypesSupported: ["authorization_code", "refresh_token"],
                 CodeChallengeMethodsSupported: ["S256"],
@@ -55,8 +72,11 @@ internal static class OAuthEndpoints
 
         // Core MCP's own resource metadata, at the RFC 9728 path for the resource `/api/mcp`. Apps
         // and the facade serve their equivalents through the SDK helpers.
-        app.MapGet("/.well-known/oauth-protected-resource/api/mcp", (CorePublicOriginResolver coreOrigins) =>
+        app.MapGet("/.well-known/oauth-protected-resource/api/mcp", (
+            HttpResponse response,
+            CorePublicOriginResolver coreOrigins) =>
         {
+            response.Headers.CacheControl = "no-store";
             var origin = coreOrigins.Effective.TrimEnd('/');
             return CoreJson.Json(new OAuthProtectedResourceMetadata(
                 Resource: $"{origin}/api/mcp",
@@ -854,7 +874,8 @@ internal sealed record OAuthServerMetadata(
     [property: JsonPropertyName("issuer")] string Issuer,
     [property: JsonPropertyName("authorization_endpoint")] string AuthorizationEndpoint,
     [property: JsonPropertyName("token_endpoint")] string TokenEndpoint,
-    [property: JsonPropertyName("registration_endpoint")] string RegistrationEndpoint,
+    [property: JsonPropertyName("registration_endpoint")]
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? RegistrationEndpoint,
     [property: JsonPropertyName("response_types_supported")] IReadOnlyList<string> ResponseTypesSupported,
     [property: JsonPropertyName("grant_types_supported")] IReadOnlyList<string> GrantTypesSupported,
     [property: JsonPropertyName("code_challenge_methods_supported")] IReadOnlyList<string> CodeChallengeMethodsSupported,
