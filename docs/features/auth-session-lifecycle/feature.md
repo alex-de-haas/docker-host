@@ -1,7 +1,7 @@
 # Auth Session Lifecycle And Recovery
 
 Created: 2026-07-13
-Updated: 2026-08-15
+Updated: 2026-09-06
 
 How a Hosty app session begins, how long it lives, and how a browser that lost one gets back in.
 Two credentials are in scope: the **Core browser session** (`hosty_session`, the signed-in Host user)
@@ -83,6 +83,23 @@ extends the idle window on authenticated use under the same 5-minute write throt
 are pruned on write (revoked ones retained 7 days). The session cookie's `Expires` is the absolute cap,
 so an extension needs no cookie re-issue — the idle window is enforced server-side, which is where the
 implementation deviated from the original design sketch and stayed.
+
+A refused credential answers `401 session_invalid`, and the **message names which of the three
+conditions killed it**: revoked, past its absolute cap, or idle past its sliding window. The record is
+looked up by id first and judged live second, so the reason survives to the refusal instead of being
+folded into one boolean. Revocation is reported ahead of an expiry that also applies — it is the
+deliberate act, and the one an operator is trying to confirm landed. An access token says so in its own
+words rather than calling itself a session, since the credential most likely to die here is an
+OAuth-issued one whose grant was revoked on the tokens page
+([mcp-oauth](../mcp-oauth/feature.md)). Only when no record survives at all — pruned, or never issued —
+does the answer stay the vague "missing, expired, or revoked", which is then the honest one.
+
+The **code stays `session_invalid` for every cause**. Callers classify on the status class and pass the
+code through for logging, exactly as the identity table above requires, and all four causes recover the
+same way, so a distinct code would add a matchable Core HTTP API surface without buying any caller new
+behavior. Naming the cause reveals nothing about another principal either: the caller already holds the
+credential being described, and ids are 256 bits, so "revoked" versus "never existed" is not an oracle
+anything can walk.
 
 ## Lifetimes
 
@@ -189,6 +206,10 @@ new tab, which `allow-popups` permits.
 - The idle slide is throttled — repeated revalidation inside the throttle window writes once — and a
   grant that keeps being used never crosses its absolute cap.
 - Explicit logout revokes the session's grants; session *expiry* does not.
+- A refused Core credential names its cause: a revoked record and an expired one, refused side by side,
+  answer the same `session_invalid` code and different messages — plus revocation winning over a
+  concurrent expiry, the idle window named apart from the absolute cap, an access token called by its
+  own name, and an unknown id still answered vaguely.
 - `/api/apps/{appId}/open` redirects an unauthenticated browser navigation to `/login?returnTo=…`
   rather than returning JSON, and returns 403 unchanged for a denied account.
 - `returnTo` hardening in both directions: the two accepted relative shapes work, and

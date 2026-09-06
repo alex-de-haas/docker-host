@@ -242,6 +242,91 @@ public sealed class CoreSessionAuthorizationTests
         Assert.Contains("session_invalid", response.Body);
     }
 
+    // The distinction the message exists to draw. Both credentials are dead, both answer 401
+    // `session_invalid`, and an operator watching a client fail has to be able to tell which happened —
+    // a revocation they just performed from a lifetime that simply ran out.
+    [Fact]
+    public async Task RequireSessionAsync_NamesRevocationAndExpiryApart()
+    {
+        var revoked = await RefuseAsync(session => session with { RevokedAt = session.CreatedAt });
+        var expired = await RefuseAsync(session => session with { ExpiresAt = session.CreatedAt.AddMinutes(-1) });
+
+        Assert.Equal(StatusCodes.Status401Unauthorized, revoked.StatusCode);
+        Assert.Equal(StatusCodes.Status401Unauthorized, expired.StatusCode);
+
+        // One code for both: callers branch on the status class, and both causes recover the same way.
+        Assert.Contains("session_invalid", revoked.Body);
+        Assert.Contains("session_invalid", expired.Body);
+
+        Assert.Contains("was revoked", revoked.Body);
+        Assert.DoesNotContain("was revoked", expired.Body);
+        Assert.Contains("has expired", expired.Body);
+        Assert.DoesNotContain("has expired", revoked.Body);
+    }
+
+    // A revoked credential that is also past its absolute cap reports the revocation: the deliberate act
+    // is the one the operator is trying to confirm landed.
+    [Fact]
+    public async Task RequireSessionAsync_ReportsRevocationOverAConcurrentExpiry()
+    {
+        var response = await RefuseAsync(session => session with
+        {
+            RevokedAt = session.CreatedAt,
+            ExpiresAt = session.CreatedAt.AddMinutes(-1),
+        });
+
+        Assert.Contains("was revoked", response.Body);
+    }
+
+    // The third condition IsSessionLive folds in, and the one that is not an expiry at all: the absolute
+    // cap still holds, but nothing used the credential inside its sliding window.
+    [Fact]
+    public async Task RequireSessionAsync_NamesTheIdleWindowSeparately()
+    {
+        var fixture = await AuthorizationFixture.CreateAsync(role: "host.user");
+        fixture.Clock.UtcNow = fixture.Clock.UtcNow
+            .Add(AuthLifetimes.Defaults.CoreSessionIdle)
+            .AddDays(1);
+
+        var response = await RefuseAsync(
+            session => session with { ExpiresAt = fixture.Clock.UtcNow.AddDays(1) },
+            fixture);
+
+        Assert.Contains("idle window", response.Body);
+        Assert.DoesNotContain("has expired", response.Body);
+    }
+
+    // An access token is not a "session" to whoever holds one, and the credential that most often dies
+    // here is an OAuth-issued token whose grant was revoked on the tokens page.
+    [Fact]
+    public async Task RequireSessionAsync_CallsARevokedAccessTokenByItsOwnName()
+    {
+        var response = await RefuseAsync(session => session with
+        {
+            Kind = AccessTokenKinds.OAuth,
+            RevokedAt = session.CreatedAt,
+        });
+
+        Assert.Contains("access token was revoked", response.Body);
+    }
+
+    // A credential whose record is gone — pruned, or never issued at all — is the one case the vague
+    // sentence is still honest about, and it must stay byte-identical for a cookie and a bearer alike.
+    [Fact]
+    public async Task RequireSessionAsync_KeepsTheVagueAnswerWhenNoRecordSurvives()
+    {
+        var fixture = await AuthorizationFixture.CreateAsync(role: "host.user");
+
+        var response = Inspect(await CoreSessionAuthorization.RequireSessionAsync(
+            CreateRequest(includeSession: false, includeCsrf: false, bearer: "not_a_session").Request,
+            fixture.Users,
+            fixture.Clock,
+            user => Task.FromResult<IResult>(Results.Ok())));
+
+        Assert.Equal(StatusCodes.Status401Unauthorized, response.StatusCode);
+        Assert.Contains("Core session is missing, expired, or revoked.", response.Body);
+    }
+
     [Fact]
     public void ReadSessionCredential_ReportsHowTheSessionArrived()
     {
@@ -262,6 +347,25 @@ public sealed class CoreSessionAuthorizationTests
         // Precedence, stated once and directly: the cookie is the credential, and the header is ignored.
         Assert.Equal(SessionCredentialSource.Cookie, both.Source);
         Assert.Equal("session_1", both.Value);
+    }
+
+    // Rewrites the fixture's one session and presents it as a bearer, which is the shape an external
+    // client uses and the one the live run refused.
+    private static async Task<(int StatusCode, string Body)> RefuseAsync(
+        Func<AuthSessionRecord, AuthSessionRecord> mutate,
+        AuthorizationFixture? existing = null)
+    {
+        var fixture = existing ?? await AuthorizationFixture.CreateAsync(role: "host.user");
+        await fixture.Users.UpdateAsync(state => state with
+        {
+            Sessions = [.. state.Sessions.Select(mutate)],
+        });
+
+        return Inspect(await CoreSessionAuthorization.RequireSessionAsync(
+            CreateRequest(includeSession: false, includeCsrf: false, bearer: "session_1").Request,
+            fixture.Users,
+            fixture.Clock,
+            user => Task.FromResult<IResult>(Results.Ok())));
     }
 
     private static DefaultHttpContext CreateRequest(
