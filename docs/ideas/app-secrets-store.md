@@ -125,7 +125,7 @@ a missing secret as a defined reconnect-required state, not an error.
 - **The service token gets more valuable.** Today it grants
   revalidate/directory/backup/notification calls; with this store it grants
   live third-party account access. Its known limits — no expiry, no scopes, no
-  per-install generation ([2026-07-10 review, C-M7](../reviews/2026-07-10-core-code-review.md)) —
+  per-install generation ([consolidated review, SEC-4](../reviews/2026-09-06-consolidated-review.md); originally 2026-07-10 C-M7) —
   become more pressing. Not a blocker in the trusted single-tenant homelab, but
   token scoping/expiry should land before marketplace-era third-party apps.
 - **Plaintext 0600 is a deliberate parity choice** (Decision 3), not an

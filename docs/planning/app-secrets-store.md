@@ -343,7 +343,7 @@ Manual, against a dev install (`.hosty-dev`):
 - [Core API](../features/core-api/feature.md)
 - [Hosty App SDK](../features/hosty-app-sdk/feature.md)
 - [Repository and release model](../features/repository-release-model/feature.md)
-- [2026-07-10 Core code review (C-M7)](../reviews/2026-07-10-core-code-review.md)
+- [Consolidated review, SEC-4 (originally 2026-07-10 C-M7)](../reviews/2026-09-06-consolidated-review.md)
 - [media-server platform request #15](https://github.com/alex-de-haas/media-server/blob/main/docs/features/hosty-platform-requests.md)
 - [media-server Trakt plan](https://github.com/alex-de-haas/media-server/blob/main/docs/planning/trakt-watched-state-sync.md)
 

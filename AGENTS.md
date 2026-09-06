@@ -51,7 +51,11 @@ docs/
   follow the code, and stays outside the status workflow and the generated
   index. A finding becomes tracked work only once it is triaged into the
   relevant feature's `plan.md` as a deliverable — the review itself never
-  carries status.
+  carries status. A later review may supersede earlier ones: it re-verifies
+  their findings against its own baseline and restates only what is still
+  open; the superseded archives are deleted in the same PR (git history keeps
+  their full text), so the folder holds only reviews whose findings are still
+  current.
 - Beyond that there are no other documentation folders. A large or cross-cutting
   feature is an ordinary feature whose docs cross-link the features it spans;
   its `plan.md` never duplicates their deliverables — it links to them and keeps

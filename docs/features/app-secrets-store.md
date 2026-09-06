@@ -169,7 +169,7 @@ secret", so a broken Core or proxy cannot masquerade as a reconnect-required sta
   but apps should not encode sensitive data in a key name.
 - **The service token gains reach.** It already authorized directory, backup, and notification
   calls; it now also unlocks live third-party credentials. Its known limits — no expiry, no
-  scopes, no per-install generation ([2026-07-10 review, C-M7](../reviews/2026-07-10-core-code-review.md))
+  scopes, no per-install generation ([consolidated review, SEC-4](../reviews/2026-09-06-consolidated-review.md); originally 2026-07-10 C-M7)
   — become more pressing, and scoping/expiry should land before marketplace-era third-party apps.
 - **Keeping data on removal keeps working credentials on disk** until reinstall or a delete-data
   removal. This mirrors `retained-config.json` and is the ratified trade-off for working

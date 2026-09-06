@@ -1,11 +1,12 @@
 # Core Lifecycle Parallelism
 
 Created: 2026-08-26
-Updated: 2026-08-26
+Updated: 2026-09-06
 
 Core does its per-app lifecycle work concurrently and asks docker in batches, so boot latency and
 steady-state process churn stop scaling with the number of installed apps. Implements findings H4 and
-M1 of the [2026-08-25 Core performance review](../../reviews/2026-08-25-core-performance-review.md).
+M1 of the 2026-08-25 Core performance review, since superseded; see
+[the consolidated review](../../reviews/2026-09-06-consolidated-review.md#superseded-reviews).
 
 ## Autostart runs a priority tier at a time, concurrently within it
 
