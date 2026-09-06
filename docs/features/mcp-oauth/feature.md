@@ -1,7 +1,7 @@
 # MCP OAuth — Automated Issuance For Scoped Tokens
 
 Created: 2026-08-25
-Updated: 2026-08-25
+Updated: 2026-09-06
 
 Core is an OAuth 2.1 authorization server, per the MCP authorization specification, so a capable
 client (Claude Code, an editor) obtains and rotates [scoped access
@@ -70,6 +70,13 @@ walked through it — registered clients and issued grants keep working. While o
 sliding window (5 per 10 minutes, a DI singleton rather than a static so its state belongs to one
 application instance) bounds the flood the toggle would otherwise admit.
 
+**The AS metadata says so.** `registration_endpoint` is optional in RFC 8414, and the document omits
+it entirely while the breaker is off — read live per request, so it appears and disappears with the
+toggle in the same process. A client that reads an endpoint it cannot use spends the flow finding
+that out from a `403`; a client that reads no endpoint falls back to the manual token path, which is
+the answer that was true all along. Nothing already registered depends on the field: registration is
+a one-time step, and the endpoints that carry a registered client through the flow stay advertised.
+
 Public clients only: no secret is issued (`token_endpoint_auth_method: none`), PKCE is what binds a
 code to the client that requested it. Redirect URIs must be https or loopback-http — a routable
 http URI would carry the code in clear. Registered clients are listed for administrators
@@ -100,7 +107,8 @@ without a public identity (null, not a guess): no metadata simply means the manu
 - The theft signal: a replayed spent refresh token killing the whole chain, including the winner's
   access token and its refresh — asserted from the victim's and the thief's side both.
 - The breaker: registration refused off, working on, refused again when turned back off — with
-  already-issued credentials untouched.
+  already-issued credentials untouched; and the AS metadata's `registration_endpoint` absent, then
+  present, then absent again across those same states.
 - PKCE pairs: wrong verifier refused; a code dying on first presentation, valid or not.
 - Resource pairs: absent and unknown refused via redirect; an app resource minting a token active at
   that app's introspection and refused at Core MCP.

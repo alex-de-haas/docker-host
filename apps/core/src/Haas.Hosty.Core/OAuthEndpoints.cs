@@ -38,14 +38,23 @@ internal static class OAuthEndpoints
         // AS metadata. Issuer and endpoints use the browser-reachable origin: the flow's whole point
         // is a remote client and a browser completing it, and a loopback URL in this document would
         // send both to the wrong machine.
-        app.MapGet("/.well-known/oauth-authorization-server", (CorePublicOriginResolver coreOrigins) =>
+        app.MapGet("/.well-known/oauth-authorization-server", (
+            CorePublicOriginResolver coreOrigins,
+            CoreSettingsService settings) =>
         {
             var origin = coreOrigins.Effective.TrimEnd('/');
             return CoreJson.Json(new OAuthServerMetadata(
                 Issuer: origin,
                 AuthorizationEndpoint: $"{origin}/api/auth/oauth/authorize",
                 TokenEndpoint: $"{origin}/api/auth/oauth/token",
-                RegistrationEndpoint: $"{origin}/api/auth/oauth/register",
+                // registration_endpoint is optional in RFC 8414, and the breaker decides whether it
+                // is true here: advertising a door that answers 403 sends a client into a
+                // registration it cannot complete, while omitting it lets that same client fall back
+                // to the manual token path. Already-registered clients are unaffected — registration
+                // is a one-time step, and everything that walked through the door keeps working.
+                RegistrationEndpoint: settings.OAuth.DynamicRegistrationEnabled
+                    ? $"{origin}/api/auth/oauth/register"
+                    : null,
                 ResponseTypesSupported: ["code"],
                 GrantTypesSupported: ["authorization_code", "refresh_token"],
                 CodeChallengeMethodsSupported: ["S256"],
@@ -854,7 +863,8 @@ internal sealed record OAuthServerMetadata(
     [property: JsonPropertyName("issuer")] string Issuer,
     [property: JsonPropertyName("authorization_endpoint")] string AuthorizationEndpoint,
     [property: JsonPropertyName("token_endpoint")] string TokenEndpoint,
-    [property: JsonPropertyName("registration_endpoint")] string RegistrationEndpoint,
+    [property: JsonPropertyName("registration_endpoint")]
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? RegistrationEndpoint,
     [property: JsonPropertyName("response_types_supported")] IReadOnlyList<string> ResponseTypesSupported,
     [property: JsonPropertyName("grant_types_supported")] IReadOnlyList<string> GrantTypesSupported,
     [property: JsonPropertyName("code_challenge_methods_supported")] IReadOnlyList<string> CodeChallengeMethodsSupported,
