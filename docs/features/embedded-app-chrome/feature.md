@@ -1,7 +1,7 @@
 # Embedded App Chrome
 
 Created: 2026-08-04
-Updated: 2026-08-04
+Updated: 2026-09-07
 
 An app opened inside a shell drops the chrome that shell already renders — its own name, and the
 navigation between its manifest pages. Opened standalone on its own origin it keeps both, because
@@ -103,7 +103,7 @@ mismatch.
 
 The first-party apps hide: Telemetry's wordmark and its Metrics / Structured logs / Traces tab bar;
 the demo app's Overview / People / Roles / Settings navigation; Marketplace's title and
-description.
+description; the assistant's own title row in the AI Gateway's pages.
 
 ## Links
 

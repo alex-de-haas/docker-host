@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import { HostThemeBridge } from "@hosty-sdk/app/react";
+import { launchModeBootstrapScript } from "@hosty-sdk/app";
+import { HostLaunchBridge, HostThemeBridge } from "@hosty-sdk/app/react";
 import { themeBootstrapScript } from "@hosty-sdk/app/theme";
 import "./globals.css";
 
@@ -21,33 +22,27 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       */}
       <head>
         {/*
-          Stamps the launch mode on <html>, so the page can drop its own outer padding while a shell
-          supplies it (globals.css) without a flash of the standalone layout.
-
-          The attribute and its values are the SDK's contract (`LAUNCH_MODE_ATTRIBUTE`), written out
-          here rather than imported. That was once because this workspace carried no SDK dependency;
-          it now does, for the theme slice below, so what keeps this inline is only that
-          `launchModeBootstrapScript` also persists a declared mode for the tab — a behaviour change
-          that belongs to its own commit. `hosty_launch` survives the launch-code strip, and the
-          framed check covers a reload that lost the parameter.
+          The launch mode, so the page drops the chrome and the outer padding a shell already
+          supplies (globals.css) without a flash of the standalone layout. This was a hand-written
+          copy of the SDK's contract while the workspace carried no SDK dependency; it now carries
+          one, and a second implementation of a protocol is what this fleet keeps paying for.
         */}
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `(()=>{try{var m=new URLSearchParams(location.search).get("hosty_launch");` +
-              `if(m!=="embedded"&&m!=="native"&&m!=="standalone")m=null;` +
-              `if(!m){try{m=self!==top?"embedded":"standalone"}catch(e){m="embedded"}}` +
-              `document.documentElement.setAttribute("data-hosty-launch",m)}catch(e){}})()`,
-          }}
-        />
+        <script dangerouslySetInnerHTML={{ __html: launchModeBootstrapScript }} />
         {/*
           The theme, from the SDK slice that owns the protocol: the `hosty_theme` launch parameters
           decide what this document paints with, the value stored for the tab carries it across
-          navigation, and `hosty:shell-theme` covers a change made while the frame is up. The bridge
-          in the body then persists it, cleans the parameters out of the URL, and follows later posts.
+          navigation, and `hosty:shell-theme` covers a change made while the frame is up.
         */}
         <script dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
       </head>
       <body className="bg-background text-foreground antialiased">
+        {/*
+          The bridges own what a paint-blocking script must not do: persisting what a shell declared
+          for the rest of the tab, and cleaning its parameters out of the URL — a `replaceState` is
+          a router's business, and a copied link must not carry a shell's presentation into a plain
+          browser tab.
+        */}
+        <HostLaunchBridge />
         <HostThemeBridge />
         {children}
       </body>
