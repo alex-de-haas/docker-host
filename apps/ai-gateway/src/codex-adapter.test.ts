@@ -83,6 +83,72 @@ describe("codex harness adapter", () => {
     expect(events.some((event) => event.type === "assistant_text" && event.text === "hello")).toBe(true);
   });
 
+  // Codex reports a failed turn through turn/completed itself, with status "failed" and the reason
+  // on turn.error — there is no turn/failed notification. Reading only the method name reported the
+  // failure as a successful result, which is the worst available answer: the operator is told the
+  // turn worked.
+  it("reports a failed turn as a failure, with the reason", async () => {
+    const active = start();
+    await waitFor(() => events.find((candidate) => candidate.type === "harness_session"), "handshake");
+    active.send("go boom");
+
+    const result = await waitFor(() => events.find((candidate) => candidate.type === "result"), "result");
+    expect(result).toMatchObject({ status: "failed" });
+    // The reason reaches the operator: `result` carries no message, so it rides on a notice.
+    expect(
+      events.some((event) => event.type === "notice" && event.message.includes("401 Unauthorized")),
+    ).toBe(true);
+  });
+
+  // A failed turn is not a dead harness: the live app-server accepts another turn afterwards
+  // (verified against 0.150.1 on 2026-09-07), and an `error` event would drop the run, unregister
+  // the session's proxy routes and mark the session failed.
+  it("keeps the run alive across a failed turn", async () => {
+    const active = start();
+    await waitFor(() => events.find((candidate) => candidate.type === "harness_session"), "handshake");
+    active.send("go boom");
+    await waitFor(() => events.find((candidate) => candidate.type === "result"), "result");
+
+    expect(events.some((event) => event.type === "error")).toBe(false);
+
+    // And the next message still runs.
+    active.send("say hello");
+    await waitFor(
+      () => events.filter((candidate) => candidate.type === "result").length >= 2 || null,
+      "second result",
+    );
+    expect(events.some((event) => event.type === "assistant_text" && event.text === "hello")).toBe(true);
+  });
+
+  // Codex retries a recoverable failure and emits one `error` per attempt — ten for a single failed
+  // turn. Surfacing those would bury the operator in noise for a turn that may still succeed, and
+  // the terminal reason arrives on turn/completed regardless.
+  it("does not report retryable errors, and reports a terminal one only once", async () => {
+    const active = start();
+    await waitFor(() => events.find((candidate) => candidate.type === "harness_session"), "handshake");
+    active.send("go boom");
+    await waitFor(() => events.find((candidate) => candidate.type === "result"), "result");
+
+    const notices = events.filter((event) => event.type === "notice");
+    expect(notices).toHaveLength(1);
+    expect(notices[0]?.message).not.toContain("Reconnecting");
+  });
+
+  // Outside a turn there is no turn/completed to carry the reason, so the notification is the only
+  // place the operator can learn about it.
+  it("reports a terminal error that arrives with no turn running", async () => {
+    const active = start();
+    await waitFor(() => events.find((candidate) => candidate.type === "harness_session"), "handshake");
+    active.send("idle-error please");
+
+    const notice = await waitFor(
+      () => events.find((candidate) => candidate.type === "notice"),
+      "notice",
+    );
+    expect(notice).toMatchObject({ message: expect.stringContaining("thread went sideways") });
+    expect(events.some((event) => event.type === "error")).toBe(false);
+  });
+
   it("pauses on an approval request and executes only after allow", async () => {
     const active = start();
     await waitFor(() => events.find((candidate) => candidate.type === "harness_session"), "handshake");

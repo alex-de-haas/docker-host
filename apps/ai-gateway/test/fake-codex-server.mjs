@@ -154,7 +154,45 @@ function handle(msg) {
       send({ jsonrpc: "2.0", method: "item/agentMessage/delta", params: { delta: "llo" } });
       send({ jsonrpc: "2.0", method: "item/completed", params: { item: { type: "agentMessage", id: "m", text: "hello" } } });
     }
+
+    // A failing turn, in the shape a live 0.150.1 emits (captured 2026-09-07 by running a turn with
+    // an empty CODEX_HOME): retryable `error` notifications while it reconnects, then a terminal one
+    // with willRetry false, then turn/completed carrying status "failed" and the reason. Codex has
+    // no turn/failed or thread/error notification — those exist in no build.
+    if (currentTurnText.includes("boom")) {
+      send({
+        jsonrpc: "2.0",
+        method: "error",
+        params: { error: { message: "Reconnecting... 1/5" }, willRetry: true, threadId: "t1", turnId: "turn-1" },
+      });
+      send({
+        jsonrpc: "2.0",
+        method: "error",
+        params: { error: { message: "Reconnecting... 2/5" }, willRetry: true, threadId: "t1", turnId: "turn-1" },
+      });
+      send({
+        jsonrpc: "2.0",
+        method: "error",
+        params: { error: { message: "401 Unauthorized" }, willRetry: false, threadId: "t1", turnId: "turn-1" },
+      });
+      send({
+        jsonrpc: "2.0",
+        method: "turn/completed",
+        params: { threadId: "t1", turn: { id: "turn-1", status: "failed", error: { message: "401 Unauthorized" } } },
+      });
+      return;
+    }
+
     send({ jsonrpc: "2.0", method: "turn/completed", params: { threadId: "t1", turn: { id: "turn-1" } } });
+
+    // An error with no turn running: nothing else reports it, so the adapter must surface it itself.
+    if (currentTurnText.includes("idle-error")) {
+      send({
+        jsonrpc: "2.0",
+        method: "error",
+        params: { error: { message: "thread went sideways" }, willRetry: false, threadId: "t1", turnId: null },
+      });
+    }
     return;
   }
 

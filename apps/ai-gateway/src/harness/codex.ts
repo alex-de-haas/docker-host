@@ -426,12 +426,34 @@ class CodexRun implements HarnessRun {
       return;
     }
 
+    // The one authoritative turn outcome: Codex has no separate failure notification, and reports a
+    // failed turn through this same message with `status: "failed"` and the reason on `turn.error`.
+    // Read live on 0.150.1 (2026-09-07) by driving a turn with an empty CODEX_HOME, which fails on
+    // auth; the turn status vocabulary is `inProgress | completed | failed | declined`, read out of
+    // the binary's variant table.
     if (message.method === "turn/completed") {
       this.turnActive = false;
-      const usage = (params.turn as Record<string, unknown> | undefined)?.usage as Record<string, unknown> | undefined;
+      const turn = params.turn as Record<string, unknown> | undefined;
+      const usage = turn?.usage as Record<string, unknown> | undefined;
+      const status = typeof turn?.status === "string" ? turn.status : "";
+      const error = turn?.error as Record<string, unknown> | undefined;
+      // Keyed on the error payload as much as the status name: a turn carrying an error did not
+      // succeed whatever it is called, and a build that renames the status must not silently turn a
+      // failure back into a success. An unrecognized status with no error stays a success, because
+      // the alternative — failing every turn on a vocabulary change — is the worse way to be wrong.
+      const failed = status === "failed" || status === "declined" || Boolean(error);
+      if (failed) {
+        const reason = typeof error?.message === "string" && error.message ? error.message : status || "no reason given";
+        // A notice, not an error: the app-server survives a failed turn and accepts the next one
+        // (verified 2026-09-07 — a second turn/start after a failure runs to its own turn/completed),
+        // so dropping the run would discard a live session the operator can still use. This is also
+        // what carries the reason: `result` has no message field, and the status alone would tell
+        // the operator that something failed without ever saying what.
+        this.emit({ type: "notice", message: `The Codex turn failed (${reason}).` });
+      }
       this.emit({
         type: "result",
-        status: "success",
+        status: failed ? "failed" : "success",
         usage: usage
           ? {
               inputTokens: typeof usage.inputTokens === "number" ? usage.inputTokens : undefined,
@@ -443,10 +465,24 @@ class CodexRun implements HarnessRun {
       return;
     }
 
-    if (message.method === "turn/failed" || message.method === "thread/error") {
-      this.turnActive = false;
-      this.emit({ type: "error", message: String(params.message ?? "The Codex turn failed.") });
-      void this.pump();
+    // Codex's error notification is the bare method `error` — not `thread/error`, which exists in no
+    // build (checked against 0.147.0, 0.150.1 and 0.153.2), and there is no `turn/failed` either.
+    // Shape: { error: { message }, willRetry, threadId, turnId }.
+    if (message.method === "error") {
+      const error = params.error as Record<string, unknown> | undefined;
+      // Retryable errors arrive in bursts — one per attempt, ten for a single failed turn — and
+      // Codex either recovers or ends the turn with the final reason on turn/completed. Reporting
+      // them would bury the operator in noise for a turn that may yet succeed.
+      if (params.willRetry === true) {
+        return;
+      }
+      // A terminal error inside a turn is left to turn/completed, which carries the same message and
+      // is what ends the turn; emitting here too would report one failure twice. Outside a turn
+      // nothing else will report it, so it is surfaced here or not at all.
+      if (!this.turnActive) {
+        const reason = typeof error?.message === "string" && error.message ? error.message : "no reason given";
+        this.emit({ type: "notice", message: `Codex reported an error (${reason}).` });
+      }
     }
   }
 
