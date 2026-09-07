@@ -9,7 +9,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { findAppPageLink, getAppPageLinks } from "./shell/app-helpers";
 import { CoreRequestError, isAuthRequiredRedirectError, readCoreError, readCoreErrorDetail, redirectToCoreLogin, redirectToCoreLoginIfAuthRequired } from "./shell/core-api";
-import { createReissueRateLimiter } from "@hosty-sdk/app/embedder";
+import { appendThemeLaunchParams, createReissueRateLimiter } from "@hosty-sdk/app/embedder";
 import { CoreEventNames, subscribeToCoreEvents } from "./shell/events/core-event-stream";
 import { isAppUp } from "./shell/runtime-states";
 import { waitForShellUpdateToSettle } from "./shell/self-update";
@@ -38,7 +38,7 @@ import {
 } from "./shell/shell-routes";
 import { emptyDetailPanelState, emptyInstallPanelState } from "./shell/state";
 import { appendHostyLaunchParam } from "./shell/launch";
-import { appendHostyThemeParams, normalizeThemePreference, resolveShellTheme } from "./shell/theme";
+import { normalizeThemePreference, resolveShellTheme } from "./shell/theme";
 import { EmptyState } from "./shell/ui";
 import { EmbeddedWorkspacePanel } from "./shell/workspace/embedded-workspace-panel";
 import { EmbeddedWorkspacePendingPanel } from "./shell/workspace/embedded-workspace-pending-panel";
@@ -523,7 +523,7 @@ export function ShellClient({
 
   const getStandaloneAppHref = useCallback(
     (app: CoreApp, page: AppPageLink) => {
-      const themedRedirectUri = appendHostyThemeParams(page.redirectUri, shellResolvedTheme, shellThemePreference);
+      const themedRedirectUri = appendThemeLaunchParams(page.redirectUri, shellResolvedTheme, shellThemePreference);
       const url = new URL(`${coreOrigin}/api/apps/${encodeURIComponent(app.id)}/open`);
       url.searchParams.set("redirectUri", themedRedirectUri);
       return url.toString();
@@ -557,7 +557,7 @@ export function ShellClient({
 
       const routePath = normalizeAppPath(page.path);
       const embeddedRedirectUri = appendHostyLaunchParam(
-        appendHostyThemeParams(page.redirectUri, shellResolvedTheme, shellThemePreference),
+        appendThemeLaunchParams(page.redirectUri, shellResolvedTheme, shellThemePreference),
       );
       // One workspace route for every app. A system app used to get its own admin-gated path; the
       // gate it expressed is Core's, not the client's.
@@ -1754,7 +1754,7 @@ export function ShellClient({
     }
 
     const embeddedRedirectUri = appendHostyLaunchParam(
-      appendHostyThemeParams(page.redirectUri, shellResolvedTheme, shellThemePreference),
+      appendThemeLaunchParams(page.redirectUri, shellResolvedTheme, shellThemePreference),
     );
     if (workspace?.appId === app.id) {
       pendingWorkspaceRoute.current = null;
@@ -2097,7 +2097,7 @@ export function ShellClient({
       }
 
       const redirectUri = appendHostyLaunchParam(
-        appendHostyThemeParams(embeddedUrl, shellResolvedTheme, shellThemePreference),
+        appendThemeLaunchParams(embeddedUrl, shellResolvedTheme, shellThemePreference),
       );
       const response = await sendCsrfJson(appEndpoint(app, "/launch-code"), { redirectUri });
       const launch = (await response.json()) as AppLaunchResponse;

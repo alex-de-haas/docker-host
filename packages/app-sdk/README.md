@@ -13,7 +13,8 @@ npm install @hosty-sdk/app
 | `@hosty-sdk/app` | anywhere | status taxonomy, recovery decision, `hosty:auth-required` and `hosty:request-delegated-token` schemas, URL/env helpers |
 | `@hosty-sdk/app/server` | server only | Core revalidation with caching, cookie helpers, the app-code route factory, the app secrets client |
 | `@hosty-sdk/app/react` | client | `<AppIdentityBridge />` — probe, silent recovery, fallback cards |
-| `@hosty-sdk/app/embedder` | client | verified responders — launch-code recovery and delegated tokens — for anything that embeds Hosty apps |
+| `@hosty-sdk/app/embedder` | client | verified responders — launch-code recovery and delegated tokens — plus the theme sender half, for anything that embeds Hosty apps |
+| `@hosty-sdk/app/theme` | anywhere | the shell→app theme protocol: constants, `resolveTheme`, `applyTheme`, `parseShellThemeMessage`, `themeBootstrapScript` / `createThemeBootstrapScript` |
 
 Minimal Next.js wiring:
 
@@ -30,6 +31,38 @@ export const POST = createAppCodeRouteHandler({
   appIdFallback: "com.example.my-app",
   identityCookieName: "my_app_hosty_identity",
 });
+```
+
+Following the shell's theme — the launch parameters decide the theme a document loads with, the
+`hosty:shell-theme` post covers changes while the frame is up, and the bootstrap keeps the first
+paint right:
+
+```tsx
+// app/layout.tsx
+import { launchModeBootstrapScript } from "@hosty-sdk/app";
+import { HostLaunchBridge, HostThemeBridge } from "@hosty-sdk/app/react";
+import { themeBootstrapScript } from "@hosty-sdk/app/theme";
+
+<html suppressHydrationWarning>
+  <head>
+    <script dangerouslySetInnerHTML={{ __html: launchModeBootstrapScript }} />
+    <script dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
+  </head>
+  <body>
+    <HostThemeBridge /> {/* followSystem={false} onTheme={setTheme} when the app runs its own provider (next-themes) */}
+    <HostLaunchBridge />
+  </body>
+</html>
+```
+
+An embedder declares the theme on every frame URL and posts changes to the frame's own origin:
+
+```ts
+import { appendThemeLaunchParams } from "@hosty-sdk/app/embedder";
+import { createShellThemeMessage } from "@hosty-sdk/app/theme";
+
+frame.src = appendThemeLaunchParams(launchUrl, theme, preference);
+frame.contentWindow.postMessage(createShellThemeMessage(theme, preference), frameOrigin);
 ```
 
 App secrets — the Core-managed keychain for runtime-acquired credentials (OAuth tokens and the
