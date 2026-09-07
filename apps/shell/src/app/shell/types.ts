@@ -762,8 +762,8 @@ export type AccessTokenView = {
   scopes?: string[] | null;
 };
 export type AppOpenTarget = "workspace" | "tab";
-export type HostyResolvedTheme = "light" | "dark";
-export type HostyThemePreference = "light" | "dark" | "system";
+// The theme protocol is the SDK's; the aliases stay so every Shell import site reads one name.
+export type { HostyResolvedTheme, HostyThemePreference } from "@hosty-sdk/app/theme";
 export type WorkspaceRoute = {
   appId: string;
   path: string;

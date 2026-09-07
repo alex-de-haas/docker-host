@@ -1,8 +1,8 @@
 # Hosty App SDK — Second Wave
 
-Status: Draft
+Status: In Progress
 Created: 2026-07-15
-Updated: 2026-08-15
+Updated: 2026-09-07
 
 Auth was phase 1 and shipped ([feature.md](feature.md)). What remains is the rest of the platform glue
 every app still hand-writes, plus the last adoption debts of the auth slice itself.
@@ -35,13 +35,23 @@ examples are already real. Ordering is by payoff.
       copy. ~200 lines of platform glue whose only app-specific value is the service-name default. The
       .NET counterpart is media-server's `HostyTelemetry.cs` → `HostySdk.App`. The three in-tree Next
       apps wire no OTel today and would gain tracing for free.
-- [ ] **3. `/theme` — theme bridging.** Five `HostThemeBridge` copies (marketplace and telemetry-ui
-      byte-identical; demo-app, project-manager, and media-server each divergent), four independent
-      theme normalizers, and the anti-FOUC bootstrap script present in demo-app and project-manager but
-      **not** in media-server. The protocol surface to freeze is small: `hosty:shell-theme`, the
-      `?hosty_theme` / `?hosty_theme_preference` launch params, and the `hosty.theme.resolved` /
-      `hosty.theme.preference` `sessionStorage` keys. Shell's sender half (`postTheme`,
-      `appendHostyThemeParams`) belongs to the embedder slice. Gated on the open question below.
+- [ ] **3. `/theme` — theme bridging.** Decided 2026-09-07: the extraction carries the current
+      protocol and any theming redesign happens inside the SDK. The trigger was a real defect, not
+      duplication for its own sake — the Shell's `hosty:shell-theme` post at frame `load` lands before
+      the app's listener exists, and the marketplace/telemetry-ui copy, which read nothing else, then
+      painted whatever its tab had stored (telemetry-ui 0.9.1 fixed it locally first).
+  - [x] The slice: `@hosty-sdk/app/theme` (protocol constants, `resolveTheme`, `applyTheme`,
+        `parseShellThemeMessage`, `createShellThemeMessage`, `themeBootstrapScript`),
+        `HostThemeBridge` in `react`, `appendThemeLaunchParams` in `embedder` — SDK 0.12.0, with the
+        suite in `theme.test.ts`.
+  - [x] In-tree adoption in the same PR: marketplace, telemetry-ui, and demo-app mount the SDK bridge
+        and bootstrap and delete their copies; Shell sends through the SDK.
+  - [ ] media-server web and project-manager take 0.12.0 and delete their copies (branches
+        `feat/sdk-theme-bridge` prepared in both repositories; each lockfile is refreshed once 0.12.0
+        is on npmjs, which the merge of the SDK PR triggers).
+  - [ ] ai-gateway web's `startThemeSync` — a sixth listener the 2026-07 sweep predates. Its web
+        package has no SDK dependency of its own (the gateway package does), so adopting the bridge
+        means adding one inside the nested workspace.
 - [ ] **4. `/env` — the non-auth environment contract.** The SDK reads only the auth variables; every
       app hand-parses the rest: `HOSTY_PORT_{KEY}` (media-server `HostyKestrel`),
       `HOSTY_SERVICE_{KEY}_URL` (telemetry-ui `backend.ts`), `HOSTY_DEPENDENCY_{KEY}_URL`,
@@ -75,13 +85,6 @@ it stays a marketplace/Shell private protocol until a second party appears); pro
 like platform glue).
 
 ## Open Questions
-
-- Question: Does `/theme` wait for the theming redesign, or carry the current protocol?
-  Answer: The extraction was deferred in phase 1 so the SDK would not freeze a design about to change,
-  and that reasoning still holds — but the pre-SDK auth drift is now repeating in slow motion across
-  five copies.
-  Recommendation: either the redesign lands first, or the extraction carries the current protocol and
-  the redesign happens inside the SDK. Leaving five copies to drift further is the worst of the three.
 
 - Question: Where does cross-app auth land if it is ratified?
   Answer: [cross-app-auth](../../ideas/cross-app-auth.md) proposes a provider middleware and a consumer

@@ -20,6 +20,7 @@ import {
   AUTH_REQUIRED_INTENT_TYPE,
   DELEGATED_TOKEN_REQUEST_TYPE,
 } from "./index";
+import { THEME_PARAM, THEME_PREFERENCE_PARAM, type HostyResolvedTheme, type HostyThemePreference } from "./theme";
 
 /** The three fields of a `message` event these parsers read. */
 export interface EmbedderMessage {
@@ -201,4 +202,22 @@ export function createReissueRateLimiter(minIntervalMs: number, now: () => numbe
       return true;
     },
   };
+}
+
+/**
+ * Declares the theme an embedder is rendering in on the URL it is about to load into a frame — the
+ * workspace page, a settings tab, a panel. This is the channel that decides the theme the frame
+ * paints with; the `hosty:shell-theme` post (`createShellThemeMessage`) is for changes made while
+ * the frame is already up, because a post at the frame's `load` routinely lands before the app has
+ * a listener. Re-derived on every launch and every page switch, so it is never stale.
+ */
+export function appendThemeLaunchParams(
+  redirectUri: string,
+  theme: HostyResolvedTheme,
+  preference: HostyThemePreference,
+): string {
+  const url = new URL(redirectUri);
+  url.searchParams.set(THEME_PARAM, theme);
+  url.searchParams.set(THEME_PREFERENCE_PARAM, preference);
+  return url.toString();
 }

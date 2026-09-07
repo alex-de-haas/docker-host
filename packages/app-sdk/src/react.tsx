@@ -4,7 +4,7 @@
 // cards. Prop-less by design: the app id and browser-reachable Core origin arrive in the
 // probe response's `recovery` field (request-time values, never build-time props).
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   buildCoreOpenUrl,
   decideRecoveryAction,
@@ -19,6 +19,17 @@ import {
   type AppSessionStatus,
   type RecoveryAction,
 } from "./index";
+import {
+  applyTheme,
+  parseShellThemeMessage,
+  resolveTheme,
+  THEME_PARAM,
+  THEME_PREFERENCE_PARAM,
+  THEME_PREFERENCE_STORAGE_KEY,
+  THEME_STORAGE_KEY,
+  type HostyResolvedTheme,
+  type HostyThemePreference,
+} from "./theme";
 
 // Once-per-tab guard so a standalone app that returns from Core still unauthorized does
 // not bounce through /open forever. Cleared on a successful code exchange.
@@ -382,3 +393,123 @@ const actionStyle: React.CSSProperties = {
   fontWeight: 650,
   textDecoration: "none",
 };
+
+function readStoredTheme(key: string): string | null {
+  try {
+    return window.sessionStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredTheme(theme: HostyResolvedTheme, preference: HostyThemePreference): void {
+  try {
+    window.sessionStorage.setItem(THEME_STORAGE_KEY, theme);
+    window.sessionStorage.setItem(THEME_PREFERENCE_STORAGE_KEY, preference);
+  } catch {
+    // sessionStorage may be blocked. The shell re-declares the theme on every launch and on every
+    // page switch it drives, so only app-internal navigation loses it.
+  }
+}
+
+function clearStoredTheme(): void {
+  try {
+    window.sessionStorage.removeItem(THEME_STORAGE_KEY);
+    window.sessionStorage.removeItem(THEME_PREFERENCE_STORAGE_KEY);
+  } catch {
+    // Same as above — nothing to keep.
+  }
+}
+
+export interface HostThemeBridgeProps {
+  /**
+   * Whether the operating system decides the theme while no shell has spoken — `true` unless the
+   * app runs its own theme provider for standalone use (next-themes), which owns that case and
+   * whose stored choice the host must not overwrite. Pass the same value to
+   * `createThemeBootstrapScript`.
+   */
+  followSystem?: boolean;
+  /**
+   * Runs after every application, with the theme just applied. An app that also runs its own
+   * theme provider hands that provider the shell's decision here; an app that only follows the
+   * host needs nothing.
+   */
+  onTheme?: (theme: HostyResolvedTheme, preference: HostyThemePreference) => void;
+}
+
+/**
+ * Mount once in the root layout. Applies the theme from the launch parameters, the value stored
+ * for this tab, or the operating system — in that order — persists a declared one, cleans the
+ * parameters out of the URL so a copied link cannot carry a shell's presentation into a plain
+ * browser tab, and then follows `hosty:shell-theme` posts from the parent for the life of the
+ * document.
+ *
+ * Pair it with `themeBootstrapScript` in the head: this effect runs after first paint, so without
+ * the script a document paints in the default theme for a frame before it is corrected. The system
+ * preference is followed live only while no shell has spoken — a declared theme is a choice, and a
+ * choice is not overruled by the OS.
+ */
+export function HostThemeBridge({ followSystem = true, onTheme }: HostThemeBridgeProps = {}) {
+  const onThemeRef = useRef(onTheme);
+  useEffect(() => {
+    onThemeRef.current = onTheme;
+  }, [onTheme]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const system = window.matchMedia("(prefers-color-scheme: dark)");
+    const apply = (theme: HostyResolvedTheme, preference: HostyThemePreference, declared: boolean) => {
+      applyTheme(root, theme, preference);
+      if (declared) {
+        writeStoredTheme(theme, preference);
+      } else {
+        clearStoredTheme();
+      }
+      onThemeRef.current?.(theme, preference);
+    };
+
+    const url = new URL(window.location.href);
+    const resolution = resolveTheme({
+      param: url.searchParams.get(THEME_PARAM),
+      preferenceParam: url.searchParams.get(THEME_PREFERENCE_PARAM),
+      stored: readStoredTheme(THEME_STORAGE_KEY),
+      storedPreference: readStoredTheme(THEME_PREFERENCE_STORAGE_KEY),
+      systemPrefersDark: system.matches,
+    });
+    let declared = resolution.source !== "system";
+    if (declared || followSystem) {
+      apply(resolution.theme, resolution.preference, declared);
+    }
+
+    // Cleaned whenever present, including an unrecognized value: a parameter this app ignored
+    // must not survive into a link someone copies.
+    if (url.searchParams.has(THEME_PARAM) || url.searchParams.has(THEME_PREFERENCE_PARAM)) {
+      url.searchParams.delete(THEME_PARAM);
+      url.searchParams.delete(THEME_PREFERENCE_PARAM);
+      window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+    }
+
+    const handleMessage = (event: MessageEvent) => {
+      const message = parseShellThemeMessage(event, window);
+      if (!message) {
+        return;
+      }
+      declared = true;
+      apply(message.theme, message.preference, true);
+    };
+    const handleSystemChange = () => {
+      if (!declared && followSystem) {
+        apply(system.matches ? "dark" : "light", "system", false);
+      }
+    };
+
+    window.addEventListener("message", handleMessage);
+    system.addEventListener("change", handleSystemChange);
+    return () => {
+      window.removeEventListener("message", handleMessage);
+      system.removeEventListener("change", handleSystemChange);
+    };
+  }, []);
+
+  return null;
+}

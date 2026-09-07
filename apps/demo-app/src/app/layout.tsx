@@ -1,34 +1,13 @@
 import type { Metadata } from "next";
 import { launchModeBootstrapScript } from "@hosty-sdk/app";
-import { AppIdentityBridge, HostLaunchBridge } from "@hosty-sdk/app/react";
-import { HostThemeBridge } from "@/components/HostThemeBridge";
+import { AppIdentityBridge, HostLaunchBridge, HostThemeBridge } from "@hosty-sdk/app/react";
+import { themeBootstrapScript } from "@hosty-sdk/app/theme";
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Hosty Demo App",
   description: "A small Next.js runtime app for Hosty lifecycle testing.",
 };
-
-const hostThemeBootstrapScript = `
-(() => {
-  try {
-    const params = new URLSearchParams(window.location.search);
-    const queryTheme = params.get("hosty_theme");
-    const storedTheme = window.sessionStorage.getItem("hosty.theme.resolved");
-    const theme = queryTheme === "dark" || queryTheme === "light"
-      ? queryTheme
-      : storedTheme === "dark" || storedTheme === "light"
-        ? storedTheme
-        : window.matchMedia("(prefers-color-scheme: dark)").matches
-          ? "dark"
-          : "light";
-    const root = document.documentElement;
-    root.classList.toggle("dark", theme === "dark");
-    root.style.colorScheme = theme;
-    root.dataset.hostyTheme = theme;
-  } catch {}
-})();
-`;
 
 export default function RootLayout({
   children,
@@ -37,9 +16,13 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className="font-sans antialiased">
-        <script dangerouslySetInnerHTML={{ __html: hostThemeBootstrapScript }} />
+      <head>
+        {/* Ahead of any body markup, so chrome a shell already renders is never painted, and the
+            first paint is already in the shell's theme. */}
         <script dangerouslySetInnerHTML={{ __html: launchModeBootstrapScript }} />
+        <script dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
+      </head>
+      <body className="font-sans antialiased">
         <HostThemeBridge />
         <HostLaunchBridge />
         <AppIdentityBridge />

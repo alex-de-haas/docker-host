@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ExternalLink, ShieldAlert } from "lucide-react";
 import { ASK_ASSISTANT_TYPE, DELEGATED_TOKEN_TYPE } from "@hosty-sdk/app";
+import { createShellThemeMessage } from "@hosty-sdk/app/theme";
 import {
   parseActiveFrameAskAssistant,
   parseActiveFrameAttention,
@@ -100,10 +101,7 @@ export function EmbeddedAppFrame({
     }
 
     try {
-      frame.contentWindow.postMessage(
-        { type: "hosty:shell-theme", theme, preference: themePreference },
-        getPostMessageTargetOrigin(src),
-      );
+      frame.contentWindow.postMessage(createShellThemeMessage(theme, themePreference), getPostMessageTargetOrigin(src));
     } catch {
       // A frame that has navigated away or is mid-teardown is not an error worth surfacing.
     }
