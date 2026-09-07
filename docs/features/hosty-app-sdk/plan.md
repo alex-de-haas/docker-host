@@ -39,7 +39,8 @@ examples are already real. Ordering is by payoff.
       protocol and any theming redesign happens inside the SDK. The trigger was a real defect, not
       duplication for its own sake — the Shell's `hosty:shell-theme` post at frame `load` lands before
       the app's listener exists, and the marketplace/telemetry-ui copy, which read nothing else, then
-      painted whatever its tab had stored (telemetry-ui 0.9.1 fixed it locally first).
+      painted whatever its tab had stored. Telemetry-ui is where it was found and first fixed
+      privately; that fix is replaced here rather than shipped, so its 0.9.1 lands with this work.
   - [x] The slice: `@hosty-sdk/app/theme` (protocol constants, `resolveTheme`, `applyTheme`,
         `parseShellThemeMessage`, `createShellThemeMessage`, `themeBootstrapScript`),
         `HostThemeBridge` in `react`, `appendThemeLaunchParams` in `embedder` — SDK 0.12.0, with the
