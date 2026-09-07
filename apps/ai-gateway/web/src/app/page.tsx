@@ -12,7 +12,6 @@ import {
   type Settings,
   type SettingsResponse,
 } from "@/lib/api";
-import { startThemeSync } from "@/lib/shell-theme";
 
 export default function SettingsPage() {
   const [data, setData] = useState<SettingsResponse | null>(null);
@@ -20,8 +19,6 @@ export default function SettingsPage() {
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [prompt, setPrompt] = useState("");
-
-  useEffect(() => startThemeSync(), []);
 
   useEffect(() => {
     // The session first, then the data: a launch code that has not been spent yet means every

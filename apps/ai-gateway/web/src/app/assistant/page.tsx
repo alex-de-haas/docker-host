@@ -13,7 +13,6 @@ import { establishSession } from "@/lib/api";
 import { composeAskDraft } from "@/lib/ask-draft";
 import { clearDraft, pruneDrafts, readDraft, writeDraft } from "@/lib/draft-store";
 import { orderSessions, publishAttention, waitingCount } from "@/lib/attention";
-import { startThemeSync } from "@/lib/shell-theme";
 import {
   createSession,
   deleteSession,
@@ -78,8 +77,6 @@ export default function AssistantPage() {
   const selfDeleted = useRef(new Set<string>());
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
-
-  useEffect(() => startThemeSync(), []);
 
   /** Attaches to one session and follows its log. Shared by reattach, switch and new. */
   const attach = useCallback((record: AssistantSession) => {
