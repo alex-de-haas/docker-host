@@ -19,14 +19,3 @@ export function resolveShellTheme(resolvedTheme: string | undefined): HostyResol
 
   return "light";
 }
-
-export function appendHostyThemeParams(
-  redirectUri: string,
-  theme: HostyResolvedTheme,
-  preference: HostyThemePreference,
-) {
-  const url = new URL(redirectUri);
-  url.searchParams.set("hosty_theme", theme);
-  url.searchParams.set("hosty_theme_preference", preference);
-  return url.toString();
-}

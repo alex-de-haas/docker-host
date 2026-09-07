@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { launchModeBootstrapScript } from "@hosty-sdk/app";
-import { AppIdentityBridge, HostLaunchBridge } from "@hosty-sdk/app/react";
-import { HostThemeBridge } from "@/components/host-theme-bridge";
+import { AppIdentityBridge, HostLaunchBridge, HostThemeBridge } from "@hosty-sdk/app/react";
+import { themeBootstrapScript } from "@hosty-sdk/app/theme";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -18,8 +18,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     // server never rendered, which React would otherwise report as a hydration difference.
     <html lang="en" suppressHydrationWarning>
       <head>
-        {/* Ahead of any body markup, so chrome a shell already renders is never painted. */}
+        {/* Ahead of any body markup, so chrome a shell already renders is never painted, and the
+            first paint is already in the shell's theme. */}
         <script dangerouslySetInnerHTML={{ __html: launchModeBootstrapScript }} />
+        <script dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
       </head>
       <body>
         <AppIdentityBridge />

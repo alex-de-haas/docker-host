@@ -1,13 +1,13 @@
 # Hosty App SDK
 
 Created: 2026-07-15
-Updated: 2026-09-02
+Updated: 2026-09-07
 
 Shared Host integration for runtime apps, in two published packages: **`@hosty-sdk/app`** on npmjs
-(TypeScript, 0.7.0) and **`HostySdk.App`** on NuGet (.NET, 0.6.0). They own the app half of the
+(TypeScript, 0.12.0) and **`HostySdk.App`** on NuGet (.NET, 0.6.0). They own the app half of the
 [auth session lifecycle](../auth-session-lifecycle/feature.md) contract — session classification,
-recovery, Core revalidation, launch-mode awareness — plus the app secrets client and delegated-token
-validation.
+recovery, Core revalidation, launch-mode awareness — plus the app secrets client, delegated-token
+validation, and (TypeScript only) the theme protocol between a shell and the pages it embeds.
 
 The packages exist because that logic was previously a private copy in every app. Six runtime apps
 held at least five incompatible copies of the same security-sensitive code, and the copies had drifted
@@ -24,8 +24,9 @@ is what the `misconfigured` state exists to prevent.
 @hosty-sdk/app                 # npmjs — types, constants, state machine, launch mode, message schema
 @hosty-sdk/app/server          # import "server-only": Core revalidation, code exchange, app secrets
 @hosty-sdk/app/delegated       # local ECDSA validation of Core-issued delegated tokens
-@hosty-sdk/app/react           # 'use client': AppIdentityBridge, HostLaunchBridge, useLaunchMode
-@hosty-sdk/app/embedder        # 'use client': the verified responders a shell owes its frames
+@hosty-sdk/app/react           # 'use client': AppIdentityBridge, HostLaunchBridge, HostThemeBridge, useLaunchMode
+@hosty-sdk/app/embedder        # 'use client': the verified responders a shell owes its frames, the theme sender half
+@hosty-sdk/app/theme           # pure: the shell→app theme protocol, its resolver, and the bootstrap script
 
 HostySdk.App                   # NuGet — Hosty auth scheme, cached Core revalidation,
                                # HOSTY_* options binding, HostySecretsClient
@@ -54,9 +55,14 @@ What each slice holds:
   building, and the app secrets client (`getAppSecret` / `setAppSecret` / `deleteAppSecret` /
   `listAppSecretKeys`).
 - **`react`:** `AppIdentityBridge` (renders the state machine and drives recovery), `HostLaunchBridge`,
-  `useLaunchMode`, and `readProbedSessionStatus`.
-- **`embedder`:** `parseActiveFrameAuthRequired`, `parseActiveFrameDelegatedTokenRequest`, and
-  `createReissueRateLimiter`.
+  `HostThemeBridge`, `useLaunchMode`, and `readProbedSessionStatus`.
+- **`embedder`:** `parseActiveFrameAuthRequired`, `parseActiveFrameDelegatedTokenRequest`,
+  `createReissueRateLimiter`, and `appendThemeLaunchParams`.
+- **`theme`:** the protocol constants (`hosty:shell-theme`, the `hosty_theme` /
+  `hosty_theme_preference` launch parameters, the `hosty.theme.resolved` / `hosty.theme.preference`
+  storage keys, the `data-hosty-theme` / `data-hosty-theme-preference` attributes), `resolveTheme`,
+  `applyTheme`, `parseShellThemeMessage`, `createShellThemeMessage`, the two normalizers, and
+  `themeBootstrapScript` (`createThemeBootstrapScript` for the `followSystem` switch).
 - **`HostySdk.App`:** `HostyAuthenticationHandler` (identity token from bearer, cookie, or inbound
   header), `CoreIdentityValidator` behind `CachingIdentityValidator`, `HostyAppOptions` binding of the
   `HOSTY_*` environment, `HostySession`, `HostySecretsClient` (`AddHostySecrets`),
@@ -131,6 +137,58 @@ its embedder already renders without a flash.
 Logout UI is the app's discretion, gated by that helper: embedded hides logout entirely (the session
 belongs to the shell), standalone may offer a control that drops the app cookie and navigates to Core's
 login page. Logout is a cookie drop only — the grant then lives until its idle expiry.
+
+## Theme Bridging
+
+An embedded page renders in the theme its shell is set to. The shell declares it over two channels
+and the page reads them in a fixed precedence:
+
+1. **The launch parameters** `hosty_theme` (`light` | `dark`) and `hosty_theme_preference` (`light`
+   | `dark` | `system`), appended by the shell to every URL it loads into a frame — the workspace
+   page, a settings tab, a panel — with `appendThemeLaunchParams`. This channel decides the theme a
+   document loads with. It travels with the document, so it cannot be missed, and the shell
+   re-derives it on every launch and every page switch it drives, so it cannot be stale.
+2. **The value persisted for the tab** under `hosty.theme.resolved` / `hosty.theme.preference` in
+   `sessionStorage`, written whenever a shell declared a theme. App-internal navigation carries no
+   parameter and must not lose the theme.
+3. **The operating system**, followed live only while no shell has spoken. A declared theme is a
+   choice, and a choice is not overruled by the OS.
+
+The `hosty:shell-theme` post (`{ type, theme, preference }`, built with `createShellThemeMessage`)
+is the shell's channel for **changes made while the frame is already up**; it is also posted when
+the frame fires `load`, but that post is not load-bearing. It routinely lands before the app's effect
+has attached a listener, and the copies this slice replaced depended on it: lost, they read whatever
+an earlier post had stored, so one session in dark pinned an app dark for the life of the tab
+whatever the shell was set to — the telemetry-ui defect that opened the extraction (2026-09-07).
+
+`parseShellThemeMessage` accepts the post from the parent frame alone: `event.source ===
+window.parent` is set by the browser and is the trustworthy gate. The parent's origin is deliberately
+not checked — a page learns which origin embeds it from messages like this one, so it cannot be used
+to pre-filter them, and `document.referrer`, which two copies used instead, goes stale the moment the
+page reloads itself. Theme is not sensitive; the source check is sufficient.
+
+Applying a theme writes four things to the root, in `applyTheme`: the `dark` class every app's
+Tailwind `dark:` variant keys on, `color-scheme` so native controls and scrollbars follow, and the
+`data-hosty-theme` / `data-hosty-theme-preference` attributes for anything that wants the words.
+`themeBootstrapScript` does the same from the same precedence before hydration, so a document never
+paints in the wrong theme for a frame; `HostThemeBridge` then persists a declared theme, cleans the
+parameters out of the URL (a copied link must not carry a shell's presentation into a plain tab — the
+launch mode's rule exactly), and follows posts for the life of the document. Cleaning is the
+bridge's job rather than the script's because a `history.replaceState` before hydration is a
+router's business.
+
+An app that also runs its own theme provider for standalone use (project-manager on next-themes)
+passes `followSystem={false}` to the bridge and creates its head script with
+`createThemeBootstrapScript({ followSystem: false })`: the host then applies only a theme a shell
+declared and leaves the standalone case — where the operator may have picked a theme with the app's
+own toggle — to the provider, whose stored choice the operating system must not overwrite. The
+bridge's `onTheme` callback hands the provider each declared theme, so the app's own components
+render in it too.
+
+Shell consumes the sender half — `appendThemeLaunchParams` on every frame URL and
+`createShellThemeMessage` in its post — so the reference sender and the shipped one are the same
+code. The native client (`apps/shell-swift`) declares no theme; its web view reads the operating
+system, which is what a native app's chrome follows anyway.
 
 ## The Embedder Contract
 
@@ -208,14 +266,14 @@ half states the "open me from your shell" case itself rather than waiting out a 
 
 | App | Status |
 | --- | --- |
-| shell | consumes the `embedder` slice (#245) and the launch/event helpers |
-| marketplace | full — server + react + app-code factory (#241, #248) |
-| telemetry-ui | full (#241, #248) |
-| ai-gateway | consumes the SDK for its app auth |
-| demo-app | partial — `AppIdentityBridge`, the launch bootstrap, the app-code factory, and `delegated` for its MCP route; its 545-line `host-auth.ts` still hand-rolls session resolution |
-| media-server web | full (media-server #63/#64) |
+| shell | consumes the `embedder` slice (#245), the launch/event helpers, and the theme sender half |
+| marketplace | full — server + react + app-code factory (#241, #248) + the theme slice |
+| telemetry-ui | full (#241, #248) + the theme slice |
+| ai-gateway | consumes the SDK for its app auth; its web pages still hand-roll a theme listener (`startThemeSync`), the web package having no SDK dependency of its own |
+| demo-app | partial — `AppIdentityBridge`, the launch and theme bootstraps, `HostThemeBridge`, the app-code factory, and `delegated` for its MCP route; its 545-line `host-auth.ts` still hand-rolls session resolution |
+| media-server web | full (media-server #63/#64); the theme bridge is still its own copy until it takes 0.12.0 |
 | media-server .NET | full — `HostySdk.App` (media-server #65); a Core timeout fails closed as 401 |
-| project-manager | adopted (PM #27), with a pre-SDK wrapper layer still duplicating SDK exports |
+| project-manager | adopted (PM #27), with a pre-SDK wrapper layer still duplicating SDK exports; the theme bridge is still its own copy until it takes 0.12.0 |
 | solitaire | nothing to adopt — vanilla JS, no auth, two `localStorage` keys and zero npm dependencies |
 
 The remaining adoption debts and the second-wave extraction inventory are in [plan.md](plan.md).
@@ -255,5 +313,14 @@ The remaining adoption debts and the second-wave extraction inventory are in [pl
   accepting a well-formed one.
 - The secrets clients survive a briefly unavailable Core through their write-through cache, and a read
   issued before a concurrent write does not overwrite the newer value.
+- The theme resolver is covered for its precedence — a launch parameter over a stale stored theme
+  (the regression the slice exists for), the stored theme across a page switch that carries no
+  parameter, the operating system when nothing is declared — and for ignoring an unrecognized value
+  on either channel rather than honouring it. The bootstrap script is run as a function against a
+  document double for the same rows, including a blocked `sessionStorage`, which must still paint.
+- `parseShellThemeMessage` rejects a foreign sender, a document with no parent, another message type,
+  and an unrenderable theme, and defaults a missing preference to the theme. The sender half replaces
+  rather than duplicates the parameters on a URL that already carries them, and keeps the app path,
+  query, and fragment.
 - CI runs both suites (`npm run sdk:test`, the `HostySdk.App.Tests` project) on any change under the
   package paths; the publish workflows re-run the tests before releasing.
