@@ -1,7 +1,7 @@
 # Repository And Release Model
 
 Created: 2026-05-12
-Updated: 2026-09-02
+Updated: 2026-09-07
 
 This document records the current repository layout and release artifact boundaries after the Core/Shell split and retirement of the legacy combined Host package.
 
@@ -85,6 +85,7 @@ commit probe in [Runtime App Update](../runtime-app-update/feature.md) for sourc
 Builds are independent:
 
 - `ci.yml` - shared checks on pull requests and pushes;
+- `claude-code-review.yml` - advisory Claude Code review of pull requests, posted as inline comments;
 - `shell-image.yml` - build and push the Hosty Shell Docker image on `main`;
 - `marketplace-image.yml` - test, build, attest, and push the Hosty Marketplace Docker image on `main`;
 - `demo-app-image.yml` - build and push the first-party Demo App Docker image;
@@ -274,6 +275,20 @@ Pull request CI and default-branch CI therefore run the same checks, both restri
 the diff touches - a push to `main` is filtered against the commit before the push exactly as a pull
 request is filtered against its base.
 
+### Pull request review
+
+`claude-code-review.yml` runs the Claude Code `code-review` plugin once per pull request - when it is
+opened as a non-draft, or when a draft is marked ready for review - and posts its findings as inline
+comments. It is advisory: the check is not required, and it does not run on later pushes; a fresh
+review needs the pull request converted back to draft and marked ready again. The job is skipped, not
+failed, for drafts, fork pull requests, and bot-authored pull requests such as Dependabot's, because
+GitHub withholds repository secrets from the latter two.
+
+It authenticates with the `CLAUDE_CODE_OAUTH_TOKEN` repository secret, a Claude subscription token, and
+posts through a Claude GitHub App token obtained via OIDC, so the workflow's own `GITHUB_TOKEN` stays
+read-only. The action refuses to run when the workflow file differs from the copy on `main`, so a pull
+request that changes the workflow itself gets no review.
+
 ## Release Artifacts
 
 Hosty Shell image artifact:
@@ -453,3 +468,4 @@ During early development, `cli-dev` is the main platform distribution channel. I
 - A publishing run whose declared version tag already exists in the registry leaves that tag on the
   existing image and still publishes `:latest` and `sha-<commit>`.
 - Cardputer host tests and the ESP32-S3 firmware build pass, the binary fits a 3.8125 MiB OTA slot, and release assets carry checksums and provenance.
+- The Claude review job runs only on eligible pull requests (non-draft, same-repository, human-authored) and is skipped rather than failed otherwise; it is advisory, not a required check.
