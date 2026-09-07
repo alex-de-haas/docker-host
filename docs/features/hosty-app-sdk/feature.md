@@ -187,7 +187,9 @@ render in it too.
 
 Shell consumes the sender half — `appendThemeLaunchParams` on every frame URL and
 `createShellThemeMessage` in its post — so the reference sender and the shipped one are the same
-code. The native client (`apps/shell-swift`) declares no theme; its web view reads the operating
+code. Every embedded first-party page reads the protocol from this slice: no app implements it
+again, and `apps/ai-gateway/web` declares the SDK itself rather than relying on the gateway
+package's copy, because npm scopes a nested-workspace install to the workspace it is run from. The native client (`apps/shell-swift`) declares no theme; its web view reads the operating
 system, which is what a native app's chrome follows anyway.
 
 ## The Embedder Contract
@@ -269,11 +271,11 @@ half states the "open me from your shell" case itself rather than waiting out a 
 | shell | consumes the `embedder` slice (#245), the launch/event helpers, and the theme sender half |
 | marketplace | full — server + react + app-code factory (#241, #248) + the theme slice |
 | telemetry-ui | full (#241, #248) + the theme slice |
-| ai-gateway | consumes the SDK for its app auth; its web pages still hand-roll a theme listener (`startThemeSync`), the web package having no SDK dependency of its own |
+| ai-gateway | consumes the SDK for its app auth; its web workspace declares the SDK too and takes the theme slice |
 | demo-app | partial — `AppIdentityBridge`, the launch and theme bootstraps, `HostThemeBridge`, the app-code factory, and `delegated` for its MCP route; its 545-line `host-auth.ts` still hand-rolls session resolution |
-| media-server web | full (media-server #63/#64); the theme bridge is still its own copy until it takes 0.12.0 |
+| media-server web | full (media-server #63/#64), theme slice included (media-server #253) |
 | media-server .NET | full — `HostySdk.App` (media-server #65); a Core timeout fails closed as 401 |
-| project-manager | adopted (PM #27), with a pre-SDK wrapper layer still duplicating SDK exports; the theme bridge is still its own copy until it takes 0.12.0 |
+| project-manager | adopted (PM #27), with a pre-SDK wrapper layer still duplicating SDK exports; theme slice included (PM #77), keeping a thin next-themes hand-off |
 | solitaire | nothing to adopt — vanilla JS, no auth, two `localStorage` keys and zero npm dependencies |
 
 The remaining adoption debts and the second-wave extraction inventory are in [plan.md](plan.md).
