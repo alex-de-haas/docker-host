@@ -35,7 +35,7 @@ examples are already real. Ordering is by payoff.
       copy. ~200 lines of platform glue whose only app-specific value is the service-name default. The
       .NET counterpart is media-server's `HostyTelemetry.cs` → `HostySdk.App`. The three in-tree Next
       apps wire no OTel today and would gain tracing for free.
-- [ ] **3. `/theme` — theme bridging.** Decided 2026-09-07: the extraction carries the current
+- [x] **3. `/theme` — theme bridging.** Decided 2026-09-07: the extraction carries the current
       protocol and any theming redesign happens inside the SDK. The trigger was a real defect, not
       duplication for its own sake — the Shell's `hosty:shell-theme` post at frame `load` lands before
       the app's listener exists, and the marketplace/telemetry-ui copy, which read nothing else, then
@@ -47,12 +47,11 @@ examples are already real. Ordering is by payoff.
         suite in `theme.test.ts`.
   - [x] In-tree adoption in the same PR: marketplace, telemetry-ui, and demo-app mount the SDK bridge
         and bootstrap and delete their copies; Shell sends through the SDK.
-  - [ ] media-server web and project-manager take 0.12.0 and delete their copies (branches
-        `feat/sdk-theme-bridge` prepared in both repositories; each lockfile is refreshed once 0.12.0
-        is on npmjs, which the merge of the SDK PR triggers).
-  - [ ] ai-gateway web's `startThemeSync` — a sixth listener the 2026-07 sweep predates. Its web
-        package has no SDK dependency of its own (the gateway package does), so adopting the bridge
-        means adding one inside the nested workspace.
+  - [x] media-server web and project-manager take 0.12.0 and delete their copies — media-server
+        #253 (0.72.2) and project-manager #77 (0.10.2), both merged 2026-09-07.
+  - [x] ai-gateway web's `startThemeSync` — a sixth listener the 2026-07 sweep predates. Its web
+        workspace now declares `@hosty-sdk/app` of its own and mounts the bridge and bootstrap; the
+        two pages no longer start a sync each. Six copies of the protocol are down to none.
 - [ ] **4. `/env` — the non-auth environment contract.** The SDK reads only the auth variables; every
       app hand-parses the rest: `HOSTY_PORT_{KEY}` (media-server `HostyKestrel`),
       `HOSTY_SERVICE_{KEY}_URL` (telemetry-ui `backend.ts`), `HOSTY_DEPENDENCY_{KEY}_URL`,
