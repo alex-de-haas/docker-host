@@ -14,10 +14,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   // otherwise read as a hydration mismatch.
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className="bg-background text-foreground antialiased">
+      {/*
+        Both bootstraps run ahead of any body markup, which is where the rest of the fleet puts them
+        and what makes "before the first paint" true rather than merely likely: a script at the top
+        of <body> can lose that race, and the cost is the flash each one exists to prevent.
+      */}
+      <head>
         {/*
-          Stamps the launch mode on <html> before the first paint, so the page can drop its own outer
-          padding while a shell supplies it (globals.css) without a flash of the standalone layout.
+          Stamps the launch mode on <html>, so the page can drop its own outer padding while a shell
+          supplies it (globals.css) without a flash of the standalone layout.
 
           The attribute and its values are the SDK's contract (`LAUNCH_MODE_ATTRIBUTE`), written out
           here rather than imported. That was once because this workspace carried no SDK dependency;
@@ -37,11 +42,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {/*
           The theme, from the SDK slice that owns the protocol: the `hosty_theme` launch parameters
           decide what this document paints with, the value stored for the tab carries it across
-          navigation, and `hosty:shell-theme` covers a change made while the frame is up. The
-          bootstrap runs before the first paint; the bridge below persists, cleans the parameters
-          out of the URL, and follows later posts.
+          navigation, and `hosty:shell-theme` covers a change made while the frame is up. The bridge
+          in the body then persists it, cleans the parameters out of the URL, and follows later posts.
         */}
         <script dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
+      </head>
+      <body className="bg-background text-foreground antialiased">
         <HostThemeBridge />
         {children}
       </body>
