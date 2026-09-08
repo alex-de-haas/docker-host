@@ -6,7 +6,7 @@ import { pipeline } from "node:stream/promises";
 
 // What an operator may hand a session, and what happens to the name they gave it.
 //
-// The caps are the operator's numbers (docs/features/assistant-attachments/plan.md, Decisions). The
+// The caps are the operator's numbers (docs/features/assistant-attachments/feature.md). The
 // per-session byte cap is the one guarding something real: the workspace lives under the cache root,
 // which is never backed up but is disk on the host, and a session nobody deletes holds it until the
 // retention sweep does. The other two exist so one upload cannot spend the whole allowance.

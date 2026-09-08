@@ -34,6 +34,16 @@ to the file. A session restored from a backup comes back without its attachments
 backed up, the cache is not — and the transcript's `attachment_added` event is what explains the
 file it no longer has.
 
+That backup is not one the operator can ask for. `apps/ai-gateway/manifest.json` declares
+`data.enabled: true` but `capabilities: ["logs"]`, and Shell shows the Backups entry — the only way
+into the create-and-restore panel — for an app whose capabilities include `backup`. The gateway's
+menu therefore offers Check for updates, Development mode, Console logs, Settings and Remove, and
+nothing else. What still happens is Core's own backup before an update, and it is the same call:
+`CreateBackupAsync` archives the app's data directory and branches on `reason` only for the backup's
+id and its retention class, so an on-demand backup would hold exactly what a pre-update one holds.
+`hosty.marketplace` and `hosty.telemetry` sit in the same position; of the first-party manifests only
+`demo-app` declares `backup`.
+
 ## Upload, Download, And What The Name Becomes
 
 `PUT /api/sessions/{id}/attachments/{name}` takes the file as the raw request body — no multipart
@@ -129,12 +139,15 @@ against the session's quota either way.
   inside a functional state update, which React runs after the handler has returned — after the
   reset — so every selection appended nothing and the first live attempt sent a message without
   its file. A property of the function, tested as one; the gateway has no UI harness.
-- **Verified live, except the on-demand backup.** The first attempt to attach a file through a
-  Core-managed gateway found the composer bug above and reached nothing else. A second run against
-  the production host on 2026-09-08 confirmed the rest: the workspace is created under the
-  `HOSTY_APP_CACHE_DIR` Core injects, both harnesses answer from an attached file, deleting a
-  session removes its workspace from the host, and the `../..` limit reads exactly as documented —
-  the sessions root lists sibling workspaces and nothing more. The backup behaviour is observed
-  only through the backup Core takes before an update, which holds the session's records and none
-  of its attachments. The gateway declares no `backup` capability, so Shell offers neither a manual
-  backup nor the restore dialog; that one check stays open in [plan.md](plan.md).
+- **Verified live.** The first attempt to attach a file through a Core-managed gateway found the
+  composer bug above and reached nothing else. A run against the production host on 2026-09-08
+  covered the rest — Core 0.97.3, gateway 0.26.3 on the `local` runtime: the workspace is created
+  under the `HOSTY_APP_CACHE_DIR` Core injects and not under the home directory, both harnesses
+  answer from an attached file, deleting a session removes its workspace from the host, and the
+  limit reads exactly as stated — one `..` shows only `workspace/`, which is why a single-level
+  probe would have falsely passed, and two reach the sessions root, where the sibling sessions are
+  enumerable and nothing else is. The backup claim was observed on the backup Core takes before an
+  update, which held the session's records and none of its attachments. No separate on-demand run
+  was made, and none is owed: the manual path is the same `CreateBackupAsync` call over the same
+  data directory, so the observation covers both. Whether an operator should be able to reach it at
+  all is the capability question above, decided on 2026-09-08 to leave the manifests alone.
