@@ -1,7 +1,7 @@
 # Assistant Attachments
 
 Created: 2026-09-03
-Updated: 2026-09-04
+Updated: 2026-09-08
 
 An operator hands the assistant a file from the composer. It lands in a working directory that
 belongs to the session, the transcript records that it did, and the harness is told where to find
@@ -129,7 +129,12 @@ against the session's quota either way.
   inside a functional state update, which React runs after the handler has returned — after the
   reset — so every selection appended nothing and the first live attempt sent a message without
   its file. A property of the function, tested as one; the gateway has no UI harness.
-- **Partly verified live.** The first attempt to attach a file through a Core-managed gateway found
-  the composer bug above and reached nothing else. No harness has yet been asked about an attached
-  file, and the backup/restore behaviour is reasoned from the storage contract rather than
-  observed. Those checks stay open in [plan.md](plan.md).
+- **Verified live, except the on-demand backup.** The first attempt to attach a file through a
+  Core-managed gateway found the composer bug above and reached nothing else. A second run against
+  the production host on 2026-09-08 confirmed the rest: the workspace is created under the
+  `HOSTY_APP_CACHE_DIR` Core injects, both harnesses answer from an attached file, deleting a
+  session removes its workspace from the host, and the `../..` limit reads exactly as documented —
+  the sessions root lists sibling workspaces and nothing more. The backup behaviour is observed
+  only through the backup Core takes before an update, which holds the session's records and none
+  of its attachments. The gateway declares no `backup` capability, so Shell offers neither a manual
+  backup nor the restore dialog; that one check stays open in [plan.md](plan.md).

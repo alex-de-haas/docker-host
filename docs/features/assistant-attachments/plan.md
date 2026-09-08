@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-09-03
-Updated: 2026-09-03
+Updated: 2026-09-08
 
 Let an operator hand the assistant a file — a log, a config, a screenshot, a manifest — instead of
 pasting it into the message box. Cross-cuts [ai-gateway](../ai-gateway/feature.md) (the surface),
@@ -155,17 +155,56 @@ Unit tests cover the path handling, every cap in both directions, ownership on b
 content-type fixing, removal on the session's exits, and what reaches the harness. What they cannot
 cover, against a Core-managed dev runtime:
 
-- [ ] **The cache directory is the one Core injects.** Start the gateway through Core and confirm
+- [x] **The cache directory is the one Core injects.** Start the gateway through Core and confirm
       `HOSTY_APP_CACHE_DIR` is set and the workspace is created under it, not under the home
       directory.
-- [ ] **Both harnesses read an attachment.** Attach a log file, ask a question about it, and confirm
+- [x] **Both harnesses read an attachment.** Attach a log file, ask a question about it, and confirm
       the answer came from the file — under Claude and under Codex.
-- [ ] **Deletion reaches the disk.** Delete the session in the UI and confirm the workspace is gone
+- [x] **Deletion reaches the disk.** Delete the session in the UI and confirm the workspace is gone
       from the host.
 - [ ] **Backups hold records and not uploads.** Take a backup of the gateway and confirm the archive
       holds the session's records and none of its attachments; restore it and confirm the transcript
-      shows the `attachment_added` event without the file.
-- [ ] **The documented limit is what it says.** From one session, ask the assistant to list `../..`
+      shows the `attachment_added` event without the file. **Half-confirmed on 2026-09-08** — the
+      update-time backup holds the session records and no attachments, which is the claim that
+      mattered. The on-demand half could not be run at all, for a reason that is itself the finding
+      below: the gateway offers no manual backup.
+- [x] **The documented limit is what it says.** From one session, ask the assistant to list `../..`
       — the sessions root, not the session's own directory one level up — and confirm what it can
       see is other sessions' workspaces and nothing else. A probe of `..` alone would observe
       nothing and pass.
+
+### Live run — production host, 2026-09-08
+
+Core 0.97.3, `hosty.ai-gateway` 0.26.3 on the `local` runtime, Windows host.
+
+- **Cache directory.** `HOSTY_APP_CACHE_DIR` resolves to
+  `C:\Users\azaya\.hosty\apps\hosty.ai-gateway\cache`, and the live session's workspace sits at
+  `…\cache\sessions\<id>\workspace` — under the injected path, not under `USERPROFILE`, which is
+  only a common ancestor.
+- **Both harnesses.** Claude and Codex each answered from an attached file.
+- **Deletion.** Deleting the session in the UI removed the workspace from the host.
+- **The documented limit.** Exactly as written: one `..` shows only `workspace/` — which is why a
+  single-level probe would have falsely passed — and two `..` reach `cache\sessions\`, where the
+  three sibling session directories are enumerable by name. The run stopped at listing names and did
+  not descend. This is the limit this plan states rather than a defect: a per-session workspace
+  prevents accidental mixing and does not contain a harness that decides to read `../..`, and every
+  actor who can reach a workspace is already a host administrator.
+
+### Finding — the gateway declares no `backup` capability
+
+`apps/ai-gateway/manifest.json` sets `data.enabled: true` but `capabilities: ["logs"]`. Shell gates
+the Backups entry on `canControl && app.capabilities.includes("backup")`
+(`apps/shell/src/app/shell/pages/dashboard-page.tsx`), so the app row's menu offers Check for
+updates, Development mode, Console logs, Settings and Remove — and no backup. Core still takes its
+own backup before an update, which is how the archive's contents were confirmed at all, but the
+operator cannot take one on demand or restore from the dialog.
+
+`hosty.marketplace` and `hosty.telemetry` are in the same position: a data directory and no `backup`
+capability. Among the first-party manifests only `demo-app` declares it.
+
+Adding `"backup"` to the gateway's capabilities would make the manual backup and the restore dialog
+reachable and so close the deliverable above. **The owner declined that change on 2026-09-08**: the
+manifests stay as they are, so the gateway keeps taking a backup only when Core takes one before an
+update. The deliverable therefore stays unchecked — not because the property it asserts is in doubt,
+but because the on-demand path it names does not exist to be exercised. Reopening it means revisiting
+the capability decision first.
