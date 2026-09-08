@@ -562,8 +562,13 @@ internal static class OAuthEndpoints
 
     /// <summary>Revokes every access token a grant issued and closes their event streams — the same
     /// cascade the credentials page runs when a grant row is revoked.</summary>
+    internal static Task RevokeIssuedAccessTokensAsync(
+        string grantId, UserDirectoryStore users, CoreEventHub events,
+        DateTimeOffset revokedAt, CancellationToken cancellationToken)
+        => RevokeIssuedAccessTokensAsync(new HashSet<string>(StringComparer.Ordinal) { grantId }, users, events, revokedAt, cancellationToken);
+
     internal static async Task RevokeIssuedAccessTokensAsync(
-        string grantId,
+        IReadOnlySet<string> grantIds,
         UserDirectoryStore users,
         CoreEventHub events,
         DateTimeOffset revokedAt,
@@ -575,7 +580,7 @@ internal static class OAuthEndpoints
             Sessions = current.Sessions
                 .Select(session =>
                 {
-                    if (string.Equals(session.GrantId, grantId, StringComparison.Ordinal))
+                    if (session.GrantId is { } id && grantIds.Contains(id))
                     {
                         issuedIds.Add(session.Id);
                         return session with { RevokedAt = session.RevokedAt ?? revokedAt };

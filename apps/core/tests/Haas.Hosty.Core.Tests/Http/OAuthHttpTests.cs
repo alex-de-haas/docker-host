@@ -103,6 +103,7 @@ public sealed class OAuthHttpTests
         var clientId = (await RegisterAsync(client, "Codex")).GetProperty("client_id").GetString()!;
         var (verifier, challenge) = NewPkcePair();
         var tokens = await RedeemAsync(client, clientId, await ApprovedCodeAsync(client, admin, clientId, challenge), verifier);
+        var secondTokens = await RedeemAsync(client, clientId, await ApprovedCodeAsync(client, admin, clientId, challenge), verifier);
         var oauth = harness.Services.GetRequiredService<OAuthStore>();
         var clock = harness.Services.GetRequiredService<IClock>();
         // Simulate interruption after the atomic OAuth write and before the session-store cascade.
@@ -116,9 +117,11 @@ public sealed class OAuthHttpTests
         await recovery.StartAsync(default);
         await recovery.StartAsync(default);
         Assert.Equal(HttpStatusCode.Unauthorized, (await InitializeMcpAsync(client, tokens.GetProperty("access_token").GetString()!)).StatusCode);
-        var before = Assert.Single((await oauth.ReadAsync()).Grants);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await InitializeMcpAsync(client, secondTokens.GetProperty("access_token").GetString()!)).StatusCode);
+        Assert.Equal(2, (await oauth.ReadAsync()).Grants.Count);
+        var before = (await oauth.ReadAsync()).Grants[0];
         await oauth.TouchGrantAsync(before.Id, clock.UtcNow.AddMinutes(10), default);
-        Assert.Equivalent(before, Assert.Single((await oauth.ReadAsync()).Grants));
+        Assert.Equivalent(before, (await oauth.ReadAsync()).Grants[0]);
     }
 
     [Theory]

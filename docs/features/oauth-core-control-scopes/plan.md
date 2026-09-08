@@ -10,39 +10,13 @@ Let an operator explicitly authorize a stock MCP client to manage and update app
 Core OAuth, without issuing a full-role credential. Client removal belongs
 to [OAuth management](../mcp-oauth/feature.md) and is not a prerequisite for issuing new scoped grants.
 
-## Target Behavior — Changes From Current Behavior
+## Target Behavior — Remaining Validation
 
-[OAuth](../mcp-oauth/feature.md) currently advertises and accepts only `mcp:read`. Extend its
-resource-aware validation and consent to accept `mcp:lifecycle` and `mcp:update` for `hosty:core`.
-Both require `mcp:read`, remain independent, and require the consenting user to be an administrator.
-App/facade audiences remain read-only; the facade filter and delegated-token restrictions stay intact.
-
-Consent describes reading, start/stop/restart, and plan/apply updates in words. A requested scope
-is not an approved scope until consent succeeds. No full-role OAuth token is issued. Refresh must
-not expand the consented scope set, and an increase uses client login and fresh consent, not a
-silent edit to an existing bearer. Existing grants are not edited for reductions either (owner
-scope decision, 2026-09-08). Do not depend on automatic client step-up or old/new-grant linking.
-
-Preserve the current issuance model: each successful new authorization creates a new grant,
-access token and refresh chain, shown as a separate Active credentials row. The previous grant
-remains independent until explicitly revoked or expired. Ordinary refresh rotates tokens within
-its existing grant and does not create another row. A new OAuth client registration is separate
-and depends on client registration behavior, not on the scope change itself.
-
-Use selectable consent as the primary design: show requested Core control scopes as optional
-choices, unchecked initially; retain required `mcp:read`. An administrator may approve a subset,
-never add an unrequested scope. Validate the selected subset against the parked request server-side,
-store only approved scopes in the code/grant and return the actual issued access-token scopes
-in token responses. Refresh scope selection follows the rules below. This is initial consent, not reduction of an existing credential. A forged consent payload
-cannot add a scope. See [RFC 6749 section 3.3](https://www.rfc-editor.org/rfc/rfc6749.html#section-3.3).
-
-Publish all three supported scopes in AS metadata while keeping Core Protected Resource Metadata
-at the minimal `mcp:read`. Test these distinct documents explicitly with both stock clients rather
-than assuming all clients choose their default from PRM. No global issuance switch is required by
-the primary design; it remains an optional policy choice only if separately requested.
-
-A missing scope parameter defaults to read-only. Do not promise that every client's default login
-requests read-only: discovery behavior differs between clients and between default/config/CLI paths.
+The implemented metadata, consent and refresh contracts belong to
+[OAuth](../mcp-oauth/feature.md); invocation enforcement belongs to
+[Core MCP](../core-mcp/feature.md), and credential identity belongs to
+[Access tokens](../access-tokens/feature.md). The remaining work verifies these
+contracts with stock Codex against the actual Core, without changing their design.
 
 ## Evidence And Client Compatibility
 
@@ -50,20 +24,6 @@ See the [2026-09-08 stock-client report](../../reviews/2026-09-08-oauth-client-c
 for observed versions, scope selection, consent subsets, refresh and isolation limitations.
 The fixture results establish client compatibility, not production-state isolation or implemented
 Core/Shell behavior.
-
-## Refresh Scope Validation
-
-The current refresh handler ignores the optional `scope` form parameter; the probe confirms Codex
-actually sends it. Resolve the grant from the presented refresh token, then validate requested
-scopes before consuming/rotating it or issuing a session. Omitted scope uses the grant's set. A
-present scope must be a non-empty, well-formed subset of `grant.Scopes` satisfying existing Core
-scope dependencies; unknown, malformed or wider scopes return `invalid_scope` without rotating
-the refresh token. Include the actual access-token scope in the response.
-
-A valid narrower refresh request narrows that newly issued access token only. It does not edit the
-persistent grant or the replacement refresh token's authority, and is not the removed credential
-permission editor. Later refresh without scope can use the originally approved grant set again.
-Client behavior may continue requesting the narrower access-token scope; that is within the grant.
 
 ## Relationship To MCP Tool Availability
 

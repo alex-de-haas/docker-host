@@ -1,7 +1,7 @@
 "use client";
 
 import type { FormEvent } from "react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Copy, KeyRound, LoaderCircle, Pencil, Plus, ShieldAlert, ShieldCheck, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -65,6 +65,7 @@ export function SettingsTokensSection({
   // Shown once, right after creation, and never retrievable again.
   const [issued, setIssued] = useState<{ label: string; token: string } | null>(null);
   const [copied, setCopied] = useState(false);
+  const deniedClientOrigin = useRef<string | null>(null);
   const [canManage, setCanManage] = useState(false);
   const [editing, setEditing] = useState<AccessTokenView | null>(null);
   const [editLabel, setEditLabel] = useState("");
@@ -75,7 +76,7 @@ export function SettingsTokensSection({
       const [pending, existing, clients] = await Promise.all([
         fetch(`${coreOrigin}/api/auth/device/requests`, { credentials: "include" }),
         fetch(`${coreOrigin}/api/auth/credentials`, { credentials: "include" }),
-        fetch(`${coreOrigin}/api/auth/oauth/clients`, { credentials: "include" }),
+        deniedClientOrigin.current === coreOrigin ? null : fetch(`${coreOrigin}/api/auth/oauth/clients`, { credentials: "include" }),
       ]);
 
       // An expired session must take the operator to /login. Without this the poll below would keep
@@ -89,10 +90,14 @@ export function SettingsTokensSection({
         return;
       }
 
-      redirectToCoreLoginIfAuthRequired(clients, coreOrigin);
-      if (!clients.ok && clients.status !== 403) throw new Error(`Client list answered ${clients.status}.`);
-      setCanManage(clients.ok);
-      setOauthClients(clients.ok ? ((await clients.json()) as { clients: typeof oauthClients }).clients : []);
+      if (clients) {
+        redirectToCoreLoginIfAuthRequired(clients, coreOrigin);
+        if (!clients.ok && clients.status !== 403) throw new Error(`Client list answered ${clients.status}.`);
+        // Cache a permission refusal for this Core until this section is remounted.
+        if (clients.status === 403) deniedClientOrigin.current = coreOrigin;
+        setCanManage(clients.ok);
+        setOauthClients(clients.ok ? ((await clients.json()) as { clients: typeof oauthClients }).clients : []);
+      }
       setRequests(((await pending.json()) as { requests?: DeviceAuthorizationRequestView[] }).requests ?? []);
       setCredentials(((await existing.json()) as { credentials?: AccessTokenView[] }).credentials ?? []);
       setLoadError(null);

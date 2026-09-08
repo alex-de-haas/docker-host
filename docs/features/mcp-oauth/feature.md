@@ -134,7 +134,8 @@ Success means the cascade completed. If cleanup fails after the OAuth write, the
 `503 oauth_cleanup_incomplete`: new issuance is blocked, but existing access tokens can remain
 usable until retry, successful restart recovery or their one-hour expiry. Expiry does not close an
 already-open stream. Repeating deletion reruns the cascade, including stream closure. A synchronous
-startup sweep finishes revoked/deleted grant cascades before HTTP starts; failure aborts startup.
+startup sweep finishes revoked/deleted grant cascades in one user-directory update before HTTP starts;
+failure aborts startup.
 Registration with no live grants can still have pending authorization. Deletion is not a software
 ban: with DCR enabled the client can register a new id and seek fresh consent.
 

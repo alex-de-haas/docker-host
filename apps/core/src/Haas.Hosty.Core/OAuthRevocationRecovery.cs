@@ -8,8 +8,10 @@ internal sealed class OAuthRevocationRecovery(
     {
         var state = await oauth.ReadAsync(cancellationToken);
         var deleted = state.Clients.Where(client => client.DeletedAt is not null).Select(client => client.ClientId).ToHashSet(StringComparer.Ordinal);
-        foreach (var grant in state.Grants.Where(grant => grant.RevokedAt is not null || deleted.Contains(grant.ClientId)))
-            await OAuthEndpoints.RevokeIssuedAccessTokensAsync(grant.Id, users, events, clock.UtcNow, cancellationToken);
+        var grantIds = state.Grants.Where(grant => grant.RevokedAt is not null || deleted.Contains(grant.ClientId))
+            .Select(grant => grant.Id).ToHashSet(StringComparer.Ordinal);
+        if (grantIds.Count > 0)
+            await OAuthEndpoints.RevokeIssuedAccessTokensAsync(grantIds, users, events, clock.UtcNow, cancellationToken);
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;

@@ -1,11 +1,11 @@
 # OAuth Management And Scope Validation
 
 Date: 2026-09-08
-Baseline: `7a3d961cb46d1cd77d5f444a418fb6dd39266a88` plus the uncommitted OAuth management,
-credential identification and selectable-consent changes in this working tree.
+Baseline: `e4efc205` (the committed OAuth management, credential identification and
+selectable-consent implementation validated by this report).
 
 This report describes local validation, not deployment to production. Platform version: 0.98.0;
-Shell version: 0.70.0. No commits or deployment were made.
+Shell version: 0.70.0. No production deployment was made.
 
 ## Automated Results
 
