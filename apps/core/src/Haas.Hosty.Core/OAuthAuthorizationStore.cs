@@ -72,7 +72,7 @@ internal sealed class OAuthAuthorizationStore(IClock clock)
 
     /// <summary>Consent given: mints the one-time code, remembering who approved. Null when the
     /// request is gone or already answered — the code must not be mintable twice.</summary>
-    public OAuthAuthorizationRequest? Approve(string id, string userId)
+    public OAuthAuthorizationRequest? Approve(string id, string userId, IReadOnlyList<string>? scopes = null)
     {
         var now = clock.UtcNow;
         while (true)
@@ -87,6 +87,7 @@ internal sealed class OAuthAuthorizationStore(IClock clock)
                 Code = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant(),
                 CodeExpiresAt = now + CodeLifetime,
                 ApprovedUserId = userId,
+                Scopes = scopes ?? current.Scopes,
             };
             if (requests.TryUpdate(id, approved, current))
             {

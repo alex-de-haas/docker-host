@@ -39,7 +39,10 @@ internal sealed class OAuthStore(CoreDataPaths paths, IClock clock)
         {
             var current = await ReadAsync(cancellationToken);
             var (next, result) = mutate(current);
-            await JsonStorage.WriteAsync(StatePath, next, restrictToOwner: true, cancellationToken);
+            if (!ReferenceEquals(current, next))
+            {
+                await JsonStorage.WriteAsync(StatePath, next, restrictToOwner: true, cancellationToken);
+            }
             return result;
         }
         finally
@@ -47,6 +50,18 @@ internal sealed class OAuthStore(CoreDataPaths paths, IClock clock)
             gate.Release();
         }
     }
+
+    internal Task TouchGrantAsync(string grantId, DateTimeOffset now, CancellationToken cancellationToken)
+        => UpdateAsync<object?>(state =>
+        {
+            var grant = state.Grants.FirstOrDefault(candidate => candidate.Id == grantId);
+            if (grant is null || !IsGrantLive(grant, now) ||
+                !state.Clients.Any(client => client.ClientId == grant.ClientId && client.DeletedAt is null) ||
+                (grant.LastRequestAt is { } last && now - last < TimeSpan.FromMinutes(5)))
+                return (state, null);
+            return (state with { Grants = state.Grants.Select(candidate => candidate.Id == grantId
+                ? candidate with { LastRequestAt = now } : candidate).ToArray() }, null);
+        }, cancellationToken);
 
     /// <summary>A grant is live while it is unrevoked and inside its absolute window.</summary>
     public static bool IsGrantLive(OAuthGrantRecord grant, DateTimeOffset now)
@@ -74,7 +89,8 @@ internal sealed record OAuthClientRecord(
     DateTimeOffset CreatedAt,
     // The registrar's remote address, kept so an operator reviewing the client list can tell a
     // registration they recognize from one they do not.
-    string? SourceAddress = null);
+    string? SourceAddress = null,
+    DateTimeOffset? DeletedAt = null);
 
 // One grant: a refresh-token chain for (client, user, audience, scopes). Rotation replaces the
 // hash and bumps RotatedAt; the record — and so the grant's identity — survives, which is what lets
@@ -96,4 +112,6 @@ internal sealed record OAuthGrantRecord(
     // otherwise whichever party refreshed first (the thief, in the attack this exists for) keeps a
     // live credential while the victim is quietly locked out. Bounded; a replay older than the
     // window is refused without the kill, which fails toward an inconvenience, never a grant.
-    IReadOnlyList<string>? SpentRefreshTokenHashes = null);
+    IReadOnlyList<string>? SpentRefreshTokenHashes = null,
+    string? Label = null,
+    DateTimeOffset? LastRequestAt = null);

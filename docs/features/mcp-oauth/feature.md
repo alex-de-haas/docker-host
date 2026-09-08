@@ -1,7 +1,7 @@
 # MCP OAuth — Automated Issuance For Scoped Tokens
 
 Created: 2026-08-25
-Updated: 2026-09-06
+Updated: 2026-09-08
 
 Core is an OAuth 2.1 authorization server, per the MCP authorization specification, so a capable
 client (Claude Code, an editor) obtains and rotates [scoped access
@@ -63,8 +63,22 @@ exactly one audience: its own `/api/mcp` → `hosty:core` (consent then requires
 the same bar manual issuance sets), an app's declared `mcp` interface URL → that app, or the `/mcp`
 facade of an app declaring the `ai-gateway` interface → that app. **A request without a resource,
 or naming anything else, is refused — never defaulted to something broad.** A resource repeated at
-the token endpoint must be the one consent was given for. This feature issues `mcp:read` only;
-requesting more is `invalid_scope`.
+code redemption must be the one consent was given for. App and facade audiences accept only
+`mcp:read`. Core accepts `mcp:read`, optionally with `mcp:lifecycle` and/or `mcp:update`;
+all combinations require read. Unknown scopes and control scopes on other resources are refused.
+
+The AS metadata advertises all three scopes; Core's protected-resource metadata advertises only
+read. An omitted authorization scope defaults to read. Consent requires a browser session and CSRF;
+Core consent also requires an administrator. Read is required, while requested lifecycle/update
+permissions initially appear unchecked. The decision endpoint validates the selected subset against
+the parked request and stores only approved scopes in the code, grant and access token. OAuth never
+issues a full-role credential.
+
+Refresh validates an explicitly supplied scope before rotating: it must be a nonempty valid subset
+of the approved grant, including read. Invalid/unknown/wider scopes return `invalid_scope` without
+consuming the refresh token. An omitted scope issues the grant's approved set. A narrower refresh
+limits that access token only; it does not edit the grant or the replacement refresh token's authority.
+The token response reports the access token's actual scopes.
 
 ## Registration Is Behind A Breaker
 
@@ -96,11 +110,34 @@ source address, and live-grant count.
 
 ## One Page Revokes It All
 
-The credentials page lists each grant as **one row named for the client** — not the hourly access
+The [credentials page](../access-tokens/feature.md#management-surface) groups grants by exact client id,
+with a stable fingerprint and an optional operator label per grant. Each new authorization creates
+a separate grant; refreshing keeps the same row. Existing grants remain valid until explicitly
+revoked or expired. There is no automatic matching, replacement or permission editor.
+
+The credentials page lists each grant as **one row** — not the hourly access
 tokens it issues, which would bury the durable credentials in churn. Revoking the row kills the
 refresh chain and every access token it issued (each found by its `GrantId` and its event stream
 closed): the client's next call fails and its next refresh fails too. The hourly tokens are
 otherwise left to expire.
+
+## Removing A Client
+
+`DELETE /api/auth/oauth/clients/{clientId}` requires an administrator browser session and CSRF.
+Shell confirms the exact registration and its affected grant references. One atomic OAuth-store
+write tombstones the client and revokes all its grants, followed by session revocation and stream
+closure. The active registration list hides tombstones. Same-name registrations are unaffected.
+Authorize, consent, code redemption and refresh reject a deleted registration; grant creation and
+rotation recheck under the store lock, and issuance rechecks after appending a session.
+
+Success means the cascade completed. If cleanup fails after the OAuth write, the endpoint returns
+`503 oauth_cleanup_incomplete`: new issuance is blocked, but existing access tokens can remain
+usable until retry, successful restart recovery or their one-hour expiry. Expiry does not close an
+already-open stream. Repeating deletion reruns the cascade, including stream closure. A synchronous
+startup sweep finishes revoked/deleted grant cascades in one user-directory update before HTTP starts;
+failure aborts startup.
+Registration with no live grants can still have pending authorization. Deletion is not a software
+ban: with DCR enabled the client can register a new id and seek fresh consent.
 
 ## The Perimeter Caveat
 
@@ -138,3 +175,9 @@ validated locally until its TTL runs out.
 - An unregistered redirect_uri answered 400 in place — never a redirect to an unvalidated URI.
 - SDK helpers: the RFC 9728 metadata-URL derivation, and refusal to guess when either URL is
   missing.
+
+- Selectable consent cannot add unrequested scopes; refresh subset validation runs before rotation
+  and preserves grant authority. AS scope catalog and read-only PRM are distinct.
+- Client deletion isolates exact ids, invalidates pending codes/consent, races safely with code
+  redemption and refresh, and closes associated streams. Recovery failure prevents startup;
+  repeated recovery completes after storage recovers.

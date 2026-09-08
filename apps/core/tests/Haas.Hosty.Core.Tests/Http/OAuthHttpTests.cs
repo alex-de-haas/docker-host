@@ -15,6 +15,383 @@ namespace Haas.Hosty.Core.Tests.Http;
 public sealed class OAuthHttpTests
 {
     [Fact]
+    public async Task DeleteClientRevokesOnlyItsGrantsAndInvalidatesParkedCodes()
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        await SeedShellAsync(harness);
+        var admin = await SeedSessionAsync(harness, "host.admin");
+        using var client = harness.CreateClient();
+        await EnableRegistrationAsync(client, admin);
+        var clientId = (await RegisterAsync(client, "Codex")).GetProperty("client_id").GetString()!;
+        var otherId = (await RegisterAsync(client, "Codex")).GetProperty("client_id").GetString()!;
+        var (verifier, challenge) = NewPkcePair();
+        var tokens = await RedeemAsync(client, clientId, await ApprovedCodeAsync(client, admin, clientId, challenge), verifier);
+        var otherTokens = await RedeemAsync(client, otherId, await ApprovedCodeAsync(client, admin, otherId, challenge), verifier);
+        var parkedCode = await ApprovedCodeAsync(client, admin, clientId, challenge);
+        using var bearerDenied = await SendAsync(client, HttpMethod.Delete, $"/api/auth/oauth/clients/{clientId}", admin);
+        Assert.Equal(HttpStatusCode.Forbidden, bearerDenied.StatusCode);
+        using var noCsrf = await BrowserAsync(client, HttpMethod.Delete, $"/api/auth/oauth/clients/{clientId}", admin, csrf: false);
+        Assert.Equal(HttpStatusCode.Forbidden, noCsrf.StatusCode);
+        using var deleted = await BrowserAsync(client, HttpMethod.Delete, $"/api/auth/oauth/clients/{clientId}", admin);
+        Assert.Equal(HttpStatusCode.OK, deleted.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await InitializeMcpAsync(client, tokens.GetProperty("access_token").GetString()!)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await InitializeMcpAsync(client, otherTokens.GetProperty("access_token").GetString()!)).StatusCode);
+        using var redemption = await PostFormAsync(client, new()
+        {
+            ["grant_type"] = "authorization_code", ["client_id"] = clientId,
+            ["code"] = parkedCode, ["code_verifier"] = verifier,
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, redemption.StatusCode);
+        using var refresh = await PostFormAsync(client, new()
+        {
+            ["grant_type"] = "refresh_token", ["client_id"] = clientId,
+            ["refresh_token"] = tokens.GetProperty("refresh_token").GetString()!,
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, refresh.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await AuthorizeAsync(client, clientId, challenge, "http://localhost:7070/api/mcp")).StatusCode);
+        using var repeated = await BrowserAsync(client, HttpMethod.Delete, $"/api/auth/oauth/clients/{clientId}", admin);
+        Assert.Equal(HttpStatusCode.OK, repeated.StatusCode);
+        var listed = await ReadJsonAsync(await SendAsync(client, HttpMethod.Get, "/api/auth/oauth/clients", admin));
+        Assert.Equal(otherId, Assert.Single(listed.GetProperty("clients").EnumerateArray()).GetProperty("clientId").GetString());
+    }
+
+    [Fact]
+    public async Task GrantActivityAndLabelSurviveRotationAndPruningWithoutChangingIdentityOrPermissions()
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        await SeedShellAsync(harness);
+        var admin = await SeedSessionAsync(harness, "host.admin");
+        using var client = harness.CreateClient();
+        await EnableRegistrationAsync(client, admin);
+        var clientId = (await RegisterAsync(client, "Codex")).GetProperty("client_id").GetString()!;
+        var (verifier, challenge) = NewPkcePair();
+        var tokens = await RedeemAsync(client, clientId, await ApprovedCodeAsync(client, admin, clientId, challenge), verifier);
+        var oauth = harness.Services.GetRequiredService<OAuthStore>();
+        var before = Assert.Single((await oauth.ReadAsync()).Grants);
+        Assert.Null(before.LastRequestAt);
+        var id = CoreSessionAuthorization.FingerprintSessionId(before.Id);
+        using var renamed = await BrowserAsync(client, HttpMethod.Patch, $"/api/auth/credentials/{id}/label", admin, new { label = "Codex — MacBook" });
+        Assert.Equal(HttpStatusCode.OK, renamed.StatusCode);
+        var afterRename = Assert.Single((await oauth.ReadAsync()).Grants);
+        Assert.Equivalent(before with { Label = "Codex — MacBook" }, afterRename);
+        await InitializeMcpAsync(client, tokens.GetProperty("access_token").GetString()!);
+        var active = Assert.Single((await oauth.ReadAsync()).Grants);
+        Assert.NotNull(active.LastRequestAt);
+        await Task.WhenAll(Enumerable.Range(0, 10).Select(_ => oauth.TouchGrantAsync(before.Id, active.LastRequestAt.Value.AddMinutes(1), default)));
+        Assert.Equal(active.LastRequestAt, Assert.Single((await oauth.ReadAsync()).Grants).LastRequestAt);
+        await RefreshAsync(client, clientId, tokens.GetProperty("refresh_token").GetString()!);
+        var users = harness.Services.GetRequiredService<UserDirectoryStore>();
+        await users.UpdateAsync(state => state with { Sessions = state.Sessions.Where(session => session.GrantId != before.Id).ToArray() });
+        var listed = await ReadJsonAsync(await SendAsync(client, HttpMethod.Get, "/api/auth/credentials", admin));
+        var row = Assert.Single(listed.GetProperty("credentials").EnumerateArray());
+        Assert.Equal(id, row.GetProperty("id").GetString());
+        Assert.Equal(clientId, row.GetProperty("oauthClientId").GetString());
+        Assert.Equal("Codex", row.GetProperty("oauthClientName").GetString());
+        Assert.Equal("Codex — MacBook", row.GetProperty("label").GetString());
+        Assert.Equal(active.LastRequestAt, row.GetProperty("lastRequestAt").GetDateTimeOffset());
+        Assert.Equal("mcp:read", Assert.Single(row.GetProperty("scopes").EnumerateArray()).GetString());
+    }
+
+    [Fact]
+    public async Task StartupRecoveryCompletesDurableRevocationBeforeServing()
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        await SeedShellAsync(harness);
+        var admin = await SeedSessionAsync(harness, "host.admin");
+        using var client = harness.CreateClient();
+        await EnableRegistrationAsync(client, admin);
+        var clientId = (await RegisterAsync(client, "Codex")).GetProperty("client_id").GetString()!;
+        var (verifier, challenge) = NewPkcePair();
+        var tokens = await RedeemAsync(client, clientId, await ApprovedCodeAsync(client, admin, clientId, challenge), verifier);
+        var secondTokens = await RedeemAsync(client, clientId, await ApprovedCodeAsync(client, admin, clientId, challenge), verifier);
+        var oauth = harness.Services.GetRequiredService<OAuthStore>();
+        var clock = harness.Services.GetRequiredService<IClock>();
+        // Simulate interruption after the atomic OAuth write and before the session-store cascade.
+        await oauth.UpdateAsync<object?>(state => (state with
+        {
+            Clients = state.Clients.Select(entry => entry with { DeletedAt = clock.UtcNow }).ToArray(),
+            Grants = state.Grants.Select(grant => grant with { RevokedAt = clock.UtcNow }).ToArray(),
+        }, null));
+        var recovery = new OAuthRevocationRecovery(oauth, harness.Services.GetRequiredService<UserDirectoryStore>(),
+            harness.Services.GetRequiredService<CoreEventHub>(), clock);
+        await recovery.StartAsync(default);
+        await recovery.StartAsync(default);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await InitializeMcpAsync(client, tokens.GetProperty("access_token").GetString()!)).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await InitializeMcpAsync(client, secondTokens.GetProperty("access_token").GetString()!)).StatusCode);
+        Assert.Equal(2, (await oauth.ReadAsync()).Grants.Count);
+        var before = (await oauth.ReadAsync()).Grants[0];
+        await oauth.TouchGrantAsync(before.Id, clock.UtcNow.AddMinutes(10), default);
+        Assert.Equivalent(before, (await oauth.ReadAsync()).Grants[0]);
+    }
+
+    [Theory]
+    [InlineData("device")]
+    [InlineData("manual")]
+    public async Task BrowserAdminCanRenameCredentialWithoutChangingItsAuthority(string kind)
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        var admin = await SeedSessionAsync(harness, "host.admin");
+        var users = harness.Services.GetRequiredService<UserDirectoryStore>();
+        var record = await AccessTokenEndpoints.IssueAsync("user_1", kind, "Original", users,
+            harness.Services.GetRequiredService<IClock>(), harness.Services.GetRequiredService<AuthLifetimes>(), default);
+        var fingerprint = CoreSessionAuthorization.FingerprintSessionId(record.Id);
+        using var client = harness.CreateClient();
+        using var denied = await SendAsync(client, HttpMethod.Patch, $"/api/auth/credentials/{fingerprint}/label", record.Id, new { label = "Changed" });
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+        using var renamed = await BrowserAsync(client, HttpMethod.Patch, $"/api/auth/credentials/{fingerprint}/label", admin, new { label = "Changed" });
+        Assert.Equal(HttpStatusCode.OK, renamed.StatusCode);
+        Assert.Equivalent(record with { Label = "Changed" }, (await users.ReadAsync()).Sessions.Single(session => session.Id == record.Id));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ClientDeletionRacingIssuanceLeavesNoLiveAccessTokens(bool refresh)
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        await SeedShellAsync(harness);
+        var admin = await SeedSessionAsync(harness, "host.admin");
+        using var client = harness.CreateClient();
+        await EnableRegistrationAsync(client, admin);
+        var clientId = (await RegisterAsync(client, "race")).GetProperty("client_id").GetString()!;
+        var (verifier, challenge) = NewPkcePair();
+        var code = await ApprovedCodeAsync(client, admin, clientId, challenge);
+        var form = new Dictionary<string, string>
+        {
+            ["grant_type"] = "authorization_code", ["client_id"] = clientId,
+            ["code"] = code, ["code_verifier"] = verifier,
+        };
+        if (refresh)
+        {
+            var initial = await RedeemAsync(client, clientId, code, verifier);
+            form = new() { ["grant_type"] = "refresh_token", ["client_id"] = clientId,
+                ["refresh_token"] = initial.GetProperty("refresh_token").GetString()! };
+        }
+        var deletion = BrowserAsync(client, HttpMethod.Delete, $"/api/auth/oauth/clients/{clientId}", admin);
+        var issuance = PostFormAsync(client, form);
+        await Task.WhenAll(deletion, issuance);
+        using var deleted = await deletion;
+        using var issued = await issuance;
+        Assert.Equal(HttpStatusCode.OK, deleted.StatusCode);
+        var oauth = await harness.Services.GetRequiredService<OAuthStore>().ReadAsync();
+        Assert.All(oauth.Grants, grant => Assert.NotNull(grant.RevokedAt));
+        var users = await harness.Services.GetRequiredService<UserDirectoryStore>().ReadAsync();
+        Assert.All(users.Sessions.Where(session => session.GrantId is not null), session => Assert.NotNull(session.RevokedAt));
+        if (issued.IsSuccessStatusCode)
+        {
+            var token = (await ReadJsonAsync(issued)).GetProperty("access_token").GetString()!;
+            Assert.Equal(HttpStatusCode.Unauthorized, (await InitializeMcpAsync(client, token)).StatusCode);
+        }
+    }
+
+    [Theory]
+    [InlineData("mcp:lifecycle")]
+    [InlineData("mcp:read unknown")]
+    [InlineData("MCP:read")]
+    [InlineData("mcp:read\tmcp:lifecycle")]
+    public async Task InvalidAuthorizationScopeIsRefused(string scopes)
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        await SeedShellAsync(harness);
+        var admin = await SeedSessionAsync(harness, "host.admin");
+        using var client = harness.CreateClient();
+        await EnableRegistrationAsync(client, admin);
+        var clientId = (await RegisterAsync(client, "invalid")).GetProperty("client_id").GetString()!;
+        var (_, challenge) = NewPkcePair();
+        using var response = await AuthorizeAsync(client, clientId, challenge, "http://localhost:7070/api/mcp", scopes);
+        Assert.Contains("error=invalid_scope", response.Headers.Location!.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ConsentCannotAddUnrequestedScopeOrBeSubmittedByBearer()
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        await SeedShellAsync(harness);
+        var admin = await SeedSessionAsync(harness, "host.admin");
+        using var client = harness.CreateClient();
+        await EnableRegistrationAsync(client, admin);
+        var clientId = (await RegisterAsync(client, "consent")).GetProperty("client_id").GetString()!;
+        var (_, challenge) = NewPkcePair();
+        var authorize = await AuthorizeAsync(client, clientId, challenge, "http://localhost:7070/api/mcp");
+        var requestId = authorize.Headers.Location!.ToString().Split("request=")[1];
+        var path = $"/api/auth/oauth/requests/{requestId}/decide";
+        using var bearer = await SendAsync(client, HttpMethod.Post, path, admin, new { decision = "approve" });
+        Assert.Equal(HttpStatusCode.Forbidden, bearer.StatusCode);
+        using var widened = await BrowserAsync(client, HttpMethod.Post, path, admin,
+            new { decision = "approve", scopes = new[] { "mcp:read", "mcp:lifecycle" } });
+        Assert.Equal(HttpStatusCode.BadRequest, widened.StatusCode);
+        Assert.Empty((await harness.Services.GetRequiredService<OAuthStore>().ReadAsync()).Grants);
+        await DecideAsync(client, admin, requestId, "approve");
+    }
+
+    [Fact]
+    public async Task ActivityFailureIsAdvisoryAndStartupRecoveryFailsClosedUntilStorageRecovers()
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        await SeedShellAsync(harness);
+        var admin = await SeedSessionAsync(harness, "host.admin");
+        using var client = harness.CreateClient();
+        await EnableRegistrationAsync(client, admin);
+        var clientId = (await RegisterAsync(client, "failure")).GetProperty("client_id").GetString()!;
+        var (verifier, challenge) = NewPkcePair();
+        var tokens = await RedeemAsync(client, clientId, await ApprovedCodeAsync(client, admin, clientId, challenge), verifier);
+        var token = tokens.GetProperty("access_token").GetString()!;
+        var oauth = harness.Services.GetRequiredService<OAuthStore>();
+        var users = harness.Services.GetRequiredService<UserDirectoryStore>();
+        var clock = harness.Services.GetRequiredService<IClock>();
+        var events = harness.Services.GetRequiredService<CoreEventHub>();
+        var paths = harness.Services.GetRequiredService<CoreDataPaths>();
+        var oauthFile = Path.Combine(paths.AuthRoot, "oauth.json");
+        File.Move(oauthFile, oauthFile + ".saved");
+        Directory.CreateDirectory(oauthFile);
+        try
+        {
+            Assert.Equal(HttpStatusCode.OK, (await InitializeMcpAsync(client, token)).StatusCode);
+        }
+        finally
+        {
+            Directory.Delete(oauthFile);
+            File.Move(oauthFile + ".saved", oauthFile);
+        }
+        Assert.Null(Assert.Single((await oauth.ReadAsync()).Grants).LastRequestAt);
+        await InitializeMcpAsync(client, token);
+        Assert.NotNull(Assert.Single((await oauth.ReadAsync()).Grants).LastRequestAt);
+
+        using var subscription = events.Subscribe("user_1", isAdmin: true, sessionId: token);
+        await oauth.UpdateAsync<object?>(state => (state with
+        {
+            Clients = state.Clients.Select(entry => entry with { DeletedAt = clock.UtcNow }).ToArray(),
+            Grants = state.Grants.Select(grant => grant with { RevokedAt = clock.UtcNow }).ToArray(),
+        }, null));
+        var recovery = new OAuthRevocationRecovery(oauth, users, events, clock);
+        var usersFile = Path.Combine(paths.AuthRoot, "state.json");
+        File.Move(usersFile, usersFile + ".saved");
+        Directory.CreateDirectory(usersFile);
+        try
+        {
+            await Assert.ThrowsAnyAsync<Exception>(() => recovery.StartAsync(default));
+        }
+        finally
+        {
+            Directory.Delete(usersFile);
+            File.Move(usersFile + ".saved", usersFile);
+        }
+        await recovery.StartAsync(default);
+        Assert.False(await subscription.Reader.WaitToReadAsync());
+        Assert.Equal(HttpStatusCode.Unauthorized, (await InitializeMcpAsync(client, token)).StatusCode);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AppAndFacadeResourcesRefuseCoreControlScopes(bool facade)
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        await SeedShellAsync(harness);
+        await SeedAppAsync(harness, "com.test.resource", system: false,
+            endpoints: [new AppEndpointContract("api", "http", "http://127.0.0.1:31000", Public: false)],
+            interfaces: new Dictionary<string, IReadOnlyList<AppInterfaceContract>>
+            {
+                [facade ? "ai-gateway" : "mcp"] = [new AppInterfaceContract("default", null, "/api/mcp")],
+            });
+        var admin = await SeedSessionAsync(harness, "host.admin");
+        using var client = harness.CreateClient();
+        await EnableRegistrationAsync(client, admin);
+        var clientId = (await RegisterAsync(client, "resource")).GetProperty("client_id").GetString()!;
+        var (_, challenge) = NewPkcePair();
+        var resource = "http://127.0.0.1:31000" + (facade ? "/mcp" : "/api/mcp");
+        using var read = await AuthorizeAsync(client, clientId, challenge, resource, "mcp:read");
+        Assert.Contains("/oauth/consent?request=", read.Headers.Location!.ToString(), StringComparison.Ordinal);
+        using var control = await AuthorizeAsync(client, clientId, challenge, resource, "mcp:read mcp:lifecycle mcp:update");
+        Assert.Contains("error=invalid_scope", control.Headers.Location!.ToString(), StringComparison.Ordinal);
+    }
+
+    private static Task<HttpResponseMessage> BrowserAsync(HttpClient client, HttpMethod method, string path,
+        string session, object? body = null, bool csrf = true)
+    {
+        var request = new HttpRequestMessage(method, path);
+        request.Headers.Add("Cookie", $"hosty_session={session}; hosty_csrf=test-csrf");
+        if (csrf) request.Headers.Add("X-Hosty-CSRF", "test-csrf");
+        if (body is not null) request.Content = JsonContent.Create(body);
+        return client.SendAsync(request);
+    }
+
+    [Theory]
+    [InlineData("mcp:read", "mcp:read")]
+    [InlineData("mcp:read mcp:lifecycle", "mcp:read mcp:lifecycle")]
+    [InlineData("mcp:read mcp:update", "mcp:read mcp:update")]
+    [InlineData("mcp:read mcp:lifecycle mcp:update", "mcp:read")]
+    [InlineData("mcp:read mcp:lifecycle mcp:update", "mcp:read mcp:lifecycle mcp:update")]
+    public async Task ConsentPersistsOnlyTheSelectedScopes(string requested, string selected)
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        await SeedShellAsync(harness);
+        var admin = await SeedSessionAsync(harness, "host.admin");
+        using var client = harness.CreateClient();
+        await EnableRegistrationAsync(client, admin);
+        var clientId = (await RegisterAsync(client, "control")).GetProperty("client_id").GetString()!;
+        var (verifier, challenge) = NewPkcePair();
+        var authorize = await AuthorizeAsync(client, clientId, challenge, "http://localhost:7070/api/mcp", requested);
+        var requestId = authorize.Headers.Location!.ToString().Split("request=")[1];
+        using var decision = await BrowserAsync(client, HttpMethod.Post, $"/api/auth/oauth/requests/{requestId}/decide", admin,
+            new { decision = "approve", scopes = selected.Split(' ') });
+        Assert.Equal(HttpStatusCode.OK, decision.StatusCode);
+        var code = (await ReadJsonAsync(decision)).GetProperty("redirectTo").GetString()!.Split("code=")[1].Split('&')[0];
+        var tokens = await RedeemAsync(client, clientId, code, verifier);
+        Assert.Equal(selected, tokens.GetProperty("scope").GetString());
+        var grant = Assert.Single((await harness.Services.GetRequiredService<OAuthStore>().ReadAsync()).Grants);
+        Assert.Equal(selected.Split(' '), grant.Scopes);
+    }
+
+    [Theory]
+    [InlineData("", false)]
+    [InlineData("mcp:update", false)]
+    [InlineData("mcp:read unknown", false)]
+    [InlineData("mcp:read mcp:update", false)]
+    [InlineData("mcp:read  mcp:lifecycle", false)]
+    [InlineData("mcp:read", true)]
+    [InlineData("mcp:read mcp:lifecycle", true)]
+    public async Task RefreshValidatesBeforeRotationAndPreservesGrantAuthority(string scope, bool valid)
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        await SeedShellAsync(harness);
+        var admin = await SeedSessionAsync(harness, "host.admin");
+        using var client = harness.CreateClient();
+        await EnableRegistrationAsync(client, admin);
+        var clientId = (await RegisterAsync(client, "control")).GetProperty("client_id").GetString()!;
+        var (verifier, challenge) = NewPkcePair();
+        var authorize = await AuthorizeAsync(client, clientId, challenge, "http://localhost:7070/api/mcp", "mcp:read mcp:lifecycle");
+        var requestId = authorize.Headers.Location!.ToString().Split("request=")[1];
+        using var decision = await BrowserAsync(client, HttpMethod.Post, $"/api/auth/oauth/requests/{requestId}/decide", admin,
+            new { decision = "approve", scopes = new[] { "mcp:read", "mcp:lifecycle" } });
+        var code = (await ReadJsonAsync(decision)).GetProperty("redirectTo").GetString()!.Split("code=")[1].Split('&')[0];
+        var tokens = await RedeemAsync(client, clientId, code, verifier);
+        var refresh = tokens.GetProperty("refresh_token").GetString()!;
+        using var response = await PostFormAsync(client, new()
+        {
+            ["grant_type"] = "refresh_token", ["client_id"] = clientId,
+            ["refresh_token"] = refresh, ["scope"] = scope,
+        });
+        var body = await ReadJsonAsync(response);
+        if (valid)
+        {
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(scope, body.GetProperty("scope").GetString());
+            refresh = body.GetProperty("refresh_token").GetString()!;
+        }
+        else
+        {
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.Equal("invalid_scope", body.GetProperty("error").GetString());
+        }
+
+        var next = await RefreshAsync(client, clientId, refresh);
+        Assert.Equal("mcp:read mcp:lifecycle", next.GetProperty("scope").GetString());
+        Assert.Equal(new[] { "mcp:read", "mcp:lifecycle" },
+            Assert.Single((await harness.Services.GetRequiredService<OAuthStore>().ReadAsync()).Grants).Scopes);
+    }
+
+    [Fact]
     public async Task TheWholeFlow_FromRegistrationToAWorkingRotatedRevokedCredential()
     {
         await using var harness = await CoreHttpHarness.StartAsync();
@@ -249,7 +626,7 @@ public sealed class OAuthHttpTests
         var (_, challenge) = NewPkcePair();
         var authorize = await AuthorizeAsync(client, clientId, challenge, resource: "http://localhost:7070/api/mcp");
         var requestId = authorize.Headers.Location!.ToString().Split("request=")[1];
-        using var refused = await SendAsync(client, HttpMethod.Post, $"/api/auth/oauth/requests/{requestId}/decide", member,
+        using var refused = await BrowserAsync(client, HttpMethod.Post, $"/api/auth/oauth/requests/{requestId}/decide", member,
             new { decision = "approve" });
         Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
         Assert.Equal("admin_required", (await ReadJsonAsync(refused)).GetProperty("code").GetString());
@@ -269,6 +646,7 @@ public sealed class OAuthHttpTests
 
         var server = await ReadJsonAsync(await client.GetAsync("/.well-known/oauth-authorization-server"));
         Assert.Equal("http://localhost:7070", server.GetProperty("issuer").GetString());
+        Assert.Equal(AccessTokenScopes.Known, server.GetProperty("scopes_supported").EnumerateArray().Select(scope => scope.GetString()));
         Assert.Equal("S256", server.GetProperty("code_challenge_methods_supported").EnumerateArray().Single().GetString());
 
         // Both documents are built from the live public origin, which an operator edits, so neither
@@ -277,6 +655,7 @@ public sealed class OAuthHttpTests
         Assert.True(resourceResponse.Headers.CacheControl?.NoStore);
         var resource = await ReadJsonAsync(resourceResponse);
         Assert.Equal("http://localhost:7070/api/mcp", resource.GetProperty("resource").GetString());
+        Assert.Equal("mcp:read", Assert.Single(resource.GetProperty("scopes_supported").EnumerateArray()).GetString());
         Assert.Equal("http://localhost:7070", resource.GetProperty("authorization_servers").EnumerateArray().Single().GetString());
 
         // A 401 from Core MCP names where the metadata lives — the thread a stock client pulls to
@@ -377,11 +756,12 @@ public sealed class OAuthHttpTests
     }
 
     private static Task<HttpResponseMessage> AuthorizeAsync(
-        HttpClient client, string clientId, string challenge, string? resource)
+        HttpClient client, string clientId, string challenge, string? resource, string? scope = null)
         => client.GetAsync(
             $"/api/auth/oauth/authorize?client_id={clientId}&redirect_uri={Uri.EscapeDataString(RedirectUri)}" +
             $"&response_type=code&state=st4te&code_challenge={challenge}&code_challenge_method=S256" +
-            (resource is null ? "" : $"&resource={Uri.EscapeDataString(resource)}"));
+            (resource is null ? "" : $"&resource={Uri.EscapeDataString(resource)}") +
+            (scope is null ? "" : $"&scope={Uri.EscapeDataString(scope)}"));
 
     private static async Task<string> ApprovedCodeAsync(
         HttpClient client, string admin, string clientId, string challenge,
@@ -395,7 +775,7 @@ public sealed class OAuthHttpTests
 
     private static async Task<JsonElement> DecideAsync(HttpClient client, string session, string requestId, string decision)
     {
-        using var response = await SendAsync(
+        using var response = await BrowserAsync(
             client, HttpMethod.Post, $"/api/auth/oauth/requests/{requestId}/decide", session, new { decision });
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         return await ReadJsonAsync(response);

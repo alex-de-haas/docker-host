@@ -1,7 +1,7 @@
 # Access Tokens — Credentials For Clients Without A Browser
 
 Created: 2026-07-31
-Updated: 2026-08-24
+Updated: 2026-09-08
 
 Core accepts a session as `Authorization: Bearer <session id>`, but a session could once only be created
 by posting Core's HTML login form — which is why the Swift Shell used to sign in through a `WKWebView`
@@ -99,11 +99,27 @@ login cannot prune a live access token whose window is much longer.
 
 ## Management surface
 
-Shell's Settings gains an **Access tokens** tab
-([settings-tokens-section.tsx](../../../apps/shell/src/app/shell/pages/settings-tokens-section.tsx)):
-pending device requests with their label and remaining time, a create form, and the list of active
-credentials with a revoke action. A `host.user` sees and manages their own; a `host.admin` sees all,
-because revoking the credential on a lost device is a host-wide concern.
+Shell's **Access tokens** tab groups device and manual credentials separately and nests OAuth
+grants under their exact client registration id. Matching display names or addresses do not merge
+connections. Each row shows its stable credential fingerprint, label, permissions, approver,
+creation time and last authenticated request; OAuth rows also show last refresh separately.
+OAuth client names and ids remain visible after renaming a grant.
+
+`PATCH /api/auth/credentials/{fingerprint}/label` accepts a label from an administrator browser
+session with CSRF. It changes only the session/grant label and records an audit event; ids,
+permissions, ownership, tokens and expiry are unchanged. Labels are operator descriptions, not
+verified device identities. A `host.user` still sees and revokes their own credentials; an admin
+sees all and can rename them. Revocation confirmation names the selected label, fingerprint and
+permissions. Client deletion is described in [OAuth](../mcp-oauth/feature.md#removing-a-client).
+
+OAuth `LastRequestAt` lives on the grant. Successful authenticated MCP/introspection/delegation
+requests update it at most once per five minutes per grant, checked under the OAuth-store gate.
+Unchanged state skips the durable write. The first observed request is recorded even immediately
+after token issuance; refresh itself does not invent request activity. The existing session idle
+window remains unchanged. Activity I/O failure is advisory and retried on a later request; revoked
+or deleted grants are never revived. Pruning access-token sessions cannot erase grant activity.
+Historical unknown activity is shown as unknown, not unused. Device/manual rows use existing sampled
+session activity, without treating the timestamp initialized at issuance as proof of a request.
 
 Settings is otherwise an administrator page, and this is the one tab on it that is not. An ordinary user
 reaches Settings only for this tab, sees only this tab, and every other tab is gated on the admin check
@@ -196,3 +212,9 @@ action taxonomy. See [Testing Expectations](#testing-expectations) for what is c
 - over real HTTP: the full flow from no credential to a working one, that a listing never contains a
   credential's value, that another ordinary user can neither see nor revoke someone else's credential,
   and that the two public device routes are the only unauthenticated ones added.
+
+- OAuth projection preserves exact client linkage and fingerprint through label edits, request
+  activity, refresh and access-session pruning. First use, five-minute per-grant throttling,
+  advisory storage failure and revoked/deleted grants are covered.
+- Browser-admin label edits for device/manual/OAuth credentials preserve all authorization fields;
+  bearer and CSRF refusals remain explicit. UI distinguishes request time from refresh time.
