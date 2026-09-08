@@ -1,7 +1,7 @@
 # AI Gateway
 
 Created: 2026-08-09
-Updated: 2026-09-03
+Updated: 2026-09-07
 
 The Hosty assistant: an optional, removable system app (`hosty.ai-gateway`) hosting admin-only
 operator chat sessions on a host-resident agent harness, plus the Shell surface that renders them.
@@ -250,6 +250,14 @@ gateway restart.
   key in app settings re-authenticates on the next health check; the fingerprint is written only
   after a successful login, so a bad key retries instead of sticking.
 - The binary resolves override → the pinned `@openai/codex` dependency → PATH.
+- **A failed turn is reported by `turn/completed` itself**, carrying `status: "failed"` and the
+  reason on `turn.error`; the status vocabulary is `inProgress | completed | failed | declined`.
+  Codex has no `turn/failed` or `thread/error` notification — neither string exists in any pinned
+  build. The reason reaches the operator as a notice and the turn ends with a failed `result`, not
+  an error event: the app-server survives a failed turn and accepts the next one, so dropping the
+  run would discard a session that still works. Codex's separate `error` notification (bare method
+  name) is retry chatter while it reconnects — one per attempt, `willRetry: true` — and is reported
+  only when it is terminal *and* no turn is running to end with the reason.
 - **No questions.** Codex has `item/tool/requestUserInput` in the same server→client request family
   as its approval methods, but it is gated behind `tools.experimental_request_user_input` — off by
   default — and its payload shape is only inferable from the binary's serde symbols. Implementing a

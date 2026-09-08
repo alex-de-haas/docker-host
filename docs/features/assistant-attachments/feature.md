@@ -1,7 +1,7 @@
 # Assistant Attachments
 
 Created: 2026-09-03
-Updated: 2026-09-04
+Updated: 2026-09-08
 
 An operator hands the assistant a file from the composer. It lands in a working directory that
 belongs to the session, the transcript records that it did, and the harness is told where to find
@@ -33,6 +33,25 @@ expiry, kept through abandonment, because an abandoned session resumes and a res
 to the file. A session restored from a backup comes back without its attachments — records are
 backed up, the cache is not — and the transcript's `attachment_added` event is what explains the
 file it no longer has.
+
+An on-demand backup is reachable, but not from Shell. `apps/ai-gateway/manifest.json` declares
+`data.enabled: true` but `capabilities: ["logs"]`, and Shell shows the Backups entry — its only way
+into the create-and-restore panel — for an app whose capabilities include `backup`. The gateway's
+menu therefore offers Check for updates, Development mode, Console logs, Settings and Remove, and
+nothing else. `hosty.marketplace` and `hosty.telemetry` sit in the same position; of the first-party
+manifests only `demo-app` declares `backup`.
+
+The capability gates that menu and nothing else. `hosty apps backup <app-id>` and
+`hosty apps restore <app-id> <backup-id>` post to `/api/apps/{appId}/backups` and
+`…/backups/{backupId}/restore`, which authorize on an admin session and CSRF and never read the
+manifest — the general rule that a capability is a client-side hint rather than an authorization
+boundary. So the operator's route to a manual backup of this app is the CLI, and the missing menu
+entry is a Shell affordance gap rather than a platform one.
+
+Whichever route takes it, the archive is the same. `CreateBackupAsync` is the single entry point for
+every backup — `manual`, `pre-update`, `pre-restore`, `pre-development-mode`, `pre-runtime-switch` —
+and it archives the app's data directory, branching on `reason` only for the backup's id and its
+retention class. Attachments live under `cache`, which the archive never reaches.
 
 ## Upload, Download, And What The Name Becomes
 
@@ -129,7 +148,15 @@ against the session's quota either way.
   inside a functional state update, which React runs after the handler has returned — after the
   reset — so every selection appended nothing and the first live attempt sent a message without
   its file. A property of the function, tested as one; the gateway has no UI harness.
-- **Partly verified live.** The first attempt to attach a file through a Core-managed gateway found
-  the composer bug above and reached nothing else. No harness has yet been asked about an attached
-  file, and the backup/restore behaviour is reasoned from the storage contract rather than
-  observed. Those checks stay open in [plan.md](plan.md).
+- **Verified live.** The first attempt to attach a file through a Core-managed gateway found the
+  composer bug above and reached nothing else. A run against the production host on 2026-09-08
+  covered the rest — Core 0.97.3, gateway 0.26.3 on the `local` runtime: the workspace is created
+  under the `HOSTY_APP_CACHE_DIR` Core injects and not under the home directory, both harnesses
+  answer from an attached file, deleting a session removes its workspace from the host, and the
+  limit reads exactly as stated — one `..` shows only `workspace/`, which is why a single-level
+  probe would have falsely passed, and two reach the sessions root, where the sibling sessions are
+  enumerable and nothing else is. The backup claim was observed on the backup Core takes before an
+  update, which held the session's records and none of its attachments. No separate on-demand run
+  was made — the owner's call on 2026-09-08, the manifests left alone in the same breath — and none
+  is owed: the manual path is the same `CreateBackupAsync` call over the same data directory, so the
+  observation covers both. Reaching it needs the CLI rather than Shell, as above.

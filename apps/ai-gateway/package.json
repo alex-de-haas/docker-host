@@ -1,6 +1,6 @@
 {
   "name": "@haas/hosty-ai-gateway",
-  "version": "0.26.0",
+  "version": "0.26.3",
   "private": true,
   "license": "AGPL-3.0-only",
   "type": "module",
@@ -20,6 +20,6 @@
   "devDependencies": {
     "@types/node": "^24.13.3",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.11"
+    "vitest": "^5.0.0"
   }
 }
