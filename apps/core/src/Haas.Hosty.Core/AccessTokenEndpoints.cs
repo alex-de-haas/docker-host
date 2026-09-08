@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Security.Cryptography;
+using System.Text.Json.Serialization;
 
 namespace Haas.Hosty.Core;
 
@@ -219,11 +220,12 @@ internal static class AccessTokenEndpoints
                             // the list always showed, and the surface says so rather than leaving
                             // "no audience" to be read as "no reach".
                             session.Audience,
-                            session.Scopes ?? []))
+                            session.Scopes ?? [],
+                            LastRequestAt: session.LastSeenAt > session.CreatedAt ? session.LastSeenAt : null))
                         .ToArray();
 
                     // OAuth grants, one row per refresh chain: the client's name as the label,
-                    // the audience and scopes it holds, rotation as last use. Same visibility rule
+                    // the audience and scopes it holds, request activity and rotation separately. Same visibility rule
                     // as the rows above — owners see their own, an administrator sees all.
                     var oauthState = await oauth.ReadAsync(cancellationToken);
                     var grantViews = oauthState.Grants
@@ -233,19 +235,62 @@ internal static class AccessTokenEndpoints
                         .Select(grant => new AccessTokenView(
                             CoreSessionAuthorization.FingerprintSessionId(grant.Id),
                             AccessTokenKinds.OAuth,
-                            oauthState.Clients.FirstOrDefault(client =>
+                            grant.Label ?? oauthState.Clients.FirstOrDefault(client =>
                                 string.Equals(client.ClientId, grant.ClientId, StringComparison.Ordinal))?.Name ?? grant.ClientId,
                             grant.UserId,
                             state.Users.FirstOrDefault(candidate => string.Equals(candidate.Id, grant.UserId, StringComparison.Ordinal))?.DisplayName,
                             grant.CreatedAt,
                             grant.RotatedAt ?? grant.CreatedAt,
                             grant.Audience,
-                            grant.Scopes))
+                            grant.Scopes,
+                            grant.ClientId,
+                            oauthState.Clients.FirstOrDefault(client => client.ClientId == grant.ClientId)?.Name,
+                            grant.LastRequestAt,
+                            grant.RotatedAt))
                         .ToArray();
 
                     return CoreJson.Json(new AccessTokenListResponse([.. views, .. grantViews]));
                 },
                 cancellationToken: cancellationToken));
+
+        app.MapPatch("/api/auth/credentials/{fingerprint}/label", (
+            string fingerprint, AccessTokenLabelRequest input, HttpRequest request,
+            UserDirectoryStore users, OAuthStore oauth, IClock clock, AuditStore audit, CancellationToken cancellationToken) =>
+            CoreSessionAuthorization.RequireAdminBrowserAsync(request, users, clock, async user =>
+            {
+                var label = DeviceAuthorizationStore.NormalizeLabel(input.Label);
+                if (string.IsNullOrWhiteSpace(label))
+                    return CoreJson.Json(new ErrorResponse("label_required", "Enter a credential label."), statusCode: 400);
+                var renamed = await oauth.UpdateAsync(state =>
+                {
+                    var target = state.Grants.FirstOrDefault(grant => OAuthStore.IsGrantLive(grant, clock.UtcNow) &&
+                        CoreSessionAuthorization.FingerprintSessionId(grant.Id) == fingerprint);
+                    return target is null ? (state, false) : (state with
+                    {
+                        Grants = state.Grants.Select(grant => grant.Id == target.Id ? grant with { Label = label } : grant).ToArray(),
+                    }, true);
+                }, cancellationToken);
+                if (!renamed)
+                {
+                    await users.UpdateAsync(state => state with
+                    {
+                        Sessions = state.Sessions.Select(session =>
+                        {
+                            if (session.Kind is not (AccessTokenKinds.Device or AccessTokenKinds.Manual) ||
+                                session.RevokedAt is not null || CoreSessionAuthorization.FingerprintSessionId(session.Id) != fingerprint)
+                                return session;
+                            renamed = true;
+                            return session with { Label = label };
+                        }).ToArray(),
+                    }, cancellationToken);
+                }
+                if (!renamed)
+                    return CoreJson.Json(new ErrorResponse("credential_unknown", "This credential is unavailable."), statusCode: 404);
+                await AppendAuditAsync(audit, "auth.credential.renamed", fingerprint,
+                    user.Id,
+                    clock, label, null, cancellationToken);
+                return Results.Ok();
+            }, cancellationToken));
 
         app.MapPost("/api/auth/credentials", (
             HttpRequest request,
@@ -638,7 +683,13 @@ internal sealed record AccessTokenView(
     DateTimeOffset CreatedAt,
     DateTimeOffset LastSeenAt,
     string? Audience = null,
-    IReadOnlyList<string>? Scopes = null);
+    IReadOnlyList<string>? Scopes = null,
+    [property: JsonPropertyName("oauthClientId")] string? OAuthClientId = null,
+    [property: JsonPropertyName("oauthClientName")] string? OAuthClientName = null,
+    DateTimeOffset? LastRequestAt = null,
+    DateTimeOffset? LastRefreshAt = null);
+
+internal sealed record AccessTokenLabelRequest(string? Label);
 
 internal sealed record AccessTokenListResponse(IReadOnlyList<AccessTokenView> Credentials);
 

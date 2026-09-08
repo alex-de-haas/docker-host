@@ -28,12 +28,14 @@ type ConsentView = {
 const SCOPE_TEXT: Record<string, string> = {
   "mcp:read": "Use read-only tools — look things up, never change anything",
   "mcp:lifecycle": "Start, stop and restart apps",
+  "mcp:update": "Plan and apply app updates",
 };
 
 export function OAuthConsentPage({ coreOrigin }: { coreOrigin: string }) {
   const [view, setView] = useState<ConsentView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [selectedScopes, setSelectedScopes] = useState<string[]>(["mcp:read"]);
 
   useEffect(() => {
     void (async () => {
@@ -83,7 +85,7 @@ export function OAuthConsentPage({ coreOrigin }: { coreOrigin: string }) {
             method: "POST",
             credentials: "include",
             headers: { "Content-Type": "application/json", "X-Hosty-CSRF": csrf },
-            body: JSON.stringify({ decision }),
+            body: JSON.stringify({ decision, scopes: selectedScopes }),
           },
         );
         redirectToCoreLoginIfAuthRequired(response, coreOrigin);
@@ -105,7 +107,7 @@ export function OAuthConsentPage({ coreOrigin }: { coreOrigin: string }) {
         setBusy(false);
       }
     },
-    [coreOrigin, view],
+    [coreOrigin, view, selectedScopes],
   );
 
   return (
@@ -133,14 +135,20 @@ export function OAuthConsentPage({ coreOrigin }: { coreOrigin: string }) {
             <ul className="space-y-1 rounded-md border bg-muted/30 p-3 text-sm">
               {view.scopes.map((scope) => (
                 <li key={scope}>
-                  {SCOPE_TEXT[scope] ?? scope}
-                  <span className="ml-1 font-mono text-xs text-muted-foreground">({scope})</span>
+                  <label className="flex items-start gap-2">
+                    <input type="checkbox" checked={selectedScopes.includes(scope)} disabled={busy || scope === "mcp:read"}
+                      onChange={(event) => setSelectedScopes((current) => event.target.checked
+                        ? [...current, scope] : current.filter((value) => value !== scope))} />
+                    <span>{SCOPE_TEXT[scope] ?? scope}
+                      <span className="ml-1 font-mono text-xs text-muted-foreground">({scope})</span>
+                    </span>
+                  </label>
                 </li>
               ))}
             </ul>
 
             <p className="text-xs text-muted-foreground">
-              Approving issues the client its own revocable credential for exactly this. You can
+              Only checked permissions are granted. Each approval creates a separate credential; existing credentials keep their permissions. You can
               withdraw it any time under Settings → Access tokens.
             </p>
 

@@ -750,7 +750,7 @@ export type DeviceAuthorizationRequestView = {
 // itself — the value exists in the response to its own creation and nowhere else.
 export type AccessTokenView = {
   id: string;
-  kind: "device" | "manual";
+  kind: "device" | "manual" | "oauth";
   label: string | null;
   userId: string;
   userDisplayName: string | null;
@@ -760,6 +760,10 @@ export type AccessTokenView = {
   // Null/absent is the full-role credential: everything its approver can do, on every surface.
   audience?: string | null;
   scopes?: string[] | null;
+  oauthClientId?: string | null;
+  oauthClientName?: string | null;
+  lastRequestAt?: string | null;
+  lastRefreshAt?: string | null;
 };
 export type AppOpenTarget = "workspace" | "tab";
 // The theme protocol is the SDK's; the aliases stay so every Shell import site reads one name.

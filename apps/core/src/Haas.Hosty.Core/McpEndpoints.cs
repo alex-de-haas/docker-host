@@ -119,7 +119,7 @@ internal static class McpEndpoints
                     }
 
                     await CoreSessionAuthorization.TouchSessionAsync(
-                        users, scoped.Record, clock.UtcNow, http.RequestAborted);
+                        users, scoped.Record, clock.UtcNow, http.RequestAborted, http.RequestServices.GetRequiredService<OAuthStore>());
 
                     // What this credential may do beyond reading is exactly what it says: the gate
                     // stops being all-or-nothing the moment mutation tools exist, and the scope is

@@ -76,6 +76,34 @@ internal static class CoreSessionAuthorization
         return ("session_invalid", "Core session is missing, expired, or revoked.");
     }
 
+    internal static async Task<IResult> RequireAdminBrowserAsync(
+        HttpRequest request, UserDirectoryStore users, IClock clock,
+        Func<HostUserRecord, Task<IResult>> action, CancellationToken cancellationToken)
+        => await RequireBrowserSessionAsync(request, users, clock, user => AppAccessPolicy.IsAdmin(user)
+            ? action(user)
+            : Task.FromResult<IResult>(CoreJson.Json(new ErrorResponse("admin_required", "A Host administrator is required."), statusCode: 403)), cancellationToken);
+
+    internal static async Task<IResult> RequireBrowserSessionAsync(
+        HttpRequest request, UserDirectoryStore users, IClock clock,
+        Func<HostUserRecord, Task<IResult>> action, CancellationToken cancellationToken)
+    {
+        if (ReadSessionCredential(request).Source != SessionCredentialSource.Cookie || !HasValidCsrfToken(request))
+        {
+            return CoreJson.Json(new ErrorResponse("browser_session_required", "Use a browser session with CSRF protection."),
+                statusCode: StatusCodes.Status403Forbidden);
+        }
+
+        var state = await users.ReadAsync(cancellationToken);
+        var record = state.Sessions.FirstOrDefault(session => session.Id == ReadSessionId(request));
+        if (record is null || record.Kind is not null)
+        {
+            return CoreJson.Json(new ErrorResponse("browser_session_required", "A browser session is required."),
+                statusCode: StatusCodes.Status403Forbidden);
+        }
+
+        return await RequireSessionAsync(request, users, clock, action, requireCsrf: true, cancellationToken: cancellationToken);
+    }
+
     public static async Task<IResult> RequireAdminSessionAsync(
         HttpRequest request,
         UserDirectoryStore users,
@@ -329,8 +357,18 @@ internal static class CoreSessionAuthorization
         UserDirectoryStore users,
         AuthSessionRecord session,
         DateTimeOffset now,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        OAuthStore? oauth = null)
     {
+        if (session.GrantId is { } grantId && oauth is not null)
+        {
+            try { await oauth.TouchGrantAsync(grantId, now, cancellationToken); }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                // Activity is advisory and retried on the next request; authentication still succeeds.
+            }
+        }
+
         if (now - (session.LastSeenAt ?? session.CreatedAt) < TouchThrottle)
         {
             return;

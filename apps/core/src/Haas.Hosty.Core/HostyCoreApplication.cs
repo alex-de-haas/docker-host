@@ -81,6 +81,7 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<AppAuthCodeStore>();
         builder.Services.AddSingleton<DeviceAuthorizationStore>();
         builder.Services.AddSingleton<OAuthStore>();
+        builder.Services.AddHostedService<OAuthRevocationRecovery>();
         builder.Services.AddSingleton<OAuthAuthorizationStore>();
         builder.Services.AddSingleton<OAuthRegistrationLimiter>();
         builder.Services.AddSingleton<AppSessionGrantStore>();

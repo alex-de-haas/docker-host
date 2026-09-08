@@ -67,7 +67,7 @@ internal static class OAuthEndpoints
                 GrantTypesSupported: ["authorization_code", "refresh_token"],
                 CodeChallengeMethodsSupported: ["S256"],
                 TokenEndpointAuthMethodsSupported: ["none"],
-                ScopesSupported: [AccessTokenScopes.McpRead]));
+                ScopesSupported: AccessTokenScopes.Known));
         });
 
         // Core MCP's own resource metadata, at the RFC 9728 path for the resource `/api/mcp`. Apps
@@ -115,7 +115,7 @@ internal static class OAuthEndpoints
             // redirected anywhere, so these two failures answer 400 in place. Everything after them
             // reports through the redirect, per RFC 6749 — the client is legitimate and gets to hear
             // what was wrong with its request.
-            if (client is null)
+            if (client is null || client.DeletedAt is not null)
             {
                 return CoreJson.Json(
                     new ErrorResponse("oauth_client_unknown", "No such OAuth client is registered on this host."),
@@ -164,11 +164,10 @@ internal static class OAuthEndpoints
             }
 
             var scopes = ParseScopes(query["scope"].ToString());
-            if (scopes is null)
+            if (scopes is null || (resolved.Value.Audience != AccessTokenScopes.CoreAudience && scopes.Any(AccessTokenScopes.CoreOnly.Contains)))
             {
-                // This feature issues read scopes only; anything else is refused rather than
-                // silently narrowed, the same rule manual issuance follows.
-                return Results.Redirect(RedirectError("invalid_scope", $"This host issues: {AccessTokenScopes.McpRead}."));
+                // Control scopes belong only to Core; app audiences remain read-only.
+                return Results.Redirect(RedirectError("invalid_scope", "Scopes must include mcp:read; control scopes require the Core resource."));
             }
 
             var parked = pending.Create(
@@ -211,29 +210,30 @@ internal static class OAuthEndpoints
             UserDirectoryStore users,
             IClock clock,
             OAuthAuthorizationStore pending,
+            OAuthStore oauth,
             CancellationToken cancellationToken) =>
             CoreSessionAuthorization.RequireSessionAsync(
                 request,
                 users,
                 clock,
-                user =>
+                async user =>
                 {
                     var found = pending.Find(id);
-                    if (found is null)
+                    if (found is null || !(await oauth.ReadAsync(cancellationToken)).Clients.Any(client => client.ClientId == found.ClientId && client.DeletedAt is null))
                     {
-                        return Task.FromResult<IResult>(CoreJson.Json(
+                        return CoreJson.Json(
                             new ErrorResponse("oauth_request_gone", "This authorization request expired or was already answered. Start again from the client."),
-                            statusCode: StatusCodes.Status404NotFound));
+                            statusCode: StatusCodes.Status404NotFound);
                     }
 
-                    return Task.FromResult<IResult>(CoreJson.Json(new OAuthConsentView(
+                    return CoreJson.Json(new OAuthConsentView(
                         found.Id,
                         found.ClientName,
                         found.AudienceDisplayName,
                         found.Audience,
                         found.Scopes,
                         user.DisplayName ?? user.Email ?? user.Id,
-                        (int)Math.Max(0, (found.ExpiresAt - clock.UtcNow).TotalSeconds))));
+                        (int)Math.Max(0, (found.ExpiresAt - clock.UtcNow).TotalSeconds)));
                 },
                 cancellationToken: cancellationToken));
 
@@ -247,16 +247,17 @@ internal static class OAuthEndpoints
             UserDirectoryStore users,
             IClock clock,
             OAuthAuthorizationStore pending,
+            OAuthStore oauth,
             AuditStore audit,
             CancellationToken cancellationToken) =>
-            CoreSessionAuthorization.RequireSessionAsync(
+            CoreSessionAuthorization.RequireBrowserSessionAsync(
                 request,
                 users,
                 clock,
                 async user =>
                 {
                     var found = pending.Find(id);
-                    if (found is null)
+                    if (found is null || !(await oauth.ReadAsync(cancellationToken)).Clients.Any(client => client.ClientId == found.ClientId && client.DeletedAt is null))
                     {
                         return CoreJson.Json(
                             new ErrorResponse("oauth_request_gone", "This authorization request expired or was already answered."),
@@ -281,7 +282,15 @@ internal static class OAuthEndpoints
                             statusCode: StatusCodes.Status403Forbidden);
                     }
 
-                    var approved = pending.Approve(id, user.Id);
+                    var selected = input?.Scopes ?? [AccessTokenScopes.McpRead];
+                    var normalized = ValidateScopes(selected);
+                    if (normalized is null || normalized.Except(found.Scopes, StringComparer.Ordinal).Any())
+                    {
+                        return CoreJson.Json(new ErrorResponse("invalid_scope", "Select only requested permissions, including mcp:read."),
+                            statusCode: StatusCodes.Status400BadRequest);
+                    }
+
+                    var approved = pending.Approve(id, user.Id, normalized);
                     if (approved is null)
                     {
                         return CoreJson.Json(
@@ -293,7 +302,6 @@ internal static class OAuthEndpoints
                     return CoreJson.Json(new OAuthDecisionResponse(
                         Append(approved.RedirectUri, WithState($"code={Uri.EscapeDataString(approved.Code!)}", approved.State))));
                 },
-                requireCsrf: true,
                 cancellationToken: cancellationToken));
     }
 
@@ -394,7 +402,13 @@ internal static class OAuthEndpoints
             // The grant is the long-lived credential; it lives on the access-token idle budget the
             // operator already tunes, and every rotation issues a fresh one.
             ExpiresAt: clock.UtcNow + settings.AuthLifetimes.AccessTokenIdle);
-        await oauth.UpdateAsync<object?>(state => (state with { Grants = state.Grants.Append(grant).ToArray() }, null), cancellationToken);
+        var created = await oauth.UpdateAsync(state => state.Clients.Any(client => client.ClientId == grant.ClientId && client.DeletedAt is null)
+            ? (state with { Grants = state.Grants.Append(grant).ToArray() }, true)
+            : (state, false), cancellationToken);
+        if (!created)
+        {
+            return TokenError("invalid_grant", "The client was deleted.");
+        }
 
         var access = await AccessTokenEndpoints.IssueAsync(
             redeemed.ApprovedUserId, AccessTokenKinds.OAuth, redeemed.ClientName, users, clock, settings.AuthLifetimes,
@@ -446,14 +460,28 @@ internal static class OAuthEndpoints
         // of them stole it, and whichever refreshed first holds the live chain; the only safe
         // answer is to kill the chain, or the thief who won the race keeps a credential while the
         // victim is quietly locked out.
+        IReadOnlyList<string>? accessScopes = null;
+        var invalidScope = false;
         var (rotated, replayed) = await oauth.UpdateAsync(state =>
         {
+            if (!state.Clients.Any(client => client.ClientId == clientId && client.DeletedAt is null))
+            {
+                return (state, ((OAuthGrantRecord?)null, (OAuthGrantRecord?)null));
+            }
+
             var grant = state.Grants.FirstOrDefault(candidate =>
                 string.Equals(candidate.RefreshTokenHash, hash, StringComparison.Ordinal) &&
                 string.Equals(candidate.ClientId, clientId, StringComparison.Ordinal) &&
                 OAuthStore.IsGrantLive(candidate, now));
             if (grant is not null)
             {
+                accessScopes = form.ContainsKey("scope") ? ParseScopes(form["scope"].ToString(), allowDefault: false) : grant.Scopes;
+                if (accessScopes is null || accessScopes.Except(grant.Scopes, StringComparer.Ordinal).Any())
+                {
+                    invalidScope = true;
+                    return (state, ((OAuthGrantRecord?)null, (OAuthGrantRecord?)null));
+                }
+
                 var spent = (grant.SpentRefreshTokenHashes ?? []).Append(grant.RefreshTokenHash).ToArray();
                 var next = grant with
                 {
@@ -489,6 +517,11 @@ internal static class OAuthEndpoints
             }, ((OAuthGrantRecord?)null, (OAuthGrantRecord?)replayVictim));
         }, cancellationToken);
 
+        if (invalidScope)
+        {
+            return TokenError("invalid_scope", "Refresh scope must be a nonempty subset of the approved scopes, including mcp:read.");
+        }
+
         if (replayed is not null)
         {
             // The chain is dead; now so is everything it issued, including the winner's access
@@ -509,7 +542,7 @@ internal static class OAuthEndpoints
         // inactive everywhere — the same catch-up every scoped credential gets.
         var access = await AccessTokenEndpoints.IssueAsync(
             rotated.UserId, AccessTokenKinds.OAuth, LabelFor(await oauth.ReadAsync(cancellationToken), rotated), users, clock,
-            settings.AuthLifetimes, cancellationToken, rotated.Audience, rotated.Scopes, AccessTokenLifetime, rotated.Id);
+            settings.AuthLifetimes, cancellationToken, rotated.Audience, accessScopes!, AccessTokenLifetime, rotated.Id);
 
         // Re-checked *after* the session was appended, which closes the race with a concurrent
         // revocation: a revoke that landed before this read is caught here and the fresh token is
@@ -524,12 +557,12 @@ internal static class OAuthEndpoints
         }
 
         return CoreJson.Json(new OAuthTokenResponse(
-            access.Id, "Bearer", (int)AccessTokenLifetime.TotalSeconds, replacement, string.Join(' ', rotated.Scopes)));
+            access.Id, "Bearer", (int)AccessTokenLifetime.TotalSeconds, replacement, string.Join(' ', accessScopes!)));
     }
 
     /// <summary>Revokes every access token a grant issued and closes their event streams — the same
     /// cascade the credentials page runs when a grant row is revoked.</summary>
-    private static async Task RevokeIssuedAccessTokensAsync(
+    internal static async Task RevokeIssuedAccessTokensAsync(
         string grantId,
         UserDirectoryStore users,
         CoreEventHub events,
@@ -542,10 +575,10 @@ internal static class OAuthEndpoints
             Sessions = current.Sessions
                 .Select(session =>
                 {
-                    if (string.Equals(session.GrantId, grantId, StringComparison.Ordinal) && session.RevokedAt is null)
+                    if (string.Equals(session.GrantId, grantId, StringComparison.Ordinal))
                     {
                         issuedIds.Add(session.Id);
-                        return session with { RevokedAt = revokedAt };
+                        return session with { RevokedAt = session.RevokedAt ?? revokedAt };
                     }
 
                     return session;
@@ -621,6 +654,40 @@ internal static class OAuthEndpoints
 
     private static void MapClients(WebApplication app)
     {
+        app.MapDelete("/api/auth/oauth/clients/{clientId}", (
+            string clientId, HttpRequest request, UserDirectoryStore users, IClock clock,
+            OAuthStore oauth, CoreEventHub events, AuditStore audit, CancellationToken cancellationToken) =>
+            CoreSessionAuthorization.RequireAdminBrowserAsync(request, users, clock, async user =>
+            {
+                var deleted = await oauth.UpdateAsync(state =>
+                {
+                    var client = state.Clients.FirstOrDefault(candidate => candidate.ClientId == clientId);
+                    if (client is null) return (state, (OAuthClientRecord?)null);
+                    var now = clock.UtcNow;
+                    return (state with
+                    {
+                        Clients = state.Clients.Select(candidate => candidate.ClientId == clientId
+                            ? candidate with { DeletedAt = candidate.DeletedAt ?? now } : candidate).ToArray(),
+                        Grants = state.Grants.Select(grant => grant.ClientId == clientId
+                            ? grant with { RevokedAt = grant.RevokedAt ?? now } : grant).ToArray(),
+                    }, (OAuthClientRecord?)client);
+                }, cancellationToken);
+                if (deleted is null)
+                    return CoreJson.Json(new ErrorResponse("oauth_client_unknown", "This client does not exist."), statusCode: 404);
+                try
+                {
+                    foreach (var grant in (await oauth.ReadAsync(cancellationToken)).Grants.Where(grant => grant.ClientId == clientId))
+                        await RevokeIssuedAccessTokensAsync(grant.Id, users, events, clock.UtcNow, cancellationToken);
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    return CoreJson.Json(new ErrorResponse("oauth_cleanup_incomplete",
+                        "Client issuance is blocked, but token cleanup failed. Retry deletion or restart Core to finish cleanup."), statusCode: 503);
+                }
+                await AppendAuditAsync(audit, clock, "auth.oauth.client", "deleted", deleted.Name, null, user.Id, cancellationToken);
+                return Results.Ok();
+            }, cancellationToken));
+
         // The operator-visible client list: who may start an authorization flow against this host.
         app.MapGet("/api/auth/oauth/clients", (
             HttpRequest request,
@@ -636,7 +703,7 @@ internal static class OAuthEndpoints
                 {
                     var state = await oauth.ReadAsync(cancellationToken);
                     var now = clock.UtcNow;
-                    return CoreJson.Json(new OAuthClientListResponse(state.Clients
+                    return CoreJson.Json(new OAuthClientListResponse(state.Clients.Where(client => client.DeletedAt is null)
                         .Select(client => new OAuthClientView(
                             client.ClientId,
                             client.Name,
@@ -733,20 +800,21 @@ internal static class OAuthEndpoints
 
     // --- Helpers -------------------------------------------------------------------------------
 
-    /// <summary>Scopes for this flow: absent means mcp:read, anything beyond read is refused (this
-    /// feature ships read scopes only). Null signals the refusal.</summary>
-    private static IReadOnlyList<string>? ParseScopes(string raw)
+    private static IReadOnlyList<string>? ParseScopes(string raw, bool allowDefault = true)
     {
-        if (string.IsNullOrWhiteSpace(raw))
+        if (raw.Length == 0 && allowDefault)
         {
             return [AccessTokenScopes.McpRead];
         }
 
-        var requested = raw.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        return requested.All(scope => string.Equals(scope, AccessTokenScopes.McpRead, StringComparison.Ordinal))
-            ? [AccessTokenScopes.McpRead]
-            : null;
+        // OAuth scope tokens are case-sensitive ASCII tokens separated by a single space.
+        return ValidateScopes(raw.Split(' '));
     }
+
+    private static IReadOnlyList<string>? ValidateScopes(IReadOnlyList<string> scopes)
+        => scopes.Count > 0 && scopes.All(AccessTokenScopes.IsKnownScope) && scopes.Contains(AccessTokenScopes.McpRead)
+            ? scopes.Distinct(StringComparer.Ordinal).ToArray()
+            : null;
 
     private static bool IsAcceptableRedirectUri(string? candidate)
     {
@@ -920,7 +988,7 @@ internal sealed record OAuthConsentView(
     string ActingUser,
     int ExpiresInSeconds);
 
-internal sealed record OAuthDecisionRequest(string? Decision);
+internal sealed record OAuthDecisionRequest(string? Decision, IReadOnlyList<string>? Scopes = null);
 
 internal sealed record OAuthDecisionResponse(string RedirectTo);
 

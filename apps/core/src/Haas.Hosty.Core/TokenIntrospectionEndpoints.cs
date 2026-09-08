@@ -29,6 +29,7 @@ internal static class TokenIntrospectionEndpoints
             AppServiceTokenService serviceTokens,
             AppRegistryStore apps,
             UserDirectoryStore users,
+            OAuthStore oauth,
             AuthLifetimes lifetimes,
             AuditStore audit,
             IClock clock,
@@ -86,7 +87,7 @@ internal static class TokenIntrospectionEndpoints
 
             // Authenticated use, so the idle window slides exactly as it does on a session — without
             // this, a credential used through an app every day would still idle out as unused.
-            await CoreSessionAuthorization.TouchSessionAsync(users, match.Record, clock.UtcNow, cancellationToken);
+            await CoreSessionAuthorization.TouchSessionAsync(users, match.Record, clock.UtcNow, cancellationToken, oauth);
 
             // Introspection is where an external client's action becomes visible to Hosty audit: the
             // call never reaches Core otherwise. A named tool is an action and is recorded; a

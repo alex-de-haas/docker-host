@@ -1,7 +1,7 @@
 # Core API
 
 Created: 2026-05-13
-Updated: 2026-09-06
+Updated: 2026-09-08
 
 ## Description
 
@@ -101,6 +101,22 @@ App backups cover the primary app data directory only:
 External mounts are excluded.
 
 An operator-triggered manual backup of a running app briefly stops it to copy a consistent snapshot, then restarts it; the Core-managed `pre-update`/`pre-runtime-switch`/`pre-restore` backups already run against stopped data. See [App Data Backup Retention](../app-data-backup-retention/feature.md) for the full consistency behavior.
+
+## OAuth Credential Administration
+
+- `GET /api/auth/oauth/clients`: active OAuth registrations for administrators, including exact
+  client id and live-grant count; deleted registrations are omitted.
+- `DELETE /api/auth/oauth/clients/{clientId}`: administrator browser session plus CSRF; tombstone,
+  grant/session cascade and stream closure. Idempotent retries finish incomplete cleanup;
+  `503 oauth_cleanup_incomplete` means issuance is blocked but the session cascade needs retry.
+- `GET /api/auth/credentials`: credential fingerprints and metadata, never token values. OAuth rows
+  include `oauthClientId`, `oauthClientName`, `lastRequestAt` and `lastRefreshAt`; timestamps can be
+  absent for unknown activity. Existing `lastSeenAt` remains for compatibility.
+- `PATCH /api/auth/credentials/{fingerprint}/label`: `{ "label": "..." }`; administrator browser
+  session plus CSRF. Renames a device/manual credential or OAuth grant without changing authority.
+- `POST /api/auth/oauth/requests/{id}/decide`: browser session plus CSRF; optional `scopes` on an
+  approval selects a validated subset of the parked request (omitted means read). Core audience
+  approval requires an administrator. See [OAuth](../mcp-oauth/feature.md) for issuance/refresh policy.
 
 ## Testing Expectations
 

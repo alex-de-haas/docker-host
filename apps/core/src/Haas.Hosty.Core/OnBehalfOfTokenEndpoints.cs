@@ -29,6 +29,7 @@ internal static class OnBehalfOfTokenEndpoints
             AppIdentityService identity,
             DelegatedTokenService delegatedTokens,
             UserDirectoryStore users,
+            OAuthStore oauth,
             AuthLifetimes lifetimes,
             AuditStore audit,
             IClock clock,
@@ -92,7 +93,7 @@ internal static class OnBehalfOfTokenEndpoints
 
                 var coreToken = delegatedTokens.CreateToken(
                     AccessTokenScopes.CoreAudience, scoped.User.Id, scoped.User.Role);
-                await CoreSessionAuthorization.TouchSessionAsync(users, scoped.Record, clock.UtcNow, cancellationToken);
+                await CoreSessionAuthorization.TouchSessionAsync(users, scoped.Record, clock.UtcNow, cancellationToken, oauth);
                 await AppendAuditAsync(audit, clock, appId, target, scoped.User.Id, "succeeded", cancellationToken);
                 return CoreJson.Json(coreToken);
             }
@@ -107,7 +108,7 @@ internal static class OnBehalfOfTokenEndpoints
                 // interaction to descend from, and the standing credential is revocable and re-checked
                 // on every call — which is the stronger property, not a weaker one.
                 var issued = delegatedTokens.CreateToken(resolved.Id, actor.Id, actor.Role);
-                await CoreSessionAuthorization.TouchSessionAsync(users, scoped.Record, clock.UtcNow, cancellationToken);
+                await CoreSessionAuthorization.TouchSessionAsync(users, scoped.Record, clock.UtcNow, cancellationToken, oauth);
                 await AppendAuditAsync(audit, clock, appId, target, actor.Id, "succeeded", cancellationToken);
                 return CoreJson.Json(issued);
             }

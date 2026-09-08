@@ -1,7 +1,7 @@
 # Core MCP
 
 Created: 2026-08-09
-Updated: 2026-09-02
+Updated: 2026-09-08
 
 An embedded Model Context Protocol endpoint on Core, giving agent clients typed tools for the things
 Core already knows — which apps exist, what state they are in, what their logs say — instead of
@@ -38,6 +38,11 @@ never performs or proxies work that belongs to a runtime app's own domain API.
   administrator-only, re-read from the directory rather than trusted from the claims). Each accepted
   caller is resolved into `McpCallerGrants` — who is acting, and whether they hold lifecycle
   authority — which the mutation tools consult.
+
+[OAuth issuance](../mcp-oauth/feature.md#resource-indicators-are-the-audience-rule) can grant the same
+Core lifecycle/update scopes through explicit selectable consent. Invocation enforcement is unchanged:
+a catalog entry is not permission to execute it, and delegated/facade callers remain unable to mutate.
+New authorization creates a new grant; refresh cannot exceed its approved authority.
 
 ## Tools
 
