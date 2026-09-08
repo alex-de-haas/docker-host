@@ -34,15 +34,24 @@ to the file. A session restored from a backup comes back without its attachments
 backed up, the cache is not — and the transcript's `attachment_added` event is what explains the
 file it no longer has.
 
-That backup is not one the operator can ask for. `apps/ai-gateway/manifest.json` declares
-`data.enabled: true` but `capabilities: ["logs"]`, and Shell shows the Backups entry — the only way
+An on-demand backup is reachable, but not from Shell. `apps/ai-gateway/manifest.json` declares
+`data.enabled: true` but `capabilities: ["logs"]`, and Shell shows the Backups entry — its only way
 into the create-and-restore panel — for an app whose capabilities include `backup`. The gateway's
 menu therefore offers Check for updates, Development mode, Console logs, Settings and Remove, and
-nothing else. What still happens is Core's own backup before an update, and it is the same call:
-`CreateBackupAsync` archives the app's data directory and branches on `reason` only for the backup's
-id and its retention class, so an on-demand backup would hold exactly what a pre-update one holds.
-`hosty.marketplace` and `hosty.telemetry` sit in the same position; of the first-party manifests only
-`demo-app` declares `backup`.
+nothing else. `hosty.marketplace` and `hosty.telemetry` sit in the same position; of the first-party
+manifests only `demo-app` declares `backup`.
+
+The capability gates that menu and nothing else. `hosty apps backup <app-id>` and
+`hosty apps restore <app-id> <backup-id>` post to `/api/apps/{appId}/backups` and
+`…/backups/{backupId}/restore`, which authorize on an admin session and CSRF and never read the
+manifest — the general rule that a capability is a client-side hint rather than an authorization
+boundary. So the operator's route to a manual backup of this app is the CLI, and the missing menu
+entry is a Shell affordance gap rather than a platform one.
+
+Whichever route takes it, the archive is the same. `CreateBackupAsync` is the single entry point for
+every backup — `manual`, `pre-update`, `pre-restore`, `pre-development-mode`, `pre-runtime-switch` —
+and it archives the app's data directory, branching on `reason` only for the backup's id and its
+retention class. Attachments live under `cache`, which the archive never reaches.
 
 ## Upload, Download, And What The Name Becomes
 
@@ -148,6 +157,6 @@ against the session's quota either way.
   probe would have falsely passed, and two reach the sessions root, where the sibling sessions are
   enumerable and nothing else is. The backup claim was observed on the backup Core takes before an
   update, which held the session's records and none of its attachments. No separate on-demand run
-  was made, and none is owed: the manual path is the same `CreateBackupAsync` call over the same
-  data directory, so the observation covers both. Whether an operator should be able to reach it at
-  all is the capability question above, decided on 2026-09-08 to leave the manifests alone.
+  was made — the owner's call on 2026-09-08, the manifests left alone in the same breath — and none
+  is owed: the manual path is the same `CreateBackupAsync` call over the same data directory, so the
+  observation covers both. Reaching it needs the CLI rather than Shell, as above.
