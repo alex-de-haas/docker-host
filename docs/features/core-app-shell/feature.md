@@ -1,7 +1,7 @@
 # Core App Shell
 
 Created: 2026-05-19
-Updated: 2026-09-01
+Updated: 2026-09-09
 
 Hosty Shell is the Core-managed browser UI runtime app. It renders a single authenticated Shell surface backed by Hosty Core APIs; it does not own Core lifecycle logic and it does not reintroduce the retired combined Next.js Host package.
 
@@ -84,6 +84,18 @@ Apps expose actions according to Core state, plus — for the two entries that a
 - inspect logs and health;
 - create, restore, delete, and prune backups;
 - remove an app, with optional backup deletion.
+
+Autostart has no column of its own: nearly every app starts with the host, so a column that reads
+`On` down its whole length costs width and says nothing. Only the exception is marked — an app that
+does not start with Core carries a hand icon beside its status, and the tooltip says where to turn
+autostart back on.
+
+Each row's Actions cell carries the shortcuts an operator reaches for most — start or stop, restart,
+console logs, and settings — as icon buttons, and the row's overflow menu lists every action the app
+supports, the lifecycle verbs included. The menu is the complete, named set; the icons are a subset of
+it, so an action is never only in one place. Version strings — each app's, and Core's — render
+monospaced so the digits line up down the column, and Core's version is printed bare, without a `v`
+prefix, in the same shape as an app's.
 
 ### Secret settings
 

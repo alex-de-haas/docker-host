@@ -78,6 +78,56 @@ test("a stopped app keeps its tab, carrying the reason rather than vanishing", (
   assert.equal(tabs[0].embeddedUrl, null);
 });
 
+test("a stopped app's tab drops the URL Core still projects for it", () => {
+  // The case the fixture above cannot reach: an endpoint keeps its reserved port while the app is
+  // down, so Core hands Shell a well-formed URL that nothing answers. Embedding it renders the
+  // browser's connection-error page inside the tab, and a stopped app then looks broken instead of
+  // stopped. Both strips are asserted — the rule belongs to the surface, not to one of its placements.
+  const stopped = [
+    app({
+      runtimeState: "stopped",
+      settingsSurface: { path: "/s", embeddedUrl: "http://127.0.0.1:3100/s" },
+      panelSurfaces: [{ path: "/p", label: "Tool", embeddedUrl: "http://127.0.0.1:3100/p" }],
+    }),
+  ];
+
+  assert.equal(getAppPanelTabs(stopped)[0].embeddedUrl, null);
+  assert.equal(getAppSettingsTabs(stopped)[0].embeddedUrl, null);
+  // The tab itself stays: it is the only thing that says the tool exists at all.
+  assert.equal(getAppPanelTabs(stopped)[0].label, "Tool");
+  assert.equal(getAppPanelTabs(stopped)[0].running, false);
+});
+
+test("a running app keeps the URL, so the gate cannot be satisfied by always answering null", () => {
+  const running = [
+    app({ panelSurfaces: [{ path: "/p", label: "Tool", embeddedUrl: "http://127.0.0.1:3100/p" }] }),
+  ];
+
+  assert.equal(getAppPanelTabs(running)[0].embeddedUrl, "http://127.0.0.1:3100/p");
+  assert.equal(getAppPanelTabs(running)[0].running, true);
+});
+
+test("an app mid-verb is transitioning, not stopped", () => {
+  // The state the recording caught: Core reports "starting" for a couple of seconds after Start, and
+  // "not running" admits it — so the tab said the app was stopped and offered a Start that would have
+  // raced the one already under way. Stopped is asserted alongside it, since a flag that were always
+  // true would satisfy the first assertion alone.
+  const [starting] = getAppPanelTabs([
+    app({ runtimeState: "starting", panelSurfaces: [{ path: "/p", label: "Tool", embeddedUrl: "http://127.0.0.1:3100/p" }] }),
+  ]);
+  const [stopped] = getAppPanelTabs([
+    app({ runtimeState: "stopped", panelSurfaces: [{ path: "/p", label: "Tool", embeddedUrl: "http://127.0.0.1:3100/p" }] }),
+  ]);
+
+  assert.equal(starting.transitioning, true);
+  assert.equal(starting.running, false);
+  assert.equal(starting.runtimeState, "starting");
+  // Still nothing to embed: the port is not answering yet either.
+  assert.equal(starting.embeddedUrl, null);
+
+  assert.equal(stopped.transitioning, false);
+});
+
 test("the active tab survives what it can and falls back rather than pointing at nothing", () => {
   const tabs = getAppPanelTabs([
     app({ id: "a", panelSurfaces: [{ path: "/p", label: "Kept" }] }),

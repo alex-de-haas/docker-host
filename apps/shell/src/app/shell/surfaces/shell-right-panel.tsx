@@ -1,6 +1,6 @@
 "use client";
 
-import { Play } from "lucide-react";
+import { LoaderCircle, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { HostyResolvedTheme, HostyThemePreference } from "../types";
@@ -67,7 +67,15 @@ export function ShellRightPanel({
     <aside className="flex h-full min-h-0 min-w-0 flex-col border-l bg-sidebar text-sidebar-foreground">
       <div className="flex items-center border-b px-2">
         <div className="flex min-w-0 flex-1 items-center gap-3 overflow-x-auto" role="tablist" aria-label="Panels">
-          {tabs.map((tab) => (
+          {tabs.map((tab) => {
+            // Two separate questions. Whether the tab leads anywhere is answered by the URL alone —
+            // the surface rule has already folded the runtime state into it, and an app can also be
+            // running with no address resolved yet. Only the *wording* asks whether it is running,
+            // so a tab never dims for one reason and explains itself with another.
+            const unavailable = !tab.embeddedUrl;
+            const reason = tab.transitioning ? tab.runtimeState : tab.running ? "not reachable" : "not running";
+
+            return (
             <button
               key={tab.key}
               type="button"
@@ -83,11 +91,16 @@ export function ShellRightPanel({
                   : "border-transparent text-muted-foreground hover:text-foreground",
                 // A stopped app keeps its tab rather than vanishing — dimmed, so the strip shows the
                 // tool exists and is merely not running.
-                !tab.running && "opacity-60",
+                unavailable && "opacity-60",
               )}
-              title={tab.running ? tab.label : `${tab.label} (not running)`}
+              title={unavailable ? `${tab.label} (${reason})` : tab.label}
             >
               {tab.label}
+              {/* Not a visible marker — the strip carries the state as dimming, and a glyph tried
+                  here read as decoration rather than as "stopped". Dimming reaches nobody using a
+                  screen reader, though, and `title` on a button that already has text is announced
+                  as its description at best, so the state is said outright for that reader alone. */}
+              {unavailable && <span className="sr-only">, {reason}</span>}
               {(attention?.[tab.appId] ?? 0) > 0 && (
                 <>
                   {/* On the tab, because the tab is on every page: a session that stops for a person
@@ -102,7 +115,8 @@ export function ShellRightPanel({
                 </>
               )}
             </button>
-          ))}
+            );
+          })}
         </div>
       </div>
 
@@ -155,10 +169,29 @@ function RightPanelBody({
   }
 
   if (!activeTab.embeddedUrl) {
-    return (
+    // Three different facts, and only one of them is answered by starting the app. An app mid-verb is
+    // reporting progress, not asking for anything: Core is already acting, and the panel settles on
+    // its own when the app answers.
+    if (activeTab.transitioning) {
+      return (
+        <PanelMessage title={`${activeTab.label} is ${activeTab.runtimeState}`}>
+          <p className="flex items-center justify-center gap-2">
+            <LoaderCircle className="h-4 w-4 animate-spin" /> This panel opens when the app answers.
+          </p>
+        </PanelMessage>
+      );
+    }
+
+    // A running app with no resolved address is a different fact from a stopped one, and telling its
+    // operator to start it would be advice for a state they are not in.
+    return activeTab.running ? (
+      <PanelMessage title={`${activeTab.label} is not reachable`}>
+        <p>The app is running, but Hosty has no address for this panel yet.</p>
+      </PanelMessage>
+    ) : (
       <PanelMessage title={`${activeTab.label} isn't running`}>
         <p>This panel is served by the app itself, so it is only reachable while the app runs.</p>
-        {onStartApp && !activeTab.running && (
+        {onStartApp && (
           <Button variant="outline" size="sm" className="mt-4" onClick={() => onStartApp(activeTab.appId)}>
             <Play /> Start
           </Button>
