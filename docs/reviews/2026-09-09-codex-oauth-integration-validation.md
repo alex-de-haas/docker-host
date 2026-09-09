@@ -1,8 +1,14 @@
 # Stock Codex OAuth Integration Validation
 
 Date: 2026-09-09
-Baseline: `588e8e16bc703ecad32b049ddbaf4b47aebfc2b1`.
+Baseline: [`588e8e16bc703ecad32b049ddbaf4b47aebfc2b1`](https://github.com/alex-de-haas/docker-host/commit/588e8e16bc703ecad32b049ddbaf4b47aebfc2b1).
 Client: stock Codex CLI/app-server 0.147.0 on macOS. Core: 0.98.0; Shell: 0.70.1.
+
+The tested commit is retained on `feat/shell-row-actions-and-stopped-apps`
+([PR #467](https://github.com/alex-de-haas/docker-host/pull/467)), independently of this documentation
+branch. GitHub resolves the commit permalink above. A checkout containing only this PR and `main`
+can retrieve it with `git fetch origin 588e8e16bc703ecad32b049ddbaf4b47aebfc2b1`;
+`git show 588e8e16bc703ecad32b049ddbaf4b47aebfc2b1` then identifies the exact tested source.
 
 The remaining stock Codex integration deliverable passed against the implemented Core.
 This completes the missing client check recorded in the
@@ -51,10 +57,10 @@ outcomes and connection evidence needed to assess completion are retained below.
 | --- | --- |
 | Denied consent | Codex requested all three scopes. Core returned `access_denied`; the Codex callback returned HTTP 400 and reported unsuccessful login. No grant was issued. |
 | Read-only consent | Core issued only `mcp:read`; stock Codex listed apps, while `start_app` and `plan_app_update` returned the expected missing-scope errors. |
-| Read refresh and restart | The refresh-token hash changed, the grant stayed unrevoked, the same credential id remained, and read/control gate results were unchanged after Core and Codex restarts. |
+| Read refresh and restart | The refresh-token hash changed, the grant stayed unrevoked, the same credential fingerprint remained, and read/control gate results were unchanged after Core and Codex restarts. |
 | Expanded reauthorization | A new login under the same configured MCP server issued a distinct grant and credential row with all three scopes. The old row remained independent. |
 | Expanded tool calls | Stock Codex started and stopped the disposable app. Update planning passed the scope check and reached the source-runtime limitation. |
-| Expanded refresh and restart | The refresh-token hash changed again within the expanded grant; both credential ids and approved scope sets remained unchanged. |
+| Expanded refresh and restart | The refresh-token hash changed again within the expanded grant; both credential fingerprints and approved scope sets remained unchanged. |
 | Old grant revoked | Restoring only the old disposable credential cache in a stopped test client produced no usable MCP tools. Restoring the new test cache still allowed read and control calls; only the new row remained. |
 | New grant revoked | Codex could no longer call tools; the active OAuth credential list was empty. |
 | Cleanup | All disposable clients were deleted/revoked, Core-managed apps and Core stopped, both ports were released, and the test profile and Core data were removed. |
@@ -69,7 +75,7 @@ The successful refresh check accelerated the same upcoming access-token deadline
 Core's test access sessions and the one disposable Codex cache entry received a deadline about
 20 seconds ahead. Bearer values, refresh-token values and grant scopes were unchanged by this
 clock adjustment. Codex then performed refresh itself; the driver asserted changed refresh hashes,
-unchanged credential ids and the expected permissions through subsequent real tool calls.
+unchanged credential fingerprints and the expected permissions through subsequent real tool calls.
 This covers proactive refresh and persistence across process restarts, without waiting an hour.
 It does not claim an hour-long wall-clock soak.
 
@@ -86,7 +92,7 @@ The driver also needed two harness corrections: treating HTTP 400 on a denied ca
 expected error-page response, while still requiring failed login/no grant; and reading the
 credential fingerprint from API field `id`, not a nonexistent `fingerprint` field. The final run
 below completed after both corrections. Independent driver checks against actual Core covered
-read/expanded tool gates, stable ids through refresh, and separate revocation before the final run.
+read/expanded tool gates, stable credential fingerprints through refresh, and separate revocation before the final run.
 
 No compiled-image update was applied: `plan_app_update` returned the expected source-runtime
 restriction after the scope check. No production deployment or production connection was used.
