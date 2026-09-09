@@ -61,3 +61,11 @@ next-env.d.ts
 
 # Built SDK package output (publish-time artifact, never committed)
 packages/*/dist/
+
+# Next.js 16.3.4+ writes an AGENTS.md (a managed "nextjs-agent-rules" block) and a CLAUDE.md
+# (`@AGENTS.md`) into every app directory on `next dev`, and re-creates them on the next run — there
+# is no switch. Not committed: they are vendor-generated, identical across apps, and would dirty the
+# tree on every Next bump. Scoped to apps/ so the repository's own root AGENTS.md / CLAUDE.md stay
+# tracked. The files still exist locally and agents working inside an app directory still read them.
+apps/*/AGENTS.md
+apps/*/CLAUDE.md
