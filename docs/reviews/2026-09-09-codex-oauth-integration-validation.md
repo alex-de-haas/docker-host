@@ -4,9 +4,9 @@ Date: 2026-09-09
 Baseline: [`588e8e16bc703ecad32b049ddbaf4b47aebfc2b1`](https://github.com/alex-de-haas/docker-host/commit/588e8e16bc703ecad32b049ddbaf4b47aebfc2b1).
 Client: stock Codex CLI/app-server 0.147.0 on macOS. Core: 0.98.0; Shell: 0.70.1.
 
-The tested commit is retained on `feat/shell-row-actions-and-stopped-apps`
-([PR #467](https://github.com/alex-de-haas/docker-host/pull/467)), independently of this documentation
-branch. GitHub resolves the commit permalink above. A checkout containing only this PR and `main`
+The tested commit is retained in `main` through merged
+[PR #467](https://github.com/alex-de-haas/docker-host/pull/467), independently of this documentation
+change. GitHub resolves the commit permalink above. A shallow checkout missing this revision
 can retrieve it with `git fetch origin 588e8e16bc703ecad32b049ddbaf4b47aebfc2b1`;
 `git show 588e8e16bc703ecad32b049ddbaf4b47aebfc2b1` then identifies the exact tested source.
 
