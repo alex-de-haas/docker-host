@@ -38,6 +38,13 @@ rest is below.
   all-running services, any probe `unhealthy` → `degraded`, else any probe `starting` → `starting`,
   else `healthy`. A `healthcheck` is declared **per service**, not per app; a service without one
   contributes liveness only, which reads as `healthy` the moment its process is alive.
+
+This vocabulary is liveness-first and **not** ASP.NET's, though it shares the words: there
+`Degraded` and `Unhealthy` are two severities of a live process; here `unhealthy` is a process-level
+partial outage and `degraded` is "alive, probe failing", covering both ASP.NET severities at once.
+Decided 2026-09-09 to keep it as it is and name it, rather than realign — the difference is spelled
+out in [App Lifecycle States](../app-lifecycle-states/feature.md#health-vocabulary-is-liveness-first),
+and this plan's use of `degraded` for an expired wait follows from it.
 - `NetworkHealthProbe` — Core-side `http` (2xx/3xx) and `tcp` (connected) probes on loopback, used
   for a `localCommand` service that declares a `healthcheck`; container `HEALTHCHECK` for docker.
 - The supervisor observes health every 15 s (`SuperviseInterval`) and reconciles `runtimeState` from
@@ -105,6 +112,10 @@ Written as a diff against the feature documents it touches.
   [Dependency-Ordered Autostart](../dependency-ordered-autostart/plan.md)'s alone.
 - `availability: "unavailable"` — an endpoint whose reserved port another process holds. Different
   fact, owned by [Automatic Runtime App Ports](../automatic-runtime-app-ports/plan.md).
+- Realigning the health words with ASP.NET's severities (`unhealthy` = cannot serve, `degraded` =
+  serving with impairment, a new word for the process-level mix). It needs a probe that reads the
+  app's own severity, a mapper change, and a docker aggregate that has no `degraded` to give; worth a
+  plan of its own if app authors need their severity to reach Hosty, and orthogonal to readiness.
 
 ## Open questions
 

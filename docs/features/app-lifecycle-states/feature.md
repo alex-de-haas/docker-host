@@ -99,6 +99,34 @@ carries the same pair as `State.Status` vs `State.Health.Status`.
 terminal value — health `starting` becomes `running`, since the container is already up. If it could
 emit a transitional value, the supervisor and a lifecycle verb would fight over the record.
 
+## Health vocabulary is liveness-first
+
+The per-app health aggregate (`AppRuntimeHealthResult`, the same fold in both adapters) uses words
+ASP.NET Core and Docker also use, but splits them on a different axis. Liveness of the service
+processes decides first; probes only refine the all-alive case:
+
+| Aggregate | Condition |
+| --- | --- |
+| `healthy` | every service process alive, every probe passing |
+| `starting` | every process alive, some probe still `starting` (Docker's word) |
+| `degraded` | every process alive, **some probe failing** |
+| `unhealthy` | **some process dead** — a mix of running and exited or stopped services |
+| `stopped` | every service stopped |
+
+So `degraded` and `unhealthy` are **not** ASP.NET's `Degraded` and `Unhealthy`. There, both describe
+a live process and differ by severity the check's author chose — `Degraded` still answers 200 and
+stays in rotation, `Unhealthy` answers 503. Here, `unhealthy` is a partial outage at the process
+level, a notion ASP.NET has no word for, and `degraded` covers *both* ASP.NET severities: Core's
+probe is binary (`2xx/3xx` passes, anything else fails), so an app that reports itself `Degraded`
+with a 200 reads `healthy`, and one that reports `Unhealthy` with a 503 reads `degraded`. An app's
+own severity does not survive the probe. A server whose port is not yet accepting connections is
+therefore `degraded` too — the process is alive — where ASP.NET would say `Unhealthy`.
+
+The mapper follows the axis: `degraded` keeps `running`, `unhealthy` becomes `unknown`. Realigning
+the words with ASP.NET's meaning was considered on 2026-09-09 and deliberately left alone: it would
+need a new word for the process-level mix, a probe that reads the app's own severity, and a change to
+the mapper; [App Readiness](../app-readiness/plan.md) builds on the vocabulary as it is.
+
 ## Clients
 
 - **Shell** — a transitional badge (sky, pulsing dot), and a lifecycle toggle that shows progress
