@@ -48,7 +48,7 @@ topology 4's deferred "mcp-hub", placed on the existing gateway system app),
 - [ ] 9. The user profile: MCP-only sessions with delegated user tokens and approval-gated writes.
 - [ ] 10. Replace one app-local model integration with a discovered `/api/ai/generate`. **Gated on
       an authorization decision** recorded as open question 1 of the
-      [platform vision](../hosty-platform-vision/plan.md): the gateway is a system app, so Core
+      [platform vision](../../vision.md): the gateway is a system app, so Core
       refuses non-admin delegated tokens for it — a regular user's app-mediated AI call has no
       credential path until it is decided (direction: the app calls the gateway as the app, and the
       user never holds an AI credential).
