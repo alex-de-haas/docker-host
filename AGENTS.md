@@ -38,6 +38,7 @@ Development is document-driven: every non-trivial change starts and ends in `doc
 ```text
 docs/
 ├── root.md              — prose overview + generated status index
+├── vision.md            — the direction the platform is built toward (living, no status)
 ├── features/
 │   └── <feature-name>/  — kebab-case; the feature's stable, permanent home
 │       ├── feature.md   — current reality only
@@ -56,6 +57,14 @@ docs/
   open; the superseded archives are deleted in the same PR (git history keeps
   their full text), so the folder holds only reviews whose findings are still
   current.
+- `docs/vision.md` holds the direction the platform is built toward: the thesis,
+  dated owner decisions, open strategic questions, and links to the features it
+  spans. It is a living document — edited whenever the direction changes, with
+  `Created:` / `Updated:` and no `Status:` — and it sits outside the status
+  workflow and the generated index, like `docs/reviews/`. It authorizes no
+  implementation and owns no deliverables: work it names is tracked in the owning
+  feature's `plan.md`. Feature and plan documents may cite its decisions by number
+  and date.
 - Beyond that there are no other documentation folders. A large or cross-cutting
   feature is an ordinary feature whose docs cross-link the features it spans;
   its `plan.md` never duplicates their deliverables — it links to them and keeps

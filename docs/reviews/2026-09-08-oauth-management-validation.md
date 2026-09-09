@@ -83,7 +83,7 @@ The isolated Codex probe did **not** run. Automatic approval review rejected cre
 its launcher because this agent session forbids overriding `CODEX_HOME`. The agent did not bypass
 that rejection or fall back to the production configuration. The earlier compatibility probe is
 separate evidence and is not substituted for this missing Core integration run. The remaining
-Codex check is tracked in [the scopes plan](../features/oauth-core-control-scopes/plan.md).
+Codex check is tracked in [the scopes plan](https://github.com/alex-de-haas/docker-host/blob/e4efc20563783dcc1c40ab5df775df6634b5cde6/docs/features/oauth-core-control-scopes/plan.md).
 
 ## Cleanup
 
