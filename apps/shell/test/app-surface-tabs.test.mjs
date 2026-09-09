@@ -153,9 +153,13 @@ test("a service nothing probes is ready the moment it is alive", () => {
   assert.equal(tab.readiness, "ready");
 });
 
-test("a running app Core has not read yet is unobserved, not stopped and not ready", () => {
+test("a running app with no reading is ready — an older Core, or one that has not observed it yet", () => {
+  // The regression this guards: with the field absent, every sidebar row was held at "is starting"
+  // against a Core that reports no readiness. Only a reading Core actually made may hold anything.
   const [tab] = getAppPanelTabs([app({ ...panelOn("web"), health: null })]);
-  assert.deepEqual([tab.embeddedUrl, tab.readiness], [url, "unobserved"]);
+  assert.deepEqual([tab.embeddedUrl, tab.readiness], [url, "ready"]);
+  const [absent] = getAppPanelTabs([app({ ...panelOn("web") })]);
+  assert.equal(absent.readiness, "ready");
 });
 
 test("a dead sibling service does not close a working endpoint", () => {
@@ -188,7 +192,7 @@ test("the launch gate holds a starting page and lets a degraded one through", ()
   // anything not up is refused — the same rule a surface tab opens by.
   const gateFor = (overrides) => resolveLaunchGate(app(overrides), "web");
   assert.equal(gateFor({ health: health("starting", [{ service: "web", status: "running", health: "starting" }]) }).allowed, false);
-  assert.equal(gateFor({ health: null }).allowed, false);
+  assert.equal(gateFor({ health: null }).allowed, true);
   assert.equal(gateFor({ health: health("degraded", [{ service: "web", status: "running", health: "unhealthy" }]) }).allowed, true);
   assert.equal(gateFor({ health: health("healthy", [{ service: "web", status: "running", health: "healthy" }]) }).allowed, true);
   assert.deepEqual(gateFor({ runtimeState: "stopped", health: null }), { up: false, readiness: "ready", allowed: false });

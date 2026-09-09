@@ -14,10 +14,13 @@ import type { CoreApp, CoreAppServiceHealth, CoreAppSurface } from "../types";
  * - `degraded` — alive, but the probe does not pass: the budget expired, or a check that used to
  *   pass no longer does. An expired budget proves nothing about the app, so this is offered, not
  *   refused: the operator may open anyway.
- * - `unobserved` — Core has no reading yet (a Core restart adopted the running app before its first
- *   tick); treated as progress until one lands.
+ *
+ * No reading at all is `ready`: a Core that reports no readiness (an older one), or one that has not
+ * observed this app yet, leaves the lifecycle state to decide — the rule Aspire applies to a resource
+ * with no health check. Holding a launch on a missing reading was tried and blocked every row against
+ * an older Core; only a reading Core actually made may hold anything.
  */
-export type SurfaceReadiness = "ready" | "starting" | "degraded" | "unobserved";
+export type SurfaceReadiness = "ready" | "starting" | "degraded";
 
 /** One placed surface, as Shell's chrome consumes it. */
 export type AppSurfaceTab = {
@@ -83,9 +86,10 @@ export function resolveReadiness(app: CoreApp, service: string | null | undefine
     return readinessOfHealth(reading.health);
   }
 
-  // No per-service reading: fall back to the fold, which for a single-service app is the same thing.
+  // No per-service reading: fall back to the fold, which for a single-service app is the same thing;
+  // no reading at all leaves the lifecycle state to decide.
   if (!app.health) {
-    return app.runtimeState === "running" ? "unobserved" : "ready";
+    return "ready";
   }
 
   return readinessOfHealth(app.health.status === "degraded" || app.health.status === "unhealthy" ? "unhealthy" : app.health.status);
@@ -186,12 +190,12 @@ export function resolveActiveSurfaceTab(tabs: readonly AppSurfaceTab[], preferre
 /**
  * Whether a launch (sidebar row, workspace) may proceed for a page served by `service`.
  *
- * The same rule a surface tab opens by, minus the tab: `starting` and `unobserved` hold the launch
- * (the page would render a connection error), `degraded` lets it through — the operator clicking a
- * row is the row's "open anyway" — and anything not up is refused outright.
+ * The same rule a surface tab opens by, minus the tab: `starting` holds the launch (the page would
+ * render a connection error), `degraded` lets it through — the operator clicking a row is the row's
+ * "open anyway" — and anything not up is refused outright.
  */
 export function resolveLaunchGate(app: CoreApp, service: string | null | undefined): { allowed: boolean; readiness: SurfaceReadiness; up: boolean } {
   const up = isServiceUp(app, service);
   const readiness = resolveReadiness(app, service);
-  return { up, readiness, allowed: up && readiness !== "starting" && readiness !== "unobserved" };
+  return { up, readiness, allowed: up && readiness !== "starting" };
 }

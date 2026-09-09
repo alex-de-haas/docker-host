@@ -236,7 +236,7 @@ function RightPanelBody({
     }
 
     return (
-      <PanelMessage title={activeTab.readiness === "unobserved" ? `${activeTab.label} is waiting for its first health reading` : `${activeTab.label} is starting`}>
+      <PanelMessage title={`${activeTab.label} is starting`}>
         <p className="flex items-center justify-center gap-2">
           <LoaderCircle className="h-4 w-4 animate-spin" /> This panel opens when the app answers.
         </p>

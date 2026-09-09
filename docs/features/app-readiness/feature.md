@@ -108,8 +108,9 @@ alone.
 - **Shell** ([App UI Surfaces](../app-ui-surfaces/feature.md), [Core App Shell](../core-app-shell/feature.md),
   [Shell Navigation](../shell-navigation/feature.md)): the Dashboard badge composes the two axes
   (`running · starting`, `running · degraded`) with the health's tone; a surface tab opens when its
-  service is ready, shows progress while `starting` or not yet observed, and offers **Open anyway**
-  when `degraded`; a frame already open survives `healthy → degraded` and is unmounted only by the
+  service is ready, shows progress while `starting`, and offers **Open anyway** when `degraded` — and
+  with no reading at all (an older Core, or an app not yet observed) the lifecycle state decides, so
+  a Core that reports no readiness never holds a row; a frame already open survives `healthy → degraded` and is unmounted only by the
   lifecycle axis; the sidebar row and a workspace launch open by the readiness of the service serving
   the page — `starting` holds them, `degraded` lets them through (the click is the row's "open
   anyway").
@@ -149,7 +150,7 @@ tier of `N` apps is about `ceil(N / 4) × 30 s`.
   and its word survives the budget; a non-positive `readinessTimeoutSeconds` is rejected; the
   dependency summary reads `healthy`/`ready` by the serving service.
 - `app-surface-tabs.test.mjs`: the three readings on one lifecycle state, a service nothing probes,
-  the unobserved case, a dead sibling not closing a working endpoint, a verb in flight blocking every
+  no reading at all being ready, a dead sibling not closing a working endpoint, a verb in flight blocking every
   open, the fold fallback, and the launch gate. `app-problems.test.mjs`: the not-answering warning.
 - `ToolCatalogTests`: an interface is asked only when its service answers.
 - Live, on a host (2026-09-09): Start from the panel holds `starting` and opens on the second with no

@@ -119,7 +119,8 @@ whose click would have raced it.
 
 Readiness is the softer question on top ([App Readiness](../app-readiness/feature.md)): a surface
 whose service is alive has a URL, and *opens* when that service's reading is `healthy` (or nothing
-probes it). While the reading is `starting`, or Core has none yet, the tab shows progress; when it is
+probes it, or Core has no reading for it — an older Core must not hold a tab). While the reading is
+`starting` the tab shows progress; when it is
 `degraded` the tab says readiness is not confirmed and offers **Open anyway**, since an expired budget
 proves nothing about the app. Readiness gates opening only: a frame already on screen survives
 `healthy → degraded` — a transient probe failure must not destroy what the operator has typed — and is

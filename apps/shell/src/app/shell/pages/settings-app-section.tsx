@@ -111,7 +111,7 @@ export function AppSettingsTabPanel({
     }
 
     return (
-      <SettingsMessage title={tab.readiness === "unobserved" ? `${tab.label} is waiting for its first health reading` : `${tab.label} is starting`}>
+      <SettingsMessage title={`${tab.label} is starting`}>
         <p className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
           <LoaderCircle className="h-4 w-4 animate-spin" /> This page opens when the app answers.
         </p>
