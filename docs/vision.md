@@ -1,12 +1,13 @@
 # Hosty Platform Vision
 
-Status: Draft
 Created: 2026-08-19
-Updated: 2026-08-31
+Updated: 2026-09-09
 
 The umbrella document: where Hosty is going, so individual decisions have a criterion to be judged
-against. It authorizes no implementation, owns almost no deliverables, and links the features it
-spans rather than duplicating them.
+against. It authorizes no implementation and owns no deliverables — work it names is tracked in the
+owning feature's `plan.md` — and it links the features it spans rather than duplicating them. It is a
+living document outside the status workflow: when the direction changes, so does this file, and
+`Updated:` says when.
 
 ## Thesis
 
@@ -118,14 +119,14 @@ Any future feature that weakens one of these must say so in its plan, in those w
 ## Contribution Points, Named
 
 Today's points exist but were each invented ad hoc: `ui.entrypoint`/`ui.navigation`, then
-`ui.settings` and `ui.panel` ([app-ui-surfaces](../app-ui-surfaces/feature.md)), and `interfaces.mcp`
-([app-mcp](../app-mcp/feature.md)). Widgets are a named future axis.
+`ui.settings` and `ui.panel` ([app-ui-surfaces](features/app-ui-surfaces/feature.md)), and `interfaces.mcp`
+([app-mcp](features/app-mcp/feature.md)). Widgets are a named future axis.
 
 The direction this document sets: **the next capability does not invent a fifth seam** — it either
 fits an existing contribution point or adds one deliberately, as a first-class, documented part of
 the manifest contract. Two standing consequences:
 
-- [core-extension-model](../core-extension-model/plan.md) stops being exploratory the day a platform
+- [core-extension-model](features/core-extension-model/plan.md) stops being exploratory the day a platform
   capability ships as a swappable app through a *named* contribution point rather than a bespoke
   integration. That is its graduation criterion.
 - The manifest is becoming an API in the `vscode.d.ts` sense. The "never bump `schemaVersion` for
@@ -138,40 +139,29 @@ the manifest contract. Two standing consequences:
    refuses to mint a delegated token for it to a non-admin (`system_app_admin_required`) — a
    *user-attributed* credential path is closed by design. The direction that fits decision 1: the
    app calls the gateway **as the app** (the app-to-app story of
-   [cross-app-dependencies](../cross-app-dependencies/plan.md)), the user never holds an AI
+   [cross-app-dependencies](features/cross-app-dependencies/plan.md)), the user never holds an AI
    credential, and the app's own UI is the boundary deciding which AI functions exist. Decide when
-   the first regular-user AI feature ships — [ai-agent-bridge](../ai-agent-bridge/plan.md) step 10
+   the first regular-user AI feature ships — [ai-agent-bridge](features/ai-agent-bridge/plan.md) step 10
    is where it will land.
 2. **What is the micro-app runtime?** Scale-to-zero, activation on request, cost near zero when
    idle. Shape, isolation, and how it differs from `localCommand` are all open.
 3. **What does cross-environment integration look like?** The owner's setup is a local dev
    installation and a separate production host; wanted later: reading prod telemetry from dev and
    reproducing prod errors there. Today's answer is the SSH topology of
-   [telemetry-mcp](../telemetry-mcp/feature.md); anything richer is undesigned.
+   [telemetry-mcp](features/telemetry-mcp/feature.md); anything richer is undesigned.
 4. **How are live Core edits seen on a dev environment, with one Core per host and no installation
    split?** No mechanism exists today; running Core from source is the developer loop in this
    repository, not an operator affordance.
 
-## Deliverables
-
-- [x] `docs/root.md`'s prose overview names the direction and links here (this PR).
-
-Nothing else. The work this document names is tracked where it belongs, per the umbrella rule:
-[core-extension-model](../core-extension-model/plan.md) carries its own graduation criterion, and
-[ai-agent-bridge](../ai-agent-bridge/plan.md) step 10 carries the regular-user authorization gate.
-An umbrella that owned those checklists would duplicate them.
-
-Version outcome: documentation-only, here and for every change this umbrella ever makes itself.
-
 ## Spanned Features
 
-[core-extension-model](../core-extension-model/plan.md) ·
-[ai-agent-bridge](../ai-agent-bridge/plan.md) ·
-[app-ui-surfaces](../app-ui-surfaces/feature.md) ·
-[assistant-entry-points](../assistant-entry-points/plan.md) ·
-[agent-background-sessions](../agent-background-sessions/feature.md) ·
-[runtime-source-workflows](../runtime-source-workflows/feature.md) ·
-[telemetry-mcp](../telemetry-mcp/feature.md) ·
-[hosty-mcp-connector](../hosty-mcp-connector/feature.md) ·
-[cross-app-dependencies](../cross-app-dependencies/plan.md) ·
-[hosty-app-sdk](../hosty-app-sdk/plan.md)
+[core-extension-model](features/core-extension-model/plan.md) ·
+[ai-agent-bridge](features/ai-agent-bridge/plan.md) ·
+[app-ui-surfaces](features/app-ui-surfaces/feature.md) ·
+[assistant-entry-points](features/assistant-entry-points/plan.md) ·
+[agent-background-sessions](features/agent-background-sessions/feature.md) ·
+[runtime-source-workflows](features/runtime-source-workflows/feature.md) ·
+[telemetry-mcp](features/telemetry-mcp/feature.md) ·
+[hosty-mcp-connector](features/hosty-mcp-connector/feature.md) ·
+[cross-app-dependencies](features/cross-app-dependencies/plan.md) ·
+[hosty-app-sdk](features/hosty-app-sdk/plan.md)

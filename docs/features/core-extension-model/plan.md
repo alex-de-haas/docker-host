@@ -8,7 +8,7 @@ Exploratory. This plan authorizes no implementation and changes no current syste
 formalizes a pattern the platform already uses ad hoc so the next capability does not invent a second
 delivery vehicle.
 
-**Graduation criterion** (from the [platform vision](../hosty-platform-vision/plan.md), 2026-08-19):
+**Graduation criterion** (from the [platform vision](../../vision.md), 2026-08-19):
 this plan stops being exploratory the day a platform capability ships as a swappable app through a
 *named* contribution point rather than a bespoke integration. Retiring the label is that decision,
 not drift.

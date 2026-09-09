@@ -25,7 +25,7 @@ so a credential valid at two audiences lets the first replay it against the seco
 Introspection cannot tell the presenter from the subject — nothing in a bearer identifies who is
 holding it — so isolation has to come from the credential naming one audience and Core enforcing it.
 That is what keeps *installing app A grants A's declared reach and nothing more*
-([platform vision](../hosty-platform-vision/plan.md), decision 5) true for this credential too.
+([platform vision](../../vision.md), decision 5) true for this credential too.
 
 ## Not A Session
 
