@@ -245,7 +245,9 @@ export function getAppPageLinks(app: CoreApp): AppPageLink[] {
     return navigation
       .map((item): AppPageLink | null => {
         const redirectUri = item.embeddedUrl || buildRedirectUriFromAppPath(app, item.path);
-        return redirectUri ? { label: item.label, path: item.path, redirectUri, iconUrl: item.iconUrl ?? null } : null;
+        return redirectUri
+          ? { label: item.label, path: item.path, redirectUri, iconUrl: item.iconUrl ?? null, service: item.service ?? null }
+          : null;
       })
       .filter((item): item is AppPageLink => item !== null);
   }

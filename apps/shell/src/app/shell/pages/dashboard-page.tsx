@@ -1128,7 +1128,7 @@ function InstalledAppRow({
       </TableCell>
       <TableCell>
         <div className="flex flex-wrap items-center gap-1.5">
-          <StatusBadge value={app.runtimeState || app.operationStatus} />
+          <StatusBadge value={app.runtimeState || app.operationStatus} health={isAppUp(app.runtimeState) ? app.health?.status : null} />
           {/* Autostart had a column of its own, and it read "On" for nearly every row — a column that
               says the same thing ten times is width spent on nothing. Only the exception is worth a
               mark, so the icon appears exactly when an app does *not* come up with the host. */}

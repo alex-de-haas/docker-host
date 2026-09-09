@@ -541,6 +541,11 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
                 errors.Add(new("app_manifest_runtime_profile_duplicate", $"Runtime profile '{profile.Key}' is declared more than once.", "$.runtimeProfiles[].key"));
             }
 
+            if (profile.ReadinessTimeoutSeconds is <= 0)
+            {
+                errors.Add(new("app_manifest_runtime_profile_readiness_timeout_invalid", $"Runtime profile '{profile.Key}' readinessTimeoutSeconds must be greater than zero.", "$.runtimeProfiles[].readinessTimeoutSeconds"));
+            }
+
             if (profile.Type is not "docker" and not "localCommand")
             {
                 errors.Add(new("app_manifest_runtime_type_unsupported", $"Runtime profile type '{profile.Type}' is not supported by this Hosty Core build.", "$.runtimeProfiles[].type"));
@@ -3464,6 +3469,13 @@ internal sealed class RuntimeProfileManifest
     // at most one per manifest. A non-development source runtime is locked and updated in review, even
     // though it also runs from source. See docs/features/runtime-artifact-model.md.
     public bool Development { get; init; }
+
+    // How long a start waits for the app's published endpoints to answer before reporting `running`
+    // with whatever readiness it has (app-readiness). Null takes Core's default (30 s). Counted after
+    // every process or container has been launched, so image pulls and `setup` are not inside it.
+    // Bounds the operator's wait, not the app's initialisation: an app whose budget expires keeps
+    // starting, and the supervisor picks it up as it answers.
+    public int? ReadinessTimeoutSeconds { get; init; }
 }
 
 internal sealed class RuntimeAppServiceManifest

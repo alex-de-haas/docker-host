@@ -31,6 +31,7 @@ import { cn } from "@/lib/utils";
 import { getAccountInitials, getAppPageLinks, resolveAssetSrc } from "../app-helpers";
 import { AppIcon } from "../app-icon";
 import { isAppBusy } from "../runtime-states";
+import { resolveLaunchGate } from "../surfaces/app-surface-tabs";
 import type { AppOpenTarget, AppPageLink, CoreApp, EmbeddedWorkspace, SessionResponse, ShellView } from "../types";
 
 export function ShellSidebar({
@@ -243,7 +244,11 @@ function AppNavigationItem({
   const primaryPage = pages[0] ?? null;
   const running = app.runtimeState === "running";
   const active = workspace?.appId === app.id;
-  const canOpen = running && primaryPage !== null;
+  // Opens by the readiness of the service that serves the primary page, not by the app's state: a
+  // page whose service is still inside its readiness budget would render a connection error, and a
+  // page whose service is alive stays openable through a sibling's outage (app-readiness).
+  const gate = primaryPage ? resolveLaunchGate(app, primaryPage.service) : null;
+  const canOpen = gate?.allowed ?? false;
   // This tab's own click, not the app's server-side state: the row settles when Core reports the app
   // running, and until then the spinner says the request left.
   const starting = busyAction === `${app.id}:start`;
@@ -253,7 +258,11 @@ function AppNavigationItem({
   const transitioning = isAppBusy(app.runtimeState);
   const canOpenStandalone = canOpen;
   // Tooltip text, and — collapsed, where the row is only its icon — its accessible name too.
-  const rowLabel = canOpen ? app.displayName : `${app.displayName} is ${app.runtimeState || app.operationStatus}`;
+  const rowLabel = canOpen
+    ? app.displayName
+    : gate?.up
+      ? `${app.displayName} is starting`
+      : `${app.displayName} is ${app.runtimeState || app.operationStatus}`;
 
   // Auto-expand the active app's page list when it becomes active, while still
   // letting the user collapse it. Adjust during render instead of in an effect.
@@ -378,7 +387,7 @@ function AppNavigationItem({
                 "flex min-h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
                 workspace?.appId === app.id && workspace.path === page.path && "bg-sidebar-accent text-sidebar-accent-foreground",
               )}
-              disabled={busyAction === `${app.id}:open`}
+              disabled={busyAction === `${app.id}:open` || !resolveLaunchGate(app, page.service).allowed}
               onClick={() => void onLaunch(app, page, "workspace")}
             >
               {busyAction === `${app.id}:open` ? (

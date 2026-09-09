@@ -139,7 +139,7 @@ export function SettingsPage({
         // an iframe cannot match it from inside — its breakpoints measure the frame's width, not
         // the window's. One side has to own it, and the shell is the side that knows the grid.
         <div className="-mb-6">
-          <AppSettingsTabPanel tab={activeAppTab} {...appTabProps} />
+          <AppSettingsTabPanel key={activeAppTab.key} tab={activeAppTab} {...appTabProps} />
         </div>
       )}
 

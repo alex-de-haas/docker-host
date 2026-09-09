@@ -117,12 +117,15 @@ flight, so the surface reports progress and offers nothing. "Not running" admits
 reading it as "stopped" told the operator to start an app that was already starting, behind a button
 whose click would have raced it.
 
-Known gap: Core reports `running` when an app's process starts, not when it accepts connections, and
-a `localCommand` app has no health probe unless its manifest declares one. A surface embedded in that
-window renders the browser's own connection-error page for as long as the app takes to bind its port.
-Nothing in Shell can observe that failure — the frame is cross-origin — so closing it needs a
-readiness signal from Core rather than a change here; that is
-[App Readiness](../app-readiness/plan.md).
+Readiness is the softer question on top ([App Readiness](../app-readiness/feature.md)): a surface
+whose service is alive has a URL, and *opens* when that service's reading is `healthy` (or nothing
+probes it). While the reading is `starting`, or Core has none yet, the tab shows progress; when it is
+`degraded` the tab says readiness is not confirmed and offers **Open anyway**, since an expired budget
+proves nothing about the app. Readiness gates opening only: a frame already on screen survives
+`healthy → degraded` — a transient probe failure must not destroy what the operator has typed — and is
+unmounted only when its own service stops running or a lifecycle verb takes the app down. Decided per
+service, so a dead sibling leaves the living service's tab open while the app reads `unknown`. No
+launch code is minted for a tab that has not opened.
 
 **The top strip** owns what belongs to neither rail: a toggle at each end, and between them the name
 of whatever fills the content area — an app's page, or the Shell page — plus the notification bell

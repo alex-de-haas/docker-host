@@ -85,6 +85,10 @@ Apps expose actions according to Core state, plus — for the two entries that a
 - create, restore, delete, and prune backups;
 - remove an app, with optional backup deletion.
 
+The Status badge composes the two axes when they differ ([App Readiness](../app-readiness/feature.md)):
+a running app whose health fold is not `healthy` reads `running · starting` or `running · degraded`,
+in the health's tone, the way Aspire's dashboard shows it. A healthy app reads its state alone.
+
 Autostart has no column of its own: nearly every app starts with the host, so a column that reads
 `On` down its whole length costs width and says nothing. Only the exception is marked — an app that
 does not start with Core carries a hand icon beside its status, and the tooltip says where to turn

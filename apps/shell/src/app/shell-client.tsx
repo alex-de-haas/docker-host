@@ -12,6 +12,7 @@ import { CoreRequestError, isAuthRequiredRedirectError, readCoreError, readCoreE
 import { appendThemeLaunchParams, createReissueRateLimiter } from "@hosty-sdk/app/embedder";
 import { CoreEventNames, subscribeToCoreEvents } from "./shell/events/core-event-stream";
 import { isAppUp } from "./shell/runtime-states";
+import { resolveLaunchGate } from "./shell/surfaces/app-surface-tabs";
 import { waitForShellUpdateToSettle } from "./shell/self-update";
 import { AppDetailsDialog } from "./shell/dialogs/app-details-dialog";
 import { InstallReviewDialog } from "./shell/dialogs/install-review-dialog";
@@ -540,13 +541,21 @@ export function ShellClient({
         return;
       }
 
-      if (app.runtimeState !== "running") {
+      // Per service, not per app (app-readiness): a page whose service is alive opens through a
+      // sibling's outage, and one whose service is still inside its readiness budget waits.
+      const gate = resolveLaunchGate(app, page.service);
+      if (!gate.up) {
         setState((current) => ({
           ...current,
           error: app.system
             ? `System app '${app.displayName}' is ${app.runtimeState || app.operationStatus}. Manage it from Dashboard.`
             : "App must be running before it can be opened.",
         }));
+        return;
+      }
+
+      if (!gate.allowed) {
+        setState((current) => ({ ...current, error: `${app.displayName} is starting — it opens when it answers.` }));
         return;
       }
 
@@ -1726,7 +1735,16 @@ export function ShellClient({
       return;
     }
 
-    if (app.runtimeState !== "running") {
+    const page = findAppPageLink(app, routeWorkspace.path);
+    if (!page) {
+      resetWorkspaceLaunch({ error: `App '${app.displayName}' does not expose '${routeWorkspace.path}'.` });
+      return;
+    }
+
+    // Same gate as a sidebar launch; this effect re-runs as the app's reading changes, so a route
+    // held at "starting" resolves itself once the service answers.
+    const gate = resolveLaunchGate(app, page.service);
+    if (!gate.up) {
       resetWorkspaceLaunch({
         error: app.system
           ? `System app '${app.displayName}' is ${app.runtimeState || app.operationStatus}. Manage it from Dashboard.`
@@ -1735,9 +1753,8 @@ export function ShellClient({
       return;
     }
 
-    const page = findAppPageLink(app, routeWorkspace.path);
-    if (!page) {
-      resetWorkspaceLaunch({ error: `App '${app.displayName}' does not expose '${routeWorkspace.path}'.` });
+    if (!gate.allowed) {
+      resetWorkspaceLaunch({ error: `${app.displayName} is starting — it opens when it answers.` });
       return;
     }
 

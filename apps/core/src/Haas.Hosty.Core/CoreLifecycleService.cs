@@ -46,6 +46,13 @@ internal sealed class CoreLifecycleService(
     // `configure` may write one. Optional only for unit fixtures that do not exercise ingress ownership;
     // production DI always supplies it, and CoreHttpHarness covers the wired path.
     PublicOriginOwnership? publicOrigins = null,
+    // The loopback probe behind readiness (app-readiness). Optional only for unit fixtures, which then
+    // get no implicit probing and rely on the adapter's own health signal; production DI supplies it.
+    IHealthProbe? healthProbe = null,
+    // The default readiness budget a start waits for the app's published endpoints to answer; a runtime
+    // profile's readinessTimeoutSeconds overrides it per app. Overridable only so tests can reach the
+    // expiry path without a real 30 s wait; production DI never passes it.
+    TimeSpan? readinessTimeout = null,
     // Cloudflare publications, so an app's lifecycle can clean up the hostnames it published and clear the
     // pending-restart flag when it starts. Optional only for unit fixtures; production DI supplies it.
     // Every use is best-effort: an unreachable Cloudflare must never fail a start, an update, or a removal.
@@ -60,6 +67,13 @@ internal sealed class CoreLifecycleService(
 
     // Optional in tests (which exercise lifecycle, not telemetry); DI always supplies the singletons.
     private readonly IClock clock = clock ?? new SystemClock();
+
+    // Readiness (app-readiness): the budget bounds the operator's wait, not the app's initialisation —
+    // an app whose budget expires keeps starting and the supervisor picks it up as it answers. 30 s is
+    // a starting value, measured against a cold `next dev` and a docker HEALTHCHECK before it settled.
+    private static readonly TimeSpan DefaultReadinessTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan ReadinessProbeInterval = TimeSpan.FromSeconds(1);
+    private readonly TimeSpan readinessTimeout = readinessTimeout ?? DefaultReadinessTimeout;
 
     // The root's instance identity for docker-name previews; empty = the default instance.
     private readonly string instanceId = runtimeConfig?.InstanceId ?? "";
@@ -924,6 +938,9 @@ internal sealed class CoreLifecycleService(
             app = (await apps.UpdateAppAsync(appId, current => current with
             {
                 RuntimeState = AppRuntimeStates.Starting,
+                // Reset, so a previous run's `healthy` cannot survive into this start; the readiness
+                // wait below fills in the services once the runtime has launched them.
+                Health = new AppHealthSummary("starting", [], clock.UtcNow),
             }, cancellationToken)).App;
 
             var load = await LoadSelectionWithStatusAsync(app, cancellationToken);
@@ -995,9 +1012,11 @@ internal sealed class CoreLifecycleService(
 
             var result = await adapter.StartAsync(context, cancellationToken);
             runtimeStarted = true;
+            var readiness = await WaitForReadinessAsync(appId, adapter, context, selection, result.Endpoints, cancellationToken);
             var updated = await apps.UpdateAppAsync(appId, current => current with
             {
                 RuntimeState = result.RuntimeState,
+                Health = readiness,
                 OperationStatus = "started",
                 LastOperation = "start",
                 LastError = null,
@@ -1056,6 +1075,9 @@ internal sealed class CoreLifecycleService(
             var updated = await apps.UpdateAppAsync(appId, current => current with
             {
                 RuntimeState = result.RuntimeState,
+                // Health is meaningful only while the app is up; a stopped app must not keep its last
+                // `healthy` (the observation skips non-up apps, so nothing else would clear it).
+                Health = null,
                 OperationStatus = "stopped",
                 LastOperation = "stop",
                 LastError = null,
@@ -1381,6 +1403,7 @@ internal sealed class CoreLifecycleService(
             _ = await apps.UpdateAppAsync(appId, current => current with
             {
                 RuntimeState = AppRuntimeStates.Starting,
+                Health = new AppHealthSummary("starting", [], clock.UtcNow),
             }, cancellationToken);
             // Re-run capability provisioning on restart too, so a config-template change ships forward
             // and the app comes back with fresh Core-owned files (see PlatformCapabilities). Ordered
@@ -1394,9 +1417,13 @@ internal sealed class CoreLifecycleService(
 
             var start = await adapter.StartAsync(context, cancellationToken);
             runtimeStarted = true;
+            // The same wait a cold start runs: this verb calls the adapter directly rather than through
+            // StartCoreAsync, so a start-only wait would leave every restart without one.
+            var readiness = await WaitForReadinessAsync(appId, adapter, context, selection, start.Endpoints, cancellationToken);
             var updated = await apps.UpdateAppAsync(appId, current => current with
             {
                 RuntimeState = start.RuntimeState,
+                Health = readiness,
                 OperationStatus = "restarted",
                 LastOperation = "restart",
                 LastError = null,
@@ -1435,6 +1462,99 @@ internal sealed class CoreLifecycleService(
     // finds a live container. Runs on a caller-supplied token because the request's is already
     // cancelled. A record that is no longer transitional (the verb committed before cancellation
     // landed) is left untouched. Best-effort: nothing useful remains to do if this write also fails.
+    // The readiness wait (docs/features/app-readiness/). Runs inside the start verb after the adapter
+    // has launched every process or container and before `running` is written, so the record reads
+    // `starting` for its whole duration — the state that already means "a verb is in flight, holding
+    // the lock" — and the supervisor, which observes only IsUp records, is not a second writer.
+    //
+    // Outcomes: every probed service answers -> `running` with each service `healthy`; the budget
+    // expires with the processes alive -> `running` with the unanswered services `unhealthy` (the fold
+    // reads `degraded`), and the supervisor keeps observing them; a process dies -> the existing
+    // failed-start path, since liveness is checked on every iteration. The wait honours the verb's
+    // cancellation. While it runs, a pending service reads `starting` whatever the raw probe said,
+    // and each change of reading is persisted so a client watching the row sees services come up.
+    private async Task<AppHealthSummary> WaitForReadinessAsync(
+        string appId,
+        IAppRuntimeAdapter adapter,
+        RuntimeLifecycleContext context,
+        RuntimeAppManifestSelection selection,
+        IReadOnlyList<AppEndpointContract> endpoints,
+        CancellationToken cancellationToken)
+    {
+        var budget = selection.RuntimeProfile.ReadinessTimeoutSeconds is int seconds && seconds > 0
+            ? TimeSpan.FromSeconds(seconds)
+            : readinessTimeout;
+        // Wall-clock elapsed, not IClock: the budget is a real wait, and a test's frozen clock must not
+        // turn it into either an instant expiry or a wait that never ends.
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var targets = AppReadinessProbes.BuildTargets(selection, endpoints, AppReadinessProbes.ImplicitProbeTimeout);
+        string? lastWritten = null;
+
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            IReadOnlyList<AppRuntimeServiceHealth> raw;
+            try
+            {
+                raw = (await adapter.GetHealthAsync(context, cancellationToken)).Services;
+            }
+            catch (Exception ex) when (ex is AppLifecycleException or IOException or UnauthorizedAccessException)
+            {
+                // No reading this iteration (a transient docker inspect failure, say) is not a failed
+                // start; the budget decides.
+                logger.LogDebug(ex, "Readiness observation for app '{AppId}' failed; retrying until the budget expires.", appId);
+                raw = [];
+            }
+
+            var dead = raw.FirstOrDefault(service => !string.Equals(service.Status, "running", StringComparison.Ordinal));
+            if (dead is not null)
+            {
+                var exit = dead.ExitCode is int code ? $" (exit code {code})" : string.Empty;
+                throw new AppLifecycleException(
+                    "app_start_service_exited",
+                    $"Service '{dead.Service}' is {dead.Status} while Core was waiting for it to answer{exit}.");
+            }
+
+            var implicitlyProbed = raw.Where(service => service.Health is null).Select(service => service.Service).ToHashSet(StringComparer.Ordinal);
+            var services = healthProbe is null ? raw : await AppReadinessProbes.ApplyAsync(raw, targets, healthProbe, cancellationToken);
+            var pending = services.Where(service => service.Health is not null && !string.Equals(service.Health, "healthy", StringComparison.Ordinal)).ToArray();
+            var remaining = budget - stopwatch.Elapsed;
+
+            if (pending.Length == 0 || remaining <= TimeSpan.Zero)
+            {
+                // Final reading. A service this class probed and that never answered reads `unhealthy`;
+                // one the adapter answered for keeps the adapter's word — a container HEALTHCHECK's
+                // `starting` is its author's budget, and past ours it is still the truth for that service.
+                var final = services
+                    .Select(service => pending.Contains(service) && implicitlyProbed.Contains(service.Service)
+                        ? service with { Health = "unhealthy" }
+                        : service)
+                    .ToArray();
+                if (pending.Length > 0)
+                {
+                    logger.LogInformation(
+                        "App '{AppId}' reported running after its {Budget:0}s readiness budget with {Count} service(s) not yet answering: {Services}.",
+                        appId, budget.TotalSeconds, pending.Length, string.Join(", ", pending.Select(service => service.Service)));
+                }
+
+                return AppReadinessProbes.Summarize(final, clock.UtcNow);
+            }
+
+            var interim = services
+                .Select(service => pending.Contains(service) ? service with { Health = "starting" } : service)
+                .ToArray();
+            var signature = string.Join(";", interim.Select(service => $"{service.Service}={service.Status}/{service.Health}"));
+            if (!string.Equals(signature, lastWritten, StringComparison.Ordinal))
+            {
+                var interimSnapshot = AppReadinessProbes.Summarize(interim, clock.UtcNow);
+                _ = await apps.UpdateAppAsync(appId, current => current with { Health = interimSnapshot }, cancellationToken);
+                lastWritten = signature;
+            }
+
+            await Task.Delay(remaining < ReadinessProbeInterval ? remaining : ReadinessProbeInterval, cancellationToken);
+        }
+    }
+
     private async Task SettleTransitionalStateAsync(string appId, CancellationToken cancellationToken)
     {
         try
@@ -1442,7 +1562,7 @@ internal sealed class CoreLifecycleService(
             await apps.UpdateAppAsync(
                 appId,
                 current => AppRuntimeStates.IsBusy(current.RuntimeState)
-                    ? current with { RuntimeState = AppRuntimeStates.Unknown }
+                    ? current with { RuntimeState = AppRuntimeStates.Unknown, Health = null }
                     : current,
                 cancellationToken);
         }
@@ -2522,12 +2642,21 @@ internal sealed class CoreLifecycleService(
         var health = await ResolveAdapter(selection.RuntimeProfile.Type).GetHealthAsync(
             await CreateRuntimeContextAsync(app, selection, cancellationToken),
             cancellationToken);
+        // The same readiness probes the supervisor folds in, so this on-demand reading and the
+        // persisted one never disagree about a service the adapter itself does not probe.
+        var services = healthProbe is null
+            ? health.Services
+            : await AppReadinessProbes.ApplyAsync(
+                health.Services,
+                AppReadinessProbes.BuildTargets(selection, app.Endpoints, AppReadinessProbes.ImplicitProbeTimeout),
+                healthProbe,
+                cancellationToken);
         return new AppRuntimeHealthResponse(
             AppId: appId,
             Runtime: selection.RuntimeProfile.Key,
             RuntimeType: selection.RuntimeProfile.Type,
-            Status: health.Status,
-            Services: health.Services);
+            Status: AppReadinessProbes.Fold(services),
+            Services: services);
     }
 
     // Read-only "update available" detection (runtime-app-marketplace.md, "Update-available
@@ -3480,16 +3609,65 @@ internal sealed class CoreLifecycleService(
                         string.Equals(endpoint.Key, wired.EndpointKey, StringComparison.Ordinal) &&
                         !string.IsNullOrWhiteSpace(endpoint.Url))))
                 .ToArray();
+            var running = provider is not null && AppRuntimeStates.IsUp(provider.RuntimeState);
+            var healthy = provider is not null && ProviderEndpointsAnswer(provider, dependency.Endpoints ?? []);
             summaries.Add(new AppDependencySummary(
                 dependency.AppId,
                 dependency.Version,
                 dependency.Required,
                 provider is not null,
-                provider is not null && AppRuntimeStates.IsUp(provider.RuntimeState),
-                endpoints));
+                running,
+                endpoints,
+                Healthy: healthy,
+                Ready: running && healthy));
         }
 
         return summaries;
+    }
+
+    // Whether every endpoint a dependency consumes is served by a provider service that is alive and
+    // answering (app-readiness). Read per service: the wired endpoint names the provider's endpoint,
+    // the endpoint names its service, and the provider's last reading names that service's health. A
+    // service nothing probes counts as answering once alive. With no wired endpoints the provider's
+    // fold stands in; with no reading at all (never started, or not observed yet) nothing answers.
+    private static bool ProviderEndpointsAnswer(AppRecord provider, IReadOnlyList<AppDependencyEndpointContract> wired)
+    {
+        if (provider.Health is not { } reading)
+        {
+            return false;
+        }
+
+        if (wired.Count == 0)
+        {
+            return string.Equals(reading.Status, "healthy", StringComparison.Ordinal);
+        }
+
+        foreach (var endpoint in wired)
+        {
+            var contract = (provider.Endpoints ?? []).FirstOrDefault(candidate =>
+                string.Equals(candidate.Key, endpoint.EndpointKey, StringComparison.Ordinal));
+            var service = contract?.Service is { } key
+                ? reading.Services.FirstOrDefault(candidate => string.Equals(candidate.Service, key, StringComparison.Ordinal))
+                : null;
+            if (service is null)
+            {
+                // No per-service reading to consult: fall back to the fold for this endpoint.
+                if (!string.Equals(reading.Status, "healthy", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (!string.Equals(service.Status, "running", StringComparison.Ordinal) ||
+                (service.Health is not null && !string.Equals(service.Health, "healthy", StringComparison.Ordinal)))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     // The app's runtime profiles, preferring the persisted record and falling back to a live load from
@@ -3581,6 +3759,7 @@ internal sealed class CoreLifecycleService(
             await apps.UpdateAppAsync(appId, current => current with
             {
                 RuntimeState = runtimeState,
+                Health = null,
                 OperationStatus = "failed",
                 LastOperation = operation,
                 LastError = message,
@@ -5902,17 +6081,53 @@ internal sealed class CoreLifecycleService(
             return null;
         }
 
-        var observedRuntimeState = ResolveRuntimeStateFromHealth(health);
-        if (observedRuntimeState is not null &&
-            !string.Equals(observedRuntimeState, app.RuntimeState, StringComparison.Ordinal))
+        // Readiness on top of the adapter's liveness: the same probes the start verb's wait runs, so a
+        // service that answered late flips to `healthy` here, and one that stopped answering flips back.
+        // A probed service is never regressed to `starting` — that word is the wait's alone; the one
+        // `starting` an observation can produce is a container HEALTHCHECK's own, which by precedence
+        // is the truth for that service.
+        var services = healthProbe is null
+            ? health.Services
+            : await AppReadinessProbes.ApplyAsync(
+                health.Services,
+                AppReadinessProbes.BuildTargets(selection, app.Endpoints, AppReadinessProbes.ImplicitProbeTimeout),
+                healthProbe,
+                cancellationToken);
+        var folded = new AppRuntimeHealthResult(AppReadinessProbes.Fold(services), services);
+        var observedRuntimeState = ResolveRuntimeStateFromHealth(folded) ?? app.RuntimeState;
+        // Kept through a partial outage (state `unknown`): readiness is decided per service, and the
+        // living service's endpoint stays ready while a sibling is dead. Cleared only once every
+        // service is gone — a stopped app must not keep a stale `healthy`.
+        var snapshot = services.Count > 0 && !AppRuntimeStates.IsIdle(observedRuntimeState)
+            ? AppReadinessProbes.Summarize(services, clock.UtcNow)
+            : null;
+
+        var stateChanged = !string.Equals(observedRuntimeState, app.RuntimeState, StringComparison.Ordinal);
+        if (stateChanged || !AppReadinessProbes.SameReading(app.Health, snapshot))
         {
-            _ = await apps.UpdateAppAsync(app.Id, current => current with
+            // Under the per-app operation lock, non-blockingly — the docker sweep's rule. A verb in
+            // flight owns the record: an observation sampled before a Stop cleared the health must not
+            // commit after it, and while a start verb runs its readiness wait it is the only writer.
+            // A held lock means skip; the next tick observes again.
+            var mutex = operationLocks.GetOrAdd(app.Id, _ => new SemaphoreSlim(1, 1));
+            if (await mutex.WaitAsync(0, cancellationToken))
             {
-                RuntimeState = observedRuntimeState,
-            }, cancellationToken);
+                try
+                {
+                    _ = await apps.UpdateAppAsync(app.Id, current => current with
+                    {
+                        RuntimeState = observedRuntimeState,
+                        Health = snapshot,
+                    }, cancellationToken);
+                }
+                finally
+                {
+                    mutex.Release();
+                }
+            }
         }
 
-        return new AppHealthObservation(app.Id, health.Status, RuntimeRestartPolicy.FromManifest(selection.Manifest.RestartPolicy));
+        return new AppHealthObservation(app.Id, folded.Status, RuntimeRestartPolicy.FromManifest(selection.Manifest.RestartPolicy));
     }
 
     private static void TryDelete(string path)

@@ -4,8 +4,13 @@ using System.Net.Sockets;
 namespace Haas.Hosty.Core;
 
 // Active health probe target resolved from a service's healthcheck and its assigned host port.
-// `Type` is "http" or "tcp"; `Path` is only meaningful for http.
-internal sealed record HealthProbeTarget(string Type, string Host, int Port, string Path, TimeSpan Timeout);
+// `Type` is "http" or "tcp"; `Path` is only meaningful for http. `AnyResponse` turns an http probe
+// into a readiness probe: any HTTP response at all passes, a 401 or a 404 included, because those
+// are a server that is up — the 2xx/3xx rule is a *health* rule. Readiness uses it for a docker
+// service with no HEALTHCHECK (app-readiness): a tcp connect through docker's userland proxy succeeds
+// the moment the port is published, six seconds before the container listens on this host, so only
+// a request the container itself has to answer says anything.
+internal sealed record HealthProbeTarget(string Type, string Host, int Port, string Path, TimeSpan Timeout, bool AnyResponse = false);
 
 // Performs an active health probe (Phase 1c-ii). Used by runtimes without a container HEALTHCHECK
 // mechanism (localCommand) to turn a declared http/tcp check into a healthy/unhealthy signal.
@@ -53,7 +58,7 @@ internal sealed class NetworkHealthProbe : IHealthProbe
     {
         var uri = new UriBuilder("http", target.Host, target.Port, target.Path).Uri;
         using var response = await httpClient.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        return (int)response.StatusCode is >= 200 and < 400;
+        return target.AnyResponse || (int)response.StatusCode is >= 200 and < 400;
     }
 
     private static async Task<bool> ProbeTcpAsync(HealthProbeTarget target, CancellationToken cancellationToken)

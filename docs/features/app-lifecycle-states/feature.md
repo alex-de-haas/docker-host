@@ -125,7 +125,17 @@ therefore `degraded` too — the process is alive — where ASP.NET would say `U
 The mapper follows the axis: `degraded` keeps `running`, `unhealthy` becomes `unknown`. Realigning
 the words with ASP.NET's meaning was considered on 2026-09-09 and deliberately left alone: it would
 need a new word for the process-level mix, a probe that reads the app's own severity, and a change to
-the mapper; [App Readiness](../app-readiness/plan.md) builds on the vocabulary as it is.
+the mapper; [App Readiness](../app-readiness/feature.md) builds on the vocabulary as it is.
+
+Since app-readiness the reading is **persisted** (`AppRecord.Health`, projected as `health`), written
+by the start verb — which now waits, inside `starting`, for the app's published endpoints to answer
+before stamping `running` — and by the supervisor's observation, and cleared by stop, failed start,
+cancellation settle, removal and install. A service nothing probes is probed implicitly on the
+endpoints it publishes (tcp for `localCommand`; any-response http for docker, because a tcp connect
+through docker's userland proxy succeeds before the container listens). None of that changes what
+`running` means: the runtime is up. Whether an endpoint answers is read from the service that serves
+it, never from `IsUp` — a partial outage reads `unknown` here while the living service's endpoint
+stays ready there.
 
 ## Clients
 

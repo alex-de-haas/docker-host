@@ -11,6 +11,8 @@ internal sealed partial class AppsCommand(CommandContext context)
         PropertyNameCaseInsensitive = true,
         NumberHandling = JsonNumberHandling.AllowReadingFromString)]
     [JsonSerializable(typeof(AppsResponse))]
+    [JsonSerializable(typeof(AppHealthSummary))]
+    [JsonSerializable(typeof(AppServiceHealthSummary))]
     [JsonSerializable(typeof(AppInstallRequest))]
     [JsonSerializable(typeof(AppInstallPlanRequest))]
     [JsonSerializable(typeof(AppInstallPlan))]
@@ -481,7 +483,7 @@ internal sealed partial class AppsCommand(CommandContext context)
                 Markup.Escape(app.Version),
                 Markup.Escape(app.SelectedRuntime ?? ""),
                 ConsoleUi.Enabled(app.Autostart),
-                ConsoleUi.State(app.RuntimeState),
+                ConsoleUi.StateWithHealth(app.RuntimeState, app.Health?.Status),
                 ConsoleUi.State(app.OperationStatus));
         }
 
@@ -770,12 +772,13 @@ internal sealed partial class AppsCommand(CommandContext context)
 
         context.Console.MarkupLine($"{ConsoleUi.State(response.Status)}: {Markup.Escape(response.AppId)}");
         context.Console.MarkupLine($"[grey]Runtime:[/] {Markup.Escape(response.Runtime)} / {Markup.Escape(response.RuntimeType)}");
-        var table = ConsoleUi.CreateTable("Service", "Status", "PID", "Exit", "Log", "Working directory");
+        var table = ConsoleUi.CreateTable("Service", "Status", "Health", "PID", "Exit", "Log", "Working directory");
         foreach (var service in response.Services)
         {
             table.AddRow(
                 Markup.Escape(service.Service),
                 ConsoleUi.State(service.Status),
+                ConsoleUi.State(service.Health ?? ""),
                 Markup.Escape(service.ProcessId?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? ""),
                 Markup.Escape(service.ExitCode?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? ""),
                 Markup.Escape(service.LogPath ?? ""),
@@ -1512,7 +1515,8 @@ internal sealed partial class AppsCommand(CommandContext context)
         string? LastOperation,
         string? LastError,
         IReadOnlyList<string> Capabilities,
-        IReadOnlyList<AppMountSummary>? Mounts = null);
+        IReadOnlyList<AppMountSummary>? Mounts = null,
+        AppHealthSummary? Health = null);
 
     internal sealed record AppMountSummary(
         string Key,
@@ -1656,7 +1660,10 @@ internal sealed partial class AppsCommand(CommandContext context)
         int? ExitCode,
         string? LogPath,
         string? WorkingDirectory,
-        string? Message);
+        string? Message,
+        // The probe result Core folded in (app-readiness): `healthy` / `unhealthy` / `starting`, or
+        // null when nothing probes the service. Distinct from Status, which is liveness alone.
+        string? Health = null);
 
     internal sealed record AppSourceResolveRequest(string? Branch, string? Tag, string? Commit, bool Fetch);
 

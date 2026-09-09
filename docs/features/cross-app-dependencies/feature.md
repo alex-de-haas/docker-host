@@ -1,7 +1,7 @@
 # Cross-App Dependencies — Declared Providers, Injected URLs, And Reported State
 
 Created: 2026-06-22
-Updated: 2026-08-25
+Updated: 2026-09-09
 
 ## Goal
 
@@ -76,13 +76,17 @@ Every declared dependency is resolved against the installed set and carried on t
 ```jsonc
 "dependencies": [
   { "appId": "com.haas.torrent-engine", "version": "^0.1.0", "required": true,
-    "installed": true, "running": false,
+    "installed": true, "running": false, "healthy": false, "ready": false,
     "endpoints": [ { "endpointKey": "control", "alias": "torrent", "resolved": false } ] }
 ]
 ```
 
 Core reports **state, never a verdict** — `running` is only meaningful when `installed`, and every
-endpoint reads `resolved: false` while the provider is absent. Deciding what deserves attention
+endpoint reads `resolved: false` while the provider is absent. `running` is the provider's lifecycle
+fact and stays exactly that; `healthy` is whether the provider services behind the wired endpoints
+answer, read per service from the provider's last health reading
+([App Readiness](../app-readiness/feature.md)) so a dead sidecar on the provider is not an outage
+here; and `ready` is the computed `running && healthy` a dependent waits on. Deciding what deserves attention
 belongs to the client, which is what lets one projection serve both the required and optional cases.
 The Shell derives its Installed Apps problem icons from it:
 
@@ -93,6 +97,7 @@ The Shell derives its Installed Apps problem icons from it:
 | optional, installed, not running | warning icon |
 | optional, not installed | nothing — an uninstalled optional dependency is a choice, not a problem |
 | running, wired endpoint has no URL | warning icon naming the missing `HOSTY_DEPENDENCY_{ALIAS}_URL` |
+| running, `healthy: false` | warning icon — the provider is up but its service is not confirmed to answer |
 
 A stopped dependency reports the stop only, not also its (necessarily) unresolved endpoints — two
 icons for one cause. The start is **not** blocked; this replaces auto-install/auto-start.

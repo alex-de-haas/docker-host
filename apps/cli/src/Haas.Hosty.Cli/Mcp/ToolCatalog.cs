@@ -45,6 +45,24 @@ internal sealed class ToolCatalog(
     /// drops out of the catalog below. Reimplementing the access policy in the CLI would mean two
     /// copies of it, and the CLI's copy would be the one nobody notices going stale.
     /// </remarks>
+    /// <summary>Whether the service behind an interface is alive and its probe passes, per Core's last reading.</summary>
+    internal static bool ServiceAnswers(Commands.AppHealthSummary? health, string? service)
+    {
+        if (health is null || string.IsNullOrWhiteSpace(service))
+        {
+            return true;
+        }
+
+        var reading = health.Services.FirstOrDefault(candidate => string.Equals(candidate.Service, service, StringComparison.Ordinal));
+        if (reading is null)
+        {
+            return true;
+        }
+
+        return string.Equals(reading.Status, "running", StringComparison.Ordinal) &&
+            (reading.Health is null || string.Equals(reading.Health, "healthy", StringComparison.Ordinal));
+    }
+
     public static IReadOnlyList<AppMcpTarget> SelectTargets(IReadOnlyList<Commands.McpCommand.McpAppSummary> apps)
     {
         var targets = new List<AppMcpTarget>();
@@ -62,7 +80,12 @@ internal sealed class ToolCatalog(
 
             foreach (var declaration in declarations)
             {
-                if (!string.IsNullOrWhiteSpace(declaration.Url))
+                // Per service, not per app (app-readiness): an interface whose service is still inside
+                // its readiness budget, or has stopped answering, is left out — asking it would only
+                // fail — while a sibling service's outage does not take a working interface with it.
+                // No reading for the service (an older Core, or nothing probes it) falls back to the
+                // app-level state already checked above.
+                if (!string.IsNullOrWhiteSpace(declaration.Url) && ServiceAnswers(app.Health, declaration.Service))
                 {
                     targets.Add(new AppMcpTarget(
                         app.Id,

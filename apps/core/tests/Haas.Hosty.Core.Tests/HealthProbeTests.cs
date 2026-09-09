@@ -88,6 +88,28 @@ public sealed class HealthProbeTests
     }
 
     [Fact]
+    public async Task NetworkHealthProbe_AnyResponse_PassesOnAnyStatus_AndTheHealthRuleDoesNot()
+    {
+        // Readiness versus health on the same 404: a server answering 404 is up (readiness passes) and
+        // is not well by the 2xx/3xx rule (health fails). The one flag is the whole difference.
+        await using var server = RespondWith(404);
+
+        Assert.True(await new NetworkHealthProbe().ProbeAsync(
+            new HealthProbeTarget("http", "127.0.0.1", server.Port, "/", TimeSpan.FromSeconds(5), AnyResponse: true)));
+        Assert.False(await new NetworkHealthProbe().ProbeAsync(
+            new HealthProbeTarget("http", "127.0.0.1", server.Port, "/", TimeSpan.FromSeconds(5))));
+    }
+
+    [Fact]
+    public async Task NetworkHealthProbe_AnyResponse_StillFailsWhenNothingAnswers()
+    {
+        using var closed = ClosedPort.Reserve();
+
+        Assert.False(await new NetworkHealthProbe().ProbeAsync(
+            new HealthProbeTarget("http", "127.0.0.1", closed.Port, "/", TimeSpan.FromSeconds(2), AnyResponse: true)));
+    }
+
+    [Fact]
     public async Task NetworkHealthProbe_HttpConnectionRefused_IsUnhealthy()
     {
         using var closed = ClosedPort.Reserve();
