@@ -59,7 +59,8 @@ needs readiness reads `IsUp` for the whole app instead of health for the service
 
 The review of this plan (2026-09-09) asked for two things to be settled before Phase 1, because they
 decide the data model: what an endpoint's availability is, and how the wait behaves. Both are stated
-here; the plan is not Ready until the user has accepted them.
+here, and the three parameters that followed are under *Decisions*; the plan is not Ready until the
+user has accepted them.
 
 **Endpoint availability.** Health is kept **per service**. The app-level aggregate exists for the
 badge and nothing else. An endpoint is *ready* when the service that owns it is `healthy` — not when
@@ -95,9 +96,17 @@ Written as a diff against the feature documents it touches.
   projects both, still without probing.
 - A start verb resets persisted health to `starting` at its head, so a previous `healthy` cannot
   survive into a new start. A stop, a failed start, a removal and an install clear it.
-- Persisted health is meaningful only while `IsUp`; every readiness consumer reads
-  `IsUp && <service>.healthy`, never health alone. `ObserveRuntimeHealthForAppAsync` skips apps that
-  are not up, so without the clear a stopped app would keep its last `healthy` indefinitely.
+- **Readiness is decided per service, never from the app-level state.** An endpoint is ready when
+  no lifecycle verb is in flight (`!IsBusy`), the owning service's observed status is `running`, and
+  its health is `healthy`. The app-level predicates keep their app-level jobs — restore, the port
+  preflight, the badge — but a partial outage turns the aggregate `unhealthy` and, through
+  `ResolveRuntimeStateFromHealth`, the app `unknown`; had readiness read `IsUp`, a dead sidecar would
+  close a working endpoint, and the per-service model above would be a promise the gate did not
+  keep. App-level `unknown` on its own forbids nothing that a service is confirmed to be serving.
+- Persisted health is meaningful only for a service whose observed status is `running`; the stop,
+  failed-start, removal and install clears above are what keep a dead or stopped service from
+  reading `healthy`. `ObserveRuntimeHealthForAppAsync` skips apps that are not up, so without the
+  clear a stopped app would keep its last `healthy` indefinitely.
 - Every endpoint the app publishes — the UI entry, dependency-provided endpoints, interface endpoints
   such as MCP — gets an implicit `tcp` check on the service that owns it when that service declares
   no `healthcheck`. A declared `healthcheck` wins; for docker, the image's `HEALTHCHECK` wins. `tcp`
@@ -115,10 +124,13 @@ Written as a diff against the feature documents it touches.
   `running · degraded` — the way Aspire's does. Display only; per-service rows keep their own health.
 - Health gates **opening** a surface, not the life of an open one. A tab embeds when the service
   behind its endpoint is `healthy`; a frame already open stays open through `healthy → degraded` — a
-  transient probe failure must not destroy what the operator has typed — and is unmounted only by
-  the lifecycle axis (`!IsUp`), as today.
+  transient probe failure must not destroy what the operator has typed — and is unmounted only when
+  its own service is no longer `running` or a lifecycle verb is taking the app down (`stopping`,
+  `stopped`). Not on app-level `unknown`: with a sibling service dead, the frame on the living one
+  stays, for the same reason it was allowed to open.
 - Three screens the strip needs and does not have: `starting` (progress — the state `starting`
-  screen, reused), `degraded` ("up, but not answering — open anyway?"), and health not yet observed
+  screen, reused), `degraded` ("The app is running, but its readiness is not confirmed yet", with an
+  **Open anyway** action — an expired budget proves nothing about the app), and health not yet observed
   (`null`, possible after a Core restart adopts a running app before its first tick — treated as
   progress until the first observation lands).
 - The sidebar's launch and the workspace follow the same opening rule.
@@ -145,15 +157,48 @@ Written as a diff against the feature documents it touches.
   app's own severity, a mapper change, and a docker aggregate that has no `degraded` to give; worth a
   plan of its own if app authors need their severity to reach Hosty, and orthogonal to readiness.
 
+## Decisions (2026-09-09)
+
+**The budget: 30 seconds by default, one per app.** Counted from the moment every process or
+container of the app has been launched — image pulls and the `setup` step are not inside it. The
+services' checks run in parallel: the first immediately, then about once a second, each bounded by
+the budget that remains. One default for both runtimes, overridable per runtime profile as
+`readinessTimeoutSeconds` (the manifest already speaks in `timeoutSeconds` / `gracePeriodSeconds`),
+because how long an app takes to answer depends on the app and its check far more than on docker
+versus `localCommand`. **30 s is a starting value, not a measurement**: it is verified against a cold
+`com.haas.demo-app` and a docker image with a `HEALTHCHECK` before Ready, and it bounds the
+operator's wait, not the app's initialisation — an app whose budget expires keeps starting.
+
+**Autostart: four slots and the barrier stay where they are.** `running` is now written when the
+adapter returns, so "release the tier on `running`" would need a second completion signal for part
+of a start — complexity with no buyer today. A slot frees on success, on budget expiry, or on a
+handled failure; a tier ends when its slots have, and the next begins; one app's expiry never holds
+the rest. The cost is explicit: for `N` apps in a tier the worst added wait is about
+`ceil(N / 4) × 30 s`. Ordering of required dependencies stays with
+[Dependency-Ordered Autostart](../dependency-ordered-autostart/plan.md).
+
+**`starting` and `degraded` stay distinct, and mean this:**
+
+| value | meaning |
+| --- | --- |
+| `starting` | readiness not yet confirmed, budget not yet spent |
+| `degraded` | readiness not confirmed within the budget, **or** a check that used to pass no longer does |
+| `healthy` | the check passes |
+
+An expired budget is not evidence of a fault, so nothing in Shell says "came up wrong". On expiry
+the services that already passed keep `healthy`; only the ones that did not read `degraded`.
+
+**After expiry, the supervisor must not regress a probed service to `starting`.** For a probed
+service (declared or implicit) `starting` is written by the adapter alone, during the wait, so the
+observation cannot produce it — it writes `healthy` or `degraded`. A docker service whose image has
+a `HEALTHCHECK` is the exception by design: the image's `start_period` is its author's budget, and
+the container reporting `starting` past ours is the truth for that service, so it reads
+`running · starting` until the container decides. That is the precedence rule, not a regression.
+
 ## Open questions
 
-- **The deadline.** Long enough for a cold `next dev`, short enough that a genuinely broken app does
-  not hold `starting` for long; one value, or per runtime type.
-- **Autostart.** With four concurrent starts by tier, a readiness wait delays every start queued
-  behind it and the next tier. Acceptable as is, or do tiers release on `running` rather than on the
-  adapter's return?
-- **`starting` versus `degraded` after the wait.** Kept apart on purpose — "still coming up" is not
-  "came up wrong" — and the review agreed; confirming it is a decision, not an accident.
+None remain. Ready waits on the user's explicit acceptance of the two contracts and the three
+decisions above.
 
 ## Deliverables
 
@@ -167,12 +212,16 @@ Written as a diff against the feature documents it touches.
       install.
 - [ ] Implicit `tcp` check on every published endpoint's owning service; declared `healthcheck` and
       image `HEALTHCHECK` take precedence.
+- [ ] The 30 s budget, counted after launch, parallel per-service checks at ~1 s, overridable as
+      `readinessTimeoutSeconds` on a runtime profile.
 - [ ] The health observation takes the operation lock non-blockingly and skips a held app.
 - [ ] `CoreLifecycleServiceTests`: a late-binding endpoint reaches `healthy` inside the wait; one that
       never binds returns `running` + `degraded` and the next observation flips it; a process that
       exits mid-wait fails the start; a restart gets the same wait; a stopped app reads no health; a
       new start does not inherit the previous `healthy`; an observation that finds the lock held
-      writes nothing; a declared `healthcheck` overrides the implicit one.
+      writes nothing; a declared `healthcheck` overrides the implicit one; a dead sibling service
+      leaves the living service's endpoint ready while the app reads `unknown`; an observation after
+      expiry never turns a probed service's `degraded` back into `starting`.
 
 ### Phase 2 — Shell: composed status, open on health
 
@@ -180,7 +229,8 @@ Written as a diff against the feature documents it touches.
 - [ ] Surface tabs open when the endpoint's service is `healthy`; an open frame survives
       `healthy → degraded`; the `degraded` and not-yet-observed screens exist.
 - [ ] Sidebar launch and workspace follow the same opening rule.
-- [ ] `app-surface-tabs.test.mjs` covers the opening gate and the stay-open rule.
+- [ ] `app-surface-tabs.test.mjs` covers the opening gate, the stay-open rule, and a partial outage
+      that keeps the living service's tab open while the app reads `unknown`.
 - [ ] Remove the known-gap paragraph from App UI Surfaces' `feature.md`.
 
 ### Phase 3 — Other consumers
@@ -202,6 +252,10 @@ Written as a diff against the feature documents it touches.
       connection-error frame. No unit test observes what the browser renders inside a cross-origin
       frame.
 - [ ] **Restart, live:** the same through Restart, since it takes the other code path.
+- [ ] **The budget, measured:** a cold `com.haas.demo-app` and a docker image with a `HEALTHCHECK`
+      both confirm readiness well inside 30 s, or the default changes and `feature.md` says why.
+- [ ] **Partial outage, live:** kill one of Demo App's two services; the other's surface stays open
+      and re-opens, while the row reads `unknown`.
 
 ## Links
 
