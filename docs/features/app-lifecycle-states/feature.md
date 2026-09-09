@@ -1,7 +1,7 @@
 # App Lifecycle States — Intermediate `starting` And `stopping`
 
 Created: 2026-07-28
-Updated: 2026-08-25
+Updated: 2026-09-09
 
 An installed app's `runtimeState` reports whether a lifecycle verb is in flight, not only where it
 ended up. A start that pulls an image, resolves a source checkout, or waits out a lingering host port
@@ -11,7 +11,7 @@ reads `starting` for its whole duration, and every client sees it — not just t
 
 | State | Meaning |
 | --- | --- |
-| `running` | Up and serving traffic. |
+| `running` | The runtime is up — the process or container exists. Whether it answers is health's question, not this one's (see [App Readiness](../app-readiness/plan.md)). |
 | `starting` | A start is in flight. Nothing is listening yet. |
 | `stopping` | A stop is in flight. The runtime may still hold its ports. |
 | `stopped` | Down, with nothing operating on it. |
@@ -33,7 +33,7 @@ different questions that only coincided while the vocabulary was binary, so `App
 
 | Predicate | Question | Members |
 | --- | --- | --- |
-| `IsUp` | may traffic reach it? | `running` |
+| `IsUp` | is the runtime up? | `running` |
 | `IsBusy` | is a verb mid-flight, so keep hands off? | `starting`, `stopping` |
 | `IsIdle` | is it safe to do something destructive? | `stopped` |
 
