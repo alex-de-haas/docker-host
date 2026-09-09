@@ -122,8 +122,10 @@ export function SettingsPage({
                 ? "border-foreground font-medium text-foreground"
                 : "border-transparent text-muted-foreground hover:text-foreground",
               // A stopped app keeps its tab: hiding it would hide that the settings exist at all.
-              // Dimmed rather than removed, and the panel says why.
-              tab.embeddedUrl ? "" : "opacity-60",
+              // Dimmed rather than removed, and the panel says why. Keyed on the URL, not on the
+              // runtime state: the two agree for a stopped app, and where they differ — running, no
+              // address resolved — the panel still says why, so the tab must still be dimmed.
+              !tab.embeddedUrl && "opacity-60",
             )}
           >
             {tab.label}

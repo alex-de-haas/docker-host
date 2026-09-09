@@ -2255,6 +2255,7 @@ export function ShellClient({
             canManageApps={Boolean(canManageApps)}
             uiApps={uiApps}
             busyAction={busyAction}
+            onStartApp={canManageApps ? startAppById : undefined}
             onNavigate={(view) => {
               setWorkspace(null);
               setOptimisticWorkspaceRoute(null);
