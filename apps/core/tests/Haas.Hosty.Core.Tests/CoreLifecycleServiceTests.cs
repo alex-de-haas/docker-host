@@ -2201,6 +2201,27 @@ public sealed class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task StartAsync_RetriesATransientHealthFailureInsteadOfReportingReady()
+    {
+        // A docker inspect that fails right after launch is no reading, not an empty one: the wait must
+        // retry until the budget decides, not report `running` with nothing observed.
+        var probe = new ScriptedHealthProbe();
+        var fixture = await LifecycleFixture.CreateAsync(healthProbe: probe, readinessTimeout: TimeSpan.FromSeconds(10));
+        var calls = 0;
+        fixture.Adapter.Health = _ => Interlocked.Increment(ref calls) <= 2
+            ? throw new AppLifecycleException("docker_inspect_failed", "docker inspect: transient")
+            : new AppRuntimeHealthResult("healthy", [ServiceHealth("app")]);
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+
+        var result = await fixture.Service.StartAsync("com.example.notes");
+
+        Assert.Equal("running", result.App?.RuntimeState);
+        Assert.Equal("healthy", result.App?.Health?.Status);
+        Assert.Equal("app", Assert.Single(result.App!.Health!.Services).Service);
+        Assert.True(calls >= 3, $"expected the failing readings to be retried, saw {calls} call(s)");
+    }
+
+    [Fact]
     public async Task InstallAsync_RejectsANonPositiveReadinessBudget()
     {
         var fixture = await LifecycleFixture.CreateAsync();

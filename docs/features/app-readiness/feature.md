@@ -39,12 +39,17 @@ and `navigation` entries), and interface summaries name theirs, so a consumer ca
 A service that declares an http/tcp `healthcheck` is probed by it (a health rule: 2xx/3xx, on the
 declared path). A docker service with an image `HEALTHCHECK` reports the container's own verdict.
 Neither is ever overridden. A service with no signal of its own gets an **implicit** probe on every
-endpoint the app publishes from it — the UI entry, a dependency-provided endpoint, an MCP interface —
-because those are exactly the addresses a client is about to use:
+endpoint the app publishes from it — the persisted endpoint set: the manifest's declared endpoints,
+or every runtime port when it declares none, which Core projects as endpoints — because those are
+exactly the addresses a client is about to use. The start wait probes the merged set the record is
+about to persist and the observation probes the persisted one, so the two never target different
+ports:
 
 - **`localCommand`**: a tcp connect on loopback at the published host port.
-- **docker**: an http request the container itself has to answer, on the service's http endpoints
-  only, passing on **any** response — a 401 or a 404 is a server that is up. Measured on 2026-09-09
+- **docker**: an http request the container itself has to answer, on the service's http(s)
+  endpoints only, passing on **any** response — a 401 or a 404 is a server that is up. An `https`
+  endpoint is probed over TLS with certificate validation off: the question is whether the app's own
+  listener answers, not whether its certificate is trusted. Measured on 2026-09-09
   (Docker Desktop on macOS): a tcp connect to a published port succeeds the instant the port exists,
   six seconds before the container listens, because the userland proxy accepts on the container's
   behalf; an http request fails (`RemoteDisconnected`) until the container serves. A docker endpoint
@@ -69,8 +74,11 @@ record write in both verbs.
 
 The budget is **30 seconds** by default, one per app, overridable per runtime profile as
 `readinessTimeoutSeconds` (validated positive). Counted after launch — image pulls and `setup` are not
-inside it. Services are checked in parallel, about once a second, each probe bounded by 2 s. Liveness
-is checked on every iteration, and the verb's cancellation is honoured. Outcomes:
+inside it. Every service, and every target within one, is probed concurrently, so a scan costs one
+probe timeout (2 s) at most however many endpoints the app publishes, and the budget is checked about
+once a second. Liveness is checked on every iteration, and the verb's cancellation is honoured. An
+adapter that fails to produce a reading (a transient `docker inspect` failure right after launch)
+is retried until the budget decides; it is neither a failed start nor readiness. Outcomes:
 
 | outcome | `runtimeState` | service health |
 | --- | --- | --- |

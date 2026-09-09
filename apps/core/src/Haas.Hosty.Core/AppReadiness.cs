@@ -26,7 +26,12 @@ internal static class AppReadinessProbes
     // probe that hangs for longer than that would make the budget's resolution the probe's timeout.
     internal static readonly TimeSpan ImplicitProbeTimeout = TimeSpan.FromSeconds(2);
 
-    /// <summary>Probe targets per service, resolved against the endpoint URLs the runtime published.</summary>
+    /// <summary>
+    /// Probe targets per service, resolved against the app's endpoint contracts — the persisted set:
+    /// the manifest's declared endpoints, or every runtime port when it declares none (Core projects
+    /// those as endpoints too). The start wait hands in the merged set the record is about to persist
+    /// and the observation hands in the persisted one, so both paths see the same targets.
+    /// </summary>
     internal static IReadOnlyDictionary<string, IReadOnlyList<HealthProbeTarget>> BuildTargets(
         RuntimeAppManifestSelection selection,
         IReadOnlyList<AppEndpointContract> endpoints,
@@ -58,9 +63,13 @@ internal static class AppReadinessProbes
                 // Implicit: every endpoint the app publishes from this service. An `exec` healthcheck
                 // is the container's own and shows up as the adapter's signal, so it takes neither branch.
                 var docker = string.Equals(selection.RuntimeProfile.Type, "docker", StringComparison.Ordinal);
-                foreach (var published in selection.Manifest.Endpoints)
+                foreach (var published in endpoints)
                 {
-                    if (!string.Equals(published.Service, service.Key, StringComparison.Ordinal))
+                    if (!string.Equals(published.Service, service.Key, StringComparison.Ordinal) ||
+                        string.IsNullOrWhiteSpace(published.Url) ||
+                        !Uri.TryCreate(published.Url, UriKind.Absolute, out var uri) ||
+                        uri.Port <= 0 ||
+                        list.Any(existing => existing.Port == uri.Port))
                     {
                         continue;
                     }
@@ -71,20 +80,11 @@ internal static class AppReadinessProbes
                         continue;
                     }
 
-                    var portKey = published.Port;
-                    if (string.IsNullOrWhiteSpace(portKey))
-                    {
-                        var first = service.Runtime.Ports.FirstOrDefault(candidate => candidate.ContainerPort is not null);
-                        portKey = first is null ? null : RuntimeServiceDiscovery.PortKey(first);
-                    }
-
-                    if (ResolveHostPort(endpoints, service.Key, portKey) is int hostPort &&
-                        !list.Any(existing => existing.Port == hostPort))
-                    {
-                        list.Add(docker
-                            ? new HealthProbeTarget("http", "127.0.0.1", hostPort, "/", timeout, AnyResponse: true)
-                            : new HealthProbeTarget("tcp", "127.0.0.1", hostPort, "/", timeout));
-                    }
+                    // The scheme travels with the target: a TLS-only listener probed in plaintext would
+                    // never answer, and every start would exhaust its budget for a service that is fine.
+                    list.Add(docker
+                        ? new HealthProbeTarget(protocol, "127.0.0.1", uri.Port, "/", timeout, AnyResponse: true)
+                        : new HealthProbeTarget("tcp", "127.0.0.1", uri.Port, "/", timeout));
                 }
             }
 
@@ -122,31 +122,22 @@ internal static class AppReadinessProbes
         IHealthProbe probe,
         CancellationToken cancellationToken)
     {
-        var result = new List<AppRuntimeServiceHealth>(services.Count);
-        foreach (var service in services)
+        // Every service, and every target within one, is probed concurrently: a scan then costs one
+        // probe timeout at most, not one per silent endpoint, so the wait's budget is checked about
+        // once a second regardless of how many endpoints an app publishes. Task.WhenAll keeps the
+        // input order, which the persisted reading relies on for nothing but stability.
+        return await Task.WhenAll(services.Select(async service =>
         {
             if (service.Health is not null ||
                 !string.Equals(service.Status, "running", StringComparison.Ordinal) ||
                 !targets.TryGetValue(service.Service, out var serviceTargets))
             {
-                result.Add(service);
-                continue;
+                return service;
             }
 
-            var healthy = true;
-            foreach (var target in serviceTargets)
-            {
-                if (!await probe.ProbeAsync(target, cancellationToken))
-                {
-                    healthy = false;
-                    break;
-                }
-            }
-
-            result.Add(service with { Health = healthy ? "healthy" : "unhealthy" });
-        }
-
-        return result;
+            var answers = await Task.WhenAll(serviceTargets.Select(target => probe.ProbeAsync(target, cancellationToken)));
+            return service with { Health = answers.All(answer => answer) ? "healthy" : "unhealthy" };
+        }));
     }
 
     /// <summary>The per-app fold, and the snapshot the record persists.</summary>
@@ -174,11 +165,14 @@ internal static class AppReadinessProbes
             return left is null && right is null;
         }
 
+        // By service key, not by position: an adapter that lists its services in another order has
+        // not changed the reading, and treating it as changed would rewrite the record every tick.
+        static IEnumerable<(string Service, string Status, string? Health)> Keyed(AppHealthSummary reading)
+            => reading.Services
+                .Select(service => (service.Service, service.Status, service.Health))
+                .OrderBy(service => service.Service, StringComparer.Ordinal);
+
         return string.Equals(left.Status, right.Status, StringComparison.Ordinal) &&
-            left.Services.Count == right.Services.Count &&
-            left.Services.Zip(right.Services).All(pair =>
-                string.Equals(pair.First.Service, pair.Second.Service, StringComparison.Ordinal) &&
-                string.Equals(pair.First.Status, pair.Second.Status, StringComparison.Ordinal) &&
-                string.Equals(pair.First.Health, pair.Second.Health, StringComparison.Ordinal));
+            Keyed(left).SequenceEqual(Keyed(right));
     }
 }

@@ -1012,7 +1012,9 @@ internal sealed class CoreLifecycleService(
 
             var result = await adapter.StartAsync(context, cancellationToken);
             runtimeStarted = true;
-            var readiness = await WaitForReadinessAsync(appId, adapter, context, selection, result.Endpoints, cancellationToken);
+            // The wait probes the endpoint set the record is about to persist — the same merge the write
+            // below applies — so the start and the supervisor's later observations target the same ports.
+            var readiness = await WaitForReadinessAsync(appId, adapter, context, selection, MergeEndpointUrls(app.Endpoints, result.Endpoints, selection), cancellationToken);
             var updated = await apps.UpdateAppAsync(appId, current => current with
             {
                 RuntimeState = result.RuntimeState,
@@ -1419,7 +1421,7 @@ internal sealed class CoreLifecycleService(
             runtimeStarted = true;
             // The same wait a cold start runs: this verb calls the adapter directly rather than through
             // StartCoreAsync, so a start-only wait would leave every restart without one.
-            var readiness = await WaitForReadinessAsync(appId, adapter, context, selection, start.Endpoints, cancellationToken);
+            var readiness = await WaitForReadinessAsync(appId, adapter, context, selection, MergeEndpointUrls(app.Endpoints, start.Endpoints, selection), cancellationToken);
             var updated = await apps.UpdateAppAsync(appId, current => current with
             {
                 RuntimeState = start.RuntimeState,
@@ -1489,21 +1491,35 @@ internal sealed class CoreLifecycleService(
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         var targets = AppReadinessProbes.BuildTargets(selection, endpoints, AppReadinessProbes.ImplicitProbeTimeout);
         string? lastWritten = null;
+        AppHealthSummary? lastSnapshot = null;
 
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            IReadOnlyList<AppRuntimeServiceHealth> raw;
+            IReadOnlyList<AppRuntimeServiceHealth>? raw = null;
             try
             {
                 raw = (await adapter.GetHealthAsync(context, cancellationToken)).Services;
             }
             catch (Exception ex) when (ex is AppLifecycleException or IOException or UnauthorizedAccessException)
             {
-                // No reading this iteration (a transient docker inspect failure, say) is not a failed
-                // start; the budget decides.
                 logger.LogDebug(ex, "Readiness observation for app '{AppId}' failed; retrying until the budget expires.", appId);
-                raw = [];
+            }
+
+            if (raw is null)
+            {
+                // No reading this iteration (a transient docker inspect failure right after launch, say)
+                // is neither a failed start nor readiness: it is retried until the budget decides, and an
+                // app that never yields a reading inside it reports whatever was last read.
+                var left = budget - stopwatch.Elapsed;
+                if (left <= TimeSpan.Zero)
+                {
+                    logger.LogWarning("App '{AppId}' yielded no health reading within its {Budget:0}s readiness budget.", appId, budget.TotalSeconds);
+                    return lastSnapshot ?? AppReadinessProbes.Summarize([], clock.UtcNow);
+                }
+
+                await Task.Delay(left < ReadinessProbeInterval ? left : ReadinessProbeInterval, cancellationToken);
+                continue;
             }
 
             var dead = raw.FirstOrDefault(service => !string.Equals(service.Status, "running", StringComparison.Ordinal));
@@ -1549,6 +1565,7 @@ internal sealed class CoreLifecycleService(
                 var interimSnapshot = AppReadinessProbes.Summarize(interim, clock.UtcNow);
                 _ = await apps.UpdateAppAsync(appId, current => current with { Health = interimSnapshot }, cancellationToken);
                 lastWritten = signature;
+                lastSnapshot = interimSnapshot;
             }
 
             await Task.Delay(remaining < ReadinessProbeInterval ? remaining : ReadinessProbeInterval, cancellationToken);

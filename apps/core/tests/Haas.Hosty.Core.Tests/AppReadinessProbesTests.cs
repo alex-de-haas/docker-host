@@ -16,9 +16,10 @@ public sealed class AppReadinessProbesTests
                 .Select(endpoint => new RuntimeAppEndpointManifest { Key = $"{endpoint.Service}.{endpoint.Port}", Service = endpoint.Service, Port = endpoint.Port, Protocol = endpoint.Protocol })
                 .ToArray(),
         };
-        var services = endpoints
-            .Select(endpoint => endpoint.Service)
-            .Distinct(StringComparer.Ordinal)
+        // The service list comes from the endpoint tuples; with none declared (the projected-ports
+        // case) the app still has its one service, which is exactly what that case is about.
+        var serviceKeys = endpoints.Select(endpoint => endpoint.Service).Distinct(StringComparer.Ordinal).ToArray();
+        var services = (serviceKeys.Length > 0 ? serviceKeys : ["app"])
             .Select(service => new RuntimeSelectedService(
                 service,
                 [],
@@ -93,6 +94,85 @@ public sealed class AppReadinessProbesTests
         var target = Assert.Single(Assert.Single(targets).Value);
         // A declared check is a health rule: 2xx/3xx, on the declared path, with its own (shorter) timeout.
         Assert.Equal(("http", "/ready", false, TimeSpan.FromSeconds(1)), (target.Type, target.Path, target.AnyResponse, target.Timeout));
+    }
+
+    [Fact]
+    public void RuntimePortsProjectedAsEndpointsAreProbedWhenTheManifestDeclaresNone()
+    {
+        // A valid manifest may declare no top-level endpoints; Core then projects every runtime port
+        // as one, and those contracts — not the manifest's (empty) list — are what get probed.
+        var targets = AppReadinessProbes.BuildTargets(
+            Selection("localCommand"),
+            [Published("app", "http", 41000)],
+            TimeSpan.FromSeconds(2));
+
+        var target = Assert.Single(Assert.Single(targets).Value);
+        Assert.Equal(("tcp", 41000), (target.Type, target.Port));
+    }
+
+    [Fact]
+    public void ADockerHttpsEndpointKeepsItsScheme()
+    {
+        var targets = AppReadinessProbes.BuildTargets(
+            Selection("docker", ("app", "http", "https")),
+            [Published("app", "http", 41443, "https")],
+            TimeSpan.FromSeconds(2));
+
+        var target = Assert.Single(Assert.Single(targets).Value);
+        Assert.Equal(("https", 41443, true), (target.Type, target.Port, target.AnyResponse));
+    }
+
+    [Fact]
+    public async Task ServicesAndTargetsAreProbedConcurrently()
+    {
+        // Three silent targets at 300 ms each: serial would cost ~900 ms per scan, concurrent ~300 ms.
+        // The budget is checked between scans, so a scan must not grow with the endpoint count.
+        var probe = new SlowProbe(TimeSpan.FromMilliseconds(300));
+        var targets = new Dictionary<string, IReadOnlyList<HealthProbeTarget>>(StringComparer.Ordinal)
+        {
+            ["a"] = [Target(1), Target(2)],
+            ["b"] = [Target(3)],
+        };
+        var services = new[] { Service("a"), Service("b") };
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var result = await AppReadinessProbes.ApplyAsync(services, targets, probe, CancellationToken.None);
+
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromMilliseconds(750), $"scan took {stopwatch.Elapsed}");
+        Assert.All(result, service => Assert.Equal("healthy", service.Health));
+        Assert.Equal(3, probe.Calls);
+    }
+
+    [Fact]
+    public void SameReadingIgnoresServiceOrder()
+    {
+        var now = DateTimeOffset.UnixEpoch;
+        var left = new AppHealthSummary("healthy", [new("a", "running", "healthy"), new("b", "running", null)], now);
+        var right = new AppHealthSummary("healthy", [new("b", "running", null), new("a", "running", "healthy")], now.AddMinutes(1));
+        var changed = new AppHealthSummary("healthy", [new("b", "running", null), new("a", "running", "unhealthy")], now);
+
+        Assert.True(AppReadinessProbes.SameReading(left, right));
+        Assert.False(AppReadinessProbes.SameReading(left, changed));
+        Assert.False(AppReadinessProbes.SameReading(left, null));
+        Assert.True(AppReadinessProbes.SameReading(null, null));
+    }
+
+    private static HealthProbeTarget Target(int port) => new("tcp", "127.0.0.1", 40000 + port, "/", TimeSpan.FromSeconds(1));
+
+    private static AppRuntimeServiceHealth Service(string key) => new(key, "running", null, null, null, null, null);
+
+    private sealed class SlowProbe(TimeSpan delay) : IHealthProbe
+    {
+        private int calls;
+
+        public int Calls => Volatile.Read(ref calls);
+
+        public async Task<bool> ProbeAsync(HealthProbeTarget target, CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref calls);
+            await Task.Delay(delay, cancellationToken);
+            return true;
+        }
     }
 
     [Fact]

@@ -1,10 +1,11 @@
 using System.Net.Http;
+using System.Net.Security;
 using System.Net.Sockets;
 
 namespace Haas.Hosty.Core;
 
 // Active health probe target resolved from a service's healthcheck and its assigned host port.
-// `Type` is "http" or "tcp"; `Path` is only meaningful for http. `AnyResponse` turns an http probe
+// `Type` is "http", "https" or "tcp"; `Path` is only meaningful for http(s). `AnyResponse` turns an http probe
 // into a readiness probe: any HTTP response at all passes, a 401 or a 404 included, because those
 // are a server that is up — the 2xx/3xx rule is a *health* rule. Readiness uses it for a docker
 // service with no HEALTHCHECK (app-readiness): a tcp connect through docker's userland proxy succeeds
@@ -30,6 +31,19 @@ internal sealed class NetworkHealthProbe : IHealthProbe
         ConnectTimeout = TimeSpan.FromSeconds(5),
     });
 
+    // For an https target. The certificate is not validated: this is a loopback readiness probe of
+    // the app's own listener, which is as likely as not to present a self-signed certificate, and the
+    // question is "does it answer", not "do I trust it" — nothing is sent and nothing read is used.
+    private readonly HttpClient insecureHttpsClient = new(new SocketsHttpHandler
+    {
+        AllowAutoRedirect = false,
+        ConnectTimeout = TimeSpan.FromSeconds(5),
+        SslOptions = new SslClientAuthenticationOptions
+        {
+            RemoteCertificateValidationCallback = static (_, _, _, _) => true,
+        },
+    });
+
     public async Task<bool> ProbeAsync(HealthProbeTarget target, CancellationToken cancellationToken = default)
     {
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -38,7 +52,7 @@ internal sealed class NetworkHealthProbe : IHealthProbe
         {
             return target.Type switch
             {
-                "http" => await ProbeHttpAsync(target, timeoutCts.Token),
+                "http" or "https" => await ProbeHttpAsync(target, timeoutCts.Token),
                 "tcp" => await ProbeTcpAsync(target, timeoutCts.Token),
                 _ => false,
             };
@@ -56,8 +70,9 @@ internal sealed class NetworkHealthProbe : IHealthProbe
 
     private async Task<bool> ProbeHttpAsync(HealthProbeTarget target, CancellationToken cancellationToken)
     {
-        var uri = new UriBuilder("http", target.Host, target.Port, target.Path).Uri;
-        using var response = await httpClient.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        var uri = new UriBuilder(target.Type, target.Host, target.Port, target.Path).Uri;
+        var client = string.Equals(target.Type, "https", StringComparison.Ordinal) ? insecureHttpsClient : httpClient;
+        using var response = await client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         return target.AnyResponse || (int)response.StatusCode is >= 200 and < 400;
     }
 
