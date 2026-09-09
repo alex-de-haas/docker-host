@@ -1,6 +1,6 @@
 # App Readiness — Readiness Is Health
 
-Status: Draft
+Status: Ready
 Created: 2026-09-09
 Updated: 2026-09-09
 
@@ -59,8 +59,8 @@ needs readiness reads `IsUp` for the whole app instead of health for the service
 
 The review of this plan (2026-09-09) asked for two things to be settled before Phase 1, because they
 decide the data model: what an endpoint's availability is, and how the wait behaves. Both are stated
-here, and the three parameters that followed are under *Decisions*; the plan is not Ready until the
-user has accepted them.
+here, and the three parameters that followed are under *Decisions*; the user accepted all of them
+on 2026-09-09, which is what made the plan Ready.
 
 **Endpoint availability.** Health is kept **per service**. The app-level aggregate exists for the
 badge and nothing else. An endpoint is *ready* when the service that owns it is `healthy` — not when
@@ -197,8 +197,7 @@ the container reporting `starting` past ours is the truth for that service, so i
 
 ## Open questions
 
-None remain. Ready waits on the user's explicit acceptance of the two contracts and the three
-decisions above.
+None. The two contracts and the three decisions were accepted by the user on 2026-09-09.
 
 ## Deliverables
 
