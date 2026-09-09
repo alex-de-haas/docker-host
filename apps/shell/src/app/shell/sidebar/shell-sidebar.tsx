@@ -30,6 +30,7 @@ import {
 import { cn } from "@/lib/utils";
 import { getAccountInitials, getAppPageLinks, resolveAssetSrc } from "../app-helpers";
 import { AppIcon } from "../app-icon";
+import { isAppBusy } from "../runtime-states";
 import type { AppOpenTarget, AppPageLink, CoreApp, EmbeddedWorkspace, SessionResponse, ShellView } from "../types";
 
 export function ShellSidebar({
@@ -246,6 +247,10 @@ function AppNavigationItem({
   // This tab's own click, not the app's server-side state: the row settles when Core reports the app
   // running, and until then the spinner says the request left.
   const starting = busyAction === `${app.id}:start`;
+  // Server-side state, so it is true for every administrator in every tab: "not running" also admits
+  // an app that is mid-start or still shutting down, and a Start sent then races the verb already in
+  // flight. Same predicate the Dashboard's lifecycle controls disable on.
+  const transitioning = isAppBusy(app.runtimeState);
   const canOpenStandalone = canOpen;
   // Tooltip text, and — collapsed, where the row is only its icon — its accessible name too.
   const rowLabel = canOpen ? app.displayName : `${app.displayName} is ${app.runtimeState || app.operationStatus}`;
@@ -325,19 +330,25 @@ function AppNavigationItem({
         )}
         {/* A stopped app's pages lead nowhere, so the slot that expands them carries the one action
             that does: start it. Offered only to a user who can — Core refuses everyone else — and
-            the row itself stays disabled, since the app is still not open-able until it answers. */}
+            the row itself stays disabled, since the app is still not open-able until it answers.
+            While a verb is already in flight the control reports it instead: an app mid-start is not
+            running either, and offering Start there would race the start already under way. */}
         {!compact && !running && onStartApp && (
           <Button
             type="button"
             variant="ghost"
             size="icon-sm"
             className="size-8 shrink-0"
-            disabled={starting}
-            aria-label={`Start ${app.displayName}`}
-            title={`Start ${app.displayName}`}
+            disabled={starting || transitioning}
+            aria-label={transitioning ? rowLabel : `Start ${app.displayName}`}
+            title={transitioning ? rowLabel : `Start ${app.displayName}`}
             onClick={() => onStartApp(app.id)}
           >
-            {starting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+            {starting || transitioning ? (
+              <LoaderCircle className="h-4 w-4 animate-spin" />
+            ) : (
+              <Play className="h-4 w-4" />
+            )}
           </Button>
         )}
         {!compact && running && pages.length > 1 && (

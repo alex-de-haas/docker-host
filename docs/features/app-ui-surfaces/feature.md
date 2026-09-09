@@ -104,7 +104,13 @@ well-formed URL for a stopped app that nothing answers; embedding it renders the
 connection-error page inside the tab, and the app then looks broken rather than stopped. The strip
 itself carries the state as dimming and a tooltip only: a glyph beside the label was tried and read
 as decoration rather than as "stopped", since no shape in Shell's vocabulary means it. Dimming
-reaches nobody using a screen reader, so a stopped tab says so in text for that reader alone.
+reaches nobody using a screen reader, so an unavailable tab says so in text for that reader alone.
+
+Whether a tab leads anywhere and *why it does not* are kept as two questions. A tab dims on the URL
+alone — the rule above has already folded the runtime state into it — while the runtime state picks
+only the wording, so a tab can never dim for one reason and explain itself with another. The two
+agree for a stopped app; where they differ, an app running with no address resolved yet is told
+exactly that, and is not offered a Start it does not need.
 
 **The top strip** owns what belongs to neither rail: a toggle at each end, and between them the name
 of whatever fills the content area — an app's page, or the Shell page — plus the notification bell

@@ -87,6 +87,12 @@ Dashboard. The control appears only for a user who may start apps, since Core re
 and the page list is gated on the runtime state as well as on the expander — an app stopped while
 its pages were open would otherwise leave behind a list of launch buttons Core cannot serve.
 
+While a lifecycle verb is already in flight the control reports progress instead of offering Start
+again: an app that is mid-start or still shutting down is not running either, and that state is
+server-side, so it is true for every administrator in every tab. The predicate is the one the
+Dashboard's own lifecycle controls disable on, rather than a second spelling of "not running" that
+would let a click race the verb under way.
+
 Navigation rows carry a 20px icon and the page links nested under an expanded app row a 16px one,
 so the second level reads as subordinate without a second indent doing all the work. The controls on
 a row — the expand chevron, the standalone-open link — stay at 16px: they belong to the row rather
