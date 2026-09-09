@@ -107,6 +107,27 @@ test("a running app keeps the URL, so the gate cannot be satisfied by always ans
   assert.equal(getAppPanelTabs(running)[0].running, true);
 });
 
+test("an app mid-verb is transitioning, not stopped", () => {
+  // The state the recording caught: Core reports "starting" for a couple of seconds after Start, and
+  // "not running" admits it — so the tab said the app was stopped and offered a Start that would have
+  // raced the one already under way. Stopped is asserted alongside it, since a flag that were always
+  // true would satisfy the first assertion alone.
+  const [starting] = getAppPanelTabs([
+    app({ runtimeState: "starting", panelSurfaces: [{ path: "/p", label: "Tool", embeddedUrl: "http://127.0.0.1:3100/p" }] }),
+  ]);
+  const [stopped] = getAppPanelTabs([
+    app({ runtimeState: "stopped", panelSurfaces: [{ path: "/p", label: "Tool", embeddedUrl: "http://127.0.0.1:3100/p" }] }),
+  ]);
+
+  assert.equal(starting.transitioning, true);
+  assert.equal(starting.running, false);
+  assert.equal(starting.runtimeState, "starting");
+  // Still nothing to embed: the port is not answering yet either.
+  assert.equal(starting.embeddedUrl, null);
+
+  assert.equal(stopped.transitioning, false);
+});
+
 test("the active tab survives what it can and falls back rather than pointing at nothing", () => {
   const tabs = getAppPanelTabs([
     app({ id: "a", panelSurfaces: [{ path: "/p", label: "Kept" }] }),

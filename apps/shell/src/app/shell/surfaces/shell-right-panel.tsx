@@ -1,6 +1,6 @@
 "use client";
 
-import { Play } from "lucide-react";
+import { LoaderCircle, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { HostyResolvedTheme, HostyThemePreference } from "../types";
@@ -73,7 +73,7 @@ export function ShellRightPanel({
             // running with no address resolved yet. Only the *wording* asks whether it is running,
             // so a tab never dims for one reason and explains itself with another.
             const unavailable = !tab.embeddedUrl;
-            const reason = tab.running ? "not reachable" : "not running";
+            const reason = tab.transitioning ? tab.runtimeState : tab.running ? "not reachable" : "not running";
 
             return (
             <button
@@ -169,6 +169,19 @@ function RightPanelBody({
   }
 
   if (!activeTab.embeddedUrl) {
+    // Three different facts, and only one of them is answered by starting the app. An app mid-verb is
+    // reporting progress, not asking for anything: Core is already acting, and the panel settles on
+    // its own when the app answers.
+    if (activeTab.transitioning) {
+      return (
+        <PanelMessage title={`${activeTab.label} is ${activeTab.runtimeState}`}>
+          <p className="flex items-center justify-center gap-2">
+            <LoaderCircle className="h-4 w-4 animate-spin" /> This panel opens when the app answers.
+          </p>
+        </PanelMessage>
+      );
+    }
+
     // A running app with no resolved address is a different fact from a stopped one, and telling its
     // operator to start it would be advice for a state they are not in.
     return activeTab.running ? (

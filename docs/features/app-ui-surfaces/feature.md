@@ -112,6 +112,17 @@ only the wording, so a tab can never dim for one reason and explain itself with 
 agree for a stopped app; where they differ, an app running with no address resolved yet is told
 exactly that, and is not offered a Start it does not need.
 
+A third state sits between the two: while Core reports `starting` or `stopping`, a verb is already in
+flight, so the surface reports progress and offers nothing. "Not running" admits that state too, and
+reading it as "stopped" told the operator to start an app that was already starting, behind a button
+whose click would have raced it.
+
+Known gap: Core reports `running` when an app's process starts, not when it accepts connections, and
+a `localCommand` app has no health probe unless its manifest declares one. A surface embedded in that
+window renders the browser's own connection-error page for as long as the app takes to bind its port.
+Nothing in Shell can observe that failure — the frame is cross-origin — so closing it needs a
+readiness signal from Core rather than a change here.
+
 **The top strip** owns what belongs to neither rail: a toggle at each end, and between them the name
 of whatever fills the content area — an app's page, or the Shell page — plus the notification bell
 and the theme control, both relocated here from the sidebar footer. The right-rail toggle is absent

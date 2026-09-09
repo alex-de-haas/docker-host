@@ -16,6 +16,19 @@ export type AppSurfaceTab = {
   // exists and says why — a surface that vanished when its app stopped would read as uninstalled.
   embeddedUrl: string | null;
   running: boolean;
+  /**
+   * A lifecycle verb is in flight on the server — true for every operator, in every tab.
+   *
+   * Distinct from `!running`, which an app mid-start also satisfies: it is not running, but it is on
+   * its way, so telling its operator it "isn't running" and offering Start is both wrong and a click
+   * that would race the start already under way. Mirrors `runtime-states.isAppBusy`, inlined rather
+   * than imported to keep this module free of runtime imports — `node --test` resolves the test's
+   * explicit `.ts` specifier but not an extensionless relative one, the same reason `app-problems.ts`
+   * inlines its own predicate.
+   */
+  transitioning: boolean;
+  /** Core's own word for the state, so a tab can name it rather than paraphrase it. */
+  runtimeState: string;
 };
 
 /**
@@ -63,6 +76,8 @@ export function getAppSettingsTabs(apps: readonly CoreApp[]): AppSurfaceTab[] {
         label: labelFor(app, surface, null),
         embeddedUrl: embeddableUrl(app, surface),
         running: app.runtimeState === "running",
+        transitioning: app.runtimeState === "starting" || app.runtimeState === "stopping",
+        runtimeState: app.runtimeState,
       },
     ];
   });
@@ -83,6 +98,8 @@ export function getAppPanelTabs(apps: readonly CoreApp[]): AppSurfaceTab[] {
       label: labelFor(app, surface, surfaces.length > 1 ? index : null),
       embeddedUrl: embeddableUrl(app, surface),
       running: app.runtimeState === "running",
+      transitioning: app.runtimeState === "starting" || app.runtimeState === "stopping",
+      runtimeState: app.runtimeState,
     }));
   });
 }

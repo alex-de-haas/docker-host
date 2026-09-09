@@ -1,6 +1,6 @@
 "use client";
 
-import { Play, Settings2 } from "lucide-react";
+import { LoaderCircle, Play, Settings2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { HostyResolvedTheme, HostyThemePreference } from "../types";
 import { EmbeddedAppFrame } from "../embedding/embedded-app-frame";
@@ -45,6 +45,18 @@ export function AppSettingsTabPanel({
   const { src, error } = useAppSurfaceSrc(tab, onOpenSurfaceFrame, "Could not open this app's settings.", reloadKey);
 
   if (!tab.embeddedUrl) {
+    // Mid-verb the app is not asking for anything — Core is already acting — so the section reports
+    // progress rather than offering a Start that would race it.
+    if (tab.transitioning) {
+      return (
+        <SettingsMessage title={`${tab.label} is ${tab.runtimeState}`}>
+          <p className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
+            <LoaderCircle className="h-4 w-4 animate-spin" /> This page opens when the app answers.
+          </p>
+        </SettingsMessage>
+      );
+    }
+
     // Running with no resolved address is not the same fact as stopped, and only one of the two is
     // answered by starting the app.
     return tab.running ? (
