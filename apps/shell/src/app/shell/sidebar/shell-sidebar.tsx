@@ -13,6 +13,7 @@ import {
   LoaderCircle,
   LogIn,
   LogOut,
+  Play,
   SlidersHorizontal,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -43,6 +44,7 @@ export function ShellSidebar({
   onNavigate,
   onOpenApps,
   onLaunchApp,
+  onStartApp,
   getStandaloneHref,
 }: {
   compact: boolean;
@@ -60,6 +62,11 @@ export function ShellSidebar({
   onNavigate: (view: ShellView) => void;
   onOpenApps: () => void;
   onLaunchApp: (app: CoreApp, page: AppPageLink, target?: AppOpenTarget) => Promise<void>;
+  /**
+   * Starts a stopped app from its own row. Undefined for a user who cannot start apps — Core refuses
+   * them, so the control would only ever fail; the same rule the right panel's start action follows.
+   */
+  onStartApp?: (appId: string) => void;
   getStandaloneHref: (app: CoreApp, page: AppPageLink) => string;
   // Opens the assistant chat panel. Undefined when no running app declares the ai-gateway interface
   // or the viewer is not an admin — the launcher then simply does not exist.
@@ -109,6 +116,7 @@ export function ShellSidebar({
                   busyAction={busyAction}
                   workspace={workspace}
                   onLaunch={onLaunchApp}
+                  onStartApp={onStartApp}
                   getStandaloneHref={getStandaloneHref}
                 />
               ))
@@ -217,6 +225,7 @@ function AppNavigationItem({
   busyAction,
   workspace,
   onLaunch,
+  onStartApp,
   getStandaloneHref,
 }: {
   app: CoreApp;
@@ -225,6 +234,7 @@ function AppNavigationItem({
   busyAction: string | null;
   workspace: EmbeddedWorkspace | null;
   onLaunch: (app: CoreApp, page: AppPageLink, target?: AppOpenTarget) => Promise<void>;
+  onStartApp?: (appId: string) => void;
   getStandaloneHref: (app: CoreApp, page: AppPageLink) => string;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -233,6 +243,9 @@ function AppNavigationItem({
   const running = app.runtimeState === "running";
   const active = workspace?.appId === app.id;
   const canOpen = running && primaryPage !== null;
+  // This tab's own click, not the app's server-side state: the row settles when Core reports the app
+  // running, and until then the spinner says the request left.
+  const starting = busyAction === `${app.id}:start`;
   const canOpenStandalone = canOpen;
   // Tooltip text, and — collapsed, where the row is only its icon — its accessible name too.
   const rowLabel = canOpen ? app.displayName : `${app.displayName} is ${app.runtimeState || app.operationStatus}`;
@@ -310,7 +323,24 @@ function AppNavigationItem({
             </a>
           </Button>
         )}
-        {!compact && pages.length > 1 && (
+        {/* A stopped app's pages lead nowhere, so the slot that expands them carries the one action
+            that does: start it. Offered only to a user who can — Core refuses everyone else — and
+            the row itself stays disabled, since the app is still not open-able until it answers. */}
+        {!compact && !running && onStartApp && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="size-8 shrink-0"
+            disabled={starting}
+            aria-label={`Start ${app.displayName}`}
+            title={`Start ${app.displayName}`}
+            onClick={() => onStartApp(app.id)}
+          >
+            {starting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+          </Button>
+        )}
+        {!compact && running && pages.length > 1 && (
           <Button
             type="button"
             variant="ghost"
@@ -325,7 +355,9 @@ function AppNavigationItem({
           </Button>
         )}
       </div>
-      {!compact && expanded && pages.length > 1 && (
+      {/* Gated on `running` as well as on `expanded`: an app stopped while its pages were open would
+          otherwise leave a list of launch buttons behind, each one a request Core cannot serve. */}
+      {!compact && running && expanded && pages.length > 1 && (
         <div className="ml-6 space-y-1 border-l pl-2">
           {pages.map((page) => (
             <button

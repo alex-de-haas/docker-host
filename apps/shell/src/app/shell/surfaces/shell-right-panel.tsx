@@ -88,6 +88,11 @@ export function ShellRightPanel({
               title={tab.running ? tab.label : `${tab.label} (not running)`}
             >
               {tab.label}
+              {/* Not a visible marker — the strip carries the state as dimming, and a glyph tried
+                  here read as decoration rather than as "stopped". Dimming reaches nobody using a
+                  screen reader, though, and `title` on a button that already has text is announced
+                  as its description at best, so the state is said outright for that reader alone. */}
+              {!tab.running && <span className="sr-only">, not running</span>}
               {(attention?.[tab.appId] ?? 0) > 0 && (
                 <>
                   {/* On the tab, because the tab is on every page: a session that stops for a person
@@ -156,7 +161,7 @@ function RightPanelBody({
 
   if (!activeTab.embeddedUrl) {
     return (
-      <PanelMessage title={`${activeTab.label} isn't running`}>
+      <PanelMessage title={activeTab.running ? `${activeTab.label} is not reachable` : `${activeTab.label} isn't running`}>
         <p>This panel is served by the app itself, so it is only reachable while the app runs.</p>
         {onStartApp && !activeTab.running && (
           <Button variant="outline" size="sm" className="mt-4" onClick={() => onStartApp(activeTab.appId)}>

@@ -13,6 +13,7 @@ import {
   Copy,
   Database,
   ExternalLink,
+  Hand,
   LoaderCircle,
   Lock,
   MoreHorizontal,
@@ -937,7 +938,6 @@ function InstalledAppsTable({
             <TableHead className="min-w-[240px]">App</TableHead>
             <TableHead>Runtime</TableHead>
             <TableHead>Version</TableHead>
-            <TableHead>Autostart</TableHead>
             <TableHead>Status</TableHead>
             <TableHead className="text-right">Actions</TableHead>
           </TableRow>
@@ -969,7 +969,7 @@ function InstalledAppsTable({
                 />
                 {expanded && (
                   <TableRow>
-                    <TableCell colSpan={6} className="bg-muted/20 px-4 py-3">
+                    <TableCell colSpan={5} className="bg-muted/20 px-4 py-3">
                       <AppServiceDetailsPanel
                         app={app}
                         healthState={healthState}
@@ -1033,6 +1033,9 @@ function InstalledAppRow({
   // are optional *features* that depend on the app itself (does it have data worth snapshotting?),
   // which is why Core's canonical vocabulary is now just those two. Restore lives inside this panel.
   const canBackup = canControl && app.capabilities.includes("backup");
+  // Console logs (docker logs) are served on-demand by Core, so the action shows for any app that
+  // declares the `logs` capability — independent of the telemetry backend.
+  const canViewLogs = app.capabilities.includes("logs");
   const canConfigure = canManageApps;
   // Live source runtimes have no reviewed-update path (the manifest is adopted on restart), so the
   // Update affordance is hidden and the live-source status icon is shown instead — that live check is
@@ -1123,10 +1126,22 @@ function InstalledAppRow({
           onReview={() => onOpenPanel(app, "update")}
         />
       </TableCell>
-      <TableCell><Badge variant={autostartEnabled ? "outline" : "secondary"}>{autostartEnabled ? "On" : "Off"}</Badge></TableCell>
       <TableCell>
         <div className="flex flex-wrap items-center gap-1.5">
           <StatusBadge value={app.runtimeState || app.operationStatus} />
+          {/* Autostart had a column of its own, and it read "On" for nearly every row — a column that
+              says the same thing ten times is width spent on nothing. Only the exception is worth a
+              mark, so the icon appears exactly when an app does *not* come up with the host. */}
+          {!autostartEnabled && (
+            <Badge
+              variant="outline"
+              className="size-6 gap-0 p-0 text-muted-foreground [&>svg]:size-3.5"
+              aria-label="Starts manually"
+              title={'Starts manually — this app is not started when Core starts. Turn on "Start at Core startup" in Settings to change that.'}
+            >
+              <Hand />
+            </Badge>
+          )}
           {app.live && (
             <Badge
               variant="outline"
@@ -1184,8 +1199,28 @@ function InstalledAppRow({
               {transitioning || isBusy("restart") ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
             </IconButton>
           )}
+          {/* Logs and Settings are the two panels an operator reaches for between lifecycle verbs, so
+              they sit in the row rather than one click deep. The menu below still lists them — and now
+              the lifecycle verbs too: it is the complete set of actions, and the row is the shortcuts. */}
+          {canViewLogs && (
+            <IconButton title="Console logs" onClick={() => onOpenPanel(app, "logs")}>
+              <Terminal className="h-4 w-4" />
+            </IconButton>
+          )}
+          {canConfigure && (
+            <IconButton title="Settings" onClick={() => onOpenPanel(app, "settings")}>
+              <Settings2 className="h-4 w-4" />
+            </IconButton>
+          )}
           <InstalledAppActionsMenu
             app={app}
+            canControl={canControl}
+            running={running}
+            transitioning={transitioning}
+            startBusy={isBusy("start")}
+            stopBusy={isBusy("stop")}
+            restartBusy={isBusy("restart")}
+            canViewLogs={canViewLogs}
             canBackup={canBackup}
             canConfigure={canConfigure}
             canRemove={canRemove}
@@ -1195,6 +1230,7 @@ function InstalledAppRow({
             devRuntime={canManageApps ? selectedDevRuntime : undefined}
             devWillRestart={!app.system && running}
             devBusy={isBusy("development-mode")}
+            onLifecycleAction={(action) => onAction(app, action)}
             onCheckUpdate={() => onCheckUpdate(app)}
             onReviewUpdate={() => onOpenPanel(app, "update")}
             onSetDevelopmentMode={onSetDevelopmentMode}
@@ -1213,7 +1249,7 @@ function InstalledAppRow({
 // Core's version, and — when an update is offered — the version the channel publishes under it, in the
 // same shape the app rows use. That includes a rebuild of the version already installed, which on a
 // rolling channel is the ordinary case: the line answers "which version would I get", and the tooltip
-// title separates "New build of v0.97.0" from "Update to v0.98.0". Core's own check is a binary-hash
+// title separates "New build of 0.97.0" from "Update to 0.98.0". Core's own check is a binary-hash
 // comparison, so it can name a version only when the release carries the marker; an older release
 // leaves the installed version alone with the "Update Core" button to say the rest.
 //
@@ -1233,8 +1269,8 @@ function CoreVersionBlock({ status, coreUpdate }: { status: CoreStatus | null; c
       <div className="space-y-0.5 text-right text-sm leading-tight text-muted-foreground">
         <div>
           <VersionLine
-            value={`v${status.version}`}
-            title={`Installed v${status.version}`}
+            value={status.version}
+            title={`Installed ${status.version}`}
             revisions={channel}
             empty="Core has not checked its release channel yet."
           />
@@ -1242,9 +1278,9 @@ function CoreVersionBlock({ status, coreUpdate }: { status: CoreStatus | null; c
         {available && (
           <div>
             <VersionLine
-              value={`v${available}`}
+              value={available}
               className="text-sky-600 decoration-sky-600/50 dark:text-sky-400 dark:decoration-sky-400/50"
-              title={available === status.version ? `New build of v${available}` : `Update to v${available}`}
+              title={available === status.version ? `New build of ${available}` : `Update to ${available}`}
               revisions={channel}
               empty="Core has not checked its release channel yet."
             />
@@ -1367,7 +1403,7 @@ function VersionLine({
         <span
           tabIndex={0}
           className={cn(
-            "inline-block cursor-help underline decoration-dotted underline-offset-4 focus-visible:outline-none",
+            "inline-block cursor-help font-mono underline decoration-dotted underline-offset-4 focus-visible:outline-none",
             className ?? "decoration-muted-foreground/70",
           )}
         >
@@ -1510,6 +1546,13 @@ function RuntimeSwitcher({
 
 function InstalledAppActionsMenu({
   app,
+  canControl,
+  running,
+  transitioning,
+  startBusy,
+  stopBusy,
+  restartBusy,
+  canViewLogs,
   canBackup,
   canConfigure,
   canRemove,
@@ -1519,12 +1562,23 @@ function InstalledAppActionsMenu({
   devRuntime,
   devWillRestart,
   devBusy,
+  onLifecycleAction,
   onCheckUpdate,
   onReviewUpdate,
   onSetDevelopmentMode,
   onOpenPanel,
 }: {
   app: CoreApp;
+  // The lifecycle verbs the row already carries as icons. They are repeated here so the menu is the
+  // one place that lists everything an app can be told to do, named rather than glyphed.
+  canControl: boolean;
+  running: boolean;
+  transitioning: boolean;
+  startBusy: boolean;
+  stopBusy: boolean;
+  restartBusy: boolean;
+  onLifecycleAction: (action: AppAction) => void;
+  canViewLogs: boolean;
   canBackup: boolean;
   canConfigure: boolean;
   canRemove: boolean;
@@ -1545,11 +1599,15 @@ function InstalledAppActionsMenu({
   onSetDevelopmentMode: (app: CoreApp, runtime: string, enabled: boolean) => void;
   onOpenPanel: OpenAppPanel;
 }) {
-  // Console logs (docker logs) are served on-demand by Core, so the action shows for any app that
-  // declares the `logs` capability — independent of the telemetry backend.
-  const canViewLogs = app.capabilities.includes("logs");
   const hasMenuActions =
-    canCheckUpdate || canReviewUpdate || Boolean(devRuntime) || canViewLogs || canBackup || canConfigure || canRemove;
+    canControl ||
+    canCheckUpdate ||
+    canReviewUpdate ||
+    Boolean(devRuntime) ||
+    canViewLogs ||
+    canBackup ||
+    canConfigure ||
+    canRemove;
 
   if (!hasMenuActions) {
     return null;
@@ -1565,6 +1623,27 @@ function InstalledAppActionsMenu({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
+        {canControl && (
+          <>
+            <DropdownMenuLabel>Lifecycle</DropdownMenuLabel>
+            {running ? (
+              <DropdownMenuItem disabled={transitioning || stopBusy} onClick={() => onLifecycleAction("stop")}>
+                <Square className="h-4 w-4" />
+                Stop app
+              </DropdownMenuItem>
+            ) : (
+              <DropdownMenuItem disabled={transitioning || startBusy} onClick={() => onLifecycleAction("start")}>
+                <Play className="h-4 w-4" />
+                Start app
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem disabled={transitioning || restartBusy} onClick={() => onLifecycleAction("restart")}>
+              <RotateCcw className="h-4 w-4" />
+              Restart app
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        )}
         {canReviewUpdate && (
           <DropdownMenuItem onClick={onReviewUpdate}>
             <ArrowUpCircle className="h-4 w-4" />

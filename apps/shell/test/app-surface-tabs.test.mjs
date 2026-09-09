@@ -78,6 +78,35 @@ test("a stopped app keeps its tab, carrying the reason rather than vanishing", (
   assert.equal(tabs[0].embeddedUrl, null);
 });
 
+test("a stopped app's tab drops the URL Core still projects for it", () => {
+  // The case the fixture above cannot reach: an endpoint keeps its reserved port while the app is
+  // down, so Core hands Shell a well-formed URL that nothing answers. Embedding it renders the
+  // browser's connection-error page inside the tab, and a stopped app then looks broken instead of
+  // stopped. Both strips are asserted — the rule belongs to the surface, not to one of its placements.
+  const stopped = [
+    app({
+      runtimeState: "stopped",
+      settingsSurface: { path: "/s", embeddedUrl: "http://127.0.0.1:3100/s" },
+      panelSurfaces: [{ path: "/p", label: "Tool", embeddedUrl: "http://127.0.0.1:3100/p" }],
+    }),
+  ];
+
+  assert.equal(getAppPanelTabs(stopped)[0].embeddedUrl, null);
+  assert.equal(getAppSettingsTabs(stopped)[0].embeddedUrl, null);
+  // The tab itself stays: it is the only thing that says the tool exists at all.
+  assert.equal(getAppPanelTabs(stopped)[0].label, "Tool");
+  assert.equal(getAppPanelTabs(stopped)[0].running, false);
+});
+
+test("a running app keeps the URL, so the gate cannot be satisfied by always answering null", () => {
+  const running = [
+    app({ panelSurfaces: [{ path: "/p", label: "Tool", embeddedUrl: "http://127.0.0.1:3100/p" }] }),
+  ];
+
+  assert.equal(getAppPanelTabs(running)[0].embeddedUrl, "http://127.0.0.1:3100/p");
+  assert.equal(getAppPanelTabs(running)[0].running, true);
+});
+
 test("the active tab survives what it can and falls back rather than pointing at nothing", () => {
   const tabs = getAppPanelTabs([
     app({ id: "a", panelSurfaces: [{ path: "/p", label: "Kept" }] }),

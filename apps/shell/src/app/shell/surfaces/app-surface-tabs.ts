@@ -12,11 +12,24 @@ export type AppSurfaceTab = {
   /** Stable within its strip: an app may ship several panels, and each needs its own tab. */
   key: string;
   label: string;
-  // Null while the app is stopped or its endpoint has no resolved URL yet. The tab still exists and
-  // says why — a surface that vanished when its app stopped would read as uninstalled.
+  // Null while the app is not running, or while its endpoint has no resolved URL yet. The tab still
+  // exists and says why — a surface that vanished when its app stopped would read as uninstalled.
   embeddedUrl: string | null;
   running: boolean;
 };
+
+/**
+ * The URL to embed, or null when there is nothing worth embedding.
+ *
+ * Core resolves a surface's URL from the app's endpoint, and an endpoint keeps its reserved port
+ * while the app is down — so a stopped app still projects a perfectly well-formed URL that nothing
+ * answers. Embedding it puts the browser's own connection-error page inside the tab, which is how a
+ * stopped app came to look broken rather than stopped. The runtime state is therefore part of the
+ * rule here, once, instead of each consumer treating "has a URL" as "is running".
+ */
+function embeddableUrl(app: CoreApp, surface: CoreAppSurface): string | null {
+  return app.runtimeState === "running" ? surface.embeddedUrl ?? null : null;
+}
 
 function labelFor(app: CoreApp, surface: CoreAppSurface, fallbackIndex: number | null): string {
   const declared = surface.label?.trim();
@@ -48,7 +61,7 @@ export function getAppSettingsTabs(apps: readonly CoreApp[]): AppSurfaceTab[] {
         appId: app.id,
         key: app.id,
         label: labelFor(app, surface, null),
-        embeddedUrl: surface.embeddedUrl ?? null,
+        embeddedUrl: embeddableUrl(app, surface),
         running: app.runtimeState === "running",
       },
     ];
@@ -68,7 +81,7 @@ export function getAppPanelTabs(apps: readonly CoreApp[]): AppSurfaceTab[] {
       appId: app.id,
       key: `${app.id}#${index}`,
       label: labelFor(app, surface, surfaces.length > 1 ? index : null),
-      embeddedUrl: surface.embeddedUrl ?? null,
+      embeddedUrl: embeddableUrl(app, surface),
       running: app.runtimeState === "running",
     }));
   });

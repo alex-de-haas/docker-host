@@ -1,7 +1,7 @@
 # App UI Surfaces
 
 Created: 2026-08-19
-Updated: 2026-08-19
+Updated: 2026-09-09
 
 An app declares **where** its pages belong, and Shell places them. Before this, an app had exactly
 one placement — the sidebar — so operator configuration, domain work, and always-at-hand tools all
@@ -98,6 +98,14 @@ something guaranteed to fail: a surface that vanished with its app would read as
 operator would go looking for the app rather than starting it. If the chosen tab's app disappears,
 the strip falls back to the first rather than rendering blank.
 
+Whether a surface can be embedded is decided by the app's runtime state, not by whether Core handed
+Shell a URL. An endpoint keeps its reserved port while its app is down, so Core projects a
+well-formed URL for a stopped app that nothing answers; embedding it renders the browser's own
+connection-error page inside the tab, and the app then looks broken rather than stopped. The strip
+itself carries the state as dimming and a tooltip only: a glyph beside the label was tried and read
+as decoration rather than as "stopped", since no shape in Shell's vocabulary means it. Dimming
+reaches nobody using a screen reader, so a stopped tab says so in text for that reader alone.
+
 **The top strip** owns what belongs to neither rail: a toggle at each end, and between them the name
 of whatever fills the content area — an app's page, or the Shell page — plus the notification bell
 and the theme control, both relocated here from the sidebar footer. The right-rail toggle is absent
@@ -151,6 +159,8 @@ out of Shell in the first place, and hosting an iframe honours it.
 - **The label fallback** — app name when a panel declares none, numbered only when the app ships
   more than one, since "Demo App 1" is worse than "Demo App" when there is nothing to tell apart.
 - **A stopped app keeps its tab**, carrying the reason rather than vanishing.
+- **A stopped app's tab drops the URL Core still projects for it**, paired with a running app that
+  keeps its URL — a gate that always answered null would satisfy either assertion alone.
 - **The active tab survives what it can and falls back rather than pointing at nothing.**
 - **Manifest validation both ways** (Core): a surface inherits the entrypoint endpoint or keeps its
   own, paths normalise like every other UI path, declaring one surface says nothing about the other.
