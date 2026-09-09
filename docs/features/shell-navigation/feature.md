@@ -1,7 +1,7 @@
 # Shell Navigation
 
 Created: 2026-07-30
-Updated: 2026-09-02
+Updated: 2026-09-09
 
 The browser Shell has three top-level destinations: **Dashboard**, the host you manage; **Settings**,
 the host you configure; and **Apps**, the apps you use. This document owns the route table and the
@@ -78,6 +78,20 @@ after a short delay; it is non-modal so sliding along the rail previews one app 
 hover open never takes focus and a hover close never returns it to the trigger — pointing at the
 rail must not pull focus out of the embedded app. A single-page app and an app that is not running
 keep the plain icon behavior: direct launch, or the disabled state tooltip.
+
+A stopped app's row stays in the list — hiding it would say the app is gone rather than down — with
+the row itself disabled and its name greyed. Where a running app's row carries the chevron that
+expands its page list, a stopped one carries **Start** instead: its pages lead nowhere, so the slot
+holds the only action that does, and the operator starts the app without first finding it on the
+Dashboard. The control appears only for a user who may start apps, since Core refuses everyone else,
+and the page list is gated on the runtime state as well as on the expander — an app stopped while
+its pages were open would otherwise leave behind a list of launch buttons Core cannot serve.
+
+While a lifecycle verb is already in flight the control reports progress instead of offering Start
+again: an app that is mid-start or still shutting down is not running either, and that state is
+server-side, so it is true for every administrator in every tab. The predicate is the one the
+Dashboard's own lifecycle controls disable on, rather than a second spelling of "not running" that
+would let a click race the verb under way.
 
 Navigation rows carry a 20px icon and the page links nested under an expanded app row a 16px one,
 so the second level reads as subordinate without a second indent doing all the work. The controls on

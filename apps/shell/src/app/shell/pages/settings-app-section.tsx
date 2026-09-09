@@ -1,6 +1,6 @@
 "use client";
 
-import { Play, Settings2 } from "lucide-react";
+import { LoaderCircle, Play, Settings2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { HostyResolvedTheme, HostyThemePreference } from "../types";
 import { EmbeddedAppFrame } from "../embedding/embedded-app-frame";
@@ -45,13 +45,33 @@ export function AppSettingsTabPanel({
   const { src, error } = useAppSurfaceSrc(tab, onOpenSurfaceFrame, "Could not open this app's settings.", reloadKey);
 
   if (!tab.embeddedUrl) {
-    return (
+    // Mid-verb the app is not asking for anything — Core is already acting — so the section reports
+    // progress rather than offering a Start that would race it.
+    if (tab.transitioning) {
+      return (
+        <SettingsMessage title={`${tab.label} is ${tab.runtimeState}`}>
+          <p className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
+            <LoaderCircle className="h-4 w-4 animate-spin" /> This page opens when the app answers.
+          </p>
+        </SettingsMessage>
+      );
+    }
+
+    // Running with no resolved address is not the same fact as stopped, and only one of the two is
+    // answered by starting the app.
+    return tab.running ? (
+      <SettingsMessage title={`${tab.label} settings are not reachable`}>
+        <p className="mt-2 text-sm text-muted-foreground">
+          The app is running, but Hosty has no address for its settings page yet.
+        </p>
+      </SettingsMessage>
+    ) : (
       <SettingsMessage title={`${tab.label} isn't running`}>
         <p className="mt-2 text-sm text-muted-foreground">
           Its settings are served by the app itself, so they are only reachable while it runs.
           Nothing here is lost — start the app and the page loads.
         </p>
-        {onStartApp && !tab.running && (
+        {onStartApp && (
           <Button variant="outline" size="sm" className="mt-4" onClick={() => onStartApp(tab.appId)}>
             <Play /> Start {tab.label}
           </Button>

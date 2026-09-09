@@ -12,11 +12,37 @@ export type AppSurfaceTab = {
   /** Stable within its strip: an app may ship several panels, and each needs its own tab. */
   key: string;
   label: string;
-  // Null while the app is stopped or its endpoint has no resolved URL yet. The tab still exists and
-  // says why — a surface that vanished when its app stopped would read as uninstalled.
+  // Null while the app is not running, or while its endpoint has no resolved URL yet. The tab still
+  // exists and says why — a surface that vanished when its app stopped would read as uninstalled.
   embeddedUrl: string | null;
   running: boolean;
+  /**
+   * A lifecycle verb is in flight on the server — true for every operator, in every tab.
+   *
+   * Distinct from `!running`, which an app mid-start also satisfies: it is not running, but it is on
+   * its way, so telling its operator it "isn't running" and offering Start is both wrong and a click
+   * that would race the start already under way. Mirrors `runtime-states.isAppBusy`, inlined rather
+   * than imported to keep this module free of runtime imports — `node --test` resolves the test's
+   * explicit `.ts` specifier but not an extensionless relative one, the same reason `app-problems.ts`
+   * inlines its own predicate.
+   */
+  transitioning: boolean;
+  /** Core's own word for the state, so a tab can name it rather than paraphrase it. */
+  runtimeState: string;
 };
+
+/**
+ * The URL to embed, or null when there is nothing worth embedding.
+ *
+ * Core resolves a surface's URL from the app's endpoint, and an endpoint keeps its reserved port
+ * while the app is down — so a stopped app still projects a perfectly well-formed URL that nothing
+ * answers. Embedding it puts the browser's own connection-error page inside the tab, which is how a
+ * stopped app came to look broken rather than stopped. The runtime state is therefore part of the
+ * rule here, once, instead of each consumer treating "has a URL" as "is running".
+ */
+function embeddableUrl(app: CoreApp, surface: CoreAppSurface): string | null {
+  return app.runtimeState === "running" ? surface.embeddedUrl ?? null : null;
+}
 
 function labelFor(app: CoreApp, surface: CoreAppSurface, fallbackIndex: number | null): string {
   const declared = surface.label?.trim();
@@ -48,8 +74,10 @@ export function getAppSettingsTabs(apps: readonly CoreApp[]): AppSurfaceTab[] {
         appId: app.id,
         key: app.id,
         label: labelFor(app, surface, null),
-        embeddedUrl: surface.embeddedUrl ?? null,
+        embeddedUrl: embeddableUrl(app, surface),
         running: app.runtimeState === "running",
+        transitioning: app.runtimeState === "starting" || app.runtimeState === "stopping",
+        runtimeState: app.runtimeState,
       },
     ];
   });
@@ -68,8 +96,10 @@ export function getAppPanelTabs(apps: readonly CoreApp[]): AppSurfaceTab[] {
       appId: app.id,
       key: `${app.id}#${index}`,
       label: labelFor(app, surface, surfaces.length > 1 ? index : null),
-      embeddedUrl: surface.embeddedUrl ?? null,
+      embeddedUrl: embeddableUrl(app, surface),
       running: app.runtimeState === "running",
+      transitioning: app.runtimeState === "starting" || app.runtimeState === "stopping",
+      runtimeState: app.runtimeState,
     }));
   });
 }
