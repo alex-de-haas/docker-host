@@ -121,7 +121,8 @@ Known gap: Core reports `running` when an app's process starts, not when it acce
 a `localCommand` app has no health probe unless its manifest declares one. A surface embedded in that
 window renders the browser's own connection-error page for as long as the app takes to bind its port.
 Nothing in Shell can observe that failure — the frame is cross-origin — so closing it needs a
-readiness signal from Core rather than a change here.
+readiness signal from Core rather than a change here; that is
+[App Readiness](../app-readiness/plan.md).
 
 **The top strip** owns what belongs to neither rail: a toggle at each end, and between them the name
 of whatever fills the content area — an app's page, or the Shell page — plus the notification bell
