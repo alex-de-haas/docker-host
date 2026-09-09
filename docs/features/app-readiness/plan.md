@@ -57,21 +57,32 @@ Written as a diff against the feature documents it touches.
 - The app record carries the aggregate health status the supervisor last observed. `/api/apps`
   projects it without probing. `runtimeState` is unchanged in meaning and in every transition.
 - A start verb, after the runtime is up, runs the first readiness wait itself — bounded — and writes
-  health `starting` → `healthy` (or `unhealthy` on expiry) before returning. `runtimeState` is stamped
+  health `starting` → `healthy` (or `degraded` on expiry) before returning. `runtimeState` is stamped
   `running` when the runtime is up, as today; the wait writes health only, so it never contends with
   the supervisor for the state. Without this the 15 s tick is the floor on how late readiness lands.
 - A service that declares no `healthcheck` but exposes the app's UI endpoint gets an implicit `tcp`
   check on that endpoint. A declared `healthcheck` always wins. `tcp` rather than `http` because a
   401 or a 404 is a server that is up, not a server that is ill; a service that wants a stricter
   answer declares `http` with a path.
-- An expired wait is **not** a failed start: the process is alive. It is health `unhealthy`, which
-  the supervisor keeps observing and flips to `healthy` when the app answers.
+- An expired wait is **not** a failed start: the process is alive. It is health `degraded` — the
+  value the aggregate already produces for "every process running, a probe failing" — which the
+  supervisor keeps observing and flips to `healthy` when the app answers. Not `unhealthy`: at the app
+  level that word is reserved for a liveness mix, and `ResolveRuntimeStateFromHealth` maps it to
+  `unknown`, which would take the app's `running` away for a port that is merely late.
+- Persisted health is meaningful only while `IsUp`. A stop, a failed start, a removal and an install
+  clear it, and every readiness consumer reads `IsUp && healthy`, never health alone.
+  `ObserveRuntimeHealthForAppAsync` skips apps that are not up, so without the clear a stopped app
+  would keep its last `healthy` for as long as it stayed stopped.
+- The health observation takes the per-app operation lock non-blockingly and skips an app whose verb
+  is in flight — the rule the docker sweep already follows — so while a start verb runs its readiness
+  wait, the verb is the only writer. Today the observation takes no lock, and a slow tick sampled
+  before readiness could commit after the verb's `healthy` and revert it until the next tick.
 
 **Shell** ([Core App Shell](../core-app-shell/feature.md),
 [App UI Surfaces](../app-ui-surfaces/feature.md)):
 
 - The Dashboard's app-row badge composes the two axes — `running · starting`,
-  `running · unhealthy` — the way Aspire's does. Display only; the per-service rows keep their own
+  `running · degraded` — the way Aspire's does. Display only; the per-service rows keep their own
   health as today.
 - A surface tab (panel, settings) embeds when the app is **healthy**. While health is `starting` it
   reports progress the way `runtimeState` `starting` does now. The known-gap paragraph in App UI
@@ -80,17 +91,18 @@ Written as a diff against the feature documents it touches.
 
 **Other consumers:**
 
-- `AppDependencySummary` reports a provider **healthy**, not merely up — coordinated with
-  [Cross-App Dependencies](../cross-app-dependencies/plan.md), which owns dependent-side behavior.
+- `AppDependencySummary.Running` reports a provider **healthy**, not merely up — the summary's
+  `installed` / `running` semantics are documented in
+  [Cross-App Dependencies](../cross-app-dependencies/feature.md), and this changes what `running`
+  answers there.
 - `hosty mcp`'s `ToolCatalog` includes an app's tools when it is healthy.
 - `hosty apps list` shows the composed status.
 
 ## Explicitly out of scope
 
-- Restarting an app for being `unhealthy`. Restart policy stays crash-only.
+- Restarting an app for being `degraded` or `unhealthy`. Restart policy stays crash-only.
 - A `Waiting` state for dependents that hold their own start until a provider is healthy — that is
-  [Dependency-Ordered Autostart](../dependency-ordered-autostart/plan.md) and
-  [Cross-App Dependencies](../cross-app-dependencies/plan.md).
+  [Dependency-Ordered Autostart](../dependency-ordered-autostart/plan.md)'s alone.
 - `availability: "unavailable"` — an endpoint whose reserved port another process holds. Different
   fact, owned by [Automatic Runtime App Ports](../automatic-runtime-app-ports/plan.md).
 
@@ -98,7 +110,7 @@ Written as a diff against the feature documents it touches.
 
 - **Which services get the implicit check.** The minimum that closes the observed gap is the service
   carrying the app's UI endpoint. A dependent app, though, may consume a different endpoint of the
-  same provider — an API port with no UI on it — and `providerRunning` then needs that one probed
+  same provider — an API port with no UI on it — and `AppDependencySummary.Running` then needs that one probed
   too. Every endpoint the app publishes to others (UI entry, dependency-provided endpoints), or the
   UI one only?
 - **The aggregate rule under a persisted value.** The existing fold has one consequence worth a
@@ -113,7 +125,7 @@ Written as a diff against the feature documents it touches.
 - **Autostart fan-out.** Start-verb waits under tier-parallel autostart
   ([Core Lifecycle Parallelism](../core-lifecycle-parallelism/feature.md)) need bounded concurrency,
   or the deadlines add up into boot time.
-- **`starting` versus `unhealthy` after the wait.** Aspire collapses both into `Unhealthy`; keeping
+- **`starting` versus `degraded` after the wait.** Aspire collapses both into `Unhealthy`; keeping
   them apart tells the operator "still coming up" from "came up wrong". Worth the extra word?
 
 ## Deliverables
@@ -125,9 +137,13 @@ Written as a diff against the feature documents it touches.
 - [ ] A start verb runs the bounded readiness wait and writes health before returning; `runtimeState`
       transitions are untouched.
 - [ ] Implicit `tcp` healthcheck on the UI endpoint for a service that declares none.
+- [ ] Stop, failed start, removal and install clear the persisted health; consumers gate on
+      `IsUp && healthy`.
+- [ ] The health observation takes the operation lock non-blockingly and skips a held app.
 - [ ] `CoreLifecycleServiceTests`: a late-binding endpoint reaches `healthy` inside the wait; one that
-      never binds leaves `running` + `unhealthy` and is picked up by the next observation; a declared
-      `healthcheck` overrides the implicit one.
+      never binds leaves `running` + `degraded` and is picked up by the next observation; a declared
+      `healthcheck` overrides the implicit one; a stopped app reads no health; an observation that
+      finds the lock held writes nothing.
 
 ### Phase 2 — Shell: composed status, embed on health
 
@@ -155,6 +171,8 @@ Written as a diff against the feature documents it touches.
 - [App Lifecycle States](../app-lifecycle-states/feature.md) — the two axes, and why `running` is
   not delayed for health.
 - [App UI Surfaces](../app-ui-surfaces/feature.md) — carries the known gap this closes.
-- [Cross-App Dependencies](../cross-app-dependencies/plan.md) — dependent-side behavior.
+- [Cross-App Dependencies](../cross-app-dependencies/feature.md) — the dependency summary whose
+  `running` this redefines.
+- [Dependency-Ordered Autostart](../dependency-ordered-autostart/plan.md) — owns `Waiting`.
 - [Automatic Runtime App Ports](../automatic-runtime-app-ports/plan.md) — the neighboring
   "honest state" work for `unavailable`.

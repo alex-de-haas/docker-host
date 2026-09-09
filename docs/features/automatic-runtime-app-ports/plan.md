@@ -2,7 +2,7 @@
 
 Status: Draft
 Created: 2026-07-14
-Updated: 2026-08-09
+Updated: 2026-09-09
 
 The install-time reservation model shipped across PRs #187–#191 (persistent model and boot migration,
 coordinated allocation and adapter consumption, reassignment plan/apply with dependency impact,
