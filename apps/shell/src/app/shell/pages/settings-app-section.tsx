@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+
 import { LoaderCircle, Play, Settings2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { HostyResolvedTheme, HostyThemePreference } from "../types";
@@ -42,7 +44,21 @@ export function AppSettingsTabPanel({
   reloadKey?: number;
   onAskAssistant?: (text: string, sourceAppId: string) => void;
 }) {
-  const { src, error } = useAppSurfaceSrc(tab, onOpenSurfaceFrame, "Could not open this app's settings.", reloadKey);
+  // Readiness gates opening the page, not the life of an open one (see ShellRightPanel). Keyed per
+  // tab by the parent, so an override does not carry over to another app's settings.
+  const [openedAnyway, setOpenedAnyway] = useState(false);
+  const [everReady, setEverReady] = useState(tab.readiness === "ready");
+  if (tab.readiness === "ready" && !everReady) {
+    setEverReady(true);
+  }
+
+  const opened = everReady || openedAnyway;
+  const { src, error } = useAppSurfaceSrc(
+    opened ? tab : { ...tab, embeddedUrl: null },
+    onOpenSurfaceFrame,
+    "Could not open this app's settings.",
+    reloadKey,
+  );
 
   if (!tab.embeddedUrl) {
     // Mid-verb the app is not asking for anything — Core is already acting — so the section reports
@@ -76,6 +92,29 @@ export function AppSettingsTabPanel({
             <Play /> Start {tab.label}
           </Button>
         )}
+      </SettingsMessage>
+    );
+  }
+
+  if (!opened) {
+    if (tab.readiness === "degraded") {
+      return (
+        <SettingsMessage title={`${tab.label} is running, but its readiness is not confirmed yet`}>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Core could not confirm that this page answers. It may still be coming up — or it may need a look.
+          </p>
+          <Button variant="outline" size="sm" className="mt-4" onClick={() => setOpenedAnyway(true)}>
+            Open anyway
+          </Button>
+        </SettingsMessage>
+      );
+    }
+
+    return (
+      <SettingsMessage title={`${tab.label} is starting`}>
+        <p className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
+          <LoaderCircle className="h-4 w-4 animate-spin" /> This page opens when the app answers.
+        </p>
       </SettingsMessage>
     );
   }

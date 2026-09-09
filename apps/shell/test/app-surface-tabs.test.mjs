@@ -4,6 +4,7 @@ import {
   getAppPanelTabs,
   getAppSettingsTabs,
   resolveActiveSurfaceTab,
+  resolveLaunchGate,
 } from "../src/app/shell/surfaces/app-surface-tabs.ts";
 
 const app = (overrides) => ({
@@ -126,6 +127,75 @@ test("an app mid-verb is transitioning, not stopped", () => {
   assert.equal(starting.embeddedUrl, null);
 
   assert.equal(stopped.transitioning, false);
+});
+
+// --- Readiness (docs/features/app-readiness/) ------------------------------------------------------
+
+const url = "http://127.0.0.1:3100/p";
+const panelOn = (service) => ({ panelSurfaces: [{ path: "/p", label: "Tool", embeddedUrl: url, service }] });
+const health = (status, services) => ({ status, services, observedAt: "2026-09-09T00:00:00Z" });
+
+test("a surface opens on its own only when the service that serves it answers", () => {
+  // Same lifecycle state, three readings: the URL is there in all three (the service is alive), and
+  // only readiness differs — which is exactly the split the panel needs to show progress, offer
+  // "open anyway", or embed.
+  const [starting] = getAppPanelTabs([app({ ...panelOn("web"), health: health("starting", [{ service: "web", status: "running", health: "starting" }]) })]);
+  const [degraded] = getAppPanelTabs([app({ ...panelOn("web"), health: health("degraded", [{ service: "web", status: "running", health: "unhealthy" }]) })]);
+  const [ready] = getAppPanelTabs([app({ ...panelOn("web"), health: health("healthy", [{ service: "web", status: "running", health: "healthy" }]) })]);
+
+  assert.deepEqual([starting.embeddedUrl, starting.readiness], [url, "starting"]);
+  assert.deepEqual([degraded.embeddedUrl, degraded.readiness], [url, "degraded"]);
+  assert.deepEqual([ready.embeddedUrl, ready.readiness], [url, "ready"]);
+});
+
+test("a service nothing probes is ready the moment it is alive", () => {
+  const [tab] = getAppPanelTabs([app({ ...panelOn("web"), health: health("healthy", [{ service: "web", status: "running", health: null }]) })]);
+  assert.equal(tab.readiness, "ready");
+});
+
+test("a running app with no reading is ready — an older Core, or one that has not observed it yet", () => {
+  // The regression this guards: with the field absent, every sidebar row was held at "is starting"
+  // against a Core that reports no readiness. Only a reading Core actually made may hold anything.
+  const [tab] = getAppPanelTabs([app({ ...panelOn("web"), health: null })]);
+  assert.deepEqual([tab.embeddedUrl, tab.readiness], [url, "ready"]);
+  const [absent] = getAppPanelTabs([app({ ...panelOn("web") })]);
+  assert.equal(absent.readiness, "ready");
+});
+
+test("a dead sibling service does not close a working endpoint", () => {
+  // The fold is `unhealthy` and the app `unknown`; the surface on the living service keeps its URL
+  // and its readiness, and the surface on the dead one loses its URL — per service, not per app.
+  const reading = health("unhealthy", [
+    { service: "web", status: "running", health: "healthy" },
+    { service: "worker", status: "exited", health: null },
+  ]);
+  const [onWeb] = getAppPanelTabs([app({ runtimeState: "unknown", ...panelOn("web"), health: reading })]);
+  const [onWorker] = getAppPanelTabs([app({ runtimeState: "unknown", ...panelOn("worker"), health: reading })]);
+
+  assert.deepEqual([onWeb.embeddedUrl, onWeb.readiness], [url, "ready"]);
+  assert.equal(onWorker.embeddedUrl, null);
+});
+
+test("a verb in flight blocks every open, whatever the service reads", () => {
+  const reading = health("healthy", [{ service: "web", status: "running", health: "healthy" }]);
+  const [tab] = getAppPanelTabs([app({ runtimeState: "stopping", ...panelOn("web"), health: reading })]);
+  assert.equal(tab.embeddedUrl, null);
+});
+
+test("a surface Core named no service for falls back to the fold", () => {
+  const [tab] = getAppPanelTabs([app({ ...panelOn(null), health: health("degraded", [{ service: "web", status: "running", health: "unhealthy" }]) })]);
+  assert.deepEqual([tab.embeddedUrl, tab.readiness], [url, "degraded"]);
+});
+
+test("the launch gate holds a starting page and lets a degraded one through", () => {
+  // A row click is the row's "open anyway": degraded proceeds, starting and unobserved wait, and
+  // anything not up is refused — the same rule a surface tab opens by.
+  const gateFor = (overrides) => resolveLaunchGate(app(overrides), "web");
+  assert.equal(gateFor({ health: health("starting", [{ service: "web", status: "running", health: "starting" }]) }).allowed, false);
+  assert.equal(gateFor({ health: null }).allowed, true);
+  assert.equal(gateFor({ health: health("degraded", [{ service: "web", status: "running", health: "unhealthy" }]) }).allowed, true);
+  assert.equal(gateFor({ health: health("healthy", [{ service: "web", status: "running", health: "healthy" }]) }).allowed, true);
+  assert.deepEqual(gateFor({ runtimeState: "stopped", health: null }), { up: false, readiness: "ready", allowed: false });
 });
 
 test("the active tab survives what it can and falls back rather than pointing at nothing", () => {

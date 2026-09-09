@@ -1,7 +1,7 @@
 # Hosty MCP Connector
 
 Created: 2026-08-15
-Updated: 2026-08-17
+Updated: 2026-09-09
 
 `hosty mcp` is a stdio MCP server inside the CLI, spawned by an agent client on the operator's own
 machine, presenting every app on one Hosty host as a single server. It is step 7 of the
@@ -54,7 +54,11 @@ client config — the cache lives in the connector process and dies with it.
 
 `GET /control/v1/apps` already resolves declared interfaces to callable URLs, so no new discovery
 route was needed. The connector keeps the apps that are running and declare an `mcp` interface with a
-resolved URL, then asks each one's own `tools/list` in parallel with a per-app timeout.
+resolved URL — and, since [App Readiness](../app-readiness/feature.md), only the interfaces whose
+serving service answers per Core's last health reading, so an interface still inside its readiness
+budget is left out rather than asked and a sibling service's outage does not take a working one
+with it (a Core that reports no reading falls back to the state alone) — then asks each one's own
+`tools/list` in parallel with a per-app timeout.
 
 Each endpoint gets the full MCP lifecycle first — `initialize`, then `notifications/initialized` —
 and any `Mcp-Session-Id` it hands back is carried on every later request. This is not ceremony: the

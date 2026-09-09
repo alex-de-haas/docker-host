@@ -249,6 +249,10 @@ internal static class CoreJson
 [JsonSerializable(typeof(AppUpdateAvailability))]
 [JsonSerializable(typeof(AppDependencySummary))]
 [JsonSerializable(typeof(AppDependencyEndpointSummary))]
+// Reachable via AppRecord/AppSummary; rooted explicitly like every other nested DTO (a body record
+// missing here 500s every route under AOT — see aot-json-context-breaks-all-routes).
+[JsonSerializable(typeof(AppHealthSummary))]
+[JsonSerializable(typeof(AppServiceHealthSummary))]
 [JsonSerializable(typeof(AppUpdateCheckStatus))]
 [JsonSerializable(typeof(AppUpdateCheckTriggerResponse))]
 [JsonSerializable(typeof(AppRuntimeSwitchPlan))]

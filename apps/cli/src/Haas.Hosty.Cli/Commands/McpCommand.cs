@@ -358,6 +358,8 @@ internal sealed partial class McpCommand(CommandContext context)
         PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true)]
     [JsonSerializable(typeof(McpAppsResponse))]
+    [JsonSerializable(typeof(AppHealthSummary))]
+    [JsonSerializable(typeof(AppServiceHealthSummary))]
     [JsonSerializable(typeof(DelegatedTokenRequest))]
     [JsonSerializable(typeof(DelegatedTokenResponse))]
     internal partial class McpJsonContext : JsonSerializerContext;
@@ -372,10 +374,13 @@ internal sealed partial class McpCommand(CommandContext context)
         string Id,
         string DisplayName,
         string RuntimeState,
-        IReadOnlyDictionary<string, IReadOnlyList<McpAppInterface>>? Interfaces = null);
+        IReadOnlyDictionary<string, IReadOnlyList<McpAppInterface>>? Interfaces = null,
+        // The app's last-observed health (app-readiness): the catalog asks an interface only when the
+        // service that serves it answers. Null on an older Core, which then gates on the state alone.
+        AppHealthSummary? Health = null);
 
-    /// <summary>A declared interface, already resolved to a callable URL by Core.</summary>
-    internal sealed record McpAppInterface(string Key, string Path, string? Url = null);
+    /// <summary>A declared interface, already resolved to a callable URL by Core, and the service that serves it.</summary>
+    internal sealed record McpAppInterface(string Key, string Path, string? Url = null, string? Service = null);
 
 
     internal sealed record DelegatedTokenRequest(string User);

@@ -101,6 +101,18 @@ function collectDependencyProblems(dependencies: CoreApp["dependencies"]): AppPr
       continue;
     }
 
+    // Running, but the service behind a wired endpoint is not answering — still inside its readiness
+    // budget, or it stopped answering. A warning, never an error: the provider is up, and its
+    // supervisor keeps observing it. Only a Core that reports readiness can say this (`healthy` is
+    // absent otherwise), so the check is on the field being false, not on it being missing.
+    if (dependency.healthy === false) {
+      problems.push({
+        severity: "warning",
+        title: `${dependency.required ? "Required" : "Optional"} dependency ${dependency.appId} is not answering yet`,
+        detail: `This app wires ${name}, which is running but whose service is not confirmed to answer. It usually settles on its own; check the dependency's health if it does not.`,
+      });
+    }
+
     // Running, so the only thing left to check is whether each wired endpoint actually resolves: an
     // unresolved one silently drops its HOSTY_DEPENDENCY_{ALIAS}_URL, which is invisible from inside
     // the consumer. Always a warning — the dependency itself is healthy, the wiring is not.

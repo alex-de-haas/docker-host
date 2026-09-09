@@ -1888,6 +1888,359 @@ public sealed class CoreLifecycleServiceTests
         Assert.Equal("runtime_switch_data_incompatible", error.Code);
     }
 
+    // --- Readiness (docs/features/app-readiness/) ---------------------------------------------------
+
+    private static AppRuntimeServiceHealth ServiceHealth(string service, string status = "running", string? health = null, int? exitCode = null)
+        => new(service, status, ProcessId: null, ExitCode: exitCode, LogPath: null, WorkingDirectory: null, Message: null, Health: health);
+
+    // A manifest whose runtime profile carries readinessTimeoutSeconds, or whose service list has a
+    // second, endpoint-less service — the two shapes the default template cannot express.
+    private static async Task<string> WriteReadinessManifestAsync(LifecycleFixture fixture, int? readinessTimeoutSeconds = null, bool secondService = false)
+    {
+        var path = Path.Combine(fixture.Root, $"readiness-{Guid.NewGuid():N}.json");
+        var timeout = readinessTimeoutSeconds is int seconds ? $""", "readinessTimeoutSeconds": {seconds}""" : "";
+        var worker = secondService
+            ? """
+              , {
+                "key": "worker",
+                "runtimes": { "docker": { "type": "docker", "image": "ghcr.io/example/worker:1.0.0" } }
+              }
+              """
+            : "";
+        await File.WriteAllTextAsync(path, $$"""
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.notes",
+              "name": "Notes",
+              "version": "1.0.0",
+              "runtimeProfiles": [{ "key": "docker", "type": "docker", "default": true{{timeout}} }],
+              "defaultRuntime": "docker",
+              "services": [{
+                "key": "app",
+                "runtimes": {
+                  "docker": {
+                    "type": "docker",
+                    "image": "ghcr.io/example/notes:1.0.0",
+                    "ports": [{ "key": "http", "containerPort": 3000, "protocol": "http", "public": true }]
+                  }
+                }
+              }{{worker}}],
+              "endpoints": [{ "key": "app.http", "service": "app", "port": "http", "protocol": "http", "public": true }]
+            }
+            """);
+        return path;
+    }
+
+    [Fact]
+    public async Task StartAsync_WaitsForThePublishedEndpointToAnswer()
+    {
+        // The port the runtime published answers on the third connect: the start must hold `starting`
+        // through the first two and report `running` + `healthy`, not `running` + a dead frame.
+        var probe = new ScriptedHealthProbe();
+        var attempts = 0;
+        probe.Answer = _ => Interlocked.Increment(ref attempts) >= 3;
+        var fixture = await LifecycleFixture.CreateAsync(healthProbe: probe, readinessTimeout: TimeSpan.FromSeconds(10));
+        fixture.Adapter.Health = _ => new AppRuntimeHealthResult("healthy", [ServiceHealth("app")]);
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+
+        var result = await fixture.Service.StartAsync("com.example.notes");
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+
+        Assert.Equal("running", result.App?.RuntimeState);
+        Assert.Equal("healthy", app!.Health?.Status);
+        var service = Assert.Single(app.Health!.Services);
+        Assert.Equal(("app", "running", "healthy"), (service.Service, service.Status, service.Health));
+        Assert.True(attempts >= 3, $"expected at least three connects, saw {attempts}");
+        // Implicit, for a docker service: an http request on loopback at the port the runtime published,
+        // passing on any response — a tcp connect through docker's proxy would have passed at t=0.
+        Assert.All(probe.Probed, target => Assert.Equal(("http", "127.0.0.1", 3100, true), (target.Type, target.Host, target.Port, target.AnyResponse)));
+    }
+
+    [Fact]
+    public async Task StartAsync_ReportsRunningAndDegradedWhenTheBudgetExpires_AndTheObservationRecovers()
+    {
+        var probe = new ScriptedHealthProbe { Answer = _ => false };
+        var fixture = await LifecycleFixture.CreateAsync(healthProbe: probe, readinessTimeout: TimeSpan.FromMilliseconds(400));
+        fixture.Adapter.Health = _ => new AppRuntimeHealthResult("healthy", [ServiceHealth("app")]);
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+
+        var result = await fixture.Service.StartAsync("com.example.notes");
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+
+        // Expiry is not a failed start: the process is alive, so it is `running`, with the service that
+        // never answered `unhealthy` and the fold `degraded` — not `unhealthy`, which would read as a
+        // partial outage and take `running` away.
+        Assert.Equal("running", result.App?.RuntimeState);
+        Assert.Equal("degraded", app!.Health?.Status);
+        Assert.Equal("unhealthy", Assert.Single(app.Health!.Services).Health);
+
+        // The supervisor's next observation finds the port answering and flips it, without any verb.
+        probe.Answer = _ => true;
+        await fixture.Service.ObserveRuntimeHealthAsync(new HashSet<string>(StringComparer.Ordinal));
+        app = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal("running", app!.RuntimeState);
+        Assert.Equal("healthy", app.Health?.Status);
+        Assert.Equal("healthy", Assert.Single(app.Health!.Services).Health);
+    }
+
+    [Fact]
+    public async Task StartAsync_HonoursTheRuntimeProfileReadinessBudget()
+    {
+        // The fixture's default budget is 30 s here on purpose; the profile's one second must win.
+        var probe = new ScriptedHealthProbe { Answer = _ => false };
+        var fixture = await LifecycleFixture.CreateAsync(healthProbe: probe, readinessTimeout: TimeSpan.FromSeconds(30));
+        fixture.Adapter.Health = _ => new AppRuntimeHealthResult("healthy", [ServiceHealth("app")]);
+        await fixture.Service.InstallAsync(new AppInstallRequest(await WriteReadinessManifestAsync(fixture, readinessTimeoutSeconds: 1)));
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var result = await fixture.Service.StartAsync("com.example.notes");
+
+        Assert.Equal("running", result.App?.RuntimeState);
+        Assert.Equal("degraded", result.App?.Health?.Status);
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(10), $"start took {stopwatch.Elapsed}");
+    }
+
+    [Fact]
+    public async Task StartAsync_FailsWhenAServiceExitsDuringTheWait()
+    {
+        var probe = new ScriptedHealthProbe { Answer = _ => false };
+        var fixture = await LifecycleFixture.CreateAsync(healthProbe: probe, readinessTimeout: TimeSpan.FromSeconds(10));
+        fixture.Adapter.Health = _ => new AppRuntimeHealthResult("unhealthy", [ServiceHealth("app", status: "exited", exitCode: 3)]);
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() => fixture.Service.StartAsync("com.example.notes"));
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+
+        // A process that dies mid-wait is the existing failed-start path — never `running` + `degraded`.
+        Assert.Equal("app_start_service_exited", error.Code);
+        Assert.Contains("exit code 3", error.Message);
+        Assert.Equal("stopped", app!.RuntimeState);
+        Assert.Equal("failed", app.OperationStatus);
+        Assert.Null(app.Health);
+        Assert.Equal(1, fixture.Adapter.StopCount);
+    }
+
+    [Fact]
+    public async Task RestartAsync_RunsTheSameReadinessWait()
+    {
+        // Restart calls the adapter directly rather than through StartCoreAsync; a start-only wait
+        // would have left it out.
+        var probe = new ScriptedHealthProbe();
+        var fixture = await LifecycleFixture.CreateAsync(healthProbe: probe);
+        fixture.Adapter.Health = _ => new AppRuntimeHealthResult("healthy", [ServiceHealth("app")]);
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        await fixture.Service.StartAsync("com.example.notes");
+        var callsAfterStart = fixture.Adapter.HealthCalls;
+        var probesAfterStart = probe.Probed.Count;
+
+        var result = await fixture.Service.RestartAsync("com.example.notes");
+
+        Assert.Equal("running", result.App?.RuntimeState);
+        Assert.Equal("healthy", result.App?.Health?.Status);
+        Assert.True(fixture.Adapter.HealthCalls > callsAfterStart);
+        Assert.True(probe.Probed.Count > probesAfterStart);
+    }
+
+    [Fact]
+    public async Task StopAsync_ClearsHealth_AndANewStartDoesNotInheritIt()
+    {
+        var probe = new ScriptedHealthProbe();
+        var fixture = await LifecycleFixture.CreateAsync(healthProbe: probe, readinessTimeout: TimeSpan.FromMilliseconds(400));
+        fixture.Adapter.Health = _ => new AppRuntimeHealthResult("healthy", [ServiceHealth("app")]);
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        await fixture.Service.StartAsync("com.example.notes");
+        Assert.Equal("healthy", (await fixture.Apps.GetAppAsync("com.example.notes"))!.Health?.Status);
+
+        await fixture.Service.StopAsync("com.example.notes");
+        Assert.Null((await fixture.Apps.GetAppAsync("com.example.notes"))!.Health);
+
+        // The next start finds the port silent: the previous `healthy` must not survive into it.
+        probe.Answer = _ => false;
+        var result = await fixture.Service.StartAsync("com.example.notes");
+        Assert.Equal("degraded", result.App?.Health?.Status);
+    }
+
+    [Fact]
+    public async Task ObserveRuntimeHealthAsync_SkipsAnAppWhoseVerbHoldsTheLock()
+    {
+        var probe = new ScriptedHealthProbe();
+        var fixture = await LifecycleFixture.CreateAsync(healthProbe: probe);
+        fixture.Adapter.Health = _ => new AppRuntimeHealthResult("healthy", [ServiceHealth("app")]);
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        await fixture.Service.StartAsync("com.example.notes");
+
+        // Hold a Stop mid-verb: the record reads `stopping` and the operation lock is taken. An
+        // observation that treats the app as supervised still samples it — and, seeing a live, healthy
+        // service, would write `running` straight over the verb's `stopping` were it not for the lock.
+        var gate = new TaskCompletionSource();
+        fixture.Adapter.StopGate = gate.Task;
+        var stop = fixture.Service.StopAsync("com.example.notes");
+        await WaitUntilAsync(async () => (await fixture.Apps.GetAppAsync("com.example.notes"))!.RuntimeState == "stopping");
+
+        await fixture.Service.ObserveRuntimeHealthAsync(new HashSet<string>(StringComparer.Ordinal) { "com.example.notes" });
+        var during = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal("stopping", during!.RuntimeState);
+
+        gate.SetResult();
+        await stop;
+        var after = await fixture.Apps.GetAppAsync("com.example.notes");
+        Assert.Equal("stopped", after!.RuntimeState);
+        Assert.Null(after.Health);
+    }
+
+    [Fact]
+    public async Task ObserveRuntimeHealthAsync_KeepsTheLivingServiceReadyThroughAPartialOutage()
+    {
+        var probe = new ScriptedHealthProbe();
+        var fixture = await LifecycleFixture.CreateAsync(healthProbe: probe);
+        fixture.Adapter.Health = _ => new AppRuntimeHealthResult("healthy", [ServiceHealth("app"), ServiceHealth("worker")]);
+        await fixture.Service.InstallAsync(new AppInstallRequest(await WriteReadinessManifestAsync(fixture, secondService: true)));
+        await fixture.Service.StartAsync("com.example.notes");
+
+        // The sidecar dies. The app-level fold is `unhealthy` and the state `unknown` — but the
+        // reading is kept, and the service behind the published endpoint still says it answers.
+        fixture.Adapter.Health = _ => new AppRuntimeHealthResult("unhealthy", [ServiceHealth("app"), ServiceHealth("worker", status: "exited", exitCode: 1)]);
+        await fixture.Service.ObserveRuntimeHealthAsync(new HashSet<string>(StringComparer.Ordinal));
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+
+        Assert.Equal("unknown", app!.RuntimeState);
+        Assert.Equal("unhealthy", app.Health?.Status);
+        Assert.Contains(app.Health!.Services, service => service.Service == "app" && service.Status == "running" && service.Health == "healthy");
+        Assert.Contains(app.Health.Services, service => service.Service == "worker" && service.Status == "exited");
+    }
+
+    [Fact]
+    public async Task ObserveRuntimeHealthAsync_NeverRegressesAProbedServiceToStarting()
+    {
+        // `starting` is the wait's word alone. After expiry the service reads `unhealthy`; an
+        // observation that still finds the port silent leaves it there — it does not invent `starting`.
+        var probe = new ScriptedHealthProbe { Answer = _ => false };
+        var fixture = await LifecycleFixture.CreateAsync(healthProbe: probe, readinessTimeout: TimeSpan.FromMilliseconds(400));
+        fixture.Adapter.Health = _ => new AppRuntimeHealthResult("healthy", [ServiceHealth("app")]);
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        await fixture.Service.StartAsync("com.example.notes");
+
+        await fixture.Service.ObserveRuntimeHealthAsync(new HashSet<string>(StringComparer.Ordinal));
+        var app = await fixture.Apps.GetAppAsync("com.example.notes");
+
+        Assert.Equal("degraded", app!.Health?.Status);
+        Assert.Equal("unhealthy", Assert.Single(app.Health!.Services).Health);
+    }
+
+    [Fact]
+    public async Task StartAsync_AContainerHealthcheckOverridesTheImplicitProbe()
+    {
+        // The adapter answered for the service (a HEALTHCHECK's own `starting`): the implicit probe
+        // must not run for it, and past the budget its word — not `unhealthy` — is what persists,
+        // because the image's start_period is its author's budget.
+        var probe = new ScriptedHealthProbe();
+        var fixture = await LifecycleFixture.CreateAsync(healthProbe: probe, readinessTimeout: TimeSpan.FromMilliseconds(400));
+        fixture.Adapter.Health = _ => new AppRuntimeHealthResult("starting", [ServiceHealth("app", health: "starting")]);
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+
+        var result = await fixture.Service.StartAsync("com.example.notes");
+
+        Assert.Equal("running", result.App?.RuntimeState);
+        Assert.Equal("starting", result.App?.Health?.Status);
+        Assert.Equal("starting", Assert.Single(result.App!.Health!.Services).Health);
+        Assert.Empty(probe.Probed);
+    }
+
+    [Fact]
+    public async Task ListAppsAsync_ReportsADependencyHealthyByTheServiceThatServesItsEndpoint()
+    {
+        // `Running` stays the provider's lifecycle fact. `Healthy` reads the provider service behind
+        // the wired endpoint — not the provider's fold — so a dead sidecar on the provider does not
+        // read as an outage for a consumer of the living service. `Ready` is the pair.
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Apps.UpsertAppAsync(SeedReassignApp(
+            "com.example.provider",
+            "unknown",
+            endpoints: [ReassignEndpoint("app", "control", "http://127.0.0.1:7100"), ReassignEndpoint("worker", "jobs", "http://127.0.0.1:7101")]));
+        await fixture.Apps.UpdateAppAsync("com.example.provider", current => current with
+        {
+            Health = new AppHealthSummary("unhealthy",
+            [
+                new AppServiceHealthSummary("app", "running", "healthy"),
+                new AppServiceHealthSummary("worker", "exited", null),
+            ], DateTimeOffset.UnixEpoch),
+        });
+        await fixture.Apps.UpsertAppAsync(SeedReassignApp(
+            "com.example.consumer",
+            "running",
+            dependencies:
+            [
+                new AppDependencyContract("com.example.provider", null, Required: true,
+                    [new AppDependencyEndpointContract("app.control", "ctl")]),
+            ]));
+        await fixture.Apps.UpsertAppAsync(SeedReassignApp(
+            "com.example.consumer-of-worker",
+            "running",
+            dependencies:
+            [
+                new AppDependencyContract("com.example.provider", null, Required: true,
+                    [new AppDependencyEndpointContract("worker.jobs", "jobs")]),
+            ]));
+
+        var apps = await fixture.Service.ListAppsAsync();
+        var ofApp = Assert.Single(apps.Single(app => app.Id == "com.example.consumer").Dependencies!);
+        var ofWorker = Assert.Single(apps.Single(app => app.Id == "com.example.consumer-of-worker").Dependencies!);
+
+        // The provider is `unknown` (partial outage): not Running, so not Ready — but the endpoint on
+        // the living service is Healthy, and the one on the dead service is not.
+        Assert.False(ofApp.Running);
+        Assert.True(ofApp.Healthy);
+        Assert.False(ofApp.Ready);
+        Assert.False(ofWorker.Healthy);
+        Assert.False(ofWorker.Ready);
+
+        // Once the provider reads running with the same services, the living endpoint's consumer is Ready.
+        await fixture.Apps.UpdateAppAsync("com.example.provider", current => current with { RuntimeState = "running" });
+        var ready = Assert.Single((await fixture.Service.ListAppsAsync()).Single(app => app.Id == "com.example.consumer").Dependencies!);
+        Assert.True(ready.Running && ready.Healthy && ready.Ready);
+    }
+
+    [Fact]
+    public async Task StartAsync_RetriesATransientHealthFailureInsteadOfReportingReady()
+    {
+        // A docker inspect that fails right after launch is no reading, not an empty one: the wait must
+        // retry until the budget decides, not report `running` with nothing observed.
+        var probe = new ScriptedHealthProbe();
+        var fixture = await LifecycleFixture.CreateAsync(healthProbe: probe, readinessTimeout: TimeSpan.FromSeconds(10));
+        var calls = 0;
+        fixture.Adapter.Health = _ => Interlocked.Increment(ref calls) <= 2
+            ? throw new AppLifecycleException("docker_inspect_failed", "docker inspect: transient")
+            : new AppRuntimeHealthResult("healthy", [ServiceHealth("app")]);
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+
+        var result = await fixture.Service.StartAsync("com.example.notes");
+
+        Assert.Equal("running", result.App?.RuntimeState);
+        Assert.Equal("healthy", result.App?.Health?.Status);
+        Assert.Equal("app", Assert.Single(result.App!.Health!.Services).Service);
+        Assert.True(calls >= 3, $"expected the failing readings to be retried, saw {calls} call(s)");
+    }
+
+    [Fact]
+    public async Task InstallAsync_RejectsANonPositiveReadinessBudget()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifest = await WriteReadinessManifestAsync(fixture, readinessTimeoutSeconds: 0);
+        var error = await Assert.ThrowsAsync<AppManifestException>(
+            () => fixture.Service.InstallAsync(new AppInstallRequest(manifest)));
+        Assert.Contains(error.Errors, candidate => candidate.Code == "app_manifest_runtime_profile_readiness_timeout_invalid");
+    }
+
+    private static async Task WaitUntilAsync(Func<Task<bool>> condition)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (!await condition())
+        {
+            Assert.True(DateTime.UtcNow < deadline, "condition not met in time");
+            await Task.Delay(20);
+        }
+    }
+
     [Fact]
     public async Task StartAsync_UsesRuntimeAdapterAndStoresRuntimeEndpoint()
     {
@@ -6493,7 +6846,12 @@ public sealed class CoreLifecycleServiceTests
             bool withPortAllocator = false,
             // Shrinks the self-restart port-release window so a test can reach the give-up path in
             // milliseconds instead of the production 15s. Null keeps the production window.
-            TimeSpan? selfRestartPortReleaseTimeout = null)
+            TimeSpan? selfRestartPortReleaseTimeout = null,
+            // The readiness probe the lifecycle service folds into health; null leaves the adapter's
+            // own signal as the only one. The budget defaults to 2 s here so a fixture that starts a
+            // real localCommand process cannot sit in the production 30 s wait.
+            IHealthProbe? healthProbe = null,
+            TimeSpan? readinessTimeout = null)
         {
             var root = Path.Combine(Path.GetTempPath(), $"hosty-core-lifecycle-tests-{Guid.NewGuid():N}");
             Directory.CreateDirectory(root);
@@ -6544,7 +6902,7 @@ public sealed class CoreLifecycleServiceTests
             var portAllocator = withPortAllocator ? new RuntimePortAllocator(runtimeConfig) : null;
             var publications = new CloudflarePublicationStore(paths);
             var publicOrigins = new PublicOriginOwnership(coreSettings, publications);
-            var service = new CoreLifecycleService(paths, apps, manifests, backups, sources, [adapter, localAdapter], ingress, Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreLifecycleService>.Instance, notifications: null, clock: clock, portAllocator: portAllocator, selfRestartPortReleaseTimeout: selfRestartPortReleaseTimeout, publicOrigins: publicOrigins);
+            var service = new CoreLifecycleService(paths, apps, manifests, backups, sources, [adapter, localAdapter], ingress, Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreLifecycleService>.Instance, notifications: null, clock: clock, portAllocator: portAllocator, selfRestartPortReleaseTimeout: selfRestartPortReleaseTimeout, publicOrigins: publicOrigins, healthProbe: healthProbe, readinessTimeout: readinessTimeout ?? TimeSpan.FromSeconds(2));
             return new LifecycleFixture(root, paths, apps, backups, manifests, sources, service, adapter, localProcesses, clock, coreSettings, publications);
         }
 
@@ -7015,8 +7373,38 @@ public sealed class CoreLifecycleServiceTests
             return Task.FromResult(new AppRuntimeLogsResult(text, services));
         }
 
+        // Scripted per call so a readiness test can make a service answer late, or die mid-wait; the
+        // default reports no services at all, which the wait treats as nothing to wait for.
+        public Func<RuntimeLifecycleContext, AppRuntimeHealthResult>? Health { get; set; }
+
+        public int HealthCalls => Volatile.Read(ref healthCalls);
+
+        private int healthCalls;
+
         public Task<AppRuntimeHealthResult> GetHealthAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
-            => Task.FromResult(new AppRuntimeHealthResult("unknown", []));
+        {
+            Interlocked.Increment(ref healthCalls);
+            return Task.FromResult(Health?.Invoke(context) ?? new AppRuntimeHealthResult("unknown", []));
+        }
+    }
+
+    // A loopback probe that answers from a script instead of a socket, so readiness tests can decide
+    // per target whether "the port answers" without opening one.
+    private sealed class ScriptedHealthProbe : IHealthProbe
+    {
+        public Func<HealthProbeTarget, bool> Answer { get; set; } = _ => true;
+
+        public List<HealthProbeTarget> Probed { get; } = [];
+
+        public Task<bool> ProbeAsync(HealthProbeTarget target, CancellationToken cancellationToken = default)
+        {
+            lock (Probed)
+            {
+                Probed.Add(target);
+            }
+
+            return Task.FromResult(Answer(target));
+        }
     }
 
     private sealed class FakeClock(DateTimeOffset now) : IClock

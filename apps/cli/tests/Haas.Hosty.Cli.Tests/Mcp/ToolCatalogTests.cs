@@ -41,6 +41,39 @@ public class ToolCatalogTests
     }
 
     [Fact]
+    public void AnInterfaceIsAskedOnlyWhenTheServiceThatServesItAnswers()
+    {
+        // Two services, one MCP each. The app is running and its fold is `degraded`, yet the backend's
+        // interface goes through and the frontend's does not — readiness is read per service, so a
+        // sibling's outage neither hides a working interface nor lets a silent one into the catalog.
+        // An interface Core named no service for, and an app with no reading at all, keep the
+        // state-only rule an older Core implies.
+        var health = new AppHealthSummary("degraded", [
+            new AppServiceHealthSummary("backend", "running", "healthy"),
+            new AppServiceHealthSummary("frontend", "running", "unhealthy"),
+        ]);
+        var targets = ToolCatalog.SelectTargets([
+            new McpCommand.McpAppSummary("com.example.split", "Split", "running", new Dictionary<string, IReadOnlyList<McpCommand.McpAppInterface>>
+            {
+                ["mcp"] =
+                [
+                    new McpCommand.McpAppInterface("api", "/api/mcp", "http://a/api/mcp", Service: "backend"),
+                    new McpCommand.McpAppInterface("ui", "/ui/mcp", "http://a/ui/mcp", Service: "frontend"),
+                    new McpCommand.McpAppInterface("unnamed", "/x/mcp", "http://a/x/mcp", Service: null),
+                ],
+            }, Health: health),
+            new McpCommand.McpAppSummary("com.example.unread", "Unread", "running", new Dictionary<string, IReadOnlyList<McpCommand.McpAppInterface>>
+            {
+                ["mcp"] = [new McpCommand.McpAppInterface("default", "/api/mcp", "http://b/api/mcp", Service: "app")],
+            }, Health: null),
+        ]);
+
+        Assert.Equal(
+            [("com.example.split", "api"), ("com.example.split", "unnamed"), ("com.example.unread", "default")],
+            targets.Select(target => (target.AppId, target.InterfaceKey)));
+    }
+
+    [Fact]
     public void OnlyAnExplicitReadOnlyHintCounts()
     {
         // Fail-closed, and this is the assertion that pins it: everything except a literal `true`

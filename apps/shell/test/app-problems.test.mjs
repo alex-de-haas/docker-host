@@ -99,6 +99,20 @@ test("a required dependency that is not installed is an error", () => {
   assert.match(problems[0].title, /Required dependency com\.haas\.torrent-engine is not installed/);
 });
 
+test("a running dependency whose service is not answering is a warning, and an older Core stays silent", () => {
+  // `healthy` false is the signal; `healthy` absent is a Core that does not report readiness, and
+  // must not read as unhealthy.
+  const notAnswering = collectAppProblems(app({ dependencies: [dependency({ installed: true, running: true, healthy: false, ready: false })] }));
+  assert.equal(notAnswering.length, 1);
+  assert.equal(notAnswering[0].severity, "warning");
+  assert.match(notAnswering[0].title, /is not answering yet/);
+
+  const older = collectAppProblems(app({ dependencies: [dependency({ installed: true, running: true })] }));
+  assert.equal(older.length, 0);
+  const answering = collectAppProblems(app({ dependencies: [dependency({ installed: true, running: true, healthy: true, ready: true })] }));
+  assert.equal(answering.length, 0);
+});
+
 test("an optional dependency that is not installed is silent", () => {
   // The one row that removes a signal: not installing an optional dependency is a choice, and an icon
   // for it would train operators to ignore the icon.

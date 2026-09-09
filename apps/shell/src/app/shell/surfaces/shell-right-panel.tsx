@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { LoaderCircle, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -61,7 +62,20 @@ export function ShellRightPanel({
   attention?: Record<string, number>;
   onAttention?: (appId: string, count: number) => void;
 }) {
-  const { src, error } = useAppSurfaceSrc(activeTab, onOpenSurfaceFrame, "Could not open this panel.", reloadKey);
+  // Readiness gates *opening* a tab, not the life of an open one. A key enters this set when its
+  // service first reads ready — or when the operator opens it anyway — and stays: a frame already
+  // on screen survives `healthy → degraded`, because a transient probe failure must not destroy what
+  // the operator has typed. Only the lifecycle axis (embeddedUrl going null) unmounts it.
+  const [openedKeys, setOpenedKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const opened = activeTab !== null && (activeTab.readiness === "ready" || openedKeys.has(activeTab.key));
+  // Adjust during render rather than in an effect (react.dev/learn/you-might-not-need-an-effect).
+  if (activeTab && activeTab.readiness === "ready" && !openedKeys.has(activeTab.key)) {
+    setOpenedKeys((current) => new Set(current).add(activeTab.key));
+  }
+
+  // No launch code is minted for a tab that is not open yet: `useAppSurfaceSrc` keys on the URL.
+  const embedTab = activeTab && !opened ? { ...activeTab, embeddedUrl: null } : activeTab;
+  const { src, error } = useAppSurfaceSrc(embedTab, onOpenSurfaceFrame, "Could not open this panel.", reloadKey);
 
   return (
     <aside className="flex h-full min-h-0 min-w-0 flex-col border-l bg-sidebar text-sidebar-foreground">
@@ -123,6 +137,8 @@ export function ShellRightPanel({
       <div className="min-h-0 flex-1 bg-background">
         <RightPanelBody
           activeTab={activeTab}
+          opened={opened}
+          onOpenAnyway={() => activeTab && setOpenedKeys((current) => new Set(current).add(activeTab.key))}
           src={src}
           error={error}
           theme={theme}
@@ -141,6 +157,8 @@ export function ShellRightPanel({
 
 function RightPanelBody({
   activeTab,
+  opened,
+  onOpenAnyway,
   src,
   error,
   theme,
@@ -153,6 +171,9 @@ function RightPanelBody({
   onAskAssistant,
 }: {
   activeTab: AppSurfaceTab | null;
+  /** Whether readiness has admitted this tab (or the operator overrode it). */
+  opened: boolean;
+  onOpenAnyway: () => void;
   src: string | null;
   error: string | null;
   theme: HostyResolvedTheme;
@@ -196,6 +217,29 @@ function RightPanelBody({
             <Play /> Start
           </Button>
         )}
+      </PanelMessage>
+    );
+  }
+
+  if (!opened) {
+    // Reachable, but not confirmed to answer. `degraded` is offered rather than refused: an expired
+    // budget proves nothing about the app, and the operator may know better.
+    if (activeTab.readiness === "degraded") {
+      return (
+        <PanelMessage title={`${activeTab.label} is running, but its readiness is not confirmed yet`}>
+          <p>Core could not confirm that this panel answers. It may still be coming up — or it may need a look.</p>
+          <Button variant="outline" size="sm" className="mt-4" onClick={onOpenAnyway}>
+            Open anyway
+          </Button>
+        </PanelMessage>
+      );
+    }
+
+    return (
+      <PanelMessage title={`${activeTab.label} is starting`}>
+        <p className="flex items-center justify-center gap-2">
+          <LoaderCircle className="h-4 w-4 animate-spin" /> This panel opens when the app answers.
+        </p>
       </PanelMessage>
     );
   }

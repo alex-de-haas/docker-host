@@ -79,6 +79,13 @@ hover open never takes focus and a hover close never returns it to the trigger �
 rail must not pull focus out of the embedded app. A single-page app and an app that is not running
 keep the plain icon behavior: direct launch, or the disabled state tooltip.
 
+A row opens by the readiness of the service that serves its primary page, not by the app's state
+([App Readiness](../app-readiness/feature.md)): while that service is still inside its readiness
+budget the row is held and its tooltip reads "is starting"; a `degraded` reading lets the click
+through — the click is the row's "open anyway"; and a page whose service is alive stays openable
+through a sibling service's outage. A workspace launch follows the same gate, and a route held at
+"starting" resolves itself once the service answers. Nested page links are gated the same way.
+
 A stopped app's row stays in the list — hiding it would say the app is gone rather than down — with
 the row itself disabled and its name greyed. Where a running app's row carries the chevron that
 expands its page list, a stopped one carries **Start** instead: its pages lead nowhere, so the slot

@@ -79,11 +79,21 @@ export function EmptyState({ icon: Icon, title, description, iconClassName }: { 
   );
 }
 
-export function StatusBadge({ value }: { value: string }) {
+// `health` composes the app's health fold onto its lifecycle state the way Aspire's dashboard does —
+// `running · degraded` — with the *health's* tone, since that is the news. Omitted, or `healthy`,
+// and the badge is the lifecycle state alone.
+export function StatusBadge({ value, health }: { value: string; health?: string | null }) {
+  if (health && health !== "healthy" && health !== "stopped" && health !== "unknown") {
+    return <StatusBadge value={`${value} · ${health}`} />;
+  }
+
   const normalized = value.toLowerCase();
   // "healthy" is matched exactly so it does not also light up on "unhealthy" (substring match).
-  const running = normalized.includes("running") || normalized.includes("ok") || normalized.includes("ready") || normalized === "healthy";
+  // A composed value ("running · degraded") takes its tone from the health half: attention and
+  // transitional are tested before `running` so the health word wins when both are present.
   const attention = normalized.includes("error") || normalized.includes("failed") || normalized.includes("unknown") || normalized.includes("offline") || normalized.includes("unhealthy") || normalized.includes("degraded");
+  const running = !attention && !normalized.includes("starting") && !normalized.includes("stopping") && !normalized.includes("restarting") &&
+    (normalized.includes("running") || normalized.includes("ok") || normalized.includes("ready") || normalized === "healthy");
   // A transitional state is neither good news nor bad news, so it gets its own tone and a pulsing dot
   // rather than the neutral grey a terminal "stopped" gets — the point is that something is happening.
   // Container health also reports "starting" (HEALTHCHECK pending), which reads correctly here too, so

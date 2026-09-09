@@ -394,7 +394,9 @@ internal sealed record AppRecord(
     // a pre-0.74 Core), so the boot backfill re-projects from the reviewed manifest copy whenever this
     // stamp differs from the running build — see BackfillManifestProjectionsAsync. Null on legacy
     // records, which therefore backfill once. Additive/nullable, so no AppStateDocument schema bump.
-    string? NormalizedBy = null);
+    string? NormalizedBy = null,
+    // See AppHealthSummary. Additive and nullable: no AppStateDocument schema bump.
+    AppHealthSummary? Health = null);
 
 // Well-known InstallOrigin values. Null on the record means a user/operator install; only the
 // distribution bootstrap stamps an explicit origin today.
@@ -552,18 +554,42 @@ internal sealed record AppDependencyEndpointContract(string EndpointKey, string 
 // optional one is a warning; an optional one that was never installed is neither) — see
 // docs/features/cross-app-dependencies/feature.md. Attached by the lifecycle service, which owns the
 // projection, because the record alone cannot know anything about the OTHER app.
+// `Running` is the provider's lifecycle fact and stays exactly that. `Healthy` is whether the
+// endpoints this dependency consumes answer — each read from the provider's service that owns it,
+// never from the provider's app-level fold, so a dead sidecar there does not read as an outage here.
+// `Ready` is the computed pair (`Running && Healthy`): what a dependent should wait on
+// (app-readiness), and not a third independently written axis.
 internal sealed record AppDependencySummary(
     string AppId,
     string? Version,
     bool Required,
     bool Installed,
     bool Running,
-    IReadOnlyList<AppDependencyEndpointSummary> Endpoints);
+    IReadOnlyList<AppDependencyEndpointSummary> Endpoints,
+    bool Healthy = false,
+    bool Ready = false);
 
 // A wired endpoint of a dependency plus whether it currently resolves to a URL. Unresolved means the
 // consumer's HOSTY_DEPENDENCY_{ALIAS}_URL is silently skipped at injection — usually a typo'd key.
 // Always false while the dependency is not installed.
 internal sealed record AppDependencyEndpointSummary(string EndpointKey, string Alias, bool Resolved);
+
+// The app's health as Core last observed it, persisted on the record so the list path can carry it
+// without probing (core-read-path-caching removed probes from reads on purpose). `Status` is the
+// per-app fold — healthy / starting / degraded / unhealthy / stopped / unknown — and it exists for the
+// badge only; a consumer that needs to know whether an *endpoint* answers reads the service that owns
+// it, never the fold, or a dead sidecar would close a working endpoint. Written by the start verb
+// (its readiness wait) and by the supervisor's observation; cleared by stop, failed start, removal
+// and install, so it is meaningful only while the app is up. See docs/features/app-readiness/.
+internal sealed record AppHealthSummary(
+    string Status,
+    IReadOnlyList<AppServiceHealthSummary> Services,
+    DateTimeOffset ObservedAt);
+
+// One service's liveness (`running` / `exited` / `stopped`) and probe result (`healthy` /
+// `unhealthy` / `starting`, or null when nothing probes it — a service with no published endpoint
+// and no declared healthcheck, which reads as ready the moment its process is alive).
+internal sealed record AppServiceHealthSummary(string Service, string Status, string? Health);
 
 internal sealed record AppEndpointContract(
     string Key,
@@ -769,7 +795,9 @@ internal sealed record AppInterfaceContract(string Key, string? EndpointKey, str
 // One declared interface endpoint resolved for clients: the declaration key, its path, and the
 // ready-to-call URL on the app's resolved endpoint origin (null while the app has no endpoint URL
 // yet, e.g. before its first start assigns ports).
-internal sealed record AppInterfaceSummary(string Key, string Path, string? Url);
+// `Service` names the service the interface's endpoint belongs to, so a client that is about to
+// call the interface (the MCP tool catalog) can gate on that service's health rather than on the app.
+internal sealed record AppInterfaceSummary(string Key, string Path, string? Url, string? Service = null);
 
 // Normalized marketplace/catalog display metadata, denormalized onto the app record and surfaced on
 // the summary (like AppUiContract). Normalization is best-effort and applied *after* the manifest
@@ -981,7 +1009,9 @@ internal sealed record AppSummary(
     // ready-to-call URL where possible, so a client can gate a feature on an installed provider —
     // e.g. Shell shows its assistant UI only when a running app declares "ai-gateway". Null when the
     // manifest declares none. Additive/nullable.
-    IReadOnlyDictionary<string, IReadOnlyList<AppInterfaceSummary>>? Interfaces = null)
+    IReadOnlyDictionary<string, IReadOnlyList<AppInterfaceSummary>>? Interfaces = null,
+    // The app's last-observed health (see AppHealthSummary); null until the first start or observation.
+    AppHealthSummary? Health = null)
 {
     // The effective Development Mode for a runtime: the operator's explicit toggle if set, else the
     // manifest profile's `development` flag as the default. Always false for a non-source runtime
@@ -1031,7 +1061,8 @@ internal sealed record AppSummary(
                 Path: item.Path,
                 EntryPath: item.Path,
                 EmbeddedUrl: BuildUiUrl(ResolveEndpointUrl(endpoints, item.EndpointKey ?? ui.EndpointKey), item.Path),
-                IconUrl: ResolveAssetUrl(item.IconAsset, app.Id, assetVersion)))
+                IconUrl: ResolveAssetUrl(item.IconAsset, app.Id, assetVersion),
+                Service: ResolveEndpoint(endpoints, item.EndpointKey ?? ui.EndpointKey)?.Service))
             .ToArray() ?? [];
 
         // A surface with no reachable endpoint yields no URL, which is how a stopped app's tab knows
@@ -1042,7 +1073,8 @@ internal sealed record AppSummary(
                 : new AppSurfaceSummary(
                     Label: surface.Label ?? fallbackLabel,
                     Path: surface.Path,
-                    EmbeddedUrl: BuildUiUrl(ResolveEndpointUrl(endpoints, surface.EndpointKey ?? ui!.EndpointKey), surface.Path));
+                    EmbeddedUrl: BuildUiUrl(ResolveEndpointUrl(endpoints, surface.EndpointKey ?? ui!.EndpointKey), surface.Path),
+                    Service: ResolveEndpoint(endpoints, surface.EndpointKey ?? ui!.EndpointKey)?.Service);
 
         var settingsSurface = Surface(ui?.Settings, app.DisplayName);
         var panelSurfaces = (ui?.Panels ?? [])
@@ -1095,7 +1127,8 @@ internal sealed record AppSummary(
             ResolveAssetUrl(app.AgentSkillFile, app.Id, assetVersion),
             app.FeedsUrl,
             app.FollowedFeedId,
-            Interfaces: BuildInterfaceSummaries(app.Interfaces, endpoints));
+            Interfaces: BuildInterfaceSummaries(app.Interfaces, endpoints),
+            Health: app.Health);
     }
 
     private static IReadOnlyDictionary<string, IReadOnlyList<AppInterfaceSummary>>? BuildInterfaceSummaries(
@@ -1114,7 +1147,8 @@ internal sealed record AppSummary(
                 .Select(declaration => new AppInterfaceSummary(
                     declaration.Key,
                     declaration.Path,
-                    BuildUiUrl(ResolveEndpointUrl(endpoints, declaration.EndpointKey), declaration.Path)))
+                    BuildUiUrl(ResolveEndpointUrl(endpoints, declaration.EndpointKey), declaration.Path),
+                    ResolveEndpoint(endpoints, declaration.EndpointKey)?.Service))
                 .ToArray();
         }
 
@@ -1248,31 +1282,36 @@ internal sealed record AppSummary(
             .ToArray();
 
     private static string? ResolveEndpointUrl(IReadOnlyList<AppEndpointContract> endpoints, string? endpointKey)
+        => ResolveEndpointOpenUrl(ResolveEndpoint(endpoints, endpointKey));
+
+    // The endpoint a UI key resolves to: the exact key when it has a URL, else a `<service>.<key>`
+    // match, else the public endpoint, else any endpoint that can be opened. The URL projection above
+    // and the owning-service projection (navigation / surfaces) read the same choice, so a page's
+    // address and the service whose health gates it can never name two different endpoints.
+    private static AppEndpointContract? ResolveEndpoint(IReadOnlyList<AppEndpointContract> endpoints, string? endpointKey)
     {
         if (!string.IsNullOrWhiteSpace(endpointKey))
         {
             var exact = endpoints.FirstOrDefault(endpoint =>
                 string.Equals(endpoint.Key, endpointKey, StringComparison.Ordinal) &&
                 !string.IsNullOrWhiteSpace(endpoint.Url));
-            var exactUrl = ResolveEndpointOpenUrl(exact);
-            if (exactUrl is not null)
+            if (exact is not null && ResolveEndpointOpenUrl(exact) is not null)
             {
-                return exactUrl;
+                return exact;
             }
 
             var suffix = $".{endpointKey}";
             var compatible = endpoints.FirstOrDefault(endpoint =>
                 endpoint.Key.EndsWith(suffix, StringComparison.Ordinal) &&
                 HasEndpointOpenUrl(endpoint));
-            var compatibleUrl = ResolveEndpointOpenUrl(compatible);
-            if (compatibleUrl is not null)
+            if (compatible is not null)
             {
-                return compatibleUrl;
+                return compatible;
             }
         }
 
-        return ResolveEndpointOpenUrl(endpoints.FirstOrDefault(endpoint => endpoint.Public && HasEndpointOpenUrl(endpoint))) ??
-            ResolveEndpointOpenUrl(endpoints.FirstOrDefault(HasEndpointOpenUrl));
+        return endpoints.FirstOrDefault(endpoint => endpoint.Public && HasEndpointOpenUrl(endpoint)) ??
+            endpoints.FirstOrDefault(HasEndpointOpenUrl);
     }
 
     private static bool HasEndpointOpenUrl(AppEndpointContract endpoint)
@@ -1311,10 +1350,13 @@ internal sealed record AppSummary(
 // the value of a secret setting is only served by the explicit per-key reveal endpoint.
 internal sealed record AppSettingSummary(string Key, string Type, string? Value, bool Secret, bool Required = false, string? Label = null, string? Description = null, bool HasValue = false);
 
-internal sealed record AppNavigationSummary(string Label, string Path, string? EntryPath, string? EmbeddedUrl, string? IconUrl = null);
+// `Service` names the service that serves this page — the one whose health decides whether the
+// page can be opened. Null when the endpoint the page resolves to names no service.
+internal sealed record AppNavigationSummary(string Label, string Path, string? EntryPath, string? EmbeddedUrl, string? IconUrl = null, string? Service = null);
 
 /// <summary>A placed surface as a client consumes it: what to call the tab, and what to embed.</summary>
-internal sealed record AppSurfaceSummary(string? Label, string Path, string? EmbeddedUrl);
+// `Service` as on AppNavigationSummary: which service's health gates embedding this surface.
+internal sealed record AppSurfaceSummary(string? Label, string Path, string? EmbeddedUrl, string? Service = null);
 
 internal sealed record AppMountSummary(
     string Key,

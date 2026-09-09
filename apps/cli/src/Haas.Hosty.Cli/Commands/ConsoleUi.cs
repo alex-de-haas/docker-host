@@ -70,6 +70,25 @@ internal static class ConsoleUi
         };
     }
 
+    /// <summary>
+    /// The lifecycle state composed with the app's health fold — <c>running · degraded</c> — the way
+    /// Shell's badge and Aspire's dashboard show it, taking the health's colour since that is the news.
+    /// A healthy, absent, or non-informative fold leaves the state alone.
+    /// </summary>
+    public static string StateWithHealth(string? state, string? health)
+    {
+        if (string.IsNullOrWhiteSpace(state) || string.IsNullOrWhiteSpace(health) ||
+            health is "healthy" or "stopped" or "unknown" ||
+            !string.Equals(state, "running", StringComparison.OrdinalIgnoreCase))
+        {
+            return State(state);
+        }
+
+        // Colour by the health word; the state word rides along uncoloured.
+        var colored = State(health);
+        return $"{Markup.Escape(state)} · {colored}";
+    }
+
     /// <summary>Colored yes/no where <c>true</c> is the desirable state (green) and <c>false</c> is grey.</summary>
     public static string Enabled(bool value) => value ? "[green]yes[/]" : "[grey]no[/]";
 

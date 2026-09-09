@@ -66,6 +66,10 @@ export type CoreAppDependency = {
   required: boolean;
   installed: boolean;
   running: boolean;
+  // Whether the endpoints this app consumes are served by provider services that answer, and the
+  // computed `running && healthy` a dependent should wait on (app-readiness). Absent on an older Core.
+  healthy?: boolean;
+  ready?: boolean;
   endpoints?: CoreAppDependencyEndpoint[];
 };
 
@@ -215,6 +219,8 @@ export type CoreReassignResult = {
 export type CoreAppSurface = {
   label?: string | null;
   path: string;
+  // The service that serves this surface — the one whose health decides whether it can be opened.
+  service?: string | null;
   // Null while the app is stopped or its endpoint has no URL yet — the tab exists, and says so
   // instead of embedding nothing.
   embeddedUrl?: string | null;
@@ -223,6 +229,8 @@ export type CoreAppSurface = {
 export type CoreNavigationItem = {
   label: string;
   path: string;
+  // As on CoreAppSurface: which service's health gates opening this page.
+  service?: string | null;
   entryPath?: string | null;
   embeddedUrl?: string | null;
   // Core-origin-relative URL for this page link's manifest-declared icon (manifest-level app assets),
@@ -242,6 +250,10 @@ export type CoreApp = {
   autostart?: boolean | null;
   operationStatus: string;
   runtimeState: string;
+  // The app's health as Core last observed it (app-readiness): the per-app fold for the badge, and
+  // per-service liveness + probe results — which is what decides whether an endpoint can be opened.
+  // Null until the first start or observation, and cleared while the app is stopped.
+  health?: CoreAppHealth | null;
   lastOperation?: string | null;
   lastError?: string | null;
   capabilities: string[];
@@ -551,6 +563,23 @@ export type CoreLogsResponse = {
   runId: string;
   ring: string;
   records: CoreLogRecord[];
+};
+
+// The persisted reading (see CoreApp.health). `status` folds the services — healthy / starting /
+// degraded / unhealthy / stopped / unknown — and exists for the badge only: a consumer deciding
+// whether an *endpoint* answers reads the service that owns it, or a dead sidecar closes a working one.
+export type CoreAppHealth = {
+  status: string;
+  services: CoreAppServiceHealth[];
+  observedAt: string;
+};
+
+// One service: liveness (`running` / `exited` / `stopped`) and its probe result (`healthy` /
+// `unhealthy` / `starting`), or null when nothing probes it — which reads as ready once alive.
+export type CoreAppServiceHealth = {
+  service: string;
+  status: string;
+  health?: string | null;
 };
 
 export type CoreRuntimeServiceHealth = {
@@ -898,6 +927,8 @@ export type AppPageLink = {
   label: string;
   path: string;
   redirectUri: string;
+  // The service that serves the page; its health gates the launch. Null when Core named none.
+  service?: string | null;
   // Core-origin-relative icon URL for this page link, or null to fall back to a Lucide icon.
   iconUrl?: string | null;
 };
