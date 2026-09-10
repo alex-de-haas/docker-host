@@ -1,7 +1,7 @@
 # AI Gateway
 
 Created: 2026-08-09
-Updated: 2026-09-07
+Updated: 2026-09-10
 
 The Hosty assistant: an optional, removable system app (`hosty.ai-gateway`) hosting admin-only
 operator chat sessions on a host-resident agent harness, plus the Shell surface that renders them.
@@ -302,10 +302,14 @@ gateway restart.
 - The panel is a right-anchored dialog: streaming deltas with a typing indicator, the transcript
   rebuilt from the event log, inline approval cards with Allow/Deny (resolved ones collapse to a
   badge), a status chip, and a New-session reset.
+- Notices and inline errors wrap long unbroken identifiers within their cards, including MCP
+  transport type names, so diagnostics do not introduce horizontal scrolling in the transcript.
 - **Approval cards are typed by what is being asked**, because an operator approves consequences,
   not JSON. A shell command shows the model's own description as its heading over the command in a
   non-wrapping block — a digest or a long path broken across lines is a command the operator would
-  have to reassemble before approving — and a Codex command adds its working directory. An edit
+  have to reassemble before approving — and a Codex command adds its working directory. The command
+  block reserves bottom padding for overlay scrollbars and a separate gap before the working
+  directory, whose long paths wrap within the card. An edit
   shows the text that leaves and the text that arrives, a write its content, a Codex file change its
   paths and diff — or the root it asks write access under, when the request carries no change list.
   An app tool names the app's server and the tool, with its arguments listed by name
