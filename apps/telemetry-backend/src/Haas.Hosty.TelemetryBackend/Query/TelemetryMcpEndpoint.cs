@@ -42,8 +42,9 @@ internal static class TelemetryMcpEndpoint
                     + "clamped: each one reports the window and row cap that produced it and whether "
                     + "it was truncated. A truncated result means 'there was more', not 'that is all'.",
             }),
-            // A notification carries no id and must not be answered.
-            "notifications/initialized" => Results.Ok(),
+            // Streamable HTTP acknowledges notifications with 202 and no body. An empty 200
+            // is not a valid transport response and can close the client during initialization.
+            "notifications/initialized" => Results.StatusCode(StatusCodes.Status202Accepted),
             "tools/list" => Result(id, new JsonObject { ["tools"] = Tools() }),
             "tools/call" => Call(id, body?["params"], query),
             _ => Error(id, -32601, $"Method not found: {method}"),

@@ -1,7 +1,7 @@
 # Telemetry Over MCP
 
 Created: 2026-08-17
-Updated: 2026-09-01
+Updated: 2026-09-10
 
 The fleet's **stored** telemetry — searchable logs, traces, and resource metrics — is an MCP
 interface an agent can call, behind a credential the query API did not have before this shipped.
@@ -70,6 +70,11 @@ of that rule here is the copy that would go stale.
 
 `interfaces.mcp` points at `/api/mcp` on the backend's query endpoint. Four tools, all declaring
 `readOnlyHint: true` — without it the connector's fail-closed filter would export nothing at all.
+
+The initialization notification receives HTTP 202 with no body, as required by the
+[Streamable HTTP transport](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports).
+An empty HTTP 200 response violates that contract and can close the client's transport during
+the handshake, before tools become available.
 
 - **`search_logs`** — time range, minimum severity, app set, substring.
 - **`list_traces`** — recent traces, newest first.
@@ -156,6 +161,8 @@ the connector then exports these tools like any other app's.
 
 ## Testing Expectations
 
+- **Initialization transport acknowledgement.** Executing the initialized notification's HTTP
+  result returns 202 with no response body or content type.
 - **Auth, as pairs.** Every refusal is asserted beside an acceptance, since a gate that refuses
   everything satisfies each negative alone: an app identity accepted and named; a delegated token
   accepted for this audience and refused for another; an expired one refused and a live one accepted;
