@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import { LoaderCircle, Play, Settings2 } from "lucide-react";
+import { LoaderCircle, Play, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { HostyResolvedTheme, HostyThemePreference } from "../types";
 import { EmbeddedAppFrame } from "../embedding/embedded-app-frame";
@@ -155,7 +155,7 @@ function SettingsMessage({ title, children }: { title: string; children: React.R
   return (
     <div className="flex min-h-64 items-center justify-center rounded-lg border bg-card">
       <div className="max-w-md px-6 py-10 text-center">
-        <Settings2 className="mx-auto mb-3 h-6 w-6 text-muted-foreground" />
+        <Settings className="mx-auto mb-3 h-6 w-6 text-muted-foreground" />
         <div className="font-medium">{title}</div>
         {children}
       </div>

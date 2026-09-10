@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { CoreRequestError } from "../core-api";
 import { cn } from "@/lib/utils";
 import {
   DEFAULT_HOST_SETTINGS_TAB,
@@ -9,6 +10,7 @@ import {
   isNonAdminHostSettingsTab,
 } from "../shell-routes";
 import type {
+  CoreApp,
   CoreGlobalMount,
   CoreSettingsState,
   HostSettingsTab,
@@ -16,7 +18,6 @@ import type {
 } from "../types";
 import { AppSettingsTabPanel } from "./settings-app-section";
 import type { AppSurfaceTab } from "../surfaces/app-surface-tabs";
-import { PageHeader } from "../ui";
 import { SettingsCoreSection } from "./settings-core-section";
 import { SettingsIngressSection } from "./settings-ingress-section";
 import { SettingsMountsSection } from "./settings-mounts-section";
@@ -50,6 +51,8 @@ export function SettingsPage({
   coreSettingsError,
   onSaveCoreSettings,
   globalMounts,
+  apps,
+  onRefresh,
   canManageApps,
   onSaveMount,
   onDeleteMount,
@@ -67,6 +70,8 @@ export function SettingsPage({
   coreSettingsError: string | null;
   onSaveCoreSettings: (values: Record<string, string>) => Promise<void>;
   globalMounts: CoreGlobalMount[];
+  apps: CoreApp[];
+  onRefresh: () => Promise<void>;
   canManageApps: boolean;
   onSaveMount: (input: { name: string; hostPath: string; mode?: string; description?: string | null }) => Promise<void>;
   onDeleteMount: (name: string, force?: boolean) => Promise<void>;
@@ -86,14 +91,7 @@ export function SettingsPage({
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Settings"
-        description={
-          canManageApps
-            ? "Users, Core behavior, public ingress, and host folders shared with apps."
-            : "Credentials for clients that cannot open a browser."
-        }
-      />
+      <h1 className="sr-only">Settings</h1>
 
       <div className="flex gap-1 border-b">
         {visibleTabs.map((tab) => (
@@ -172,6 +170,17 @@ export function SettingsPage({
       {canManageApps && resolvedTab === "mounts" && (
         <SettingsMountsSection
           globalMounts={globalMounts}
+          apps={apps}
+          onRefresh={onRefresh}
+          onSaveBindings={async (name, change) => {
+            try {
+              await sendCsrfJson(`${coreOrigin}/api/apps/${encodeURIComponent(change.appId)}/mounts/shared/${encodeURIComponent(name)}`, { keys: change.keys, expectedKeys: change.expectedKeys }, "PUT");
+            } catch (error) {
+              if (error instanceof CoreRequestError && error.status === 404 && !error.code)
+                throw new Error("Update Core to 0.100.0 or later to manage shared mount assignments here.");
+              throw error;
+            }
+          }}
           canManageApps={canManageApps}
           onSave={onSaveMount}
           onDelete={onDeleteMount}

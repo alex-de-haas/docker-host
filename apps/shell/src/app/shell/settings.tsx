@@ -55,21 +55,24 @@ export function PublicOriginInput({ setting, endpoint, value, disabled, onChange
   );
 }
 
-export function SettingInput({ setting, value, disabled, onChange, onReveal }: { setting: CoreInstallSetting | CoreSetting; value: string | null; disabled?: boolean; onChange: (value: string) => void; onReveal?: () => Promise<string | null> }) {
+export function SettingInput({ setting, value, disabled, onChange, onReveal, stacked = false, unit }: { setting: CoreInstallSetting | CoreSetting; value: string | null; disabled?: boolean; onChange: (value: string) => void; onReveal?: () => Promise<string | null>; stacked?: boolean; unit?: string | null }) {
   const controlId = `setting-${setting.key}`;
   const label = setting.label?.trim() || formatSettingLabel(setting.key);
   const description = setting.description?.trim();
   return (
-    <div className="grid gap-2 sm:grid-cols-[1fr_2fr] sm:items-center sm:gap-4">
+    <div className={cn("grid gap-2", !stacked && "sm:grid-cols-[1fr_2fr] sm:items-center sm:gap-4")}>
       <div className="flex min-w-0 items-center gap-2">
-        <Label htmlFor={controlId} className="min-w-0 truncate" title={setting.key}>
+        <Label htmlFor={controlId} className={cn("min-w-0", stacked ? "leading-snug" : "truncate")} title={setting.key}>
           {label}
         </Label>
         {setting.required && <Badge variant="secondary">required</Badge>}
         {description && <SettingDescriptionHint description={description} />}
       </div>
-      <div className="min-w-0">
-        <SettingControl controlId={controlId} setting={setting} value={value} disabled={disabled} onChange={onChange} onReveal={onReveal} />
+      <div className="flex min-w-0 items-center gap-2">
+        <div className="min-w-0 flex-1">
+          <SettingControl controlId={controlId} setting={setting} value={value} disabled={disabled} onChange={onChange} onReveal={onReveal} />
+        </div>
+        {unit && <span className="shrink-0 text-xs text-muted-foreground">{unit}</span>}
       </div>
     </div>
   );

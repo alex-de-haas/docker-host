@@ -36,13 +36,12 @@ public sealed class AppUpdateSweepServiceTests
         Assert.Equal(pending?.PlanDigest, summary.UpdateCheck.PlanDigest);
 
         // It also names the target that plan resolves to, so a client can say *which* version is
-        // available without fetching the plan. These manifests declare no compiled artifact and no
-        // source, so there is nothing to name beyond the version — and a probe that resolved nothing
-        // must leave the field absent rather than fill it with a placeholder.
+        // available without fetching the plan. Docker candidates include the successfully resolved
+        // image revision; no source commit is invented for an image-only app.
         Assert.Equal("1.1.0", summary.UpdateCheck.TargetVersion);
         Assert.Equal(pending?.TargetVersion, summary.UpdateCheck.TargetVersion);
         Assert.Null(summary.UpdateCheck.TargetSourceCommit);
-        Assert.Null(summary.UpdateCheck.TargetArtifactDigests);
+        Assert.Equal("sha256:" + new string('a', 64), summary.UpdateCheck.TargetArtifactDigests?["app"]);
 
         var status = fixture.Sweep.Status;
         Assert.False(status.Running);
@@ -442,9 +441,12 @@ public sealed class AppUpdateSweepServiceTests
         public DateTimeOffset UtcNow => DateTimeOffset.UtcNow;
     }
 
-    private sealed class NoopDockerRuntimeAdapter : IAppRuntimeAdapter
+    private sealed class NoopDockerRuntimeAdapter : IAppRuntimeAdapter, IImageDigestResolver
     {
         public string Type => "docker";
+
+        public Task<string?> ResolveRemoteDigestAsync(RuntimeDockerImage image, CancellationToken cancellationToken = default)
+            => Task.FromResult<string?>("sha256:" + new string('a', 64));
 
         public Task<AppRuntimeStartResult> StartAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
             => Task.FromResult(new AppRuntimeStartResult("running", []));

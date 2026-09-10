@@ -1,7 +1,7 @@
 # Marketplace System App
 
 Created: 2026-06-25
-Updated: 2026-07-25
+Updated: 2026-09-10
 
 ## Description
 
@@ -131,6 +131,19 @@ Marketplace supports a Docker runtime and a Core-managed `dev` local-command run
 - [Shell Access And System Apps](../shell-access-and-system-apps.md)
 - [Marketplace As A System App idea](../../ideas/marketplace-system-app.md)
 
+Marketplace uses the SDK identity bridge in both Docker and DEV runtimes. Its launch-code exchange
+survives React development effect replay, so opening it through Shell establishes the administrator
+session before the reloaded storefront reads the catalog.
+
+The storefront renders through the SDK bridge's `renderState` callback. While identity recovers it
+shows one session-loading state and sends no catalog requests. A terminal recovery failure shows one
+message with a sign-in link or retry action. Once the session is active, catalog loading has its own
+single indicator. Source metadata and diagnostics appear only after a real catalog response;
+a fetch failure never fabricates an unconfigured source or an empty catalog. HTTP 401/403 responses
+hide a previously loaded catalog, while a transient catalog-fetch error can retain the last loaded
+cards. Refresh after an expired session restarts identity recovery. A ready but empty catalog and a
+search with no matches have distinct empty states.
+
 ## Testing Expectations
 
 - **Route authorization.** Every API route on the Marketplace origin is covered by a test that calls
@@ -157,3 +170,10 @@ Marketplace supports a Docker runtime and a Core-managed `dev` local-command run
   sending null, bounds the feed id, and posts only to the resolved embedding origin — never a
   wildcard, and never when unembedded. The remembered parent origin survives a self-reload that
   rewrites the referrer to Marketplace's own origin.
+
+- Browser API tests preserve 401/403 status, non-JSON server failures, network errors and aborts,
+  while distinguishing an actual empty response from a source configuration diagnostic.
+- Verify the Core-managed DEV launch through Shell, including a populated catalog after identity
+  recovery; SDK tests cover development effect replay and terminal recovery states.
+- Rendered session-gate tests assert a single loading or terminal state and no premature catalog
+  loading/source placeholders; active identity proceeds to the storefront loading state.

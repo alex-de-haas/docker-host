@@ -1,7 +1,7 @@
 # Global (Shared) Host-Path Mounts
 
 Created: 2026-06-30
-Updated: 2026-08-04
+Updated: 2026-09-10
 
 ## Goal
 
@@ -141,6 +141,13 @@ changes unless an operator deliberately restricts a shared folder to read-only l
   - `POST /api/global-mounts` → upsert by `name` (`{ name, hostPath, mode?, description? }`).
   - `DELETE /api/global-mounts/{name}` → delete; `409 global_mount_in_use` when `usedBy > 0` unless
     `?force=true`.
+- `PUT /api/apps/{appId}/mounts/shared/{name}` (and its `/control/v1` mirror) replaces only one
+  library entry's references in one app. Body: `{ keys: ["catalogRoots"], expectedKeys: [] }`.
+  Both arrays are required; empty `keys` detaches that shared mount. The current reference keys must
+  match `expectedKeys`, otherwise Core returns `409 app_mount_bindings_changed`. The operation runs
+  under the app lifecycle lock and merges from the current registry record, preserving other shared
+  and inline bindings. The existing slot, cardinality, label and path validation runs before the
+  atomic write. It saves configuration without stopping or restarting the app.
 - All new DTOs registered in `CoreJsonSerializerContext` (Native AOT).
 
 ## Clients
@@ -149,13 +156,31 @@ changes unless an operator deliberately restricts a shared folder to read-only l
 
 - **Shared mounts section** on the host **Settings** page (`/settings?tab=mounts`, admin-only): a
   table of `Name · Host path · Mode · Used by · actions` with an **Add mount** button in the
-  section header. Add and edit each open a modal dialog (`name`, `mode ro/rw`, `host path`,
+  toolbar above the table. The tab label identifies the page, so the content omits the repeated
+  visible title and description while retaining a screen-reader heading.
+  Add and edit each open a modal dialog (`name`, `mode ro/rw`, `host path`,
   optional `description`); the name identifies the entry in Core, so the edit dialog shows it
   read-only. A save rejected by Core surfaces inline in the dialog; deleting an in-use entry
   surfaces Core's rejection above the table and arms the same trash button for a force delete.
   The table flags a `ro` entry with a lock icon and a registered path that does not currently
   exist with an advisory warning icon. The library list is loaded into shell state so the per-app
   picker can reuse it.
+- **Expandable usage.** The mount name toggles its app bindings below the library row. Each binding
+  shows the app, runtime, declared slot/service, configured path and effective mode. Docker paths
+  use `/mnt/{key}/{name}`; local-command paths use the host folder. The slot and library's read-only
+  caps both apply. An unattached folder offers Manage apps from its empty usage list.
+- **Manage apps.** The usage section opens one searchable dialog listing installed apps with mount
+  slots. Checkboxes assign the shared folder to several apps or slots at once, or remove/move its
+  existing references. A single-binding slot occupied by another folder and a colliding inline
+  label cannot be silently replaced. Removing a required slot's last binding shows a start warning.
+  The editor retains its reviewed baseline during live app refreshes. Saves change only apps whose
+  selection differs, report errors per app, and retain successful writes. Retry submits only the
+  remaining changes; Reload assignments discards unsaved selections and takes a fresh baseline.
+  Running apps expose `restartRequired` when effective mounts differ from the applied start snapshot;
+  Dashboard offers a Restart action. Library path/mode edits are included, and the comparison survives
+  Core restarts. No-op edits and reverts clear the difference. Stopped apps pick up configuration on next start.
+  Closing an unsaved editor changes no bindings. Older Core versions receive an explicit upgrade
+  message when the assignment endpoint is unavailable.
 - **Consolidated per-app Settings dialog.** Per-app configuration lives in one tabbed dialog:
   **App settings** (non-public-origin settings), **Public origins** (when the app has
   public-origin-capable endpoints), **Mounts** (when the app declares `externalMounts`). Each tab
@@ -231,3 +256,13 @@ changes how the operator supplies the path, not what the app is allowed to recei
 - Shell: Settings tab visibility by manifest data, source toggle global/local, Shared mounts CRUD
   through the add/edit dialogs, in-use delete rejection + force delete.
 - CLI: `storage` commands and `apps mounts set --ref`.
+
+- Shared assignment endpoint: move/add/remove one entry's references, preserve unrelated global and
+  inline bindings, keep running apps running, reject missing request arrays/unknown entries/slots,
+  enforce single-slot limits atomically, and reject stale edits to the same mount while preserving
+  concurrent changes to other mounts. Browser routes require an admin session and CSRF; the control
+  mirror requires the control secret.
+- Assignment editor: match references rather than labels/paths; compute diffs and runtime paths;
+  respect both read-only caps and occupied-slot conflicts; retain partial successes and retry only
+  failures, including failures with empty error messages. Verify selection/cancellation and narrow
+  viewport layout through the Core-managed Shell without changing real app bindings.

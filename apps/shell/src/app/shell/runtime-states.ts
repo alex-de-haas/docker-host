@@ -21,3 +21,25 @@ export function isAppBusy(state?: string | null) {
 export function isAppIdle(state?: string | null) {
   return state === "stopped";
 }
+
+export type AppStateFilter = "all" | "running" | "transitioning" | "attention" | "updates";
+
+/** Shared by Dashboard counts and visible rows so each count describes its own result set. */
+export function matchesAppStateFilter(
+  app: { runtimeState?: string | null; operationStatus?: string | null; lastError?: string | null; restartRequired?: boolean; updateCheck?: { updateAvailable?: boolean; error?: string | null } | null },
+  filter: AppStateFilter,
+): boolean {
+  switch (filter) {
+    case "all": return true;
+    case "running": return isAppUp(app.runtimeState);
+    case "transitioning": return isAppBusy(app.runtimeState);
+    case "updates": return Boolean(app.updateCheck?.updateAvailable);
+    case "attention": return Boolean(app.restartRequired || app.updateCheck?.error || app.lastError || app.operationStatus === "failed" || app.runtimeState === "unknown");
+  }
+}
+
+/** Name and technical ID are both searchable, independently of the active state filter. */
+export function matchesAppSearch(app: { id: string; displayName: string }, query: string): boolean {
+  const needle = query.trim().toLowerCase();
+  return !needle || app.displayName.toLowerCase().includes(needle) || app.id.toLowerCase().includes(needle);
+}

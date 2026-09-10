@@ -1,7 +1,7 @@
 # Core App Shell
 
 Created: 2026-05-19
-Updated: 2026-09-09
+Updated: 2026-09-10
 
 Hosty Shell is the Core-managed browser UI runtime app. It renders a single authenticated Shell surface backed by Hosty Core APIs; it does not own Core lifecycle logic and it does not reintroduce the retired combined Next.js Host package.
 
@@ -166,6 +166,16 @@ Gateway and external ingress readiness remain target architecture topics for ser
 - [System App Pages](../ideas/system-app-pages.md) - originating design for administrator-only pages.
 - [Marketplace System App](runtime-app-marketplace/feature.md) - the first storefront using the generic system-app and install-intent paths.
 
+## App Icons
+
+Dashboard and sidebar app rows prefer the manifest's `catalogMetadata.icon` image. When that image
+is absent or fails to load, Shell renders the Lucide name declared in `ui.icon`, which Core projects
+as `AppSummary.icon`. Named icons load on demand; missing or unknown names retain the surface's
+generic fallback. This behavior is the same for live development and compiled runtimes.
+
+Image failure state belongs to its URL. A changed URL starts a fresh image load instead of carrying
+a previous failure into the new version's icon.
+
 ## Testing Expectations
 
 Shell has no browser or component-rendering harness: `npm test --workspace @haas/hosty-shell` runs
@@ -190,3 +200,6 @@ Required coverage:
 What the harness cannot reach — JSX wiring, event handling, and anything requiring a live Core session —
 is verified by `npx tsc --noEmit`, `npx eslint`, `npm run build`, and manual checks against a running
 Shell.
+
+- Icon coverage includes manifest-declared names without catalog metadata for both live and compiled
+  runtimes, unknown names, image priority, and recovery after a failed URL changes.

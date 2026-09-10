@@ -147,6 +147,7 @@ internal static class CoreJson
 [JsonSerializable(typeof(AppFeedRequest))]
 [JsonSerializable(typeof(AppDevelopmentModeRequest))]
 [JsonSerializable(typeof(AppMountsRequest))]
+[JsonSerializable(typeof(AppSharedMountsRequest))]
 [JsonSerializable(typeof(GlobalMountUpsertRequest))]
 [JsonSerializable(typeof(AppUpdatePlanRequest))]
 [JsonSerializable(typeof(AppUpdateApplyRequest))]
@@ -247,6 +248,8 @@ internal static class CoreJson
 [JsonSerializable(typeof(AppPendingUpdatePlanResponse))]
 // Reachable via AppSummary/AppsResponse, but rooted explicitly for parity with the other nested DTOs.
 [JsonSerializable(typeof(AppUpdateAvailability))]
+[JsonSerializable(typeof(AppUpdateSnapshot))]
+[JsonSerializable(typeof(AppUpdateBase))]
 [JsonSerializable(typeof(AppDependencySummary))]
 [JsonSerializable(typeof(AppDependencyEndpointSummary))]
 // Reachable via AppRecord/AppSummary; rooted explicitly like every other nested DTO (a body record

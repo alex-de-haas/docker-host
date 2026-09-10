@@ -190,6 +190,21 @@ internal static class LifecycleEndpoints
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
+        app.MapPut("/api/apps/{appId}/mounts/shared/{name}", async (
+            string appId,
+            string name,
+            HttpRequest request,
+            UserDirectoryStore users,
+            IClock clock,
+            CoreLifecycleService lifecycle,
+            AppSharedMountsRequest input,
+            CancellationToken cancellationToken) =>
+            await CoreSessionAuthorization.RequireAdminSessionAsync(
+                request, users, clock,
+                async () => await HandleLifecycleError(() => lifecycle.ConfigureSharedMountsAsync(appId, name, input, cancellationToken)),
+                requireCsrf: true,
+                cancellationToken: cancellationToken));
+
         // Browser twins of the control-API source routes in SourceEndpoints.cs. Let the Shell change
         // an installed app's live source folder (set/clear the local override) with the same admin
         // session + CSRF guard the other mutating app endpoints use. GET reads current source state.
@@ -687,6 +702,17 @@ internal static class LifecycleEndpoints
             await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
                 await HandleLifecycleError(() => lifecycle.ConfigureMountsAsync(appId, input, cancellationToken))));
 
+        app.MapPut("/control/v1/apps/{appId}/mounts/shared/{name}", async (
+            string appId,
+            string name,
+            HttpRequest request,
+            ControlSecret secret,
+            CoreLifecycleService lifecycle,
+            AppSharedMountsRequest input,
+            CancellationToken cancellationToken) =>
+            await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
+                await HandleLifecycleError(() => lifecycle.ConfigureSharedMountsAsync(appId, name, input, cancellationToken))));
+
         app.MapPost("/control/v1/apps/{appId}/autostart", async (
             string appId,
             HttpRequest request,
@@ -918,6 +944,7 @@ internal static class LifecycleEndpoints
                 "already_installed" => StatusCodes.Status409Conflict,
                 // Same shape: the write is well-formed, but another surface owns the value right now.
                 "public_origin_managed" => StatusCodes.Status409Conflict,
+                "app_mount_bindings_changed" => StatusCodes.Status409Conflict,
                 _ => StatusCodes.Status400BadRequest,
             };
             return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), statusCode: statusCode);

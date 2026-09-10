@@ -2,7 +2,7 @@
 
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Archive, Database, FileText, FolderGit2, HardDrive, Info, LoaderCircle, Lock, Plus, Radio, RefreshCw, Rss, Settings2, Sparkles, Trash2, TriangleAlert, Upload } from "lucide-react";
+import { Archive, Database, FileText, FolderGit2, HardDrive, Info, LoaderCircle, Lock, Plus, Radio, RefreshCw, Rss, Settings, Sparkles, Trash2, TriangleAlert, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -111,7 +111,7 @@ export function AppDetailsDialog({
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-3xl">
+      <DialogContent className={view === "logs" ? "w-[calc(100%-2rem)] sm:max-w-7xl" : "sm:max-w-3xl"}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <span className="min-w-0 truncate">{detailTitle(view)} · {app.displayName}</span>
@@ -608,7 +608,7 @@ function SettingsForm({
       </DialogBody>
       <DialogFooter>
         <Button type="submit" disabled={!canManageApps || busyAction === `${app.id}:configure`}>
-          {busyAction === `${app.id}:configure` ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Settings2 className="h-4 w-4" />}
+          {busyAction === `${app.id}:configure` ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Settings className="h-4 w-4" />}
           Save settings
         </Button>
       </DialogFooter>

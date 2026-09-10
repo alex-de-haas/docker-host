@@ -1,12 +1,12 @@
-// Shell's mark, sized for the top strip it now lives in rather than the sidebar header it used
-// to cap. The rail below is navigation and nothing else.
+// Match the navigation's 20px icon slot. The artwork stays 24px for optical alignment;
+// its internal whitespace keeps the visible mark aligned with the icons below.
 export function BrandMark() {
   return (
-    <span className="flex size-6 shrink-0 items-center justify-center">
+    <span className="flex size-5 shrink-0 items-center justify-center">
       <svg
         viewBox="0 0 100 100"
         aria-hidden
-        className="size-6"
+        className="size-6 shrink-0"
         fill="none"
         stroke="currentColor"
         strokeWidth={6}

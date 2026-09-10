@@ -34,7 +34,7 @@ export function ShellTopStrip({
   onBrandClick: () => void;
 }) {
   return (
-    <header className="relative flex h-10 shrink-0 items-center gap-2 border-b bg-sidebar px-2 text-sidebar-foreground">
+    <header className="relative flex h-10 shrink-0 items-center gap-2 border-b bg-sidebar pl-5 pr-2 text-sidebar-foreground">
       <button
         type="button"
         onClick={onBrandClick}
@@ -43,18 +43,18 @@ export function ShellTopStrip({
         className="flex shrink-0 items-center gap-2 rounded-md outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
       >
         <BrandMark />
-        <span className="text-sm font-semibold uppercase">Hosty</span>
+        <span className="hidden text-sm font-semibold uppercase sm:inline">Hosty</span>
       </button>
 
-      <div className="flex-1" />
+      <div className="hidden flex-1 sm:block" />
 
       {/* Centred against the window rather than inside the space left over: the brand and the
           control group are different widths, so centring between them would sit visibly off. Capped
           and truncating so a long app name cannot run under either of them, and click-through so the
           label never swallows a press meant for what is behind it. */}
-      <div className="pointer-events-none absolute left-1/2 flex max-w-[45%] -translate-x-1/2 items-baseline gap-2">
+      <div className="pointer-events-none flex min-w-0 flex-1 items-baseline gap-2 sm:absolute sm:left-1/2 sm:max-w-[45%] sm:-translate-x-1/2">
         <span className="truncate text-sm font-medium">{title}</span>
-        {subtitle && <span className="truncate text-xs text-muted-foreground">{subtitle}</span>}
+        {subtitle && <span className="hidden truncate text-xs text-muted-foreground sm:inline">{subtitle}</span>}
       </div>
 
       <div className="flex items-center gap-1">

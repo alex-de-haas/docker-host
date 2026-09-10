@@ -14,7 +14,7 @@ import {
   LogIn,
   LogOut,
   Play,
-  SlidersHorizontal,
+  Settings,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -76,12 +76,12 @@ export function ShellSidebar({
   return (
     <div className="flex h-full min-h-0 flex-col">
 
-      <nav className={cn("min-h-0 flex-1 overflow-y-auto py-4", compact ? "px-2" : "px-3")} aria-label="Host navigation">
+      <nav className={cn("min-h-0 flex-1 overflow-y-auto py-4 pl-3", compact ? "pr-[11px]" : "pr-3")} aria-label="Host navigation">
         <div className={cn(compact ? "space-y-4" : "space-y-6")}>
           {canManageApps && (
             <NavigationSection title="Host" compact={compact}>
               <SidebarButton compact={compact} active={activeView === "dashboard" && !workspace} icon={Gauge} label="Dashboard" onClick={() => onNavigate("dashboard")} />
-              <SidebarButton compact={compact} active={activeView === "settings"} icon={SlidersHorizontal} label="Settings" onClick={() => onNavigate("settings")} />
+              <SidebarButton compact={compact} active={activeView === "settings"} icon={Settings} label="Settings" onClick={() => onNavigate("settings")} />
             </NavigationSection>
           )}
 
@@ -127,7 +127,7 @@ export function ShellSidebar({
         </div>
       </nav>
 
-      <div className={cn("shrink-0 border-t", compact ? "space-y-2 px-2 py-3" : "space-y-3 p-3")}>
+      <div className={cn("shrink-0 border-t p-3", compact ? "space-y-2" : "space-y-3")}>
         <SidebarFooterAccount compact={compact} coreOrigin={coreOrigin} activeUser={activeUser} />
       </div>
     </div>
@@ -192,7 +192,7 @@ function SidebarButton({
       type="button"
       className={cn(
         "flex min-h-9 w-full min-w-0 items-center gap-2 rounded-md text-sm transition-colors",
-        compact ? "justify-center px-0" : "px-2",
+        "px-2",
         active
           ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
           : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
@@ -211,7 +211,7 @@ function SidebarButton({
 
 function NavigationPlaceholder({ compact, icon: Icon, label }: { compact: boolean; icon: LucideIcon; label: string }) {
   return (
-    <div className={cn("flex min-h-9 min-w-0 items-center gap-2 rounded-md px-2 text-sm text-muted-foreground", compact && "justify-center px-0")} title={label}>
+    <div className="flex min-h-9 min-w-0 items-center gap-2 rounded-md px-2 text-sm text-muted-foreground" title={label}>
       <Icon className="h-5 w-5 shrink-0" />
       {!compact && <span className="truncate">{label}</span>}
     </div>
@@ -298,7 +298,7 @@ function AppNavigationItem({
           type="button"
           className={cn(
             "flex min-h-9 min-w-0 flex-1 items-center gap-2 rounded-md text-sm transition-colors",
-            compact ? "justify-center px-0" : "px-2",
+            "px-2",
             active
               ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
               : canOpen
@@ -314,7 +314,7 @@ function AppNavigationItem({
             }
           }}
         >
-          <AppIcon src={resolveAssetSrc(coreOrigin, app.iconUrl)} fallback={LayoutGrid} className="h-5 w-5 rounded-sm" alt="" />
+          <AppIcon src={resolveAssetSrc(coreOrigin, app.iconUrl)} name={app.icon} fallback={LayoutGrid} className="h-5 w-5 shrink-0 rounded-sm" alt="" />
           {!compact && (
             <span className="min-w-0 flex-1 truncate text-left">{app.displayName}</span>
           )}
@@ -511,7 +511,7 @@ function CompactAppMenu({
         <button
           type="button"
           className={cn(
-            "flex min-h-9 w-full min-w-0 items-center justify-center rounded-md px-0 text-sm transition-colors",
+            "flex min-h-9 w-full min-w-0 items-center rounded-md px-2 text-sm transition-colors",
             active
               ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
               : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
@@ -531,7 +531,7 @@ function CompactAppMenu({
             }
           }}
         >
-          <AppIcon src={resolveAssetSrc(coreOrigin, app.iconUrl)} fallback={LayoutGrid} className="h-5 w-5 rounded-sm" alt="" />
+          <AppIcon src={resolveAssetSrc(coreOrigin, app.iconUrl)} name={app.icon} fallback={LayoutGrid} className="h-5 w-5 shrink-0 rounded-sm" alt="" />
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
@@ -631,7 +631,7 @@ function SidebarFooterAccount({
   if (!activeUser) {
     return (
       <div className="space-y-2">
-        <Button asChild variant={compact ? "ghost" : "outline"} size={compact ? "icon-lg" : "default"} className={cn(!compact && "w-full justify-start")}>
+        <Button asChild variant={compact ? "ghost" : "outline"} size={compact ? "icon" : "default"} className={cn(compact ? "mx-auto flex size-9" : "w-full justify-start")}>
           <a href={`${coreOrigin}/login`} title="Login">
             <LogIn className="h-4 w-4" />
             {!compact && "Login"}
@@ -648,11 +648,11 @@ function SidebarFooterAccount({
           <Button
             type="button"
             variant={compact ? "ghost" : "outline"}
-            size={compact ? "icon-lg" : "default"}
-            className={cn(compact ? "mx-auto flex size-11 rounded-md" : "h-auto w-full justify-start px-3 py-2 text-left")}
+            size={compact ? "icon" : "default"}
+            className={cn(compact ? "mx-auto flex size-9 rounded-md" : "h-auto w-full justify-start px-3 py-2 text-left")}
             title={compact ? accountLabel : undefined}
           >
-            <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-rose-600 text-xs font-semibold text-white">
+            <span className={cn("flex shrink-0 items-center justify-center rounded-md bg-rose-600 font-semibold text-white", compact ? "size-7 text-[10px]" : "size-9 text-xs")}>
               {getAccountInitials(activeUser)}
             </span>
             {!compact && (

@@ -48,6 +48,7 @@ internal sealed partial class GlobalMountService(GlobalMountStore store, AppRegi
                 .OrderBy(mount => mount.Name, StringComparer.Ordinal)
                 .ToArray();
             var updated = state with { Mounts = mounts };
+            await CaptureLegacyBaselinesAsync(name, state, cancellationToken);
             await store.WriteAsync(updated, cancellationToken);
             return await BuildSummariesAsync(updated, cancellationToken);
         }
@@ -84,12 +85,24 @@ internal sealed partial class GlobalMountService(GlobalMountStore store, AppRegi
                 .Where(mount => !string.Equals(mount.Name, name, StringComparison.Ordinal))
                 .ToArray();
             var updated = state with { Mounts = mounts };
+            await CaptureLegacyBaselinesAsync(name, state, cancellationToken);
             await store.WriteAsync(updated, cancellationToken);
             return await BuildSummariesAsync(updated, cancellationToken);
         }
         finally
         {
             mutationLock.Release();
+        }
+    }
+
+    private async Task CaptureLegacyBaselinesAsync(string name, GlobalMountState before, CancellationToken cancellationToken)
+    {
+        foreach (var app in await apps.ListAppRecordsAsync(cancellationToken))
+        {
+            if (app.AppliedConfigurationHash is not null || !AppRuntimeStates.IsUp(app.RuntimeState)
+                || !(app.Mounts ?? []).Any(binding => binding.GlobalMountName == name)) continue;
+            await apps.UpdateAppAsync(app.Id,
+                current => AppConfigurationFingerprint.CaptureLegacyBaseline(current, before), cancellationToken);
         }
     }
 

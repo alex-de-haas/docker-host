@@ -1,10 +1,10 @@
 # Hosty App SDK
 
 Created: 2026-07-15
-Updated: 2026-09-07
+Updated: 2026-09-10
 
 Shared Host integration for runtime apps, in two published packages: **`@hosty-sdk/app`** on npmjs
-(TypeScript, 0.12.0) and **`HostySdk.App`** on NuGet (.NET, 0.6.0). They own the app half of the
+(TypeScript, 0.13.0) and **`HostySdk.App`** on NuGet (.NET, 0.6.0). They own the app half of the
 [auth session lifecycle](../auth-session-lifecycle/feature.md) contract — session classification,
 recovery, Core revalidation, launch-mode awareness — plus the app secrets client, delegated-token
 validation, and (TypeScript only) the theme protocol between a shell and the pages it embeds.
@@ -110,6 +110,11 @@ message. It deliberately does not try to derive Core's origin from the page host
 bind is loopback and its redirect-URI allowlist would reject an origin it does not know
 (`redirect_uri_denied`), so the heuristic is dead twice over. Off-machine access is supported by
 configuring public origins.
+
+The React identity bridge keeps a pending one-time launch-code exchange across development effect
+cleanup and replay. The replay waits for that exchange before probing or recovering the session;
+only the active effect reloads after success. Cleanup still cancels probes and recovery timers,
+while an already submitted code exchange runs to completion so its single-use code is not lost.
 
 ## Classification And Caching
 
@@ -295,6 +300,12 @@ The remaining adoption debts and the second-wave extraction inventory are in [pl
   vanilla JS); copy-and-keep-in-sync with a lint rule (a lint rule flags drift, it does not stop it);
   unifying cookie and header names across apps (a forced migration for no functional gain).
 
+`AppIdentityBridge` accepts an optional `renderState` callback, receiving recovering, active,
+signin, denied, unavailable or misconfigured state. Apps can gate their content and data requests
+on `active`, using the same recovery lifecycle as the bridge. Omitting the callback keeps the
+existing default recovery UI. The initial state is recovering; an active identity probe permits
+content, while failed probes never expose an active state.
+
 ## Testing Expectations
 
 - The classification table is exercised per status, including that a 503 keeps the cookie while a 401
@@ -326,3 +337,8 @@ The remaining adoption debts and the second-wave extraction inventory are in [pl
   query, and fragment.
 - CI runs both suites (`npm run sdk:test`, the `HostySdk.App.Tests` project) on any change under the
   package paths; the publish workflows re-run the tests before releasing.
+- Identity-bridge regression tests replay development effect setup/cleanup, checking one exchange,
+  no premature probe, one successful reload, recovery after failed exchanges, and no navigation
+  after an actual unmount.
+- Bridge render-state tests keep content gated until an active probe and cover denied, unavailable
+  and misconfigured responses without replacing the default recovery contract.

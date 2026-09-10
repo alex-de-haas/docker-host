@@ -21,12 +21,14 @@ export type CoreUpdateStatus = {
   updateAvailable: boolean;
   releaseTag: string;
   checkedAt: string;
+  lastSuccessfulCheckAt?: string | null;
   error?: string | null;
   // The version the release channel publishes, from the release's own VERSION marker. Display only —
   // `updateAvailable` is the binary-hash comparison either way. Absent against a release published
   // before the marker existed, and from Core builds that predate the field; the platform row then
   // names no version, exactly as it did before.
   availableVersion?: string | null;
+  clientPhase?: "installing" | "reconnecting" | "verifying" | "completed" | "unconfirmed";
 };
 
 // A choice for a select-typed setting: the stored value and its display label.
@@ -276,6 +278,8 @@ export type CoreApp = {
   // Null when the manifest declares none; an absolute https icon passes through unchanged. Prefix a
   // relative value with coreOrigin to load. Optional for backwards compatibility with older Core builds.
   iconUrl?: string | null;
+  // Manifest ui.icon (Lucide name), used when the display image is absent or unavailable.
+  icon?: string | null;
   descriptionUrl?: string | null;
   // The app-owned feed this install follows, for the feed selector and choose-a-feed guidance.
   // Null/absent = no feed set. Optional for older Core builds.
@@ -294,6 +298,8 @@ export type CoreApp = {
   // Last-known update verdict from the Core fleet check (plan-first updates); null until a check has
   // run for this app. Drives the row Update/Review affordances. Optional for backwards compatibility.
   updateCheck?: AppUpdateAvailability | null;
+  restartRequired?: boolean;
+  updateProgress?: { stage: string; changedAt: string; service?: string | null } | null;
   // Declared cross-app dependencies with their state resolved against the installed set. Core reports
   // state only — whether a given state is a problem is decided here, in collectAppProblems. Null/absent
   // when the app declares none, or when talking to an older Core that predates the projection.
@@ -392,6 +398,7 @@ export type AppUpdateAvailability = {
   requiresReview: boolean;
   planDigest?: string | null;
   checkedAt: string;
+  lastSuccessfulCheckAt?: string | null;
   error?: string | null;
   // What the update resolves to, projected from the same plan build as the verdict so a row can name
   // the update without fetching its plan. `targetVersion` equals the installed version whenever the

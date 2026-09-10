@@ -100,6 +100,7 @@ internal sealed class LocalCommandRuntimeAdapter(
                 // services already in `startedServices`).
                 try
                 {
+                    if (context.ReportUpdateProgress is not null) await context.ReportUpdateProgress("preparing", service.Key);
                     await RunSetupAsync(context, service, servicePorts, workingDirectory, logWriter, cancellationToken);
                 }
                 catch
@@ -108,6 +109,7 @@ internal sealed class LocalCommandRuntimeAdapter(
                     throw;
                 }
 
+                if (context.ReportUpdateProgress is not null) await context.ReportUpdateProgress("starting", service.Key);
                 EnsureDynamicRangePortsStillAvailable(service.Key, servicePorts[service.Key], logger);
 
                 System.Diagnostics.ProcessStartInfo startInfo;

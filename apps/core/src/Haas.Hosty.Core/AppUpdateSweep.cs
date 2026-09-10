@@ -6,7 +6,7 @@ namespace Haas.Hosty.Core;
 // Last-known update-availability verdict for one app, projected into its list summary (plan-first
 // updates phase 2). `PlanDigest` names the cached pending plan a one-click apply would consume;
 // `Error` is set when the latest check failed for this app (the row shows "check failed" instead of
-// a stale verdict). Additive on AppSummary — older clients ignore it.
+// clearing the last successful result). Additive on AppSummary — older clients ignore it.
 internal sealed record AppUpdateAvailability(
     bool UpdateAvailable,
     bool RequiresReview,
@@ -17,11 +17,23 @@ internal sealed record AppUpdateAvailability(
     // the apps list can name the update instead of only asserting one exists. `TargetVersion` is the
     // candidate manifest's version — equal to the installed one whenever the update advances the build
     // rather than the version, which is why the revisions below travel with it: for a source app the
-    // target commit, for compiled services the candidate image digest per service key. All null on a
-    // failed check or a verdict with nothing available. Additive — older clients ignore them.
+    // target commit, for compiled services the candidate image digest per service key. A failed check
+    // retains these from the last result for the same installation. Additive — older clients ignore them.
     string? TargetVersion = null,
     string? TargetSourceCommit = null,
-    IReadOnlyDictionary<string, string>? TargetArtifactDigests = null);
+    IReadOnlyDictionary<string, string>? TargetArtifactDigests = null,
+    DateTimeOffset? LastSuccessfulCheckAt = null)
+{
+    public static AppUpdateAvailability Failed(AppUpdateAvailability? previous, DateTimeOffset attemptedAt, string message)
+        => previous is null
+            ? new(false, false, null, attemptedAt, message)
+            : previous with
+            {
+                CheckedAt = attemptedAt,
+                Error = message,
+                LastSuccessfulCheckAt = previous.LastSuccessfulCheckAt ?? (previous.Error is null ? previous.CheckedAt : null),
+            };
+}
 
 // Fleet update-check state for the apps list: whether a sweep is running right now (drives the
 // "Check updates" spinner from server state) and when one last finished.
@@ -143,7 +155,7 @@ internal sealed class AppUpdateSweepService(
             var targets = apps
                 .Where(app => string.Equals(app.Kind, "runtime", StringComparison.Ordinal) && !app.Live)
                 .ToList();
-            lifecycle.PruneUpdateAvailability(targets.Select(target => target.Id).ToHashSet(StringComparer.Ordinal));
+            await lifecycle.PruneUpdateAvailability(targets.Select(target => target.Id).ToHashSet(StringComparer.Ordinal));
 
             // No cross-app fetch dedupe is needed here: app-feeds.0.1 documents are per-app (a single
             // appId that must match the installed app), so each app's feed and manifest URLs are its
@@ -167,7 +179,7 @@ internal sealed class AppUpdateSweepService(
                 {
                     Interlocked.Increment(ref failures);
                     var message = $"Update check timed out after {perAppCheckTimeout.TotalSeconds:0}s.";
-                    lifecycle.RecordUpdateCheckFailure(target.Id, message);
+                    await lifecycle.RecordUpdateCheckFailure(target.Id, message);
                     logger.LogWarning("Update check for app {AppId} timed out after {Timeout}s.", target.Id, perAppCheckTimeout.TotalSeconds);
                 }
                 // Real shutdown is the only cancellation that ends the sweep. Rethrowing every
@@ -184,7 +196,7 @@ internal sealed class AppUpdateSweepService(
                 catch (Exception ex)
                 {
                     Interlocked.Increment(ref failures);
-                    lifecycle.RecordUpdateCheckFailure(target.Id, ex.Message);
+                    await lifecycle.RecordUpdateCheckFailure(target.Id, ex.Message);
                     logger.LogWarning(ex, "Update check failed for app {AppId}.", target.Id);
                 }
                 finally

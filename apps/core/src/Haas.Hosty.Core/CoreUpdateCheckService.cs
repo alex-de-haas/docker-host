@@ -46,14 +46,23 @@ internal sealed class CoreUpdateCheckService(
             }
 
             var status = await CheckAsync(cancellationToken);
-            cached = status;
-            return status;
+            cached = MergeStatus(cached, status);
+            return cached;
         }
         finally
         {
             gate.Release();
         }
     }
+
+    internal static CoreUpdateStatus MergeStatus(CoreUpdateStatus? previous, CoreUpdateStatus status)
+        => status.Error is null ? status with { LastSuccessfulCheckAt = status.CheckedAt }
+            : previous is not null && previous.CurrentVersion == status.CurrentVersion && previous.ReleaseTag == status.ReleaseTag
+                ? previous with
+                {
+                    Error = status.Error, CheckedAt = status.CheckedAt,
+                    LastSuccessfulCheckAt = previous.LastSuccessfulCheckAt ?? (previous.Error is null ? previous.CheckedAt : null),
+                } : status;
 
     private static bool IsStale(CoreUpdateStatus status)
         => DateTimeOffset.UtcNow - status.CheckedAt >= CacheTtl;
@@ -294,8 +303,8 @@ internal sealed class CoreUpdateCheckService(
     }
 }
 
-// Response for GET /api/core/update-status. UpdateAvailable is false whenever the check can't be made
-// (dev run, unreachable release, unsupported platform); Error carries a short reason for logs/tooltips.
+// Response for GET /api/core/update-status. A failed attempt retains a previous successful verdict
+// for the same version/channel; Error and CheckedAt describe the new attempt.
 internal sealed record CoreUpdateStatus(
     string CurrentVersion,
     bool UpdateAvailable,
@@ -307,7 +316,8 @@ internal sealed record CoreUpdateStatus(
     // implausible marker degrades to null rather than changing the verdict. Null is expected against
     // a release published before the marker existed — a client then names no version, exactly as it
     // did before this field. Additive — older clients ignore it.
-    string? AvailableVersion = null);
+    string? AvailableVersion = null,
+    DateTimeOffset? LastSuccessfulCheckAt = null);
 
 // Minimal view over {DataRoot}/core/product-channel.json (written by the CLI); only the release tag is read.
 internal sealed record CoreProductChannelRef(string? ReleaseTag);

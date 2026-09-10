@@ -11,8 +11,7 @@ import type {
   CatalogDiagnostic,
 } from "@/lib/catalog-types";
 import { postInstallFeedIntent } from "@/lib/install-intent";
-import { fetchAppUpdateAvailable, fetchCatalogApp, fetchCatalogApps, fetchIdentity, fetchInstalledAppIds } from "@/lib/marketplace-api";
-import type { MarketplaceIdentity } from "@/lib/host-auth";
+import { fetchAppUpdateAvailable, fetchCatalogApp, fetchCatalogApps, fetchInstalledAppIds, MarketplaceApiError } from "@/lib/marketplace-api";
 import { MarkdownDescription } from "@/components/markdown-description";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -35,7 +34,8 @@ export function Storefront() {
   const [selected, setSelected] = useState<CatalogAppDetailResponse | null>(null);
   const [detailLoading, setDetailLoading] = useState<string | null>(null);
   const [installLoading, setInstallLoading] = useState<string | null>(null);
-  const [identity, setIdentity] = useState<MarketplaceIdentity | null>(null);
+  const [hasCatalog, setHasCatalog] = useState(false);
+  const [sessionExpired, setSessionExpired] = useState(false);
   const [installedAppIds, setInstalledAppIds] = useState<ReadonlySet<string>>(() => new Set());
   const [notice, setNotice] = useState<string | null>(null);
   const requestRef = useRef<AbortController | null>(null);
@@ -43,11 +43,20 @@ export function Storefront() {
   const loadCatalog = useCallback(async (refresh: boolean, signal?: AbortSignal) => {
     try {
       const response = await fetchCatalogApps(refresh, signal);
+      if (signal?.aborted) return;
       setCatalog(response);
+      setHasCatalog(true);
+      setSessionExpired(false);
       setError(null);
     } catch (loadError) {
       if (loadError instanceof Error && loadError.name === "AbortError") {
         return;
+      }
+      if (signal?.aborted) return;
+      if (loadError instanceof MarketplaceApiError && [401, 403].includes(loadError.status)) {
+        setHasCatalog(false);
+        setSelected(null);
+        setSessionExpired(loadError.status === 401);
       }
       setError(loadError instanceof Error ? loadError.message : "The catalog could not be loaded.");
     } finally {
@@ -69,16 +78,17 @@ export function Storefront() {
     const controller = new AbortController();
     requestRef.current = controller;
     void loadCatalog(false, controller.signal);
-    void fetchIdentity(controller.signal).then(setIdentity).catch(() => undefined);
     loadInstalledAppIds(controller.signal);
-    return () => requestRef.current?.abort();
+    return () => controller.abort();
   }, [loadCatalog, loadInstalledAppIds]);
 
   const refresh = () => {
+    if (sessionExpired) { window.location.reload(); return; }
     requestRef.current?.abort();
     const controller = new AbortController();
     requestRef.current = controller;
     setLoading(true);
+    setError(null);
     setNotice(null);
     void loadCatalog(true, controller.signal);
     loadInstalledAppIds(controller.signal);
@@ -150,8 +160,7 @@ export function Storefront() {
   return (
     <main className="mx-auto w-full max-w-6xl space-y-6 px-4 py-6 sm:px-6">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        {/* The app's own name, which every shell already renders. The badge and Refresh beside it are
-            not: one is the state of this app's session and the other acts on the catalog below. */}
+        {/* Shell already renders the app name; Refresh acts on the catalog below. */}
         <div className={cn("min-w-0 space-y-1", SHELL_DUPLICATED_CHROME_CLASS)}>
           <h1 className="truncate text-xl font-semibold leading-7">Marketplace</h1>
           <p className="text-sm text-muted-foreground">
@@ -159,7 +168,6 @@ export function Storefront() {
           </p>
         </div>
         <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2 sm:ml-auto sm:justify-end">
-          <IdentityBadge identity={identity} />
           <Button type="button" variant="outline" size="sm" onClick={refresh} disabled={loading}>
             <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
             Refresh
@@ -167,6 +175,7 @@ export function Storefront() {
         </div>
       </header>
 
+      {hasCatalog && <>
       <section className="flex items-center gap-3 rounded-lg border bg-card p-4" aria-label="Catalog source">
         <div className="flex size-10 shrink-0 items-center justify-center rounded-md border bg-muted text-muted-foreground" aria-hidden="true">
           <Store className="h-5 w-5" />
@@ -181,9 +190,11 @@ export function Storefront() {
       </section>
 
       {catalog.diagnostic.status !== "ready" ? <DiagnosticBanner diagnostic={catalog.diagnostic} /> : null}
+      </>}
       {error ? <NoticeBanner message={error} /> : null}
       {notice ? <NoticeBanner message={notice} /> : null}
 
+      {hasCatalog && catalog.diagnostic.status === "ready" && <>
       <section className="flex flex-col gap-3 sm:flex-row sm:items-center" aria-label="Catalog filters">
         <div className="relative flex-1">
           <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -211,16 +222,9 @@ export function Storefront() {
         </span>
       </section>
 
-      {loading && catalog.apps.length === 0 ? (
-        <EmptyState icon={LoaderCircle} title="Loading catalog" description="Reading the configured Marketplace source." iconClassName="animate-spin" />
-      ) : filtered.length === 0 ? (
-        <EmptyState
-          icon={PackageSearch}
-          title={catalog.diagnostic.status === "ready" ? "No matching apps" : "Marketplace is not ready"}
-          description={catalog.diagnostic.status === "ready"
-            ? "Try another search or category."
-            : "Check the source diagnostic above or update the app setting in Hosty Shell."}
-        />
+      {filtered.length === 0 ? (
+        <EmptyState icon={PackageSearch} title={query || category !== "all" ? "No matching apps" : "Catalog is empty"}
+          description={query || category !== "all" ? "Try another search or category." : "This source has no apps yet."} />
       ) : (
         <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" aria-label="Catalog apps">
           {filtered.map(app => (
@@ -236,6 +240,11 @@ export function Storefront() {
           ))}
         </section>
       )}
+
+      </>}
+      {!hasCatalog && loading && !error ? (
+        <EmptyState icon={LoaderCircle} title="Loading catalog" description="Reading the configured Marketplace source." iconClassName="animate-spin" />
+      ) : null}
 
       {selected ? (
         <AppDetailDialog
@@ -521,13 +530,6 @@ function Fact({ label, value }: { label: string; value: string }) {
       <dd className="mt-1 text-sm font-medium break-words">{value}</dd>
     </div>
   );
-}
-
-function IdentityBadge({ identity }: { identity: MarketplaceIdentity | null }) {
-  // Surface the host session only when there's a problem. The signed-in user's
-  // name is already shown by the Shell, so we don't duplicate it here.
-  if (!identity || identity.status === "active") return null;
-  return <Badge variant="outline">Host session {identity.status}</Badge>;
 }
 
 function DiagnosticBadge({ diagnostic }: { diagnostic: CatalogDiagnostic }) {

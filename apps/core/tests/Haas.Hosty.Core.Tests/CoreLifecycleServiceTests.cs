@@ -9,7 +9,7 @@ using Haas.Hosty.Core;
 
 namespace Haas.Hosty.Core.Tests;
 
-public sealed class CoreLifecycleServiceTests
+public sealed partial class CoreLifecycleServiceTests
 {
     [Theory]
     [InlineData("healthy", "running")]
@@ -2845,6 +2845,7 @@ public sealed class CoreLifecycleServiceTests
 
         var app = await fixture.Apps.GetAppAsync("com.example.notes");
         Assert.Equal("updated", app!.OperationStatus);
+        Assert.Equal("completed", app.UpdateProgress?.Stage);
         Assert.Equal("1.1.0", app.Version);
         Assert.Null(app.LastError);
 
@@ -2884,8 +2885,7 @@ public sealed class CoreLifecycleServiceTests
             await run;
         }
 
-        // The app was running, so the apply restarted it — the post-update start is the last
-        // operation on the record; the version proves the update landed.
+        // The update remains the owning operation through the post-update restart.
         var app = await fixture.Apps.GetAppAsync("com.example.notes");
         Assert.Equal("started", app!.OperationStatus);
         Assert.Equal("1.1.0", app.Version);
@@ -2994,6 +2994,7 @@ public sealed class CoreLifecycleServiceTests
     public async Task UpdateAvailabilityProjection_FollowsPlanBuildAndApply()
     {
         var fixture = await LifecycleFixture.CreateAsync();
+        fixture.Adapter.RemoteDigest = "sha256:" + new string('a', 64);
         var manifest = await fixture.WriteManifestAsync("1.0.0");
         await fixture.Service.InstallAsync(new AppInstallRequest(manifest));
 
@@ -6794,6 +6795,7 @@ public sealed class CoreLifecycleServiceTests
             AppSourceService sources,
             CoreLifecycleService service,
             RecordingRuntimeAdapter adapter,
+            LocalCommandRuntimeAdapter localAdapter,
             LocalCommandProcessRegistry localProcesses,
             FakeClock clock,
             CoreSettingsService coreSettings,
@@ -6807,6 +6809,7 @@ public sealed class CoreLifecycleServiceTests
             Sources = sources;
             Service = service;
             Adapter = adapter;
+            LocalAdapter = localAdapter;
             LocalProcesses = localProcesses;
             Clock = clock;
             CoreSettings = coreSettings;
@@ -6835,6 +6838,8 @@ public sealed class CoreLifecycleServiceTests
         public CloudflarePublicationStore Publications { get; }
 
         public RecordingRuntimeAdapter Adapter { get; }
+
+        private LocalCommandRuntimeAdapter LocalAdapter { get; }
 
         public LocalCommandProcessRegistry LocalProcesses { get; }
 
@@ -6903,7 +6908,15 @@ public sealed class CoreLifecycleServiceTests
             var publications = new CloudflarePublicationStore(paths);
             var publicOrigins = new PublicOriginOwnership(coreSettings, publications);
             var service = new CoreLifecycleService(paths, apps, manifests, backups, sources, [adapter, localAdapter], ingress, Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreLifecycleService>.Instance, notifications: null, clock: clock, portAllocator: portAllocator, selfRestartPortReleaseTimeout: selfRestartPortReleaseTimeout, publicOrigins: publicOrigins, healthProbe: healthProbe, readinessTimeout: readinessTimeout ?? TimeSpan.FromSeconds(2));
-            return new LifecycleFixture(root, paths, apps, backups, manifests, sources, service, adapter, localProcesses, clock, coreSettings, publications);
+            return new LifecycleFixture(root, paths, apps, backups, manifests, sources, service, adapter, localAdapter, localProcesses, clock, coreSettings, publications);
+        }
+
+        public CoreLifecycleService RecreateService()
+        {
+            var registry = new AppRegistryStore(Paths);
+            return new CoreLifecycleService(Paths, registry, Manifests, new AppBackupService(Paths, Clock),
+                new AppSourceService(Paths, registry, Clock), [Adapter, LocalAdapter], new NoopIngressController(),
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreLifecycleService>.Instance, clock: Clock);
         }
 
         // Shared-mounts library over the same data root the lifecycle service reads from.

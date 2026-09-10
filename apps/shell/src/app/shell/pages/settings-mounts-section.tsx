@@ -1,8 +1,8 @@
 "use client";
 
 import type { FormEvent } from "react";
-import { useState } from "react";
-import { HardDrive, LoaderCircle, Lock, Pencil, Plus, Trash2, TriangleAlert } from "lucide-react";
+import { Fragment, useState } from "react";
+import { ChevronRight, HardDrive, LoaderCircle, Lock, Pencil, Plus, Trash2, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -16,7 +16,9 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import type { CoreGlobalMount } from "../types";
+import type { CoreApp, CoreGlobalMount } from "../types";
+import { SharedMountAppsDialog } from "./shared-mount-apps-dialog";
+import { sharedMountMode, sharedMountPath, type MountAssignmentChange } from "../shared-mount-bindings";
 import { EmptyState, IconButton, InlineError } from "../ui";
 
 const CONTROL_CLASS =
@@ -31,15 +33,25 @@ const emptyDraft: DraftMount = { name: "", hostPath: "", mode: "rw", description
 // host-level configuration surface behind a button on a page about apps.
 export function SettingsMountsSection({
   globalMounts,
+  apps,
+  onSaveBindings,
+  onRefresh,
   canManageApps,
   onSave,
   onDelete,
 }: {
   globalMounts: CoreGlobalMount[];
+  apps: CoreApp[];
+  onSaveBindings: (name: string, change: MountAssignmentChange) => Promise<void>;
+  onRefresh: () => Promise<void>;
   canManageApps: boolean;
   onSave: (input: { name: string; hostPath: string; mode?: string; description?: string | null }) => Promise<void>;
   onDelete: (name: string, force?: boolean) => Promise<void>;
 }) {
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const [editorRevision, setEditorRevision] = useState(0);
+  const [managing, setManaging] = useState<CoreGlobalMount | null>(null);
+  const [savedApps, setSavedApps] = useState<CoreApp[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [draft, setDraft] = useState<DraftMount>(emptyDraft);
   // Name of the mount being edited; null means the dialog adds a new one. Names are the mount's
@@ -122,17 +134,18 @@ export function SettingsMountsSection({
 
   return (
     <div className="space-y-5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h3 className="text-sm font-medium">Shared mounts</h3>
-          <p className="text-xs text-muted-foreground">Host folders apps can attach by reference.</p>
-        </div>
+      <h3 className="sr-only">Shared mounts</h3>
+      <div className="flex justify-end">
         <Button onClick={openAdd} disabled={!canManageApps || busy}>
           <Plus className="h-4 w-4" />
           Add mount
         </Button>
       </div>
 
+      {savedApps.length > 0 && <p role="status" className="text-sm text-muted-foreground">
+        Bindings saved for {savedApps.map(app => app.displayName).join(", ")}.
+        {savedApps.some(app => app.runtimeState === "running") ? " Restart running apps to apply the changes." : " Changes apply on the next start."}
+      </p>}
       {listError && <InlineError message={listError} />}
 
       {globalMounts.length === 0 ? (
@@ -151,8 +164,11 @@ export function SettingsMountsSection({
             </TableHeader>
             <TableBody>
               {globalMounts.map((mount) => (
-                <TableRow key={mount.name}>
-                  <TableCell className="font-mono text-xs">{mount.name}</TableCell>
+                <Fragment key={mount.name}>
+                <TableRow>
+                  <TableCell className="font-mono text-xs"><button type="button" className="flex items-center gap-2 rounded-sm py-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-expanded={expanded.has(mount.name)} aria-controls={`mount-usage-${mount.name}`} onClick={() => setExpanded(current => { const next = new Set(current); if (next.has(mount.name)) next.delete(mount.name); else next.add(mount.name); return next; })}>
+                    <ChevronRight className={`size-4 shrink-0 ${expanded.has(mount.name) ? "rotate-90" : ""}`} />{mount.name}
+                  </button></TableCell>
                   <TableCell className="max-w-[200px] truncate font-mono text-xs text-muted-foreground">
                     <span className="inline-flex items-center gap-1">
                       {mount.mode === "ro" && <Lock className="h-3 w-3 shrink-0" />}
@@ -186,11 +202,33 @@ export function SettingsMountsSection({
                     </div>
                   </TableCell>
                 </TableRow>
+                {expanded.has(mount.name) && <TableRow id={`mount-usage-${mount.name}`} className="hover:bg-transparent">
+                  <TableCell colSpan={5} className="bg-muted/20 p-4">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <span className="text-sm font-medium">App bindings</span>
+                      <Button size="sm" variant="outline" disabled={!canManageApps || busy} onClick={() => setManaging(mount)}><Plus className="size-4" />Manage apps</Button>
+                    </div>
+                    {apps.some(app => app.mounts?.some(slot => slot.bindings.some(binding => binding.globalMountName === mount.name))) ?
+                      <div className="divide-y">
+                        {apps.flatMap(app => (app.mounts ?? []).filter(slot => slot.bindings.some(binding => binding.globalMountName === mount.name)).map(slot => (
+                          <div key={`${app.id}/${slot.key}`} className="grid gap-1 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,2fr)_6rem] sm:items-center sm:gap-4">
+                            <div className="min-w-0"><p className="text-sm font-medium">{app.displayName}</p><p className="truncate text-xs text-muted-foreground">{app.selectedRuntime}</p></div>
+                            <div><p className="text-sm">{slot.key}</p>{slot.service && <p className="text-xs text-muted-foreground">{slot.service}</p>}</div>
+                            <p className="break-all font-mono text-xs text-muted-foreground" title="Path in app">{sharedMountPath(app, slot, mount)}</p>
+                            <span className="text-xs text-muted-foreground">{sharedMountMode(slot, mount) === "ro" ? "Read only" : "Read & write"}</span>
+                          </div>
+                        )))}
+                      </div> : <p className="py-3 text-sm text-muted-foreground">No apps use this folder yet. Choose Manage apps to attach it.</p>}
+                  </TableCell>
+                </TableRow>}
+                </Fragment>
               ))}
             </TableBody>
           </Table>
         </div>
       )}
+
+      {managing && <SharedMountAppsDialog key={editorRevision} mount={managing} apps={apps} onSave={onSaveBindings} onRefresh={onRefresh} onReload={async () => { await onRefresh(); setEditorRevision(value => value + 1); }} onClose={() => setManaging(null)} onSaved={changed => setSavedApps(current => [...current.filter(app => !changed.some(next => next.id === app.id)), ...changed])} />}
 
       {/* Dismissal (Escape, overlay, the X button) is ignored while a save is in flight: resetting
           the form under a pending request would let its completion close or error a dialog the

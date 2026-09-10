@@ -7,7 +7,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Haas.Hosty.Core;
 
-internal sealed class CoreLifecycleService(
+internal sealed partial class CoreLifecycleService(
     CoreDataPaths paths,
     AppRegistryStore apps,
     AppManifestService manifests,
@@ -503,6 +503,7 @@ internal sealed class CoreLifecycleService(
 
     private async Task<AppLifecycleResponse> ConfigureCoreAsync(string appId, AppConfigureRequest request, CancellationToken cancellationToken)
     {
+        var registry = await globalMounts.ReadAsync(cancellationToken);
         var policy = NormalizeConfiguredUpdatePolicy(request.UpdatePolicy);
         // Resolved before the record mutation because it reads the publication store; the comparison
         // itself happens inside the mutator, against the record being committed.
@@ -513,7 +514,7 @@ internal sealed class CoreLifecycleService(
         {
             ValidatePublicOriginSettings(request.Settings);
             RequireUnmanagedPublicOrigins(app, request.Settings, managedOrigins);
-            return app with
+            return AppConfigurationFingerprint.CaptureLegacyBaseline(app, registry) with
             {
                 Settings = request.Settings is { Count: > 0 } ? MergeSettings(app.Settings, request.Settings) : app.Settings,
                 Autostart = request.Autostart ?? app.Autostart,
@@ -775,6 +776,7 @@ internal sealed class CoreLifecycleService(
                     LastError = null,
                 };
             }, cancellationToken);
+            await ClearUpdateAvailability(appId);
 
             // The flip is now durable; the restart below is best-effort, so mark the operation complete
             // here — the finally must not double-restart if StartAsync itself throws (it records + rethrows
@@ -822,7 +824,7 @@ internal sealed class CoreLifecycleService(
         // record's live mount slots, not a stale pre-fetched copy.
         var registry = await globalMounts.ReadAsync(cancellationToken);
 
-        var document = await apps.UpdateAppAsync(appId, current => current with
+        var document = await apps.UpdateAppAsync(appId, current => AppConfigurationFingerprint.CaptureLegacyBaseline(current, registry) with
         {
             Mounts = ValidateMountBindings(current, request.Mounts ?? [], registry),
             OperationStatus = "configured",
@@ -999,7 +1001,10 @@ internal sealed class CoreLifecycleService(
             }
             adapter = ResolveAdapter(selection.RuntimeProfile.Type);
             context = await CreateRuntimeContextAsync(app, selection, cancellationToken);
+            var appliedConfigurationHash = AppConfigurationFingerprint.Compute(context.App, context.Mounts);
             context = EnsureMountsReadyForStart(context);
+            if (app.OperationStatus == "updating")
+                context = context with { ReportUpdateProgress = (stage, service) => SetUpdateProgressAsync(appId, stage, service, cancellationToken) };
             // Core-owned provisioning for the platform capability slots this app provides (e.g. the
             // OTLP collector's config + sink dirs), run before the services launch. Keyed by the
             // manifest's `provides`, not the app id or install path, so a marketplace/direct install
@@ -1014,13 +1019,15 @@ internal sealed class CoreLifecycleService(
             runtimeStarted = true;
             // The wait probes the endpoint set the record is about to persist — the same merge the write
             // below applies — so the start and the supervisor's later observations target the same ports.
+            if (context.ReportUpdateProgress is not null) await context.ReportUpdateProgress("checking", null);
             var readiness = await WaitForReadinessAsync(appId, adapter, context, selection, MergeEndpointUrls(app.Endpoints, result.Endpoints, selection), cancellationToken);
             var updated = await apps.UpdateAppAsync(appId, current => current with
             {
                 RuntimeState = result.RuntimeState,
+                AppliedConfigurationHash = appliedConfigurationHash,
                 Health = readiness,
-                OperationStatus = "started",
-                LastOperation = "start",
+                OperationStatus = current.OperationStatus == "updating" ? "updating" : "started",
+                LastOperation = current.OperationStatus == "updating" ? "update" : "start",
                 LastError = null,
                 Endpoints = MergeEndpointUrls(current.Endpoints, result.Endpoints, selection),
                 // Persist the run-locks the adapter resolved (TOFU backfill);
@@ -1394,6 +1401,7 @@ internal sealed class CoreLifecycleService(
 
             adapter = ResolveAdapter(selection.RuntimeProfile.Type);
             context = await CreateRuntimeContextAsync(app, selection, cancellationToken);
+            var appliedConfigurationHash = AppConfigurationFingerprint.Compute(context.App, context.Mounts);
             context = EnsureMountsReadyForStart(context);
             // A restart reports its two halves instead of a single `restarting`: both are IsBusy, so
             // clients behave identically either way, and the operator gets to see which half is slow.
@@ -1425,6 +1433,7 @@ internal sealed class CoreLifecycleService(
             var updated = await apps.UpdateAppAsync(appId, current => current with
             {
                 RuntimeState = start.RuntimeState,
+                AppliedConfigurationHash = appliedConfigurationHash,
                 Health = readiness,
                 OperationStatus = "restarted",
                 LastOperation = "restart",
@@ -1640,6 +1649,7 @@ internal sealed class CoreLifecycleService(
             throw new AppLifecycleException("manifest_path_required", "Installed app has no manifest path and update request did not provide one.");
         }
 
+        var updateBase = await UpdateBaseAsync(app, cancellationToken);
         var currentSelection = await LoadSelectionForAppAsync(app, cancellationToken);
         var selection = await manifests.LoadAsync(manifestPath, request.SelectedRuntime ?? app.SelectedRuntime, cancellationToken);
         if (!string.Equals(selection.Manifest.Id, app.Id, StringComparison.Ordinal))
@@ -1711,7 +1721,7 @@ internal sealed class CoreLifecycleService(
         // artifact digest to "unknown", mismatching the rest). currentSelection.ManifestDigest rides along
         // for the base-state guard in apply. Overwrites any prior pending plan for this app.
         var cached = new CachedUpdatePlan(plan, selection, currentSelection.ManifestDigest, artifactProbes, resolvedSourceCommit, clock.UtcNow);
-        reviewedUpdatePlans[appId] = cached;
+
         // Every successful plan build — sweep, dialog open, status probe — refreshes the app's
         // availability projection, so the apps-list verdict and the plan cache never disagree.
         // The target the verdict refers to travels with it, so a client can name the update without
@@ -1719,20 +1729,43 @@ internal sealed class CoreLifecycleService(
         // resolves to (the probed source commit, and each service's candidate image digest). Probes
         // that could not resolve contribute nothing rather than a placeholder — an unreachable
         // registry must not be rendered as a revision the operator would get.
-        SetUpdateAvailability(appId, new AppUpdateAvailability(
+        var verdict = new AppUpdateAvailability(
             UpdateAvailable: PlanIndicatesUpdateAvailable(changes),
             RequiresReview: plan.RequiresReview,
             PlanDigest: plan.PlanDigest,
             CheckedAt: clock.UtcNow,
-            Error: null,
+            Error: UpdateMovesSourcePin(app, selection) && resolvedSourceCommit is null
+                ? "Could not resolve the update source revision. Check the source connection and retry." : null,
             TargetVersion: plan.TargetVersion,
             TargetSourceCommit: resolvedSourceCommit,
-            TargetArtifactDigests: BuildTargetArtifactDigests(artifactProbes)));
+            TargetArtifactDigests: BuildTargetArtifactDigests(artifactProbes),
+            LastSuccessfulCheckAt: clock.UtcNow);
+        if (verdict.Error is null && artifactProbes.Any(probe => string.IsNullOrEmpty(probe.CandidateDigest)))
+            verdict = verdict with { Error = "Could not resolve one or more image revisions. Check the registry connection and retry." };
+        await updateSnapshots.ChangeAsync(appId, previous => new AppUpdateSnapshot(1,
+            updateBase, cached, verdict.Error is null ? verdict
+                : AppUpdateAvailability.Failed((previous?.Base == updateBase ? previous.Verdict : null) ?? (verdict with { LastSuccessfulCheckAt = null }), clock.UtcNow, verdict.Error)
+                    with { PlanDigest = null }), cancellationToken);
+        events?.PublishAppEvent(CoreEventHub.AppUpdateCheckChanged, appId);
         return cached;
     }
 
     public Task<AppLifecycleResponse> ApplyUpdateAsync(string appId, AppUpdateApplyRequest request, CancellationToken cancellationToken = default)
-        => WithAppLockAsync(appId, () => ApplyUpdateCoreAsync(appId, request, cancellationToken), cancellationToken);
+        => WithAppLockAsync(appId, async () =>
+        {
+            try { return await ApplyUpdateCoreAsync(appId, request, cancellationToken); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                var failed = await apps.GetAppAsync(appId, CancellationToken.None);
+                if (failed?.OperationStatus == "updating" ||
+                    (failed?.LastOperation == "start" && failed.UpdateProgress?.Stage is "preparing" or "downloading" or "starting" or "checking"))
+                {
+                    await SetUpdateProgressAsync(appId, "failed", null, CancellationToken.None);
+                    await RecordBackgroundLifecycleFailureAsync(appId, "update", ex.Message, CancellationToken.None);
+                }
+                throw;
+            }
+        }, cancellationToken);
 
     // Enqueue-and-return apply (plan-first updates phase 3), the browser surface's path: validate
     // fast and locally so a stale click still gets its error in the response, persist the
@@ -1747,14 +1780,14 @@ internal sealed class CoreLifecycleService(
         // Advisory pre-checks — the background run re-validates both under the app lock. Cheap and
         // local (no network): the confirmed plan must exist and match, and the base must not have
         // moved since it was reviewed.
-        var confirmed = ResolveConfirmedUpdatePlan(appId, request.PlanDigest);
+        var confirmed = await ResolveConfirmedUpdatePlan(appId, request.PlanDigest);
         var app = await RequireAppAsync(appId, cancellationToken);
         var currentSelection = await LoadSelectionForAppAsync(app, cancellationToken);
         if (!string.Equals(app.Version, confirmed.Plan.CurrentVersion, StringComparison.Ordinal) ||
             !string.Equals(app.SelectedRuntime, confirmed.Plan.CurrentRuntime, StringComparison.Ordinal) ||
             !string.Equals(currentSelection.ManifestDigest, confirmed.CurrentManifestDigest, StringComparison.Ordinal))
         {
-            EvictReviewedPlan(appId, confirmed);
+            await EvictReviewedPlan(appId, confirmed);
             throw new AppLifecycleException(
                 "update_plan_stale",
                 "The app changed since this update was reviewed. Reopen the update to review the current plan, then apply.");
@@ -1776,6 +1809,7 @@ internal sealed class CoreLifecycleService(
             document = await apps.UpdateAppAsync(appId, current => current with
             {
                 OperationStatus = "updating",
+                UpdateProgress = new AppUpdateProgress("queued", clock.UtcNow),
                 LastOperation = "update",
                 LastError = null,
             }, cancellationToken);
@@ -1834,6 +1868,7 @@ internal sealed class CoreLifecycleService(
         catch (Exception ex)
         {
             logger.LogError(ex, "Background update for app {AppId} failed.", appId);
+            await SetUpdateProgressAsync(appId, "failed", null, CancellationToken.None);
             await RecordBackgroundLifecycleFailureAsync(appId, "update", ex.Message, CancellationToken.None);
         }
     }
@@ -1947,7 +1982,7 @@ internal sealed class CoreLifecycleService(
                     }
 
                     flipped = true;
-                    return current with { OperationStatus = "failed", LastOperation = "update", LastError = message };
+                    return current with { OperationStatus = "failed", LastOperation = "update", LastError = message, UpdateProgress = new AppUpdateProgress("interrupted", clock.UtcNow) };
                 },
                 cancellationToken);
             if (!flipped)
@@ -1955,6 +1990,7 @@ internal sealed class CoreLifecycleService(
                 continue;
             }
 
+            await ClearUpdateAvailability(app.Id);
             logger.LogWarning("App {AppId} was mid-update when Core stopped; marked failed for re-review.", app.Id);
             recovered++;
         }
@@ -1962,32 +1998,26 @@ internal sealed class CoreLifecycleService(
         return recovered;
     }
 
-    // Reviewed update plans awaiting apply, keyed by app id (one pending plan per app). See the write in
-    // CreateUpdatePlanAsync for why apply consumes this rather than rebuilding.
-    private readonly ConcurrentDictionary<string, CachedUpdatePlan> reviewedUpdatePlans = new(StringComparer.Ordinal);
-
-    // Last-known update-availability verdict per app (plan-first updates phase 2), projected into the
-    // app summaries so clients render Update/Review affordances straight from the list. Written on
-    // every successful plan build, by the sweep on per-app failures, and reset by a successful apply.
-    // In-memory by design: after a Core restart the post-boot sweep repopulates it (see the resolved
-    // questions in docs/planning/plan-first-app-updates.md).
-    private readonly ConcurrentDictionary<string, AppUpdateAvailability> updateAvailability = new(StringComparer.Ordinal);
-
-    // The projection's own choke point. Verdicts never reach AppRecord, so the store's app.changed
-    // cannot cover them — every write goes through these two helpers instead, which keeps sweep
-    // results, dialog-open re-plans, refresh probes and the post-apply reset publishing uniformly.
-    private void SetUpdateAvailability(string appId, AppUpdateAvailability verdict)
+    private async Task SetUpdateProgressAsync(string appId, string stage, string? service, CancellationToken cancellationToken)
     {
-        updateAvailability[appId] = verdict;
-        events?.PublishAppEvent(CoreEventHub.AppUpdateCheckChanged, appId);
+        await apps.UpdateAppAsync(appId, current => current with
+        {
+            OperationStatus = "updating", LastOperation = "update",
+            UpdateProgress = new AppUpdateProgress(stage, clock.UtcNow, service),
+        }, cancellationToken);
     }
 
-    private void ClearUpdateAvailability(string appId)
+    private readonly AppUpdateSnapshotStore updateSnapshots = new(paths, logger);
+
+    private async Task ClearUpdateAvailability(string appId)
     {
-        if (updateAvailability.TryRemove(appId, out _))
+        var changed = false;
+        await updateSnapshots.ChangeAsync(appId, current =>
         {
-            events?.PublishAppEvent(CoreEventHub.AppUpdateCheckChanged, appId);
-        }
+            changed = current is not null;
+            return null;
+        });
+        if (changed) events?.PublishAppEvent(CoreEventHub.AppUpdateCheckChanged, appId);
     }
 
     // Service key -> the digest that service would run after the update, for the availability
@@ -2001,92 +2031,58 @@ internal sealed class CoreLifecycleService(
         return digests.Count == 0 ? null : digests;
     }
 
-    // Sweep hook: a plan build failed for this app, so its row shows "check failed" instead of a
-    // stale verdict. The pending plan slot is deliberately left alone — an earlier plan may still be
-    // fresh and applicable even when the latest re-check could not resolve its inputs.
-    internal void RecordUpdateCheckFailure(string appId, string message)
-        => SetUpdateAvailability(appId, new AppUpdateAvailability(
-            UpdateAvailable: false,
-            RequiresReview: false,
-            PlanDigest: null,
-            CheckedAt: clock.UtcNow,
-            Error: message));
-
-    // Sweep hook: drop projections for apps that no longer exist (or stopped being sweep targets),
-    // so a removed app's verdict does not linger until Core restarts.
-    internal void PruneUpdateAvailability(IReadOnlySet<string> keepAppIds)
+    // A failed check is durable too. Keep a still-applicable reviewed plan for explicit review.
+    internal async Task RecordUpdateCheckFailure(string appId, string message)
     {
-        // ConcurrentDictionary.Keys is already a snapshot, so removing while iterating it is safe.
-        foreach (var appId in updateAvailability.Keys.Where(key => !keepAppIds.Contains(key)))
+        var app = await apps.GetAppAsync(appId, CancellationToken.None);
+        if (app is null)
         {
-            ClearUpdateAvailability(appId);
+            await ClearUpdateAvailability(appId);
+            return;
         }
+        var fingerprint = await UpdateBaseAsync(app, CancellationToken.None);
+        await updateSnapshots.ChangeAsync(appId, previous => new AppUpdateSnapshot(1, fingerprint,
+            previous?.Base == fingerprint ? previous.Plan : null,
+            AppUpdateAvailability.Failed(previous?.Base == fingerprint ? previous.Verdict : null, clock.UtcNow, message)));
+        events?.PublishAppEvent(CoreEventHub.AppUpdateCheckChanged, appId);
     }
 
-    // A pending plan is discarded after this long. The operator applies from an open dialog, so a stale
-    // entry means they wandered off and should re-review against current inputs rather than apply a plan
-    // built against possibly-moved ones. Generous enough for a distracted operator; short of "yesterday".
+    internal async Task PruneUpdateAvailability(IReadOnlySet<string> keepAppIds)
+    {
+        foreach (var appId in updateSnapshots.AppIds.Where(id => !keepAppIds.Contains(id)))
+            await ClearUpdateAvailability(appId);
+    }
+
     private static readonly TimeSpan ReviewedUpdatePlanTtl = TimeSpan.FromHours(1);
 
-    private sealed record CachedUpdatePlan(
-        AppUpdatePlan Plan,
-        RuntimeAppManifestSelection Selection,
-        string CurrentManifestDigest,
-        // Structured per-service registry probe results from the plan build, so the update-status
-        // projection can report per-service digests without re-hitting the registry.
-        IReadOnlyList<AppServiceArtifactProbe> ArtifactProbes,
-        // The commit the target manifest's source ref resolved to at plan time, for a selection that
-        // runs from the managed checkout (see UpdateMovesSourcePin). Apply stamps exactly this commit
-        // into SourceState — the operator reviewed this commit, not whatever the branch tip is at
-        // apply time. Null when the selection has no managed source or the probe could not resolve
-        // one (apply then resolves fresh itself).
-        string? ResolvedSourceCommit,
-        DateTimeOffset CreatedAt);
-
-    // Non-throwing read of the pending reviewed plan: returns it while fresh, evicts and returns null
-    // once expired. The read paths (pending-plan GET, update-status projection) share this;
-    // ResolveConfirmedUpdatePlan keeps its own throwing variant with apply-grade error messages.
-    private CachedUpdatePlan? TryGetFreshReviewedPlan(string appId)
+    private async Task<CachedUpdatePlan?> TryGetFreshReviewedPlan(string appId)
     {
-        if (!reviewedUpdatePlans.TryGetValue(appId, out var cached))
+        var cached = (await ReadUpdateSnapshotAsync(await RequireAppAsync(appId, CancellationToken.None), CancellationToken.None))?.Plan;
+        if (cached is not null && clock.UtcNow - cached.CreatedAt > ReviewedUpdatePlanTtl)
         {
+            await EvictReviewedPlan(appId, cached);
             return null;
         }
-
-        if (clock.UtcNow - cached.CreatedAt > ReviewedUpdatePlanTtl)
-        {
-            EvictReviewedPlan(appId, cached);
-            return null;
-        }
-
         return cached;
     }
 
-    // Read-only view of the pending reviewed plan built by an earlier update check or dialog open. A
-    // null plan means nothing is pending (never built, expired, or consumed by an apply) — clients
-    // fall back to requesting a fresh plan. See docs/planning/plan-first-app-updates.md.
     public async Task<AppPendingUpdatePlanResponse> GetPendingUpdatePlanAsync(string appId, CancellationToken cancellationToken = default)
     {
         _ = await RequireAppAsync(appId, cancellationToken);
-        return new AppPendingUpdatePlanResponse(TryGetFreshReviewedPlan(appId)?.Plan);
+        return new AppPendingUpdatePlanResponse((await TryGetFreshReviewedPlan(appId))?.Plan);
     }
 
-    // Compare-and-remove: drop the pending plan only while it is still the entry we read. Apply runs under
-    // the app lock but CreateUpdatePlanAsync does not (it resolves feeds and probes the registry, and
-    // holding the lock across that would stall start/stop for the duration), so a second operator can
-    // review a fresh plan mid-apply. An unconditional TryRemove would evict *their* valid plan and fail
-    // their apply with a phantom update_plan_expired. Equality is effectively per-instance here: the
-    // records carry collection members, which record equality compares by reference, so two separately
-    // built plans never match — and in the degenerate case where they would, both describe the same plan
-    // against the same base, so evicting either is the same outcome.
-    private void EvictReviewedPlan(string appId, CachedUpdatePlan plan)
-        => reviewedUpdatePlans.TryRemove(new KeyValuePair<string, CachedUpdatePlan>(appId, plan));
+    // Compare-and-remove by persisted identity: a concurrent re-check keeps its replacement plan.
+    private async Task EvictReviewedPlan(string appId, CachedUpdatePlan plan)
+        => _ = await updateSnapshots.ChangeAsync(appId, current => current?.Plan?.CacheId == plan.CacheId
+            ? current with { Plan = null } : current);
 
     // Returns the pending plan the operator confirmed, or throws an actionable "reopen the update" error.
     // Never rebuilds: the point is to apply exactly what was reviewed.
-    private CachedUpdatePlan ResolveConfirmedUpdatePlan(string appId, string planDigest)
+    private async Task<CachedUpdatePlan> ResolveConfirmedUpdatePlan(string appId, string planDigest)
     {
-        if (!reviewedUpdatePlans.TryGetValue(appId, out var cached))
+        var cached = (await ReadUpdateSnapshotAsync(await RequireAppAsync(appId, CancellationToken.None), CancellationToken.None, rejectStale: true))?.Plan;
+        if (cached is null)
         {
             throw new AppLifecycleException(
                 "update_plan_expired",
@@ -2095,7 +2091,7 @@ internal sealed class CoreLifecycleService(
 
         if (clock.UtcNow - cached.CreatedAt > ReviewedUpdatePlanTtl)
         {
-            EvictReviewedPlan(appId, cached);
+            await EvictReviewedPlan(appId, cached);
             throw new AppLifecycleException(
                 "update_plan_expired",
                 "The reviewed update plan has expired. Reopen the update to review the current plan, then apply.");
@@ -2117,7 +2113,7 @@ internal sealed class CoreLifecycleService(
         // ignored because the resolved source (feed ref or source override) is already captured in the
         // cached plan. Rebuilding here was the whole defect: it re-resolved the feed and re-hit the
         // registry, so the recomputed digest routinely differed from the one just confirmed.
-        var confirmed = ResolveConfirmedUpdatePlan(appId, request.PlanDigest);
+        var confirmed = await ResolveConfirmedUpdatePlan(appId, request.PlanDigest);
         var plan = confirmed.Plan;
 
         var app = await RequireAppAsync(appId, cancellationToken);
@@ -2131,12 +2127,13 @@ internal sealed class CoreLifecycleService(
             !string.Equals(app.SelectedRuntime, plan.CurrentRuntime, StringComparison.Ordinal) ||
             !string.Equals(currentSelection.ManifestDigest, confirmed.CurrentManifestDigest, StringComparison.Ordinal))
         {
-            EvictReviewedPlan(appId, confirmed);
+            await EvictReviewedPlan(appId, confirmed);
             throw new AppLifecycleException(
                 "update_plan_stale",
                 "The app changed since this update was reviewed. Reopen the update to review the current plan, then apply.");
         }
 
+        await SetUpdateProgressAsync(appId, "preparing", null, cancellationToken);
         var selection = confirmed.Selection;
 
         // The ghost-version fix (digest pinning phase 2b): a reviewed update of a source app must move
@@ -2157,14 +2154,17 @@ internal sealed class CoreLifecycleService(
         var wasRunning = AppRuntimeStates.IsUp(app.RuntimeState);
         if (wasRunning)
         {
+            await SetUpdateProgressAsync(appId, "stopping", null, cancellationToken);
             _ = await adapter.StopAsync(await CreateRuntimeContextAsync(app, currentSelection, cancellationToken), cancellationToken);
             _ = await apps.UpdateAppAsync(appId, current => current with { RuntimeState = "stopped" }, cancellationToken);
         }
 
+        if (plan.WillCreatePreUpdateBackup) await SetUpdateProgressAsync(appId, "backing-up", null, cancellationToken);
         var backup = plan.WillCreatePreUpdateBackup
             ? await backups.CreateBackupAsync(appId, "pre-update", cancellationToken: cancellationToken)
             : null;
 
+        await SetUpdateProgressAsync(appId, "installing", null, cancellationToken);
         await manifests.SaveManifestCopyAsync(selection, GetAppRoot(appId), cancellationToken);
         await manifests.VendorDisplayAssetsAsync(selection, GetAppRoot(appId), cancellationToken);
         var manifestCopyPath = Path.Combine(GetAppRoot(appId), "manifest.json");
@@ -2177,7 +2177,8 @@ internal sealed class CoreLifecycleService(
             system: app.System || IsSystemManifest(selection.Manifest),
             existing: app) with
         {
-            OperationStatus = "updated",
+            OperationStatus = "updating",
+            UpdateProgress = new AppUpdateProgress("installing", clock.UtcNow),
             RuntimeState = "stopped",
             LastOperation = "update",
             LastError = null,
@@ -2204,20 +2205,24 @@ internal sealed class CoreLifecycleService(
         // An endpoint the new manifest dropped (or made private) can never serve its hostname again, so the
         // route and DNS record go with it. Best-effort, and only for endpoints that are actually gone.
         await CleanUpOrphanedPublicationsAsync(appId, next, cancellationToken);
-        // Consumed: the app is now at the target, so the pending plan (built against the old base) would
-        // only fail the base-state guard from here on. Drop it so a fresh review starts clean.
-        EvictReviewedPlan(appId, confirmed);
-        // The app just moved to the reviewed target: clear the availability verdict so the row's
-        // update affordance disappears immediately instead of pointing at the consumed plan. The
-        // next check (row refresh or sweep) re-establishes it against current upstream.
-        ClearUpdateAvailability(appId);
+        // Consume the plan and verdict together without deleting a concurrent replacement. A plan
+        // for the old base is rejected on the next read; one reviewed against the new base survives.
+        await updateSnapshots.ChangeAsync(appId, current => current?.Plan is null || current.Plan.CacheId == confirmed.CacheId
+            ? null : current);
+        events?.PublishAppEvent(CoreEventHub.AppUpdateCheckChanged, appId);
         if (wasRunning)
         {
-            var restarted = await StartCoreAsync(appId, afterOwnStop: wasRunning, cancellationToken);
-            return new AppLifecycleResponse(restarted.App, backup, "updated");
+            await SetUpdateProgressAsync(appId, "preparing", null, cancellationToken);
+            _ = await StartCoreAsync(appId, afterOwnStop: wasRunning, cancellationToken);
         }
 
-        return new AppLifecycleResponse(await BuildAppSummaryAsync(document.App, cancellationToken), backup, "updated");
+        var finished = await apps.UpdateAppAsync(appId, current => current with
+        {
+            // Keep the terminal status older Shell self-update waiters recognize.
+            OperationStatus = wasRunning ? "started" : "updated", LastOperation = "update", LastError = null,
+            UpdateProgress = new AppUpdateProgress(wasRunning && current.Health?.Status != "healthy" ? "needs-attention" : "completed", clock.UtcNow),
+        }, cancellationToken);
+        return new AppLifecycleResponse(await BuildAppSummaryAsync(finished.App, cancellationToken), backup, "updated");
     }
 
     public async Task<AppRuntimeSwitchPlan> CreateRuntimeSwitchPlanAsync(
@@ -2312,6 +2317,7 @@ internal sealed class CoreLifecycleService(
             LastError = null,
         };
         await apps.UpsertAppAsync(next, cancellationToken);
+        await ClearUpdateAvailability(appId);
 
         if (wasRunning)
         {
@@ -2444,6 +2450,7 @@ internal sealed class CoreLifecycleService(
 
     private async Task<AppLifecycleResponse> RemoveCoreAsync(string appId, AppRemoveRequest request, CancellationToken cancellationToken)
     {
+        await ClearUpdateAvailability(appId);
         var app = await apps.GetAppAsync(appId, cancellationToken);
         if (app is not null && !string.IsNullOrWhiteSpace(app.ManifestPath))
         {
@@ -2692,7 +2699,7 @@ internal sealed class CoreLifecycleService(
     public async Task<AppUpdateStatusResponse> GetUpdateStatusAsync(string appId, bool refresh = false, CancellationToken cancellationToken = default)
     {
         var app = await RequireAppAsync(appId, cancellationToken);
-        if (!refresh && TryGetFreshReviewedPlan(appId) is { } cached)
+        if (!refresh && await TryGetFreshReviewedPlan(appId) is { } cached)
         {
             return ProjectUpdateStatus(app, cached);
         }
@@ -3462,6 +3469,7 @@ internal sealed class CoreLifecycleService(
             InstalledAt: existing?.InstalledAt ?? default,
             UpdatedAt: default,
             SourceState: BuildSourceState(selection, existing),
+            AppliedConfigurationHash: existing?.AppliedConfigurationHash,
             Autostart: existing?.Autostart ?? true,
             Mounts: PreserveMounts(manifest, existing?.Mounts),
             // Sticky once captured at install; URL installs leave it null (covered by ManifestUrl).
@@ -3592,7 +3600,10 @@ internal sealed class CoreLifecycleService(
         // (sweep pruning alone can't be relied on: the scheduler may be disabled).
         return summary with
         {
-            UpdateCheck = summary.Live ? null : updateAvailability.GetValueOrDefault(app.Id),
+            RestartRequired = app.AppliedConfigurationHash is not null && AppRuntimeStates.IsUp(app.RuntimeState)
+                && AppConfigurationFingerprint.RequiresRestart(app, await globalMounts.ReadAsync(cancellationToken)),
+            UpdateProgress = app.UpdateProgress,
+            UpdateCheck = (await ReadUpdateSnapshotAsync(app, cancellationToken, summary.Live))?.Verdict,
             Dependencies = await ResolveDependencySummariesAsync(app, installed, cancellationToken),
         };
     }
@@ -4256,15 +4267,7 @@ internal sealed class CoreLifecycleService(
         // entry was deleted is dropped (inert); an entry capped to read-only forces ReadOnly on top
         // of the slot mode (the slot stays authoritative — it can only further restrict).
         var registry = await globalMounts.ReadAsync(cancellationToken);
-        var globalsByName = registry.Mounts.ToDictionary(mount => mount.Name, StringComparer.Ordinal);
-        var (bindings, forcedReadOnly) = RuntimeMountPlanner.MaterializeBindings(app.Mounts, globalsByName);
-        var mounts = RuntimeMountPlanner.Resolve(app.MountSlots, bindings);
-        if (forcedReadOnly.Count > 0)
-        {
-            mounts = mounts
-                .Select(mount => forcedReadOnly.Contains((mount.Key, mount.Label)) ? mount with { ReadOnly = true } : mount)
-                .ToArray();
-        }
+        var mounts = AppConfigurationFingerprint.ResolveMounts(app, registry);
 
         return new(
             app,

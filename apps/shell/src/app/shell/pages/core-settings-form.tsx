@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { SettingInput } from "../settings";
 import type { CoreSettingItem, CoreSettingsState } from "../types";
 import { InlineError } from "../ui";
+import { settingDurationHint, settingUnitLabel } from "../setting-duration";
+import { CoreSettingsLayout } from "./core-settings-layout";
 
 // The editable form over Core's own settings, shared by the Core and Ingress tabs. Core returns one flat
 // list tagged with a `group`; each tab decides which of those groups it owns, so this component takes a
@@ -21,6 +23,7 @@ export function CoreSettingsForm({
   onSave,
   visible,
   showGroupHeadings = true,
+  layout = "groups",
   onDraftChange,
 }: {
   settings: CoreSettingsState | null;
@@ -28,6 +31,7 @@ export function CoreSettingsForm({
   onSave: (values: Record<string, string>) => Promise<void>;
   visible?: (item: CoreSettingItem, draft: Record<string, string>) => boolean;
   showGroupHeadings?: boolean;
+  layout?: "groups" | "core";
   onDraftChange?: (draft: Record<string, string>) => void;
 }) {
   const items = useMemo(() => settings?.settings ?? [], [settings]);
@@ -94,6 +98,43 @@ export function CoreSettingsForm({
     }
   };
 
+  const renderField = (item: CoreSettingItem, label?: string) => (
+    <div key={item.key} className="space-y-1">
+      <SettingInput
+        setting={{
+          key: item.key,
+          type: item.type,
+          label: label ?? item.label,
+          description: item.description,
+          required: false,
+          secret: false,
+          options: item.options,
+        }}
+        stacked={layout === "core"}
+        unit={settingUnitLabel(item.unit)}
+        value={draft[item.key] ?? item.value}
+        disabled={saving}
+        onChange={(value) => update(item.key, value)}
+      />
+      {settingDurationHint(draft[item.key] ?? item.value, item.unit) && (
+        <p className="text-xs text-muted-foreground">{settingDurationHint(draft[item.key] ?? item.value, item.unit)}</p>
+      )}
+      {item.overridden && (
+        <div className="flex justify-end">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-auto min-h-6 max-w-full whitespace-normal break-all px-2 text-right text-xs text-muted-foreground"
+            disabled={saving}
+            onClick={() => reset(item.key)}
+          >
+            {item.default ? `Reset to default (${item.default}${item.unit ?? ""})` : "Reset to default"}
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div className="space-y-3">
       {error && <InlineError message={error} />}
@@ -107,40 +148,12 @@ export function CoreSettingsForm({
 
       {settings && groups.length > 0 && (
         <div className="space-y-4">
-          {groups.map((group) => (
+          {layout === "core" ? (
+            <CoreSettingsLayout items={shown} renderField={renderField} />
+          ) : groups.map((group) => (
             <div key={group.name} className="space-y-3 rounded-md border p-3">
               {showGroupHeadings && <p className="text-xs font-medium text-muted-foreground">{group.name}</p>}
-              {group.items.map((item) => (
-                <div key={item.key} className="space-y-1">
-                  <SettingInput
-                    setting={{
-                      key: item.key,
-                      type: item.type,
-                      label: item.label,
-                      description: item.description,
-                      required: false,
-                      secret: false,
-                      options: item.options,
-                    }}
-                    value={draft[item.key] ?? item.value}
-                    disabled={saving}
-                    onChange={(value) => update(item.key, value)}
-                  />
-                  {item.overridden && (
-                    <div className="flex justify-end">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-6 px-2 text-xs text-muted-foreground"
-                        disabled={saving}
-                        onClick={() => reset(item.key)}
-                      >
-                        {item.default ? `Reset to default (${item.default}${item.unit ?? ""})` : "Reset to default"}
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              ))}
+              {group.items.map((item) => renderField(item))}
             </div>
           ))}
 

@@ -497,7 +497,11 @@ public sealed class DockerRuntimeAdapterTests
         var runner = new FakeDockerCommandRunner(args =>
             args is ["image", "inspect", ..] ? new DockerCommandResult(0, "[{}]", "") : new DockerCommandResult(0, "", ""));
 
-        var result = await CreateAdapter(runner).StartAsync(CreateDockerContext(CreateDockerAppRecord("pinned", locks)));
+        var stages = new List<string>();
+        var result = await CreateAdapter(runner).StartAsync(CreateDockerContext(CreateDockerAppRecord("pinned", locks)) with
+        { ReportUpdateProgress = (stage, _) => { stages.Add(stage); return Task.CompletedTask; } });
+        Assert.DoesNotContain("downloading", stages);
+        Assert.Contains("starting", stages);
 
         Assert.DoesNotContain(runner.Commands, command => command[0] == "pull");
         Assert.Equal($"ghcr.io/example/app@{digest}", runner.Find("run")![^1]);
@@ -511,7 +515,10 @@ public sealed class DockerRuntimeAdapterTests
         var runner = new FakeDockerCommandRunner(args =>
             args is ["image", "inspect", ..] ? new DockerCommandResult(1, "", "No such image") : new DockerCommandResult(0, "", ""));
 
-        await CreateAdapter(runner).StartAsync(CreateDockerContext(CreateDockerAppRecord("pinned", LockMap(digest))));
+        var stages = new List<string>();
+        await CreateAdapter(runner).StartAsync(CreateDockerContext(CreateDockerAppRecord("pinned", LockMap(digest))) with
+        { ReportUpdateProgress = (stage, _) => { stages.Add(stage); return Task.CompletedTask; } });
+        Assert.Equal(new[] { "downloading", "starting" }, stages);
 
         Assert.True(runner.Ran("pull", $"ghcr.io/example/app@{digest}"));
         Assert.False(runner.Ran("pull", "ghcr.io/example/app:latest"));

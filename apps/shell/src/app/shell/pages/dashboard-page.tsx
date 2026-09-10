@@ -2,6 +2,8 @@
 
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import Link from "next/link";
+import { isRoutineUpdate, updateFeedback, updateCheckDescription, UPDATE_SUCCESS_DURATION } from "../update-feedback";
 import {
   Activity,
   ArrowUpCircle,
@@ -23,7 +25,7 @@ import {
   RefreshCw,
   RotateCcw,
   Server,
-  Settings2,
+  Settings,
   Square,
   Terminal,
   Trash2,
@@ -31,6 +33,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { CoreLogsDialog } from "../dialogs/core-logs-dialog";
+import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -62,8 +65,9 @@ import {
   resolveAvailableVersionLabel,
   type AppRevision,
 } from "../app-versions";
-import { isAppBusy, isAppUp } from "../runtime-states";
+import { isAppBusy, isAppUp, matchesAppStateFilter, matchesAppSearch, type AppStateFilter } from "../runtime-states";
 import { AppIcon } from "../app-icon";
+import { getShellViewHref } from "../shell-routes";
 import { copyTextToClipboard } from "../clipboard";
 import { isAuthRequiredRedirectError, readCoreError, redirectToCoreLoginIfAuthRequired } from "../core-api";
 import { ingressProviderLabel } from "../ingress";
@@ -83,7 +87,7 @@ import type {
   RuntimeHealthState,
   UpdateStatusState,
 } from "../types";
-import { Alert, EmptyState, Fact, IconButton, PageHeader, StatusBadge } from "../ui";
+import { Alert, EmptyState, Fact, IconButton, StatusBadge } from "../ui";
 import { EndpointAvailabilityMarker, PortReassignControl } from "./port-reassign-control";
 import { PublicOriginControl } from "./public-origin-control";
 
@@ -145,6 +149,9 @@ export function DashboardPage({
 }) {
   const isRefreshing = loading;
   const hasAnyApps = apps.length > 0;
+  const [appFilter, setAppFilter] = useState<AppStateFilter>("all");
+  const [appSearch, setAppSearch] = useState("");
+  const visibleApps = apps.filter((app) => matchesAppStateFilter(app, appFilter) && matchesAppSearch(app, appSearch));
 
   // Per-app per-service digest detail for the expanded row (GET /api/apps/{id}/update-status,
   // served from Core's cached plan). The row Update/Review affordances read the fleet-check verdict
@@ -269,7 +276,7 @@ export function DashboardPage({
         description: [reviewNote, failedNote].filter(Boolean).join(" ") || undefined,
       });
     } else if (failed > 0) {
-      toast.warning("No updates found", { description: failedNote });
+      toast.warning("Update check incomplete", { description: failedNote });
     } else {
       toast.success("All apps up to date");
     }
@@ -278,49 +285,44 @@ export function DashboardPage({
   // Routine verdicts the header "Update all" would apply (review-class ones stay on their rows).
   // Mirrors updateAllApps' own filter — including the planDigest requirement, so N never counts an
   // app the action could not actually enqueue.
-  const routineUpdateCount = apps.filter(
-    (app) =>
-      app.updateCheck?.updateAvailable === true &&
-      app.updateCheck.requiresReview !== true &&
-      Boolean(app.updateCheck.planDigest) &&
-      app.operationStatus !== "updating",
-  ).length;
+  const routineUpdateCount = apps.filter(isRoutineUpdate).length;
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Dashboard"
-        description="This host and every app installed on it. System apps carry a badge; state is resolved through the Core backend API and runtime state."
-        actions={(
-          <>
-            <Button variant="outline" size="icon" onClick={onRefresh} disabled={isRefreshing} aria-label="Refresh apps">
-              <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
+      <h1 className="sr-only">Dashboard</h1>
+      <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <Input className="w-52" placeholder="Search apps" aria-label="Search apps by name or ID" value={appSearch} onChange={(event) => setAppSearch(event.target.value)} />
+          <AppCounts apps={apps} filter={appFilter} onFilterChange={setAppFilter} />
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="icon" onClick={onRefresh} disabled={isRefreshing} aria-label="Refresh apps">
+            <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
+          </Button>
+          {canManageApps && (
+            <Button variant="outline" onClick={onCheckUpdates} disabled={checkingUpdates}>
+              {checkingUpdates ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ArrowUpCircle className="h-4 w-4" />}
+              Check updates
             </Button>
-            {canManageApps && (
-              <Button variant="outline" onClick={onCheckUpdates} disabled={checkingUpdates}>
-                {checkingUpdates ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ArrowUpCircle className="h-4 w-4" />}
-                Check updates
-              </Button>
-            )}
-            {canManageApps && routineUpdateCount > 0 && (
-              <Button
-                variant="outline"
-                className="text-sky-600 hover:text-sky-600 dark:text-sky-400 dark:hover:text-sky-400"
-                onClick={onUpdateAll}
-              >
-                <ArrowUpCircle className="h-4 w-4" />
-                Update all ({routineUpdateCount})
-              </Button>
-            )}
-            {canManageApps && (
-              <Button onClick={() => onInstall()}>
-                <Plus className="h-4 w-4" />
-                Install App
-              </Button>
-            )}
-          </>
-        )}
-      />
+          )}
+          {canManageApps && routineUpdateCount > 0 && (
+            <Button
+              variant="outline"
+              className="text-sky-600 hover:text-sky-600 dark:text-sky-400 dark:hover:text-sky-400"
+              onClick={onUpdateAll}
+            >
+              <ArrowUpCircle className="h-4 w-4" />
+              Update all ({routineUpdateCount})
+            </Button>
+          )}
+          {canManageApps && (
+            <Button onClick={() => onInstall()}>
+              <Plus className="h-4 w-4" />
+              Install App
+            </Button>
+          )}
+        </div>
+      </div>
 
       <CoreSection
         status={status}
@@ -337,75 +339,94 @@ export function DashboardPage({
         </div>
       ) : !hasAnyApps ? (
         <EmptyState icon={Boxes} title="No installed apps" description="Install a runtime app to make it available in the shell." />
-      ) : (
-        <div className="space-y-3">
-          <AppCounts apps={apps} />
-          <InstalledAppsTable
-            coreOrigin={coreOrigin}
-            apps={apps}
-            shellAppId={shellAppId}
-            canManageApps={canManageApps}
-            busyAction={busyAction}
-            updateStatusByApp={updateStatusByApp}
-            onAction={onAction}
-            onSwitchRuntime={onSwitchRuntime}
-            onSetDevelopmentMode={onSetDevelopmentMode}
-            onUpdateApp={onUpdateApp}
-            onCheckUpdate={(target) => void checkAppUpdate(target)}
-            onOpenPanel={onOpenPanel}
-          />
+      ) : visibleApps.length === 0 ? (
+        <div className="rounded-lg border bg-card p-8 text-center" role="status">
+          <p className="text-sm text-muted-foreground">No apps match your search and filters.</p>
+          <Button variant="outline" className="mt-3" onClick={() => { setAppFilter("all"); setAppSearch(""); }}>Show all apps</Button>
         </div>
+      ) : (
+        <InstalledAppsTable
+          coreOrigin={coreOrigin}
+          apps={visibleApps}
+          shellAppId={shellAppId}
+          canManageApps={canManageApps}
+          busyAction={busyAction}
+          updateStatusByApp={updateStatusByApp}
+          onAction={onAction}
+          onSwitchRuntime={onSwitchRuntime}
+          onSetDevelopmentMode={onSetDevelopmentMode}
+          onUpdateApp={onUpdateApp}
+          onCheckUpdate={(target) => void checkAppUpdate(target)}
+          onOpenPanel={onOpenPanel}
+        />
       )}
     </div>
   );
 }
 
-// The old Dashboard's aggregate widget, reduced to one line above the table it describes. The
-// runtime-coverage bar it used to carry is gone: it drew a proportion of a number visible two lines
-// below as the tallest element on the page.
-//
-// The counts describe the rows in this table, system apps included. The old widget counted non-system
-// apps only, which was defensible beside a page that split them and is not beside a table that does
-// not — a header disagreeing with the list under it is worse than either number alone.
-function AppCounts({ apps }: { apps: CoreApp[] }) {
-  const total = apps.length;
-  const running = apps.filter((app) => isAppUp(app.runtimeState)).length;
-  // Apps mid-verb are counted in neither bucket: calling them "not running" reads as a shortfall
-  // during a boot that is going fine, and calling them a problem is worse.
-  const transitioning = apps.filter((app) => isAppBusy(app.runtimeState)).length;
-  const attention = apps.filter(
-    (app) => app.lastError || app.operationStatus === "failed" || app.runtimeState === "unknown",
-  ).length;
+// Counts always describe the full host, even when the table is filtered.
+function AppCounts({ apps, filter, onFilterChange }: {
+  apps: CoreApp[];
+  filter: AppStateFilter;
+  onFilterChange: (filter: AppStateFilter) => void;
+}) {
+  const counters = [
+    { key: "running", label: "running", icon: Activity, accent: "text-emerald-600 dark:text-emerald-500" },
+    { key: "transitioning", label: "in progress", icon: LoaderCircle, accent: "animate-spin" },
+    { key: "attention", label: "need attention", icon: CircleAlert, accent: "text-amber-700 dark:text-amber-500" },
+    { key: "updates", label: "updates", icon: ArrowUpCircle, accent: "text-sky-600 dark:text-sky-400" },
+    { key: "all", label: "total", icon: Boxes, accent: "" },
+  ] as const;
 
   return (
-    <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm">
-      <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-        <Activity className={cn("h-4 w-4", running > 0 && "text-emerald-600 dark:text-emerald-500")} aria-hidden />
-        <span className="font-medium text-foreground">{running}</span> running
-      </span>
-      {transitioning > 0 && (
-        <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-          <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden />
-          <span className="font-medium text-foreground">{transitioning}</span> in progress
-        </span>
-      )}
-      <span
-        className={cn(
-          "inline-flex items-center gap-1.5 text-muted-foreground",
-          attention > 0 && "text-amber-700 dark:text-amber-500",
-        )}
-      >
-        <CircleAlert className="h-4 w-4" aria-hidden />
-        <span className={cn("font-medium", attention > 0 ? "text-amber-700 dark:text-amber-500" : "text-foreground")}>
-          {attention}
-        </span>{" "}
-        need attention
-      </span>
-      <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-        <Boxes className="h-4 w-4" aria-hidden />
-        <span className="font-medium text-foreground">{total}</span> total
-      </span>
+    <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Filter apps by state">
+      {counters.map(({ key, label, icon: Icon, accent }) => {
+        const count = apps.filter((app) => matchesAppStateFilter(app, key)).length;
+        // An active filter stays reachable if its last matching app changes state.
+        if (count === 0 && filter !== key && key === "transitioning") return null;
+        return (
+          <Button
+            key={key}
+            variant={filter === key ? "secondary" : "ghost"}
+            size="sm"
+            className="gap-1.5 text-muted-foreground"
+            aria-pressed={filter === key}
+            onClick={() => onFilterChange(filter === key ? "all" : key)}
+          >
+            <Icon className={cn("h-4 w-4", count > 0 && accent)} aria-hidden />
+            <span className="font-medium text-foreground">{count}</span> {key === "updates" && count === 1 ? "update" : label}
+          </Button>
+        );
+      })}
     </div>
+  );
+}
+
+// Shared column widths keep the separate Core and app tables aligned, including when expanded.
+function DashboardColumns() {
+  return (
+    <colgroup>
+      <col />
+      <col className="w-28" />
+      <col className="w-28" />
+      <col className="w-52" />
+      <col className="w-48" />
+    </colgroup>
+  );
+}
+
+// Keep native column semantics without spending a visible row on self-explanatory labels.
+function DashboardTableHeader() {
+  return (
+    <TableHeader className="[&_tr]:border-0">
+      <TableRow className="border-0">
+        {["App", "Runtime", "Version", "Status", "Actions"].map((label) => (
+          <TableHead key={label} scope="col" className="h-0 border-0 p-0">
+            <span className="sr-only">{label}</span>
+          </TableHead>
+        ))}
+      </TableRow>
+    </TableHeader>
   );
 }
 
@@ -444,57 +465,85 @@ function CoreSection({
   };
 
   return (
-    // `text-sm` matches the table below, which gets it from the `Table` element itself — this block
-    // is a plain div outside any table, so without it the same markup renders a step larger than the
-    // rows it is shaped after.
-    <div className="rounded-lg border bg-card text-sm">
-      <div className="flex min-w-0 items-center gap-2 px-4 py-3">
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          className="shrink-0"
-          title={expanded ? "Hide details" : "Show details"}
-          aria-label={expanded ? "Hide Core details" : "Show Core details"}
-          aria-expanded={expanded}
-          onClick={() => setExpanded((current) => !current)}
-        >
-          {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-        </Button>
-
-        <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-          <Server className="h-4 w-4" />
-        </div>
-
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-center gap-2">
-            <span className="truncate font-medium">Hosty Core</span>
-            {/* Not a `System` badge: this is not an installed app at all, which is also why it sits
-                above the table instead of in it — the counts below describe rows, and Core is none. */}
-            <Badge variant="outline">Platform</Badge>
-          </div>
-          <div className="truncate text-xs text-muted-foreground">{status?.component ?? "hosty-core"}</div>
-        </div>
-
-        <div className="flex shrink-0 items-center gap-3">
-          <CoreVersionBlock status={status} coreUpdate={coreUpdate} />
-          <StatusBadge value={status ? status.status : "offline"} />
-          {/* Every installed app has its console logs one click away in the row menu below; Core is
-              not an installed app and had nowhere to show its own. */}
-          {canManageApps && (
-            <Button variant="outline" size="sm" onClick={() => setLogsOpen(true)}>
-              <Terminal className="h-4 w-4" />
-              Logs
-            </Button>
-          )}
-          {showUpdate && (
-            <Button variant="outline" size="sm" disabled={coreUpdating} onClick={onUpdateCore}>
-              {coreUpdating ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ArrowUpCircle className="h-4 w-4" />}
-              {coreUpdating ? "Updating…" : "Update Core"}
-            </Button>
-          )}
-        </div>
-      </div>
+    <div className="overflow-hidden rounded-lg border bg-card text-sm">
+      <Table className="min-w-[920px] table-fixed" aria-label="Hosty Core">
+        <DashboardColumns />
+        <DashboardTableHeader />
+        <TableBody>
+          <TableRow>
+            <TableCell>
+              <div className="flex min-w-0 items-center gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="shrink-0"
+                  title={expanded ? "Hide details" : "Show details"}
+                  aria-label={expanded ? "Hide Core details" : "Show Core details"}
+                  aria-expanded={expanded}
+                  onClick={() => setExpanded((current) => !current)}
+                >
+                  {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                </Button>
+                <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+                  <Server className="h-4 w-4" />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="truncate font-medium">Hosty Core</span>
+                    <Badge variant="outline">Platform</Badge>
+                  </div>
+                  <div className="truncate text-xs text-muted-foreground">{status?.component ?? "hosty-core"}</div>
+                </div>
+              </div>
+            </TableCell>
+            <TableCell><span className="sr-only">Not applicable</span></TableCell>
+            <TableCell>
+              <div className="flex items-center gap-1.5">
+                <CoreVersionBlock status={status} coreUpdate={coreUpdate} />
+                {showUpdate && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="shrink-0 text-sky-600 hover:bg-sky-500/10 hover:text-sky-600 dark:text-sky-400 dark:hover:text-sky-400"
+                    title={coreUpdating ? "Updating Core…" : "Update Core"}
+                    aria-label={coreUpdating ? "Updating Core…" : "Update Core"}
+                    disabled={coreUpdating}
+                    onClick={onUpdateCore}
+                  >
+                    {coreUpdating ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ArrowUpCircle className="h-4 w-4" />}
+                  </Button>
+                )}
+              </div>
+            </TableCell>
+            <TableCell><div className="space-y-1">
+              <StatusBadge value={status ? status.status : "offline"} />
+              {(coreUpdating || coreUpdate?.clientPhase) && <div role="status" className="flex items-center gap-1 text-xs text-muted-foreground">
+                {coreUpdating && <LoaderCircle className="size-3 animate-spin" />}
+                {coreUpdate?.clientPhase === "completed" ? "Updated" : coreUpdate?.clientPhase === "reconnecting" ? "Reconnecting" : coreUpdate?.clientPhase === "verifying" ? "Verifying update" : coreUpdate?.clientPhase === "unconfirmed" ? "Update not confirmed" : "Installing update"}
+              </div>}
+              {coreUpdate?.error && <span title={updateCheckDescription(coreUpdate)} className="text-xs text-amber-600">Check failed</span>}
+            </div></TableCell>
+            <TableCell>
+              <div className="flex justify-end gap-1">
+                {canManageApps && (
+                  <>
+                    <IconButton title="Core console logs" onClick={() => setLogsOpen(true)}>
+                      <Terminal className="h-4 w-4" />
+                    </IconButton>
+                    <Button variant="ghost" size="icon-sm" asChild>
+                      <Link href={getShellViewHref("settings")} title="Host settings" aria-label="Host settings">
+                        <Settings className="h-4 w-4" />
+                      </Link>
+                    </Button>
+                  </>
+                )}
+              </div>
+            </TableCell>
+          </TableRow>
+        </TableBody>
+      </Table>
 
       {expanded && (
         <div className="space-y-4 border-t bg-muted/20 px-4 py-3">
@@ -817,7 +866,7 @@ function EndpointUrlBlock({
         )}
         {onConfigure && (
           <IconButton title={configureTitle || "Configure"} onClick={onConfigure}>
-            <Settings2 className="h-4 w-4" />
+            <Settings className="h-4 w-4" />
           </IconButton>
         )}
         {actions}
@@ -931,17 +980,10 @@ function InstalledAppsTable({
   };
 
   return (
-    <div className="rounded-lg border bg-card">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead className="min-w-[240px]">App</TableHead>
-            <TableHead>Runtime</TableHead>
-            <TableHead>Version</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead className="text-right">Actions</TableHead>
-          </TableRow>
-        </TableHeader>
+    <div className="overflow-hidden rounded-lg border bg-card">
+      <Table className="min-w-[920px] table-fixed" aria-label="Installed apps">
+        <DashboardColumns />
+        <DashboardTableHeader />
         <TableBody>
           {apps.map((app) => {
             const expanded = expandedAppIds.has(app.id);
@@ -1049,10 +1091,10 @@ function InstalledAppRow({
   // state, so it survives reloads and shows for every admin.
   const updating = app.operationStatus === "updating";
   const verdict = canUpdate && !updating ? app.updateCheck : null;
-  const updateVisible = Boolean(verdict?.updateAvailable && !verdict.error);
+  const updateVisible = Boolean(verdict?.updateAvailable);
   // A verdict with no cached plan digest cannot be applied in one click (the plan expired or was
   // consumed), so it takes the review path too — the dialog rebuilds the plan.
-  const needsReview = Boolean(verdict?.requiresReview || !verdict?.planDigest);
+  const needsReview = Boolean(verdict?.error || verdict?.requiresReview || !verdict?.planDigest);
   // Removal, like start/stop/restart/update, is an inherent Core operation: the endpoint authorizes on
   // the admin session, never on the manifest `capabilities` list, so an app cannot decline to be
   // uninstalled by omitting a token. System apps are removable too — "system" governs who may see and
@@ -1095,7 +1137,7 @@ function InstalledAppRow({
               <ChevronRight className="h-4 w-4" />
             )}
           </Button>
-          <AppIcon src={resolveAssetSrc(coreOrigin, app.iconUrl)} fallback={Boxes} className="h-8 w-8 self-center rounded-md" alt="" />
+          <AppIcon src={resolveAssetSrc(coreOrigin, app.iconUrl)} name={app.icon} fallback={Boxes} className="h-8 w-8 self-center rounded-md" alt="" />
           <div className="min-w-0">
             <div className="flex min-w-0 items-center gap-2">
               <span className="truncate font-medium">{app.displayName}</span>
@@ -1104,6 +1146,17 @@ function InstalledAppRow({
               <AppProblemIcons problems={problems} />
             </div>
             <div className="truncate text-xs text-muted-foreground">{app.id}</div>
+            {app.restartRequired && (
+              <div className="flex flex-wrap items-center gap-2 text-xs text-amber-700 dark:text-amber-400">
+                <span title="Settings or mounts changed since this app started.">Restart required</span>
+                {canControl && (
+                  <Button variant="link" size="sm" className="h-auto p-0 text-xs text-inherit" disabled={transitioning || busyAction?.startsWith(`${app.id}:`) || app.operationStatus === "updating"} onClick={() => onAction(app, "restart")}>
+                    Restart
+                  </Button>
+                )}
+              </div>
+            )}
+            <AppUpdateFeedback key={app.updateProgress?.changedAt ?? "no-update"} app={app} />
           </div>
         </div>
       </TableCell>
@@ -1160,17 +1213,8 @@ function InstalledAppRow({
       </TableCell>
       <TableCell>
         <div className="flex items-center justify-end gap-1">
-          {updating && (
-            <span
-              className="inline-flex items-center gap-1 text-xs text-muted-foreground"
-              title="An update is being applied on Core; this row settles when it finishes."
-            >
-              <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-              Updating
-            </span>
-          )}
           {verdict?.error && (
-            <span title={`Update check failed: ${verdict.error}`} className="inline-flex shrink-0">
+            <span title={updateCheckDescription(verdict)} className="inline-flex shrink-0">
               <CircleAlert className="h-4 w-4 text-amber-500" aria-label="Update check failed" />
             </span>
           )}
@@ -1209,7 +1253,7 @@ function InstalledAppRow({
           )}
           {canConfigure && (
             <IconButton title="Settings" onClick={() => onOpenPanel(app, "settings")}>
-              <Settings2 className="h-4 w-4" />
+              <Settings className="h-4 w-4" />
             </IconButton>
           )}
           <InstalledAppActionsMenu
@@ -1242,16 +1286,30 @@ function InstalledAppRow({
   );
 }
 
-// At most two icons — one per severity, worst first — rather than one glyph per problem type. A distinct
-// glyph reads better at a glance, but does not scale: an app with a failed start, an unbound port, and
-// missing settings would carry three icons and stop being scannable. The tooltip carries the specifics,
-// and the panel's alerts carry the full explanation.
+function AppUpdateFeedback({ app }: { app: CoreApp }) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (app.updateProgress?.stage !== "completed") return;
+    const remaining = Date.parse(app.updateProgress.changedAt) + UPDATE_SUCCESS_DURATION - Date.now();
+    if (remaining <= 0) return;
+    const timer = setTimeout(() => setNow(Date.now()), remaining);
+    return () => clearTimeout(timer);
+  }, [app.updateProgress?.stage, app.updateProgress?.changedAt]);
+  const label = updateFeedback(app, now);
+  if (!label) return null;
+  const success = app.updateProgress?.stage === "completed";
+  const busy = app.operationStatus === "updating" && !["failed", "interrupted"].includes(app.updateProgress?.stage ?? "");
+  return <div role="status" title={app.lastError ?? undefined} className={cn("mt-0.5 flex items-center gap-1 text-xs", success ? "text-emerald-600" : busy ? "text-muted-foreground" : "text-amber-600")}>
+    {success ? <Check className="size-3" /> : busy ? <LoaderCircle className="size-3 animate-spin" /> : <CircleAlert className="size-3" />}{label}
+  </div>;
+}
+
 // Core's version, and — when an update is offered — the version the channel publishes under it, in the
 // same shape the app rows use. That includes a rebuild of the version already installed, which on a
 // rolling channel is the ordinary case: the line answers "which version would I get", and the tooltip
 // title separates "New build of 0.97.0" from "Update to 0.98.0". Core's own check is a binary-hash
 // comparison, so it can name a version only when the release carries the marker; an older release
-// leaves the installed version alone with the "Update Core" button to say the rest.
+// leaves the installed version beside the update icon to say the rest.
 //
 // The tooltips name the release channel, and only that. Unlike an app row there is no revision to
 // show — no hash of the published binary is exposed to a client — and `checkedAt` is deliberately left
@@ -1266,7 +1324,7 @@ function CoreVersionBlock({ status, coreUpdate }: { status: CoreStatus | null; c
 
   return (
     <TooltipProvider delayDuration={150}>
-      <div className="space-y-0.5 text-right text-sm leading-tight text-muted-foreground">
+      <div className="space-y-0.5 text-sm leading-tight">
         <div>
           <VersionLine
             value={status.version}
@@ -1327,7 +1385,7 @@ function AppVersionCell({
 
   return (
     <TooltipProvider delayDuration={150}>
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-1.5" title={updateCheckDescription(verdict)}>
         <div className="min-w-0 space-y-0.5 leading-tight">
           <div>
             <VersionLine
@@ -1355,7 +1413,7 @@ function AppVersionCell({
             variant="ghost"
             size="icon-sm"
             className="shrink-0 text-amber-600 hover:bg-amber-500/10 hover:text-amber-600 dark:text-amber-500 dark:hover:text-amber-500"
-            title="Update available — changes more than the app's build, so review it before applying"
+            title={verdict?.error ? "Previously found update — check failed; review before applying" : "Update available — review before applying"}
             aria-label="Update available — review before applying"
             onClick={onReview}
           >
@@ -1705,7 +1763,7 @@ function InstalledAppActionsMenu({
           <>
             {canBackup && <DropdownMenuSeparator />}
             <DropdownMenuItem onClick={() => onOpenPanel(app, "settings")}>
-              <Settings2 className="h-4 w-4" />
+              <Settings className="h-4 w-4" />
               Settings
             </DropdownMenuItem>
           </>
