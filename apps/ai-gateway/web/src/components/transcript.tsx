@@ -112,7 +112,7 @@ export function TranscriptEvent({
       // Something degraded while the session stayed usable, so it reads as information rather than
       // as the failure styling — which would say the run is over when it is not.
       return (
-        <div className="rounded-md border border-muted-foreground/30 bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+        <div className="min-w-0 rounded-md border border-muted-foreground/30 bg-muted/40 px-3 py-2 text-xs wrap-anywhere text-muted-foreground">
           {String(event.message ?? "")}
         </div>
       );
@@ -314,13 +314,14 @@ function ApprovalBody({ view }: { view: ApprovalView }) {
   switch (view.kind) {
     case "command":
       return (
-        <div className="space-y-1">
+        <div className="flex min-w-0 flex-col gap-2">
           {/* No wrapping on purpose: a command is read left to right, and a digest or a long path
-              broken across lines is a command the operator has to reassemble before approving. */}
-          <pre className="max-h-48 overflow-auto rounded bg-background/60 p-2 font-mono text-xs whitespace-pre">
+              broken across lines is a command the operator has to reassemble before approving.
+              Reserve bottom padding for overlay scrollbars so they cannot cover the command. */}
+          <pre className="max-h-48 min-w-0 shrink-0 overflow-auto rounded bg-background/60 p-2 pb-5 font-mono text-xs whitespace-pre">
             {view.command}
           </pre>
-          {view.cwd && <div className="text-xs text-muted-foreground">in {view.cwd}</div>}
+          {view.cwd && <div className="text-xs break-all text-muted-foreground">in {view.cwd}</div>}
         </div>
       );
     case "file":
