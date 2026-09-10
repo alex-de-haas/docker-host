@@ -173,6 +173,8 @@ Shell re-reads Core's installed status and cached update availability when the e
 or reconnects and when the tab becomes visible. Its delayed post-update probe also refreshes the
 installed status. These reads bypass the browser cache, so a restarted Core's version appears without
 a page reload; a temporary failed status read retains the last known facts until the next sync.
+An update offer for an older installed Core version is hidden as soon as the new version is known,
+even if the release-status endpoint is still unavailable.
 
 ## Pending runtime configuration
 
@@ -183,7 +185,8 @@ administrator-only Restart action disabled during lifecycle operations. It never
 The attention filter includes these apps.
 
 The fingerprint survives Core restarts and covers inline bindings, shared assignments, library host
-paths, and effective read-only modes. Description-only edits, unchanged values, binding reorderings,
+paths, and effective read-only modes. Applied paths are the canonical paths passed to the runtime;
+repointing a symlink marks the app for restart. Unresolvable paths do not block listing or repair. Description-only edits, unchanged values, binding reorderings,
 and changes reverted to the applied configuration produce no warning. Autostart and update policy
 are not process configuration. Stopped apps apply edits at their next start, so they show no warning.
 Failed starts preserve the preceding fingerprint. The digest stays private; summaries expose only a

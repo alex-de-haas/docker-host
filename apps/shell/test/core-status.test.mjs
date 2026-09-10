@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readCoreStatus } from "../src/app/shell/core-status.ts";
+import { readCoreStatus, reconcileCoreUpdate } from "../src/app/shell/core-status.ts";
 import { subscribeToCoreEvents } from "../src/app/shell/events/core-event-stream.ts";
 
 const origin = "http://core.test";
@@ -64,3 +64,25 @@ test("a late response after cancellation cannot overwrite Core status", async (t
   }));
   assert.equal(await readCoreStatus(origin, controller.signal), null);
 });
+
+for (const statusFirst of [true, false]) {
+  test(`an old Core offer is hidden when installed status arrives ${statusFirst ? "before" : "after"} a failed release check`, () => {
+    let version = "0.98.0";
+    let update = { currentVersion: version, availableVersion: "0.99.0", updateAvailable: true, releaseTag: "stable", checkedAt: "2026-09-10T09:00:00Z" };
+    const failCheck = () => { update = { ...update, error: "HTTP 503" }; };
+    if (statusFirst) version = "0.99.0";
+    failCheck();
+    if (!statusFirst) {
+      assert.equal(reconcileCoreUpdate(update, version).updateAvailable, true);
+      version = "0.99.0";
+    }
+    const displayed = reconcileCoreUpdate(update, version);
+    assert.equal(displayed.currentVersion, version);
+    assert.equal(displayed.updateAvailable, false);
+    assert.equal(displayed.availableVersion, null);
+    assert.equal(displayed.lastSuccessfulCheckAt, null);
+    assert.equal(displayed.error, "HTTP 503");
+    const fresh = { ...update, currentVersion: version, availableVersion: "0.100.0", error: null };
+    assert.equal(reconcileCoreUpdate(fresh, version), fresh);
+  });
+}

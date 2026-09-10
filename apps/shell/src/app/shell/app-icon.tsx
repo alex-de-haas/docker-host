@@ -2,10 +2,12 @@
 
 import { useCallback, useState } from "react";
 import type { LucideIcon } from "lucide-react";
-import { DynamicIcon, iconNames, type IconName } from "lucide-react/dynamic";
+import { DynamicIcon, iconNames } from "lucide-react/dynamic";
 import { cn } from "@/lib/utils";
 
-const knownIcons = new Set<string>(iconNames);
+import { createAppIconNameResolver } from "./app-icon-name";
+
+const resolveIconName = createAppIconNameResolver(iconNames);
 
 type AppIconProps = {
   src: string | null;
@@ -23,8 +25,7 @@ export function AppIcon(props: AppIconProps) {
 function AppIconContent({ src, name, fallback: Fallback, className, alt = "" }: AppIconProps) {
   const [failed, setFailed] = useState(false);
   const renderFallback = useCallback(() => <Fallback className="size-full" />, [Fallback]);
-  const iconName = name?.trim();
-  const namedIcon = iconName && knownIcons.has(iconName) ? iconName as IconName : null;
+  const namedIcon = resolveIconName(name);
 
   if (src && !failed) {
     return (

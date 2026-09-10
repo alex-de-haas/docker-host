@@ -170,7 +170,8 @@ Gateway and external ingress readiness remain target architecture topics for ser
 
 Dashboard and sidebar app rows prefer the manifest's `catalogMetadata.icon` image. When that image
 is absent or fails to load, Shell renders the Lucide name declared in `ui.icon`, which Core projects
-as `AppSummary.icon`. Named icons load on demand; missing or unknown names retain the surface's
+as `AppSummary.icon`. Component names such as `BarChart` and dynamic keys such as `bar-chart`
+resolve to the same icon. Named icons load on demand; missing or unknown names retain the surface's
 generic fallback. This behavior is the same for live development and compiled runtimes.
 
 Image failure state belongs to its URL. A changed URL starts a fresh image load instead of carrying

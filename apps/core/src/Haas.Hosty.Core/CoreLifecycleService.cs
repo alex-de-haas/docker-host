@@ -1001,8 +1001,8 @@ internal sealed partial class CoreLifecycleService(
             }
             adapter = ResolveAdapter(selection.RuntimeProfile.Type);
             context = await CreateRuntimeContextAsync(app, selection, cancellationToken);
-            var appliedConfigurationHash = AppConfigurationFingerprint.Compute(context.App, context.Mounts);
             context = EnsureMountsReadyForStart(context);
+            var appliedConfigurationHash = AppConfigurationFingerprint.Compute(context.App, context.Mounts);
             if (app.OperationStatus == "updating")
                 context = context with { ReportUpdateProgress = (stage, service) => SetUpdateProgressAsync(appId, stage, service, cancellationToken) };
             // Core-owned provisioning for the platform capability slots this app provides (e.g. the
@@ -1401,8 +1401,8 @@ internal sealed partial class CoreLifecycleService(
 
             adapter = ResolveAdapter(selection.RuntimeProfile.Type);
             context = await CreateRuntimeContextAsync(app, selection, cancellationToken);
-            var appliedConfigurationHash = AppConfigurationFingerprint.Compute(context.App, context.Mounts);
             context = EnsureMountsReadyForStart(context);
+            var appliedConfigurationHash = AppConfigurationFingerprint.Compute(context.App, context.Mounts);
             // A restart reports its two halves instead of a single `restarting`: both are IsBusy, so
             // clients behave identically either way, and the operator gets to see which half is slow.
             _ = await apps.UpdateAppAsync(appId, current => current with

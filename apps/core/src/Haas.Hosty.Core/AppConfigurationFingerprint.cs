@@ -17,8 +17,20 @@ internal static class AppConfigurationFingerprint
             .ToArray();
     }
 
-    public static string Compute(AppRecord app, GlobalMountState library)
-        => Compute(app, ResolveMounts(app, library));
+    private static string? ComputeDesired(AppRecord app, GlobalMountState library)
+    {
+        try
+        {
+            return Compute(app, ResolveMounts(app, library)
+                .Select(mount => mount with { HostPath = MountPathPolicy.ResolveRealPath(mount.HostPath) })
+                .ToArray());
+        }
+        catch (Exception error) when (error is AppLifecycleException or IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            // A broken path must not break app listing or prevent the operator from repairing it.
+            return null;
+        }
+    }
 
     public static string Compute(AppRecord app, IReadOnlyList<RuntimeMount> mounts)
     {
@@ -51,10 +63,10 @@ internal static class AppConfigurationFingerprint
     // on the first supported edit, rather than marking every existing running app as needing restart.
     public static AppRecord CaptureLegacyBaseline(AppRecord app, GlobalMountState library)
         => app.AppliedConfigurationHash is null && AppRuntimeStates.IsUp(app.RuntimeState)
-            ? app with { AppliedConfigurationHash = Compute(app, library) }
+            ? app with { AppliedConfigurationHash = ComputeDesired(app, library) ?? "" }
             : app;
 
     public static bool RequiresRestart(AppRecord app, GlobalMountState library)
         => AppRuntimeStates.IsUp(app.RuntimeState) && app.AppliedConfigurationHash is { } applied
-            && !string.Equals(applied, Compute(app, library), StringComparison.Ordinal);
+            && !string.Equals(applied, ComputeDesired(app, library), StringComparison.Ordinal);
 }

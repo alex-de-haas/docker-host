@@ -16,7 +16,7 @@ import { CoreEventNames, subscribeToCoreEvents } from "./shell/events/core-event
 import { isAppUp } from "./shell/runtime-states";
 import { resolveLaunchGate } from "./shell/surfaces/app-surface-tabs";
 import { waitForShellUpdateToSettle } from "./shell/self-update";
-import { readCoreStatus } from "./shell/core-status";
+import { readCoreStatus, reconcileCoreUpdate } from "./shell/core-status";
 import { reconcileAppList } from "./shell/app-list-snapshot";
 import { AppDetailsDialog } from "./shell/dialogs/app-details-dialog";
 import { InstallReviewDialog } from "./shell/dialogs/install-review-dialog";
@@ -2242,7 +2242,7 @@ export function ShellClient({
       coreSettings,
       coreSettingsError,
       globalMounts,
-      coreUpdate,
+      coreUpdate: reconcileCoreUpdate(coreUpdate, state.status?.version),
       coreUpdating,
     }),
     [

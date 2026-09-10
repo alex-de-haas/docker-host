@@ -98,42 +98,46 @@ export function CoreSettingsForm({
     }
   };
 
-  const renderField = (item: CoreSettingItem, label?: string) => (
-    <div key={item.key} className="space-y-1">
-      <SettingInput
-        setting={{
-          key: item.key,
-          type: item.type,
-          label: label ?? item.label,
-          description: item.description,
-          required: false,
-          secret: false,
-          options: item.options,
-        }}
-        stacked={layout === "core"}
-        unit={settingUnitLabel(item.unit)}
-        value={draft[item.key] ?? item.value}
-        disabled={saving}
-        onChange={(value) => update(item.key, value)}
-      />
-      {settingDurationHint(draft[item.key] ?? item.value, item.unit) && (
-        <p className="text-xs text-muted-foreground">{settingDurationHint(draft[item.key] ?? item.value, item.unit)}</p>
-      )}
-      {item.overridden && (
-        <div className="flex justify-end">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-auto min-h-6 max-w-full whitespace-normal break-all px-2 text-right text-xs text-muted-foreground"
-            disabled={saving}
-            onClick={() => reset(item.key)}
-          >
-            {item.default ? `Reset to default (${item.default}${item.unit ?? ""})` : "Reset to default"}
-          </Button>
-        </div>
-      )}
-    </div>
-  );
+  const renderField = (item: CoreSettingItem, label?: string) => {
+    const value = draft[item.key] ?? item.value;
+    const durationHint = settingDurationHint(value, item.unit);
+    return (
+      <div key={item.key} className="space-y-1">
+        <SettingInput
+          setting={{
+            key: item.key,
+            type: item.type,
+            label: label ?? item.label,
+            description: item.description,
+            required: false,
+            secret: false,
+            options: item.options,
+          }}
+          stacked={layout === "core"}
+          unit={settingUnitLabel(item.unit)}
+          value={value}
+          disabled={saving}
+          onChange={(value) => update(item.key, value)}
+        />
+        {durationHint && (
+          <p className="text-xs text-muted-foreground">{durationHint}</p>
+        )}
+        {item.overridden && (
+          <div className="flex justify-end">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-auto min-h-6 max-w-full whitespace-normal break-all px-2 text-right text-xs text-muted-foreground"
+              disabled={saving}
+              onClick={() => reset(item.key)}
+            >
+              {item.default ? `Reset to default (${item.default}${item.unit ?? ""})` : "Reset to default"}
+            </Button>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-3">

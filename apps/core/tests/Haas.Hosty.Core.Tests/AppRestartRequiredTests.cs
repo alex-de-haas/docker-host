@@ -89,4 +89,60 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.False((await fixture.Service.StartAsync("com.example.notes")).App!.RestartRequired);
         Assert.NotEqual(applied, (await fixture.Apps.GetAppAsync("com.example.notes"))!.AppliedConfigurationHash);
     }
+    [Fact]
+    public async Task RestartRequired_TracksCanonicalMountTargetAcrossSymlinkChanges()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0", externalMountsJson: RequiredCatalogMountsJson)));
+        var alias = CreateExternalDirectory();
+        var firstTarget = CreateExternalDirectory();
+        var nextTarget = CreateExternalDirectory();
+        await fixture.Service.ConfigureMountsAsync("com.example.notes", new([new("catalogRoots", "movies", alias)]));
+        Directory.Delete(alias);
+        Directory.CreateSymbolicLink(alias, firstTarget);
+        try
+        {
+            Assert.False((await fixture.Service.StartAsync("com.example.notes")).App!.RestartRequired);
+            Assert.Equal(MountPathPolicy.ResolveRealPath(firstTarget), Assert.Single(fixture.Adapter.LastContext!.Mounts).HostPath);
+            Assert.False(Assert.Single(await fixture.RecreateService().ListAppsAsync()).RestartRequired);
+            Directory.Delete(alias);
+            Directory.CreateSymbolicLink(alias, nextTarget);
+            Assert.True(Assert.Single(await fixture.Service.ListAppsAsync()).RestartRequired);
+            Assert.False((await fixture.Service.RestartAsync("com.example.notes")).App!.RestartRequired);
+            Assert.Equal(MountPathPolicy.ResolveRealPath(nextTarget), Assert.Single(fixture.Adapter.LastContext!.Mounts).HostPath);
+        }
+        finally
+        {
+            if (OperatingSystem.IsWindows()) Directory.Delete(alias);
+            else File.Delete(alias);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RestartRequired_UnresolvablePathDoesNotBlockListingOrRepair(bool legacy)
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0", externalMountsJson: RequiredCatalogMountsJson)));
+        var alias = CreateExternalDirectory();
+        await fixture.Service.ConfigureMountsAsync("com.example.notes", new([new("catalogRoots", "movies", alias)]));
+        await fixture.Service.StartAsync("com.example.notes");
+        if (legacy) await fixture.Apps.UpdateAppAsync("com.example.notes", app => app with { AppliedConfigurationHash = null });
+        Directory.Delete(alias);
+        Directory.CreateSymbolicLink(alias, alias);
+        try
+        {
+            Assert.Equal(!legacy, Assert.Single(await fixture.Service.ListAppsAsync()).RestartRequired);
+            var repaired = await fixture.Service.ConfigureMountsAsync("com.example.notes", new([new("catalogRoots", "movies", CreateExternalDirectory())]));
+            Assert.True(repaired.App!.RestartRequired);
+            Assert.False((await fixture.Service.RestartAsync("com.example.notes")).App!.RestartRequired);
+        }
+        finally
+        {
+            if (OperatingSystem.IsWindows()) Directory.Delete(alias);
+            else File.Delete(alias);
+        }
+    }
+
 }
