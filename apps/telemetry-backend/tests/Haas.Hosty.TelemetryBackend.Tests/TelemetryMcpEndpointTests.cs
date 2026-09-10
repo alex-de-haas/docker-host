@@ -1,5 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 using Haas.Hosty.TelemetryBackend.Query;
 
@@ -10,6 +12,23 @@ namespace Haas.Hosty.TelemetryBackend.Tests;
 // newest 500" — a false statement about the host rather than a report about the query.
 public class TelemetryMcpEndpointTests
 {
+    [Fact]
+    public async Task InitializedNotificationReturnsAcceptedWithNoBody()
+    {
+        var result = TelemetryMcpEndpoint.Handle(
+            JsonNode.Parse("""{"jsonrpc":"2.0","method":"notifications/initialized"}"""), null!);
+        using var services = new ServiceCollection().AddLogging().BuildServiceProvider();
+        await using var body = new MemoryStream();
+        var context = new DefaultHttpContext { RequestServices = services };
+        context.Response.Body = body;
+
+        await result.ExecuteAsync(context);
+
+        Assert.Equal(StatusCodes.Status202Accepted, context.Response.StatusCode);
+        Assert.Equal(0, body.Length);
+        Assert.Null(context.Response.ContentType);
+    }
+
     [Fact]
     public void EveryToolDeclaresItselfReadOnly()
     {
