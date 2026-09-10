@@ -35,11 +35,15 @@ export async function fetchAppUpdateAvailable(appId: string, signal?: AbortSigna
   return result.updateAvailable === true;
 }
 
+export class MarketplaceApiError extends Error {
+  constructor(message: string, readonly status: number, readonly code?: string) { super(message); }
+}
+
 async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   const response = await fetch(url, { cache: "no-store", signal });
   if (!response.ok) {
     const body = await response.json().catch(() => null) as ErrorResponse | null;
-    throw new Error(body?.message || `Marketplace request returned HTTP ${response.status}.`);
+    throw new MarketplaceApiError(body?.message || `Marketplace request returned HTTP ${response.status}.`, response.status, body?.code);
   }
   return response.json() as Promise<T>;
 }

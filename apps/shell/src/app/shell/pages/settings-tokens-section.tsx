@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Copy, KeyRound, LoaderCircle, Pencil, Plus, ShieldAlert, ShieldCheck, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { redirectToCoreLoginIfAuthRequired } from "../core-api";
@@ -51,6 +51,7 @@ export function SettingsTokensSection({
   const [error, setError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
   const [label, setLabel] = useState("");
   const [audience, setAudience] = useState(FULL_ACCESS);
   // Apps that can actually receive a scoped credential: only an app declaring an `mcp` interface
@@ -154,6 +155,7 @@ export function SettingsTokensSection({
 
   const create = (event: FormEvent) => {
     event.preventDefault();
+    if (busy || !label.trim() || issued) return;
     return run(async () => {
       // Audience and scopes travel together or not at all; Core refuses half of a pair, so the
       // form never assembles one.
@@ -167,6 +169,10 @@ export function SettingsTokensSection({
               ? { label, audience: CORE_AUDIENCE, scopes: ["mcp:read", "mcp:lifecycle", "mcp:update"] }
             : { label, audience, scopes: ["mcp:read"] },
       );
+      if (!response.ok) {
+        const body = await response.json().catch(() => null) as { message?: string } | null;
+        throw new Error(body?.message ?? "Could not create credential.");
+      }
       const created = (await response.json()) as { label: string; token: string };
       setIssued({ label: created.label, token: created.token });
       setLabel("");
@@ -208,17 +214,124 @@ export function SettingsTokensSection({
 
   return (
     <div className="space-y-6">
-      <div>
-        <h3 className="text-sm font-medium">Access tokens</h3>
-        <p className="text-xs text-muted-foreground">
-          Credentials for clients that cannot open a browser — a native client, a script, a device
-          console, an agent client. A credential carries the full role of whoever approves it unless it
-          is limited to one audience below, so approving an unlimited one from an administrator account
-          grants administrator access to this host until it is revoked.
-        </p>
-      </div>
+      <h3 className="sr-only">Access tokens</h3>
 
-      {error || loadError ? <InlineError message={error ?? loadError!} /> : null}
+      <Dialog open={createOpen} onOpenChange={(open) => {
+        if (busy) return;
+        setCreateOpen(open);
+        setError(null);
+        setLabel("");
+        setAudience(FULL_ACCESS);
+        setIssued(null);
+        setCopied(false);
+      }}>
+        <div className="flex justify-end">
+          <DialogTrigger asChild>
+            <Button disabled={busy}><Plus className="size-4" />Create</Button>
+          </DialogTrigger>
+        </div>
+        <DialogContent showCloseButton={!busy} onInteractOutside={(event) => {
+          if (issued || busy) event.preventDefault();
+        }} onEscapeKeyDown={(event) => {
+          if (issued || busy) event.preventDefault();
+        }}>
+          <DialogHeader>
+            <DialogTitle>{issued ? "Credential created" : "Create a credential"}</DialogTitle>
+            <DialogDescription>
+              {issued ? "Copy the token before closing. You cannot view it again." : "Choose a label and the access this client needs."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="min-h-0 overflow-y-auto">
+            {error ? <InlineError message={error} /> : null}
+            {issued ? (
+              <div className="space-y-2 rounded-md border border-dashed p-3">
+                <p className="text-sm font-medium">{issued.label}</p>
+                <div className="flex gap-2">
+                  <Input aria-label="Created credential" value={issued.token} readOnly className="font-mono" />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(issued.token);
+                      setCopied(true);
+                    }}
+                  >
+                    {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+                    {copied ? "Copied" : "Copy"}
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  This is the only time this value is shown. Nothing stores it in a form that can be read back — if it
+                  is lost, revoke this credential and create another.
+                </p>
+              </div>
+            ) : (
+              <form id="create-credential" className="space-y-4" onSubmit={create}>
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="token-label">Label</Label>
+                    <Input
+                      id="token-label"
+                      disabled={busy}
+                      maxLength={120}
+                      value={label}
+                      placeholder="backup script"
+                      onChange={(event) => setLabel(event.target.value)}
+                      className="w-full"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="token-audience">Access</Label>
+                    <select
+                      id="token-audience"
+                      disabled={busy}
+                      value={audience}
+                      onChange={(event) => setAudience(event.target.value)}
+                      className="h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs"
+                    >
+                      <option value={FULL_ACCESS}>Full access — everything you can do</option>
+                      <option value={CORE_AUDIENCE}>Core MCP — read-only</option>
+                      <option value={CORE_CONTROL}>Core MCP — read + app control</option>
+                      <option value={CORE_UPDATE}>Core MCP — read + app control + updates</option>
+                      {mcpApps.map((app) => (
+                        <option key={app.id} value={app.id}>
+                          {app.displayName} — read-only tools
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  For a client that cannot run the device flow. Pass the value as an <code>Authorization: Bearer</code> header.
+                  {audience === FULL_ACCESS
+                    ? " A full-access credential can do everything you can, on every Core surface."
+                    : audience === CORE_CONTROL
+                      ? " This credential can read the fleet and also start, stop and restart apps. It is refused everywhere else."
+                      : audience === CORE_UPDATE
+                        ? " This credential can also update apps — changing which version runs, not only restarting what is installed. It is refused everywhere else."
+                      : " A limited credential reaches only what is selected here and is refused everywhere else, including every other app."}
+                </p>
+              </form>
+            )}
+          </div>
+          <DialogFooter>
+            {issued ? (
+              <Button disabled={busy} onClick={() => { setCreateOpen(false); setIssued(null); setCopied(false); }}>Done</Button>
+            ) : (
+              <>
+                <Button type="button" variant="outline" disabled={busy} onClick={() => { setCreateOpen(false); setError(null); }}>Cancel</Button>
+                <Button type="submit" form="create-credential" disabled={busy || !label.trim()}>
+                  {busy ? <LoaderCircle className="size-4 animate-spin" /> : <Plus className="size-4" />}
+                  Create
+                </Button>
+              </>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {loadError || (error && !createOpen) ? <InlineError message={loadError ?? error!} /> : null}
 
       {requests.length > 0 ? (
         <div className="space-y-2">
@@ -253,79 +366,6 @@ export function SettingsTokensSection({
           <p className="text-xs text-muted-foreground">
             Check the code against the one shown on the device before approving. Anyone who can reach this host
             can start a request; only approving one grants anything.
-          </p>
-        </div>
-      ) : null}
-
-      <form className="space-y-2" onSubmit={create}>
-        <h4 className="text-sm font-medium">Create a credential</h4>
-        <div className="flex flex-wrap items-end gap-2">
-          <div className="min-w-48 flex-1 space-y-1">
-            <Label htmlFor="token-label">Label</Label>
-            <Input
-              id="token-label"
-              value={label}
-              placeholder="backup script"
-              onChange={(event) => setLabel(event.target.value)}
-              className="w-full"
-            />
-          </div>
-          <div className="min-w-48 flex-1 space-y-1">
-            <Label htmlFor="token-audience">Access</Label>
-            <select
-              id="token-audience"
-              value={audience}
-              onChange={(event) => setAudience(event.target.value)}
-              className="h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs"
-            >
-              <option value={FULL_ACCESS}>Full access — everything you can do</option>
-              <option value={CORE_AUDIENCE}>Core MCP — read-only</option>
-              <option value={CORE_CONTROL}>Core MCP — read + app control</option>
-              <option value={CORE_UPDATE}>Core MCP — read + app control + updates</option>
-              {mcpApps.map((app) => (
-                <option key={app.id} value={app.id}>
-                  {app.displayName} — read-only tools
-                </option>
-              ))}
-            </select>
-          </div>
-          <Button type="submit" disabled={busy || label.trim().length === 0}>
-            {busy ? <LoaderCircle className="size-4 animate-spin" /> : <Plus className="size-4" />}
-            Create
-          </Button>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          For a client that cannot run the device flow. Pass the value as an <code>Authorization: Bearer</code> header.
-          {audience === FULL_ACCESS
-            ? " A full-access credential can do everything you can, on every Core surface."
-            : audience === CORE_CONTROL
-              ? " This credential can read the fleet and also start, stop and restart apps. It is refused everywhere else."
-              : audience === CORE_UPDATE
-                ? " This credential can also update apps — changing which version runs, not only restarting what is installed. It is refused everywhere else."
-              : " A limited credential reaches only what is selected here and is refused everywhere else, including every other app."}
-        </p>
-      </form>
-
-      {issued ? (
-        <div className="space-y-2 rounded-md border border-dashed p-3">
-          <p className="text-sm font-medium">{issued.label}</p>
-          <div className="flex gap-2">
-            <Input value={issued.token} readOnly className="font-mono" />
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                void navigator.clipboard.writeText(issued.token);
-                setCopied(true);
-              }}
-            >
-              {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
-              {copied ? "Copied" : "Copy"}
-            </Button>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            This is the only time this value is shown. Nothing stores it in a form that can be read back — if it
-            is lost, revoke this credential and create another.
           </p>
         </div>
       ) : null}

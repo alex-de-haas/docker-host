@@ -95,7 +95,7 @@ export function CoreLogsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[85vh] flex-col sm:max-w-4xl">
+      <DialogContent className="flex max-h-[85vh] w-[calc(100%-2rem)] flex-col sm:max-w-7xl">
         <DialogHeader>
           <DialogTitle>Core logs</DialogTitle>
           <DialogDescription>

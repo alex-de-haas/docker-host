@@ -312,6 +312,24 @@ public sealed class AppRegistryStoreTests
         Assert.Equal("/api/apps/com.example.notes/assets/assets/people.svg", summary.Navigation[0].IconUrl);
     }
 
+    [Theory]
+    [InlineData("film", false)]
+    [InlineData("film", true)]
+    [InlineData("calendar-days", false)]
+    [InlineData("calendar-days", true)]
+    public void From_WithoutDisplayImage_PreservesDeclaredIcon(string icon, bool live)
+    {
+        var app = CreateApp("com.example.notes") with
+        {
+            Ui = AppUiContract.FromManifest(new RuntimeAppUiManifest { Icon = icon }),
+        };
+
+        var summary = AppSummary.From(app, live: live);
+
+        Assert.Null(summary.IconUrl);
+        Assert.Equal(icon, summary.Icon);
+    }
+
     [Fact]
     public void From_WithoutCatalogMetadata_HasNoAssetUrls()
     {

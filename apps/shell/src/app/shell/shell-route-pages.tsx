@@ -85,6 +85,8 @@ export function ShellSettingsRoute() {
         coreSettingsError={shell.coreSettingsError}
         onSaveCoreSettings={shellActions.saveCoreSettings}
         globalMounts={shell.globalMounts}
+        apps={shell.state.apps}
+        onRefresh={shellActions.refresh}
         canManageApps={shell.canManageApps}
         onSaveMount={shellActions.saveGlobalMount}
         onDeleteMount={shellActions.deleteGlobalMount}

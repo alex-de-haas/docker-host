@@ -32,4 +32,30 @@ public sealed class CoreUpdateCheckServiceTests
     [InlineData("00000000001111111111222222222233333333334444444444555555555566666")]
     public void SanitizeVersion_RejectsAnythingThatIsNotPlainlyAVersion(string body)
         => Assert.Null(CoreUpdateCheckService.SanitizeVersion(body));
+
+    [Fact]
+    public void FailedCheckKeepsLastSuccessfulResultUntilRecovery()
+    {
+        var checkedAt = DateTimeOffset.Parse("2026-09-10T10:00:00Z");
+        var success = CoreUpdateCheckService.MergeStatus(null, new("0.99.0", true, "main", checkedAt, Error: null, AvailableVersion: "0.100.0"));
+        var failed = CoreUpdateCheckService.MergeStatus(success, new("0.99.0", false, "main", checkedAt.AddMinutes(5), Error: "Offline"));
+        Assert.True(failed.UpdateAvailable);
+        Assert.Equal("0.100.0", failed.AvailableVersion);
+        Assert.Equal(checkedAt, failed.LastSuccessfulCheckAt);
+        Assert.Equal("Offline", failed.Error);
+        var recovered = CoreUpdateCheckService.MergeStatus(failed, new("0.99.0", false, "main", checkedAt.AddMinutes(10), Error: null));
+        Assert.False(recovered.UpdateAvailable);
+        Assert.Null(recovered.Error);
+        Assert.Equal(checkedAt.AddMinutes(10), recovered.LastSuccessfulCheckAt);
+    }
+
+    [Theory]
+    [InlineData("0.100.0", "main")]
+    [InlineData("0.99.0", "preview")]
+    public void FailedCheckDoesNotRetainAnOfferForAnotherVersionOrChannel(string version, string channel)
+    {
+        var previous = new CoreUpdateStatus("0.99.0", true, "main", DateTimeOffset.UtcNow, Error: null);
+        var current = new CoreUpdateStatus(version, false, channel, DateTimeOffset.UtcNow, Error: "Offline");
+        Assert.Equal(current, CoreUpdateCheckService.MergeStatus(previous, current));
+    }
 }

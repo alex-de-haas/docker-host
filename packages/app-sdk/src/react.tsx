@@ -5,6 +5,7 @@
 // probe response's `recovery` field (request-time values, never build-time props).
 
 import { useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import {
   buildCoreOpenUrl,
   decideRecoveryAction,
@@ -178,8 +179,9 @@ export function useLaunchMode(): AppLaunchMode | null {
   return mode;
 }
 
-type RecoveryUi =
-  | { kind: "hidden" }
+export type AppIdentityBridgeState =
+  | { kind: "recovering" }
+  | { kind: "active" }
   | { kind: "signin"; openUrl: string | null; embedded: boolean }
   | { kind: "denied" }
   | { kind: "unavailable" }
@@ -190,6 +192,8 @@ export interface AppIdentityBridgeProps {
   probePath?: string;
   /** Code-exchange endpoint. */
   appCodePath?: string;
+  /** Optional app-owned rendering, including loading and active content. Recovery remains SDK-owned. */
+  renderState?: (state: AppIdentityBridgeState) => ReactNode;
 }
 
 /**
@@ -202,8 +206,12 @@ export interface AppIdentityBridgeProps {
 export function AppIdentityBridge({
   probePath = "/api/auth/identity",
   appCodePath = "/api/auth/app-code",
+  renderState,
 }: AppIdentityBridgeProps = {}) {
-  const [ui, setUi] = useState<RecoveryUi>({ kind: "hidden" });
+  const [ui, setUi] = useState<AppIdentityBridgeState>({ kind: "recovering" });
+  // A launch code is single-use. Strict Mode replays the effect after the URL is cleaned;
+  // keep its exchange alive and let the replacement effect await the same response.
+  const exchangeRef = useRef<{ path: string; response: Promise<Response> } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -256,7 +264,7 @@ export function AppIdentityBridge({
 
       switch (action.kind) {
         case "none":
-          setUi({ kind: "hidden" });
+          setUi({ kind: "active" });
           return;
         case "post-auth-required": {
           // The payload carries no secret, so targetOrigin "*" is safe — the Shell verifies
@@ -295,12 +303,18 @@ export function AppIdentityBridge({
     if (code) {
       url.searchParams.delete("code");
       window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
-      void fetch(appCodePath, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code }),
-        signal: controller.signal,
-      })
+      exchangeRef.current = {
+        path: appCodePath,
+        response: fetch(appCodePath, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code }),
+        }),
+      };
+    }
+    const exchange = exchangeRef.current;
+    if (exchange && exchange.path === appCodePath) {
+      void exchange.response
         .then((response) => {
           if (cancelled) {
             return;
@@ -309,11 +323,13 @@ export function AppIdentityBridge({
             writeGuard(false);
             window.location.reload();
           } else {
+            exchangeRef.current = null;
             void probeAndRecover();
           }
         })
         .catch(() => {
           if (!cancelled) {
+            exchangeRef.current = null;
             void probeAndRecover();
           }
         });
@@ -327,7 +343,9 @@ export function AppIdentityBridge({
     };
   }, [probePath, appCodePath]);
 
-  if (ui.kind === "hidden") {
+  if (renderState) return renderState(ui);
+
+  if (ui.kind === "recovering" || ui.kind === "active") {
     return null;
   }
 

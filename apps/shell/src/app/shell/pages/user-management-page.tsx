@@ -2,7 +2,7 @@
 
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useState } from "react";
-import { Check, CheckCircle2, LoaderCircle, MoreHorizontal, RefreshCw, Trash2, UserCog, UserPlus, UserX } from "lucide-react";
+import { Check, CheckCircle2, LoaderCircle, MoreHorizontal, Trash2, UserCog, UserPlus, UserX } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,12 +11,11 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { cn } from "@/lib/utils";
 import { formatDateTime } from "../app-helpers";
 import { copyTextToClipboard } from "../clipboard";
 import { isAuthRequiredRedirectError, readCoreError, redirectToCoreLoginIfAuthRequired } from "../core-api";
 import type { AssignableAppSummary, HostUserSummary, InviteTtlOption, SessionResponse, UserInvitationSummary, UserManagementResponse } from "../types";
-import { CopyField, InlineError, PageHeader, RoleBadge } from "../ui";
+import { CopyField, InlineError, RoleBadge } from "../ui";
 
 export function UserManagementPanel({
   coreOrigin,
@@ -209,33 +208,25 @@ export function UserManagementPanel({
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="User Management"
-        description="Manage Host accounts, invitations, roles, and app access."
-        actions={(
-          <>
-            <Button variant="outline" size="icon" onClick={() => void loadUsers()} disabled={loading} aria-label="Refresh users">
-              <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
-            </Button>
-            <Button onClick={() => setInviteOpen(true)}>
-              <UserPlus className="h-4 w-4" />
-              Invite User
-            </Button>
-          </>
-        )}
-      />
+      <h2 className="sr-only">User Management</h2>
 
       {error && <InlineError message={error} />}
 
-      <Card>
-        <CardHeader className="gap-4 sm:grid sm:grid-cols-[1fr_auto]">
+      <Card className="border-0 bg-transparent py-0 shadow-none">
+        <CardHeader className="px-0 gap-4 sm:grid sm:grid-cols-[1fr_auto]">
           <div className="space-y-2">
             <CardTitle>Users</CardTitle>
             <CardDescription>{users.length} account{users.length === 1 ? "" : "s"}</CardDescription>
           </div>
-          <Input className="w-full sm:w-72" placeholder="Search users" value={search} onChange={(event) => setSearch(event.target.value)} />
+          <div className="flex flex-wrap items-center gap-2">
+            <Input className="min-w-0 flex-1 sm:w-60" placeholder="Search users" aria-label="Search users" value={search} onChange={(event) => setSearch(event.target.value)} />
+            <Button className="shrink-0" onClick={() => setInviteOpen(true)}>
+              <UserPlus className="h-4 w-4" />
+              Invite User
+            </Button>
+          </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="px-0">
           <Table>
             <TableHeader>
               <TableRow>
@@ -284,12 +275,15 @@ export function UserManagementPanel({
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
+      {pendingInvitations.length === 0 ? (
+        <p className="text-sm text-muted-foreground">Pending invitations · {loading ? "Loading…" : "0"}</p>
+      ) : (
+      <Card className="border-0 bg-transparent py-0 shadow-none">
+        <CardHeader className="px-0">
           <CardTitle>Pending Invitations</CardTitle>
           <CardDescription>{pendingInvitations.length} pending</CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="px-0">
           <Table>
             <TableHeader>
               <TableRow>
@@ -301,9 +295,7 @@ export function UserManagementPanel({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {pendingInvitations.length === 0 ? (
-                <TableRow><TableCell colSpan={5} className="py-10 text-center text-muted-foreground">No pending invitations.</TableCell></TableRow>
-              ) : pendingInvitations.map((invitation) => (
+              {pendingInvitations.map((invitation) => (
                 <TableRow key={invitation.id}>
                   <TableCell>{invitation.email}</TableCell>
                   <TableCell><RoleBadge role={invitation.role} /></TableCell>
@@ -321,6 +313,7 @@ export function UserManagementPanel({
           </Table>
         </CardContent>
       </Card>
+      )}
 
       <Dialog open={inviteOpen} onOpenChange={setInviteOpen}>
         <DialogContent className="sm:max-w-2xl">

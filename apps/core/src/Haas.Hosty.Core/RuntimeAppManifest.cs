@@ -1837,8 +1837,9 @@ internal sealed class DockerRuntimeAdapter(
             // Resolve what to run from the lock instead of blindly running the mutable tag: a locked
             // digest is reused (pulled only if missing), a lockless app is backfilled once (TOFU).
             // See A3/A4/A8.
-            var (runReference, resolvedLock) = await ResolveImageRunReferenceAsync(service.Image, existingLock, cancellationToken);
+            var (runReference, resolvedLock) = await ResolveImageRunReferenceAsync(service.Image, existingLock, cancellationToken, context.ReportUpdateProgress is null ? null : () => context.ReportUpdateProgress("downloading", service.Key));
             resolvedLocks[service.Key] = resolvedLock;
+            if (context.ReportUpdateProgress is not null) await context.ReportUpdateProgress("starting", service.Key);
 
             // Secret-bearing env (app settings + the service token) is passed by NAME on the argv and by
             // VALUE through the docker process environment, so the values never land in ps/cmdline (C-M5).
@@ -2305,13 +2306,15 @@ internal sealed class DockerRuntimeAdapter(
     private async Task<(string RunReference, ArtifactLock Lock)> ResolveImageRunReferenceAsync(
         RuntimeDockerImage image,
         ArtifactLock? existingLock,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<Task>? onDownload = null)
     {
         if (!string.IsNullOrWhiteSpace(existingLock?.ImageDigest))
         {
             var pinnedReference = (image with { Digest = existingLock!.ImageDigest }).Reference;
             if (!await ImageExistsLocallyAsync(pinnedReference, cancellationToken))
             {
+                if (onDownload is not null) await onDownload();
                 _ = await RunDockerAsync(["pull", pinnedReference], ignoreFailures: false, cancellationToken);
             }
 
@@ -2324,6 +2327,7 @@ internal sealed class DockerRuntimeAdapter(
         AppLifecycleException? pullFailure = null;
         try
         {
+            if (onDownload is not null) await onDownload();
             pullOutput = await RunDockerAsync(["pull", tagReference], ignoreFailures: false, cancellationToken);
         }
         catch (AppLifecycleException ex)
@@ -3212,7 +3216,9 @@ internal sealed record RuntimeLifecycleContext(
     // The app's cache directory (sibling of AppDataPath, outside backup scope). Last and defaulted
     // so existing positional constructions (tests) stay valid; adapters fall back to
     // `{AppRoot}/cache` when null.
-    string? AppCachePath = null);
+    string? AppCachePath = null,
+    [property: System.Text.Json.Serialization.JsonIgnore]
+    Func<string, string?, Task>? ReportUpdateProgress = null);
 
 internal sealed record RuntimeAppManifestSelection(
     RuntimeAppManifest Manifest,

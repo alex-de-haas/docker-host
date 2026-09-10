@@ -396,7 +396,13 @@ internal sealed record AppRecord(
     // records, which therefore backfill once. Additive/nullable, so no AppStateDocument schema bump.
     string? NormalizedBy = null,
     // See AppHealthSummary. Additive and nullable: no AppStateDocument schema bump.
-    AppHealthSummary? Health = null);
+    AppHealthSummary? Health = null,
+    AppUpdateProgress? UpdateProgress = null,
+    // Private start-time settings/mount digest; retained across Core restarts, never sent in summaries.
+    string? AppliedConfigurationHash = null);
+
+// Last observed update stage, retained through completion for reconnecting clients.
+internal sealed record AppUpdateProgress(string Stage, DateTimeOffset ChangedAt, string? Service = null);
 
 // Well-known InstallOrigin values. Null on the record means a user/operator install; only the
 // distribution bootstrap stamps an explicit origin today.
@@ -1011,7 +1017,11 @@ internal sealed record AppSummary(
     // manifest declares none. Additive/nullable.
     IReadOnlyDictionary<string, IReadOnlyList<AppInterfaceSummary>>? Interfaces = null,
     // The app's last-observed health (see AppHealthSummary); null until the first start or observation.
-    AppHealthSummary? Health = null)
+    AppHealthSummary? Health = null,
+    // Manifest ui.icon name for clients to use when no display image is available.
+    string? Icon = null,
+    AppUpdateProgress? UpdateProgress = null,
+    bool RestartRequired = false)
 {
     // The effective Development Mode for a runtime: the operator's explicit toggle if set, else the
     // manifest profile's `development` flag as the default. Always false for a non-source runtime
@@ -1128,7 +1138,8 @@ internal sealed record AppSummary(
             app.FeedsUrl,
             app.FollowedFeedId,
             Interfaces: BuildInterfaceSummaries(app.Interfaces, endpoints),
-            Health: app.Health);
+            Health: app.Health,
+            Icon: app.Ui?.Icon);
     }
 
     private static IReadOnlyDictionary<string, IReadOnlyList<AppInterfaceSummary>>? BuildInterfaceSummaries(

@@ -1,7 +1,7 @@
 # Runtime App Update
 
 Created: 2026-06-04
-Updated: 2026-09-02
+Updated: 2026-09-10
 
 ## Description
 
@@ -39,6 +39,35 @@ Apply consumes the cached plan **verbatim**; it never rebuilds. Rebuilding was n
 
 All three errors mean the same thing to a client: re-review against current inputs, then apply. A successful apply evicts the plan.
 
+## State Across Core Restarts
+
+Core persists each app's last verdict and fully resolved pending plan together in
+`core/update-checks/<app-id>.json`. Writes use an owner-only temporary file and atomic rename.
+These snapshots are separate from app data and backups. They include the selected manifest and
+runtime, artifact probes, resolved source commit, plan digest, original creation time, and the
+verdict's checked time and target revisions. Restoring them does not contact a registry, feed, or
+git server and works even when scheduled update checks are disabled.
+
+Before serving a verdict or pending plan, Core matches its base against the current installation:
+installation timestamp, version, runtime, installed manifest contents and paths, feed binding, source
+identity and pin, development-mode settings, and artifact locks. Runtime state changes and ordinary
+source timestamp refreshes do not invalidate it. A mismatched base or a live-source runtime drops
+the snapshot; successful apply consumes it, removal and runtime/development-mode switches clear it,
+and sweep pruning removes snapshots for apps that are no longer targets. A concurrent replacement
+plan is identified separately so consuming an older plan cannot delete it.
+
+The one-hour plan TTL starts at the original check and is not renewed by reading or restarting.
+An expired plan is removed from the snapshot while its last-known verdict remains visible; applying
+requires a fresh review. Missing, malformed, or incompatible snapshots are ignored and a later
+check replaces them. Snapshot restoration never applies an update. Boot recovery clears the snapshot of an interrupted
+apply so it requires fresh review.
+
+Failed checks are persisted with their error and can retain an earlier, still-applicable reviewed
+plan. A source or registry failure retains the last successful offer for the same installation.
+`checkedAt` describes the latest attempt, while `lastSuccessfulCheckAt` preserves the successful
+check time. A partially resolved replacement plan clears the one-click digest from the verdict
+and requires review. A later successful check replaces the result and clears the error.
+
 ## Changes
 
 The `changes` list is a human-review summary of the update plan. Core reports specific contract changes when it can classify them, such as `version`, `runtime`, `role`, `service`, `image`, `command`, `port`, `environment`, `setting`, `endpoint`, `data`, `dependency`, and `capability` changes, plus `artifact:{service}:{current}->{target}` for compiled-image digest movement. When the target manifest digest differs but none of those contract categories changed, Core reports `manifest` as a fallback meaning "manifest content changed." A recheck against the same installed manifest returns an empty `changes` list.
@@ -65,7 +94,7 @@ The classification is deliberately conservative and not operator-tunable: it is 
 
 `GET /api/apps/{appId}/update-status` reports availability and per-service digest detail. It is a **projection of the app's cached plan**: with a fresh plan it does no network work at all. Without one it builds a plan (caching it) and projects that. `?refresh=true` forces a single-app rebuild — the "Check for updates" action on an expanded row.
 
-The candidate is whatever the reviewed plan would use: the followed feed's current `manifestRef` for feed-bound apps, or a refetch of the stored manifest URL for non-feed URL installs. Refetching the external manifest matters for candidates that move to new *versioned* image tags: comparing the registry against the installed copy's old tags would report "up to date" forever. Resolution failures degrade to `unknown` fields, never an error, and the installed app is left untouched.
+The candidate is whatever the reviewed plan would use: the followed feed's current `manifestRef` for feed-bound apps, or a refetch of the stored manifest URL for non-feed URL installs. Refetching the external manifest matters for candidates that move to new *versioned* image tags: comparing the registry against the installed copy's old tags would report "up to date" forever. Resolution failures degrade service detail to `unknown` and set an explicit error on the summary verdict; the installed app is left untouched.
 
 ## Fleet Check
 
@@ -90,13 +119,13 @@ The reference is parsed the way docker's own parser does: a first path component
 
 The contract is the same either way: an unresolvable digest is reported as `unknown` and never fails the plan.
 
-Each app's summary then carries the last-known verdict as `updateCheck`: `{ updateAvailable, requiresReview, planDigest, checkedAt, error, targetVersion, targetSourceCommit, targetArtifactDigests }` — null until a check has run for it, and suppressed for a live-source runtime so a verdict from before the app went live cannot keep offering an update the plan flow would refuse. Because caching a plan overwrites the app's pending slot, a fleet check also refreshes what a one-click apply would apply.
+Each app's summary then carries the last-known verdict as `updateCheck`: `{ updateAvailable, requiresReview, planDigest, checkedAt, error, targetVersion, targetSourceCommit, targetArtifactDigests, lastSuccessfulCheckAt }` — null until a check has run for it, and suppressed for a live-source runtime so a verdict from before the app went live cannot keep offering an update the plan flow would refuse. Because caching a plan overwrites the app's pending slot, a fleet check also refreshes what a one-click apply would apply.
 
 The last three fields name the target the verdict refers to, projected from the same plan build so a client can say *what* the update is without fetching its plan: the candidate manifest's version, the commit the source probe resolved, and the candidate image digest per service key. `targetVersion` equals the installed version whenever the update advances the build rather than the version — a source app tracking a branch, or a re-pushed image tag — which is why the revisions travel with it. Probes that did not resolve contribute nothing rather than a placeholder, so an unreachable registry is never rendered as a revision the operator would get.
 
 Alongside them, `AppSummary.sourceCommit` reports the *installed* reviewed source pin, so the current build's revision is readable from the list without opening the app's Source tab.
 
-A background scheduler runs the same sweep on an interval (`HOSTY_UPDATE_CHECK_INTERVAL_MINUTES`, default 60, `0` disables; first run 2 minutes after startup so autostart settles). The interval is re-read every cycle, so a change from the Core settings panel applies without a restart. With the scheduler on, pending plans are effectively never expired — each sweep replaces them.
+A background scheduler runs the same sweep on an interval (`HOSTY_UPDATE_CHECK_INTERVAL_MINUTES`, default 60, `0` disables; first run 2 minutes after startup so autostart settles). The interval is re-read every cycle, so a change from the Core settings panel applies without a restart. Each successful scheduled check replaces the plan; delayed or failed checks do not extend its TTL.
 
 ## Background Apply
 
@@ -115,12 +144,19 @@ Progress and outcome live on the app record, not in a client:
 
 ## Shell UX
 
+After each app-record change, Shell re-reads the installed-app list through the shared Core event
+stream. The same subscription resyncs after a reconnect or returning to the tab. Full-page and event
+reads bypass the browser cache and share a request sequence: a late older response cannot replace
+newer versions, runtime states, or update verdicts. Full refreshes still replace the app list when
+the authenticated session changes. This applies to individual and bulk updates; Shell self-updates
+additionally wait for their restart before reloading the page into the new assets.
+
 Rows render from the app summary's `updateCheck` verdict, so the affordances survive navigation and reloads without re-probing:
 
 - **routine** — a blue update icon applies the cached plan by digest with no dialog; the row's actions menu offers "Review and update" for the curious;
 - **review-required** — an amber update icon opens the plan; there is no silent path;
 - **check failed** — an amber icon carrying the error;
-- **applying** — an "Updating" chip driven by `operationStatus`.
+- **applying** — the current stage beside the app name, driven by `updateProgress` and `operationStatus`.
 
 The update icon and the versions share the **Version** cell, because "an update exists" and "which version" are one statement. The cell stacks the installed version over the version the update resolves to, in the icon's own colour, with the icon after them. The second line names that version even when it equals the installed one: an update that keeps its version is the normal shape for a source app tracking a branch, and the row is answering "which version would I get". The commit that separates the two builds lives in the tooltip. A verdict naming no version at all — an older Core — leaves the installed version alone with the icon. The platform row follows the same rule for Core's own update.
 
@@ -130,11 +166,32 @@ The header "Check updates" triggers or joins the fleet sweep. "Update all (N)" a
 
 Applying closes the dialog immediately. A rejected enqueue (stale, expired, consumed, or already updating) toasts the error and refreshes so the row corrects itself rather than resending a dead digest. The update dialog opens over the cached pending plan, rebuilding only for an explicitly supplied source or after a feed change. Progress needs no poll: every app-record commit publishes a hint on Core's event stream, and the page re-reads the list from it.
 
+### Update stages and check feedback
+
+App records persist `updateProgress: { stage, changedAt, service }` and publish their ordinary event
+hints as the operation moves through queueing, preparation, stopping, backup, installation, runtime
+start and readiness. Docker reports downloading only when it actually pulls an image; local-command
+setup reports preparation. Running apps retain `operationStatus: updating` until readiness finishes.
+The terminal status remains `started` for a restarted app and `updated` for an app left stopped,
+maintaining compatibility with existing Shell self-update waiters. `lastOperation` remains `update`.
+A healthy finish shows Updated for 30 seconds; an unhealthy finish shows Updated · not ready.
+Failures and interrupted updates remain visible with their error.
+
+Version/check tooltips distinguish never checked, no updates, and a failed attempt, and include the
+last successful check time. A failed check keeps the found target visible and opens review; bulk
+update skips failed verdicts. A fleet check with failures and no offers reports an incomplete check.
+
+Core's detached updater does not expose download percentages or internal stages. Shell shows
+installing, reconnecting and verifying based on live status reads. It confirms completion only when
+Core is running and a fresh release-hash check reports no remaining update, then displays Updated
+briefly. A five-minute deadline yields an unconfirmed result, without claiming success. Failed Core
+checks retain the previous offer only for the same installed version and release channel.
+
 ## System Apps
 
 System apps (Shell, Telemetry, Marketplace) update through this same reviewed flow, gated on `host.admin` alone. Lifecycle operations are inherent to Core managing an app and are authorized on the endpoint, never by the manifest `capabilities` list — an app cannot opt out of being updated by omitting a token (see [Core App Shell](../core-app-shell/feature.md)).
 
-Core startup never applies updates: the boot reconcile installs missing distribution apps, re-applies Hosty-owned provisioning, and migrates a moved http(s) distribution manifest reference (pointer only — no content change, no restart). A Shell self-update briefly restarts the Shell serving the page; the apply survives the tab, so the UI warns, keeps the tab alive through the swap, and reloads into the new build — after two signals, in this order: Core's record settling the apply **and** the restart it hands off to, and then the page's own document URL answering again (the new server is listening). Settled means `"started"`, or `"failed"` carrying the error; `"updating"` and — while a restart is still to come — `"updated"` are both intermediate, because Core commits `"updated"` once the new manifest is in place and only then starts the app, carrying the image pull and the container start under that status. An app that was already down settles at `"updated"`, which is where Core leaves it when there is no restart to run. Both signals are needed because the enqueue returns before anything is torn down — the old Shell keeps serving its origin for the whole apply, so an origin probe on its own resolves immediately and reloads the old bundle. The record arrives on the event stream the page already holds (Core stays up across the swap), so no poll is involved; a `"failed"` record toasts the error instead of reloading, and a record that never settles — the deadline passed, the app was removed, or the page never saw the flip — leaves the operator on the working old page with a note to check the row and reload once the Shell answers. See [On-Demand System App Updates](../../ideas/system-app-updates.md) for the design and its deferred hardening (readiness gate, automatic rollback).
+Core startup never applies updates: the boot reconcile installs missing distribution apps, re-applies Hosty-owned provisioning, and migrates a moved http(s) distribution manifest reference (pointer only — no content change, no restart). A Shell self-update briefly restarts the Shell serving the page; the apply survives the tab, so the UI warns, keeps the tab alive through the swap, and reloads into the new build — after two signals, in this order: Core's record settling the apply **and** the restart it hands off to, and then the page's own document URL answering again (the new server is listening). Settled means `"started"` after the post-update restart, `"updated"` when no restart is needed, or `"failed"` with an error. Core keeps `"updating"` throughout installation, runtime preparation and readiness. Shell also tolerates older Core versions that use an intermediate `"updated"` before starting the runtime. Both signals are needed because the enqueue returns before anything is torn down — the old Shell keeps serving its origin for the whole apply, so an origin probe on its own resolves immediately and reloads the old bundle. The record arrives on the event stream the page already holds (Core stays up across the swap), so no poll is involved; a `"failed"` record toasts the error instead of reloading, and a record that never settles — the deadline passed, the app was removed, or the page never saw the flip — leaves the operator on the working old page with a note to check the row and reload once the Shell answers. See [On-Demand System App Updates](../../ideas/system-app-updates.md) for the design and its deferred hardening (readiness gate, automatic rollback).
 
 ## Live Source Runtimes
 
@@ -163,3 +220,19 @@ Failed updates leave enough state for diagnosis and retry. Runtime state and app
 - **Digest resolution** — reference parsing (Docker Hub defaults, `library/` normalization, host detection) and rejection of references that cannot be turned into a URL unambiguously; bearer-challenge handling with token reuse and one re-challenge when a cached token stops working; the hash-the-manifest path when the digest header is absent; fallback to the docker CLI on every unclean answer (auth, redirect, malformed digest, transport failure); cancellation propagating rather than being swallowed as a fallback.
 
 Digest resolution is covered offline against a stub transport — the suite must not depend on reaching a registry. Agreement with `docker buildx imagetools inspect` on real registries is verified out of band when the resolver changes.
+
+- App-list refreshes — an older full-page response cannot overwrite an event-delivered update;
+  an older event response cannot overwrite a newer full-page read; versions, source revisions,
+  runtime state, and update verdicts move together, including multiple apps updated in one batch.
+
+- Restart regression coverage recreates Core services over the same data directory, checks offline
+  Docker and same-version local-command source updates, exact-plan apply and consumption, original
+  TTL, disabled scheduled checks, changed bases, malformed snapshots, owner-only files, removal,
+  retained failures, pruning, and unresolved git probes after restart.
+
+- Update-feedback tests cover real download callbacks, continued updating through readiness, healthy
+  completion, synchronous failure, retained offers after failed source/registry checks, and recovery.
+- Core availability tests cover retained results and timestamps, successful recovery, and rejection
+  of a retained offer after the installed version or release channel changes.
+- Shell tests cover expiring success feedback, unknown/failed/empty checks, and bulk-update exclusion
+  of failed, review-required, expired and already-updating offers.

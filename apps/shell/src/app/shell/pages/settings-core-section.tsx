@@ -33,18 +33,11 @@ export function SettingsCoreSection({
 
   return (
     <div className="space-y-3">
-      <div>
-        <h3 className="text-sm font-medium">Core settings</h3>
-        <p className="text-xs text-muted-foreground">
-          Core&apos;s own behavior settings — auth session lifetimes (in hours), app update checks, and user
-          retention — edited here rather than through environment variables. Changes save and apply live.
-        </p>
-      </div>
+      <h3 className="sr-only">Core settings</h3>
 
       {/* The public origin is the one setting on this page whose effect arrives in two stages, so it is
-          said here, next to the field, at the moment it is being changed. "Changes apply live" above is
-          true of everything Core itself does with the value; it is not true of the copy each installed
-          app was handed when it started. */}
+          said here at the moment it is being changed. Installed apps retain the copy they were
+          handed when they started. */}
       {originChanged && (
         <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400">
           <p className="font-medium">Saving the public origin takes effect in two stages</p>
@@ -56,6 +49,7 @@ export function SettingsCoreSection({
       )}
 
       <CoreSettingsForm
+        layout="core"
         settings={settings}
         error={settingsError}
         onSave={onSaveSettings}

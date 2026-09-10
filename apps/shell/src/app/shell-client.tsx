@@ -1,5 +1,7 @@
 "use client";
 
+import { isRoutineUpdate } from "./shell/update-feedback";
+
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LoaderCircle } from "lucide-react";
@@ -14,6 +16,8 @@ import { CoreEventNames, subscribeToCoreEvents } from "./shell/events/core-event
 import { isAppUp } from "./shell/runtime-states";
 import { resolveLaunchGate } from "./shell/surfaces/app-surface-tabs";
 import { waitForShellUpdateToSettle } from "./shell/self-update";
+import { readCoreStatus, reconcileCoreUpdate } from "./shell/core-status";
+import { reconcileAppList } from "./shell/app-list-snapshot";
 import { AppDetailsDialog } from "./shell/dialogs/app-details-dialog";
 import { InstallReviewDialog } from "./shell/dialogs/install-review-dialog";
 import { findAssistantGateway } from "./shell/assistant/assistant-client";
@@ -158,7 +162,7 @@ export function ShellClient({
     [pathname, searchParams],
   );
   const normalizedRoutePath = normalizeShellPath(pathname || "/");
-  const [state, setState] = useState<LoadState>({
+  const [state, setState] = useState<LoadState & { appsReadId?: number }>({
     loading: true,
     error: null,
     status: null,
@@ -183,6 +187,8 @@ export function ShellClient({
   const [coreUpdate, setCoreUpdate] = useState<CoreUpdateStatus | null>(null);
   const [coreUpdating, setCoreUpdating] = useState(false);
   // Tracks the post-update re-probe timer so it can be cancelled on unmount / re-trigger.
+  const coreUpdateProbeGeneration = useRef(0);
+  const coreUpdateProbeAbort = useRef<AbortController | null>(null);
   const coreUpdateProbeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Applying an update / switching runtime resets Core's artifact locks, so the cached update-status
   // owned by the Installed Apps page goes stale (it would keep showing "Update available"). We can't
@@ -191,6 +197,29 @@ export function ShellClient({
   const [workspace, setWorkspace] = useState<EmbeddedWorkspace | null>(null);
   const [optimisticWorkspaceRoute, setOptimisticWorkspaceRoute] = useState<WorkspaceRoute | null>(null);
   const [sidebarCompact, setSidebarCompact] = useState(initialSidebarCompact ?? false);
+  const [narrowViewport, setNarrowViewport] = useState(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const effectiveSidebarCompact = narrowViewport ? !mobileSidebarOpen : sidebarCompact;
+
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 767px)");
+    const syncViewport = () => {
+      setNarrowViewport(media.matches);
+      setMobileSidebarOpen(false);
+    };
+    syncViewport();
+    media.addEventListener("change", syncViewport);
+    return () => media.removeEventListener("change", syncViewport);
+  }, []);
+
+  useEffect(() => {
+    if (!mobileSidebarOpen) return;
+    const dismissOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !event.defaultPrevented) setMobileSidebarOpen(false);
+    };
+    window.addEventListener("keydown", dismissOnEscape);
+    return () => window.removeEventListener("keydown", dismissOnEscape);
+  }, [mobileSidebarOpen]);
   const [rightPanelOpen, setRightPanelOpen] = useState(initialRightPanelOpen ?? false);
   // Gates the chrome grid's column transition. Off during the initial settle: the right panel
   // column can only appear once /api/apps names a panel-capable app, and animating that data
@@ -212,6 +241,7 @@ export function ShellClient({
   const pendingWorkspaceRoute = useRef<string | null>(null);
   // Stale async resolutions must not overwrite newer shared state, so each load takes a token.
   const refreshRequestRef = useRef(0);
+  const appsReadSequence = useRef(0);
   const detailRequestRef = useRef(0);
   const installRequestRef = useRef(0);
   // Last launch-code reissue per app id, so a chatty frame cannot storm Core with reissues.
@@ -295,9 +325,11 @@ export function ShellClient({
       }
 
       let apps: AppsResponse = { apps: [] };
+      let appsReadId = 0;
       let nextGlobalMounts: CoreGlobalMount[] = [];
       if (session?.authenticated) {
-        const appsResponse = await fetch(`${coreOrigin}/api/apps`, { credentials: "include" });
+        appsReadId = ++appsReadSequence.current;
+        const appsResponse = await fetch(`${coreOrigin}/api/apps`, { credentials: "include", cache: "no-store" });
         redirectToCoreLoginIfAuthRequired(appsResponse, coreOrigin);
         if (!appsResponse.ok) {
           throw new Error(`Apps API returned ${appsResponse.status}.`);
@@ -320,17 +352,22 @@ export function ShellClient({
       }
 
       setGlobalMounts(nextGlobalMounts);
-      setState({
+      setState((current) => ({
         loading: false,
         error: null,
         status,
-        // The cast above cannot catch a Core that answers without an `apps` field, and every
-        // consumer of state.apps assumes an array — normalize once here rather than in each page.
-        apps: apps.apps ?? [],
         session,
         updatedAt: new Date().toISOString(),
-        updateCheck: apps.updateCheck ?? null,
-      });
+        // An app event can finish a newer list read while this refresh waits for global mounts.
+        // Retain that list, but never carry a previous user's apps into a changed session.
+        ...reconcileAppList(
+          current.session?.user?.id === session.user?.id && current.session?.authenticated === session.authenticated
+            ? current
+            : { apps: [] },
+          apps,
+          appsReadId,
+        ),
+      }));
     } catch (error) {
       if (isAuthRequiredRedirectError(error) || requestToken !== refreshRequestRef.current) {
         return;
@@ -349,14 +386,15 @@ export function ShellClient({
   // requests and flip `loading`, making the list flicker on someone else's action.
   const refreshApps = useCallback(async () => {
     const requestToken = refreshRequestRef.current;
-    const response = await fetch(`${coreOrigin}/api/apps`, { credentials: "include" });
+    const appsReadId = ++appsReadSequence.current;
+    const response = await fetch(`${coreOrigin}/api/apps`, { credentials: "include", cache: "no-store" });
     redirectToCoreLoginIfAuthRequired(response, coreOrigin);
     if (!response.ok) {
       return;
     }
 
     const apps = (await response.json()) as AppsResponse;
-    // A full refresh started meanwhile owns the state; its response is the fresher one.
+    // A newer full refresh owns the session; do not apply a read from its predecessor.
     if (requestToken !== refreshRequestRef.current) {
       return;
     }
@@ -365,8 +403,7 @@ export function ShellClient({
       current.session?.authenticated
         ? {
             ...current,
-            apps: apps.apps ?? [],
-            updateCheck: apps.updateCheck ?? null,
+            ...reconcileAppList(current, apps, appsReadId),
             updatedAt: new Date().toISOString(),
           }
         : current,
@@ -465,22 +502,33 @@ export function ShellClient({
     delegatedTokens.current?.invalidateAll();
   }, [activeUserId]);
 
-  // Best-effort Core update-available probe (admin-only endpoint). A failure clears the badge rather
-  // than leaving a stale "Update available" showing (auth expiry, Core mid-restart, transient error),
-  // and never breaks the shell load. Pass force to bypass Core's TTL cache (e.g. right after a hotfix
-  // release) so the operator never has to drop to the CLI to re-check. An optional AbortSignal lets a
-  // superseding call / unmount cancel the in-flight request without touching state.
+  // Keep the last successful availability through transient HTTP/network failures.
   const loadCoreUpdateStatus = useCallback(async (force = false, signal?: AbortSignal) => {
     try {
       const url = `${coreOrigin}/api/core/update-status${force ? "?refresh=true" : ""}`;
-      const response = await fetch(url, { credentials: "include", signal });
-      setCoreUpdate(response.ok ? ((await response.json()) as CoreUpdateStatus) : null);
+      const response = await fetch(url, { credentials: "include", cache: "no-store", signal });
+      if (!response.ok) throw new Error(`Core answered HTTP ${response.status}.`);
+      const update = await response.json() as CoreUpdateStatus;
+      if (!signal?.aborted) setCoreUpdate(previous => update.error && previous && previous.currentVersion === update.currentVersion && previous.releaseTag === update.releaseTag ? {
+        ...previous, error: update.error, checkedAt: update.checkedAt,
+        lastSuccessfulCheckAt: previous.lastSuccessfulCheckAt ?? (!previous.error ? previous.checkedAt : null),
+      } : { ...update, clientPhase: previous?.clientPhase });
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") {
-        return;
-      }
+      if (signal?.aborted) return;
+      setCoreUpdate(previous => previous ? {
+        ...previous,
+        lastSuccessfulCheckAt: previous.lastSuccessfulCheckAt ?? (!previous.error ? previous.checkedAt : null),
+        checkedAt: new Date().toISOString(),
+        error: error instanceof Error ? error.message : "Could not check Core updates.",
+      } : { currentVersion: "", updateAvailable: false, releaseTag: "", checkedAt: new Date().toISOString(), error: "Could not check Core updates." });
+    }
+  }, [coreOrigin]);
 
-      setCoreUpdate(null);
+  // Update the installed version independently of app-list refreshes and update availability.
+  const refreshCoreStatus = useCallback(async (signal?: AbortSignal) => {
+    const status = await readCoreStatus(coreOrigin, signal);
+    if (status && !signal?.aborted) {
+      setState((current) => ({ ...current, status }));
     }
   }, [coreOrigin]);
 
@@ -494,18 +542,54 @@ export function ShellClient({
     }
 
     setCoreUpdating(true);
+    const generation = ++coreUpdateProbeGeneration.current;
+    const initialVersion = state.status?.version;
+    const startedAt = Date.now();
+    const setPhase = (clientPhase: CoreUpdateStatus["clientPhase"]) => setCoreUpdate(previous => ({
+      ...(previous ?? { currentVersion: initialVersion ?? "", updateAvailable: false, releaseTag: "", checkedAt: new Date().toISOString() }), clientPhase,
+    }));
+    setPhase("installing");
     try {
-      // Fire-and-forget on Core's side: it spawns `hosty update` detached and restarts. Give Core time to
-      // self-update and come back, then re-probe — the badge clears itself when the new binary matches.
       await sendCsrfJson(`${coreOrigin}/api/core/update`, {});
-      if (coreUpdateProbeTimer.current !== null) {
-        clearTimeout(coreUpdateProbeTimer.current);
-      }
-      coreUpdateProbeTimer.current = setTimeout(() => {
+      const probe = async () => {
         coreUpdateProbeTimer.current = null;
-        setCoreUpdating(false);
-        void loadCoreUpdateStatus(true);
-      }, 20000);
+        if (coreUpdateProbeGeneration.current !== generation) return;
+        const controller = new AbortController();
+        coreUpdateProbeAbort.current = controller;
+        const timeout = setTimeout(() => controller.abort(), 10000);
+        let completed = false;
+        try {
+          const status = await readCoreStatus(coreOrigin, controller.signal);
+          if (coreUpdateProbeGeneration.current !== generation) return;
+          if (!status) setPhase("reconnecting");
+          else {
+            setState(current => ({ ...current, status }));
+            const response = await fetch(`${coreOrigin}/api/core/update-status?refresh=true`, { credentials: "include", cache: "no-store", signal: controller.signal });
+            if (response.ok) {
+              const update = await response.json() as CoreUpdateStatus;
+              if (coreUpdateProbeGeneration.current !== generation) return;
+              completed = status.status === "running" && !update.error && !update.updateAvailable;
+              setCoreUpdate({ ...update, clientPhase: completed ? "completed" : status.version !== initialVersion ? "verifying" : "installing" });
+            }
+          }
+        } catch { /* A restart may interrupt either probe; the next attempt reads fresh state. */ }
+        finally { clearTimeout(timeout); }
+        if (coreUpdateProbeGeneration.current !== generation) return;
+        if (completed) {
+          setCoreUpdating(false);
+          toast.success("Core updated");
+          coreUpdateProbeTimer.current = setTimeout(() => {
+            coreUpdateProbeTimer.current = null;
+            setCoreUpdate(previous => previous ? { ...previous, clientPhase: undefined } : previous);
+          }, 30000);
+        } else if (Date.now() - startedAt >= 5 * 60_000) {
+          setCoreUpdating(false);
+          setPhase("unconfirmed");
+          toast.warning("Core update could not be confirmed", { description: "Check Core logs and retry the status check." });
+        } else coreUpdateProbeTimer.current = setTimeout(() => void probe(), 5000);
+      };
+      if (coreUpdateProbeTimer.current !== null) clearTimeout(coreUpdateProbeTimer.current);
+      coreUpdateProbeTimer.current = setTimeout(() => void probe(), 2000);
     } catch (error) {
       if (!isAuthRequiredRedirectError(error)) {
         setState((current) => ({
@@ -514,8 +598,9 @@ export function ShellClient({
         }));
       }
       setCoreUpdating(false);
+      setPhase(undefined);
     }
-  }, [coreOrigin, coreUpdating, loadCoreUpdateStatus, sendCsrfJson]);
+  }, [coreOrigin, coreUpdating, state.status?.version, sendCsrfJson]);
 
   const appEndpoint = useCallback(
     (app: CoreApp, suffix: string) => `${coreOrigin}/api/apps/${encodeURIComponent(app.id)}${suffix}`,
@@ -649,18 +734,27 @@ export function ShellClient({
     });
   }, [state.apps]);
 
-  // Probe for a newer Core once we know the session is an admin (the endpoint is admin-only). Core
-  // TTL-caches the result, so this stays cheap across reloads. Aborts the in-flight probe on unmount /
-  // dependency change so a late response can't overwrite fresher state.
+  // A Core restart reconnects the shared stream. Re-read both installed status and availability
+  // then, even if the update outlasted the 20-second fallback probe or ran outside this tab.
+  // No domain event names: ordinary app changes must not trigger Core release-channel checks.
   useEffect(() => {
-    if (!canManageApps) {
-      return;
-    }
+    if (!canManageApps) return;
 
     const controller = new AbortController();
-    void loadCoreUpdateStatus(false, controller.signal);
-    return () => controller.abort();
-  }, [canManageApps, loadCoreUpdateStatus]);
+    const unsubscribe = subscribeToCoreEvents(coreOrigin, {
+      names: [],
+      onSync: async () => {
+        await Promise.all([
+          refreshCoreStatus(controller.signal),
+          loadCoreUpdateStatus(false, controller.signal),
+        ]);
+      },
+    });
+    return () => {
+      controller.abort();
+      unsubscribe();
+    };
+  }, [canManageApps, coreOrigin, loadCoreUpdateStatus, refreshCoreStatus]);
 
   // Live app state, replacing the old poll-while-update-work-is-in-flight interval: Core commits and
   // update-check verdicts now arrive as hints on the shared event stream, and the reaction is always
@@ -686,6 +780,8 @@ export function ShellClient({
   // Cancel a pending post-update re-probe timer when the shell unmounts.
   useEffect(
     () => () => {
+      coreUpdateProbeGeneration.current++;
+      coreUpdateProbeAbort.current?.abort();
       if (coreUpdateProbeTimer.current !== null) {
         clearTimeout(coreUpdateProbeTimer.current);
       }
@@ -1424,15 +1520,9 @@ export function ShellClient({
   // page, so every other enqueue must already be accepted by then (enqueueUpdate then owns the
   // wait-for-new-Shell reload).
   const updateAllApps = useCallback(async () => {
-    const routine = state.apps.filter(
-      (app) =>
-        app.updateCheck?.updateAvailable === true &&
-        app.updateCheck.requiresReview !== true &&
-        Boolean(app.updateCheck.planDigest) &&
-        app.operationStatus !== "updating",
-    );
+    const routine = state.apps.filter(isRoutineUpdate);
     const reviewCount = state.apps.filter(
-      (app) => app.updateCheck?.updateAvailable === true && app.updateCheck.requiresReview === true,
+      (app) => app.updateCheck?.updateAvailable === true && (app.updateCheck.requiresReview === true || Boolean(app.updateCheck.error) || !app.updateCheck.planDigest),
     ).length;
     const reviewNote = reviewCount > 0 ? `${reviewCount} update${reviewCount === 1 ? "" : "s"} need review.` : undefined;
     if (routine.length === 0) {
@@ -1857,6 +1947,10 @@ export function ShellClient({
   ]);
 
   function setCompact(compact: boolean) {
+    if (narrowViewport) {
+      setMobileSidebarOpen(!compact);
+      return;
+    }
     setSidebarCompact(compact);
     persistChromePref(SIDEBAR_COMPACT_PREF_KEY, compact);
   }
@@ -2148,7 +2242,7 @@ export function ShellClient({
       coreSettings,
       coreSettingsError,
       globalMounts,
-      coreUpdate,
+      coreUpdate: reconcileCoreUpdate(coreUpdate, state.status?.version),
       coreUpdating,
     }),
     [
@@ -2235,14 +2329,15 @@ export function ShellClient({
         <ShellTopStrip
           title={stripTitle}
           subtitle={stripSubtitle}
-          leftRailExpanded={!sidebarCompact}
-          onToggleLeftRail={() => setCompact(!sidebarCompact)}
+          leftRailExpanded={!effectiveSidebarCompact}
+          onToggleLeftRail={() => setCompact(!effectiveSidebarCompact)}
           // Null while no installed app declares a panel surface: there is no rail to toggle, and a
           // control for chrome that does not exist is worse than no control.
           rightRailExpanded={appPanelTabs.length > 0 ? rightPanelOpen : null}
           onToggleRightRail={() => setPanelOpen(!rightPanelOpen)}
           showNotifications={Boolean(activeUser)}
           onBrandClick={() => {
+            setMobileSidebarOpen(false);
             setWorkspace(null);
             setOptimisticWorkspaceRoute(null);
             router.push(getShellViewHref(canManageApps ? "dashboard" : "available-apps"));
@@ -2251,20 +2346,31 @@ export function ShellClient({
 
       <div
         className={cn(
-          "grid min-h-0 flex-1",
-          chromeTransitions && "transition-[grid-template-columns] duration-200",
+          "relative grid min-h-0 flex-1",
+          chromeTransitions && !narrowViewport && "motion-safe:transition-[grid-template-columns] motion-safe:duration-200",
           rightPanelVisible
-            ? sidebarCompact
-              ? "grid-cols-[72px_minmax(0,1fr)_360px]"
+            ? (narrowViewport || sidebarCompact)
+              ? "grid-cols-[60px_minmax(0,1fr)_360px]"
               : "grid-cols-[280px_minmax(0,1fr)_360px]"
-            : sidebarCompact
-              ? "grid-cols-[72px_minmax(0,1fr)]"
+            : (narrowViewport || sidebarCompact)
+              ? "grid-cols-[60px_minmax(0,1fr)]"
               : "grid-cols-[280px_minmax(0,1fr)]",
         )}
       >
-        <aside className="z-30 h-full overflow-visible border-r bg-sidebar text-sidebar-foreground">
+        {narrowViewport && mobileSidebarOpen && (
+          <button
+            type="button"
+            className="absolute inset-y-0 right-0 left-[min(280px,85vw)] z-20 bg-black/20"
+            aria-label="Close navigation"
+            onClick={() => setMobileSidebarOpen(false)}
+          />
+        )}
+        <aside className={cn(
+          "z-30 h-full overflow-visible border-r bg-sidebar text-sidebar-foreground",
+          narrowViewport && mobileSidebarOpen && "absolute inset-y-0 left-0 w-[280px] max-w-[85vw] shadow-lg",
+        )}>
           <ShellSidebar
-            compact={sidebarCompact}
+            compact={effectiveSidebarCompact}
             activeView={effectiveView}
             workspace={workspace}
             coreOrigin={coreOrigin}
@@ -2274,19 +2380,25 @@ export function ShellClient({
             busyAction={busyAction}
             onStartApp={canManageApps ? startAppById : undefined}
             onNavigate={(view) => {
+              setMobileSidebarOpen(false);
               setWorkspace(null);
               setOptimisticWorkspaceRoute(null);
               router.push(getShellViewHref(view));
             }}
             onOpenApps={() => {
+              setMobileSidebarOpen(false);
               setWorkspace(null);
               setOptimisticWorkspaceRoute(null);
               router.push(getShellViewHref("available-apps"));
             }}
-            onLaunchApp={launchAppPage}
+            onLaunchApp={(app, page, target) => {
+              setMobileSidebarOpen(false);
+              return launchAppPage(app, page, target);
+            }}
             getStandaloneHref={getStandaloneAppHref}
           />
         </aside>
+        {narrowViewport && mobileSidebarOpen && <div aria-hidden />}
 
         <div
           className={cn(
