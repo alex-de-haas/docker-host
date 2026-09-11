@@ -1,7 +1,7 @@
 # Runtime App Update
 
 Created: 2026-06-04
-Updated: 2026-09-10
+Updated: 2026-09-11
 
 ## Description
 
@@ -156,7 +156,7 @@ Rows render from the app summary's `updateCheck` verdict, so the affordances sur
 - **routine** — a blue update icon applies the cached plan by digest with no dialog; the row's actions menu offers "Review and update" for the curious;
 - **review-required** — an amber update icon opens the plan; there is no silent path;
 - **check failed** — an amber icon carrying the error;
-- **applying** — the current stage beside the app name, driven by `updateProgress` and `operationStatus`.
+- **applying** — the current stage beneath the runtime status, matching the Core row, driven by `updateProgress` and `operationStatus`.
 
 The update icon and the versions share the **Version** cell, because "an update exists" and "which version" are one statement. The cell stacks the installed version over the version the update resolves to, in the icon's own colour, with the icon after them. The second line names that version even when it equals the installed one: an update that keeps its version is the normal shape for a source app tracking a branch, and the row is answering "which version would I get". The commit that separates the two builds lives in the tooltip. A verdict naming no version at all — an older Core — leaves the installed version alone with the icon. The platform row follows the same rule for Core's own update.
 
@@ -174,6 +174,7 @@ start and readiness. Docker reports downloading only when it actually pulls an i
 setup reports preparation. Running apps retain `operationStatus: updating` until readiness finishes.
 The terminal status remains `started` for a restarted app and `updated` for an app left stopped,
 maintaining compatibility with existing Shell self-update waiters. `lastOperation` remains `update`.
+Update stages and outcomes appear below the status badge in the Status cell.
 A healthy finish shows Updated for 30 seconds; an unhealthy finish shows Updated · not ready.
 Failures and interrupted updates remain visible with their error.
 
