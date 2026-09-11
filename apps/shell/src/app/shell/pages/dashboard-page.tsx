@@ -1156,7 +1156,6 @@ function InstalledAppRow({
                 )}
               </div>
             )}
-            <AppUpdateFeedback key={app.updateProgress?.changedAt ?? "no-update"} app={app} />
           </div>
         </div>
       </TableCell>
@@ -1180,35 +1179,38 @@ function InstalledAppRow({
         />
       </TableCell>
       <TableCell>
-        <div className="flex flex-wrap items-center gap-1.5">
-          <StatusBadge value={app.runtimeState || app.operationStatus} health={isAppUp(app.runtimeState) ? app.health?.status : null} />
-          {/* Autostart had a column of its own, and it read "On" for nearly every row — a column that
-              says the same thing ten times is width spent on nothing. Only the exception is worth a
-              mark, so the icon appears exactly when an app does *not* come up with the host. */}
-          {!autostartEnabled && (
-            <Badge
-              variant="outline"
-              className="size-6 gap-0 p-0 text-muted-foreground [&>svg]:size-3.5"
-              aria-label="Starts manually"
-              title={'Starts manually — this app is not started when Core starts. Turn on "Start at Core startup" in Settings to change that.'}
-            >
-              <Hand />
-            </Badge>
-          )}
-          {app.live && (
-            <Badge
-              variant="outline"
-              className="size-6 gap-0 border-emerald-500/40 p-0 text-emerald-700 dark:text-emerald-300 [&>svg]:size-3.5"
-              aria-label="Live source runtime"
-              title={
-                app.sourceLivePath
-                  ? `Runs live from ${app.sourceLivePath}; the manifest is adopted on restart. Switch to a compiled runtime for reviewed updates.`
-                  : "Runs live from your source folder; the manifest is adopted on restart. Switch to a compiled runtime for reviewed updates."
-              }
-            >
-              <Radio />
-            </Badge>
-          )}
+        <div className="space-y-1">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <StatusBadge value={app.runtimeState || app.operationStatus} health={isAppUp(app.runtimeState) ? app.health?.status : null} />
+            {/* Autostart had a column of its own, and it read "On" for nearly every row — a column that
+                says the same thing ten times is width spent on nothing. Only the exception is worth a
+                mark, so the icon appears exactly when an app does *not* come up with the host. */}
+            {!autostartEnabled && (
+              <Badge
+                variant="outline"
+                className="size-6 gap-0 p-0 text-muted-foreground [&>svg]:size-3.5"
+                aria-label="Starts manually"
+                title={'Starts manually — this app is not started when Core starts. Turn on "Start at Core startup" in Settings to change that.'}
+              >
+                <Hand />
+              </Badge>
+            )}
+            {app.live && (
+              <Badge
+                variant="outline"
+                className="size-6 gap-0 border-emerald-500/40 p-0 text-emerald-700 dark:text-emerald-300 [&>svg]:size-3.5"
+                aria-label="Live source runtime"
+                title={
+                  app.sourceLivePath
+                    ? `Runs live from ${app.sourceLivePath}; the manifest is adopted on restart. Switch to a compiled runtime for reviewed updates.`
+                    : "Runs live from your source folder; the manifest is adopted on restart. Switch to a compiled runtime for reviewed updates."
+                }
+              >
+                <Radio />
+              </Badge>
+            )}
+          </div>
+          <AppUpdateFeedback key={app.updateProgress?.changedAt ?? "no-update"} app={app} />
         </div>
       </TableCell>
       <TableCell>
@@ -1299,7 +1301,7 @@ function AppUpdateFeedback({ app }: { app: CoreApp }) {
   if (!label) return null;
   const success = app.updateProgress?.stage === "completed";
   const busy = app.operationStatus === "updating" && !["failed", "interrupted"].includes(app.updateProgress?.stage ?? "");
-  return <div role="status" title={app.lastError ?? undefined} className={cn("mt-0.5 flex items-center gap-1 text-xs", success ? "text-emerald-600" : busy ? "text-muted-foreground" : "text-amber-600")}>
+  return <div role="status" title={app.lastError ?? undefined} className={cn("flex items-center gap-1 text-xs", success ? "text-emerald-600" : busy ? "text-muted-foreground" : "text-amber-600")}>
     {success ? <Check className="size-3" /> : busy ? <LoaderCircle className="size-3 animate-spin" /> : <CircleAlert className="size-3" />}{label}
   </div>;
 }
