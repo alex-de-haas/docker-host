@@ -17,7 +17,7 @@ Use this skill to implement Hosty runtime apps in the shape expected by this rep
 
 - Read `references/app-manifest.md` when authoring or reviewing `manifest.json`, runtime profiles, service implementations, settings, storage, dependencies, endpoints, install/update behavior, or backups.
 - Read `references/app-auth-and-users.md` when adding app identity, app-owned roles, or scoped app directory access.
-- Read `references/app-manifest.md` ("MCP Interface") when adding or debugging an app's MCP endpoint — delegated-token auth, the handshake's HTTP 202, and read-only annotations.
+- Read `references/app-manifest.md` ("MCP Interface") when adding or debugging an app's MCP endpoint — delegated- and scoped-token auth, the handshake's HTTP 202, and read-only annotations.
 - Read `references/app-feeds.md` when publishing or reviewing repository-owned `feeds.json` for Marketplace discovery and Core-managed updates.
 - Read `references/app-launch-mode.md` when the app has a UI, to keep it from drawing the name and page navigation a shell already renders around it.
 - Read `references/demo-app-patterns.md` when validating against the repository Demo App.
