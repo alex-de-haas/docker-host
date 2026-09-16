@@ -10,7 +10,7 @@ namespace Haas.Hosty.Core.Tests.Http;
 //
 // This widened what one app can learn about another, so the widening is asserted rather than assumed:
 // the disclosure is the app roster plus where their declared interfaces live, and nothing more —
-// no settings, no secrets, no per-app operational state beyond whether it is running. Reaching one of
+// no settings, secrets or filesystem paths. Display/runtime metadata describes context only. Reaching one of
 // those URLs still needs a Core-issued token the caller does not get from here.
 public sealed class AppDirectoryInterfacesHttpTests
 {
@@ -35,6 +35,15 @@ public sealed class AppDirectoryInterfacesHttpTests
         {
             // Every entry carries the shape the caller relies on, present even when empty — a
             // consumer must not have to distinguish "no interfaces" from "field missing".
+            Assert.Equal("1.0.0", entry.GetProperty("version").GetString());
+            Assert.True(entry.TryGetProperty("selectedRuntime", out _));
+            Assert.True(entry.TryGetProperty("operationStatus", out _));
+            Assert.True(entry.TryGetProperty("description", out _));
+            Assert.Equal("Network", entry.GetProperty("icon").GetString());
+            Assert.Contains("/assets/assets/icon.svg", entry.GetProperty("iconUrl").GetString());
+            Assert.False(entry.TryGetProperty("settings", out _));
+            Assert.False(entry.TryGetProperty("source", out _));
+            Assert.False(entry.TryGetProperty("sourceLivePath", out _));
             Assert.True(entry.TryGetProperty("interfaces", out var interfaces));
             Assert.Equal(JsonValueKind.Array, interfaces.ValueKind);
             Assert.False(string.IsNullOrWhiteSpace(entry.GetProperty("runtimeState").GetString()));
@@ -114,5 +123,7 @@ public sealed class AppDirectoryInterfacesHttpTests
             Dependencies: [],
             Endpoints: [],
             InstalledAt: DateTimeOffset.UtcNow,
-            UpdatedAt: DateTimeOffset.UtcNow);
+            UpdatedAt: DateTimeOffset.UtcNow,
+            Ui: new AppUiContract(null, "Network", null, "/", []),
+            CatalogMetadata: new AppCatalogMetadataContract(null, null, [], "assets/icon.svg", [], null, null, null, null, null, null));
 }

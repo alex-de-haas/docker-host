@@ -1,7 +1,7 @@
 # App-Owned MCP
 
 Created: 2026-08-11
-Updated: 2026-08-13
+Updated: 2026-09-16
 
 Runtime apps expose their domain actions to agents through an MCP endpoint they own, and Core tells
 agent clients which apps have one. This is step 4 of the [AI Agent Bridge](../ai-agent-bridge/plan.md)
@@ -39,12 +39,14 @@ app's endpoints, so consumers never assemble origins themselves.
 ## Discovery
 
 `GET /api/internal/apps/{appId}/app-directory` (app service token) returns the installed roster with
-each app's display name, runtime state, and declared interfaces resolved to URLs. It previously
-returned id and display name only.
+each app's display name, description, version, selected runtime, runtime/operation state, icon name,
+resolved icon URL and
+declared interfaces resolved to URLs. The gateway uses the same directory independently for
+[session app context](../assistant-app-context/feature.md) and MCP-provider discovery.
 
 This widens what one app can learn about another, which was a deliberate decision rather than a
 side effect: the disclosure is the roster plus where declared interfaces live, and nothing else — no
-settings, no secrets, no operational state beyond whether an app is running. Reaching one of those
+settings, secrets, source paths, app data or logs. Reaching one of those
 URLs still requires a Core-issued token the caller does not obtain from this response. The
 alternative — a new endpoint gated to system apps — would have added an authorization axis Core does
 not otherwise have.
@@ -77,8 +79,9 @@ which are enabled; Core stays the registry.
 
 ## Testing Expectations
 
-- Core: the app-directory response carries `interfaces`, `runtimeState` and `displayName` on every
-  entry, present even when empty so a consumer never distinguishes "none" from "field missing"; a
+- Core: the app-directory response carries `interfaces`, `runtimeState`, `displayName`, `description`,
+  `version`, `selectedRuntime`, `operationStatus`, `icon` and `iconUrl`; it excludes settings, secrets and source paths.
+  Interfaces remain present even when empty so a consumer never distinguishes "none" from "field missing"; a
   missing token, a forged bearer, and a token minted for a *different* app are each rejected. That
   last one matters more now that the response describes the whole fleet.
 - Gateway: discovery filters to apps declaring `mcp`, prunes toggles for apps Core no longer lists,

@@ -1,5 +1,6 @@
 "use client";
 
+import { AppSessionMenuItem } from "../assistant/app-session-action";
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import Link from "next/link";
@@ -1683,6 +1684,7 @@ function InstalledAppActionsMenu({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
+        <AppSessionMenuItem appId={app.id} />
         {canControl && (
           <>
             <DropdownMenuLabel>Lifecycle</DropdownMenuLabel>

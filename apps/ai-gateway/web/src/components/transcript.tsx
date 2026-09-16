@@ -50,6 +50,10 @@ export function TranscriptEvent({
   attachments?: AttachmentIndex;
 }) {
   switch (event.type) {
+    case "app_context_changed": {
+      const ids = Array.isArray(event.appIds) ? event.appIds.map(String) : [];
+      return <div className="px-3 py-1 text-xs text-muted-foreground">App context: {ids.length ? ids.join(", ") : "General context"}</div>;
+    }
     case "user_message": {
       // The files this turn carried are named here, under the message that carried them, because
       // this event is the only one that knows which message they belong to. Their upload rows draw
