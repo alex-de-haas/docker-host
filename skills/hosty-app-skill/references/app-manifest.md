@@ -190,6 +190,43 @@ Declare platform interfaces the app exposes for other components to discover wit
 
 Core validates shape only (names and keys are kebab tokens, keys unique per interface, paths absolute) and surfaces the declarations on the apps API with each declaration resolved to a ready-to-call URL, so clients can gate features on an installed provider — e.g. Shell shows its assistant UI only when an installed app declares `ai-gateway`. Declaring an interface does not grant the app anything; it is discovery metadata. See `docs/features/ai-agent-bridge/feature.md` ("Manifest Interfaces And Registry").
 
+### MCP Interface
+
+An app that declares `interfaces.mcp` serves MCP over Streamable HTTP at that path: JSON-RPC in a
+`POST` body. `apps/demo-app/src/app/api/mcp/route.ts` is the reference; `docs/features/app-mcp/feature.md`
+is the contract.
+
+- **Accept both Core credentials, not an app session.** Callers send `Authorization: Bearer <token>`,
+  and the token is one of two kinds:
+  - a **delegated token** from `hosty mcp` or the assistant. Validate it first, locally, with
+    `validateDelegatedToken` / `HostyDelegatedToken.Validate`, which checks it against
+    `HOSTY_DELEGATED_TOKEN_PUBLIC_KEY` and the app id without a round trip;
+  - a **scoped access token** from a stock MCP client connecting directly (manually issued or
+    OAuth). When the bearer is not a delegated token, introspect it with `introspectScopedToken` /
+    `HostyScopedTokenClient.IntrospectAsync` and require the `mcp:read` scope (`hasScope(…,
+    SCOPE_MCP_READ)` / `HasScope(HostyScopedTokenClient.McpReadScope)`). An introspection error
+    means the credential was never checked: answer 503, not 401.
+
+  Accepting only delegated tokens works through `hosty mcp` and the assistant but refuses direct
+  clients (`docs/features/scoped-access-tokens/feature.md`, "The App Side"). The identity scheme in
+  front of the app's other routes validates app identity tokens and refuses both of these.
+- **Acknowledge notifications with HTTP 202 and no body.** Answer `initialize` with a JSON-RPC result,
+  then answer `notifications/initialized` (and any other message without an `id`) with a bare `202`:
+  no body, no content type. **Do not answer an empty `200`.** Some clients accept it, including
+  Hosty's own catalog readers, so it can look fine. The assistant's Codex harness rejects it while
+  sending the notification, which surfaces as `Transport channel closed, when send initialized
+  notification` and drops every tool the app offers from the session.
+- **Declare `annotations.readOnlyHint` on every tool.** `hosty mcp` and the gateway's external MCP
+  endpoint are fail-closed: they export only tools whose `annotations.readOnlyHint` is the boolean
+  `true`. A missing `annotations` object, a top-level `readOnlyHint`, or the string `"true"` all
+  hide the tool rather than widening access.
+- **Authorize per tool for the resolved actor**, whichever credential it arrived on, with the same permission model the app's HTTP
+  routes use. A refusal is a tool result with `isError: true`, not a JSON-RPC error.
+
+Test the transport on the executed HTTP response (status, body length, content type). An empty `200`
+and a `202` are both ordinary result objects in most frameworks, and only the wire shows the
+difference.
+
 ## UI Surfaces
 
 `ui.entrypoint` and `ui.navigation` place an app's pages in a shell's sidebar. Two optional sibling
