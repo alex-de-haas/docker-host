@@ -1744,8 +1744,9 @@ internal sealed partial class CoreLifecycleService(
         // Without an external source the plan compared the app with Core's own copy, so an empty change
         // list says nothing about newer versions. Reported as the check's error rather than as "no
         // updates": the two looked identical in every client, and a record that never got a source
-        // would read as up to date forever.
-        if (!sourceConfigured)
+        // would read as up to date forever. An earlier error wins, like the registry check below: it
+        // names the fault this check actually hit, and replacing it would hand out the wrong fix.
+        if (verdict.Error is null && !sourceConfigured)
             verdict = verdict with { Error = MissingUpdateSourceError(appId) };
         if (verdict.Error is null && artifactProbes.Any(probe => string.IsNullOrEmpty(probe.CandidateDigest)))
             verdict = verdict with { Error = "Could not resolve one or more image revisions. Check the registry connection and retry." };
