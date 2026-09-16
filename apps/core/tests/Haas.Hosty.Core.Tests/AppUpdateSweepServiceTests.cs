@@ -108,6 +108,40 @@ public sealed class AppUpdateSweepServiceTests
     }
 
     [Fact]
+    public async Task RunAsync_AnAppWithNoUpdateSourceIsReportedRatherThanUpToDate()
+    {
+        // The shape a real host was stuck in: a record whose only manifest is Core's own copy. The
+        // check compared that copy with itself, found no changes, and every client rendered it as "no
+        // updates" while a newer version was already published.
+        using var fixture = CreateFixture();
+        var installedFrom = Path.Combine(fixture.Root, "notes.json");
+        await File.WriteAllTextAsync(installedFrom, Manifest("1.0.0"));
+        await fixture.Lifecycle.InstallAsync(new AppInstallRequest(installedFrom));
+        File.Delete(installedFrom);
+
+        await fixture.Sweep.RunAsync(CancellationToken.None);
+
+        var sourceless = Assert.Single(await fixture.Lifecycle.ListAppsAsync());
+        Assert.NotNull(sourceless.UpdateCheck);
+        Assert.Equal(CoreLifecycleService.MissingUpdateSourceError("com.example.notes"), sourceless.UpdateCheck!.Error);
+        // An incomplete check offers no one-click apply; the operator reviews whatever it did find.
+        Assert.Null(sourceless.UpdateCheck.PlanDigest);
+        Assert.Equal("1.0.0", sourceless.UpdateCheck.TargetVersion);
+
+        // Naming a source explicitly — what `hosty apps update-plan --manifest` does — is a complete
+        // check again, and its finding replaces the error on the same summary.
+        var published = Path.Combine(fixture.Root, "published.json");
+        await File.WriteAllTextAsync(published, Manifest("1.1.0"));
+        var plan = await fixture.Lifecycle.CreateUpdatePlanAsync("com.example.notes", new AppUpdatePlanRequest(published));
+        Assert.True(plan.SourceConfigured);
+
+        var found = Assert.Single(await fixture.Lifecycle.ListAppsAsync());
+        Assert.Null(found.UpdateCheck!.Error);
+        Assert.True(found.UpdateCheck.UpdateAvailable);
+        Assert.Equal("1.1.0", found.UpdateCheck.TargetVersion);
+    }
+
+    [Fact]
     public async Task RunAsync_TimesOutAWedgedAppWithoutStallingTheSweep()
     {
         // The operations behind a check carry deadlines sized for their heavy cousins (`docker pull`,

@@ -1,7 +1,7 @@
 # Runtime App Update
 
 Created: 2026-06-04
-Updated: 2026-09-11
+Updated: 2026-09-16
 
 ## Description
 
@@ -25,6 +25,8 @@ The browser surface runs step 4 in the background (see [Background Apply](#backg
 `manifestDigest` is the SHA-256 of the exact manifest JSON text loaded from a local manifest file, local app directory, `file://` URL, or HTTP(S) URL. For a locally installed `dev` runtime app, Core hashes the manifest JSON, not the app source folder or local command working directory.
 
 If an update request does not provide a manifest reference and the app has both `FeedsUrl` and `FollowedFeedId`, Core re-fetches `feeds.json`, validates `app-feeds.0.1`, resolves the followed feed, and loads its current `manifestRef`. Otherwise Core resolves the source in this order: the stored manifest URL for remote direct installs; the original local manifest path or directory captured at install (so edits to the source folder are picked up on recheck); and finally the installed manifest copy under the app's Core state directory when that original source is no longer present.
+
+That last fallback compares the app with itself, so it can never find a newer version. The plan reports it as `sourceConfigured: false` — a followed feed, an explicit manifest reference, a stored manifest URL, or a still-present install folder all count as configured — and the check's verdict carries an `error` naming the way out (`hosty apps update-plan <app-id> --manifest <url-or-path>`) rather than reading as "no updates". A record can be left without a source when it predates its feed binding or its install folder is moved. Applying an update planned from a URL stores that URL, so later checks resolve it on their own.
 
 `planDigest` is the SHA-256 of the reviewed update plan seed: app id, current and target versions, current and target runtimes, current and target manifest digests, the target manifest path, the resolved feed identity (feeds URL, feed id, and feed document digest), whether a pre-update backup will be created, and the reported changes.
 
@@ -108,6 +110,8 @@ Failures are captured per app: one dark feed marks that app's verdict with an `e
 - a whole per-app check gets 90 seconds, recorded as that app's `error` verdict.
 
 Neither is reached on a healthy host, where a check is a handful of registry round-trips.
+
+An app with no update source (see [Digest Semantics](#digest-semantics)) is also recorded as an `error` verdict. Its plan still builds and is cached for review, but the verdict offers no one-click apply, and a sweep that meets one reports the check as incomplete rather than every app up to date.
 
 ### Resolving a Digest
 
@@ -216,7 +220,7 @@ Failed updates leave enough state for diagnosis and retry. Runtime state and app
 - **Plan and classification** — change detection per contract category, `requiresReview` routine/review split (including `role: system` escalation and a cross-repository `image` move), `updateAvailable` treating `->unknown` as "cannot tell", and plan-digest stability across a rebuild.
 - **Apply** — digest mismatch, expiry, and stale-base rejection; verbatim consumption of the cached plan; `update_in_progress`; the interrupted-apply boot sweep.
 - **Shell self-update wait** — the page stays put through `"updating"` and through the intermediate `"updated"` while the restart is still to report, settles on that restart's `"started"` (and on `"updated"` when no restart is coming), reports a `"failed"` record with its error, treats a failed read as no outcome at all, and gives up on its deadline (and when the app is gone) without reloading.
-- **Fleet check** — availability projected into summaries (target version and revisions alongside the verdict, and nothing named for a probe that did not resolve), live-source apps skipped and an earlier verdict suppressed, per-app failures captured without failing the sweep, per-app timeout recorded as that app's error while the rest of the fleet still completes, shutdown not recorded as timeouts, single-flight joining, and the finish announced only once the run no longer reports running.
+- **Fleet check** — availability projected into summaries (target version and revisions alongside the verdict, and nothing named for a probe that did not resolve), live-source apps skipped and an earlier verdict suppressed, per-app failures captured without failing the sweep, an app with no update source reported as an error rather than as up to date (and cleared by a plan from an explicit manifest), per-app timeout recorded as that app's error while the rest of the fleet still completes, shutdown not recorded as timeouts, single-flight joining, and the finish announced only once the run no longer reports running.
 - **Version cell** — the target version shown whether or not it advances, and nothing shown when the verdict names no version; installed revisions read from the app record alone, so the tooltip stands without an update.
 - **Digest resolution** — reference parsing (Docker Hub defaults, `library/` normalization, host detection) and rejection of references that cannot be turned into a URL unambiguously; bearer-challenge handling with token reuse and one re-challenge when a cached token stops working; the hash-the-manifest path when the digest header is absent; fallback to the docker CLI on every unclean answer (auth, redirect, malformed digest, transport failure); cancellation propagating rather than being swallowed as a fallback.
 

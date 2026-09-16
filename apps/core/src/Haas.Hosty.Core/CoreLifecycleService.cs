@@ -1658,7 +1658,8 @@ internal sealed partial class CoreLifecycleService(
         }
 
         var willCreateBackup = Directory.Exists(GetAppDataPath(appId));
-        var sourceConfigured = HasExternalUpdateSource(app, request.ManifestPath);
+        // A followed feed is an external source in its own right, whatever its manifestRef looks like.
+        var sourceConfigured = feedResolution is not null || HasExternalUpdateSource(app, request.ManifestPath);
         var changes = BuildUpdateChanges(app, currentSelection, selection).ToList();
         // Surface a compiled-artifact change even when the manifest JSON is byte-identical (a
         // re-pushed tag): resolve the target tag's digest with a light remote lookup and compare it
@@ -1740,6 +1741,12 @@ internal sealed partial class CoreLifecycleService(
             TargetSourceCommit: resolvedSourceCommit,
             TargetArtifactDigests: BuildTargetArtifactDigests(artifactProbes),
             LastSuccessfulCheckAt: clock.UtcNow);
+        // Without an external source the plan compared the app with Core's own copy, so an empty change
+        // list says nothing about newer versions. Reported as the check's error rather than as "no
+        // updates": the two looked identical in every client, and a record that never got a source
+        // would read as up to date forever.
+        if (!sourceConfigured)
+            verdict = verdict with { Error = MissingUpdateSourceError(appId) };
         if (verdict.Error is null && artifactProbes.Any(probe => string.IsNullOrEmpty(probe.CandidateDigest)))
             verdict = verdict with { Error = "Could not resolve one or more image revisions. Check the registry connection and retry." };
         await updateSnapshots.ChangeAsync(appId, previous => new AppUpdateSnapshot(1,
@@ -4804,6 +4811,12 @@ internal sealed partial class CoreLifecycleService(
             || (!string.IsNullOrWhiteSpace(app.InstallManifestPath)
                 && !IsInternalAppPath(app.Id, app.InstallManifestPath)
                 && (File.Exists(app.InstallManifestPath) || Directory.Exists(app.InstallManifestPath)));
+
+    // Names the way out, not just the fault: an explicit manifest plan works for every runtime, and
+    // applying an update from a URL records that URL, so later checks find updates on their own.
+    internal static string MissingUpdateSourceError(string appId)
+        => "No update source is configured, so Core compared the app with its own installed copy and cannot detect newer versions. " +
+            $"Plan the update from a manifest URL or folder: hosty apps update-plan {appId} --manifest <url-or-path>.";
 
     // True when the path resolves inside the app's Core-managed root (e.g. the internal manifest
     // copy under {AppsRoot}/{id}). Such a path is never a real external source. Reuses
