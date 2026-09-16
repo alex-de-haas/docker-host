@@ -3248,6 +3248,9 @@ internal sealed partial class CoreLifecycleService(
         // collector is the OTLP sink other apps point at, so its endpoint URL must be resolved and
         // persisted before a lower tier's start-time env injection reads it (see
         // ResolveTelemetryEndpointAsync). Tiers therefore run strictly in sequence.
+        // Within each capability priority, system apps get a separate earlier tier so Shell is
+        // available while ordinary apps boot. Use the installed role rather than a first-party id;
+        // capability providers still start before any system app that consumes them.
         //
         // Within a tier the apps are independent — each start holds only its own app's operation lock,
         // the port allocator serializes on its own gate, and every failure is captured per app by
@@ -3265,15 +3268,16 @@ internal sealed partial class CoreLifecycleService(
             .Where(app =>
                 string.Equals(app.Kind, "runtime", StringComparison.Ordinal) &&
                 (app.Autostart ?? true))
-            .GroupBy(app => PlatformCapabilities.StartPriority(app.Provides))
-            .OrderByDescending(tier => tier.Key);
+            .GroupBy(app => (CapabilityPriority: PlatformCapabilities.StartPriority(app.Provides), app.System))
+            .OrderByDescending(tier => tier.Key.CapabilityPriority)
+            .ThenByDescending(tier => tier.Key.System);
 
         foreach (var tier in tiers)
         {
             cancellationToken.ThrowIfCancellationRequested();
             using var slots = new SemaphoreSlim(MaxConcurrentAutostarts, MaxConcurrentAutostarts);
             // Alphabetical within the tier so the *submission* order — and therefore the reported
-            // result order, which Task.WhenAll preserves — stays what it has always been.
+            // result order, which Task.WhenAll preserves — is stable within each tier.
             var tasks = tier
                 .OrderBy(app => app.Id, StringComparer.Ordinal)
                 .Select(async app =>

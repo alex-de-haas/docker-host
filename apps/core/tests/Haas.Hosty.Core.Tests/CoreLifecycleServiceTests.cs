@@ -3138,12 +3138,14 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.False(app?.Autostart);
     }
 
-    [Fact]
-    public async Task StartAutostartAppsAsync_StartsOnlyEnabledApps()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task StartAutostartAppsAsync_StartsOnlyEnabledApps(bool system)
     {
         var fixture = await LifecycleFixture.CreateAsync();
         var manifest = await fixture.WriteManifestAsync("1.0.0");
-        await fixture.Service.InstallAsync(new AppInstallRequest(manifest, Autostart: false));
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifest, System: system, Autostart: false));
 
         var disabledResults = await fixture.Service.StartAutostartAppsAsync();
 
@@ -3223,6 +3225,63 @@ public sealed partial class CoreLifecycleServiceTests
             [
                 "enter:com.example.collector",
                 "exit:com.example.collector",
+                "enter:com.example.notes",
+                "exit:com.example.notes",
+            ],
+            timeline);
+    }
+
+    [Theory]
+    [InlineData("hosty.shell", false)]
+    [InlineData("org.example.shell", false)]
+    [InlineData("org.example.shell", true)]
+    public async Task StartAutostartAppsAsync_FinishesSystemAppsBeforeOrdinaryApps(
+        string systemAppId,
+        bool failSystemStart)
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        await fixture.Service.InstallAsync(new AppInstallRequest(
+            await fixture.WriteManifestAsync("1.0.0", id: systemAppId, name: "Shell"), System: true));
+        await fixture.Service.InstallAsync(new AppInstallRequest(
+            await fixture.WriteManifestAsync("1.0.0", id: "org.example.telemetry", name: "Collector")));
+        await fixture.Apps.UpdateAppAsync("org.example.telemetry", app => app with
+        {
+            Provides = [PlatformCapabilities.OtlpCollector],
+        });
+
+        var timeline = new ConcurrentQueue<string>();
+        fixture.Adapter.StartProbe = async () =>
+        {
+            var appId = fixture.Adapter.LastContext!.App.Id;
+            timeline.Enqueue($"enter:{appId}");
+            if (appId == "com.example.notes")
+            {
+                // The barrier covers the whole lifecycle operation, including readiness and the
+                // persisted state, rather than only submitting the system app's runtime start first.
+                var systemApp = await fixture.Apps.GetAppAsync(systemAppId);
+                Assert.Equal(failSystemStart ? "stopped" : "running", systemApp!.RuntimeState);
+                Assert.Equal(failSystemStart ? "failed" : "started", systemApp.OperationStatus);
+            }
+
+            await Task.Yield();
+            timeline.Enqueue($"exit:{appId}");
+            if (appId == systemAppId && failSystemStart)
+            {
+                throw new AppLifecycleException("runtime_start_failed", "System app failed to start.");
+            }
+        };
+
+        var results = await fixture.Service.StartAutostartAppsAsync();
+
+        Assert.Equal(["org.example.telemetry", systemAppId, "com.example.notes"], results.Select(result => result.AppId));
+        Assert.All(results, result => Assert.Equal(!(failSystemStart && result.AppId == systemAppId), result.Succeeded));
+        Assert.Equal(
+            [
+                "enter:org.example.telemetry",
+                "exit:org.example.telemetry",
+                $"enter:{systemAppId}",
+                $"exit:{systemAppId}",
                 "enter:com.example.notes",
                 "exit:com.example.notes",
             ],
