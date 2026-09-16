@@ -85,7 +85,12 @@ try{
 const checks=[];
 const check=(name,ok)=>checks.push({name,ok:Boolean(ok)});
 const result=name=>results.find(r=>r.name===name);
-const outputs=r=>r.messages.flatMap(m=>m.message?.content??[]).filter(b=>b.type==='tool_result').map(b=>b.content);
+const blocks=r=>r.messages.flatMap(m=>m.message?.content??[]);
+const outputs=r=>blocks(r).filter(b=>b.type==='tool_result').map(b=>b.content);
+const deniedFileTool=(r,tool,file)=>{
+ const call=blocks(r).find(b=>b.type==='tool_use'&&b.name===tool&&b.input?.file_path===file);
+ return Boolean(call&&blocks(r).some(b=>b.type==='tool_result'&&b.tool_use_id===call.id&&b.is_error===true&&b.content==='Path outside granted source'));
+};
 const shellOutput=r=>outputs(r).findLast(s=>typeof s==='string'&&s.startsWith('{'));
 for(const name of ['both','command-only','settings-excluded','resume-revoked-b']){
  const r=result(name);let p;try{p=JSON.parse(shellOutput(r))}catch{}
@@ -94,6 +99,8 @@ for(const name of ['both','command-only','settings-excluded','resume-revoked-b']
 }
 check('zero approval cards',results.every(r=>r.callbacks.length===0));
 check('file secret not disclosed',!JSON.stringify(outputs(result('both'))).includes('SYNTHETIC_SECRET_DO_NOT_DISCLOSE'));
+check('settings-excluded file secret denied',deniedFileTool(result('settings-excluded'),'Read',f.secret+'/token.txt')&&!JSON.stringify(outputs(result('settings-excluded'))).includes('SYNTHETIC_SECRET_DO_NOT_DISCLOSE'));
+check('settings-excluded file write denied',deniedFileTool(result('settings-excluded'),'Write',f.c+'/settings-excluded')&&!fs.existsSync(f.c+'/settings-excluded'));
 check('file public read works',JSON.stringify(outputs(result('both'))).includes('public fixture'));
 check('edit-only',result('edit-only').observed.a&&!result('edit-only').observed.cache);
 check('command-only file write denied',!result('command-only').observed.a);

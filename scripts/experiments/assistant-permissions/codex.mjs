@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
+import {fileURLToPath} from 'node:url';
 import {args,requireArgs,fixture,cleanEnv,delay,save,rpcChild} from './common.mjs';
 requireArgs();const out=path.resolve(args.out),f=fixture(out),home=out+'/codex-home';fs.mkdirSync(home,{recursive:true});fs.mkdirSync(out+'/process-tmp',{recursive:true});
 const cli=path.resolve(args.deps,'node_modules/@openai/codex/bin/codex.js');
@@ -35,7 +36,7 @@ const server=http.createServer(async(req,res)=>{
 });
 await new Promise(r=>server.listen(0,'127.0.0.1',r));
 const base=`http://127.0.0.1:${server.address().port}/v1`;
-const catalog=path.join(path.dirname(new URL(import.meta.url).pathname),'model-catalog.json');
+const catalog=fileURLToPath(new URL('./model-catalog.json',import.meta.url));
 let config=`default_permissions = "readonly"\nproject_doc_max_bytes = 0\nmodel = "hosty-permission-fixture"\nmodel_catalog_json = ${JSON.stringify(catalog)}\nmodel_provider = "fixture"\napproval_policy = "never"\n[model_providers.fixture]\nname = "Local fixture"\nbase_url = ${JSON.stringify(base)}\nwire_api = "responses"\nrequires_openai_auth = false\n`;
 for(const [name,p]of Object.entries(profiles)){
  config+=`\n[permissions.${JSON.stringify(name)}.filesystem]\n`;
@@ -44,8 +45,10 @@ for(const [name,p]of Object.entries(profiles)){
 }
 fs.writeFileSync(home+'/config.toml',config);
 let client;
-async function connect(){const c=rpcChild(process.execPath,[cli,'app-server','--stdio'],{cwd:f.a,env:cleanEnv({CODEX_HOME:home,TMPDIR:out+'/process-tmp'})});await c.rpc('initialize',{clientInfo:{name:'hosty-permission-fixture',version:'1'},capabilities:{experimentalApi:true}});c.send({method:'initialized',params:{}});return c;}
-const results=[];function record(name,result){results.push({name,result});save(out+'/codex-results.json',{version,results,requests,events:client?.events});console.log(JSON.stringify({name,result}));}
+const clients=[];
+const evidence=()=>({connections:clients.map((c,index)=>({index,events:c.events,stderr:c.stderr})),events:clients.flatMap(c=>c.events),stderr:clients.flatMap(c=>c.stderr)});
+async function connect(){const c=rpcChild(process.execPath,[cli,'app-server','--stdio'],{cwd:f.a,env:cleanEnv({CODEX_HOME:home,TMPDIR:out+'/process-tmp'})});clients.push(c);await c.rpc('initialize',{clientInfo:{name:'hosty-permission-fixture',version:'1'},capabilities:{experimentalApi:true}});c.send({method:'initialized',params:{}});return c;}
+const results=[];function record(name,result){results.push({name,result});save(out+'/codex-results.json',{version,results,requests,...evidence()});console.log(JSON.stringify({name,result}));}
 const code=`const fs=require('fs');const o={};for(const[k,p]of Object.entries(${JSON.stringify({a:f.a,b:f.b,c:f.c,cache:f.cache})})){try{fs.writeFileSync(p+'/probe','x');o[k]='allowed'}catch(e){o[k]=e.code}}for(const[k,p]of Object.entries(${JSON.stringify({secret:f.secret+'/token.txt',symlink:f.a+'/secret-link/token.txt',public:f.a+'/public.txt'})})){try{o[k]=fs.readFileSync(p,'utf8')}catch(e){o[k]=e.code}}console.log(JSON.stringify(o));`;
 const cmd={command:[process.execPath,'-e',code],cwd:f.a,timeoutMs:10000};
 const patch=(name,target=f.a)=>({type:'custom_tool_call',name:'apply_patch',input:`*** Begin Patch\n*** Add File: ${target}/${name}\n+fixture\n*** End Patch`});
@@ -95,7 +98,7 @@ try{
  if(args.revoke==='unsubscribe')await client.rpc('thread/resume',{threadId:running.thread.id,cwd:f.a,permissions:'a-only',approvalPolicy:'never'});
  record('turn-after-revoke',await turn(running.thread.id,actions,{permissions:'a-only'}));
  record('observed-files',{editOnly:fs.existsSync(f.a+'/edit-only'),commandEscaped:fs.existsSync(f.a+'/edit-only-command'),commandOnly:fs.existsSync(f.a+'/command-only'),neither:fs.existsSync(f.a+'/neither'),secret:fs.readFileSync(f.secret+'/token.txt','utf8')});
-}catch(error){record('error',String(error));process.exitCode=1}finally{save(out+'/codex-results.json',{version,results,requests,events:client?.events,stderr:client?.stderr});client?.stop();server.closeAllConnections();server.close();}
+}catch(error){record('error',String(error));process.exitCode=1}finally{save(out+'/codex-results.json',{version,results,requests,...evidence()});client?.stop();server.closeAllConnections();server.close();}
 const checks=[];
 const check=(name,ok)=>checks.push({name,ok:Boolean(ok)});
 const result=name=>results.find(r=>r.name===name)?.result;
@@ -104,13 +107,16 @@ for(const [name,a,b]of [['both','allowed','allowed'],['a-only','allowed','EPERM'
  check(name+' executes',r?.exitCode===0);check(name+' writes',p?.a===a&&p?.b===b&&p?.c==='EPERM'&&p?.cache==='allowed');check(name+' reads',p?.secret==='EPERM'&&p?.symlink==='EPERM'&&p?.public==='public fixture\n');
 }
 check('source edits without shell',result('observed-files')?.editOnly&&!result('observed-files')?.commandEscaped);
-check('commands without edits',!result('observed-files')?.commandOnly);
+const commandOnlyOutput=result('command-only')?.toolOutputs?.find(o=>o.type==='function_call_output'&&o.call_id==='fixture_2')?.output;
+let commandOnlyProbe;
+try{commandOnlyProbe=JSON.parse(commandOnlyOutput.split('Output:\n')[1]);}catch{}
+check('commands without edits',!result('observed-files')?.commandOnly&&result('command-only')?.status==='completed'&&commandOnlyOutput?.includes('Process exited with code 0\n')&&commandOnlyProbe?.a==='EPERM'&&commandOnlyProbe?.b==='EPERM'&&commandOnlyProbe?.c==='EPERM'&&commandOnlyProbe?.cache==='allowed');
 check('neither permission',!result('observed-files')?.neither);
 check('patch secret blocked',JSON.stringify(result('file-tool-secret')?.toolOutputs).includes('Operation not permitted'));
 check('resume narrows B',JSON.stringify(result('thread-resumed-a-only')?.toolOutputs).includes('\\"b\\":\\"EPERM\\"'));
 check('direct process quiescent',result('terminate')?.stopped>=2&&result('terminate')?.stopped===result('terminate')?.after);
 check('turn quiescent',result('turn-interrupt')?.status==='interrupted'&&result('turn-quiescence')?.atStop>=2&&result('turn-quiescence')?.atStop===result('turn-quiescence')?.after&&!result('turn-quiescence')?.nextFile);
 check('revoked B after interrupt',JSON.stringify(result('turn-after-revoke')?.toolOutputs).includes('\\"b\\":\\"EPERM\\"'));
-check('config accepted',!client?.stderr.join('').includes('Invalid configuration'));
+check('config accepted',!evidence().stderr.join('').includes('Invalid configuration'));
 check('declared CLI version',version==='0.154.0');
 save(out+'/codex-checks.json',checks);console.log(JSON.stringify({checks}));if(checks.some(c=>!c.ok))process.exitCode=1;
