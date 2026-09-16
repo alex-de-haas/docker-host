@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-06-09
-Updated: 2026-09-06
+Updated: 2026-09-16
 
 The shared model, the boundaries and the decision log live in [feature.md](feature.md) and are in
 force. This document holds only what is **not built**: the rollout checklist, and the design for the
@@ -243,6 +243,14 @@ role changes mid-flight, or when the action contract changes underneath it.
 
 ## Step 12 — Development Agent Bridge
 
+The interactive create/edit/preview journey is tracked separately in
+[app authoring](../app-authoring/plan.md), following the owner's 2026-09-16 direction. It permits a
+durable local source folder without Git and uses the installed app's live development runtime.
+This step continues to own isolated non-interactive branch/PR jobs; its repository and disposable
+validation prerequisites do not gate that interactive journey. Shared source/session coordination
+belongs to [prototype workspaces](../app-prototype-workspaces/plan.md), and development lifecycle
+controls to [app development controls](../app-development-controls/plan.md).
+
 The source-changing layer, building on [agent-bridge-workflow](../../ideas/agent-bridge-workflow.md).
 In the operator profile this work is already interactive — an admin's session edits source through
 existing dev-mode and source workflows with approval-gated writes — so what remains is the
@@ -260,8 +268,9 @@ worktree whose only output is a branch or draft PR, never a merge and never live
 
 Development actions never mutate production app data or repoint an installed app's feed.
 
-Two operator sessions, or a session and a human, modifying the same checkout concurrently is an open
-edge case here.
+Live-workspace writer coordination and detection of intervening human edits are tracked in
+[prototype workspaces](../app-prototype-workspaces/plan.md). Isolated jobs in this step still need
+their own branch/worktree collision handling as part of the disposable-validation contract.
 
 ## Open Questions
 

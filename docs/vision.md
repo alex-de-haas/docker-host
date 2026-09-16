@@ -1,7 +1,7 @@
 # Hosty Platform Vision
 
 Created: 2026-08-19
-Updated: 2026-09-09
+Updated: 2026-09-16
 
 The umbrella document: where Hosty is going, so individual decisions have a criterion to be judged
 against. It authorizes no implementation and owns no deliverables — work it names is tracked in the
@@ -33,6 +33,44 @@ increasing share of that work under the operator's control. Regular users work i
 feedback reaches development through surfaces built for it (an annotation overlay is the recorded
 example), with the administrator approving what becomes an agent's task.
 
+## App Creation And Development (owner direction, 2026-09-16)
+
+The intended development loop includes creating apps inside Hosty: an administrator supplies an app
+id, display metadata and a prompt, then sees a running prototype beside its assistant session and
+iterates in place. An app may begin as a durable local folder without Git. Local does not mean
+temporary: source must outlive the conversation, and a valid manifest still gives the app an identity
+and version.
+
+Assistant sessions can be associated with any installed app, or several apps, independently of
+creation: the operator selects apps in chat or starts a new session from an app's menu. This context
+survives panel reloads, and deleting a conversation never removes the ability to start another about
+the same app. [Assistant app context](features/assistant-app-context/plan.md) owns that shared work;
+context association alone changes neither tool grants nor the development workspace.
+
+App creation is stack-neutral: the starting artifact is minimal metadata with an optional disposable
+HTML preview, not a framework template. The agent chooses one or several services and their languages
+from the request. Core-owned development guidance describes the platform contract; supported SDKs
+simplify integration, while other languages use the same documented API directly.
+
+Owner source-policy decisions, 2026-09-16: new apps use the existing `apps/<id>/source` directory,
+including without Git. Reuse existing development/runtime mechanisms wherever they satisfy the
+requirements. Core observes source state and warns before operations that could discard work;
+Git owns history, and the assistant provides the explicit save/commit/push path. Hosty does not keep
+source snapshots or restore history. Ordinary runtime command failures remain Core errors,
+restarts are operator/agent-triggered, and new prototype autostart defaults to off.
+
+The same loop extends to source-capable installed apps through Development Mode and compatible
+runtime profiles. Integration with installed apps uses their published interfaces and authorization
+contracts. Optional promotion proceeds through repository history, remote source, installable
+release/feed and a catalog contribution; the catalog maintainer retains the approval decision.
+Those are separate milestones, not one publish flag, and none implies public network exposure.
+
+The [app-authoring epic](features/app-authoring/plan.md) gathers existing mechanisms and assigns the
+remaining work to prototype workspaces, development controls, integrations and publication. Its plans
+are Draft: this direction does not approve their implementation choices. Interactive live editing
+continues decision 2 below; isolated non-interactive branch/PR jobs remain the distinct Development
+Agent Bridge workflow.
+
 ## The Security Consequence
 
 If installing an app extends the agent, then **installing an app is a capability grant**, and the
@@ -48,7 +86,9 @@ property:
 
 Any future feature that weakens one of these must say so in its plan, in those words.
 
-## Decisions (owner, 2026-08-19)
+## Decisions (owner; dates noted below)
+
+Decisions 1–5: 2026-08-19.
 
 1. **Scopes are deferred; admin/user is the model until user-rights separation is actually needed.**
    Regular users get no administrative rights and no direct agent access — no free-text prompting.
@@ -96,6 +136,19 @@ Any future feature that weakens one of these must say so in its plan, in those w
    agent** (draft-only ask-assistant, providers off by default). Those do not protect the system
    from a bad app — they protect the administrator's own agency from being subverted, and consent
    given at install time cannot cover a mechanism that works by deceiving the consenting party.
+
+6. **Session development permissions apply to existing and new apps (2026-09-16).** An administrator
+   can explicitly permit source edits and project commands for one or more apps in a session's
+   context. Association alone grants nothing. Routine work inside that authorized boundary runs
+   without repeated approval cards; filesystem, command and credential restrictions require verified
+   enforcement on both harnesses. This changes the former every-write-asks policy within that boundary.
+   [Assistant approval rules](features/assistant-approval-rules/plan.md) owns the permissions and the
+   experiment required before implementation; app creation consumes the general capability.
+   The administrator owns the consequences of code they create and execute through localCommand,
+   including malicious code. The current runtime executes under Core's OS account outside the agent
+   sandbox; it does not provide filesystem isolation between apps. This qualifies decision 5's
+   containment language for localCommand: API identity checks remain, but they do not isolate local
+   processes. Explain this at development setup without prompting on every edit or restart.
 
 ## Expectations And Later Directions
 
@@ -155,6 +208,7 @@ the manifest contract. Two standing consequences:
 
 ## Spanned Features
 
+[app-authoring](features/app-authoring/plan.md) ·
 [core-extension-model](features/core-extension-model/plan.md) ·
 [ai-agent-bridge](features/ai-agent-bridge/plan.md) ·
 [app-ui-surfaces](features/app-ui-surfaces/feature.md) ·
