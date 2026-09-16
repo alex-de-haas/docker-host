@@ -1051,7 +1051,12 @@ function UpdatePanel({
         {sourceMissing && (
           <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
             <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-            <span>This plan was built from the source Core recorded at install and cannot detect edits to the original. To compare against a specific folder or URL, set a source override in Settings &rarr; Source, then reopen Update to rebuild the plan.</span>
+            <span>
+              Core has no update source for this app, so this plan compares it with its own installed copy and cannot find newer
+              versions. Plan the update from a manifest URL or folder with{" "}
+              <code className="rounded bg-muted px-1">hosty apps update-plan {app.id} --manifest &lt;url-or-path&gt;</code>; applying
+              an update from a URL records it for later checks. A source runtime can also use a source override in Settings &rarr; Source.
+            </span>
           </div>
         )}
         {detail.loading ? (

@@ -526,9 +526,10 @@ internal sealed partial class AppsCommand(CommandContext context)
         if (plan.SourceConfigured == false)
         {
             context.Console.MarkupLine(
-                "[yellow]Source not configured: Recheck compared the app against Core's internal copy, " +
-                "so it cannot detect manifest edits. Re-run with --manifest <folder> or set a local " +
-                "override via `apps source-override <app-id> --path <folder>`.[/]");
+                "[yellow]Source not configured: Core compared the app with its own installed copy, so it " +
+                "cannot detect newer versions. Re-run with --manifest <url-or-path>; applying an update " +
+                "from a URL records it for later checks. A source runtime can also use " +
+                "`apps source-override <app-id> --path <folder>`.[/]");
         }
     }
 
