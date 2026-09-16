@@ -1,19 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { History, Loader2, MessageSquarePlus, Paperclip, Send, Sparkles, X } from "lucide-react";
+import { AppContextPicker } from "@/components/app-context-picker";
+import { ArrowLeft, History, Loader2, MessageSquarePlus, Paperclip, Send, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, InlineError, StatusBadge } from "@/components/status";
 import { Markdown } from "@/components/markdown";
 import { SessionList } from "@/components/session-list";
 import { indexAttachments, takeChosenFiles } from "@/lib/attachments";
 import { TranscriptEvent, type ApprovalDecision } from "@/components/transcript";
-import { cn } from "@/lib/utils";
 import { establishSession } from "@/lib/api";
 import { composeAskDraft } from "@/lib/ask-draft";
 import { clearDraft, pruneDrafts, readDraft, writeDraft } from "@/lib/draft-store";
 import { orderSessions, publishAttention, waitingCount } from "@/lib/attention";
 import {
+  AssistantApiError,
   createSession,
   deleteSession,
   getHealth,
@@ -40,6 +41,7 @@ import {
 // Which session is open lives in storage rather than in the embedder: closing the panel never stops
 // the harness run, so a reload that forgot the id would orphan a live run behind a brand-new session.
 const SESSION_STORAGE_KEY = "hosty.assistant.session";
+const HISTORY_STORAGE_KEY = "hosty.assistant.history";
 /** An ask is a prompt fragment, not a payload: anything longer is a page dumping itself into the draft. */
 const MAX_ASK_CHARS = 4_000;
 
@@ -47,8 +49,9 @@ const MAX_ASK_CHARS = 4_000;
 export default function AssistantPage() {
   const [health, setHealth] = useState<HarnessHealth | null>(null);
   const [sessions, setSessions] = useState<AssistantSession[]>([]);
-  // A session the embedder asked for before the list existed. Shell strips its parameter as soon as it
-  // posts, so a request dropped here is not retried by anyone — it has to wait for the list instead.
+  // Hold an embedder's session request until authentication finishes. Resolve it directly through
+  // the API: a session Shell just created may not appear in this tab's initial list.
+  const requestedSessionRef = useRef<string | null>(null);
   const [requestedSessionId, setRequestedSessionId] = useState<string | null>(null);
   const [session, setSession] = useState<AssistantSession | null>(null);
   const [status, setStatus] = useState("idle");
@@ -57,6 +60,8 @@ export default function AssistantPage() {
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [contextUnavailable, setContextUnavailable] = useState(false);
+  const [withoutAppDetails, setWithoutAppDetails] = useState(false);
   // Chosen but not yet sent. Uploaded only when the message goes, so a file picked and then
   // reconsidered never reaches the gateway.
   const [pending, setPending] = useState<File[]>([]);
@@ -68,7 +73,16 @@ export default function AssistantPage() {
   const [uploaded, setUploaded] = useState<StoredAttachment[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [showSessions, setShowSessions] = useState(false);
+  const setHistoryOpen = useCallback((open: boolean) => {
+    setShowSessions(open);
+    try {
+      window.localStorage.setItem(HISTORY_STORAGE_KEY, String(open));
+    } catch {
+      // Storage refusal only prevents restoring the current view after a reload.
+    }
+  }, []);
   const [ready, setReady] = useState(false);
+  const activeSessionId = useRef<string | null>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
   // A session this client was watching that no longer exists; cleared once acted on.
   const [deletedElsewhere, setDeletedElsewhere] = useState<string | null>(null);
@@ -81,7 +95,11 @@ export default function AssistantPage() {
   /** Attaches to one session and follows its log. Shared by reattach, switch and new. */
   const attach = useCallback((record: AssistantSession) => {
     streamAbortRef.current?.abort();
+    activeSessionId.current = record.id;
     setSession(record);
+    setError(null);
+    setContextUnavailable(false);
+    setWithoutAppDetails(false);
     setStatus(record.status);
     setEvents([]);
     setStreamed("");
@@ -103,6 +121,12 @@ export default function AssistantPage() {
     void streamEvents(
       record.id,
       (event) => {
+        if (abort.signal.aborted) return;
+        if (event.type === "app_context_changed") {
+          const revision = Number(event.appContextRevision);
+          setSession(current => current?.id === record.id && revision > (current.appContextRevision ?? 0)
+            ? { ...current, appIds: event.appIds as string[], appContextRevision: revision } : current);
+        }
         if (event.type === "assistant_delta") {
           setStreamed((current) => current + String(event.text ?? ""));
           return;
@@ -120,8 +144,8 @@ export default function AssistantPage() {
             return;
           }
           // Deleted from somewhere else — another tab, another client. Recorded for the effect
-          // below rather than handled here: detaching needs the session list and the new-session
-          // path, and reaching those from inside the stream callback would tie this callback to
+          // below rather than handled here: detaching clears the conversation and opens history,
+          // and reaching that state from inside the stream callback would tie this callback to
           // state it must not go stale on.
           setDeletedElsewhere(record.id);
           return;
@@ -137,12 +161,13 @@ export default function AssistantPage() {
     try {
       const record = await createSession({});
       setSessions((current) => [record, ...current]);
-      setShowSessions(false);
+      setHistoryOpen(false);
       attach(record);
+      return record;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
-  }, [attach]);
+  }, [attach, setHistoryOpen]);
 
   // The session before the data, as on the settings page: a launch code that has not been spent yet
   // means every request below is answered 401 by a gateway that is working correctly.
@@ -174,8 +199,10 @@ export default function AssistantPage() {
 
         // Reattach first: the stream replays from seq 0, which rebuilds unresolved approval cards.
         let stored: string | null = null;
+        let restoreHistory = false;
         try {
           stored = window.localStorage.getItem(SESSION_STORAGE_KEY);
+          restoreHistory = window.localStorage.getItem(HISTORY_STORAGE_KEY) === "true";
         } catch {
           // Private-mode storage can refuse reads as well as writes; that costs reattachment, and
           // must not take the whole page down with it.
@@ -185,10 +212,16 @@ export default function AssistantPage() {
           return;
         }
 
+        if (requestedSessionRef.current) return;
+        setShowSessions(restoreHistory);
+
         if (previous) {
           attach(previous);
           return;
         }
+
+        // Deleting the last session leaves an empty history, including after a reload.
+        if (restoreHistory) return;
 
         // Created because nothing was stored — and added to the list, or "Recent sessions" would
         // say there are none while one is open, and switching away would strand it.
@@ -248,6 +281,7 @@ export default function AssistantPage() {
         // A notification arriving at the rail: open the session it was about. Only the id crosses —
         // the panel decides whether that session still exists and what to show, which is the same
         // division as everywhere else here.
+        requestedSessionRef.current = data.sessionId;
         setRequestedSessionId(data.sessionId);
         return;
       }
@@ -258,28 +292,43 @@ export default function AssistantPage() {
 
       const text = data.text.slice(0, MAX_ASK_CHARS);
       const sourceAppId = typeof data.sourceAppId === "string" ? data.sourceAppId : "";
+      // After deleting the active session, history intentionally has no attached conversation.
+      // An explicit ask may start one, but still only fills its draft and never sends a message.
+      if (!activeSessionId.current) {
+        void startNew().then(record => {
+          if (record && activeSessionId.current === record.id) {
+            setInput(current => composeAskDraft(current, text, sourceAppId));
+          }
+        });
+        return;
+      }
+      setHistoryOpen(false);
       setInput((current) => composeAskDraft(current, text, sourceAppId));
       composerRef.current?.focus();
     };
 
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-    // Re-attached when the session list changes: the handler resolves an incoming id against it, and
-    // a listener closed over an empty first render would refuse every session that arrived later.
-  }, [attach, sessions]);
+  }, [startNew, setHistoryOpen]);
 
-  // Honoured once the list can answer. Held rather than dropped because the request arrives from a
-  // notification the operator just acted on, and losing it silently is worse than opening a moment late.
+  // Shell can create a session after the initial list was fetched. Resolve the requested id
+  // through the authenticated API, and never replace a newer request with an older response.
   useEffect(() => {
-    if (!requestedSessionId) {
-      return;
-    }
-    const wanted = sessions.find((record) => record.id === requestedSessionId);
-    if (wanted) {
-      attach(wanted);
+    if (!requestedSessionId || !ready) return;
+    let cancelled = false;
+    void getSession(requestedSessionId).then(record => {
+      if (cancelled) return;
+      setSessions(current => [record, ...current.filter(item => item.id !== record.id)]);
+      attach(record);
+      setHistoryOpen(false);
+      requestedSessionRef.current = null;
       setRequestedSessionId(null);
-    }
-  }, [attach, requestedSessionId, sessions]);
+      composerRef.current?.focus();
+    }).catch(cause => {
+      if (!cancelled) { requestedSessionRef.current = null; setError(cause instanceof Error ? cause.message : String(cause)); setRequestedSessionId(null); }
+    });
+    return () => { cancelled = true; };
+  }, [attach, requestedSessionId, ready, setHistoryOpen]);
 
   // Written on change rather than on unload: a closed laptop, a crashed tab and a navigation away all
   // skip unload handlers, and those are exactly the cases where the text matters most.
@@ -340,87 +389,91 @@ export default function AssistantPage() {
         // Moved as each lands, not after all have: a failure part-way leaves the ones that made it
         // in `uploaded` and the rest still pending, so the retry sends exactly what is missing.
         stored.push(attachment);
-        setUploaded((current) => [...current, attachment]);
-        setPending((current) => current.filter((candidate) => candidate !== file));
+        if (activeSessionId.current === session.id) {
+          setUploaded((current) => [...current, attachment]);
+          setPending((current) => current.filter((candidate) => candidate !== file));
+        }
       }
-      await postMessage(session.id, trimmed, stored.map((attachment) => attachment.name));
+      await postMessage(session.id, trimmed, stored.map((attachment) => attachment.name), session.appContextRevision ?? 0, withoutAppDetails);
+      // Clear only after acceptance, and never overwrite another session opened during the request.
+      clearDraft(session.id);
+      if (activeSessionId.current !== session.id) return;
+      setContextUnavailable(false);
+      setWithoutAppDetails(false);
       setUploaded([]);
       setPending([]);
       setInput("");
-      // Cleared only once the gateway has it: clearing before the round trip would lose the text on
-      // exactly the failure the operator most wants it kept for.
-      clearDraft(session.id);
       // The gateway names an unnamed session from its first message, so the record the list holds is
       // stale the moment that message lands. Re-read rather than deriving the same title here: two
       // implementations of one rule drift, and the server's is the one that is stored.
       if (!session.title) {
         const named = await getSession(session.id).catch(() => null);
         if (named?.title) {
-          setSession(named);
+          setSession(current => current?.id === named.id && (current.appContextRevision ?? 0) <= (named.appContextRevision ?? 0) ? named : current);
           setSessions((current) => current.map((record) => (record.id === named.id ? named : record)));
         }
       }
     } catch (cause) {
+      if (activeSessionId.current !== session.id) return;
+      if (cause instanceof AssistantApiError && cause.code === "app_context_unavailable") setContextUnavailable(true);
+      if (cause instanceof AssistantApiError && cause.code === "app_context_conflict") {
+        const current = await getSession(session.id).catch(() => null);
+        if (current) setSession(previous => previous?.id === current.id && (previous.appContextRevision ?? 0) <= (current.appContextRevision ?? 0) ? current : previous);
+      }
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setSending(false);
     }
-  }, [input, pending, sending, session, uploaded]);
+  }, [input, pending, sending, session, uploaded, withoutAppDetails]);
 
-  const remove = useCallback(
-    async (sessionId: string) => {
-      setError(null);
-      // Claimed before the request: the fan-out can reach this tab's own stream before the response
-      // does, and this is what tells the two apart.
-      selfDeleted.current.add(sessionId);
-      try {
-        await deleteSession(sessionId);
-        // The draft belonged to a session that no longer exists; leaving it behind would resurrect
-        // someone's half-written message under a future session's id.
-        clearDraft(sessionId);
-        setSessions((current) => current.filter((entry) => entry.id !== sessionId));
-        if (session?.id === sessionId) {
-          // The open session was the one deleted: drop its stream and start a fresh one, rather
-          // than leaving the panel attached to a transcript that is gone.
-          streamAbortRef.current?.abort();
-          try {
-            window.localStorage.removeItem(SESSION_STORAGE_KEY);
-          } catch {
-            // Private-mode storage can refuse writes; the reattach path already tolerates a stored
-            // id that no longer resolves.
-          }
-          await startNew();
-        }
-      } catch (cause) {
-        // Nothing was deleted, so the claim must not outlive the attempt — a later deletion from
-        // another tab would otherwise be swallowed as this one's own.
-        selfDeleted.current.delete(sessionId);
-        setError(cause instanceof Error ? cause.message : String(cause));
-      }
-    },
-    [session, startNew],
-  );
+  // Deletion clears the active conversation without creating or selecting another one.
+  const detachDeleted = useCallback((sessionId: string) => {
+    if (activeSessionId.current !== sessionId) return;
+    streamAbortRef.current?.abort();
+    activeSessionId.current = null;
+    setSession(null);
+    setStatus("idle");
+    setEvents([]);
+    setStreamed("");
+    setInput("");
+    setPending([]);
+    setUploaded([]);
+    setContextUnavailable(false);
+    setWithoutAppDetails(false);
+    setHistoryOpen(true);
+    try {
+      window.localStorage.removeItem(SESSION_STORAGE_KEY);
+    } catch {
+      // An obsolete stored id is harmless: reattachment resolves it through the API.
+    }
+  }, [setHistoryOpen]);
+
+  const remove = useCallback(async (sessionId: string) => {
+    setError(null);
+    // The deletion event can arrive before its HTTP response.
+    selfDeleted.current.add(sessionId);
+    try {
+      await deleteSession(sessionId);
+      clearDraft(sessionId);
+      setSessions(current => current.filter(entry => entry.id !== sessionId));
+      detachDeleted(sessionId);
+    } catch (cause) {
+      selfDeleted.current.delete(sessionId);
+      setError(cause instanceof Error ? cause.message : String(cause));
+      throw cause;
+    }
+  }, [detachDeleted]);
 
   useEffect(() => {
-    if (!deletedElsewhere) {
-      return;
-    }
+    if (!deletedElsewhere) return;
     setDeletedElsewhere(null);
-    setSessions((current) => current.filter((entry) => entry.id !== deletedElsewhere));
+    setSessions(current => current.filter(entry => entry.id !== deletedElsewhere));
     clearDraft(deletedElsewhere);
-    if (session?.id === deletedElsewhere) {
-      // The open session was deleted elsewhere: the composer must stop pointing at it, or the next
-      // message is sent into a session that is not there.
-      streamAbortRef.current?.abort();
-      try {
-        window.localStorage.removeItem(SESSION_STORAGE_KEY);
-      } catch {
-        // Reattachment across reloads already tolerates a stored id that no longer resolves.
-      }
-      setError("This session was deleted. Started a new one.");
-      void startNew();
+    if (activeSessionId.current === deletedElsewhere) {
+      detachDeleted(deletedElsewhere);
+      setError("This session was deleted in another window. Choose a session or start a new one.");
     }
-  }, [deletedElsewhere, session, startNew]);
+  }, [deletedElsewhere, detachDeleted]);
 
   const rename = useCallback(async (sessionId: string, title: string) => {
     setError(null);
@@ -495,47 +548,36 @@ export default function AssistantPage() {
   return (
     <div className="flex h-dvh min-h-0 flex-col">
       <header className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
-        <Sparkles className="hosty-shell-chrome h-4 w-4 shrink-0" aria-hidden />
-        <span className="hosty-shell-chrome text-sm font-medium">Assistant</span>
-        <StatusBadge value={status} />
-        <div className="ml-auto flex items-center gap-1">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            title="Recent sessions"
-            aria-label="Recent sessions"
-            aria-pressed={showSessions}
-            className={cn(showSessions && "bg-muted")}
-            onClick={() => {
-              // Re-read on open: titles and statuses move on the server — another client's session
-              // was named by its first message, one of them is now waiting — and a list that only
-              // ever reflects this tab's own actions is a list the operator learns not to trust.
-              setShowSessions((open) => {
-                if (!open) {
-                  void listSessions()
-                    .then(setSessions)
-                    .catch(() => undefined);
-                }
-                return !open;
-              });
-            }}
-          >
-            <History className="h-4 w-4" />
-          </Button>
-          <Button type="button" variant="ghost" size="icon-sm" title="New session" aria-label="New session" onClick={() => void startNew()}>
-            <MessageSquarePlus className="h-4 w-4" />
-          </Button>
-        </div>
+        {showSessions ? (
+          <>
+            {session && <Button variant="ghost" size="icon-sm" aria-label="Back to conversation" title="Back to conversation" onClick={() => setHistoryOpen(false)}><ArrowLeft /></Button>}
+            <h1 className="min-w-0 flex-1 truncate text-sm font-medium">Session history</h1>
+            <Button variant="ghost" size="sm" disabled={!ready || !health?.available} onClick={() => void startNew()}><MessageSquarePlus data-icon="inline-start" />New session</Button>
+          </>
+        ) : (
+          <>
+            <Sparkles className="hosty-shell-chrome h-4 w-4 shrink-0" aria-hidden />
+            <span className="hosty-shell-chrome text-sm font-medium">Assistant</span>
+            <StatusBadge value={status} />
+            <div className="ml-auto flex items-center gap-1">
+              <Button variant="ghost" size="icon-sm" title="Session history" aria-label="Session history" disabled={!ready} onClick={() => {
+                setHistoryOpen(true);
+                void listSessions().then(setSessions).catch(cause => setError(cause instanceof Error ? cause.message : String(cause)));
+              }}><History /></Button>
+              <Button variant="ghost" size="icon-sm" title="New session" aria-label="New session" disabled={!ready || !health?.available} onClick={() => void startNew()}><MessageSquarePlus /></Button>
+            </div>
+          </>
+        )}
       </header>
+      {error && <div className="shrink-0 p-3" role="alert"><InlineError message={error} /></div>}
 
       {showSessions ? (
         <SessionList
           sessions={orderSessions(sessions)}
           activeId={session?.id ?? null}
           onPick={(record) => {
-            setShowSessions(false);
-            attach(record);
+            requestedSessionRef.current = record.id;
+            setRequestedSessionId(record.id);
           }}
           onRename={rename}
           onDelete={remove}
@@ -546,7 +588,6 @@ export default function AssistantPage() {
             {health && !health.available && (
               <Alert severity="warning" title="Assistant unavailable" detail={health.reason} />
             )}
-            {error && <InlineError message={error} />}
             {ready && health?.available && events.length === 0 && !streamed && (
               <p className="px-1 text-xs text-muted-foreground">
                 Operator session on this host — every write asks first.
@@ -579,6 +620,16 @@ export default function AssistantPage() {
             )}
           </div>
 
+          {session && (
+            <AppContextPicker key={session.id} session={session} busy={sending} running={["running", "awaiting_approval", "awaiting_question"].includes(status)}
+              onChange={record => setSession(current => current?.id === record.id && (record.appContextRevision ?? 0) >= (current.appContextRevision ?? 0) ? record : current)} />
+          )}
+          {contextUnavailable && (
+            <label className="flex gap-2 px-3 py-2 text-xs">
+              <input type="checkbox" checked={withoutAppDetails} onChange={event => setWithoutAppDetails(event.target.checked)} />
+              Send without fresh app details for this message
+            </label>
+          )}
           {(pending.length > 0 || uploaded.length > 0) && (
             <div className="flex shrink-0 flex-wrap gap-1 border-t px-3 pt-2 text-xs">
               {uploaded.map((attachment) => (

@@ -31,6 +31,8 @@ export type AssistantSession = {
   createdAt: string;
   updatedAt?: string;
   createdBy?: string;
+  appIds?: string[];
+  appContextRevision?: number;
 };
 
 export type HarnessHealth = {
@@ -38,8 +40,23 @@ export type HarnessHealth = {
   available: boolean;
   reason?: string;
   /** Absent on an older gateway; treated as "cannot", so nothing is over-promised. */
-  capabilities?: { questions?: boolean; liveReconfigure?: boolean; denyReason?: boolean };
+  capabilities?: { appContext?: boolean; questions?: boolean; liveReconfigure?: boolean; denyReason?: boolean };
 };
+
+export type ContextApp = { id: string; displayName: string; available: boolean; runtimeState?: string; icon?: string; iconUrl?: string };
+export class AssistantApiError extends Error {
+  constructor(public readonly code: string | undefined, message: string) { super(message); }
+}
+export async function listContextApps(search = "", offset = 0): Promise<{ apps: ContextApp[]; nextOffset: number | null }> {
+  return (await call(`/session-apps?search=${encodeURIComponent(search)}&offset=${offset}`)).json();
+}
+export async function selectedContextApps(ids: string[]): Promise<ContextApp[]> {
+  if (!ids.length) return [];
+  return ((await (await call(`/session-apps?ids=${encodeURIComponent(ids.join(","))}`)).json()) as { apps: ContextApp[] }).apps;
+}
+export async function setSessionApps(id: string, appIds: string[], expectedRevision: number): Promise<AssistantSession> {
+  return (await call(`/sessions/${encodeURIComponent(id)}/apps`, { method: "PUT", body: JSON.stringify({ appIds, expectedRevision }) })).json();
+}
 
 /** Terminal for a stream: retrying cannot fix a revoked role or a session that is gone. */
 const TERMINAL_STREAM_STATUSES = new Set([401, 403, 404, 410]);
@@ -74,8 +91,8 @@ async function call(path: string, init: RequestInit = {}, retried = false): Prom
   }
 
   if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as { message?: string } | null;
-    throw new Error(body?.message || `Request failed (${response.status}).`);
+    const body = (await response.json().catch(() => null)) as { message?: string; code?: string } | null;
+    throw new AssistantApiError(body?.code, body?.message || `Request failed (${response.status}).`);
   }
   return response;
 }
@@ -97,7 +114,7 @@ export async function listSessions(): Promise<AssistantSession[]> {
   return body.sessions ?? [];
 }
 
-export async function createSession(input: { title?: string; context?: Record<string, string> } = {}): Promise<AssistantSession> {
+export async function createSession(input: { title?: string; context?: Record<string, string>; appIds?: string[]; clientRequestId?: string } = {}): Promise<AssistantSession> {
   return (await call("/sessions", { method: "POST", body: JSON.stringify(input) })).json() as Promise<AssistantSession>;
 }
 
@@ -120,10 +137,10 @@ export async function getSession(sessionId: string): Promise<AssistantSession> {
   return (await call(`/sessions/${encodeURIComponent(sessionId)}`)).json() as Promise<AssistantSession>;
 }
 
-export async function postMessage(sessionId: string, text: string, attachments: string[] = []): Promise<void> {
+export async function postMessage(sessionId: string, text: string, attachments: string[] = [], appContextRevision = 0, withoutAppDetails = false): Promise<void> {
   await call(`/sessions/${encodeURIComponent(sessionId)}/messages`, {
     method: "POST",
-    body: JSON.stringify(attachments.length > 0 ? { text, attachments } : { text }),
+    body: JSON.stringify({ text, attachments, appContextRevision, withoutAppDetails }),
   });
 }
 

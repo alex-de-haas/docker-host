@@ -20,7 +20,7 @@ import { readCoreStatus, reconcileCoreUpdate } from "./shell/core-status";
 import { reconcileAppList } from "./shell/app-list-snapshot";
 import { AppDetailsDialog } from "./shell/dialogs/app-details-dialog";
 import { InstallReviewDialog } from "./shell/dialogs/install-review-dialog";
-import { findAssistantGateway } from "./shell/assistant/assistant-client";
+import { assistantSupportsContext, createAppSession, findAssistantGateway } from "./shell/assistant/assistant-client";
 import { ShellSidebar } from "./shell/sidebar/shell-sidebar";
 import { ShellTopStrip } from "./shell/chrome/shell-top-strip";
 import { ShellRightPanel } from "./shell/surfaces/shell-right-panel";
@@ -2117,6 +2117,37 @@ export function ShellClient({
     router.replace(`${pathname}${next.toString() ? `?${next}` : ""}`);
   }, [appPanelTabs, assistantGateway?.appId, assistantSessionParam, pathname, router, searchParams]);
 
+  const [assistantContextReady, setAssistantContextReady] = useState(false);
+  const [assistantSessionPending, setAssistantSessionPending] = useState(false);
+  const creatingAssistantSession = useRef(false);
+  useEffect(() => {
+    let cancelled = false;
+    const check = async () => {
+      const available = canManageApps && assistantGateway?.running
+        ? await assistantSupportsContext(assistantGateway, refresh => issueDelegatedToken(assistantGateway.appId, refresh)).catch(() => false)
+        : false;
+      if (!cancelled) setAssistantContextReady(Boolean(available));
+    };
+    void check();
+    const timer = setInterval(() => void check(), 30_000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [assistantGateway, canManageApps, issueDelegatedToken, activeUserId]);
+
+  const newAppAssistantSession = useCallback(async (appId: string) => {
+    if (!canManageApps || !assistantGateway?.running || creatingAssistantSession.current) return;
+    const tab = appPanelTabs.find(item => item.appId === assistantGateway.appId);
+    if (!tab) { toast.error("The assistant panel is unavailable. Refresh Shell and retry."); return; }
+    creatingAssistantSession.current = true;
+    setAssistantSessionPending(true);
+    try {
+      const session = await createAppSession(assistantGateway, refresh => issueDelegatedToken(assistantGateway.appId, refresh), appId, crypto.randomUUID());
+      setPanelOpen(true);
+      setActivePanelKey(tab.key);
+      setAssistantAsk(current => ({ message: { type: "hosty:open-assistant-session", sessionId: session.id }, nonce: (current?.nonce ?? 0) + 1 }));
+    } catch (cause) { toast.error(cause instanceof Error ? cause.message : String(cause)); }
+    finally { creatingAssistantSession.current = false; setAssistantSessionPending(false); }
+  }, [canManageApps, assistantGateway, appPanelTabs, issueDelegatedToken]);
+
   const askAssistant = useCallback((text: string, sourceAppId: string) => {
     if (!askLimiter.current.tryAcquire(sourceAppId)) {
       return;
@@ -2273,6 +2304,8 @@ export function ShellClient({
       onEmbeddedAuthRequired: handleSurfaceAuthRequired,
       surfaceAuthNonce,
       askAssistant: assistantAvailable ? askAssistant : undefined,
+      newAppAssistantSession: assistantContextReady && canManageApps && assistantGateway?.running ? newAppAssistantSession : undefined,
+      assistantSessionPending,
       requestDelegatedTokenFor,
       openSurfaceFrame,
       startAppById,
@@ -2297,6 +2330,11 @@ export function ShellClient({
       surfaceAuthNonce,
       askAssistant,
       assistantAvailable,
+      assistantContextReady,
+      canManageApps,
+      assistantGateway?.running,
+      newAppAssistantSession,
+      assistantSessionPending,
       requestDelegatedTokenFor,
       openSurfaceFrame,
       startAppById,

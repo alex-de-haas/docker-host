@@ -44,7 +44,7 @@ and version.
 Assistant sessions can be associated with any installed app, or several apps, independently of
 creation: the operator selects apps in chat or starts a new session from an app's menu. This context
 survives panel reloads, and deleting a conversation never removes the ability to start another about
-the same app. [Assistant app context](features/assistant-app-context/plan.md) owns that shared work;
+the same app. [Assistant app context](features/assistant-app-context/feature.md) owns that shared work;
 context association alone changes neither tool grants nor the development workspace.
 
 App creation is stack-neutral: the starting artifact is minimal metadata with an optional disposable

@@ -1,3 +1,4 @@
+import { AppContextError, parseAppIds, validateSelection, captureContext, withAppContext } from "./app-context.js";
 import { mkdir, stat } from "node:fs/promises";
 import { isWaitingStatus, WaitingNotifier } from "../notifications.js";
 import { composeSystemPrompt, partitionSkills, type AppSkill } from "../mcp/skills.js";
@@ -61,6 +62,15 @@ interface LiveSession {
 
 export class SessionManager {
   private readonly live = new Map<string, LiveSession>();
+  private readonly operations = new Map<string, Promise<unknown>>();
+  private serialize<T>(key: string, action: () => Promise<T>): Promise<T> {
+    const previous = this.operations.get(key) ?? Promise.resolve();
+    const next = previous.catch(() => undefined).then(action);
+    this.operations.set(key, next);
+    void next.finally(() => { if (this.operations.get(key) === next) this.operations.delete(key); }).catch(() => undefined);
+    return next;
+  }
+
 
   // Harness events are dispatched without being awaited — the adapter's callback is synchronous and
   // must not block the run. Holding each handler here is what makes `shutdown` mean "no more writes":
@@ -116,36 +126,76 @@ export class SessionManager {
     title?: string;
     context?: Record<string, string>;
     createdBy: string;
+    appIds?: unknown;
+    clientRequestId?: unknown;
   }): Promise<SessionRecord> {
-    const now = new Date().toISOString();
-    const title = normalizeTitle(input.title);
-    const record: SessionRecord = {
-      id: randomUUID(),
-      title,
-      titleSource: title ? "operator" : "auto",
-      context: input.context ?? null,
-      status: "idle",
-      createdAt: now,
-      updatedAt: now,
-      createdBy: input.createdBy,
-      harnessSessionId: null,
-      lastEventSeq: 0,
-    };
-    await this.store.createSession(record);
-    this.live.set(record.id, {
-      record,
-      run: null,
-      listeners: new Set(),
-      mcpAppIds: [],
-      pendingApprovals: new Map(),
-      pendingQuestions: new Map(),
-      credential: null,
-      refreshTimer: null,
-      autoAllowed: new Set(),
+    return this.serialize("create", async () => {
+      const appIds = parseAppIds(input.appIds === undefined ? [] : input.appIds);
+      const requestId = input.clientRequestId;
+      if (requestId !== undefined && (typeof requestId !== "string" || !/^[a-zA-Z0-9-]{1,128}$/.test(requestId)))
+        throw new AppContextError(400, "request_id_invalid", "Invalid creation request id.");
+      const fingerprint = JSON.stringify({ title: normalizeTitle(input.title), context: input.context ?? null, appIds });
+      if (typeof requestId === "string") {
+        const existing = (await this.store.listRecords()).find(r => r.createdBy === input.createdBy && r.creationRequest?.id === requestId);
+        if (existing) {
+          if (existing.creationRequest?.fingerprint !== fingerprint) throw new AppContextError(409, "creation_conflict", "This request id was already used with different session details.");
+          return existing;
+        }
+      }
+      await validateSelection(this.providers, appIds);
+      const now = new Date().toISOString();
+      const title = normalizeTitle(input.title);
+      const record: SessionRecord = {
+        id: randomUUID(),
+        title,
+        titleSource: title ? "operator" : "auto",
+        context: input.context ?? null,
+        appIds, appContextRevision: 0,
+        ...(typeof requestId === "string" ? { creationRequest: { id: requestId, fingerprint } } : {}),
+        status: "idle",
+        createdAt: now,
+        updatedAt: now,
+        createdBy: input.createdBy,
+        harnessSessionId: null,
+        lastEventSeq: 0,
+      };
+      await this.store.createSession(record);
+      this.live.set(record.id, {
+        record,
+        run: null,
+        listeners: new Set(),
+        mcpAppIds: [],
+        pendingApprovals: new Map(),
+        pendingQuestions: new Map(),
+        credential: null,
+        refreshTimer: null,
+        autoAllowed: new Set(),
+      });
+      await this.append(record.id, { type: "session_created", createdBy: input.createdBy });
+      this.audit.report("ai_session_created", { sessionId: record.id, actor: input.createdBy });
+      return record;
     });
-    await this.append(record.id, { type: "session_created", createdBy: input.createdBy });
-    this.audit.report("ai_session_created", { sessionId: record.id, actor: input.createdBy });
-    return record;
+  }
+
+  async setAppContext(id: string, value: unknown, revision: unknown, actor: string): Promise<SessionRecord> {
+    return this.serialize(id, async () => {
+      const session = await this.requireLive(id);
+      const ids = parseAppIds(value);
+      this.checkRevision(session.record, revision);
+      await validateSelection(this.providers, ids, session.record.appIds ?? []);
+      // Development grants/cwd are deliberately absent here. Their future owner must quiesce
+      // removed grants before this mutation; association itself creates no execution authority.
+      session.record.appIds = ids;
+      session.record.appContextRevision = (session.record.appContextRevision ?? 0) + 1;
+      session.record.updatedAt = new Date().toISOString();
+      await this.append(id, { type: "app_context_changed", appIds: ids, appContextRevision: session.record.appContextRevision, actor });
+      return session.record;
+    });
+  }
+
+  private checkRevision(record: SessionRecord, revision: unknown): void {
+    if (!Number.isSafeInteger(revision) || revision !== (record.appContextRevision ?? 0))
+      throw new AppContextError(409, "app_context_conflict", "App selection changed in another tab. Review the current selection and retry.");
   }
 
   async listSessions(): Promise<SessionRecord[]> {
@@ -167,39 +217,41 @@ export class SessionManager {
    * sit on a stream that has stopped meaning anything, and reconnect into a 404 it cannot explain.
    */
   async deleteSession(id: string, deletedBy: string): Promise<boolean> {
-    const record = this.live.get(id)?.record ?? (await this.store.readRecord(id));
-    if (!record) {
-      return false;
-    }
-
-    const session = this.live.get(id);
-    if (session) {
-      if (session.run) {
-        await session.run.stop().catch(() => undefined);
-        session.run = null;
+    return this.serialize(id, async () => {
+      const record = this.live.get(id)?.record ?? (await this.store.readRecord(id));
+      if (!record) {
+        return false;
       }
-      session.pendingApprovals.clear();
-      session.pendingQuestions.clear();
-      this.clearRefresh(session);
-      this.fanOut(session, {
-        // Negative, like the client's own stream errors: this event is never persisted, and reusing
-        // the last stored seq would hand subscribers a cursor value that already belongs to a real
-        // event. Nothing can reconnect with it anyway — the session it points at is being removed.
-        seq: -1,
-        ts: new Date().toISOString(),
-        type: "session_deleted",
+
+      const session = this.live.get(id);
+      if (session) {
+        if (session.run) {
+          await session.run.stop().catch(() => undefined);
+          session.run = null;
+        }
+        session.pendingApprovals.clear();
+        session.pendingQuestions.clear();
+        this.clearRefresh(session);
+        this.fanOut(session, {
+          // Negative, like the client's own stream errors: this event is never persisted, and reusing
+          // the last stored seq would hand subscribers a cursor value that already belongs to a real
+          // event. Nothing can reconnect with it anyway — the session it points at is being removed.
+          seq: -1,
+          ts: new Date().toISOString(),
+          type: "session_deleted",
       });
-      session.listeners.clear();
-      this.live.delete(id);
-    }
-    this.proxy?.unregister(id);
-    await this.store.deleteSession(id);
-    // Reported like every other lifecycle transition, and with the administrator who asked for it:
-    // the transcript this removed is exactly what an audit trail cannot recover afterwards, so an
-    // unattributable deletion would be the one entry that matters least. The deleter is recorded
-    // separately from the session's creator, which is a different person often enough to matter.
-    this.audit.report("ai_session_deleted", { sessionId: id, deletedBy, createdBy: record.createdBy });
-    return true;
+        session.listeners.clear();
+        this.live.delete(id);
+      }
+      this.proxy?.unregister(id);
+      await this.store.deleteSession(id);
+      // Reported like every other lifecycle transition, and with the administrator who asked for it:
+      // the transcript this removed is exactly what an audit trail cannot recover afterwards, so an
+      // unattributable deletion would be the one entry that matters least. The deleter is recorded
+      // separately from the session's creator, which is a different person often enough to matter.
+      this.audit.report("ai_session_deleted", { sessionId: id, deletedBy, createdBy: record.createdBy });
+      return true;
+    });
   }
 
   /**
@@ -223,16 +275,18 @@ export class SessionManager {
    * content does not reach Core (decision 2026-08-08 — Core audits lifecycle and approvals only).
    */
   async renameSession(id: string, title: unknown): Promise<SessionRecord | null> {
-    const record = this.live.get(id)?.record ?? (await this.store.readRecord(id));
-    if (!record) {
-      return null;
-    }
-    const normalized = normalizeTitle(title);
-    record.title = normalized;
-    record.titleSource = normalized ? "operator" : "auto";
-    record.updatedAt = new Date().toISOString();
-    await this.store.saveRecord(record);
-    return record;
+    return this.serialize(id, async () => {
+      const record = this.live.get(id)?.record ?? (await this.store.readRecord(id));
+      if (!record) {
+        return null;
+      }
+      const normalized = normalizeTitle(title);
+      record.title = normalized;
+      record.titleSource = normalized ? "operator" : "auto";
+      record.updatedAt = new Date().toISOString();
+      await this.store.saveRecord(record);
+      return record;
+    });
   }
 
   /**
@@ -246,101 +300,108 @@ export class SessionManager {
    * Their paths are appended to what the harness receives, in a fixed form, and never to the system
    * prompt: a file is the operator's input for one turn, not standing instruction.
    */
-  async postMessage(id: string, text: string, credential?: string, attachments: string[] = []): Promise<void> {
-    const session = await this.requireLive(id);
-    // Resolved before anything is written, so a name that is not a stored name fails the whole
-    // message rather than leaving a user_message event that names a file the harness never got.
-    const attached: Array<{ name: string; path: string }> = [];
-    for (const name of attachments) {
-      const file = this.store.attachmentPath(id, name);
-      if (file === null) {
-        throw new Error("attachments need a workspace, and this gateway has none");
+  async postMessage(id: string, text: string, credential?: string, attachments: string[] = [], context: { expectedRevision?: unknown; withoutDetails?: boolean } = {}): Promise<void> {
+    return this.serialize(id, async () => {
+      const session = await this.requireLive(id);
+      const revision = session.record.appContextRevision ?? 0;
+      this.checkRevision(session.record, context.expectedRevision === undefined && revision === 0 ? 0 : context.expectedRevision);
+      const snapshot = await captureContext(this.providers, session.record.appIds ?? [], revision, context.withoutDetails === true);
+      // Resolved before anything is written, so a name that is not a stored name fails the whole
+      // message rather than leaving a user_message event that names a file the harness never got.
+      const attached: Array<{ name: string; path: string }> = [];
+      for (const name of attachments) {
+        const file = this.store.attachmentPath(id, name);
+        if (file === null) {
+          throw new Error("attachments need a workspace, and this gateway has none");
+        }
+        // A well-formed name is not a stored file. Without this, `missing.txt` — or any name after
+        // the cache was lost or restored without it — would be written into the transcript and handed
+        // to the harness as a path to read, and the model would report on a file that is not there.
+        const info = await stat(file).catch(() => null);
+        if (info === null || !info.isFile()) {
+          throw new Error(`attachment not found: ${name}`);
+        }
+        attached.push({ name, path: file });
       }
-      // A well-formed name is not a stored file. Without this, `missing.txt` — or any name after
-      // the cache was lost or restored without it — would be written into the transcript and handed
-      // to the harness as a path to read, and the model would report on a file that is not there.
-      const info = await stat(file).catch(() => null);
-      if (info === null || !info.isFile()) {
-        throw new Error(`attachment not found: ${name}`);
-      }
-      attached.push({ name, path: file });
-    }
-    if (credential) {
-      // A fresh credential is also the documented recovery from a lapsed chain, so an existing run
-      // gets its servers rebuilt here rather than waiting for the next timer tick — otherwise
-      // "the operator saying anything at all" restores nothing for up to three minutes.
-      const recovering = session.credential === null && session.run !== null;
-      session.credential = credential;
-      if (recovering) {
-        await this.refreshMcpServers(session);
-      }
-    }
-    // Named from the first message that says anything, not from every message: the opening ask is
-    // what the operator will recognise the session by later, and re-deriving on each turn would
-    // rename a session out from under someone mid-conversation.
-    if (!session.record.title && session.record.titleSource !== "operator") {
-      // Every session that existed before titles did is unnamed *and* already has a conversation.
-      // Naming those after the message being typed now would call a session about a failed restart
-      // "and now try again" — so the log is asked what this conversation opened with.
-      const opening = session.record.lastEventSeq > 0 ? await this.firstUserMessage(id) : null;
-      const derived = deriveTitleFromMessage(opening ?? text);
-      if (derived) {
-        session.record.title = derived;
-        session.record.updatedAt = new Date().toISOString();
-        await this.store.saveRecord(session.record);
-      }
-    }
-    await this.append(id, {
-      type: "user_message",
-      text,
-      ...(attached.length > 0 ? { attachments: attached.map((file) => file.name) } : {}),
-    });
-    await this.setStatus(id, "running");
-    if (!session.run) {
-      // Read at start, not at every turn: the system prompt is the session's instruction set, so a
-      // mid-conversation swap would leave a transcript whose halves ran under different rules. An
-      // edit takes effect in the next session, which the settings UI states plainly.
-      const operatorPrompt = (await this.settings?.read())?.systemPrompt?.trim() || undefined;
-      const mcpServers = await this.buildMcpServers(session);
-      // After the servers, deliberately: the set of enabled providers is what decides whose skill is
-      // read, and buildMcpServers is where that set is resolved. Asking first would use a stale one.
-      // Host preamble first, operator text second — the platform states identity and ground rules,
-      // and the operator's own words come after so they can override any of it. App skills follow,
-      // fenced, inside composeSystemPrompt. The facade's instructions deliberately do not carry the
-      // preamble: an external client has no shell and no approval cards, so it would be false there.
-      const systemPrompt = composeSystemPrompt(
-        [HOST_SYSTEM_PROMPT, operatorPrompt?.trim()].filter(Boolean).join("\n\n"),
-        await this.readDeliverableSkills(session));
-      // The session's own directory, not the shared one. Every session used to start in the same
-      // `workDir`, which defaulted to the home directory — a file placed "next to the session" was
-      // visible to all of them at once.
-      const workspace = await this.store.ensureWorkspace(id);
-      if (workspace === null) {
-        // The shared fallback used to be the home directory, which always exists; a temp path does
-        // not until something makes it, and a harness spawned into a missing cwd fails with ENOENT.
-        await mkdir(this.workDir, { recursive: true });
-        if (!this.warnedSharedWorkDir) {
-          this.warnedSharedWorkDir = true;
-          console.warn(`[sessions] no cache directory injected; every session shares ${this.workDir}`);
+      if (credential) {
+        // A fresh credential is also the documented recovery from a lapsed chain, so an existing run
+        // gets its servers rebuilt here rather than waiting for the next timer tick — otherwise
+        // "the operator saying anything at all" restores nothing for up to three minutes.
+        const recovering = session.credential === null && session.run !== null;
+        session.credential = credential;
+        if (recovering) {
+          await this.refreshMcpServers(session);
         }
       }
-
-      session.run = this.adapter.start({
-        sessionId: id,
-        cwd: workspace ?? this.workDir,
-        systemPrompt,
-        ...(mcpServers ? { mcpServers } : {}),
-        // Read live rather than captured: a provider toggled off mid-session must stop being
-        // auto-allowed at once, not at the next run.
-        isAutoAllowed: (toolName) => session.autoAllowed.has(toolName),
-        // A gateway restart loses the process but not the record: resume the harness-native
-        // session when one was captured, per the reattach/resume decision in the plan.
-        resumeHarnessSessionId: session.record.harnessSessionId ?? undefined,
-        onEvent: (event) => this.dispatchHarnessEvent(id, event),
+      // Named from the first message that says anything, not from every message: the opening ask is
+      // what the operator will recognise the session by later, and re-deriving on each turn would
+      // rename a session out from under someone mid-conversation.
+      if (!session.record.title && session.record.titleSource !== "operator") {
+        // Every session that existed before titles did is unnamed *and* already has a conversation.
+        // Naming those after the message being typed now would call a session about a failed restart
+        // "and now try again" — so the log is asked what this conversation opened with.
+        const opening = session.record.lastEventSeq > 0 ? await this.firstUserMessage(id) : null;
+        const derived = deriveTitleFromMessage(opening ?? text);
+        if (derived) {
+          session.record.title = derived;
+          session.record.updatedAt = new Date().toISOString();
+          await this.store.saveRecord(session.record);
+        }
+      }
+      await this.append(id, {
+        type: "user_message",
+        text,
+        appContext: snapshot,
+        ...(attached.length > 0 ? { attachments: attached.map((file) => file.name) } : {}),
       });
-    }
-    this.scheduleMcpRefresh(id);
-    session.run.send(withAttachedPaths(text, attached.map((file) => file.path)));
+      await this.setStatus(id, "running");
+      if (!session.run) {
+        // Read at start, not at every turn: the system prompt is the session's instruction set, so a
+        // mid-conversation swap would leave a transcript whose halves ran under different rules. An
+        // edit takes effect in the next session, which the settings UI states plainly.
+        const operatorPrompt = (await this.settings?.read())?.systemPrompt?.trim() || undefined;
+        const mcpServers = await this.buildMcpServers(session);
+        // After the servers, deliberately: the set of enabled providers is what decides whose skill is
+        // read, and buildMcpServers is where that set is resolved. Asking first would use a stale one.
+        // Host preamble first, operator text second — the platform states identity and ground rules,
+        // and the operator's own words come after so they can override any of it. App skills follow,
+        // fenced, inside composeSystemPrompt. The facade's instructions deliberately do not carry the
+        // preamble: an external client has no shell and no approval cards, so it would be false there.
+        const systemPrompt = composeSystemPrompt(
+          [HOST_SYSTEM_PROMPT, operatorPrompt?.trim()].filter(Boolean).join("\n\n"),
+          await this.readDeliverableSkills(session));
+        // The session's own directory, not the shared one. Every session used to start in the same
+        // `workDir`, which defaulted to the home directory — a file placed "next to the session" was
+        // visible to all of them at once.
+        const workspace = await this.store.ensureWorkspace(id);
+        if (workspace === null) {
+          // The shared fallback used to be the home directory, which always exists; a temp path does
+          // not until something makes it, and a harness spawned into a missing cwd fails with ENOENT.
+          await mkdir(this.workDir, { recursive: true });
+          if (!this.warnedSharedWorkDir) {
+            this.warnedSharedWorkDir = true;
+            console.warn(`[sessions] no cache directory injected; every session shares ${this.workDir}`);
+          }
+        }
+
+        session.run = this.adapter.start({
+          sessionId: id,
+          cwd: workspace ?? this.workDir,
+          systemPrompt,
+          ...(mcpServers ? { mcpServers } : {}),
+          // Read live rather than captured: a provider toggled off mid-session must stop being
+          // auto-allowed at once, not at the next run.
+          isAutoAllowed: (toolName) => session.autoAllowed.has(toolName),
+          // A gateway restart loses the process but not the record: resume the harness-native
+          // session when one was captured, per the reattach/resume decision in the plan.
+          resumeHarnessSessionId: session.record.harnessSessionId ?? undefined,
+          onEvent: (event) => this.dispatchHarnessEvent(id, event),
+        });
+      }
+      this.scheduleMcpRefresh(id);
+      const prompt = withAttachedPaths(text, attached.map((file) => file.path));
+      session.run.send(snapshot.apps.length || snapshot.revision > 0 ? withAppContext(prompt, snapshot) : prompt);
+    });
   }
 
   /**
@@ -813,6 +874,9 @@ export class SessionManager {
       throw new SessionNotFoundError(id);
     }
 
+    const loaded = this.live.get(id);
+    if (loaded) return loaded;
+
     const session: LiveSession = {
       record,
       run: null,
@@ -836,7 +900,7 @@ export class SessionManager {
       return;
     }
 
-    const handled = this.onHarnessEvent(id, event);
+    const handled = this.serialize(id, () => this.onHarnessEvent(id, event));
     this.inFlightEvents.add(handled);
     void handled.finally(() => this.inFlightEvents.delete(handled));
   }

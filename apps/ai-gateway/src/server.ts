@@ -1,3 +1,4 @@
+import { AppContextError, readContextApps, parseAppIds, captureContext, contextFromRoster } from "./sessions/app-context.js";
 import { AttachmentRefusedError, listAttachments, storeAttachment, type AttachmentRefusal } from "./sessions/attachments.js";
 import { pipeline } from "node:stream/promises";
 import path from "node:path";
@@ -44,6 +45,10 @@ export function createGatewayServer(
 ): Server {
   return createServer((request, response) => {
     void route(request, response, manager, adapter, settings, providers, proxy, facade).catch((error) => {
+      if (error instanceof AppContextError) {
+        sendJson(response, error.status, { code: error.code, message: error.message });
+        return;
+      }
       if (error instanceof SessionNotFoundError) {
         sendJson(response, 404, { code: "session_not_found", message: error.message });
         return;
@@ -101,7 +106,7 @@ async function route(
     const availability = await adapter.probe();
     sendJson(response, 200, {
       status: "ok",
-      harness: { name: adapter.name, capabilities: adapter.capabilities, ...availability },
+      harness: { name: adapter.name, capabilities: { ...adapter.capabilities, appContext: true }, ...availability },
     });
     return;
   }
@@ -210,7 +215,7 @@ async function route(
     // reconfigured live must not be described as applying a toggle immediately.
     sendJson(response, 200, {
       status: "ok",
-      harness: { name: adapter.name, capabilities: adapter.capabilities, ...availability },
+      harness: { name: adapter.name, capabilities: { ...adapter.capabilities, appContext: true }, ...availability },
     });
     return;
   }
@@ -340,19 +345,43 @@ async function route(
     return;
   }
 
+  if (url.pathname === "/api/session-apps" && method === "GET") {
+    const apps = await readContextApps(providers);
+    if (url.searchParams.has("ids")) {
+      const ids = parseAppIds(url.searchParams.get("ids")?.split(",") ?? []);
+      sendJson(response, 200, { apps: ids.map(id => apps.find(app => app.id === id) ?? { id, displayName: id, available: false }), nextOffset: null });
+      return;
+    }
+    const search = (url.searchParams.get("search") ?? "").slice(0, 200).toLowerCase();
+    const offset = Number(url.searchParams.get("offset") ?? 0);
+    if (!Number.isSafeInteger(offset) || offset < 0) throw new AppContextError(400, "offset_invalid", "Invalid app list offset.");
+    const filtered = apps.filter(app => `${app.id} ${app.displayName}`.toLowerCase().includes(search));
+    sendJson(response, 200, { apps: filtered.slice(offset, offset + 100), nextOffset: offset + 100 < filtered.length ? offset + 100 : null });
+    return;
+  }
+
   if (url.pathname === "/api/sessions" && method === "POST") {
     const body = await readJson(request);
     const record = await manager.createSession({
       title: typeof body.title === "string" ? body.title : undefined,
       context: isStringRecord(body.context) ? body.context : undefined,
       createdBy: actor.userId,
+      appIds: body.appIds,
+      clientRequestId: body.clientRequestId,
     });
     sendJson(response, 200, record);
     return;
   }
 
   if (url.pathname === "/api/sessions" && method === "GET") {
-    sendJson(response, 200, { sessions: await manager.listSessions() });
+    const records = await manager.listSessions();
+    const roster = records.some(record => record.appIds?.length)
+      ? await readContextApps(providers).catch(() => null) : [];
+    sendJson(response, 200, { sessions: records.map(record => ({
+      ...record,
+      appContext: contextFromRoster(roster ?? [], record.appIds ?? [], record.appContextRevision ?? 0,
+        roster === null && record.appIds?.length ? "unavailable" : "ok"),
+    })) });
     return;
   }
 
@@ -365,13 +394,22 @@ async function route(
   const sessionId = sessionMatch[1]!;
   const rest = sessionMatch[2] ?? "";
 
+  if (rest === "/apps" && method === "PUT") {
+    const body = await readJson(request);
+    sendJson(response, 200, await manager.setAppContext(sessionId, body.appIds, body.expectedRevision, actor.userId));
+    return;
+  }
+
   if (rest === "" && method === "GET") {
     const record = await manager.getSession(sessionId);
     if (!record) {
       sendJson(response, 404, { code: "session_not_found", message: "Session not found." });
       return;
     }
-    sendJson(response, 200, record);
+    // Copy before discovery yields: an SSE update may mutate the live record in the meantime.
+    const current = { ...record };
+    const appContext = await captureContext(providers, current.appIds ?? [], current.appContextRevision ?? 0, true);
+    sendJson(response, 200, { ...current, appContext });
     return;
   }
 
@@ -424,7 +462,7 @@ async function route(
       : [];
     try {
       // The presented token seeds the session's delegation chain; see SessionManager.postMessage.
-      await manager.postMessage(sessionId, body.text, readBearer(request), attachments);
+      await manager.postMessage(sessionId, body.text, readBearer(request), attachments, { expectedRevision: body.appContextRevision, withoutDetails: body.withoutAppDetails === true });
     } catch (error) {
       if (error instanceof Error && /attachments need a workspace/.test(error.message)) {
         // The gateway's configuration, not the request: the same answer the upload route gives.

@@ -9,6 +9,15 @@ This is the operator milestone of the [AI Agent Bridge](../ai-agent-bridge/featu
 decisions recorded there (execution profiles, placement, token mechanics, approval policy) govern
 this feature.
 
+## Session App Context
+
+Administrators select one or several installed apps through the chat's Apps picker, or open a new
+bound session from an app's Shell menu. Associations persist independently of MCP opt-ins, runtime
+state and source availability. Every accepted message captures a fresh, bounded Core metadata
+snapshot and revision for both native harnesses. Selection changes apply to subsequent messages and
+grant no filesystem, command or runtime authority. The complete API, concurrency rules and coverage
+are documented in [Assistant App Context](../assistant-app-context/feature.md).
+
 ## Discovery And Gating
 
 - `app.0.1` manifests may declare a top-level `interfaces` map (draft extension): interface name →
@@ -402,11 +411,16 @@ gateway restart.
     transcript from disk and stops any run still producing one — by the same route a cancel takes,
     so a harness is never left minting app tokens for a conversation nobody can read. The row asks
     for confirmation first, naming what is about to go: nothing restores a deleted transcript.
+    History has its own heading and an explicit return-to-conversation action while a conversation
+    remains open. Deletion stays in history; deleting the active session clears its stream, draft
+    and attachments without creating a replacement. The empty history survives reload, and **New
+    session** is an explicit action. Pending deletion keeps its confirmation visible and prevents
+    duplicate submissions; errors remain visible in history so the operator can retry.
   - A deletion reaches the other clients watching that session, and is terminal for them:
     subscribers are sent `session_deleted`, the stream is closed, and the client stops reconnecting
     on that event instead of treating the EOF as a dropped connection. A panel whose open session
-    was deleted elsewhere detaches and starts a fresh one rather than leaving its composer pointed
-    at a session that is not there. Opening a stream for a session that is already gone is a `404`
+    was deleted elsewhere detaches and opens history with an explanation rather than leaving its
+    composer pointed at a session that is not there. Opening a stream for a session that is already gone is a `404`
     — refused before a `200` is committed, because an empty `200` reads as a transient drop and the
     client would come straight back.
   - Core is told `ai_session_deleted` with the session id, the administrator who deleted it, and the
@@ -453,6 +467,11 @@ gateway restart.
   as a hung browser tab — an open event stream being ended when the session it follows is deleted
   under it. That test hangs and fails if the stream is left open. The audit report is asserted to
   carry the deleting administrator alongside the session's creator.
+- History UI: verify return-to-conversation preserves the draft, deletion of an active or inactive
+  row stays in history, failed deletion remains retryable, and deleting the last session leaves an
+  empty history after reload. On 2026-09-16, Core-managed browser checks covered navigation, draft
+  retention, cancellation, API-triggered deletion of the watched test session and empty-history
+  restoration without creating a replacement; no model messages were sent.
 - Markdown (vitest over the two pure policies — `web/src/lib` suites run in the gateway's own
   vitest project; the library itself is not re-tested here): the allowed schemes, and refusal of
   `javascript:`, `data:`, `file:`, credentials in the authority, and relative references. Soft

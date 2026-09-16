@@ -25,7 +25,7 @@ Owner decision, 2026-09-16: the administrator can grant source writes and projec
 for any source-capable app selected in a session's context, including existing apps and several apps
 in one session. Association alone grants nothing. Routine authorized development must proceed without
 one approval card per edit or command. This feature owns the shared development binding and enforcement;
-[app context](../assistant-app-context/plan.md) owns selection and
+[app context](../assistant-app-context/feature.md) owns selection and
 [prototype creation](../app-prototype-workspaces/plan.md) consumes the same grants.
 
 This explicitly weakens the existing "every write asks" policy inside an administrator-approved

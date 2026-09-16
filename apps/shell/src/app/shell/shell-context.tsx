@@ -47,6 +47,8 @@ export type ShellContextValue = {
 };
 
 export type ShellActionsContextValue = {
+  newAppAssistantSession?: (appId: string) => Promise<void>;
+  assistantSessionPending?: boolean;
   coreOrigin: string;
   // Embedding callbacks the Settings tabs hand to the shared app frame. The delegated-token one is
   // undefined for every app that does not already qualify, so a new embedding context cannot widen

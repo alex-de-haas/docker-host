@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Check, Pencil, Trash2, X } from "lucide-react";
+import { Check, Loader2, Pencil, Trash2, X } from "lucide-react";
 import { isWaiting } from "@/lib/attention";
 import { cn } from "@/lib/utils";
 import type { AssistantSession } from "@/lib/assistant-api";
@@ -29,8 +29,11 @@ export function SessionList({
   // rather than in a modal, which keeps the name of what is about to go next to the confirmation.
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
 
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const deleting = useRef(false);
+
   if (sessions.length === 0) {
-    return <p className="p-3 text-xs text-muted-foreground">No sessions yet.</p>;
+    return <p className="p-3 text-xs text-muted-foreground">No sessions yet. Start a new session when you’re ready.</p>;
   }
 
   return (
@@ -51,16 +54,28 @@ export function SessionList({
               <button
                 type="button"
                 aria-label="Confirm delete"
-                onClick={() => {
-                  setConfirmingId(null);
-                  void onDelete(record.id);
+                disabled={deletingId !== null}
+                onClick={async () => {
+                  if (deleting.current) return;
+                  deleting.current = true;
+                  setDeletingId(record.id);
+                  try {
+                    await onDelete(record.id);
+                    setConfirmingId(null);
+                  } catch {
+                    // The page shows the error; keep this confirmation available for retry.
+                  } finally {
+                    deleting.current = false;
+                    setDeletingId(null);
+                  }
                 }}
                 className="shrink-0 rounded-md p-1.5 text-destructive hover:bg-destructive/10"
               >
-                <Check className="h-3.5 w-3.5" aria-hidden />
+                {deletingId === record.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-label="Deleting session" /> : <Check className="h-3.5 w-3.5" aria-hidden />}
               </button>
               <button
                 type="button"
+                disabled={deletingId !== null}
                 aria-label="Keep session"
                 onClick={() => setConfirmingId(null)}
                 className="shrink-0 rounded-md p-1.5 text-muted-foreground hover:text-foreground"

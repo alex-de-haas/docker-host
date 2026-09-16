@@ -18,7 +18,7 @@ below are proposals, not approved owner decisions.
 
 Owner follow-up, 2026-09-16: selects the create/view/change cycle as the first milestone and requests
 general assistant app associations immediately: a multi-app picker in chat and a new-session action
-in each app's Shell menu. The shared [assistant-app-context](../assistant-app-context/plan.md) plan
+in each app's Dashboard menu (the owner's follow-up keeps the sidebar focused on navigation). The shared [assistant-app-context](../assistant-app-context/feature.md) feature
 owns that prerequisite; [prototype workspaces](../app-prototype-workspaces/plan.md) now details the
 first complete authoring cycle. Agreement on the milestone does not approve the new technical defaults.
 
@@ -121,7 +121,7 @@ being a Hosty app. The disposable preview server does not constrain the generate
 | Order | Feature and owner of implementation work | Independently useful outcome |
 | --- | --- | --- |
 | 0 | Current assistant + existing lifecycle, recipe below | Demonstrate a local prototype without waiting for new MCP tools |
-| 1a | [Assistant app context](../assistant-app-context/plan.md) | Associate any apps in chat; open a fresh session from an app menu |
+| 1a | [Assistant app context](../assistant-app-context/feature.md) | Associate any apps in chat; open a fresh session from an app menu |
 | 1a prerequisite for autonomous development | [Assistant approval rules](../assistant-approval-rules/plan.md) | Verified source-write and command grants for one or more contextual apps, existing or new |
 | 1b | [App prototype workspaces](../app-prototype-workspaces/plan.md) | Create → open → edit using existing source/dev mode, loss warnings and assisted Git save/push |
 | 2 | [App development controls](../app-development-controls/plan.md) | Reliably edit an existing app and enter/leave development through typed controls |
@@ -164,7 +164,7 @@ existing CLI plan/digest apply pair. Disabling Development Mode is not a save or
 - [Assistant entry points](../assistant-entry-points/plan.md) owns generic panel and context handoff.
   Reuse it. Third-party app messages still only fill a draft; an operator pressing Create with their
   own prompt is a separate explicit submission. Do not turn `ask-assistant` into auto-send.
-- [Assistant app context](../assistant-app-context/plan.md) owns persistent multi-app associations
+- [Assistant app context](../assistant-app-context/feature.md) owns persistent multi-app associations
   and the picker/new-session entry points. An association is conversational context, independent
   of provider grants and the single primary source workspace used for development.
 - [Assistant approval rules](../assistant-approval-rules/plan.md) owns reusable approval policy.

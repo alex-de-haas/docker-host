@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { generateKeyPairSync, sign as signData } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
@@ -54,6 +54,7 @@ describe("gateway", () => {
   let dataDir: string;
   let store: SessionStore;
   let settings: SettingsStore;
+  let directory: ProviderDirectory;
   let manager: SessionManager;
   let server: Server;
   let origin: string;
@@ -71,14 +72,16 @@ describe("gateway", () => {
     dataDir = mkdtempSync(path.join(os.tmpdir(), "ai-gateway-test-"));
     store = new SessionStore(dataDir);
     settings = new SettingsStore(dataDir);
+    directory = new ProviderDirectory(null, null, "hosty.ai-gateway");
     manager = new SessionManager(
       store,
       new FakeHarnessAdapter(),
       new AuditReporter(null, null, "hosty.ai-gateway"),
       dataDir,
       settings,
+      directory,
     );
-    server = createGatewayServer(manager, new FakeHarnessAdapter(), settings);
+    server = createGatewayServer(manager, new FakeHarnessAdapter(), settings, directory);
     await new Promise<void>((resolve) => server.listen(0, resolve));
     origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   });
@@ -105,6 +108,37 @@ describe("gateway", () => {
 
     const member = await call("/api/sessions", { method: "GET" }, "host.member");
     expect(member.status).toBe(401);
+  });
+
+  it("gates the context roster and mutation API, reports outages and rejects stale sends", async () => {
+    for (const role of [null, "host.member"]) {
+      expect((await call("/api/session-apps", {}, role)).status).toBe(401);
+      expect((await call("/api/sessions/absent/apps", { method: "PUT", body: JSON.stringify({ appIds: [] , expectedRevision: 0 }) }, role)).status).toBe(401);
+    }
+    expect((await call("/api/session-apps")).status).toBe(503);
+    vi.spyOn(directory, "readApps").mockResolvedValue([
+      { id: "notes", displayName: "Notes", runtimeState: "stopped", interfaces: [] },
+      { id: "media", displayName: "Media", runtimeState: "running", interfaces: [] },
+    ]);
+    const roster = await (await call("/api/session-apps?search=notes")).json() as { apps: Array<{ id: string }> };
+    expect(roster.apps.map((app: { id: string }) => app.id)).toEqual(["notes"]);
+    expect((await call("/api/session-apps?offset=-1")).status).toBe(400);
+    const input = { appIds: ["notes"], clientRequestId: "context-request" };
+    const a = await (await call("/api/sessions", { method: "POST", body: JSON.stringify(input) })).json() as { id: string; status: string; appContextRevision: number };
+    const b = await (await call("/api/sessions", { method: "POST", body: JSON.stringify(input) })).json() as { id: string };
+    expect(a.id).toBe(b.id);
+    expect(a.status).toBe("idle"); expect(a.appContextRevision).toBe(0);
+    const listed = await (await call("/api/sessions")).json();
+    expect(listed).toMatchObject({ sessions: [{ id: a.id, appIds: ["notes"], appContextRevision: 0,
+      appContext: { resolution: "ok", apps: [{ id: "notes", runtimeState: "stopped", available: true }] } }] });
+    const exact = await (await call("/api/session-apps?ids=notes,missing")).json();
+    expect(exact).toMatchObject({ apps: [{ id: "notes", available: true }, { id: "missing", available: false }] });
+    vi.mocked(directory.readApps).mockResolvedValueOnce(null);
+    expect(await (await call("/api/sessions")).json()).toMatchObject({ sessions: [{ appIds: ["notes"], appContext: { resolution: "unavailable" } }] });
+    const changed = await call(`/api/sessions/${a.id}/apps`, { method: "PUT", body: JSON.stringify({ appIds: ["media"], expectedRevision: 0 }) });
+    expect(changed.status).toBe(200);
+    expect((await call(`/api/sessions/${a.id}/messages`, { method: "POST", body: JSON.stringify({ text: "hello", appContextRevision: 0 }) })).status).toBe(409);
+    expect((await store.readEvents(a.id)).some(e => e.type === "user_message")).toBe(false);
   });
 
   it("serves health without a token, including harness availability", async () => {
@@ -607,6 +641,7 @@ describe("gateway", () => {
       harness: { capabilities: { questions: boolean; liveReconfigure: boolean } };
     };
     expect(body.harness.capabilities).toEqual({
+      appContext: true,
       questions: true,
       appMcp: true,
       liveReconfigure: true,

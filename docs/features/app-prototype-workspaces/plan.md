@@ -31,7 +31,7 @@ Owner decisions, 2026-09-16:
    the preview immediately; autostart controls subsequent Core/host startup.
 
 The owner also requests general multi-app associations in chat and new-session actions in app menus.
-[Assistant app context](../assistant-app-context/plan.md) owns that shared feature and precedes this
+[Assistant app context](../assistant-app-context/feature.md) owns that shared feature and precedes this
 one. General source binding and per-app source-write/command grants belong to
 [assistant approval rules](../assistant-approval-rules/plan.md), for existing apps as well as prototypes.
 This feature consumes both shared capabilities; it does not introduce prototype-only permissions.

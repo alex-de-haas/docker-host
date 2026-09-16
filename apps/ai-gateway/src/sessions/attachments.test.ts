@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { open, readFile } from "node:fs/promises";
 import { generateKeyPairSync, sign } from "node:crypto";
@@ -202,6 +202,7 @@ describe("session attachments", () => {
     });
     expect(response.status).toBe(202);
 
+    await vi.waitFor(async () => expect((await store.readEvents(id)).some(event => event.type === "assistant_text")).toBe(true));
     const events = await store.readEvents(id);
     expect(events.find((event) => event.type === "user_message")).toMatchObject({
       text: "What is in the file?",

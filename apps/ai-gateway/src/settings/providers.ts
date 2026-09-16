@@ -42,7 +42,13 @@ export interface McpProvider {
   interfaces: Array<{ key: string; url: string }>;
 }
 
-interface AppDirectoryEntry {
+export interface AppDirectoryEntry {
+  icon?: unknown;
+  iconUrl?: unknown;
+  description?: unknown;
+  version?: unknown;
+  selectedRuntime?: unknown;
+  operationStatus?: unknown;
   id?: unknown;
   displayName?: unknown;
   runtimeState?: unknown;
@@ -99,19 +105,15 @@ export class ProviderDirectory {
   }
 
   /**
-   * Every installed app declaring an `mcp` interface, plus the full installed roster so stale
-   * toggles can be pruned against it.
-   *
-   * Returns nulls rather than throwing when Core is unreachable: the settings page must still open
-   * and show the system prompt. A discovery failure is reported as such — an empty list would read
-   * as "no app declares MCP", which is a different and misleading statement.
+   * The installed app roster, independent of provider toggles, runtime and source availability.
+   * Both MCP discovery and session context consume this authenticated Core contract.
+   * Null distinguishes an unavailable directory from a successfully resolved empty host.
    */
-  async read(): Promise<{ providers: McpProvider[]; installedAppIds: string[] } | null> {
+  async readApps(): Promise<AppDirectoryEntry[] | null> {
     if (!this.coreOrigin || !this.serviceToken) {
       return null;
     }
 
-    let entries: AppDirectoryEntry[];
     try {
       const response = await fetch(
         `${this.coreOrigin}/api/internal/apps/${encodeURIComponent(this.appId)}/app-directory`,
@@ -130,10 +132,16 @@ export class ProviderDirectory {
       if (!Array.isArray(body.apps)) {
         return null;
       }
-      entries = body.apps as AppDirectoryEntry[];
+      return body.apps as AppDirectoryEntry[];
     } catch {
       return null;
     }
+
+  }
+
+  async read(): Promise<{ providers: McpProvider[]; installedAppIds: string[] } | null> {
+    const entries = await this.readApps();
+    if (!entries) return null;
 
     const providers: McpProvider[] = [];
     const installedAppIds: string[] = [];

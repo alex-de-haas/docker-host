@@ -1,7 +1,7 @@
 # App UI Surfaces
 
 Created: 2026-08-19
-Updated: 2026-09-09
+Updated: 2026-09-16
 
 An app declares **where** its pages belong, and Shell places them. Before this, an app had exactly
 one placement — the sidebar — so operator configuration, domain work, and always-at-hand tools all
@@ -88,7 +88,8 @@ Two rails and a strip, so content stays visible beside its tools rather than und
 one — chrome for a capability nobody has is worse than no chrome — and collapsible when they do, with
 the choice remembered like the sidebar's. The property that motivated it is **docking**: panel
 content sits beside the workspace, so an operator reads an app's error and works with a tool about it
-at the same time.
+at the same time. The tab strip scrolls horizontally when labels exceed the available width;
+tab underlines stay within its height and do not create a vertical scrollbar.
 
 Tabs are keyed rather than indexed, because stopping or removing an app reorders the strip and an
 index would then point at somebody else's tool. A stopped app **keeps** its tab, dimmed and saying

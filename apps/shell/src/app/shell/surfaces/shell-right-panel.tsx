@@ -80,7 +80,7 @@ export function ShellRightPanel({
   return (
     <aside className="flex h-full min-h-0 min-w-0 flex-col border-l bg-sidebar text-sidebar-foreground">
       <div className="flex items-center border-b px-2">
-        <div className="flex min-w-0 flex-1 items-center gap-3 overflow-x-auto" role="tablist" aria-label="Panels">
+        <div className="flex min-w-0 flex-1 items-center gap-3 overflow-x-auto overflow-y-hidden" role="tablist" aria-label="Panels">
           {tabs.map((tab) => {
             // Two separate questions. Whether the tab leads anywhere is answered by the URL alone —
             // the surface rule has already folded the runtime state into it, and an app can also be
@@ -99,7 +99,7 @@ export function ShellRightPanel({
               className={cn(
                 // The same underline treatment as the Settings page's tabs: one shape for "these are
                 // tabs" across Shell, rather than a second invention in the rail.
-                "-mb-px shrink-0 border-b-2 py-2 text-xs transition-colors",
+                "shrink-0 border-b-2 py-2 text-xs transition-colors",
                 tab.key === activeTab?.key
                   ? "border-foreground font-medium text-foreground"
                   : "border-transparent text-muted-foreground hover:text-foreground",

@@ -1,7 +1,7 @@
 # Assistant Entry Points
 
 Created: 2026-08-19
-Updated: 2026-08-31
+Updated: 2026-09-16
 
 The assistant is reachable from anywhere in Shell, and an app can hand it context — without letting
 an app drive it.
@@ -14,7 +14,7 @@ error underneath. Docked as a `ui.panels` tab on Shell's right rail, both are le
 the trigger is in view on every page.
 
 **The chat is served by the gateway, not by Shell** — the same movement that took observability's
-pages out of Shell into telemetry-ui. Shell hosts an iframe and knows nothing about the conversation.
+pages out of Shell into telemetry-ui. Shell hosts an iframe; the gateway owns the conversation and its state.
 A session list came with the move, which the Shell-native panel never had: closing it was the only
 way back to a previous conversation, and there was no way back at all.
 
@@ -36,6 +36,19 @@ every app-MCP path would be skipped by a guard, and the chat would work while th
 no app tools. The credential stays the operator's, obtained through the existing
 `hosty:request-delegated-token` handshake; a gateway minting user-scoped tokens for itself is the
 "token, not proxy" rule this design is built on.
+
+## New Session About An Installed App
+
+Administrators can choose **New assistant session** from Dashboard app actions. The sidebar keeps
+app navigation without assistant action menus. Shell checks the running gateway's `appContext` capability and harness availability, creates
+an app-bound session using a delegated token, and selects it in the existing panel. It keeps the
+current app preview open, focuses an empty composer and submits no message. Duplicate activation
+is disabled and uncertain network retries use an actor-scoped request id.
+
+The gateway resolves the requested session through its authenticated API even when its initial
+session list does not contain the newly created id. Durable multi-app selection, revisions and
+per-message snapshots are described in [Assistant App Context](../assistant-app-context/feature.md).
+This Shell action is separate from the app-originated draft handoff below.
 
 ## An App Can Fill The Draft; Only The Operator Sends
 
@@ -82,6 +95,10 @@ absent, so a gate built on one fails *silently*. Closing it properly is a platfo
 recorded as such.
 
 ## Testing Expectations
+
+- App-bound creation: authenticated retry/capability tests and live Dashboard entry points,
+  including a retained preview, a newly created session missing from the initial list and no model
+  execution before Send. See the app-context feature for the live acceptance record.
 
 - **The ask verified beside one dropped**: the same payload from a wrong origin, from a wrong source
   window, and with no active frame all yield nothing. Either assertion alone is satisfied by a parser

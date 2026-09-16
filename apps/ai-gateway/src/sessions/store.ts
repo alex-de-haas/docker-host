@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, rm, writeFile, appendFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile, appendFile, rename } from "node:fs/promises";
 import path from "node:path";
 
 // Session records and transcripts live in the gateway's app data directory (decision 2026-08-08):
@@ -35,6 +35,9 @@ export interface SessionRecord {
   titleSource?: "auto" | "operator";
   /** Structured page context from the client (app id, route) — seeds the first prompt, never parsed. */
   context: Record<string, string> | null;
+  appIds?: string[];
+  appContextRevision?: number;
+  creationRequest?: { id: string; fingerprint: string };
   status: SessionStatus;
   createdAt: string;
   updatedAt: string;
@@ -127,19 +130,24 @@ export class SessionStore {
     await this.saveRecord(record);
   }
 
+  private readonly writes = new Map<string, Promise<void>>();
+
   async saveRecord(record: SessionRecord): Promise<void> {
-    await writeFile(
-      path.join(this.sessionDir(record.id), "record.json"),
-      JSON.stringify(record, null, 2),
-      "utf8",
-    );
+    const content = JSON.stringify(record, null, 2);
+    const previous = this.writes.get(record.id) ?? Promise.resolve();
+    const task = previous.catch(() => undefined).then(async () => {
+      const target = path.join(this.sessionDir(record.id), "record.json");
+      await writeFile(`${target}.tmp`, content, "utf8");
+      await rename(`${target}.tmp`, target);
+    });
+    this.writes.set(record.id, task);
+    try { await task; } finally { if (this.writes.get(record.id) === task) this.writes.delete(record.id); }
   }
 
   async readRecord(id: string): Promise<SessionRecord | null> {
     try {
-      return JSON.parse(
-        await readFile(path.join(this.sessionDir(id), "record.json"), "utf8"),
-      ) as SessionRecord;
+      const record = JSON.parse(await readFile(path.join(this.sessionDir(id), "record.json"), "utf8")) as SessionRecord;
+      return { ...record, appIds: record.appIds ?? [], appContextRevision: record.appContextRevision ?? 0 };
     } catch {
       return null;
     }

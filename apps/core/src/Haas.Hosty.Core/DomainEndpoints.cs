@@ -216,6 +216,12 @@ internal static class DomainEndpoints
                         summary.Id,
                         summary.DisplayName,
                         summary.RuntimeState,
+                        summary.Description,
+                        summary.Version,
+                        summary.SelectedRuntime,
+                        summary.OperationStatus,
+                        summary.Icon,
+                        summary.IconUrl,
                         (summary.Interfaces ?? new Dictionary<string, IReadOnlyList<AppInterfaceSummary>>())
                             .SelectMany(pair => pair.Value.Select(declaration =>
                                 new AppDirectoryInterface(pair.Key, declaration.Key, declaration.Url)))
@@ -419,6 +425,12 @@ internal sealed record AppDirectoryEntry(
     string Id,
     string DisplayName,
     string RuntimeState,
+    string? Description,
+    string Version,
+    string? SelectedRuntime,
+    string OperationStatus,
+    string? Icon,
+    string? IconUrl,
     IReadOnlyList<AppDirectoryInterface> Interfaces);
 
 /// One declared platform interface, resolved to a ready-to-call URL from the app's endpoints.
