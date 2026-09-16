@@ -7,6 +7,7 @@
 //   * "write"  -> raises a fileChange approval request and waits; on allow it emits a tool item and
 //                 finishes, on deny it says so and finishes.
 //   * "hello"  -> streams two agent-message deltas and finishes.
+//   * "mcp"    -> emits started/completed MCP calls, then the assistant's answer.
 //   * anything else -> finishes immediately.
 // Strict protocol checks (a wrong shape exits non-zero, failing the test loudly):
 //   * thread/start must pass `sandbox` as a string; turn/start must pass `sandboxPolicy` as an
@@ -147,6 +148,30 @@ function handle(msg) {
         params: { threadId: "thread-fake-1", itemId: "exec-1", changes: [{ path: "/tmp/x" }], reason: null },
       });
       return;
+    }
+
+    if (currentTurnText.includes("mcp")) {
+      // Shape verified with `app-server generate-ts` on Codex 0.153.4 (2026-09-16).
+      const failed = currentTurnText.includes("failed");
+      for (const [tool, args] of [["list_apps", {}], ["get_app", { app_id: "com.haas.demo-app" }]]) {
+        const item = {
+          type: "mcpToolCall", id: `mcp-${tool}`, server: "hosty-core", tool,
+          arguments: args, status: "inProgress", result: null, error: null, durationMs: null,
+          appContext: null, pluginId: null, readOnlyHint: true,
+        };
+        send({ jsonrpc: "2.0", method: "item/started", params: { item } });
+        send({
+          jsonrpc: "2.0", method: "item/completed",
+          params: { item: {
+            ...item, status: failed ? "failed" : "completed", durationMs: 10,
+            result: failed ? null : { content: [{ type: "text", text: "app data" }] },
+            error: failed ? { message: "MCP server unavailable" } : null,
+          } },
+        });
+      }
+      send({ jsonrpc: "2.0", method: "item/completed", params: { item: {
+        type: "agentMessage", id: "mcp-answer", text: failed ? "MCP calls failed" : "Apps checked",
+      } } });
     }
 
     if (currentTurnText.includes("hello")) {

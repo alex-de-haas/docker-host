@@ -409,6 +409,14 @@ class CodexRun implements HarnessRun {
         if (text) {
           this.emit({ type: "assistant_text", text });
         }
+      } else if (type === "mcpToolCall") {
+        // Match Claude's MCP naming so the shared transcript resolves the server's display name.
+        // Emit only on completion: item/started describes the same call and would duplicate it.
+        this.emit({
+          type: "tool_use",
+          toolName: `mcp__${String(item.server ?? "unknown")}__${String(item.tool ?? "unknown")}`,
+          input: item.arguments,
+        });
       } else if (type === "commandExecution" || type === "fileChange") {
         // Codex reports a refused item as completed too; reporting it as a tool use would tell the
         // operator their denial ran anyway.

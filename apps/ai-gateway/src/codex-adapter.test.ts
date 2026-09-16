@@ -83,6 +83,20 @@ describe("codex harness adapter", () => {
     expect(events.some((event) => event.type === "assistant_text" && event.text === "hello")).toBe(true);
   });
 
+  it.each(["completed", "failed"])("lists %s MCP calls once, with their arguments, before the answer", async (status) => {
+    const active = start();
+    await waitFor(() => events.find((candidate) => candidate.type === "harness_session"), "handshake");
+    active.send(`mcp ${status}`);
+
+    await waitFor(() => events.find((candidate) => candidate.type === "result"), "result");
+    // A start and a completion describe the same call; failed calls are still tool uses.
+    expect(events.filter((event) => event.type === "tool_use" || event.type === "assistant_text")).toEqual([
+      { type: "tool_use", toolName: "mcp__hosty-core__list_apps", input: {} },
+      { type: "tool_use", toolName: "mcp__hosty-core__get_app", input: { app_id: "com.haas.demo-app" } },
+      { type: "assistant_text", text: status === "failed" ? "MCP calls failed" : "Apps checked" },
+    ]);
+  });
+
   // Codex reports a failed turn through turn/completed itself, with status "failed" and the reason
   // on turn.error — there is no turn/failed notification. Reading only the method name reported the
   // failure as a successful result, which is the worst available answer: the operator is told the
