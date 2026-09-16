@@ -261,6 +261,8 @@ gateway restart.
 - MCP calls appear in the transcript when Codex emits `item/completed` with a `mcpToolCall` item.
   The adapter maps its server, tool and arguments to the shared `tool_use` event using
   `mcp__<server>__<tool>` naming, so the panel resolves app display names as it does for Claude.
+  Codex events also retain the original server and tool as separate fields; the panel uses these
+  to preserve names containing `__`, including when app display-name discovery is unavailable.
   Each call gets one row, including failed calls; `item/started` does not add a duplicate.
 - **No questions.** Codex has `item/tool/requestUserInput` in the same server→client request family
   as its approval methods, but it is gated behind `tools.experimental_request_user_input` — off by
@@ -466,6 +468,7 @@ gateway restart.
   invalidation when the signed-in user changes — is unit-tested apart from the component.
 - Codex adapter (vitest, against `test/fake-codex-server.mjs`): handshake, resume, streaming,
   completed and failed MCP calls with names and arguments preserved, one row per call before the answer,
+  explicit server/tool boundaries for names containing double underscores,
   approval allow and deny, suppression of a refused item's tool-use, process death, missing binary,
   harness selection, and binary resolution. The fake fails the suite on a protocol violation —
   wrong sandbox shape, the v1 decision vocabulary on a v2 method, or a session-scoped approval.

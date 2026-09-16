@@ -86,9 +86,15 @@ export function summarizeToolUse(
   toolName: string,
   input: unknown,
   appNames?: Record<string, string>,
+  mcpIdentity?: unknown,
 ): ToolSummary {
   const fields = asFields(input);
-  const mcp = parseMcpToolName(toolName);
+  // Codex supplies the original names; its combined alias is ambiguous when either contains __.
+  // Older events and Claude only have the alias, so keep their existing parsing fallback.
+  const identity = asFields(mcpIdentity);
+  const server = text(identity.server);
+  const tool = text(identity.tool);
+  const mcp = server && tool ? { server, tool } : parseMcpToolName(toolName);
   if (mcp) {
     return { label: `${appLabel(mcp.server, appNames)} · ${mcp.tool}`, detail: oneLine(summarizeArguments(fields)) };
   }

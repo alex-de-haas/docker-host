@@ -153,9 +153,10 @@ function handle(msg) {
     if (currentTurnText.includes("mcp")) {
       // Shape verified with `app-server generate-ts` on Codex 0.153.4 (2026-09-16).
       const failed = currentTurnText.includes("failed");
-      for (const [tool, args] of [["list_apps", {}], ["get_app", { app_id: "com.haas.demo-app" }]]) {
+      const underscores = currentTurnText.includes("underscores");
+      for (const [tool, args] of [[underscores ? "get__item" : "list_apps", {}], ["get_app", { app_id: "com.haas.demo-app" }]]) {
         const item = {
-          type: "mcpToolCall", id: `mcp-${tool}`, server: "hosty-core", tool,
+          type: "mcpToolCall", id: `mcp-${tool}`, server: underscores ? "foo__bar" : "hosty-core", tool,
           arguments: args, status: "inProgress", result: null, error: null, durationMs: null,
           appContext: null, pluginId: null, readOnlyHint: true,
         };

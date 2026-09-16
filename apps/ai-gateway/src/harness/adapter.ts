@@ -57,7 +57,7 @@ export type HarnessEvent =
   | { type: "harness_session"; harnessSessionId: string }
   | { type: "assistant_delta"; text: string }
   | { type: "assistant_text"; text: string }
-  | { type: "tool_use"; toolName: string; input: unknown }
+  | { type: "tool_use"; toolName: string; input: unknown; mcp?: { server: string; tool: string } }
   /**
    * A proposed write is paused inside the harness until resolveApproval is called.
    *

@@ -91,10 +91,21 @@ describe("codex harness adapter", () => {
     await waitFor(() => events.find((candidate) => candidate.type === "result"), "result");
     // A start and a completion describe the same call; failed calls are still tool uses.
     expect(events.filter((event) => event.type === "tool_use" || event.type === "assistant_text")).toEqual([
-      { type: "tool_use", toolName: "mcp__hosty-core__list_apps", input: {} },
-      { type: "tool_use", toolName: "mcp__hosty-core__get_app", input: { app_id: "com.haas.demo-app" } },
+      { type: "tool_use", toolName: "mcp__hosty-core__list_apps", input: {}, mcp: { server: "hosty-core", tool: "list_apps" } },
+      { type: "tool_use", toolName: "mcp__hosty-core__get_app", input: { app_id: "com.haas.demo-app" }, mcp: { server: "hosty-core", tool: "get_app" } },
       { type: "assistant_text", text: status === "failed" ? "MCP calls failed" : "Apps checked" },
     ]);
+  });
+
+  it("preserves MCP server and tool boundaries when both contain double underscores", async () => {
+    const active = start();
+    await waitFor(() => events.find((candidate) => candidate.type === "harness_session"), "handshake");
+    active.send("mcp underscores");
+    await waitFor(() => events.find((candidate) => candidate.type === "result"), "result");
+    expect(events.find((event) => event.type === "tool_use")).toEqual({
+      type: "tool_use", toolName: "mcp__foo__bar__get__item", input: {},
+      mcp: { server: "foo__bar", tool: "get__item" },
+    });
   });
 
   // Codex reports a failed turn through turn/completed itself, with status "failed" and the reason

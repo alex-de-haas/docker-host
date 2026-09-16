@@ -83,7 +83,7 @@ export function TranscriptEvent({
       );
     case "tool_use": {
       const toolName = String(event.toolName ?? "tool");
-      return isListedToolUse(toolName) ? <ToolRow toolName={toolName} input={event.input} appNames={appNames} /> : null;
+      return isListedToolUse(toolName) ? <ToolRow toolName={toolName} input={event.input} appNames={appNames} mcp={event.mcp} /> : null;
     }
     case "approval_request":
       return (
@@ -170,9 +170,11 @@ function AttachmentRow({ files }: { files: { name: string; size: number | null }
 // thirty rows, so the row carries the model's own description (or the path, the pattern, the query)
 // and the raw input waits behind a click — a transcript that showed every input would be a wall of
 // JSON with the conversation somewhere inside it.
-function ToolRow({ toolName, input, appNames }: { toolName: string; input: unknown; appNames?: Record<string, string> }) {
+function ToolRow({ toolName, input, appNames, mcp }: {
+  toolName: string; input: unknown; appNames?: Record<string, string>; mcp?: unknown;
+}) {
   const [open, setOpen] = useState(false);
-  const summary = useMemo(() => summarizeToolUse(toolName, input, appNames), [toolName, input, appNames]);
+  const summary = useMemo(() => summarizeToolUse(toolName, input, appNames, mcp), [toolName, input, appNames, mcp]);
   const Chevron = open ? ChevronDown : ChevronRight;
 
   return (

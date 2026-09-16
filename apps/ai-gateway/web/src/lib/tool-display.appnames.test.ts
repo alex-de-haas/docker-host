@@ -34,4 +34,20 @@ describe("app display names in tool labels", () => {
   it("leaves a non-app tool alone", () => {
     expect(summarizeToolUse("Bash", { description: "list files" }, names).label).toBe("Shell");
   });
+
+  it("uses explicit MCP names even when aliases and known server prefixes are ambiguous", () => {
+    const mcp = { server: "foo__bar", tool: "get__item" };
+    const aliases = { foo: "Wrong app", foo__bar: "Right app", foo__bar__get: "Another app" };
+    expect(summarizeToolUse("mcp__foo__bar__get__item", {}, aliases, mcp).label)
+      .toBe("Right app · get__item");
+    expect(summarizeToolUse("mcp__foo__bar__get__item", {}, undefined, mcp).label)
+      .toBe("foo__bar · get__item");
+  });
+
+  it.each([null, {}, { server: "foo__bar" }, { server: 42, tool: "get_item" }])(
+    "falls back to the alias when MCP metadata is invalid: %j", (mcp) => {
+      expect(summarizeToolUse("mcp__hosty-core__list_apps", {}, undefined, mcp).label)
+        .toBe("hosty-core · list_apps");
+    },
+  );
 });
