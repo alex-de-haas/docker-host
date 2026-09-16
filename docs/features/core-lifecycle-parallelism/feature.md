@@ -1,7 +1,7 @@
 # Core Lifecycle Parallelism
 
 Created: 2026-08-26
-Updated: 2026-09-06
+Updated: 2026-09-16
 
 Core does its per-app lifecycle work concurrently and asks docker in batches, so boot latency and
 steady-state process churn stop scaling with the number of installed apps. Implements findings H4 and
@@ -11,8 +11,15 @@ M1 of the 2026-08-25 Core performance review, since superseded; see
 ## Autostart runs a priority tier at a time, concurrently within it
 
 `CoreLifecycleService.StartAutostartAppsAsync` groups autostart apps by
-`PlatformCapabilities.StartPriority` and runs the tiers **strictly in sequence**, with the apps inside
-one tier running **concurrently**, at most `MaxConcurrentAutostarts` (4) at a time.
+`PlatformCapabilities.StartPriority`, then by the installed `System` flag, and runs the tiers
+**strictly in sequence**, with the apps inside one tier running **concurrently**, at most
+`MaxConcurrentAutostarts` (4) at a time. At each capability priority, system apps such as Shell
+finish their start attempts (including the normal readiness check) before ordinary apps start.
+This keeps Shell out of the ordinary app queue so administrators can watch the rest of boot.
+Capability providers still precede their consumers, including system apps; the OTLP collector
+therefore starts before Shell. System priority follows the installed role, independent of app id
+or install origin, and does not override a disabled autostart setting. A failed system-app start
+is reported per app and does not prevent the remaining tiers from starting.
 
 The tier boundary is a barrier, not a sort key, and that is the load-bearing part: the telemetry
 collector is the OTLP sink other apps point at, so its endpoint URL must be resolved and persisted
@@ -25,9 +32,9 @@ Concurrency is bounded rather than unlimited because a start can pull: twenty si
 `docker pull`s starve each other of bandwidth and finish later than a smaller batch would.
 
 Submission order inside a tier stays alphabetical by app id, and `Task.WhenAll` preserves it, so the
-reported result order — what the boot log prints — is unchanged. `Task.WhenAll` also waits for every
-task even when one faults, so a boot cancelled midway never leaves a start running detached against a
-Core that is already tearing down. Stops were parallelized earlier for the same reasons
+reported result order — what the boot log prints — follows the tiers, then app id. `Task.WhenAll`
+also waits for every task even when one faults, so a boot cancelled midway never leaves a start
+running detached against a Core that is already tearing down. Stops were parallelized earlier for the same reasons
 (`StopRuntimeAppsAsync`).
 
 **Cross-app dependency order is still not honoured**, and this changes how that shows up. Autostart
@@ -71,8 +78,9 @@ container count for a reading that is usually unchanged.
 
 - `CoreLifecycleServiceTests`: two apps in one tier are in flight at the same time (a rendezvous both
   starts must reach before either finishes — unsatisfiable if they run serially); a capability
-  provider's start *finishes* before the next tier's app starts; autostart still reports its results
-  in alphabetical submission order.
+  provider's start *finishes* before system apps start, and system-app starts finish before ordinary
+  apps start, regardless of app id; disabled system apps stay stopped and a failed system-app start
+  does not block ordinary apps. Autostart reports results by tier, then alphabetical submission order.
 - `DockerRuntimeAdapterTests`: a multi-service app's health costs exactly one container inspect; a
   container missing from the batch reads `stopped` while its siblings' lines still parse (the
   non-zero exit must not discard them); an image's repo digest is resolved once and served from cache
