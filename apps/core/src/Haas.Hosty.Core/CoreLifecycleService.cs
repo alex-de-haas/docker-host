@@ -2548,7 +2548,11 @@ internal sealed partial class CoreLifecycleService(
             Runtime: selection.RuntimeProfile.Key,
             RuntimeType: selection.RuntimeProfile.Type,
             Status: AppReadinessProbes.Fold(services),
-            Services: services);
+            Services: services.Select(service => service with
+            {
+                RuntimeType = selection.Services.FirstOrDefault(item => item.Key == service.Service)?.Runtime.Type,
+                Artifact = selection.Services.FirstOrDefault(item => item.Key == service.Service)?.Artifact,
+            }).ToArray());
     }
 
     // Read-only "update available" detection (runtime-app-marketplace.md, "Update-available
@@ -3690,7 +3694,7 @@ internal sealed partial class CoreLifecycleService(
         var localOverridePath = ResolveInstallLocalSourcePath(selection, source);
         if (source?.Repository is null)
         {
-            if (!string.Equals(selection.RuntimeProfile.Type, "localCommand", StringComparison.Ordinal))
+            if (!selection.Services.Any(service => service.Artifact is "source" or "prebuilt"))
             {
                 return existing?.SourceState;
             }
@@ -3705,7 +3709,8 @@ internal sealed partial class CoreLifecycleService(
                     ManagedCheckoutPath: paths.ResolveManagedCheckoutPath(selection.Manifest.Id!),
                     LocalOverridePath: localOverridePath,
                     UpdatedAt: null,
-                    ManifestSubpath: ResolveInstallManifestSubpath(selection, localOverridePath)));
+                    ManifestSubpath: ResolveInstallManifestSubpath(selection, localOverridePath),
+                    InspectionPaths: source?.Paths));
         }
 
         var resolvedRef = source.Commit ?? source.Tag ?? source.Branch;
@@ -3723,6 +3728,7 @@ internal sealed partial class CoreLifecycleService(
                 ManagedCheckoutPath = existing.SourceState.ManagedCheckoutPath ?? paths.ResolveManagedCheckoutPath(selection.Manifest.Id!),
                 LocalOverridePath = existing.SourceState.LocalOverridePath ?? localOverridePath,
                 ManifestSubpath = manifestSubpath ?? existing.SourceState.ManifestSubpath,
+                InspectionPaths = source.Paths,
             };
         }
 
@@ -3734,7 +3740,8 @@ internal sealed partial class CoreLifecycleService(
             ManagedCheckoutPath: paths.ResolveManagedCheckoutPath(selection.Manifest.Id!),
             LocalOverridePath: localOverridePath,
             UpdatedAt: null,
-            ManifestSubpath: manifestSubpath);
+            ManifestSubpath: manifestSubpath,
+            InspectionPaths: source.Paths);
     }
 
     // Combines a live source root with its captured manifest subpath, contained within the root. A
@@ -4250,7 +4257,7 @@ internal sealed partial class CoreLifecycleService(
         RuntimeAppManifestSelection selection,
         CancellationToken cancellationToken)
     {
-        if (!string.Equals(selection.RuntimeProfile.Type, "localCommand", StringComparison.Ordinal))
+        if (!selection.Services.Any(service => service.Artifact is "source" or "prebuilt"))
         {
             return app;
         }
@@ -4520,6 +4527,12 @@ internal sealed partial class CoreLifecycleService(
                     ManifestError: $"Live source manifest declares app id '{live.Manifest.Id}', expected '{app.Id}'.");
             }
 
+            if (lastGood.Services.Any(service => service.Runtime.Type == "docker") || live.Services.Any(service => service.Runtime.Type == "docker"))
+            {
+                if (DockerSourceRuntime.RequiresReview(lastGood, live))
+                    return new AppSelectionLoad(lastGood, LiveReconciled: false, ManifestError:
+                        "Docker environment, mounts, permissions or network configuration changed. Review and apply an update from the source manifest before restarting.");
+            }
             return new AppSelectionLoad(live, LiveReconciled: true, ManifestError: null, Baseline: lastGood);
         }
         // A mid-edit folder manifest can fail validation (AppManifestException) or be unreadable
@@ -4580,7 +4593,7 @@ internal sealed partial class CoreLifecycleService(
     }
 
     // True when the app's selected runtime is a live source artifact owned by the operator: a
-    // development runtime (localCommand + development: true) whose source Core re-reads live from the
+    // development runtime (development: true with an editable source service) whose source Core re-reads live from the
     // operator's own folder — an explicit source-override (which supersedes a URL/publisher install),
     // else the original folder install of a non-URL install. For these the contract tracks the folder
     // and is adopted on restart, so the reviewed-update flow does not apply - clients mark the runtime
@@ -4690,7 +4703,7 @@ internal sealed partial class CoreLifecycleService(
         => !string.IsNullOrWhiteSpace(path) && PathEqualsOrWithin(GetAppRoot(appId), path);
 
     private IAppRuntimeAdapter ResolveAdapter(string? runtimeType)
-        => adapters.FirstOrDefault(adapter => string.Equals(adapter.Type, runtimeType, StringComparison.Ordinal))
+        => runtimeType == "mixed" ? new MixedRuntimeAdapter(adapters) : adapters.FirstOrDefault(adapter => string.Equals(adapter.Type, runtimeType, StringComparison.Ordinal))
             ?? throw new AppLifecycleException("runtime_adapter_missing", $"Runtime adapter '{runtimeType}' is not available.");
 
     private string GetAppRoot(string appId)
@@ -4919,7 +4932,7 @@ internal sealed partial class CoreLifecycleService(
     {
         var resolver = adapters.OfType<IImageDigestResolver>().FirstOrDefault();
         return await Task.WhenAll(targetSelection.Services
-            .Where(service => service.Image is not null)
+            .Where(service => service.Image is not null && service.Runtime.Build is null)
             .OrderBy(service => service.Key, StringComparer.Ordinal)
             .Select(async service =>
             {
@@ -5191,6 +5204,12 @@ internal sealed partial class CoreLifecycleService(
         RuntimeSelectedService current,
         RuntimeSelectedService target)
     {
+        if (current.Runtime.Build != target.Runtime.Build)
+            changes.Add($"environment-build:{serviceKey}:{JsonSerializer.Serialize(current.Runtime.Build, CoreJsonSerializerContext.Default.RuntimeDockerBuildManifest)}->{JsonSerializer.Serialize(target.Runtime.Build, CoreJsonSerializerContext.Default.RuntimeDockerBuildManifest)}");
+        var currentMount = JsonSerializer.Serialize(current.Runtime.SourceMount, CoreJsonSerializerContext.Default.RuntimeSourceMountManifest);
+        var targetMount = JsonSerializer.Serialize(target.Runtime.SourceMount, CoreJsonSerializerContext.Default.RuntimeSourceMountManifest);
+        if (currentMount != targetMount)
+            changes.Add($"source-mount:{serviceKey}:{currentMount}->{targetMount}");
         var currentImage = current.Image?.Reference;
         var targetImage = target.Image?.Reference;
         if (!string.Equals(currentImage, targetImage, StringComparison.Ordinal))

@@ -1,0 +1,34 @@
+{
+  "schemaVersion": "app.0.1",
+  "id": "com.example.docker-development",
+  "name": "Docker development fixture",
+  "version": "1.0.0",
+  "runtimeProfiles": [{ "key": "dev", "type": "mixed", "development": true }],
+  "services": [
+    {
+      "key": "web",
+      "runtimes": {
+        "dev": {
+          "type": "docker",
+          "artifact": "source",
+          "build": { "context": ".", "dockerfile": "Dockerfile.dev", "revision": "1" },
+          "sourceMount": { "path": ".", "target": "/workspace", "mode": "ro" },
+          "command": "exec httpd -f -p 8080 -h /workspace",
+          "ports": [{ "key": "http", "containerPort": 8080, "protocol": "http" }]
+        }
+      }
+    },
+    {
+      "key": "proxy",
+      "dependsOn": ["web"],
+      "runtimes": {
+        "dev": {
+          "type": "localCommand",
+          "command": "node proxy.mjs",
+          "ports": [{ "key": "http", "containerPort": 3000, "protocol": "http", "public": true }]
+        }
+      }
+    }
+  ],
+  "endpoints": [{ "key": "http", "service": "proxy", "port": "http", "protocol": "http", "public": true }]
+}

@@ -607,7 +607,8 @@ internal sealed record AppSourceState(
     // things (the reviewed pin, or whatever an operator folder happened to be at) and forced the pinned
     // start path to distrust it: a reviewed update's commit was discarded on the very next start of any
     // app that had an override. Additive/nullable; older records read back as null.
-    string? OverrideCommit = null);
+    string? OverrideCommit = null,
+    IReadOnlyList<string>? InspectionPaths = null);
 
 internal sealed record AppUiContract(
     string? Category,

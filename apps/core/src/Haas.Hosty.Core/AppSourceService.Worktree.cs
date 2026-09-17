@@ -31,7 +31,7 @@ internal sealed partial class AppSourceService
             var head = headResult.ExitCode == 0 ? headResult.StandardOutput.Trim() : null;
             var branchResult = await WorktreeGitAsync(scope, ["symbolic-ref", "--quiet", "--short", "HEAD"], cancellationToken, allowFailure: true);
             var branch = branchResult.ExitCode == 0 ? branchResult.StandardOutput.Trim() : null;
-            var result = await WorktreeGitAsync(scope, ["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all", "--", "."], cancellationToken, limit: MaxStatusOutput);
+            var result = await WorktreeGitAsync(scope, ["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all", "--", .. app.SourceState?.InspectionPaths is { Count: > 0 } selectedPaths ? selectedPaths : ["."]], cancellationToken, limit: MaxStatusOutput);
             var truncated = result.StandardOutput.Length > MaxStatusOutput;
             var records = result.StandardOutput.Split('\0');
             var files = new List<AppSourceFile>();
@@ -43,6 +43,7 @@ internal sealed partial class AppSourceService
                 var fullPath = Path.GetFullPath(Path.Combine(root, entry[3..]));
                 if (!IsWithinScope(scope, fullPath)) continue;
                 var relative = Path.GetRelativePath(scope, fullPath).Replace(Path.DirectorySeparatorChar, '/');
+                if (app.SourceState?.InspectionPaths is { Count: > 0 } allowed && !allowed.Any(path => relative.StartsWith(path.TrimEnd('/') + "/", StringComparison.Ordinal))) continue;
                 // `git rm --cached` can list the same path as both deleted and untracked. Restore
                 // that tracked path once, rather than presenting it again as a new-file deletion.
                 if (!seen.Add(relative)) continue;
@@ -195,6 +196,15 @@ internal sealed partial class AppSourceService
         var root = source?.LocalOverridePath ?? source?.ManagedCheckoutPath;
         if (string.IsNullOrWhiteSpace(root)) return null;
         root = MountPathPolicy.ResolveRealPath(root);
+        if (source?.InspectionPaths is { Count: > 0 } inspectionPaths)
+        {
+            foreach (var path in inspectionPaths)
+            {
+                if (!DockerSourceRuntime.SafeRelative(path) || path == "." || CoreDataPaths.ContainsSymbolicLink(root, Path.GetFullPath(Path.Combine(root, path))))
+                    throw SourceError("source_scope_invalid", "Source inspection paths must stay within the registered checkout.");
+            }
+            return root;
+        }
         var scope = string.IsNullOrEmpty(source?.ManifestSubpath) ? root : Path.GetFullPath(Path.Combine(root, source.ManifestSubpath));
         if (scope != root && (!IsWithinScope(root, scope) || CoreDataPaths.ContainsSymbolicLink(root, scope)))
             throw SourceError("source_scope_invalid", "The source manifest directory must remain within the registered source root.");

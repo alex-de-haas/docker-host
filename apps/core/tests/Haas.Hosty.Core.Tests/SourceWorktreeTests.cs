@@ -17,6 +17,26 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task Worktree_ExplicitSiblingScopesExcludeUnrelatedFilesFromPreviewAndDiscard()
+    {
+        var (fixture, repository) = await SourceFixtureAsync();
+        foreach (var directory in new[] { "backend", "ui", "unrelated" })
+        {
+            Directory.CreateDirectory(Path.Combine(repository, directory));
+            await File.WriteAllTextAsync(Path.Combine(repository, directory, "new.txt"), directory);
+        }
+        await fixture.Apps.UpdateAppAsync(SourceTestApp, app => app with
+        {
+            SourceState = app.SourceState! with { InspectionPaths = ["backend", "ui"] },
+        });
+        var status = await fixture.Sources.GetWorktreeStatusAsync(SourceTestApp);
+        Assert.Equal(new[] { "backend/new.txt", "ui/new.txt" }, status.Files.Select(file => file.Path).Order());
+        await Assert.ThrowsAsync<AppLifecycleException>(() => fixture.Sources.GetWorktreeDiffAsync(SourceTestApp, new("unrelated/new.txt")));
+        await Assert.ThrowsAsync<AppLifecycleException>(() => fixture.Sources.PlanDiscardAsync(SourceTestApp, new(["unrelated/new.txt"])));
+        Assert.True(File.Exists(Path.Combine(repository, "unrelated", "new.txt")));
+    }
+
+    [Fact]
     public async Task Worktree_StatusDiffDiscardPreservesUnrelatedWorkAndHead()
     {
         var (fixture, repository) = await SourceFixtureAsync();

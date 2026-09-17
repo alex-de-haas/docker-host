@@ -47,10 +47,10 @@ internal sealed class LocalCommandRuntimeAdapter(
         // Resolve every service's host ports up front so the assignment is deterministic and
         // shared: a service reads its own HOSTY_PORT_* from the same map a dependent reads to
         // build HOSTY_SERVICE_{KEY}_URL, regardless of declaration/start order.
-        var servicePorts = ResolveServicePorts(context);
+        var servicePorts = ResolveServicePorts(context with { Manifest = context.Manifest with { Services = context.AllServices } });
         try
         {
-            foreach (var service in context.Manifest.Services)
+            foreach (var service in DockerRuntimeAdapter.OrderServices(context.Manifest.Services))
             {
                 if (string.IsNullOrWhiteSpace(service.Runtime.Command))
                 {
@@ -183,7 +183,7 @@ internal sealed class LocalCommandRuntimeAdapter(
             throw;
         }
 
-        return new AppRuntimeStartResult("running", endpoints, resolvedLocks.Count > 0 ? resolvedLocks : null);
+        return new AppRuntimeStartResult("running", endpoints, resolvedLocks.Count > 0 ? resolvedLocks : null, startedServices);
     }
 
     // Runs the service's one-shot `setup` command to completion before the long-running `command`, in
@@ -575,7 +575,7 @@ internal sealed class LocalCommandRuntimeAdapter(
         // assigned in `servicePorts` (the same map drives every service's own HOSTY_PORT_*). A
         // missing entry yields null, which BuildEnvironment skips rather than emitting `:0`.
         foreach (var serviceUrl in RuntimeServiceDiscovery.BuildEnvironment(
-            context.Manifest.Services,
+            context.AllServices,
             service,
             (target, port) => servicePorts.TryGetValue(target.Key, out var targetPorts) &&
                     targetPorts.TryGetValue(RuntimeServiceDiscovery.PortKey(port), out var hostPort)

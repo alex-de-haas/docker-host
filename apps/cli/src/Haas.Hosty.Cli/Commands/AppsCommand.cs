@@ -773,11 +773,13 @@ internal sealed partial class AppsCommand(CommandContext context)
 
         context.Console.MarkupLine($"{ConsoleUi.State(response.Status)}: {Markup.Escape(response.AppId)}");
         context.Console.MarkupLine($"[grey]Runtime:[/] {Markup.Escape(response.Runtime)} / {Markup.Escape(response.RuntimeType)}");
-        var table = ConsoleUi.CreateTable("Service", "Status", "Health", "PID", "Exit", "Log", "Working directory");
+        var table = ConsoleUi.CreateTable("Service", "Execution", "Artifact", "Status", "Health", "PID", "Exit", "Log", "Working directory");
         foreach (var service in response.Services)
         {
             table.AddRow(
                 Markup.Escape(service.Service),
+                Markup.Escape(service.RuntimeType ?? ""),
+                Markup.Escape(service.Artifact ?? ""),
                 ConsoleUi.State(service.Status),
                 ConsoleUi.State(service.Health ?? ""),
                 Markup.Escape(service.ProcessId?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? ""),
@@ -1664,7 +1666,9 @@ internal sealed partial class AppsCommand(CommandContext context)
         string? Message,
         // The probe result Core folded in (app-readiness): `healthy` / `unhealthy` / `starting`, or
         // null when nothing probes the service. Distinct from Status, which is liveness alone.
-        string? Health = null);
+        string? Health = null,
+        string? RuntimeType = null,
+        string? Artifact = null);
 
     internal sealed record AppSourceResolveRequest(string? Branch, string? Tag, string? Commit, bool Fetch);
 

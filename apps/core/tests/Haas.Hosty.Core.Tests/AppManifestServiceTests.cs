@@ -855,7 +855,7 @@ public sealed class AppManifestServiceTests
     }
 
     [Fact]
-    public async Task LoadAsync_RejectsDevelopmentUnderDocker()
+    public async Task LoadAsync_RejectsDevelopmentWithoutEditableSource()
     {
         var manifestPath = await WriteRawManifestAsync("""
             {
@@ -873,7 +873,7 @@ public sealed class AppManifestServiceTests
 
         var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
 
-        Assert.Contains(error.Errors, candidate => candidate.Code == "app_manifest_development_requires_local_command");
+        Assert.Contains(error.Errors, candidate => candidate.Code == "app_manifest_development_requires_source");
     }
 
     [Fact]

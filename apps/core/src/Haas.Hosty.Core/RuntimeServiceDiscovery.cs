@@ -14,6 +14,20 @@ namespace Haas.Hosty.Core;
 // under `localCommand` it is reached on the loopback host at its assigned host port.
 internal static class RuntimeServiceDiscovery
 {
+    // Addresses belong to the consumer's network namespace, not the profile as a whole.
+    internal static string BuildPeerUrl(RuntimeLifecycleContext context, RuntimeSelectedService consumer,
+        RuntimeSelectedService target, RuntimePortManifest port)
+    {
+        if (consumer.Runtime.Type == "docker" && target.Runtime.Type == "docker")
+            return DockerRuntimeAdapter.BuildDockerServiceUrl(target, port);
+        var key = PortKey(port);
+        if (!RuntimePortHelper.TryResolvePinnedHostPort(context.App, target.Key, port, key, out var assigned))
+            throw new AppLifecycleException("mixed_port_not_reserved", $"Port '{target.Key}.{key}' must be reserved before mixed startup.");
+        if (consumer.Runtime.Type == "docker" && !string.Equals(port.Expose, "host", StringComparison.OrdinalIgnoreCase))
+            throw new AppLifecycleException("mixed_host_binding_required", $"Container access to '{target.Key}.{key}' requires an explicit host-exposed port and a host-reachable listener.");
+        return $"{Scheme(port)}://{(consumer.Runtime.Type == "docker" ? "host.docker.internal" : "127.0.0.1")}:{assigned}";
+    }
+
     public const string EnvironmentPrefix = "HOSTY_SERVICE_";
 
     public static string EnvironmentName(string serviceKey)

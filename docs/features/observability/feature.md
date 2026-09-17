@@ -1,7 +1,7 @@
 # Feature: Observability (telemetry collection, storage, and UI)
 
 Created: 2026-06-28
-Updated: 2026-09-06
+Updated: 2026-09-17
 
 Runtime apps export OpenTelemetry to a collector; a Hosty-native **telemetry backend** stores the
 three signals in embedded SQLite and serves a query API; a **telemetry UI** system app renders
@@ -14,6 +14,11 @@ on-demand `docker logs` console tail Shell shows per app — plus the lifecycle 
 every producer its endpoint. It also keeps **its own** log records in memory, serves them to Shell,
 and lets the telemetry backend pull them — the one stream nothing else can produce, because Core is
 the host kernel rather than an installed app, with no runtime to inject `OTEL_*` into.
+
+
+Telemetry also declares a `dev` mixed profile: the collector stays in Docker while the backend and
+UI run from source. They share the same app data and use consumer-specific peer URLs; see
+[Mixed Development Runtimes](../mixed-development-runtimes/feature.md).
 
 ## Non-goals
 

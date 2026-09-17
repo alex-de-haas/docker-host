@@ -18,7 +18,13 @@ using Haas.Hosty.TelemetryBackend.Query;
 var options = TelemetryBackendOptions.FromEnvironment();
 
 var builder = WebApplication.CreateBuilder(args);
-builder.WebHost.ConfigureKestrel(kestrel => kestrel.ListenAnyIP(options.QueryPort));
+builder.WebHost.ConfigureKestrel(kestrel =>
+{
+    if (Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_BIND_LOOPBACK") == "1")
+        kestrel.ListenLocalhost(options.QueryPort);
+    else
+        kestrel.ListenAnyIP(options.QueryPort);
+});
 builder.Services.AddSingleton(options);
 builder.Services.AddSingleton<SqliteTelemetryStore>();
 builder.Services.AddSingleton<TelemetryQueryService>();

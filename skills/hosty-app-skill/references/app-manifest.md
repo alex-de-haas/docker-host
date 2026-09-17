@@ -50,16 +50,23 @@ Core injects:
 
 For `localCommand` runtime profiles, do not hard-code development ports by default. Omit `localPort` and `hostPort` so Core assigns an available loopback port and injects it as `HOSTY_PORT_{KEY}`. If a service declares exactly one port and the app did not explicitly set `PORT`, Core also injects `PORT=<assigned-port>` for common dev servers such as Next.js.
 
-A `localCommand` service may declare `setup` — a one-shot preparation command Core runs to completion **before** `command`, in the same `workingDirectory` with the same environment. Use it to install dependencies or build from the source Core checked out (`npm install`, `dotnet restore`, `pip install`, …); that checkout has no `node_modules`/build artifacts, so a source-run app that needs them must declare `setup` or its `command` fails to start. Setup runs on every start (it should be idempotent — `npm install` no-ops when up to date), so it also picks up dependency changes after Core pulls new source. A non-zero exit fails the start with the setup output in the service log. `setup` is `localCommand`-only; declaring it under `docker` is rejected with `app_manifest_service_setup_requires_local_command`.
+A `localCommand` service may declare `setup` — a one-shot preparation command Core runs to completion **before** `command`, in the same `workingDirectory` with the same environment. Use it to install dependencies or build from the source Core checked out (`npm install`, `dotnet restore`, `pip install`, …); that checkout has no `node_modules`/build artifacts, so a source-run app that needs them must declare `setup` or its `command` fails to start. Setup runs on every start (it should be idempotent — `npm install` no-ops when up to date), so it also picks up dependency changes after Core pulls new source. A non-zero exit fails the start with the setup output in the service log. Docker source services with an explicit `sourceMount` also support `setup`, inside the container after the image entrypoint. Other Docker services reject it.
 
 ### Runtime Artifact Kind
 
 Each `services[].runtimes[<key>]` may declare `artifact`, which tells Core how the running code is delivered and therefore how it updates:
 
-- `image` — a compiled OCI image. The update is **locked**: Core resolves the tag to an immutable digest and pins it, so restarts are deterministic and advancing it is a reviewed change (the `rolling` per-start re-resolve was removed; `updatePolicy` accepts only `pinned`). This is the default (and only supported value) for `docker`.
-- `source` — code that runs **live** from the operator's own folder. There is no run-lock; Core re-reads and reconciles the manifest on each start. This is the default (and only supported value) for `localCommand`.
+- `image` — a compiled OCI image, locked to the reviewed digest. Default for ordinary Docker services.
+- `source` — editable code for development profiles or pinned Git source for reviewed local-command profiles. Default for local commands and Docker services with `sourceMount`.
+- `prebuilt` — a content-hashed folder delivery for reviewed local-command profiles. Not allowed in development profiles.
 
-`artifact` is optional — when omitted Core infers it from the runtime type (`docker` → `image`, `localCommand` → `source`), so existing manifests need no change. Declaring a value that does not match its runtime (e.g. `artifact: source` under `docker`) is rejected with `app_runtime_artifact_unsupported`. `prebuilt` is reserved and not yet supported.
+### Docker And Mixed Development (Core 0.104.0+)
+
+A profile with `development: true` can use `type: docker` or `type: mixed`. Mixed profiles declare each service's type explicitly (`docker` or `localCommand`). At least one service must execute source; third-party image dependencies remain image services.
+
+Docker source recipes declare `sourceMount: { path: ".", target: "/workspace", mode: "ro", caches: ["bin", "obj"] }`, a `command`, and either `image` or `build: { context: ".", dockerfile: "Dockerfile.dev", revision: "1" }`. Paths are contained in the authorized checkout; workingDirectory is relative to the source mount. Cache directories use isolated Docker volumes. Setup/command become CMD, preserving the image entrypoint (including VPN initialization). Build environments lock by image ID; change the build revision through manifest review to rebuild. Source mounts require a local Docker engine. Image/build/mount/privilege/network edits require review even in development.
+
+`source.paths` optionally lists sibling source directories relative to the repository root for source inspection/discard; do not include unrelated monorepo code. Service-specific data/cache targets use `service` alongside the profile's `runtime` key. See [Mixed Development Runtimes](../../../docs/features/mixed-development-runtimes/feature.md) for the full contract and example.
 
 ### Service Dependencies
 
@@ -67,7 +74,8 @@ A service's `dependsOn` lists sibling services. Each entry is a service-key stri
 
 - Target port = the named port, else the sibling's first non-`public` port.
 - `docker`: resolves by service-name DNS on a per-app network, e.g. `http://api:3000` (internal port not host-published).
-- `localCommand`: resolves over loopback, e.g. `http://localhost:43210`.
+- Host consumers, including local services in mixed profiles: assigned loopback URLs.
+- Container consumers of local services: `host.docker.internal` plus the assigned host port; the target must explicitly declare `expose: host` and bind a host-reachable address.
 - Distinct from `HOSTY_DEPENDENCY_{KEY}_URL` (cross-app public endpoint); the two namespaces never collide.
 
 Use explicit `localPort` only when a fixed local port is a real requirement. If that port is occupied, Core fails start with a lifecycle error instead of silently routing Shell to another app.
