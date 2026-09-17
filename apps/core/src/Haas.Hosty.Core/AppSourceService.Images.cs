@@ -11,9 +11,13 @@ internal sealed partial class AppSourceService
     private static bool IsSourceImagePath(string path)
         => Path.GetExtension(path).ToLowerInvariant() is ".png" or ".jpg" or ".jpeg" or ".gif" or ".webp";
 
-    private static bool IsBinaryPatch(string patch)
-        => patch.Split('\n').Any(line => line.StartsWith("Binary files ", StringComparison.Ordinal)
-            || line == "GIT binary patch");
+    internal static bool IsBinaryPatch(string patch)
+    {
+        foreach (var line in patch.AsSpan().EnumerateLines())
+            if (line.StartsWith("Binary files ", StringComparison.Ordinal) || line.SequenceEqual("GIT binary patch"))
+                return true;
+        return false;
+    }
 
     private static async Task<AppSourceImagePreview> GetSourceImageAsync(AppSourceStatus status, AppSourceFile file,
         CancellationToken cancellationToken)

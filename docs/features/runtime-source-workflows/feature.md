@@ -94,7 +94,8 @@ dialog. File headers show green added-line and red deleted-line counts from sour
 including while collapsed and before a preview is requested. The Dashboard uses the same source
 status for aggregate counts. Both compare HEAD with the working tree, exclude context lines and
 do not double-count staged changes. A file whose staged edit was reverted on disk has zero net
-line changes even though its index is still dirty. Binary files have no per-file line counts and
+line changes even though its index is still dirty. Files removed with `git rm --cached` but retained
+on disk are compared through a temporary HEAD index, preserving the operator's real index. Binary files have no per-file line counts and
 contribute zero to textual totals. Incomplete/unsupported statistics remain unknown; the Dashboard
 omits an incomplete total and explains this in the branch tooltip.
 

@@ -23,20 +23,40 @@ internal sealed partial class AppSourceService
                 var result = await WorktreeGitAsync(status.ScopePath!,
                     ["diff", "--numstat", "-z", "--no-ext-diff", "--no-textconv", "--no-renames", "--relative", status.Head!, "--", "."],
                     cancellationToken, limit: MaxStatusOutput);
-                trackedComplete = result.StandardOutput.Length <= MaxStatusOutput;
-                foreach (var entry in result.StandardOutput.Split('\0').SkipLast(1))
+                (tracked, trackedComplete) = ParseLineStatistics(result.StandardOutput);
+
+                // rm --cached leaves HEAD content on disk but ordinary diff treats it as deleted.
+                // Compare through a temporary HEAD index; never stage into the operator's index.
+                var retainedPaths = files.Where(file => file.Status[0] == 'D'
+                    && File.Exists(Path.Combine(status.ScopePath!, file.Path))).Select(file => file.Path).ToArray();
+                if (retainedPaths.Length > 0)
                 {
-                    // Split only twice: a literal Git filename may contain tabs and newlines.
-                    var parts = entry.Split('\t', 3);
-                    if (parts.Length != 3) { trackedComplete = false; continue; }
-                    if (parts[0] == "-" && parts[1] == "-") tracked[parts[2]] = (null, true);
-                    else if (long.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out var added)
-                        && long.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out var deleted))
-                        tracked[parts[2]] = (new(added, deleted), false);
-                    else trackedComplete = false;
+                    // If the second observation fails, do not publish the index-only deletions.
+                    foreach (var path in retainedPaths) tracked.Remove(path);
+                    var originalComplete = trackedComplete;
+                    trackedComplete = false;
+                    var temporary = Directory.CreateTempSubdirectory("hosty-source-stats-");
+                    try
+                    {
+                        var indexPath = Path.Combine(temporary.FullName, "index");
+                        await WorktreeGitAsync(status.ScopePath!, ["read-tree", status.Head!], cancellationToken,
+                            indexPath: indexPath);
+                        var retainedResult = await WorktreeGitAsync(status.ScopePath!,
+                            ["diff", "--numstat", "-z", "--no-ext-diff", "--no-textconv", "--no-renames", "--relative", status.Head!, "--", "."],
+                            cancellationToken, limit: MaxStatusOutput, indexPath: indexPath);
+                        var (retained, retainedComplete) = ParseLineStatistics(retainedResult.StandardOutput);
+                        foreach (var path in retainedPaths)
+                        {
+                            if (retained.TryGetValue(path, out var stats)) tracked[path] = stats;
+                            else if (retainedComplete) tracked[path] = (new(0, 0), false);
+                        }
+                        trackedComplete = originalComplete && retainedComplete;
+                    }
+                    finally { temporary.Delete(recursive: true); }
                 }
             }
-            catch (AppLifecycleException) { /* Statistics failure must not hide the changed-file list. */ }
+            catch (Exception ex) when (ex is AppLifecycleException or IOException or UnauthorizedAccessException)
+            { /* Statistics failure must not hide the changed-file list. */ }
         }
 
         // Git numstat omits untracked files. Count their bytes in bounded chunks, without fetching
@@ -98,6 +118,25 @@ internal sealed partial class AppSourceService
             Files = files,
             LineStats = totalsKnown ? new(files.Sum(file => file.LineStats?.Additions ?? 0), files.Sum(file => file.LineStats?.Deletions ?? 0)) : null
         };
+    }
+
+    private static (Dictionary<string, (AppSourceLineStats? Stats, bool Binary)> Files, bool Complete)
+        ParseLineStatistics(string output)
+    {
+        var files = new Dictionary<string, (AppSourceLineStats? Stats, bool Binary)>(StringComparer.Ordinal);
+        var complete = output.Length <= MaxStatusOutput;
+        foreach (var entry in output.Split('\0').SkipLast(1))
+        {
+            // Split only twice: a literal Git filename may contain tabs and newlines.
+            var parts = entry.Split('\t', 3);
+            if (parts.Length != 3) { complete = false; continue; }
+            if (parts[0] == "-" && parts[1] == "-") files[parts[2]] = (null, true);
+            else if (long.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out var added)
+                && long.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out var deleted))
+                files[parts[2]] = (new(added, deleted), false);
+            else complete = false;
+        }
+        return (files, complete);
     }
 
     private static async Task<HashSet<string>> FindRegularNewFilesAsync(string scope, IEnumerable<string> paths,

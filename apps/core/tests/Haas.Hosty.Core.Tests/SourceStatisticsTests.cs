@@ -50,6 +50,53 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Theory]
+    [InlineData("source", 0, 0, false)]
+    [InlineData("edited\nextra\n", 2, 1, false)]
+    [InlineData("\0binary", 0, 0, true)]
+    public async Task SourceStats_CachedDeletionUsesRetainedDiskCopyWithoutChangingIndex(string contents, int added, int deleted, bool binary)
+    {
+        var (fixture, repository) = await SourceFixtureAsync();
+        await RunGitAsync(repository, ["rm", "--cached", "README.md"]);
+        await File.WriteAllTextAsync(Path.Combine(repository, "README.md"), contents);
+        await File.WriteAllTextAsync(Path.Combine(repository, "staged.txt"), "staged\n");
+        await RunGitAsync(repository, ["add", "staged.txt"]);
+        var indexPath = Path.Combine(repository, ".git", "index");
+        var indexBefore = await File.ReadAllBytesAsync(indexPath);
+
+        var status = await fixture.Sources.GetWorktreeStatusAsync(SourceTestApp);
+
+        Assert.Equal(2, status.FileCount);
+        var file = status.Files.Single(file => file.Path == "README.md");
+        Assert.False(file.NewFile);
+        Assert.True(file.CanDiscard);
+        Assert.Equal(binary, file.Binary);
+        Assert.Equal(binary ? null : new AppSourceLineStats(added, deleted), file.LineStats);
+        Assert.Equal(new AppSourceLineStats(added + 1, deleted), status.LineStats);
+        Assert.Equal(indexBefore, await File.ReadAllBytesAsync(indexPath));
+    }
+
+    [Fact]
+    public async Task SourceStats_CachedDeletionRespectsNestedScopeAndLiteralPaths()
+    {
+        var (fixture, repository) = await SourceFixtureAsync();
+        var folder = Path.Combine(repository, "app");
+        Directory.CreateDirectory(folder);
+        var name = OperatingSystem.IsWindows() ? "file[1].txt" : "file[1]\tpart\nname.txt";
+        await File.WriteAllTextAsync(Path.Combine(folder, name), "old\n");
+        await RunGitAsync(repository, ["add", "."]);
+        await RunGitAsync(repository, ["-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-m", "Nested baseline"]);
+        await RunGitAsync(repository, ["rm", "--cached", "--", "app/" + name]);
+        await File.WriteAllTextAsync(Path.Combine(folder, name), "new\nsecond\n");
+        await File.WriteAllTextAsync(Path.Combine(repository, "README.md"), "outside scope\n");
+        await fixture.Apps.UpdateAppAsync(SourceTestApp, app => app with { SourceState = app.SourceState! with { ManifestSubpath = "app" } });
+
+        var status = await fixture.Sources.GetWorktreeStatusAsync(SourceTestApp);
+
+        Assert.Equal(name, Assert.Single(status.Files).Path);
+        Assert.Equal(new AppSourceLineStats(2, 1), status.LineStats);
+    }
+
+    [Theory]
     [InlineData("", 0)]
     [InlineData("first\nsecond", 2)]
     [InlineData("first\nsecond\n", 2)]

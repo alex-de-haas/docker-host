@@ -7,6 +7,18 @@ public sealed partial class CoreLifecycleServiceTests
     private static readonly byte[] PreviewPng = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a8Z8AAAAASUVORK5CYII=");
 
     [Theory]
+    [InlineData("Binary files a/a and b/a differ", true)]
+    [InlineData("GIT binary patch\n", true)]
+    [InlineData("+Binary files text in a document", false)]
+    [InlineData(" GIT binary patch", false)]
+    [InlineData("GIT binary patch is document text", false)]
+    public void BinaryPreview_DetectsOnlyLineStartMarkersAfterLargeText(string lastLine, bool binary)
+    {
+        var patch = string.Concat(Enumerable.Repeat("+ordinary text\n", 250_000)) + lastLine;
+        Assert.Equal(binary, AppSourceService.IsBinaryPatch(patch));
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task ImagePreview_NewImageHasOnlyWorkingTree(bool staged)
