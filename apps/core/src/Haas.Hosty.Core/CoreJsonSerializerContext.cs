@@ -53,6 +53,8 @@ internal static class CoreJson
 [JsonSerializable(typeof(CloudflareUnpublishRequest))]
 [JsonSerializable(typeof(CloudflarePublicationResult))]
 [JsonSerializable(typeof(CloudflareAppPublications))]
+[JsonSerializable(typeof(CloudflareCorePublication))]
+[JsonSerializable(typeof(CloudflareCorePublicationResult))]
 [JsonSerializable(typeof(CloudflareCredential))]
 [JsonSerializable(typeof(CloudflareCredentialSummary))]
 [JsonSerializable(typeof(CloudflareIntegrationState))]

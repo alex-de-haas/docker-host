@@ -21,6 +21,42 @@ public sealed class CorePublicOriginHttpTests
     private const string Password = "correct-horse-battery-staple";
 
     [Fact]
+    public async Task PublicOrigin_UnpublishedCore_ReturnsJsonToAdmin()
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        using var client = harness.CreateClient();
+        await SeedAdminWithPasswordAsync(harness);
+        using var signIn = await PostLoginAsync(client);
+        Assert.Equal(HttpStatusCode.OK, signIn.StatusCode);
+        var session = ReadSessionCookie(signIn);
+        Assert.False(string.IsNullOrWhiteSpace(session));
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/core/public-origin");
+        request.Headers.Add("Cookie", $"{CoreSessionAuthorization.SessionCookieName}={session}");
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal(JsonValueKind.Null, document.RootElement.GetProperty("publication").ValueKind);
+        Assert.Equal("http://localhost:7070", document.RootElement.GetProperty("origin").GetString());
+        Assert.True(document.RootElement.GetProperty("configured").GetBoolean());
+    }
+
+    [Theory]
+    [InlineData("core.example.test", "https://core.example.test", "local")]
+    [InlineData(null, "http://localhost:7070", null)]
+    public void PublicOrigin_MutationResult_SerializesWithProductionMetadata(string? hostname, string origin, string? locality)
+    {
+        var result = new CloudflareCorePublicationResult(hostname, origin, locality);
+
+        using var document = JsonDocument.Parse(CoreJson.Text(result));
+
+        Assert.Equal(hostname, document.RootElement.GetProperty("hostname").GetString());
+        Assert.Equal(origin, document.RootElement.GetProperty("origin").GetString());
+        Assert.Equal(locality, document.RootElement.GetProperty("locality").GetString());
+    }
+
+    [Fact]
     public async Task PublicOrigin_IsListedAndEditableOverTheControlPlane()
     {
         await using var harness = await CoreHttpHarness.StartAsync();

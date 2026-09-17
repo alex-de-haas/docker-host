@@ -1,7 +1,7 @@
 # Core's Own Public Origin
 
 Created: 2026-09-01
-Updated: 2026-09-01
+Updated: 2026-09-17
 
 The address Core tells the world it lives at is a live Core setting, editable where every other host
 setting is edited and publishable through the Cloudflare API provider the way an app endpoint is.
@@ -107,6 +107,10 @@ unpublishing never restores a hostname Hosty itself wrote.
 Since Core builds its links per request, a publish is live immediately and there is no restart to prompt
 for — the one place this flow reads differently from an app's.
 
+`GET /api/core/public-origin` reads the stored publication and live origin without calling Cloudflare.
+Its response and the publish/unpublish result are registered in Core's source-generated JSON context,
+so the HTTP layer serializes them in the Native AOT release as well as the development host.
+
 Diagnostics report Core's address under the app state vocabulary, with a `managed` flag saying whether
 Hosty published it. A Hosty-written route is compared against the exact service string it wrote, so a
 Core port that moved reads as `route_stale` and the remedy is to reapply it; a hand-written route is
@@ -135,5 +139,7 @@ the providers that cannot publish it.
   fails), unpublish restoring the previous origin or clearing it, unpublish declining to overwrite a
   newer manual edit, a rename keeping the original previous origin, and the disconnect sweep taking
   Core's publication with it.
+- Publication HTTP responses: an authenticated administrator can read an unpublished Core's address as
+  JSON, and both publish and unpublish results serialize with the production source-generated metadata.
 - Diagnostics: Core's publication reported as Core rather than as a missing app, a Hosty-written route
   that moved reported as `route_stale`, and a hand-written route not judged on its target.
