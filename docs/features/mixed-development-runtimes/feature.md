@@ -36,7 +36,12 @@ Source paths resolve inside the registered app checkout. Context and source path
 and symlink escapes. The Dockerfile path is relative to the build context; workingDirectory is
 relative to the source mount. Read-only source access is the default; writable access requires
 `mode: rw`. Cache paths overlay named Docker volumes so Linux outputs do not overwrite host build
-outputs. The image's user owns writes to those volumes: non-root SDK images must arrange compatible
+outputs. Before starting the container, Core creates any missing empty cache mountpoint
+folders in the host checkout, including missing parent folders. This permits nested volumes
+under a read-only source mount on a fresh checkout. Core leaves existing contents untouched,
+rejects file/symlink collisions, and retains these folders after stop/removal. The Core account
+needs permission to create missing folders; container access to the rest of the source remains
+read-only. The image's user owns writes to those volumes: non-root SDK images must arrange compatible
 permissions. Caches survive stop, profile switches and app removal; operators can remove the
 Core-prefixed development volumes with Docker when no development container uses them. Source and
 persistent app data are never cache-cleanup targets.
@@ -101,6 +106,8 @@ included in inspection, preview and discard; similarly named neighboring files r
 ## Testing Expectations
 
 - Validate every new/adopted profile while preserving selected-profile reads for legacy installations.
+- Cover fresh-checkout cache mountpoint preparation, file/symlink rejection, retained host contents,
+  and writable Docker caches under a read-only source mount.
 - Cover source/build path containment, unchanged-image lock retention across updates, and review
   requirements for commands in inactive profiles.
 - Cover new-port reservations on update/switch and loopback discovery with a configured LAN hostname.

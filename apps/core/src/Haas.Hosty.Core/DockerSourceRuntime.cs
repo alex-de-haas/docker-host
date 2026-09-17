@@ -142,6 +142,46 @@ internal static class DockerSourceRuntime
         return (id, existing ?? new ArtifactLock("development-image", id, reference, null, null, DateTimeOffset.UtcNow));
     }
 
+    private static void PrepareCacheMountpoints(string source, IReadOnlyList<string> caches)
+    {
+        // runc cannot create a nested volume's mountpoint after its parent bind is read-only.
+        // Prepare empty host directories only; volume-nocopy keeps build output inside Docker.
+        source = System.IO.Path.TrimEndingDirectorySeparator(source);
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        var paths = caches.Select(cache =>
+        {
+            if (!SafeRelative(cache) || cache == ".")
+                throw new AppLifecycleException("docker_source_cache_invalid", "Cache paths must be relative directories inside the source mount.");
+            return (Cache: cache, Path: ContainedPath(source, cache));
+        }).ToArray();
+
+        void Validate(string cache, string path)
+        {
+            if (CoreDataPaths.ContainsSymbolicLink(source, path))
+                throw new AppLifecycleException("docker_source_cache_invalid", $"Cache '{cache}' must not traverse a symbolic link.");
+            for (var current = path; !string.Equals(current, source, comparison); current = System.IO.Path.GetDirectoryName(current)!)
+                if (File.Exists(current))
+                    throw new AppLifecycleException("docker_source_cache_invalid", $"Cache '{cache}' conflicts with an existing file. Choose a directory without replacing source files.");
+        }
+
+        // Reject invalid declarations before creating any directories.
+        foreach (var (cache, path) in paths) Validate(cache, path);
+        foreach (var (cache, path) in paths)
+        {
+            Validate(cache, path);
+            try
+            {
+                Directory.CreateDirectory(path);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                throw new AppLifecycleException("docker_source_cache_unavailable",
+                    $"Cannot prepare cache mountpoint '{cache}' in '{source}'. Create the directory or grant the Core account permission to create it. {error.Message}");
+            }
+            Validate(cache, path);
+        }
+    }
+
     internal static async Task<Launch?> PrepareAsync(RuntimeLifecycleContext context, RuntimeSelectedService service,
         IDockerCommandRunner runner, CancellationToken cancellationToken)
     {
@@ -157,6 +197,7 @@ internal static class DockerSourceRuntime
         }
         if (host is null || !(host.StartsWith("unix://", StringComparison.Ordinal) || host.StartsWith("npipe://", StringComparison.Ordinal)))
             throw new AppLifecycleException("docker_source_remote_unsupported", "Docker development requires a local Docker engine; remote engines cannot mount this source checkout.");
+        PrepareCacheMountpoints(path, mount.Caches);
         var args = new List<string> { "--mount", $"type=bind,source={path},target={mount.Target}{(mount.Mode == "ro" ? ",readonly" : "")}",
             "--workdir", mount.Target.TrimEnd('/') + (string.IsNullOrWhiteSpace(service.Runtime.WorkingDirectory) ? "" : "/" + service.Runtime.WorkingDirectory) };
         for (var index = 0; index < mount.Caches.Count; index++)

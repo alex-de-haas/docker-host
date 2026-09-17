@@ -12,7 +12,7 @@
           "type": "docker",
           "artifact": "source",
           "build": { "context": ".", "dockerfile": "Dockerfile.dev", "revision": "1" },
-          "sourceMount": { "path": ".", "target": "/workspace", "mode": "ro" },
+          "sourceMount": { "path": ".", "target": "/workspace", "mode": "ro", "caches": ["src/Fixture/bin", "src/Fixture/obj"] },
           "command": "exec httpd -f -p 8080 -h /workspace",
           "ports": [{ "key": "http", "containerPort": 8080, "protocol": "http" }]
         }
