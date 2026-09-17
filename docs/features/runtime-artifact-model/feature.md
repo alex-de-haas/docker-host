@@ -5,20 +5,22 @@ Updated: 2026-09-17
 
 ## Execution And Artifacts
 
-A runtime profile declares a command recipe and an execution type. Docker profiles execute images;
+A runtime profile declares a command recipe and an execution type. Docker profiles execute images or explicitly mounted development source;
 `localCommand` profiles execute source commands or a prebuilt artifact. Profile keys are arbitrary:
 `dev` is a naming convention, not a reserved runtime type.
 
 | Execution | Artifact | Behavior |
 | --- | --- | --- |
 | `docker` | `image` | Reviewed image digest lock |
+| `docker` | `source`, `development: true` | Source mount inside a locked development environment |
+| `mixed` profile | Per-service `image` or `source` | Dependency graph across Docker and local commands |
 | `localCommand` | `source`, `development: false` | Reviewed contract; managed Git source is pinned to the reviewed commit |
 | `localCommand` | `source`, `development: true` | Editable source, live manifest adoption on restart |
 | `localCommand` | `prebuilt` | Content-hashed immutable folder copy |
 
 Development profiles use `development: true`. More than one profile may declare it; profiles share
-the app's source state. Docker development profiles and development profiles containing prebuilt services are rejected by
-manifest validation. Prebuilt artifacts stay immutable and require a reviewed profile.
+the app's source state. Docker development and mixed profiles support explicit source services alongside image dependencies;
+see [Mixed Development Runtimes](../mixed-development-runtimes/feature.md). Development profiles containing prebuilt services are rejected by manifest validation. Prebuilt artifacts stay immutable and require a reviewed profile.
 The profile supplies `setup` and service `command` values. Core does not infer hot reload from the
 name, install watchers on behalf of the app, or equate the working tree with code loaded by a process.
 A source `setup` command runs before service startup; the application chooses how to cache its build.
@@ -58,8 +60,8 @@ remain app-level under `apps/<id>/source`, with persisted legacy paths honored.
 ## Testing Expectations
 
 - Arbitrary names and multiple declared development profiles work; `dev` without the flag is reviewed.
-- Docker development profiles and mixed source/prebuilt development profiles are rejected, including
-  unselected profiles; reviewed prebuilt artifacts retain immutable execution.
+- Docker source and mixed development profiles validate all declared recipes, including unselected
+  profiles; development prebuilt artifacts are rejected and reviewed prebuilt artifacts stay immutable.
 - Obsolete mode fields cannot override the manifest on reads, starts or restarts and are omitted on write.
 - Failed runtime switches retain the previous selection and recoverable source state.
 - A pinned start preserves staged, unstaged, untracked and ignored source files; dirty work refuses startup.

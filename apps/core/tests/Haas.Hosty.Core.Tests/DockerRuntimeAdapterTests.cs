@@ -6,6 +6,15 @@ namespace Haas.Hosty.Core.Tests;
 public sealed class DockerRuntimeAdapterTests
 {
     [Fact]
+    public async Task GetLogsAsync_IncludesCompilerErrorsWrittenToStandardError()
+    {
+        var runner = new FakeDockerCommandRunner(_ => new DockerCommandResult(0, "restore complete\n", "watch: build failed\n"));
+        var logs = await CreateAdapter(runner).GetLogsAsync(CreateDockerContext(CreateDockerAppRecord("pinned", locks: null)), 20);
+        Assert.Contains("restore complete", logs.Text);
+        Assert.Contains("watch: build failed", logs.Text);
+    }
+
+    [Fact]
     public void BuildDockerCoreEnvironment_SplitsContainerAndBrowserOrigins()
     {
         var config = CreateConfig(corePort: 7070, listenUrl: "http://localhost:7070", corePublicOrigin: null);

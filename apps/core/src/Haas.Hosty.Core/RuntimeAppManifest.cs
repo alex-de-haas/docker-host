@@ -54,7 +54,8 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
     public async Task<RuntimeAppManifestSelection> LoadAsync(
         string manifestPath,
         string? selectedRuntime = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool validateAllProfiles = false)
     {
         if (string.IsNullOrWhiteSpace(manifestPath))
         {
@@ -70,7 +71,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
             localManifestCache.TryGetValue(localPath, out var cached) &&
             cached.Stamp == stamp)
         {
-            return Select(cached.Manifest, localPath, cached.Digest, selectedRuntime, cached.Json, manifestUrl: null);
+            return Select(cached.Manifest, localPath, cached.Digest, selectedRuntime, cached.Json, manifestUrl: null, validateAllProfiles: validateAllProfiles);
         }
 
         var source = await ReadManifestSourceAsync(trimmed, cancellationToken);
@@ -95,7 +96,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
             localManifestCache[localPath] = new CachedLocalManifest(manifest, source.Json, digest, stamp);
         }
 
-        return Select(manifest, source.Reference, digest, selectedRuntime, source.Json, source.ManifestUrl);
+        return Select(manifest, source.Reference, digest, selectedRuntime, source.Json, source.ManifestUrl, validateAllProfiles: validateAllProfiles);
     }
 
     // Mirrors ReadManifestSourceAsync/ReadLocalManifestAsync resolution for the cache key: null for a
@@ -471,7 +472,8 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
         string manifestDigest,
         string? selectedRuntime = null,
         string? manifestJson = null,
-        string? manifestUrl = null)
+        string? manifestUrl = null,
+        bool validateAllProfiles = true)
     {
         var errors = new List<AppManifestValidationError>();
         ValidateRequired(manifest.SchemaVersion, "$.schemaVersion", errors);
@@ -522,6 +524,12 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
         }
 
         var profileKeys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var path in manifest.Source?.Paths ?? [])
+        {
+            if (!DockerSourceRuntime.SafeRelative(path) || path == ".")
+                errors.Add(new("app_manifest_source_path_invalid", "Source paths must be explicit relative files or directories within the checkout.", "$.source.paths"));
+        }
+
         var defaultProfileCount = 0;
         foreach (var profile in manifest.RuntimeProfiles)
         {
@@ -546,17 +554,22 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
                 errors.Add(new("app_manifest_runtime_profile_readiness_timeout_invalid", $"Runtime profile '{profile.Key}' readinessTimeoutSeconds must be greater than zero.", "$.runtimeProfiles[].readinessTimeoutSeconds"));
             }
 
-            if (profile.Type is not "docker" and not "localCommand")
+            if (profile.Type is not "docker" and not "localCommand" and not "mixed")
             {
                 errors.Add(new("app_manifest_runtime_type_unsupported", $"Runtime profile type '{profile.Type}' is not supported by this Hosty Core build.", "$.runtimeProfiles[].type"));
             }
 
-            // `development` gates source override + the live update model, both of which only make
-            // sense for a source runtime (localCommand in v1). A docker profile cannot be a
-            // development runtime.
-            if (profile.Development && profile.Type is not "localCommand")
+            if (profile.Type == "mixed" && !profile.Development)
             {
-                errors.Add(new("app_manifest_development_requires_local_command", $"Runtime profile '{profile.Key}' sets development: true, which is only supported for a localCommand runtime.", "$.runtimeProfiles[].development"));
+                errors.Add(new("app_manifest_mixed_requires_development", "Mixed profiles must declare development: true.", "$.runtimeProfiles[].development"));
+            }
+
+            if (profile.Development && !manifest.Services.Any(service =>
+                service.Runtimes.TryGetValue(profile.Key, out var runtime) &&
+                (runtime.SourceMount is not null ||
+                 ((runtime.Type ?? profile.Type) == "localCommand" && runtime.Artifact is null or "source"))))
+            {
+                errors.Add(new("app_manifest_development_requires_source", $"Development profile '{profile.Key}' must contain an editable source service.", "$.runtimeProfiles[].development"));
             }
 
             if (profile.Development && manifest.Services.Any(service =>
@@ -640,7 +653,8 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
             }
 
             var runtimeType = string.IsNullOrWhiteSpace(runtime.Type) ? selectedProfile.Type : runtime.Type;
-            if (!string.Equals(runtimeType, selectedProfile.Type, StringComparison.Ordinal))
+            if (runtimeType is not ("docker" or "localCommand") ||
+                (selectedProfile.Type != "mixed" && !string.Equals(runtimeType, selectedProfile.Type, StringComparison.Ordinal)))
             {
                 errors.Add(new("app_manifest_service_runtime_type_mismatch", $"Service '{service.Key}' runtime type '{runtimeType}' must match profile type '{selectedProfile.Type}'.", "$.services[].runtimes[].type"));
                 continue;
@@ -649,7 +663,9 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
             RuntimeDockerImage? image = null;
             if (runtimeType == "docker")
             {
-                image = ParseDockerImage(runtime.Image, errors, "$.services[].runtimes[].image");
+                image = runtime.Build is not null
+                    ? new RuntimeDockerImage("hosty-dev-environment", "local")
+                    : ParseDockerImage(runtime.Image, errors, "$.services[].runtimes[].image");
                 if (image is null)
                 {
                     continue;
@@ -661,14 +677,15 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
                 continue;
             }
 
-            ValidateSetup(service.Key, runtimeType, runtime.Setup, errors);
+            if (runtime.SourceMount is null) ValidateSetup(service.Key, runtimeType, runtime.Setup, errors);
+            DockerSourceRuntime.Validate(service.Key, selectedProfile, runtime, errors);
             ValidateNetwork(service.Key, runtimeType, runtime.Network, errors);
             ValidateCapabilities(service.Key, runtimeType, runtime.Capabilities, errors);
             ValidateDevices(service.Key, runtimeType, runtime.Devices, errors);
             ValidatePorts(service.Key, runtime.Ports, runtime.IsHostNetwork, errors);
             ValidateHealthcheck(service.Key, runtimeType, runtime.Ports, runtime.Healthcheck, errors);
 
-            var artifact = ResolveArtifactKind(service.Key, runtimeType, runtime.Artifact, errors);
+            var artifact = ResolveArtifactKind(service.Key, runtimeType, runtime.Artifact ?? (runtime.SourceMount is not null ? "source" : null), errors);
             ValidateDelivery(service.Key, artifact, runtime.Delivery, errors);
             if (artifact is null)
             {
@@ -821,6 +838,13 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
         {
             throw new AppManifestException("manifest_validation_failed", "Runtime app manifest failed validation.", errors);
         }
+
+        if (validateAllProfiles)
+        {
+            foreach (var other in manifest.RuntimeProfiles.Where(profile => profile.Key != selectedProfile!.Key))
+                Select(manifest, manifestPath, manifestDigest, other.Key, manifestJson, manifestUrl, validateAllProfiles: false);
+        }
+        _ = DockerRuntimeAdapter.OrderServices(selectedServices);
 
         return new RuntimeAppManifestSelection(
             Manifest: manifest,
@@ -1026,11 +1050,8 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
             value is not "." and not ".." &&
             CoreDataPaths.IsSafePathSegment(value);
 
-    // Resolve the per-service artifact kind (A1). Absent infers per runtime type (docker → image,
-    // localCommand → source). v1 supports exactly one kind per runtime: docker = image,
-    // localCommand = source; `prebuilt` is reserved and any other value is rejected. Returns the
-    // resolved kind, or null after recording an error (the caller skips the service). See
-    // runtime-app-marketplace.md, R1–R4.
+    // Source mounts select source artifacts inside Docker; ordinary Docker services keep image
+    // artifacts. Reviewed local-command profiles also support immutable prebuilt delivery.
     private static string? ResolveArtifactKind(string serviceKey, string runtimeType, string? declared, List<AppManifestValidationError> errors)
     {
         var isDocker = string.Equals(runtimeType, "docker", StringComparison.Ordinal);
@@ -1050,7 +1071,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
         }
 
         // docker delivers an image; localCommand delivers source (live) or prebuilt (compiled build).
-        var supported = isDocker ? artifact is "image" : artifact is "source" or "prebuilt";
+        var supported = isDocker ? artifact is "image" or "source" : artifact is "source" or "prebuilt";
         if (!supported)
         {
             var allowed = isDocker ? "'image'" : "'source' or 'prebuilt'";
@@ -1797,7 +1818,7 @@ internal sealed class DockerRuntimeAdapter(
         // Siblings that `dependsOn` one another reach each other by service-name DNS over a
         // per-app user network, so the internal port never needs host publishing. Containers
         // run standalone otherwise, so only create the network when discovery is actually used.
-        var dependencyNetwork = RequiresUserNetwork(services) ? BuildNetworkName(config.InstanceId, context.App.Id) : null;
+        var dependencyNetwork = RequiresUserNetwork(context.AllServices) ? BuildNetworkName(config.InstanceId, context.App.Id) : null;
         if (dependencyNetwork is not null)
         {
             _ = await RunDockerAsync(["network", "create", dependencyNetwork], ignoreFailures: true, cancellationToken);
@@ -1816,6 +1837,7 @@ internal sealed class DockerRuntimeAdapter(
                 throw new AppLifecycleException("runtime_profile_invalid", $"Docker service '{service.Key}' does not declare an image.");
             }
 
+            var sourceCommand = await DockerSourceRuntime.PrepareAsync(context, service, runner, cancellationToken);
             var hostNetwork = service.Runtime.IsHostNetwork;
             var containerName = BuildContainerName(config.InstanceId, context.App.Id, service.Key);
             var existingLock = context.App.ArtifactLocks?.GetValueOrDefault(service.Key);
@@ -1828,7 +1850,7 @@ internal sealed class DockerRuntimeAdapter(
             // through to the normal recreate path below. Adopted
             // containers are intentionally NOT added to startedContainers: this start did not create
             // them, so a later sibling's failure must not tear a healthy running service down.
-            if (await TryAdoptRunningContainerAsync(context.App.Id, containerName, service.Image, existingLock, cancellationToken))
+            if (service.Runtime.SourceMount is null && await TryAdoptRunningContainerAsync(context.App.Id, containerName, service.Image, existingLock, cancellationToken))
             {
                 resolvedLocks[service.Key] = existingLock!;
                 AppendServiceEndpoints(endpoints, service, AssignServicePorts(context, service, hostNetwork), config);
@@ -1843,7 +1865,15 @@ internal sealed class DockerRuntimeAdapter(
             // Resolve what to run from the lock instead of blindly running the mutable tag: a locked
             // digest is reused (pulled only if missing), a lockless app is backfilled once (TOFU).
             // See A3/A4/A8.
-            var (runReference, resolvedLock) = await ResolveImageRunReferenceAsync(service.Image, existingLock, cancellationToken, context.ReportUpdateProgress is null ? null : () => context.ReportUpdateProgress("downloading", service.Key));
+            var (runReference, resolvedLock) = service.Runtime.Build is not null
+                ? await DockerSourceRuntime.ResolveBuildAsync(context, service, runner, existingLock, cancellationToken)
+                : sourceCommand is not null && existingLock is { Kind: "development-image", ImageDigest: not null }
+                    ? await DockerSourceRuntime.ResolveLocalImageAsync(existingLock.ImageDigest, existingLock, runner, cancellationToken)
+                    : await ResolveImageRunReferenceAsync(service.Image, existingLock, cancellationToken, context.ReportUpdateProgress is null ? null : () => context.ReportUpdateProgress("downloading", service.Key));
+            // A locally supplied SDK image may have no registry digest. Lock its content ID instead
+            // of silently following a mutable local tag on the next development restart.
+            if (sourceCommand is not null && resolvedLock.ImageDigest is null)
+                (runReference, resolvedLock) = await DockerSourceRuntime.ResolveLocalImageAsync(runReference, null, runner, cancellationToken);
             resolvedLocks[service.Key] = resolvedLock;
             if (context.ReportUpdateProgress is not null) await context.ReportUpdateProgress("starting", service.Key);
 
@@ -1958,7 +1988,8 @@ internal sealed class DockerRuntimeAdapter(
                 runArgs.Add($"HOSTY_DEPENDENCY_{RuntimePortHelper.NormalizeEnvironmentKey(dependency.Key)}_URL={BuildDockerCoreOrigin(dependency.Value)}");
             }
 
-            foreach (var serviceUrl in RuntimeServiceDiscovery.BuildEnvironment(services, service, BuildDockerServiceUrl))
+            foreach (var serviceUrl in RuntimeServiceDiscovery.BuildEnvironment(context.AllServices, service, (target, port) =>
+                RuntimeServiceDiscovery.BuildPeerUrl(context, service, target, port)))
             {
                 runArgs.Add("-e");
                 runArgs.Add($"{serviceUrl.Key}={serviceUrl.Value}");
@@ -2021,7 +2052,9 @@ internal sealed class DockerRuntimeAdapter(
                 runArgs.Add($"{mountEnvironment.Key}={mountEnvironment.Value}");
             }
 
+            if (sourceCommand is not null) runArgs.AddRange(sourceCommand.Arguments);
             runArgs.Add(runReference);
+            if (sourceCommand is not null) runArgs.AddRange(sourceCommand.Command);
             _ = await RunDockerAsync(runArgs, ignoreFailures: false, cancellationToken, environment: containerEnvironment);
             startedContainers.Add(containerName);
 
@@ -2045,7 +2078,8 @@ internal sealed class DockerRuntimeAdapter(
             throw;
         }
 
-        return new AppRuntimeStartResult("running", endpoints, resolvedLocks);
+        return new AppRuntimeStartResult("running", endpoints, resolvedLocks,
+            services.Where(service => startedContainers.Contains(BuildContainerName(config.InstanceId, context.App.Id, service.Key))).Select(service => service.Key).ToArray());
     }
 
     public async Task<AppRuntimeOperationResult> StopAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
@@ -2094,11 +2128,14 @@ internal sealed class DockerRuntimeAdapter(
         var lines = new List<string>();
         foreach (var service in context.Manifest.Services)
         {
-            var output = await RunDockerAsync(
+            var output = await RunRawAsync(
                 ["logs", "--tail", Math.Clamp(tail, 1, 1000).ToString(System.Globalization.CultureInfo.InvariantCulture), BuildContainerName(config.InstanceId, context.App.Id, service.Key)],
-                ignoreFailures: true,
                 cancellationToken);
-            var text = string.IsNullOrWhiteSpace(output) ? string.Empty : output.TrimEnd();
+            // Docker returns the application's stderr on the CLI's stderr, including compiler/watch
+            // failures. Omitting it makes failed source launches appear to have silently stopped.
+            var text = output.ExitCode == 0
+                ? string.Join(Environment.NewLine, new[] { output.StandardOutput.TrimEnd(), output.StandardError.TrimEnd() }.Where(part => part.Length > 0))
+                : string.Empty;
             services.Add(new AppRuntimeServiceLogs(service.Key, text));
             if (text.Length > 0)
             {
@@ -2853,7 +2890,7 @@ internal sealed class DockerRuntimeAdapter(
     private static string? NullIfBlank(string? value)
         => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
-    private static IReadOnlyList<RuntimeSelectedService> OrderServices(IReadOnlyList<RuntimeSelectedService> services)
+    internal static IReadOnlyList<RuntimeSelectedService> OrderServices(IReadOnlyList<RuntimeSelectedService> services)
     {
         var remaining = services.ToDictionary(service => service.Key, StringComparer.Ordinal);
         var ordered = new List<RuntimeSelectedService>();
@@ -3224,7 +3261,11 @@ internal sealed record RuntimeLifecycleContext(
     // `{AppRoot}/cache` when null.
     string? AppCachePath = null,
     [property: System.Text.Json.Serialization.JsonIgnore]
-    Func<string, string?, Task>? ReportUpdateProgress = null);
+    Func<string, string?, Task>? ReportUpdateProgress = null,
+    IReadOnlyList<RuntimeSelectedService>? GraphServices = null)
+{
+    public IReadOnlyList<RuntimeSelectedService> AllServices => GraphServices ?? Manifest.Services;
+}
 
 internal sealed record RuntimeAppManifestSelection(
     RuntimeAppManifest Manifest,
@@ -3467,7 +3508,8 @@ internal sealed record RuntimeAppSource(
     string? Repository,
     string? Branch,
     string? Tag,
-    string? Commit);
+    string? Commit,
+    IReadOnlyList<string>? Paths = null);
 
 internal sealed class RuntimeProfileManifest
 {
@@ -3475,11 +3517,9 @@ internal sealed class RuntimeProfileManifest
     public string Type { get => field ?? ""; init; } = "";
     public bool Default { get; init; }
 
-    // Marks a runtime meant for local development. Two coupled consequences: the operator may point
-    // it at their own source folder (source override), and it runs live from that folder (no lock, no
-    // reviewed update — the "Live" affordance). Only valid for a source runtime (localCommand in v1);
-    // at most one per manifest. A non-development source runtime is locked and updated in review, even
-    // though it also runs from source. See docs/features/runtime-artifact-model.md.
+    // Enables editable source execution and source overrides. Docker/mixed profiles keep their
+    // environment images locked and require review for protected contract changes. Multiple
+    // development profiles may share the app's source state.
     public bool Development { get; init; }
 
     // How long a start waits for the app's published endpoints to answer before reporting `running`
@@ -3544,6 +3584,9 @@ internal sealed record RuntimeServiceProfileManifest
     public RuntimePrebuiltDeliveryManifest? Delivery { get; init; }
 
     public JsonElement? Image { get; init; }
+
+    public RuntimeSourceMountManifest? SourceMount { get; init; }
+    public RuntimeDockerBuildManifest? Build { get; init; }
 
     // One-shot preparation command run to completion before `command` on every start (localCommand
     // only). It runs in the same `workingDirectory` with the same environment as `command`; a
@@ -3781,7 +3824,8 @@ internal sealed class RuntimeAppEndpointManifest
 internal sealed record AppRuntimeStartResult(
     string RuntimeState,
     IReadOnlyList<AppEndpointContract> Endpoints,
-    IReadOnlyDictionary<string, ArtifactLock>? ArtifactLocks = null);
+    IReadOnlyDictionary<string, ArtifactLock>? ArtifactLocks = null,
+    IReadOnlyList<string>? CreatedServices = null);
 
 internal sealed record AppRuntimeOperationResult(string RuntimeState);
 
@@ -3810,7 +3854,9 @@ internal sealed record AppRuntimeServiceHealth(
     // Times the runtime has restarted this service (docker RestartCount), or null when unavailable.
     int? RestartCount = null,
     // RFC3339 start timestamp of the current run as reported by the runtime, or null when not started.
-    string? StartedAt = null);
+    string? StartedAt = null,
+    string? RuntimeType = null,
+    string? Artifact = null);
 
 internal sealed record AppManifestValidationError(string Code, string Message, string Path);
 

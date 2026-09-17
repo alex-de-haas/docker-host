@@ -3,7 +3,7 @@
   "id": "hosty.telemetry",
   "name": "Hosty Telemetry",
   "description": "OpenTelemetry collector + telemetry backend + UI: receives OTLP from Hosty runtime apps, stores metrics/logs/traces in an embedded SQLite store, and serves the Metrics/Structured logs/Traces pages that read the backend directly.",
-  "version": "0.9.2",
+  "version": "0.10.0",
   "role": "system",
   "provides": [
     "otlp-collector"
@@ -13,6 +13,11 @@
       "key": "docker",
       "type": "docker",
       "default": true
+    },
+    {
+      "key": "dev",
+      "type": "mixed",
+      "development": true
     }
   ],
   "defaultRuntime": "docker",
@@ -40,20 +45,44 @@
               "protocol": "http"
             }
           ]
+        },
+        "dev": {
+          "type": "docker",
+          "image": {
+            "repository": "otel/opentelemetry-collector-contrib",
+            "tag": "0.155.0"
+          },
+          "ports": [
+            {
+              "key": "otlp-http",
+              "containerPort": 4318,
+              "localPort": 4318,
+              "protocol": "http",
+              "expose": "host"
+            },
+            {
+              "key": "metrics",
+              "containerPort": 9464,
+              "protocol": "http"
+            }
+          ]
         }
       }
     },
     {
       "key": "backend",
       "dependsOn": [
-        "collector"
+        {
+          "service": "collector",
+          "port": "metrics"
+        }
       ],
       "runtimes": {
         "docker": {
           "type": "docker",
           "image": {
             "repository": "ghcr.io/alex-de-haas/hosty-telemetry-backend",
-            "tag": "0.9.2"
+            "tag": "0.10.0"
           },
           "environment": {
             "HOSTY_TELEMETRY_LOGS_FILE": "/etc/otelcol-contrib/otlp-logs/logs.jsonl",
@@ -62,6 +91,19 @@
             "HOSTY_TELEMETRY_QUERY_PORT": "8080",
             "HOSTY_TELEMETRY_METRICS_URL": "http://collector:9464/metrics"
           },
+          "ports": [
+            {
+              "key": "query",
+              "containerPort": 8080,
+              "protocol": "http"
+            }
+          ]
+        },
+        "dev": {
+          "type": "localCommand",
+          "workingDirectory": "apps/telemetry-backend/src/Haas.Hosty.TelemetryBackend",
+          "command": "dotnet watch run --no-launch-profile",
+          "environment": { "HOSTY_TELEMETRY_BIND_LOOPBACK": "1" },
           "ports": [
             {
               "key": "query",
@@ -82,7 +124,7 @@
           "type": "docker",
           "image": {
             "repository": "ghcr.io/alex-de-haas/hosty-telemetry-ui",
-            "tag": "0.9.2"
+            "tag": "0.10.0"
           },
           "environment": {
             "PORT": "3000",
@@ -104,6 +146,20 @@
             "retries": 3,
             "gracePeriodSeconds": 10
           }
+        },
+        "dev": {
+          "type": "localCommand",
+          "workingDirectory": "apps/telemetry-ui",
+          "setup": "npm install",
+          "command": "npm run dev -- --hostname 127.0.0.1",
+          "ports": [
+            {
+              "key": "http",
+              "containerPort": 3000,
+              "protocol": "http",
+              "public": true
+            }
+          ]
         }
       }
     }
@@ -113,6 +169,11 @@
     "targets": [
       {
         "runtime": "docker",
+        "containerPath": "/etc/otelcol-contrib"
+      },
+      {
+        "runtime": "dev",
+        "service": "collector",
         "containerPath": "/etc/otelcol-contrib"
       }
     ]
@@ -205,6 +266,16 @@
         "endpoint": "query",
         "path": "/api/mcp"
       }
+    ]
+  },
+  "source": {
+    "type": "git",
+    "repository": "https://github.com/alex-de-haas/docker-host.git",
+    "branch": "main",
+    "paths": [
+      "apps/telemetry",
+      "apps/telemetry-backend",
+      "apps/telemetry-ui"
     ]
   }
 }

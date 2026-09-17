@@ -294,7 +294,8 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
             // Preserve the install-time manifest subpath: an override points at the same repo root, so
             // the app's manifest keeps the same in-repo offset.
             ManifestSubpath: existing?.ManifestSubpath,
-            OverrideCommit: string.IsNullOrWhiteSpace(commit) ? null : commit.Trim());
+            OverrideCommit: string.IsNullOrWhiteSpace(commit) ? null : commit.Trim(),
+            InspectionPaths: existing?.InspectionPaths);
         await apps.UpdateAppAsync(appId, current => current with { SourceState = state }, cancellationToken);
         return new AppSourceResponse(appId, state);
     }

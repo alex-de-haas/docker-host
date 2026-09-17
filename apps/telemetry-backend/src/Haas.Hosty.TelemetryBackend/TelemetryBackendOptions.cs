@@ -75,19 +75,16 @@ internal sealed record TelemetryBackendOptions
     {
         var appData = FirstNonEmpty(
             Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_DATA_DIR"),
+            Environment.GetEnvironmentVariable("HOSTY_APP_DATA_DIR"),
             Environment.GetEnvironmentVariable("HOSTY_APP_DATA"))
             ?? Path.Combine(Directory.GetCurrentDirectory(), "data");
 
         return new TelemetryBackendOptions
         {
             DatabasePath = FirstNonEmpty(Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_DB_PATH"))
-                ?? Path.Combine(appData, "telemetry.db"),
-            // Collector Prometheus URL. The manifest pins this explicitly, and must: the `dependsOn`
-            // fallback below resolves the collector's FIRST port, which is the OTLP receiver (4318), not
-            // the Prometheus exporter (9464) — so it yields a 404 and silently drops every app metric.
-            // The fallback stays for a collector that declares only the one port; it is not a default to
-            // rely on. Both forms use the sibling service name, reachable over the per-app docker
-            // network, unlike a host-loopback URL.
+                ?? Path.Combine(appData, "store", "telemetry.db"),
+            // The dependency explicitly selects the collector's metrics port. Core supplies a
+            // container DNS URL in Docker and its assigned loopback URL in the mixed profile.
             MetricsScrapeUrl = FirstNonEmpty(
                 Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_METRICS_URL"),
                 Append(Environment.GetEnvironmentVariable("HOSTY_SERVICE_COLLECTOR_URL"), "/metrics")),
@@ -111,7 +108,9 @@ internal sealed record TelemetryBackendOptions
             LogsRetention = ParseDays("HOSTY_TELEMETRY_LOGS_RETENTION_DAYS", 3),
             TracesRetention = ParseDays("HOSTY_TELEMETRY_TRACES_RETENTION_DAYS", 3),
             MaxDatabaseBytes = ParseBytes("HOSTY_TELEMETRY_MAX_DB_BYTES", 1L * 1024 * 1024 * 1024),
-            QueryPort = ParseInt("HOSTY_TELEMETRY_QUERY_PORT", 8080),
+            QueryPort = ParseInt("HOSTY_TELEMETRY_QUERY_PORT",
+                Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_BIND_LOOPBACK") == "1"
+                    ? ParseInt("HOSTY_PORT_QUERY", 8080) : 8080),
         };
     }
 

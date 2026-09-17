@@ -5,6 +5,26 @@ namespace Haas.Hosty.Core.Tests;
 public sealed class LocalCommandRuntimeAdapterTests
 {
     [Fact]
+    public void MixedDiscovery_InjectsLoopbackEvenWithPublicLanHost()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            var config = CreateConfig(7070, "http://127.0.0.1:7070", null) with { RuntimePublicHost = "lan.example" };
+            var adapter = new LocalCommandRuntimeAdapter(config, new LocalCommandProcessRegistry(),
+                new AppServiceTokenService(new AppServiceSigningKey("test-discovery-key"u8.ToArray())));
+            var context = MixedRuntimeTests.Context() with { AppDataPath = root };
+            var backend = context.AllServices.Single(service => service.Key == "backend");
+            var start = new System.Diagnostics.ProcessStartInfo();
+            var ports = context.App.PortAssignments!.GroupBy(port => port.Service).ToDictionary(group => group.Key,
+                group => (IReadOnlyDictionary<string, int>)group.ToDictionary(port => port.PortKey, port => port.HostPort));
+            adapter.InjectEnvironment(start, MixedRuntimeAdapter.ForService(context, backend), backend, [], ports);
+            Assert.Equal("http://127.0.0.1:34001", start.Environment["HOSTY_SERVICE_COLLECTOR_URL"]);
+        }
+        finally { TryDeleteDirectory(root); }
+    }
+
+    [Fact]
     public void BuildCoreEnvironment_SplitsPublicAndRuntimeOrigins()
     {
         var config = CreateConfig(

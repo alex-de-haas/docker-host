@@ -1,11 +1,12 @@
 # Feature: Automatic Runtime App Ports
 
 Created: 2026-06-05
-Updated: 2026-08-10
+Updated: 2026-09-17
 
 Runtime apps do not hard-code host ports. Core reserves an available host port for every declared
-service port at install, exposes it to the app through the environment, and keeps the stored endpoint
-URL pointing at the port the app actually got. Manifests omit `localPort` / `hostPort` unless a fixed
+service port at install and reconciles reservations on reviewed updates and runtime switches.
+It exposes the port through the environment and keeps the stored endpoint URL pointing at the
+port the app actually got. Manifests omit `localPort` / `hostPort` unless a fixed
 port is part of the app's contract.
 
 ## Assignment
@@ -33,7 +34,8 @@ Start resolves each port to the first source that answers
 2. the manifest's explicit `localPort` / `hostPort`;
 3. the install-time reservation for that service and port key;
 4. the port inside an endpoint URL stored by an earlier start — the fallback for records that
-   predate the reservation model, or for a port added to a manifest after install.
+   predate the reservation model, or for a port added through live source edits after install.
+   Reviewed updates and runtime switches reserve new port keys before starting services.
 
 Ports are resolved for every service of an app in one pass before any process binds, so two
 not-yet-started siblings cannot be handed the same port.

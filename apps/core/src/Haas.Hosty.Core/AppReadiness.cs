@@ -62,7 +62,7 @@ internal static class AppReadinessProbes
             {
                 // Implicit: every endpoint the app publishes from this service. An `exec` healthcheck
                 // is the container's own and shows up as the adapter's signal, so it takes neither branch.
-                var docker = string.Equals(selection.RuntimeProfile.Type, "docker", StringComparison.Ordinal);
+                var docker = string.Equals(service.Runtime.Type, "docker", StringComparison.Ordinal);
                 foreach (var published in endpoints)
                 {
                     if (!string.Equals(published.Service, service.Key, StringComparison.Ordinal) ||

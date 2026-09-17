@@ -206,7 +206,7 @@ When a manifest is installed from a local manifest file or app directory, Core t
 
 When a manifest is installed from an HTTP(S) URL and the selected runtime profile is `localCommand`, Core requires an app-level `source.repository` that can be cloned as an absolute Git URL or local repository path. Relative repositories such as `.` are rejected for this remote-manifest start path because Core has no repository root to resolve them against.
 
-Docker runtime profiles do not need a source root and ignore source checkout state during start. Source override state is not public manifest metadata; it belongs to the local Hosty installation.
+Image-only Docker profiles do not need a source root. Docker source and mixed development profiles resolve the app source root and preserve image dependencies; see [Mixed Development Runtimes](../mixed-development-runtimes/feature.md). Source override state is not public manifest metadata; it belongs to the local Hosty installation.
 
 Docker-only apps remain valid without source metadata. Resolving source for an app with no source repository returns a Core validation error instead of changing the app.
 
@@ -220,7 +220,7 @@ Core places each published `localCommand` service inside an operating-system pro
 
 `hosty apps switch-runtime-plan <app-id> --runtime <key>` returns a reviewed plan with a digest and a `changes` list. The plan compares the current and target runtime contracts, including runtime type, service images or commands, ports, service environment keys, settings, dependencies, endpoint contracts, data target compatibility, and generated Docker container names. `hosty apps switch-runtime` requires the reviewed digest, and Core includes the `changes` list in the digest seed so a stale review is rejected if the runtime contract changes before apply.
 
-Runtime switching can move between Docker profiles, from Docker to `localCommand`, and from `localCommand` back to Docker. Core rejects switching an app with existing primary data to a target runtime that cannot preserve a compatible primary data target.
+Runtime switching can move between Docker, `localCommand`, and mixed profiles. Core rejects switching an app with existing primary data to a target runtime that cannot preserve a compatible primary data target.
 
 When a running app is switched, Core stops the current runtime, updates selected runtime state, and starts the target runtime. If the target runtime fails to start, Core restores the selected runtime in installation state to the previous runtime, leaves the app stopped, records `LastError`, and returns `runtime_switch_restart_failed`. Any `pre-runtime-switch` backup created before mutation remains available through normal backup commands.
 

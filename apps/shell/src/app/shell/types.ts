@@ -575,6 +575,8 @@ export type CoreAppServiceHealth = {
 
 export type CoreRuntimeServiceHealth = {
   service: string;
+  runtimeType?: string | null;
+  artifact?: string | null;
   status: string;
   processId?: number | null;
   exitCode?: number | null;

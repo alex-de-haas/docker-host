@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
 
-const [command = "dev", fallbackPort] = process.argv.slice(2);
+const [command = "dev", fallbackPort, ...extraArgs] = process.argv.slice(2);
 const port = process.env.PORT || fallbackPort;
 const nextBin = process.platform === "win32" ? "next.cmd" : "next";
-const args = [command];
+const args = [command, ...extraArgs];
 
 if (port) {
   args.push("--port", port);

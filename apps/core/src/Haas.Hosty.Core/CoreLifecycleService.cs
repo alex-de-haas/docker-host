@@ -129,7 +129,7 @@ internal sealed partial class CoreLifecycleService(
 
     public async Task<AppInstallPlan> CreateInstallPlanAsync(AppInstallPlanRequest request, CancellationToken cancellationToken = default)
     {
-        var selection = await manifests.LoadAsync(request.ManifestPath, request.SelectedRuntime, cancellationToken);
+        var selection = await manifests.LoadAsync(request.ManifestPath, request.SelectedRuntime, cancellationToken, validateAllProfiles: true);
         // Resolve each image service's tag to its current remote digest at plan time: what the plan
         // shows is what the bound apply pins (C-CR1 Fix B). An unresolvable candidate (offline
         // registry, local-only image) stays null — that service surfaces without a digest and
@@ -187,7 +187,8 @@ internal sealed partial class CoreLifecycleService(
     // lock records the digest the operator reviewed and the tag it was resolved from.
     private IReadOnlyDictionary<string, ArtifactLock>? BuildReviewedArtifactLocks(
         RuntimeAppManifestSelection selection,
-        IReadOnlyList<AppServiceArtifactProbe> probes)
+        IReadOnlyList<AppServiceArtifactProbe> probes,
+        IReadOnlyDictionary<string, ArtifactLock>? existingLocks = null)
     {
         var locks = new Dictionary<string, ArtifactLock>(StringComparer.Ordinal);
         foreach (var probe in probes)
@@ -206,6 +207,14 @@ internal sealed partial class CoreLifecycleService(
             locks[probe.Service] = new ArtifactLock("image", probe.CandidateDigest, service.Image.TagReference, null, null, clock.UtcNow);
         }
 
+        // A metadata-only update must not turn an edited Dockerfile into an implicit rebuild.
+        foreach (var service in selection.Services.Where(service => service.Runtime.Build is not null))
+        {
+            if (existingLocks?.TryGetValue(service.Key, out var existingLock) == true &&
+                existingLock.Kind == "development-image" &&
+                existingLock.BundleHash == DockerSourceRuntime.BuildFingerprint(service.Runtime.Build!))
+                locks[service.Key] = existingLock;
+        }
         return locks.Count > 0 ? locks : null;
     }
 
@@ -277,7 +286,7 @@ internal sealed partial class CoreLifecycleService(
         CancellationToken cancellationToken)
     {
         var resolution = await RequireFeedService().ResolveAsync(request.FeedsUrl, request.FeedId, cancellationToken);
-        var selection = await manifests.LoadAsync(resolution.Feed.ManifestRef, request.SelectedRuntime, cancellationToken);
+        var selection = await manifests.LoadAsync(resolution.Feed.ManifestRef, request.SelectedRuntime, cancellationToken, validateAllProfiles: true);
         if (!string.Equals(selection.Manifest.Id, resolution.AppId, StringComparison.Ordinal))
         {
             throw new AppLifecycleException(
@@ -374,7 +383,7 @@ internal sealed partial class CoreLifecycleService(
         // Unbound path: in-process callers only (the boot bootstrap installs from trusted local
         // distribution manifests). The HTTP endpoints require a plan id, so no network caller can
         // reach an apply-time fetch.
-        var selection = await manifests.LoadAsync(request.ManifestPath, request.SelectedRuntime, cancellationToken);
+        var selection = await manifests.LoadAsync(request.ManifestPath, request.SelectedRuntime, cancellationToken, validateAllProfiles: true);
         return await WithAppLockAsync(selection.Manifest.Id!, () => InstallCoreAsync(request, selection, cancellationToken), cancellationToken);
     }
 
@@ -1511,7 +1520,7 @@ internal sealed partial class CoreLifecycleService(
 
         var updateBase = await UpdateBaseAsync(app, cancellationToken);
         var currentSelection = await LoadSelectionForAppAsync(app, cancellationToken);
-        var selection = await manifests.LoadAsync(manifestPath, request.SelectedRuntime ?? app.SelectedRuntime, cancellationToken);
+        var selection = await manifests.LoadAsync(manifestPath, request.SelectedRuntime ?? app.SelectedRuntime, cancellationToken, validateAllProfiles: true);
         if (!string.Equals(selection.Manifest.Id, app.Id, StringComparison.Ordinal))
         {
             throw new AppLifecycleException("manifest_app_mismatch", $"Update manifest app id '{selection.Manifest.Id}' does not match installed app '{app.Id}'.");
@@ -2063,13 +2072,13 @@ internal sealed partial class CoreLifecycleService(
         // candidates. Persist them as the run-locks so the next start pulls the reviewed digest — a tag
         // re-pushed between apply and start no longer swaps unreviewed bytes in (C-CR1 Fix B). Services
         // whose candidate was unresolvable at plan time carry no lock and TOFU-backfill at start.
-        var reviewedLocks = BuildReviewedArtifactLocks(selection, confirmed.ArtifactProbes);
+        var reviewedLocks = BuildReviewedArtifactLocks(selection, confirmed.ArtifactProbes, app.ArtifactLocks);
         if (reviewedLocks is not null)
         {
             next = next with { ArtifactLocks = reviewedLocks };
         }
 
-        var document = await apps.UpsertAppAsync(next, cancellationToken);
+        var document = await PersistRuntimePortsAsync(next, selection, cancellationToken);
         // An endpoint the new manifest dropped (or made private) can never serve its hostname again, so the
         // route and DNS record go with it. Best-effort, and only for endpoints that are actually gone.
         await CleanUpOrphanedPublicationsAsync(appId, next, cancellationToken);
@@ -2092,6 +2101,10 @@ internal sealed partial class CoreLifecycleService(
         }, cancellationToken);
         return new AppLifecycleResponse(await BuildAppSummaryAsync(finished.App, cancellationToken), backup, "updated");
     }
+
+    private Task<AppStateDocument> PersistRuntimePortsAsync(AppRecord record, RuntimeAppManifestSelection selection, CancellationToken cancellationToken)
+        => portAllocator is null ? apps.UpsertAppAsync(record, cancellationToken)
+            : portAllocator.AssignAndPersistAsync(record, selection, apps.ListAppRecordsAsync, apps.UpsertAppAsync, cancellationToken);
 
     public async Task<AppRuntimeSwitchPlan> CreateRuntimeSwitchPlanAsync(
         string appId,
@@ -2184,7 +2197,7 @@ internal sealed partial class CoreLifecycleService(
             LastOperation = "switch-runtime",
             LastError = null,
         };
-        await apps.UpsertAppAsync(next, cancellationToken);
+        await PersistRuntimePortsAsync(next, targetSelection, cancellationToken);
         await ClearUpdateAvailability(appId);
 
         if (wasRunning)
@@ -2548,7 +2561,11 @@ internal sealed partial class CoreLifecycleService(
             Runtime: selection.RuntimeProfile.Key,
             RuntimeType: selection.RuntimeProfile.Type,
             Status: AppReadinessProbes.Fold(services),
-            Services: services);
+            Services: services.Select(service => service with
+            {
+                RuntimeType = selection.Services.FirstOrDefault(item => item.Key == service.Service)?.Runtime.Type,
+                Artifact = selection.Services.FirstOrDefault(item => item.Key == service.Service)?.Artifact,
+            }).ToArray());
     }
 
     // Read-only "update available" detection (runtime-app-marketplace.md, "Update-available
@@ -2623,7 +2640,7 @@ internal sealed partial class CoreLifecycleService(
             {
                 var feed = await RequireFeedService().ResolveAsync(app.FeedsUrl, app.FollowedFeedId, cancellationToken);
                 RequireFeedAppMatch(app, feed.AppId);
-                candidateSelection = await manifests.LoadAsync(feed.Feed.ManifestRef, app.SelectedRuntime, cancellationToken);
+                candidateSelection = await manifests.LoadAsync(feed.Feed.ManifestRef, app.SelectedRuntime, cancellationToken, validateAllProfiles: true);
                 if (!string.Equals(candidateSelection.Manifest.Id, app.Id, StringComparison.Ordinal))
                 {
                     throw new AppLifecycleException(
@@ -2651,7 +2668,7 @@ internal sealed partial class CoreLifecycleService(
             // copy's old tags and report "up to date" forever.
             try
             {
-                var candidate = await manifests.LoadAsync(app.ManifestUrl, app.SelectedRuntime, cancellationToken);
+                var candidate = await manifests.LoadAsync(app.ManifestUrl, app.SelectedRuntime, cancellationToken, validateAllProfiles: true);
                 if (!string.Equals(candidate.Manifest.Id, app.Id, StringComparison.Ordinal))
                 {
                     throw new AppLifecycleException(
@@ -3690,7 +3707,7 @@ internal sealed partial class CoreLifecycleService(
         var localOverridePath = ResolveInstallLocalSourcePath(selection, source);
         if (source?.Repository is null)
         {
-            if (!string.Equals(selection.RuntimeProfile.Type, "localCommand", StringComparison.Ordinal))
+            if (!selection.Services.Any(service => service.Artifact is "source" or "prebuilt"))
             {
                 return existing?.SourceState;
             }
@@ -3705,7 +3722,8 @@ internal sealed partial class CoreLifecycleService(
                     ManagedCheckoutPath: paths.ResolveManagedCheckoutPath(selection.Manifest.Id!),
                     LocalOverridePath: localOverridePath,
                     UpdatedAt: null,
-                    ManifestSubpath: ResolveInstallManifestSubpath(selection, localOverridePath)));
+                    ManifestSubpath: ResolveInstallManifestSubpath(selection, localOverridePath),
+                    InspectionPaths: source?.Paths));
         }
 
         var resolvedRef = source.Commit ?? source.Tag ?? source.Branch;
@@ -3723,6 +3741,7 @@ internal sealed partial class CoreLifecycleService(
                 ManagedCheckoutPath = existing.SourceState.ManagedCheckoutPath ?? paths.ResolveManagedCheckoutPath(selection.Manifest.Id!),
                 LocalOverridePath = existing.SourceState.LocalOverridePath ?? localOverridePath,
                 ManifestSubpath = manifestSubpath ?? existing.SourceState.ManifestSubpath,
+                InspectionPaths = source.Paths,
             };
         }
 
@@ -3734,7 +3753,8 @@ internal sealed partial class CoreLifecycleService(
             ManagedCheckoutPath: paths.ResolveManagedCheckoutPath(selection.Manifest.Id!),
             LocalOverridePath: localOverridePath,
             UpdatedAt: null,
-            ManifestSubpath: manifestSubpath);
+            ManifestSubpath: manifestSubpath,
+            InspectionPaths: source.Paths);
     }
 
     // Combines a live source root with its captured manifest subpath, contained within the root. A
@@ -4250,7 +4270,7 @@ internal sealed partial class CoreLifecycleService(
         RuntimeAppManifestSelection selection,
         CancellationToken cancellationToken)
     {
-        if (!string.Equals(selection.RuntimeProfile.Type, "localCommand", StringComparison.Ordinal))
+        if (!selection.Services.Any(service => service.Artifact is "source" or "prebuilt"))
         {
             return app;
         }
@@ -4511,7 +4531,7 @@ internal sealed partial class CoreLifecycleService(
 
         try
         {
-            var live = await manifests.LoadAsync(liveManifestPath, app.SelectedRuntime, cancellationToken);
+            var live = await manifests.LoadAsync(liveManifestPath, app.SelectedRuntime, cancellationToken, validateAllProfiles: true);
             // A folder whose manifest now describes a different app is an operator mistake, not a
             // contract Core should adopt — treat it like an invalid edit and keep the last-good copy.
             if (!string.Equals(live.Manifest.Id, app.Id, StringComparison.Ordinal))
@@ -4520,6 +4540,12 @@ internal sealed partial class CoreLifecycleService(
                     ManifestError: $"Live source manifest declares app id '{live.Manifest.Id}', expected '{app.Id}'.");
             }
 
+            if (lastGood.Services.Any(service => service.Runtime.Type == "docker") || live.Services.Any(service => service.Runtime.Type == "docker"))
+            {
+                if (DockerSourceRuntime.RequiresReview(lastGood, live))
+                    return new AppSelectionLoad(lastGood, LiveReconciled: false, ManifestError:
+                        "Docker environment, mounts, permissions or network configuration changed. Review and apply an update from the source manifest before restarting.");
+            }
             return new AppSelectionLoad(live, LiveReconciled: true, ManifestError: null, Baseline: lastGood);
         }
         // A mid-edit folder manifest can fail validation (AppManifestException) or be unreadable
@@ -4580,7 +4606,7 @@ internal sealed partial class CoreLifecycleService(
     }
 
     // True when the app's selected runtime is a live source artifact owned by the operator: a
-    // development runtime (localCommand + development: true) whose source Core re-reads live from the
+    // development runtime (development: true with an editable source service) whose source Core re-reads live from the
     // operator's own folder — an explicit source-override (which supersedes a URL/publisher install),
     // else the original folder install of a non-URL install. For these the contract tracks the folder
     // and is adopted on restart, so the reviewed-update flow does not apply - clients mark the runtime
@@ -4690,7 +4716,7 @@ internal sealed partial class CoreLifecycleService(
         => !string.IsNullOrWhiteSpace(path) && PathEqualsOrWithin(GetAppRoot(appId), path);
 
     private IAppRuntimeAdapter ResolveAdapter(string? runtimeType)
-        => adapters.FirstOrDefault(adapter => string.Equals(adapter.Type, runtimeType, StringComparison.Ordinal))
+        => runtimeType == "mixed" ? new MixedRuntimeAdapter(adapters) : adapters.FirstOrDefault(adapter => string.Equals(adapter.Type, runtimeType, StringComparison.Ordinal))
             ?? throw new AppLifecycleException("runtime_adapter_missing", $"Runtime adapter '{runtimeType}' is not available.");
 
     private string GetAppRoot(string appId)
@@ -4919,7 +4945,7 @@ internal sealed partial class CoreLifecycleService(
     {
         var resolver = adapters.OfType<IImageDigestResolver>().FirstOrDefault();
         return await Task.WhenAll(targetSelection.Services
-            .Where(service => service.Image is not null)
+            .Where(service => service.Image is not null && service.Runtime.Build is null)
             .OrderBy(service => service.Key, StringComparer.Ordinal)
             .Select(async service =>
             {
@@ -5191,6 +5217,12 @@ internal sealed partial class CoreLifecycleService(
         RuntimeSelectedService current,
         RuntimeSelectedService target)
     {
+        if (current.Runtime.Build != target.Runtime.Build)
+            changes.Add($"environment-build:{serviceKey}:{JsonSerializer.Serialize(current.Runtime.Build, CoreJsonSerializerContext.Default.RuntimeDockerBuildManifest)}->{JsonSerializer.Serialize(target.Runtime.Build, CoreJsonSerializerContext.Default.RuntimeDockerBuildManifest)}");
+        var currentMount = JsonSerializer.Serialize(current.Runtime.SourceMount, CoreJsonSerializerContext.Default.RuntimeSourceMountManifest);
+        var targetMount = JsonSerializer.Serialize(target.Runtime.SourceMount, CoreJsonSerializerContext.Default.RuntimeSourceMountManifest);
+        if (currentMount != targetMount)
+            changes.Add($"source-mount:{serviceKey}:{currentMount}->{targetMount}");
         var currentImage = current.Image?.Reference;
         var targetImage = target.Image?.Reference;
         if (!string.Equals(currentImage, targetImage, StringComparison.Ordinal))

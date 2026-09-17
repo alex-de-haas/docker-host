@@ -692,6 +692,12 @@ function AppServiceDetailsPanel({
                     >
                       {service.service}
                     </span>
+                    {serviceHealth?.runtimeType && (
+                      <Badge variant="outline" className="shrink-0 text-[10px] font-normal">
+                        {serviceHealth.runtimeType === "docker" ? "Docker" : "Local"}
+                        {serviceHealth.artifact ? ` · ${serviceHealth.artifact}` : ""}
+                      </Badge>
+                    )}
                     {matchedDigest && (
                       <Badge
                         variant="outline"

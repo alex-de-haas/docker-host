@@ -2,7 +2,7 @@
 
 Status: Draft
 Created: 2026-07-02
-Updated: 2026-09-16
+Updated: 2026-09-17
 
 ## Goal
 
@@ -18,13 +18,14 @@ loop to new delivery mechanisms. This plan retains the unbuilt work from the leg
 - [ ] Expose update availability per runtime rather than conflating the active profile and alternatives.
 - [ ] Decide whether a demonstrated multi-source use case warrants per-runtime source bindings and a
       unified artifact-state record; preserve app-level source and existing paths until then.
-- [ ] Specify Docker development from source only when build/mount lifecycle support is introduced.
 - [ ] Verify the selected extensions, update feature.md and retire this plan when its work is complete.
 
 ## Open Questions
 
-Delivery authentication, archive formats, multi-source ownership, and the Docker build/mount contract
-remain undecided. Private source credentials belong to Runtime Source Extensions. No automatic pull,
+Delivery authentication, archive formats and multi-source ownership remain undecided.
+Docker build/mount development and mixed source/image profiles are owned by
+[Mixed Development Runtimes](../mixed-development-runtimes/plan.md), including Telemetry adoption.
+Private source credentials belong to Runtime Source Extensions. No automatic pull,
 branch switching, or migration to per-runtime source directories is authorized by this plan.
 
 ## Verification
