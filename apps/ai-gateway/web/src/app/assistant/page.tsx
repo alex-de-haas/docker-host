@@ -667,11 +667,10 @@ export default function AssistantPage() {
               value={input}
               onChange={(event) => setInput(event.target.value)}
               onPaste={(event) => {
+                // Leave native paste intact for every text flavor, including HTML-only clipboards.
                 const images = takePastedImages(event.clipboardData);
                 if (images.length === 0) return;
                 setPending((current) => [...current, ...images]);
-                // Mixed clipboard content keeps the browser's native text insertion and caret.
-                if (!event.clipboardData.getData("text/plain")) event.preventDefault();
               }}
               onKeyDown={(event) => {
                 if (event.key === "Enter" && !event.shiftKey) {
@@ -730,7 +729,10 @@ function PendingImagePreview({ file }: { file: File }) {
   }, [file]);
   // Local blobs never go through the server image optimizer. The filename remains if decoding fails.
   // eslint-disable-next-line @next/next/no-img-element
-  return <img ref={imageRef} alt={`Preview of ${file.name}`} className="h-16 w-16 shrink-0 rounded object-contain" onError={event => { event.currentTarget.hidden = true; }} />;
+  return <img ref={imageRef} alt={`Preview of ${file.name}`} className="h-16 w-16 shrink-0 rounded object-contain" onError={event => {
+    URL.revokeObjectURL(event.currentTarget.src);
+    event.currentTarget.hidden = true;
+  }} />;
 }
 
 // The history the Shell panel never had: closing it used to be the only way back to a previous

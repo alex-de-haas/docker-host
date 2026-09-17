@@ -38,11 +38,12 @@ export function takePastedImages(data: Pick<DataTransfer, "items">, now = new Da
     const file = item.getAsFile();
     if (!file) continue;
     const extension = ({ "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif",
-      "image/webp": "webp", "image/avif": "avif", "image/bmp": "bmp", "image/svg+xml": "svg" } as Record<string, string>)[file.type];
+      "image/webp": "webp", "image/avif": "avif", "image/bmp": "bmp", "image/svg+xml": "svg" } as Record<string, string>)[file.type]
+      ?? file.name.match(/\.([a-z0-9]+)$/i)?.[1];
     const genericName = !file.name || /^(?:image|clipboard)(?:\.[a-z0-9]+)?$/i.test(file.name);
-    const name = genericName && extension
-      ? `Screenshot-${now.toISOString().replace(/[:.]/g, "-")}-${images.length + 1}.${extension}`
-      : file.name || `Clipboard-image-${images.length + 1}`;
+    const name = genericName
+      ? `Screenshot-${now.toISOString().replace(/[:.]/g, "-")}-${images.length + 1}${extension ? `.${extension}` : ""}`
+      : file.name;
     images.push(new File([file], name, { type: file.type, lastModified: file.lastModified }));
   }
   return images;

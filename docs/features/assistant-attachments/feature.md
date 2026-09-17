@@ -80,9 +80,12 @@ Cmd+V or Ctrl+V adds it to the same pending queue. Clipboard files are copied du
 event; non-image items and unavailable files are ignored. Ordinary text paste is unchanged, and
 mixed text/image clipboard content retains the browser's native text insertion. Generic image or
 clipboard filenames receive a timestamp and item number; meaningful filenames are preserved.
+Unknown image formats keep their filename extension when available; unnamed images still receive
+a timestamp and item number even when their MIME type has no known extension. Native paste is
+never cancelled, including when clipboard text is available only as HTML.
 
 Pending images show local blob previews alongside their names and remove buttons. Removing an
-image, changing sessions, or sending releases its preview URL. An unsupported or corrupt image
+image, changing sessions, sending, or a decoding error releases its preview URL. An unsupported or corrupt image
 keeps its filename even when no preview can be decoded. Files are uploaded only on send. Pending
 files cannot be removed while sending; successfully uploaded files remain available for a retry
 without uploading them again.

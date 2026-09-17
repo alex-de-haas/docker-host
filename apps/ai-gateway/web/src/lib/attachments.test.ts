@@ -18,14 +18,28 @@ describe("clipboard images", () => {
     expect(files.every(file => file.type === "image/png")).toBe(true);
   });
 
-  it("keeps meaningful filenames and extracts only images from a mixed clipboard", () => {
-    const text = { kind: "string", type: "text/plain", getAsFile: () => null };
+  it.each(["text/plain", "text/html"])("keeps meaningful filenames and extracts only images alongside %s", (type) => {
+    const text = { kind: "string", type, getAsFile: () => null };
     const missing = { kind: "file", type: "image/png", getAsFile: () => null };
     const photo = new File(["photo"], "diagram.jpg", { type: "image/jpeg" });
     expect(takePastedImages(clipboard([text, missing, item(new File(["log"], "log.txt", { type: "text/plain" })), item(photo)]))
       .map(file => file.name)).toEqual(["diagram.jpg"]);
     expect(takePastedImages(clipboard([text, missing]))).toEqual([]);
     expect(takePastedImages(clipboard([]))).toEqual([]);
+  });
+
+  it("timestamp-names unknown image formats and unnamed images without inventing an extension", () => {
+    const files = takePastedImages(clipboard([
+      item(new File(["heic"], "image.heic", { type: "image/heic" })),
+      item(new File(["unknown"], "", { type: "image/unknown" })),
+      item(new File(["known"], "", { type: "image/jpeg" })),
+    ]), new Date("2026-09-17T12:00:00Z"));
+    expect(files.map(file => file.name)).toEqual([
+      "Screenshot-2026-09-17T12-00-00-000Z-1.heic",
+      "Screenshot-2026-09-17T12-00-00-000Z-2",
+      "Screenshot-2026-09-17T12-00-00-000Z-3.jpg",
+    ]);
+    expect(files.map(file => file.type)).toEqual(["image/heic", "image/unknown", "image/jpeg"]);
   });
 });
 
