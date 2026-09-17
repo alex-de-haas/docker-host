@@ -1,7 +1,7 @@
 # Core App Shell
 
 Created: 2026-05-19
-Updated: 2026-09-10
+Updated: 2026-09-17
 
 Hosty Shell is the Core-managed browser UI runtime app. It renders a single authenticated Shell surface backed by Hosty Core APIs; it does not own Core lifecycle logic and it does not reintroduce the retired combined Next.js Host package.
 
@@ -74,6 +74,11 @@ flowchart TD
 ## Installed apps
 
 Dashboard is the administrator management surface for installed apps: one table holding non-system runtime apps and Core-managed system apps together, the latter marked by a `System` badge.
+
+The Core and installed-app tables share column widths. Runtime, version/source and status receive
+12%, 17% and 20% of the table respectively; actions reserve 224 px and the app name uses the
+remaining width. Both tables scroll horizontally below their 1040 px minimum width, preserving
+readable names and space between metadata and action controls.
 
 Apps expose actions according to Core state, plus — for the two entries that are optional app features rather than lifecycle verbs — the `logs` and `backup` capabilities the app declares (see below):
 

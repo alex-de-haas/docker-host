@@ -6,14 +6,16 @@ namespace Haas.Hosty.Core;
 
 internal sealed partial class AppSourceService
 {
-    private const int MaxFiles = 512;
+    private const int MaxStatusOutput = 8 * 1024 * 1024;
     private const int MaxGitOutput = 256 * 1024;
-    private const int MaxDiffOutput = 64 * 1024;
+    // Previews are requested per expanded file. Allow large documents while bounding payloads
+    // and browser parsing: decoded characters for Git patches, bytes for untracked contents.
+    private const int MaxDiffOutput = 4 * 1024 * 1024;
     private const long MaxDiscardFileBytes = 4 * 1024 * 1024;
     private readonly ConcurrentDictionary<string, DiscardReview> discardReviews = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, SemaphoreSlim> sourceLocks = new(StringComparer.Ordinal);
 
-    public async Task<AppSourceStatus> GetWorktreeStatusAsync(string appId, CancellationToken cancellationToken = default)
+    private async Task<AppSourceStatus> ReadWorktreeStatusAsync(string appId, CancellationToken cancellationToken = default)
     {
         var app = await RequireAppAsync(appId, cancellationToken);
         string? scope = null;
@@ -29,10 +31,11 @@ internal sealed partial class AppSourceService
             var head = headResult.ExitCode == 0 ? headResult.StandardOutput.Trim() : null;
             var branchResult = await WorktreeGitAsync(scope, ["symbolic-ref", "--quiet", "--short", "HEAD"], cancellationToken, allowFailure: true);
             var branch = branchResult.ExitCode == 0 ? branchResult.StandardOutput.Trim() : null;
-            var result = await WorktreeGitAsync(scope, ["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all", "--", "."], cancellationToken);
-            var truncated = result.StandardOutput.Length > MaxGitOutput;
+            var result = await WorktreeGitAsync(scope, ["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all", "--", "."], cancellationToken, limit: MaxStatusOutput);
+            var truncated = result.StandardOutput.Length > MaxStatusOutput;
             var records = result.StandardOutput.Split('\0');
             var files = new List<AppSourceFile>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
             // A truncated final record is not a complete filename.
             foreach (var entry in records.Take(records.Length - 1))
             {
@@ -42,8 +45,7 @@ internal sealed partial class AppSourceService
                 var relative = Path.GetRelativePath(scope, fullPath).Replace(Path.DirectorySeparatorChar, '/');
                 // `git rm --cached` can list the same path as both deleted and untracked. Restore
                 // that tracked path once, rather than presenting it again as a new-file deletion.
-                if (files.Any(file => file.Path == relative)) continue;
-                if (files.Count >= MaxFiles) { truncated = true; break; }
+                if (!seen.Add(relative)) continue;
                 var status = entry[..2];
                 var conflict = status.Contains('U') || status is "AA" or "DD";
                 var canDiscard = head is not null && !conflict && IsRegularSourcePath(scope, relative)
@@ -61,28 +63,34 @@ internal sealed partial class AppSourceService
 
     public async Task<AppSourceDiff> GetWorktreeDiffAsync(string appId, AppSourceDiffRequest request, CancellationToken cancellationToken = default)
     {
-        var status = await GetWorktreeStatusAsync(appId, cancellationToken);
+        var status = await ReadWorktreeStatusAsync(appId, cancellationToken);
         var file = RequireChangedFile(status, request.Path);
         var scope = status.ScopePath!;
         var fullPath = Path.Combine(scope, file.Path);
         if (!IsRegularSourcePath(scope, file.Path))
             throw SourceError("source_diff_unsupported", "Symlinks and submodule directories cannot be previewed here.");
         await RequireRegularFileAsync(fullPath, cancellationToken);
+        if (IsSourceImagePath(file.Path))
+            return new(file.Path, "", "", false, status.Head, file.NewFile,
+                Image: await GetSourceImageAsync(status, file, cancellationToken));
         if (file.Status == "??")
         {
             await using var stream = File.OpenRead(fullPath);
             var buffer = new byte[MaxDiffOutput + 1];
             var count = await stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: false, cancellationToken);
             var binary = buffer.AsSpan(0, count).Contains((byte)0);
-            return new(file.Path, binary ? "New binary file" : Encoding.UTF8.GetString(buffer, 0, Math.Min(count, MaxDiffOutput)),
-                "", count > MaxDiffOutput, status.Head, NewFile: true);
+            var tooLarge = !binary && count > MaxDiffOutput;
+            return new(file.Path, binary ? "New binary file" : tooLarge ? "" : Encoding.UTF8.GetString(buffer, 0, count),
+                "", tooLarge, status.Head, NewFile: true, Binary: binary);
         }
         string[] common = ["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--relative"];
         var combined = await WorktreeGitAsync(scope, [.. common, .. status.Head is null ? Array.Empty<string>() : new[] { status.Head }, "--", file.Path], cancellationToken, limit: MaxDiffOutput);
         var staged = await WorktreeGitAsync(scope, [.. common, "--cached", "--", file.Path], cancellationToken, limit: MaxDiffOutput);
-        return new(file.Path, combined.StandardOutput[..Math.Min(combined.StandardOutput.Length, MaxDiffOutput)],
-            staged.StandardOutput[..Math.Min(staged.StandardOutput.Length, MaxDiffOutput)],
-            combined.StandardOutput.Length > MaxDiffOutput || staged.StandardOutput.Length > MaxDiffOutput, status.Head, file.NewFile);
+        var truncated = combined.StandardOutput.Length > MaxDiffOutput || staged.StandardOutput.Length > MaxDiffOutput;
+        return new(file.Path, truncated ? "" : combined.StandardOutput,
+            truncated ? "" : staged.StandardOutput,
+            truncated, status.Head, file.NewFile,
+            Binary: IsBinaryPatch(combined.StandardOutput) || IsBinaryPatch(staged.StandardOutput));
     }
 
     public async Task<AppSourceDiscardPlan> PlanDiscardAsync(string appId, AppSourceDiscardRequest request, CancellationToken cancellationToken = default)
@@ -91,7 +99,7 @@ internal sealed partial class AppSourceService
             if (pair.Value.Plan.ExpiresAt <= clock.UtcNow) discardReviews.TryRemove(pair.Key, out _);
         if (discardReviews.Count >= 64) throw SourceError("source_reviews_busy", "Too many pending source reviews; retry after they expire.");
         var selected = ValidateSelection(request.Paths);
-        var status = await GetWorktreeStatusAsync(appId, cancellationToken);
+        var status = await ReadWorktreeStatusAsync(appId, cancellationToken);
         var fingerprint = await DiscardFingerprintAsync(status, selected, cancellationToken);
         var files = selected.Select(path => RequireChangedFile(status, path)).ToArray();
         var plan = new AppSourceDiscardPlan(appId, Convert.ToHexString(RandomNumberGenerator.GetBytes(24)), status.Head!,
@@ -112,7 +120,7 @@ internal sealed partial class AppSourceService
             if (!discardReviews.TryRemove(request.ReviewId, out _))
                 throw SourceError("source_review_expired", "This source review was already used.");
             var selected = review.Plan.Files.Select(file => file.Path).ToArray();
-            var current = await GetWorktreeStatusAsync(appId, cancellationToken);
+            var current = await ReadWorktreeStatusAsync(appId, cancellationToken);
             var fingerprint = await DiscardFingerprintAsync(current, selected, cancellationToken);
             if (fingerprint != review.Fingerprint)
                 throw SourceError("source_review_stale", "Selected files, Git state or source location changed. Review the changes again; nothing was discarded.");
@@ -240,12 +248,16 @@ internal sealed partial class AppSourceService
     }
 
     private static async Task<ProcessRunResult> WorktreeGitAsync(string scope, IReadOnlyList<string> args, CancellationToken cancellationToken,
-        bool allowFailure = false, int limit = MaxGitOutput)
+        bool allowFailure = false, int limit = MaxGitOutput, Encoding? outputEncoding = null, string? indexPath = null)
     {
         var start = CreateGitStartInfo(scope, ["--literal-pathspecs", "-c", "core.fsmonitor=false", "-c", "core.quotePath=false", .. args]);
+        if (outputEncoding is not null) start.StandardOutputEncoding = outputEncoding;
         foreach (var key in new[] { "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT" })
             start.Environment.Remove(key);
+        // Only internal callers supply an isolated index; inherited overrides remain stripped.
+        if (indexPath is not null) start.Environment["GIT_INDEX_FILE"] = indexPath;
         start.Environment["GIT_OPTIONAL_LOCKS"] = "0";
+        start.Environment["GIT_NO_REPLACE_OBJECTS"] = "1";
         ProcessRunResult result;
         try { result = await ProcessRunner.RunAsync(start, TimeSpan.FromSeconds(10), cancellationToken, outputLimit: limit); }
         catch (System.ComponentModel.Win32Exception) { throw SourceError("source_git_unavailable", "Git is unavailable."); }
@@ -257,11 +269,17 @@ internal sealed partial class AppSourceService
     private sealed record DiscardReview(AppSourceDiscardPlan Plan, string Fingerprint);
 }
 
-internal sealed record AppSourceFile(string Path, string Status, bool NewFile, bool CanDiscard);
+internal sealed record AppSourceLineStats(long Additions, long Deletions);
+internal sealed record AppSourceFile(string Path, string Status, bool NewFile, bool CanDiscard,
+    AppSourceLineStats? LineStats = null, bool Binary = false);
 internal sealed record AppSourceStatus(string AppId, string State, string? ScopePath, string? Branch, string? Head,
-    IReadOnlyList<AppSourceFile> Files, bool Truncated, DateTimeOffset ObservedAt, string? Error = null);
+    IReadOnlyList<AppSourceFile> Files, bool Truncated, DateTimeOffset ObservedAt, string? Error = null, AppSourceLineStats? LineStats = null)
+{
+    public int FileCount => Files.Count;
+}
 internal sealed record AppSourceDiffRequest(string Path);
-internal sealed record AppSourceDiff(string Path, string Combined, string Staged, bool Truncated, string? Head, bool NewFile);
+internal sealed record AppSourceDiff(string Path, string Combined, string Staged, bool Truncated, string? Head, bool NewFile,
+    bool Binary = false, AppSourceImagePreview? Image = null);
 internal sealed record AppSourceDiscardRequest(string[] Paths);
 internal sealed record AppSourceDiscardPlan(string AppId, string ReviewId, string Head, string ScopePath, IReadOnlyList<AppSourceFile> Files, DateTimeOffset ExpiresAt);
 internal sealed record AppSourceDiscardApplyRequest(string ReviewId);

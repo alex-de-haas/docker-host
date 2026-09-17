@@ -60,7 +60,8 @@ scope: changes in shared libraries outside the app directory are not included. N
 registry, history, automatic commit, fetch or push is involved.
 
 The administrator-only Dashboard version cell for a live/development app shows the current branch
-with a dotted underline and changed-file count (`No changes` when clean). Its tooltip contains the
+with a dotted underline and an explicit file count (`2 files`, or `No changes` when clean), followed
+by green added-line and red deleted-line totals when available. Its tooltip contains the
 full HEAD, scope and observation time; the hash takes no space in the table. The branch only exposes
 the tooltip; clicking the separate change-count line opens the source dialog. Manifest version remains
 in the source dialog. Other apps
@@ -68,17 +69,75 @@ can open **Inspect source changes** in Source settings. Visible panels refresh e
 on explicit refresh; observations carry their time. A clean result describes files on disk, not an
 uploaded commit, a running process's loaded code or successful hot reload.
 
+Dashboard requests only summary metadata: branch, HEAD, observation time, total changed-file count
+and available aggregate line statistics. It receives no file entries, patches or image bytes.
+Opening the source dialog requests the complete file metadata list, without pagination or a
+fixed file-count cap; each entry contains only its path, status, discard eligibility and line counts.
+Full diff/image requests happen only when a specific file is expanded.
+
 Status distinguishes `none`, `missing`, `no-git`, `clean`, `changes` and `unavailable`. Unborn branches
 have no HEAD; detached HEAD and linked worktrees are supported. No-Git folders have no invented
 clean/dirty state or recovery promise. Failed probes are unavailable, never clean. Results contain
-at most 512 files, with a truncation flag; each Git invocation has a ten-second deadline and bounded
-output. Git paths are literal and no credentials or remote URLs are returned by these reads.
+all observed files, subject to an 8 MiB status/numstat output safety limit, with a truncation flag
+only if that resource limit is reached. Each Git invocation has a ten-second deadline and bounded
+output. File counts are independent of preview loading. Git paths are literal and no credentials
+or remote URLs are returned by these reads.
 
-The source dialog previews a selected file's HEAD-to-working-tree diff and its staged changes
-separately. New untracked text files have a bounded content preview; binary files have a label.
-Previews are limited to 64 KiB/characters per part and mark truncation. Rename detection is disabled:
+Each file row in the source dialog independently expands to show its HEAD-to-working-tree diff
+directly below the filename, with staged changes in a nested disclosure. Multiple files can stay
+expanded; opening or closing a preview does not change its discard checkbox. Previews load on
+expansion and reload when reopened. Loading and error states appear inside the owning file section.
+The diff fills the file card's width without an inset border or its own vertical scrollbar;
+expanded sections grow to their content height and share the dialog body's vertical scrolling.
+Long code lines retain horizontal scrolling. The repository HEAD appears once at the top of the
+dialog. File headers show green added-line and red deleted-line counts from source status,
+including while collapsed and before a preview is requested. The Dashboard uses the same source
+status for aggregate counts. Both compare HEAD with the working tree, exclude context lines and
+do not double-count staged changes. A file whose staged edit was reverted on disk has zero net
+line changes even though its index is still dirty. Files removed with `git rm --cached` but retained
+on disk are compared through a temporary HEAD index, preserving the operator's real index. Binary files have no per-file line counts and
+contribute zero to textual totals. Incomplete/unsupported statistics remain unknown; the Dashboard
+omits an incomplete total and explains this in the branch tooltip.
+
+Core obtains tracked counts in one scoped `git diff --numstat -z` call per non-clean status
+observation, with external diff/text conversion disabled and the existing output/time limits.
+Untracked files, and working-tree files on an unborn branch, are counted as additions using bounded
+regular-file reads: at most 4 MiB per text file, a 16 MiB aggregate read budget (including binary
+probes), and a two-second deadline. POSIX regular-file checks run in batches of 64, with paths
+passed as literal arguments, avoiding a process per new file and rejecting FIFOs before opening.
+Binary NUL bytes stop text counting. Missing final newlines
+count as one final line. The existing 15-second status refresh cadence is unchanged; opening
+previews and validating discard plans use status without computing statistics again. A truncated
+file list never exposes its partial sum as a complete total.
+Shell lazily loads `@pierre/diffs` in the browser for a single-column preview with
+line numbers, red deletions, green additions and syntax highlighting, using the Shell's light/dark
+theme. New untracked text files appear as additions; binary files have a label. Oversized patches
+return only a truncation marker with no partial patch payload; Shell shows a
+clear message directing the operator to an editor or Git client, without mounting the diff viewer.
+Unparseable complete patches retain a plain-text fallback.
+Text previews allow up to 4,194,304 decoded characters per Git patch part, or 4 MiB of raw
+untracked contents, and mark truncation beyond that bound. This protects response size and browser
+parsing without cutting off ordinary documents of several hundred kilobytes. Binary detection is
+independent of size: tracked files follow Git's binary classification; untracked previews detect
+NUL bytes in the inspected contents. Rename detection is disabled:
 a rename appears as the old path's deletion and the new path's addition, so each path is explicit.
 Symlinks, submodule directories and special files cannot be previewed through this panel.
+
+PNG, JPEG, GIF and WebP paths render image previews instead of text diffs. Core returns the
+HEAD version (Before) and the working-tree version (After), or only the existing side for an
+addition/deletion. Each version is limited to 4 MiB, identified by its raster signature and
+encoded inline in the existing authenticated diff response. Missing, oversized, unsupported or
+undecodable versions have an explanatory message. Binary files without an image preview display
+“Binary file — a preview is not available for this format. Open it locally to view its contents.”
+instead of a misleading text-truncation warning. Images have no line counts or pixel comparison.
+
+Image reads accept only an exact entry from the current scoped change list. The client cannot
+choose an absolute filesystem path, Git revision or object ID. Core checks the canonical app
+scope and regular-file path, rejects symlinks and special files, and accepts only regular blobs
+from its observed HEAD. Git paths remain literal; Git reads have bounded output and deadlines.
+No public image/file-download endpoint or image optimizer is involved, and SVG/HTML is never
+returned as an image. These checks share the existing trusted-local-worktree boundary: they
+do not sandbox a malicious local process racing filesystem changes or controlling Git storage.
 
 **Select all** above the file list selects/deselects all eligible files and shows a mixed state for
 partial selection. After status refreshes, review requests and counts include only currently discardable
@@ -104,8 +163,9 @@ Browser API routes under `/api/apps/{appId}/source`:
 
 | Method and suffix | Purpose |
 | --- | --- |
-| `GET /status` | Bounded scoped source/Git observation |
-| `POST /diff` | Preview a currently changed `path` |
+| `GET /summary` | Dashboard observation with file count and line totals, without a file list or previews |
+| `GET /status` | Complete scoped file metadata list and summary for the source dialog, subject to resource limits |
+| `POST /diff` | Preview a currently changed `path` as text, bounded raster image sides or a binary-file message |
 | `POST /discard/plan` | Review explicit `paths` and return an opaque `reviewId` |
 | `POST /discard` | Apply that `reviewId` once after revalidation |
 
@@ -186,6 +246,26 @@ Shell also exposes Hosty Shell runtime switching in the Installed Apps System Ap
   unrelated staging, and handles literal filenames, renamed files and cached deletions.
 - Browser source routes reject non-admin sessions and missing CSRF; trusted control routes require
   the control secret. Large child-process outputs are drained with bounded retention.
+- Text preview coverage includes complete documents above the former 64 KiB limit and tracked/
+  untracked content above the 4 MiB/character limit returning a marker with no partial payload.
+- Shell preview coverage includes tracked and staged patches, untracked text (including patch-like
+  contents), empty and binary files, missing final newlines, and truncated or malformed patches.
+  Verify independent file expansion/collapse, reopening, and discard-checkbox independence through
+  Core-managed Shell in the browser.
+- Image previews cover added/staged, modified and deleted images, exact binary round trips from
+  HEAD, nested app scopes, literal names, format detection, both-side size limits and disguised
+  active content. Unauthorized sessions, absent CSRF, unlisted/ignored/unchanged files, traversal,
+  filesystem symlinks and deleted Git symlinks must not expose source bytes. Shell accepts only
+  inline raster data URLs and reports unsupported binary formats, including older Core responses.
+- Source statistics cover staged/unstaged cancellation, untracked and unborn text, binary files,
+  missing final newlines, scoped paths with tabs/newlines, deleted files, large text limits and
+  symlink/FIFO rejection and literal shell syntax in paths. File headers show counts before
+  expansion; Dashboard distinguishes changed
+  file count from added/deleted line totals, and never presents unknown totals as zero.
+- Lists beyond 512 files retain all observed entries and exact file counts, and their last files
+  remain previewable/reviewable. Summary serialization contains neither file paths nor previews;
+  summary routes enforce administrator/control-secret authorization. Verify a large list in the
+  Core-managed dialog while Dashboard continues to request summary metadata only.
 - Core-managed Shell verification: edit a clean Demo App source file, see the changed title in the
   embedded app, inspect its diff, review/discard that file, verify clean scoped status and the original
   title. This verifies source operations, not assistant execution grants or app-role identity.

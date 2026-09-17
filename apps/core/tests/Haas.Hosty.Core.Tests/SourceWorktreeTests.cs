@@ -260,15 +260,40 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Fact]
-    public async Task Worktree_TruncatesLargeChangeListsAndDiffs()
+    public async Task Worktree_KeepsCompleteFileLists()
     {
         var (fixture, repository) = await SourceFixtureAsync();
-        await File.WriteAllTextAsync(Path.Combine(repository, "README.md"), new string('x', 100_000));
-        Assert.True((await fixture.Sources.GetWorktreeDiffAsync(SourceTestApp, new("README.md"))).Truncated);
+        await File.WriteAllTextAsync(Path.Combine(repository, "README.md"), new string('x', 300_000));
+        Assert.False((await fixture.Sources.GetWorktreeDiffAsync(SourceTestApp, new("README.md"))).Truncated);
         for (var index = 0; index < 520; index++) await File.WriteAllTextAsync(Path.Combine(repository, $"new-{index}.txt"), "new");
         var status = await fixture.Sources.GetWorktreeStatusAsync(SourceTestApp);
-        Assert.True(status.Truncated);
-        Assert.Equal(512, status.Files.Count);
-        await Assert.ThrowsAsync<AppLifecycleException>(() => fixture.Sources.PlanDiscardAsync(SourceTestApp, new(["README.md"])));
+        Assert.False(status.Truncated);
+        Assert.Equal(521, status.Files.Count);
+        Assert.Equal("README.md", Assert.Single((await fixture.Sources.PlanDiscardAsync(SourceTestApp, new(["README.md"]))).Files).Path);
+    }
+
+    [Theory]
+    [InlineData(false, 300_000, false)]
+    [InlineData(true, 300_000, false)]
+    [InlineData(false, 5 * 1024 * 1024, true)]
+    [InlineData(true, 5 * 1024 * 1024, true)]
+    public async Task Worktree_PreviewsLargeDocumentsButBoundsMultiMegabyteText(bool untracked, int size, bool truncated)
+    {
+        var (fixture, repository) = await SourceFixtureAsync();
+        var path = untracked ? "new-document.md" : "README.md";
+        var contents = string.Concat(Enumerable.Repeat("Document paragraph with text.\n", size / 29)) + "END OF DOCUMENT\n";
+        await File.WriteAllTextAsync(Path.Combine(repository, path), contents);
+
+        var diff = await fixture.Sources.GetWorktreeDiffAsync(SourceTestApp, new(path));
+
+        Assert.Equal(truncated, diff.Truncated);
+        Assert.False(diff.Binary);
+        Assert.True(diff.Combined.Length <= 4 * 1024 * 1024);
+        if (truncated)
+        {
+            Assert.Empty(diff.Combined);
+            Assert.Empty(diff.Staged);
+        }
+        else Assert.Contains("END OF DOCUMENT", diff.Combined);
     }
 }

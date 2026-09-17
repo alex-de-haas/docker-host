@@ -226,6 +226,7 @@ internal static class CoreJson
 [JsonSerializable(typeof(AuthRecoveryCompleteResponse))]
 [JsonSerializable(typeof(AuthBootstrapTokenResponse))]
 [JsonSerializable(typeof(AppSourceStatus))]
+[JsonSerializable(typeof(AppSourceSummary))]
 [JsonSerializable(typeof(AppSourceDiff))]
 [JsonSerializable(typeof(AppSourceDiffRequest))]
 [JsonSerializable(typeof(AppSourceDiscardRequest))]
