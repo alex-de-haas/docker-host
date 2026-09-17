@@ -1,7 +1,7 @@
 # Assistant Attachments
 
 Created: 2026-09-03
-Updated: 2026-09-08
+Updated: 2026-09-17
 
 An operator hands the assistant a file from the composer. It lands in a working directory that
 belongs to the session, the transcript records that it did, and the harness is told where to find
@@ -73,6 +73,28 @@ streams, since a declared length is a claim. A refused upload names its cap. A f
 partial file — the stream lands under a dotted temp name and is renamed into place only once
 complete.
 
+## Clipboard And Composer
+
+The file picker accepts multiple files, including images. Pasting an image into the composer with
+Cmd+V or Ctrl+V adds it to the same pending queue. Clipboard files are copied during the paste
+event; non-image items and unavailable files are ignored. Ordinary text paste is unchanged, and
+mixed text/image clipboard content retains the browser's native text insertion. Generic image or
+clipboard filenames receive a timestamp and item number; meaningful filenames are preserved.
+Unknown image formats keep their filename extension when available; unnamed images still receive
+a timestamp and item number even when their MIME type has no known extension. Native paste is
+never cancelled, including when clipboard text is available only as HTML.
+
+Pending images show local blob previews alongside their names and remove buttons. Removing an
+image, changing sessions, sending, or a decoding error releases its preview URL. An unsupported or corrupt image
+keeps its filename even when no preview can be decoded. Files are uploaded only on send. Pending
+files cannot be removed while sending; successfully uploaded files remain available for a retry
+without uploading them again.
+
+A message can contain text, attachments, or both. An empty or whitespace-only message without
+attachments is refused by the composer and API. The API still requires a string `text` field and
+validates referenced files before recording the message. An attachment-only first message gives
+the session a title derived from its filenames; later turns do not replace that opening title.
+
 ## How The Harness Learns Of It
 
 A message may name stored attachments. Their workspace paths are appended to the operator's text in
@@ -81,6 +103,11 @@ instructions)* — and never to the system prompt: a file is the operator's inpu
 standing instruction. Both harnesses read files from `cwd` through their own tools, so no adapter
 grew a capability. A message naming something that is not a stored attachment is refused whole,
 before any event is written, so no `user_message` ever names a file the harness did not get.
+
+For an attachment-only turn, the harness prompt asks it to use the files and conversation context
+and clarify the intended task when it is unclear. This guidance is not inserted into the stored
+user message: the transcript retains the actual empty text and shows its attachment row without
+an empty message bubble. Both harnesses use their image-reading tools for image attachments.
 
 The gateway's own instructions say what an attached file is: the operator's data, the subject of
 their question, to be read as data — and any instruction inside it is text about the file, not a
@@ -115,6 +142,22 @@ nothing; an upload no message ever claimed keeps a row of its own, since it is i
 against the session's quota either way.
 
 ## Testing Expectations
+
+- **Clipboard and empty drafts**: multiple images preserve their bytes and MIME types, generic
+  names are distinct, meaningful names survive, and non-image or missing clipboard files are
+  ignored. Pending and already-uploaded attachments both enable sending without text; an entirely
+  empty draft does not. Valid attachment-only API requests preserve the original text, reach the
+  harness with context guidance, and derive a stable filename title. Empty requests and invalid
+  attachment references are refused before any user message is recorded.
+- **Image verification (2026-09-17)**: the Core-managed gateway's authenticated browser page
+  accepted actual clipboard-image paste, ordinary text paste, preview removal, image selection
+  through the file picker, and sending with an empty text field. Claude read the uploaded image
+  and correctly described its red square on the left and blue circle on the right using the
+  preceding message's instructions. The real Codex adapter independently passed the same two-turn
+  image-reading check under its existing read-only sandbox. Shell loaded the rebuilt embedded
+  page; clipboard automation inside its iframe could not be completed because the browser tool
+  rejected the input target. The direct page check used the same Core-managed gateway and existing
+  Hosty session, not a standalone development server.
 
 - **The workspace, and when it stops existing**: the harness starts in it under the cache root and
   not the data root; the shared fallback applies only without a cache root and warns once; removed

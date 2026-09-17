@@ -30,6 +30,29 @@ export function takeChosenFiles(input: Pick<HTMLInputElement, "files" | "value">
   return chosen;
 }
 
+/** Copy clipboard files synchronously, before the browser releases the paste event's data. */
+export function takePastedImages(data: Pick<DataTransfer, "items">, now = new Date()): File[] {
+  const images: File[] = [];
+  for (const item of Array.from(data.items)) {
+    if (item.kind !== "file" || !item.type.startsWith("image/")) continue;
+    const file = item.getAsFile();
+    if (!file) continue;
+    const extension = ({ "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif",
+      "image/webp": "webp", "image/avif": "avif", "image/bmp": "bmp", "image/svg+xml": "svg" } as Record<string, string>)[file.type]
+      ?? file.name.match(/\.([a-z0-9]+)$/i)?.[1];
+    const genericName = !file.name || /^(?:image|clipboard)(?:\.[a-z0-9]+)?$/i.test(file.name);
+    const name = genericName
+      ? `Screenshot-${now.toISOString().replace(/[:.]/g, "-")}-${images.length + 1}${extension ? `.${extension}` : ""}`
+      : file.name;
+    images.push(new File([file], name, { type: file.type, lastModified: file.lastModified }));
+  }
+  return images;
+}
+
+export function hasMessageContent(text: string, pendingCount: number, uploadedCount: number): boolean {
+  return Boolean(text.trim()) || pendingCount > 0 || uploadedCount > 0;
+}
+
 /**
  * Which uploaded file belongs to which message, and how big each one was.
  *

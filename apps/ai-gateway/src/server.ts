@@ -451,15 +451,15 @@ async function route(
 
   if (rest === "/messages" && method === "POST") {
     const body = await readJson(request);
-    if (typeof body.text !== "string" || !body.text.trim()) {
-      sendJson(response, 400, { code: "text_required", message: "A non-empty text field is required." });
-      return;
-    }
     // Stored names only — the manager resolves each to a workspace path and refuses any that is
     // not one, before the message is written anywhere.
     const attachments = Array.isArray(body.attachments)
       ? body.attachments.filter((name): name is string => typeof name === "string").slice(0, 20)
       : [];
+    if (typeof body.text !== "string" || (!body.text.trim() && attachments.length === 0)) {
+      sendJson(response, 400, { code: "text_required", message: "Provide text or at least one attachment; text must be a string." });
+      return;
+    }
     try {
       // The presented token seeds the session's delegation chain; see SessionManager.postMessage.
       await manager.postMessage(sessionId, body.text, readBearer(request), attachments, { expectedRevision: body.appContextRevision, withoutDetails: body.withoutAppDetails === true });

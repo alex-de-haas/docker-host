@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Alert, InlineError, StatusBadge } from "@/components/status";
 import { Markdown } from "@/components/markdown";
 import { SessionList } from "@/components/session-list";
-import { indexAttachments, takeChosenFiles } from "@/lib/attachments";
+import { hasMessageContent, indexAttachments, takeChosenFiles, takePastedImages } from "@/lib/attachments";
 import { TranscriptEvent, type ApprovalDecision } from "@/components/transcript";
 import { establishSession } from "@/lib/api";
 import { composeAskDraft } from "@/lib/ask-draft";
@@ -374,7 +374,7 @@ export default function AssistantPage() {
 
   const send = useCallback(async () => {
     const trimmed = input.trim();
-    if (!trimmed || !session || sending) {
+    if (!hasMessageContent(trimmed, pending.length, uploaded.length) || !session || sending) {
       return;
     }
     setSending(true);
@@ -640,11 +640,12 @@ export default function AssistantPage() {
               ))}
               {pending.map((file, index) => (
                 <span key={`${file.name}-${index}`} className="inline-flex max-w-[16rem] items-center gap-1 rounded border px-1.5 py-0.5">
-                  <Paperclip className="h-3 w-3 shrink-0" aria-hidden />
+                  {file.type.startsWith("image/") ? <PendingImagePreview file={file} /> : <Paperclip className="h-3 w-3 shrink-0" aria-hidden />}
                   <span className="truncate">{file.name}</span>
                   <button
                     type="button"
                     aria-label={`Remove ${file.name}`}
+                    disabled={sending}
                     className="text-muted-foreground hover:text-foreground"
                     onClick={() => setPending((current) => current.filter((_, i) => i !== index))}
                   >
@@ -665,6 +666,12 @@ export default function AssistantPage() {
               ref={composerRef}
               value={input}
               onChange={(event) => setInput(event.target.value)}
+              onPaste={(event) => {
+                // Leave native paste intact for every text flavor, including HTML-only clipboards.
+                const images = takePastedImages(event.clipboardData);
+                if (images.length === 0) return;
+                setPending((current) => [...current, ...images]);
+              }}
               onKeyDown={(event) => {
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
@@ -700,7 +707,7 @@ export default function AssistantPage() {
             >
               <Paperclip />
             </Button>
-            <Button type="submit" size="icon" disabled={!session || sending || !input.trim()} aria-label="Send">
+            <Button type="submit" size="icon" disabled={!session || sending || !hasMessageContent(input, pending.length, uploaded.length)} aria-label="Send">
               {sending ? <Loader2 className="animate-spin" /> : <Send />}
             </Button>
           </form>
@@ -708,6 +715,24 @@ export default function AssistantPage() {
       )}
     </div>
   );
+}
+
+function PendingImagePreview({ file }: { file: File }) {
+  const imageRef = useRef<HTMLImageElement>(null);
+  useEffect(() => {
+    const image = imageRef.current;
+    if (!image) return;
+    const url = URL.createObjectURL(file);
+    image.hidden = false;
+    image.src = url;
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+  // Local blobs never go through the server image optimizer. The filename remains if decoding fails.
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img ref={imageRef} alt={`Preview of ${file.name}`} className="h-16 w-16 shrink-0 rounded object-contain" onError={event => {
+    URL.revokeObjectURL(event.currentTarget.src);
+    event.currentTarget.hidden = true;
+  }} />;
 }
 
 // The history the Shell panel never had: closing it used to be the only way back to a previous

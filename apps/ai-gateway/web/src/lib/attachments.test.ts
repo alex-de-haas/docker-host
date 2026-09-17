@@ -1,5 +1,56 @@
 import { describe, expect, it } from "vitest";
-import { indexAttachments, takeChosenFiles } from "./attachments";
+import { hasMessageContent, indexAttachments, takeChosenFiles, takePastedImages } from "./attachments";
+
+describe("clipboard images", () => {
+  const clipboard = (entries: Array<{ kind: string; type: string; getAsFile(): File | null }>) =>
+    ({ items: entries as unknown as DataTransferItemList });
+  const item = (file: File) => ({ kind: "file", type: file.type, getAsFile: () => file });
+
+  it("copies multiple images with distinct readable names and preserves their bytes and types", async () => {
+    const files = takePastedImages(clipboard([
+      item(new File(["first"], "image.png", { type: "image/png" })),
+      item(new File(["second"], "clipboard.png", { type: "image/png" })),
+    ]), new Date("2026-09-17T12:00:00Z"));
+    expect(files.map(file => file.name)).toEqual([
+      "Screenshot-2026-09-17T12-00-00-000Z-1.png", "Screenshot-2026-09-17T12-00-00-000Z-2.png",
+    ]);
+    expect(await Promise.all(files.map(file => file.text()))).toEqual(["first", "second"]);
+    expect(files.every(file => file.type === "image/png")).toBe(true);
+  });
+
+  it.each(["text/plain", "text/html"])("keeps meaningful filenames and extracts only images alongside %s", (type) => {
+    const text = { kind: "string", type, getAsFile: () => null };
+    const missing = { kind: "file", type: "image/png", getAsFile: () => null };
+    const photo = new File(["photo"], "diagram.jpg", { type: "image/jpeg" });
+    expect(takePastedImages(clipboard([text, missing, item(new File(["log"], "log.txt", { type: "text/plain" })), item(photo)]))
+      .map(file => file.name)).toEqual(["diagram.jpg"]);
+    expect(takePastedImages(clipboard([text, missing]))).toEqual([]);
+    expect(takePastedImages(clipboard([]))).toEqual([]);
+  });
+
+  it("timestamp-names unknown image formats and unnamed images without inventing an extension", () => {
+    const files = takePastedImages(clipboard([
+      item(new File(["heic"], "image.heic", { type: "image/heic" })),
+      item(new File(["unknown"], "", { type: "image/unknown" })),
+      item(new File(["known"], "", { type: "image/jpeg" })),
+    ]), new Date("2026-09-17T12:00:00Z"));
+    expect(files.map(file => file.name)).toEqual([
+      "Screenshot-2026-09-17T12-00-00-000Z-1.heic",
+      "Screenshot-2026-09-17T12-00-00-000Z-2",
+      "Screenshot-2026-09-17T12-00-00-000Z-3.jpg",
+    ]);
+    expect(files.map(file => file.type)).toEqual(["image/heic", "image/unknown", "image/jpeg"]);
+  });
+});
+
+describe("message content", () => {
+  it("enables file-only sends, including a retry after uploads, but refuses entirely empty drafts", () => {
+    expect(hasMessageContent(" \n", 0, 0)).toBe(false);
+    expect(hasMessageContent("", 1, 0)).toBe(true);
+    expect(hasMessageContent("", 0, 1)).toBe(true);
+    expect(hasMessageContent("hello", 0, 0)).toBe(true);
+  });
+});
 
 describe("takeChosenFiles", () => {
   it("returns the selection and resets the input, in that order", () => {
