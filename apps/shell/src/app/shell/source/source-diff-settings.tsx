@@ -1,5 +1,7 @@
 "use client";
 
+import { useId } from "react";
+import { Label } from "@/components/ui/label";
 import { AlignLeft, ChevronDown, Columns2, ListOrdered, Rows2, WrapText } from "lucide-react";
 import type { FileDiffOptions } from "@pierre/diffs/react";
 import { Button } from "@/components/ui/button";
@@ -29,6 +31,7 @@ export function SourceDiffToolbar({ settings, onChange }: {
   settings: SourceDiffSettings;
   onChange: (settings: SourceDiffSettings) => void;
 }) {
+  const id = useId();
   const update = (patch: Partial<SourceDiffSettings>) => onChange({ ...settings, ...patch });
   return <div role="group" aria-label="Diff display settings" className="flex flex-wrap items-center gap-2">
     <div role="group" aria-label="Diff layout" className="flex gap-0.5 rounded-md bg-muted p-0.5">
@@ -60,8 +63,8 @@ export function SourceDiffToolbar({ settings, onChange }: {
         </DropdownMenuRadioGroup>
       </DropdownMenuContent>
     </DropdownMenu>
-    <label className="flex h-8 cursor-pointer items-center gap-2 rounded-md border bg-background px-2.5 text-sm shadow-xs"><AlignLeft className="size-4" />Backgrounds<Switch size="sm" aria-label="Diff backgrounds" checked={!settings.disableBackground} onCheckedChange={(checked) => update({ disableBackground: !checked })} /></label>
-    <label className="flex h-8 cursor-pointer items-center gap-2 rounded-md border bg-background px-2.5 text-sm shadow-xs"><WrapText className="size-4" />Wrapping<Switch size="sm" aria-label="Wrap diff lines" checked={settings.overflow === "wrap"} onCheckedChange={(checked) => update({ overflow: checked ? "wrap" : "scroll" })} /></label>
-    <label className="flex h-8 cursor-pointer items-center gap-2 rounded-md border bg-background px-2.5 text-sm shadow-xs"><ListOrdered className="size-4" />Line numbers<Switch size="sm" aria-label="Diff line numbers" checked={!settings.disableLineNumbers} onCheckedChange={(checked) => update({ disableLineNumbers: !checked })} /></label>
+    <div className="flex h-8 items-center gap-2 rounded-md border bg-background px-2.5 text-sm shadow-xs"><Label htmlFor={`${id}-backgrounds`} className="cursor-pointer gap-2"><AlignLeft className="size-4" />Backgrounds</Label><Switch id={`${id}-backgrounds`} size="sm" aria-label="Diff backgrounds" checked={!settings.disableBackground} onCheckedChange={(checked) => update({ disableBackground: !checked })} /></div>
+    <div className="flex h-8 items-center gap-2 rounded-md border bg-background px-2.5 text-sm shadow-xs"><Label htmlFor={`${id}-wrapping`} className="cursor-pointer gap-2"><WrapText className="size-4" />Wrapping</Label><Switch id={`${id}-wrapping`} size="sm" aria-label="Wrap diff lines" checked={settings.overflow === "wrap"} onCheckedChange={(checked) => update({ overflow: checked ? "wrap" : "scroll" })} /></div>
+    <div className="flex h-8 items-center gap-2 rounded-md border bg-background px-2.5 text-sm shadow-xs"><Label htmlFor={`${id}-numbers`} className="cursor-pointer gap-2"><ListOrdered className="size-4" />Line numbers</Label><Switch id={`${id}-numbers`} size="sm" aria-label="Diff line numbers" checked={!settings.disableLineNumbers} onCheckedChange={(checked) => update({ disableLineNumbers: !checked })} /></div>
   </div>;
 }

@@ -89,8 +89,8 @@ expanded; opening or closing a preview does not change its discard checkbox. Pre
 expansion and reload when reopened. Loading and error states appear inside the owning file section.
 The diff fills the file card's width without an inset border or its own vertical scrollbar;
 expanded sections grow to their content height and share the dialog body's vertical scrolling.
-Long code lines retain horizontal scrolling. The repository HEAD appears once at the top of the
-dialog. File headers show green added-line and red deleted-line counts from source status,
+Long code lines wrap by default and scroll horizontally when wrapping is disabled. The repository
+HEAD appears once at the top of the dialog. File headers show green added-line and red deleted-line counts from source status,
 including while collapsed and before a preview is requested. The Dashboard uses the same source
 status for aggregate counts. Both compare HEAD with the working tree, exclude context lines and
 do not double-count staged changes. A file whose staged edit was reverted on disk has zero net
