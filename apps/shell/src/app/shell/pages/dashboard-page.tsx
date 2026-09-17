@@ -21,6 +21,7 @@ import {
   LoaderCircle,
   Lock,
   MoreHorizontal,
+  Package,
   Play,
   Plus,
   Radio,
@@ -499,6 +500,7 @@ function CoreSection({
             <TableCell><span className="sr-only">Not applicable</span></TableCell>
             <TableCell>
               <div className="flex items-center gap-1.5">
+                <Package aria-hidden="true" className="size-3.5 shrink-0" />
                 <CoreVersionBlock status={status} coreUpdate={coreUpdate} />
                 {showUpdate && (
                   <Button
@@ -641,29 +643,6 @@ function AppServiceDetailsPanel({
       {problems.map((problem) => (
         <Alert key={problem.title} severity={problem.severity} title={problem.title} detail={problem.detail} />
       ))}
-      {app.live && (
-        <div className="space-y-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-xs">
-          <div className="flex items-center gap-1.5 font-medium text-emerald-700 dark:text-emerald-300">
-            <Radio className="h-3.5 w-3.5" />
-            Live source runtime
-          </div>
-          <p className="text-muted-foreground">
-            Core runs this app from your source folder and adopts manifest edits on restart — there is no reviewed update. Switch to a compiled runtime for locked, reviewed updates.
-          </p>
-          {/* The manifest error is raised as a top-level alert (and a row icon) instead, so it is not
-              repeated here. */}
-          {app.liveChanges && app.liveChanges.length > 0 && (
-            <div className="text-muted-foreground">
-              <span className="text-[11px] uppercase tracking-wide">Adopted at last start</span>
-              <ul className="mt-1 list-disc space-y-0.5 pl-4">
-                {app.liveChanges.map((change) => (
-                  <li key={change}>{formatUpdateChange(change)}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      )}
       {healthLoading && (
         <div className="flex flex-wrap items-center gap-2 rounded-md bg-muted/30 px-2 py-1.5">
           <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -1359,6 +1338,7 @@ function AppVersionCell({
   return (
     <TooltipProvider delayDuration={150}>
       <div className="flex items-center gap-1.5" title={updateCheckDescription(verdict)}>
+        <Package aria-hidden="true" className="size-3.5 shrink-0" />
         <div className="min-w-0 space-y-0.5 leading-tight">
           <div>
             <VersionLine
@@ -1529,9 +1509,28 @@ function RuntimeSwitcher({
     <div className="flex min-w-0 flex-wrap items-center gap-x-1">
       <span className="min-w-0 truncate font-mono text-sm">{currentRuntime}</span>
       {development && (
-        <span className="inline-flex shrink-0 text-emerald-600 dark:text-emerald-400" role="img" aria-label="Live source runtime" title="Development profile: runs from editable source. Reload behavior depends on its commands; manifest changes require restart.">
-          <Radio className="h-3.5 w-3.5" />
-        </span>
+        <TooltipProvider delayDuration={150}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span tabIndex={0} className="inline-flex shrink-0 cursor-help text-emerald-600 dark:text-emerald-400" role="img" aria-label="Live source runtime">
+                <Radio aria-hidden="true" className="size-3.5" />
+              </span>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-sm">
+              <div className="flex flex-col gap-2">
+                <p className="font-medium">Live source runtime</p>
+                <p>Core runs this app from your source folder and adopts manifest edits on restart — there is no reviewed update. Switch to a compiled runtime for locked, reviewed updates.</p>
+                <p>Reload behavior depends on the runtime commands.</p>
+                {app.liveChanges && app.liveChanges.length > 0 && <div>
+                  <p className="font-medium">Adopted at last start</p>
+                  <ul className="mt-1 flex list-disc flex-col gap-0.5 pl-4">
+                    {app.liveChanges.map((change) => <li key={change}>{formatUpdateChange(change)}</li>)}
+                  </ul>
+                </div>}
+              </div>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       )}
       {switchable && <DropdownMenu>
         <DropdownMenuTrigger asChild>
