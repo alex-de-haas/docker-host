@@ -104,7 +104,13 @@ console logs, and settings — as icon buttons, and the row's overflow menu list
 supports, the lifecycle verbs included. The menu is the complete, named set; the icons are a subset of
 it, so an action is never only in one place. Version strings — each app's, and Core's — render
 monospaced so the digits line up down the column, and Core's version is printed bare, without a `v`
-prefix, in the same shape as an app's.
+prefix, in the same shape as an app's. Core and non-development apps show one package icon before
+their version block, vertically centered across the installed and available versions when both
+are present; development apps show their Git branch icon instead. The live-source icon beside the
+runtime exposes the full explanation and last adopted manifest changes in a hover/focus tooltip,
+without a repeated informational banner in the expanded service details.
+The tooltip distinguishes an active live-source runtime from a selected development profile whose
+source is not active; only the active live state says reviewed updates are unavailable.
 
 ### Secret settings
 
