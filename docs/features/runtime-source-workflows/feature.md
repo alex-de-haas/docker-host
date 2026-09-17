@@ -109,9 +109,16 @@ Binary NUL bytes stop text counting. Missing final newlines
 count as one final line. The existing 15-second status refresh cadence is unchanged; opening
 previews and validating discard plans use status without computing statistics again. A truncated
 file list never exposes its partial sum as a complete total.
-Shell lazily loads `@pierre/diffs` in the browser for a single-column preview with
-line numbers, red deletions, green additions and syntax highlighting, using the Shell's light/dark
-theme. New untracked text files appear as additions; binary files have a label. Oversized patches
+Shell lazily loads `@pierre/diffs` in the browser for previews with syntax highlighting, using
+the Shell's light/dark theme. A shared display toolbar controls unified/split layout, bars/classic/no
+change markers, word-alt/word/character/no inline highlighting, unchanged-line separators
+(Line Info Basic, Line Info, Metadata or Simple), change backgrounds, line wrapping
+and line numbers. It applies to all expanded files and their staged previews without refetching
+patches. Each dialog starts with unified layout, bars, word-alt highlighting, Line Info Basic separators, backgrounds, wrapping
+and line numbers enabled; settings last until the dialog closes. File cards still share the dialog's
+vertical scroll area. The dialog fills the viewport on narrow screens; on desktop it leaves a
+16 px margin on each edge. Its header and footer stay visible while the body scrolls.
+New untracked text files appear as additions; binary files have a label. Oversized patches
 return only a truncation marker with no partial patch payload; Shell shows a
 clear message directing the operator to an editor or Git client, without mounting the diff viewer.
 Unparseable complete patches retain a plain-text fallback.
@@ -252,6 +259,9 @@ Shell also exposes Hosty Shell runtime switching in the Installed Apps System Ap
   contents), empty and binary files, missing final newlines, and truncated or malformed patches.
   Verify independent file expansion/collapse, reopening, and discard-checkbox independence through
   Core-managed Shell in the browser.
+- Verify the shared diff display controls in both Shell themes: unified/split, marker and inline
+  highlighting modes, unchanged-line separator styles, backgrounds, wrapping and line numbers. Settings affect combined and staged
+  previews without new diff requests, and reset when the dialog is reopened.
 - Image previews cover added/staged, modified and deleted images, exact binary round trips from
   HEAD, nested app scopes, literal names, format detection, both-side size limits and disguised
   active content. Unauthorized sessions, absent CSRF, unlisted/ignored/unchanged files, traversal,

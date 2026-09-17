@@ -5,6 +5,7 @@ import { preloadHighlighter } from "@pierre/diffs";
 import { FileDiff, type FileDiffOptions } from "@pierre/diffs/react";
 import { useTheme } from "next-themes";
 import { prepareSourceDiff, type SourceDiffInput } from "./source-diff-data";
+import type { SourceDiffSettings } from "./source-diff-settings";
 
 const diffStyle = {
   "--diffs-font-family": "var(--font-mono)",
@@ -12,7 +13,7 @@ const diffStyle = {
   "--diffs-line-height": "20px",
 } as CSSProperties;
 
-export default function SourceDiffView({ path, content, untracked, truncated }: SourceDiffInput) {
+export default function SourceDiffView({ path, content, untracked, truncated, settings }: SourceDiffInput & { settings: SourceDiffSettings }) {
   const { resolvedTheme } = useTheme();
   const [highlighter, setHighlighter] = useState<"loading" | "ready" | "failed">("loading");
   useEffect(() => {
@@ -26,14 +27,11 @@ export default function SourceDiffView({ path, content, untracked, truncated }: 
   }, []);
   const preview = useMemo(() => prepareSourceDiff({ path, content, untracked, truncated }), [path, content, untracked, truncated]);
   const options = useMemo<FileDiffOptions<undefined, undefined>>(() => ({
-    diffStyle: "unified",
-    diffIndicators: "classic",
+    ...settings,
     theme: { light: "pierre-light", dark: "pierre-dark" },
     themeType: resolvedTheme === "dark" ? "dark" : "light",
     disableFileHeader: true,
-    overflow: "scroll",
-    hunkSeparators: "metadata",
-  }), [resolvedTheme]);
+  }), [resolvedTheme, settings]);
 
   if (preview.kind === "text") return <div className="space-y-2">
     <p className="px-3 py-2 text-xs text-muted-foreground">{preview.message}</p>

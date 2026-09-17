@@ -11,6 +11,7 @@ import { useShellActions, useShellState } from "../shell-context";
 import type { CoreApp } from "../types";
 import { isBinarySourceDiff, type SourceDiff, type SourceLineStats } from "./source-preview-data";
 import SourceImageView from "./source-image-view";
+import { defaultSourceDiffSettings, SourceDiffToolbar, type SourceDiffSettings } from "./source-diff-settings";
 
 const SourceDiffView = dynamic(() => import("./source-diff-view"), {
   ssr: false,
@@ -127,7 +128,7 @@ function LineCounts({ stats }: { stats: SourceLineStats }) {
   </span>;
 }
 
-function SourceFilePreview({ endpoint, path, untracked }: { endpoint: string; path: string; untracked: boolean }) {
+function SourceFilePreview({ endpoint, path, untracked, settings }: { endpoint: string; path: string; untracked: boolean; settings: SourceDiffSettings }) {
   const { sendCsrfJson } = useShellActions();
   const [diff, setDiff] = useState<SourceDiff | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -152,13 +153,14 @@ function SourceFilePreview({ endpoint, path, untracked }: { endpoint: string; pa
   if (isBinarySourceDiff(diff, untracked)) return <p className="p-3 text-sm text-muted-foreground">Binary file — a preview is not available for this format. Open it locally to view its contents.</p>;
   if (diff.truncated) return <p role="status" className="p-3 text-sm text-muted-foreground">This diff is too large to preview here. Open the repository in your editor or Git client to view the complete changes.</p>;
   return <div className="min-w-0">
-    <SourceDiffView path={diff.path} content={diff.combined} untracked={untracked} truncated={diff.truncated} />
-    {diff.staged && <details className="border-t"><summary className="cursor-pointer px-3 py-2 text-sm">Staged changes</summary><SourceDiffView path={diff.path} content={diff.staged} truncated={diff.truncated} /></details>}
+    <SourceDiffView settings={settings} path={diff.path} content={diff.combined} untracked={untracked} truncated={diff.truncated} />
+    {diff.staged && <details className="border-t"><summary className="cursor-pointer px-3 py-2 text-sm">Staged changes</summary><SourceDiffView settings={settings} path={diff.path} content={diff.staged} truncated={diff.truncated} /></details>}
   </div>;
 }
 
-function SourceFileSection({ file, endpoint, selected, selectionDisabled, busy, onSelect }: {
+function SourceFileSection({ file, endpoint, selected, selectionDisabled, busy, onSelect, settings }: {
   file: SourceFile;
+  settings: SourceDiffSettings;
   endpoint: string;
   selected: boolean;
   selectionDisabled: boolean;
@@ -178,7 +180,7 @@ function SourceFileSection({ file, endpoint, selected, selectionDisabled, busy, 
       {file.lineStats && <LineCounts stats={file.lineStats} />}
     </div>
     <div id={previewId} hidden={!expanded} className="border-t">
-      {expanded && <SourceFilePreview key={file.status} endpoint={endpoint} path={file.path} untracked={file.status === "??"} />}
+      {expanded && <SourceFilePreview settings={settings} key={file.status} endpoint={endpoint} path={file.path} untracked={file.status === "??"} />}
     </div>
   </div>;
 }
@@ -186,6 +188,7 @@ function SourceFileSection({ file, endpoint, selected, selectionDisabled, busy, 
 function SourceChangesDialog({ app, onClose }: { app: CoreApp; onClose: () => void }) {
   const { coreOrigin, sendCsrfJson } = useShellActions();
   const { status, error: statusError, refresh } = useSourceStatus(app, true, true);
+  const [diffSettings, setDiffSettings] = useState(defaultSourceDiffSettings);
   const [selected, setSelected] = useState<string[]>([]);
   const [plan, setPlan] = useState<DiscardPlan | null>(null);
   const [busy, setBusy] = useState(false);
@@ -217,8 +220,8 @@ function SourceChangesDialog({ app, onClose }: { app: CoreApp; onClose: () => vo
     finally { setPlan(null); setBusy(false); refresh(); }
   };
   return <Dialog open onOpenChange={(value) => { if (!value && !busy) onClose(); }}>
-    <DialogContent className="sm:max-w-5xl">
-      <DialogHeader><DialogTitle>Source changes · {app.displayName}</DialogTitle>
+    <DialogContent className="h-dvh max-h-dvh max-w-full rounded-none border-0 sm:h-[calc(100dvh-2rem)] sm:max-w-[calc(100%-2rem)] sm:rounded-lg sm:border">
+      <DialogHeader className="pr-6"><DialogTitle>Source changes · {app.displayName}</DialogTitle>
         <DialogDescription>Changes on disk; the running process may need a reload or restart. Manifest version {app.version}.</DialogDescription>
       </DialogHeader>
       <DialogBody className="space-y-4">
@@ -244,6 +247,7 @@ function SourceChangesDialog({ app, onClose }: { app: CoreApp; onClose: () => vo
           <ul className="max-h-56 overflow-auto text-sm">{plan.files.map((file) => <li key={file.path} className="break-all py-1"><strong>{file.newFile ? "Delete" : "Restore"}</strong> · {file.path}</li>)}</ul>
           <p className="text-xs text-muted-foreground">The review expires at {new Date(plan.expiresAt).toLocaleTimeString()}. Changed files require a new review.</p>
         </div> : <>
+          {!!status?.files.length && <SourceDiffToolbar settings={diffSettings} onChange={setDiffSettings} />}
           <div className="space-y-3">
             {!!status?.files.length && <div className="space-y-1 px-3 py-1">
               <label className="flex items-center gap-2 text-sm">
@@ -256,7 +260,7 @@ function SourceChangesDialog({ app, onClose }: { app: CoreApp; onClose: () => vo
               {selectablePaths.length > 32 && <p className="text-xs text-muted-foreground">Select up to 32 files per review.</p>}
               {selectablePaths.length < status.files.length && <p className="text-xs text-muted-foreground">Only files available for discard can be selected.</p>}
             </div>}
-            {status?.files.map((file) => <SourceFileSection key={`${status.scopePath}:${status.head}:${file.path}`} file={file} endpoint={endpoint}
+            {status?.files.map((file) => <SourceFileSection settings={diffSettings} key={`${status.scopePath}:${status.head}:${file.path}`} file={file} endpoint={endpoint}
               selected={selectedPaths.includes(file.path)} busy={busy}
               selectionDisabled={busy || !file.canDiscard || status.truncated || (selectedCount >= 32 && !selected.includes(file.path))}
               onSelect={(checked) => setSelected((current) => checked ? [...current, file.path] : current.filter((path) => path !== file.path))} />)}
