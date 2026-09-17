@@ -38,8 +38,7 @@ enum PreviewFixtures {
               "key": "production",
               "type": "compose",
               "default": true,
-              "development": false,
-              "developmentMode": false
+              "development": false
             }
           ],
           "updatePolicy": "reviewed",
@@ -82,8 +81,7 @@ enum PreviewFixtures {
               "key": "source",
               "type": "localCommand",
               "default": true,
-              "development": true,
-              "developmentMode": true
+              "development": true
             }
           ],
           "updatePolicy": "reviewed",

@@ -2,7 +2,7 @@ using System.Text.RegularExpressions;
 
 namespace Haas.Hosty.Core;
 
-internal sealed class AppSourceService(CoreDataPaths paths, AppRegistryStore apps, IClock clock)
+internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryStore apps, IClock clock)
 {
     private static readonly Regex CommitPattern = new("^[0-9a-fA-F]{4,64}$", RegexOptions.Compiled);
 
@@ -53,7 +53,7 @@ internal sealed class AppSourceService(CoreDataPaths paths, AppRegistryStore app
     }
 
     // Materializes the managed checkout at the pinned commit (detached HEAD) for a locked source runtime
-    // — Development Mode off. Clones if needed, resolves the recorded ref to a commit when none is pinned
+    // — development: false. Clones if needed, resolves the recorded ref to a commit when none is pinned
     // yet, checks that exact commit out (so the working tree is the reviewed, immutable source rather than
     // the branch tip), and records it. Only a reviewed source-resolve/update advances the commit, which
     // makes "off" an honest lock. Requires a source repository (a pure folder install cannot be pinned).
@@ -107,11 +107,15 @@ internal sealed class AppSourceService(CoreDataPaths paths, AppRegistryStore app
             }
         }
 
-        // Force the working tree to exactly the pinned commit: discard tracked edits and remove untracked
-        // files (e.g. left by a prior Dev-Mode-on live run) so OFF is an honest, reproducible lock. Ignored
-        // build outputs are kept (no `-x`) for `setup` to manage.
-        _ = await RunGitAsync(checkoutPath, ["checkout", "--detach", "--force", pinnedCommit], cancellationToken);
-        _ = await RunGitAsync(checkoutPath, ["clean", "-fd"], cancellationToken);
+        // Pinning is not a discard operation. Protect staged, unstaged and untracked work before
+        // changing HEAD; even a clean checkout uses non-forcing checkout to respect concurrent edits.
+        var status = await RunGitAsync(checkoutPath, ["status", "--porcelain=v1", "--untracked-files=all"], cancellationToken);
+        if (!string.IsNullOrWhiteSpace(status))
+        {
+            throw new AppLifecycleException("source_changes_present",
+                "The source checkout has local changes. Commit or explicitly discard them before starting a pinned runtime, or select a development runtime. No source files were removed.");
+        }
+        _ = await RunGitAsync(checkoutPath, ["checkout", "--detach", "--no-overwrite-ignore", pinnedCommit], cancellationToken);
 
         // Build the new state from the current record inside the update lambda so a concurrent change to
         // other AppSourceState fields (override, ref) is not overwritten by this pre-read snapshot.
@@ -282,7 +286,7 @@ internal sealed class AppSourceService(CoreDataPaths paths, AppRegistryStore app
             ResolvedRef: existing?.ResolvedRef,
             // The reviewed pin is untouched. Configuring an operator folder says nothing about which
             // upstream commit was reviewed, and stamping the folder's HEAD here used to make the pinned
-            // (Development Mode off) start path treat the whole field as untrustworthy.
+            // (development: false) start path treat the whole field as untrustworthy.
             Commit: existing?.Commit,
             ManagedCheckoutPath: existing?.ManagedCheckoutPath ?? paths.ResolveManagedCheckoutPath(appId),
             LocalOverridePath: overridePath,

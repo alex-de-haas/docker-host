@@ -332,24 +332,6 @@ internal sealed record AppRecord(
     // endpoint/settings deltas vs the previous start), for operator awareness — informational, not a
     // gate (2b/R11/R12). Null/empty when nothing changed or the app is not a live source app.
     IReadOnlyList<string>? LiveChanges = null,
-    // Per-runtime Development Mode toggles the operator has explicitly set (runtime key -> on/off). A
-    // key that is absent falls back to the manifest profile's `development` flag as the default; the
-    // operator may flip any source (localCommand) runtime either way. ON runs the runtime live from
-    // source (the folder manifest is adopted on restart). OFF uses the reviewed manifest and, for a
-    // URL/publisher install, runs the managed checkout pinned to its commit (an honest lock advanced only
-    // by a reviewed source-resolve/update); a folder install has no separate reviewed source, so OFF runs
-    // its own folder. Additive/nullable, so no AppStateDocument schema bump. See "Development Mode — an
-    // operator toggle" in runtime-artifact-model.md.
-    IReadOnlyDictionary<string, bool>? DevelopmentModes = null,
-    // Snapshot bookkeeping captured when the operator turned Development Mode ON for a runtime, so
-    // turning it OFF later can offer to roll the app data back to the reviewed version's last-known-good
-    // state. Keyed by runtime; each entry records the reviewed version at enable time and the id of the
-    // `pre-development-mode` backup taken then. On disable Core compares the entry's Version to the app's
-    // current version (which reflects the version that ran live) to decide whether a rollback is worth
-    // recommending — a likely one-way data migration the reviewed version may not read. Cleared on
-    // disable. Additive/nullable, so no AppStateDocument schema bump. See "Development Mode — an operator
-    // toggle" in runtime-artifact-model.md.
-    IReadOnlyDictionary<string, DevelopmentModeBaseline>? DevelopmentModeBaselines = null,
     // Optional marketplace/catalog display metadata (publisher, tags, screenshots, license, links, …),
     // captured from the manifest at install/update and re-read on each start for a live source app.
     // Display-only; never gates anything. Additive/nullable, so no AppStateDocument schema bump. See
@@ -521,11 +503,6 @@ internal sealed record ArtifactLock(
     string? Commit,
     DateTimeOffset ResolvedAt);
 
-// Per-runtime snapshot bookkeeping for a Development-Mode enable (see AppRecord.DevelopmentModeBaselines).
-// Version = the reviewed version in effect when the operator turned dev mode ON; BackupId = the
-// `pre-development-mode` backup taken at that moment (null when the app has no data directory to snapshot).
-internal sealed record DevelopmentModeBaseline(string Version, string? BackupId);
-
 // Label/Description are optional manifest-derived presentation metadata (like Type/Secret/Required),
 // denormalized here and refreshed from the manifest on each BuildAppRecord. Additive and nullable, so
 // old persisted state deserializes fine (missing => null) with no AppStateDocument schema bump.
@@ -609,13 +586,7 @@ internal sealed record AppEndpointContract(
     // record and attached in AppSummary.From, exactly like PublicOrigin. See EndpointAvailability.
     string? Availability = null);
 
-// `Development` (additive/defaulted for back-compat) is the manifest author's declared default for
-// Development Mode on this runtime — the intent marker. `DevelopmentMode` is the *effective* per-runtime
-// state after the operator's toggle is applied (override else the `Development` default, and always
-// false for a non-source runtime); it is what actually drives liveness, the Source tab, and the
-// Live/Locked badge. Computed on summaries via AppSummary.ResolveDevelopmentMode; the persisted record's
-// profiles leave it false. See "Development Mode — an operator toggle" in runtime-artifact-model.md.
-internal sealed record AppRuntimeProfileSummary(string Key, string Type, bool Default, bool Development = false, bool DevelopmentMode = false);
+internal sealed record AppRuntimeProfileSummary(string Key, string Type, bool Default, bool Development = false);
 
 internal sealed record AppSourceState(
     string? Type,
@@ -1023,22 +994,6 @@ internal sealed record AppSummary(
     AppUpdateProgress? UpdateProgress = null,
     bool RestartRequired = false)
 {
-    // The effective Development Mode for a runtime: the operator's explicit toggle if set, else the
-    // manifest profile's `development` flag as the default. Always false for a non-source runtime
-    // (image/prebuilt have no working copy to bind). Single source of truth shared by the summary
-    // projection here and the lifecycle service's liveness gate, so they never disagree.
-    public static bool ResolveDevelopmentMode(AppRecord app, AppRuntimeProfileSummary profile)
-    {
-        if (!string.Equals(profile.Type, "localCommand", StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        return app.DevelopmentModes is not null && app.DevelopmentModes.TryGetValue(profile.Key, out var mode)
-            ? mode
-            : profile.Development;
-    }
-
     public static AppSummary From(
         AppRecord app,
         IReadOnlyList<AppRuntimeProfileSummary>? runtimeProfiles = null,
@@ -1047,12 +1002,7 @@ internal sealed record AppSummary(
     {
         var ui = app.Ui;
         var endpoints = AttachAvailability(AttachPublicOrigins(app.Endpoints, app.Settings), app);
-        // Overlay each runtime's *effective* Development Mode (operator toggle over the manifest default)
-        // so clients render the Live/Locked badge and the toggle switch from what actually governs
-        // liveness, not the raw manifest flag.
-        var profiles = (runtimeProfiles ?? app.RuntimeProfiles ?? [])
-            .Select(profile => profile with { DevelopmentMode = ResolveDevelopmentMode(app, profile) })
-            .ToArray();
+        var profiles = runtimeProfiles ?? app.RuntimeProfiles ?? [];
         // The UI entry URL is only meaningful when the app declares a `ui` section. A headless
         // app (e.g. a backend service that exposes only a control endpoint for other apps to
         // consume) must not be treated as openable just because it has an HTTP endpoint, so we
@@ -1091,10 +1041,7 @@ internal sealed record AppSummary(
             .Select(panel => Surface(panel, app.DisplayName)!)
             .ToArray();
 
-        // Source-capable when it declares any source (localCommand) runtime, regardless of install
-        // channel. Under the Development Mode operator toggle, the operator may point any source runtime
-        // at a local folder and flip it live — so the Source tab appears whenever a source runtime exists,
-        // not only when a runtime is flagged development in the manifest. See runtime-artifact-model.md.
+        // Source settings remain available for any source-capable profile, including reviewed ones.
         var supportsSource = profiles.Any(profile => string.Equals(profile.Type, "localCommand", StringComparison.Ordinal));
 
         return new(

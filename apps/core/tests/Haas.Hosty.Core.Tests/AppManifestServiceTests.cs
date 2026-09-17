@@ -879,8 +879,7 @@ public sealed class AppManifestServiceTests
     [Fact]
     public async Task LoadAsync_AcceptsMultipleDevelopmentRuntimes()
     {
-        // development is now only the default for the per-runtime operator Development Mode toggle, so
-        // several flagged runtimes are valid (each just defaults to live). See runtime-artifact-model.md.
+        // Multiple declared development recipes may share the app source root.
         var manifestPath = await WriteRawManifestAsync("""
             {
               "schemaVersion": "app.0.1",

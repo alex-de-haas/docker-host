@@ -3,7 +3,7 @@
   "id": "hosty.ai-gateway",
   "name": "Hosty AI Gateway",
   "description": "Hosty assistant service: admin-only operator chat sessions supervised on a host-resident agent harness. Headless — Shell renders the chat UI and calls this API with delegated tokens.",
-  "version": "0.27.0",
+  "version": "0.28.0",
   "role": "system",
   "source": {
     "type": "git",
@@ -15,6 +15,11 @@
       "key": "local",
       "type": "localCommand",
       "default": true
+    },
+    {
+      "key": "dev",
+      "type": "localCommand",
+      "development": true
     }
   ],
   "defaultRuntime": "local",
@@ -41,6 +46,26 @@
             "path": "/healthz",
             "timeoutSeconds": 5
           }
+        },
+        "dev": {
+          "type": "localCommand",
+          "workingDirectory": "apps/ai-gateway",
+          "setup": "npm install --workspace @haas/hosty-ai-gateway --workspace @haas/hosty-ai-gateway-web && npm run build:web",
+          "command": "npm run dev",
+          "ports": [
+            {
+              "key": "http",
+              "containerPort": 3400,
+              "protocol": "http",
+              "public": true
+            }
+          ],
+          "healthcheck": {
+            "type": "http",
+            "port": 3400,
+            "path": "/healthz",
+            "timeoutSeconds": 5
+          }
         }
       }
     }
@@ -51,6 +76,10 @@
       {
         "runtime": "local",
         "environment": "HOSTY_APP_DATA_DIR"
+      },
+      {
+        "runtime": "dev",
+        "environment": "HOSTY_APP_DATA_DIR"
       }
     ]
   },
@@ -59,6 +88,10 @@
     "targets": [
       {
         "runtime": "local",
+        "environment": "HOSTY_APP_CACHE_DIR"
+      },
+      {
+        "runtime": "dev",
         "environment": "HOSTY_APP_CACHE_DIR"
       }
     ]

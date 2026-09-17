@@ -33,6 +33,24 @@ development boundary. Provider opt-ins, draft-only third-party messages and exte
 restrictions remain unchanged. [Vision decision 6](../../vision.md) records the accepted direction and
 the separate administrator responsibility for executing apps through Core's localCommand runtime.
 
+## First-Slice Scope Decision (2026-09-16)
+
+The owner defers immediate revocation of already-running processes and further experiments on that
+mechanism. It remains an unchecked deferred deliverable, not a prerequisite for the first slice.
+Permission changes govern subsequent dispatch/resume; already-started commands may retain their
+original permissions until they exit. The UI must describe this limitation rather than report that
+an active process has lost access. Removing and re-adding context does not restore grants.
+
+Isolation between temporary directories is not a first-slice objective. Temporary scratch space may
+be shared by the native harness; no session-private temporary-storage guarantee is offered. The
+required boundary protects Hosty apps outside their explicitly granted source roots, Core state and
+credentials. Hosty must not move protected data into shared scratch space as a way around that boundary.
+Resolve canonical paths: an app Source or Hosty data root physically placed under a broadly accessible
+temporary directory is not covered by the successful outside-temp experiment. The first slice must
+identify such unsupported protected-root placements rather than promise app isolation there.
+This narrows the target scope; it neither approves implementation of the remaining Draft nor changes
+the separately accepted localCommand runtime responsibility.
+
 ## Target Behavior
 
 ### A. Per-tool policy in settings
@@ -105,18 +123,19 @@ such as `primaryWorkspaceAppId`, resolved through Core, for existing apps as wel
 Commands can affect every root made writable in their execution environment: show that scope rather
 than implying cwd isolates them. Context-only apps remain outside the writable set.
 
-Changes to context normally apply next turn, but revocation is an authority change. Removing an app
-revokes its development grants. Stop/quiesce affected execution before reporting revocation complete;
-prevent subsequent dispatch under the old policy. Re-adding an app does not restore grants. If the
-primary app is removed, clear its binding after quiescence and require an explicit next target.
-Reconfigure native threads only where supported and verified; otherwise require a new native thread
-under the same Hosty conversation, with the changed boundary made visible. Never resume stale rights.
+Changes to context and grant removal apply to subsequent dispatch/resume in the first slice.
+Removing an app removes its grants for future work and clears its primary binding, requiring an
+explicit next target. Already-started commands may finish with their original rights; stopping them
+immediately is deferred. Re-adding an app does not restore grants. Reconfigure native threads only
+where supported and verified; otherwise require a new native thread under the same Hosty conversation,
+with the changed boundary made visible. Never resume a new turn with stale rights.
 
 **Edit source** permits normal reads and changes within granted source roots without cards.
 **Run project commands** permits execution within the enforced filesystem/network boundary, including
 dependency setup, builds and tests. Commands must not bypass a disabled Edit source permission:
-without it, source remains read-only. Package caches and temporary outputs use dedicated writable
-locations; toolchains/system libraries have only the access needed to run. Network destinations and
+without it, source remains read-only. Package caches and temporary outputs use declared writable
+locations; dedicated paths organize outputs without promising isolation within system temporary space.
+Toolchains/system libraries have only the access needed to run. Network destinations and
 Git publication rights are separate permissions, visible in the grant summary. Source editing alone
 does not authorize push, host administration, global package installation or access to other apps.
 Explicit Git requests and any separately granted remote/branch authority use the same policy, not a
@@ -150,8 +169,8 @@ not a claim that the current adapter already separates instructions from permiss
 Audit every execution path beyond Bash. The auto-allowed Task/subagent and in-process WebFetch paths
 must inherit the effective grant or remain unavailable in development sessions until enforcement is
 verified. Native sandbox networking does not establish in-process tool or MCP-server egress policy.
-Likewise, the observed shared Claude sandbox TMPDIR is not a session-private cache: verify isolated
-temporary storage or record the limitation and resolve it before claiming per-session containment.
+The observed shared Claude sandbox TMPDIR is accepted scratch space for the first slice, not a
+session-private cache. App source, Core state and credentials remain within the protected-root policy.
 
 Use native sandbox controls where their behavior is verified on the supported host platform. Codex
 needs a bounded writable policy instead of today's read-only policy; Claude needs scoped file-tool
@@ -168,7 +187,7 @@ output, in audit.
 Lifecycle permissions are distinct app/action grants. Core or a narrow trusted execution broker must
 validate the requested app and action; an unrestricted hosty CLI/control credential inside the agent
 boundary would bypass source restrictions. The first app-scoped lifecycle authority belongs here;
-[development controls](../app-development-controls/plan.md) adds dev-mode/runtime-switch operations
+[development controls](../app-development-controls/plan.md) adds runtime-switch operations
 using that contract. Existing broad delegated tokens do not gain mutations.
 
 Core-started localCommand apps run outside the assistant sandbox under the Core OS account today.
@@ -204,14 +223,16 @@ permissions and narrower native-session resume on both adapters. Claude's host P
 shell restrictions blocked the synthetic secret; Codex's named profile blocked shell and apply_patch
 reads outside temporary paths. The scripts assert observed files and actual tool results, not model prose.
 
-Two Codex findings remain blockers to the proposed general boundary. `turn/interrupt` and a subsequent
+Two Codex findings limit the originally proposed general boundary. The owner scope decision above
+defers immediate process revocation and excludes temporary-directory isolation from the first slice.
+`turn/interrupt` and a subsequent
 `thread/unsubscribe` did not stop a running unified-exec writer: the next turn had narrower rights but
 the old process kept writing. Standalone command/exec/terminate worked and must not be confused with
 model-tool process control. Separately, fixtures in `/private/tmp` escaped the named profile's expected
 write/read restrictions even with a valid default profile, dedicated TMPDIR and slash-tmp deny entry.
 The successful outside-temp cases do not prove arbitrary source/cache path isolation.
 
-These results do not complete H. The new runners use scripted model responses and a fixed native-tool
+These results do not complete H within the remaining first-slice scope. The new runners use scripted model responses and a fixed native-tool
 catalog; live model generation, code mode, other operating systems, package/network setup, subagents
 and the complete create/build loop remain open. The original Claude mock artifacts were not retained;
 the new runners preserve the candidate read/settings-exclusion tests but do not yet reproduce every
@@ -222,7 +243,8 @@ never probe real host secrets. First measure the current create/edit/build loop,
 count, elapsed time and failures. Then test candidate grants: routine source changes and project
 commands require no repeated cards; writes to ungranted apps and reads of secret fixtures fail through
 both file tools and shell. Include multiple granted roots, package setup/network, user/project settings,
-symlink attempts, cancellation/revocation and native-session resume. Check host-control credential
+symlink attempts, next-dispatch permission changes and native-session resume. Immediate running-process
+revocation experiments are deferred by the scope decision above. Check host-control credential
 access and report the separate Core-started runtime limitation explicitly. Record OS and pinned harness
 versions. Unsupported cases remain documented blockers to the corresponding capability, not assumed
 parity. A disposable spike establishes the contract; this Draft does not authorize product implementation.
@@ -231,16 +253,16 @@ parity. A disposable spike establishes the contract; this Draft does not authori
 
 - [ ] Run and record H's current-policy baseline and candidate-boundary experiment on both adapters;
       resolve enforcement, audit and lifecycle-authority design before implementation approval.
-- [ ] Resolve Codex running-process revocation: own and terminate model-tool commands or verify all
-      old executions have quiesced before completing revocation. Keep new dispatch blocked while
-      revocation is pending; turn interruption/unsubscription alone failed the preserved regression.
-- [ ] Resolve or explicitly restrict unsupported temporary source/cache placements and verify
-      temporary-storage isolation. The pinned Codex profile allowed unintended access under
-      `/private/tmp`; Claude's shared sandbox TMPDIR also needs a concrete policy.
+- [ ] **Deferred — immediate process revocation:** own and terminate model-tool commands or verify all
+      old executions have quiesced before claiming their access was revoked. Preserve the failing
+      interrupt/unsubscribe regression; further experiments are postponed and do not block the first slice.
+- [ ] Implement the first-slice protected-root policy: check canonical app Source and Hosty data paths,
+      identify unsupported placements under broadly accessible temporary directories, and disclose
+      shared scratch space without promising isolation between temporary folders.
 - [ ] Implement session development-grant persistence/revisions, Core-resolved source bindings and
       explicit primary cwd, with multiple granted apps, no-Git sources and stale-root invalidation.
 - [ ] Add per-app Edit source / Run project commands controls to the shared context UI, effective
-      scope summaries, revocation and unavailable states; prototype creation consumes the same API.
+      scope summaries, next-dispatch grant removal and unavailable states; prototype creation consumes the same API.
 - [ ] Implement and verify filesystem, command, network and credential boundaries in both adapters;
       handle unsupported hosts and native-thread reconfiguration without silent permission widening.
 - [ ] Add app-scoped lifecycle authorization/execution with server-enforced app/action checks,
@@ -251,8 +273,8 @@ parity. A disposable spike establishes the contract; this Draft does not authori
       and cover source-local settings widening the shell sandbox. No hidden native settings may
       contradict the grants shown in Hosty. Review the Task/subagent auto-allow (H1) in the same pass.
 - [ ] Enforce sensitive reads across native file/search tools and shell; verify independent edit
-      and command switches, instruction loading without permission-setting inheritance, isolated
-      temporary storage, and WebFetch/subagent/MCP paths against the same effective grant.
+      and command switches, instruction loading without permission-setting inheritance, declared
+      scratch-space policy, and WebFetch/subagent/MCP paths against the same effective grant.
 - [ ] Rule model in the gateway's settings store: per-tool modes keyed by provider and tool name,
   shell prefix rules, with validation and pruning against the live tool list.
 - [ ] One policy over tool name, input and effective session grants, consulted by both adapters;
@@ -272,10 +294,10 @@ parity. A disposable spike establishes the contract; this Draft does not authori
 - **Verified development boundary.** H must establish the supported OS/harness matrix, sensitive-read
   restrictions, network/cache configuration, grant changes on resumed threads and complete audit events.
   The owner approved the product direction, not an untested enforcement mechanism.
-- **Revocation completion and temporary roots.** Pinned-version tests establish narrower subsequent
-  turns but not termination of Codex's old processes, and expose a temporary-path exception. Choose
-  verified process ownership/quiescence and a supported path policy before promising completed
-  revocation or general containment. Keep these distinct from the accepted localCommand runtime risk.
+- **Protected-root placement.** The first slice does not isolate temporary folders. Verify canonical
+  Hosty app/data paths against the supported boundary; protected roots under broadly accessible temp
+  paths must be reported as unsupported. Immediate termination of existing commands is deferred, with
+  no promise that a permission change has stopped them. This is separate from localCommand runtime risk.
 - **Settings sources in development sessions.** Claude user allow rules pre-empt `canUseTool`, and
   project settings inside a granted source widen the shell sandbox. Choose between excluding writable
   settings sources from development sessions, which also stops the SDK loading project `CLAUDE.md`,
@@ -307,8 +329,10 @@ parity. A disposable spike establishes the contract; this Draft does not authori
   context-only selection grants neither writes nor commands. Explicit grants allow repeated edits,
   dependency setup/build/test without cards inside the approved boundary. Ungranted roots, synthetic
   secrets and host-control credentials remain inaccessible; validate through file tools and scripts.
-  Exercise independent edit/command permissions, dedicated caches/network, revocation mid-run,
+  Exercise independent edit/command permissions, declared caches/network, next-dispatch grant changes,
   remove/re-add, changed source roots and resumed sessions. Record approval counts and actual outcomes.
+  Verify protected app/data roots outside scratch space and reject unsupported canonical placements;
+  temporary-folder isolation and immediate process-revocation experiments are not first-slice gates.
 - Verify an app-scoped lifecycle request cannot target another app, and a source grant alone cannot
   push to a remote. Keep the documented Core localCommand trust boundary visible in setup and tests;
   never describe agent sandbox tests as runtime-app isolation tests.

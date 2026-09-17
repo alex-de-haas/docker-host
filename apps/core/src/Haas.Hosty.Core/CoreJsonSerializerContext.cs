@@ -71,9 +71,6 @@ internal static class CoreJson
 // Reachable via AppRecord/AppSummary, but rooted explicitly: the per-service artifact run-lock is
 // (de)serialized as a nested map value on persisted state and on API summaries.
 [JsonSerializable(typeof(ArtifactLock))]
-// Reachable via AppRecord, but rooted explicitly (same reason as ArtifactLock): a nested map value on
-// persisted state carrying the Development-Mode enable snapshot bookkeeping.
-[JsonSerializable(typeof(DevelopmentModeBaseline))]
 // Platform-interface declarations: nested map values on the manifest, the persisted record, and the
 // API summary (same explicit-rooting reason as ArtifactLock).
 [JsonSerializable(typeof(RuntimeAppInterfaceManifest))]
@@ -145,7 +142,6 @@ internal static class CoreJson
 [JsonSerializable(typeof(AppConfigureRequest))]
 [JsonSerializable(typeof(AppAutostartRequest))]
 [JsonSerializable(typeof(AppFeedRequest))]
-[JsonSerializable(typeof(AppDevelopmentModeRequest))]
 [JsonSerializable(typeof(AppMountsRequest))]
 [JsonSerializable(typeof(AppSharedMountsRequest))]
 [JsonSerializable(typeof(GlobalMountUpsertRequest))]
@@ -229,6 +225,12 @@ internal static class CoreJson
 [JsonSerializable(typeof(AuthBootstrapCompleteResponse))]
 [JsonSerializable(typeof(AuthRecoveryCompleteResponse))]
 [JsonSerializable(typeof(AuthBootstrapTokenResponse))]
+[JsonSerializable(typeof(AppSourceStatus))]
+[JsonSerializable(typeof(AppSourceDiff))]
+[JsonSerializable(typeof(AppSourceDiffRequest))]
+[JsonSerializable(typeof(AppSourceDiscardRequest))]
+[JsonSerializable(typeof(AppSourceDiscardPlan))]
+[JsonSerializable(typeof(AppSourceDiscardApplyRequest))]
 [JsonSerializable(typeof(AppSourceResponse))]
 [JsonSerializable(typeof(AppAuthorizeResult))]
 [JsonSerializable(typeof(AppIdentityTokenResult))]
@@ -240,9 +242,6 @@ internal static class CoreJson
 [JsonSerializable(typeof(AppLifecycleResponse))]
 [JsonSerializable(typeof(AppRemovalImpact))]
 [JsonSerializable(typeof(AppSettingValueResponse))]
-// Reachable via AppLifecycleResponse, but rooted explicitly for parity with the other nested DTOs:
-// the Development-Mode disable rollback recommendation.
-[JsonSerializable(typeof(AppDevelopmentModeRestoreHint))]
 [JsonSerializable(typeof(GlobalMountListResponse))]
 [JsonSerializable(typeof(AppUpdatePlan))]
 [JsonSerializable(typeof(AppPendingUpdatePlanResponse))]

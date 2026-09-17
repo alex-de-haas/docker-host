@@ -1106,6 +1106,40 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.False(plan.SourceConfigured);
     }
 
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public async Task CreateUpdatePlanAsync_DevelopmentFlagChangeRequiresReview(bool currentDevelopment, bool targetDevelopment)
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var folder = Path.Combine(fixture.Root, "development-update");
+        Directory.CreateDirectory(folder);
+        var manifestPath = Path.Combine(folder, "manifest.json");
+        string Manifest(string version, bool development) => $$$"""
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.development-update",
+              "name": "Development Update",
+              "version": "{{{version}}}",
+              "runtimeProfiles": [{ "key": "dev", "type": "localCommand", "development": {{{development.ToString().ToLowerInvariant()}}} }],
+              "services": [{ "key": "app", "runtimes": {
+                "dev": { "type": "localCommand", "command": "sleep 5", "workingDirectory": "." }
+              }}]
+            }
+            """;
+        await File.WriteAllTextAsync(manifestPath, Manifest("1.0.0", currentDevelopment));
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath, SelectedRuntime: "dev"));
+
+        // Use a separate candidate: editing a live source manifest changes the current selection.
+        var candidatePath = Path.Combine(folder, "candidate.json");
+        await File.WriteAllTextAsync(candidatePath, Manifest("1.0.1", targetDevelopment));
+        var plan = await fixture.Service.CreateUpdatePlanAsync(
+            "com.example.development-update", new AppUpdatePlanRequest(candidatePath));
+
+        Assert.Contains($"development:{currentDevelopment.ToString().ToLowerInvariant()}->{targetDevelopment.ToString().ToLowerInvariant()}", plan.Changes);
+        Assert.True(plan.RequiresReview);
+    }
+
     [Fact]
     public async Task LiveSourceRuntime_MarksSummaryLive_AndRefusesReviewedUpdate()
     {
@@ -1481,180 +1515,49 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Equal("update_live_source_runtime", error.Code);
     }
 
-    [Fact]
-    public async Task ConfigureDevelopmentMode_TogglesLivenessOnANonDevelopmentRuntime()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DevelopmentProfile_OnlyManifestFlagControlsBehavior(bool development)
     {
         var fixture = await LifecycleFixture.CreateAsync();
-        var folder = Path.Combine(fixture.Root, "toggle-app");
-        Directory.CreateDirectory(folder);
-        var manifestPath = Path.Combine(folder, "manifest.json");
-        // A source runtime with no development flag: Development Mode defaults OFF.
-        await File.WriteAllTextAsync(manifestPath, """
-            {
-              "schemaVersion": "app.0.1",
-              "id": "com.example.toggle",
-              "name": "Toggle",
-              "version": "1.0.0",
-              "runtimeProfiles": [{ "key": "release", "type": "localCommand", "default": true }],
-              "defaultRuntime": "release",
-              "services": [{ "key": "app", "runtimes": { "release": { "type": "localCommand", "command": "echo hi" } } }]
-            }
-            """);
-        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath));
+        var id = await InstallDevelopmentSourceAppAsync(fixture, development);
+        var app = (await fixture.Apps.GetAppAsync(id))!;
+        // Unknown fields from old state documents are ignored, not converted into new settings.
+        var json = JsonSerializer.Serialize(app, CoreJsonSerializerContext.Default.AppRecord);
+        json = json.Insert(1, $"\"developmentModes\":{{\"release\":{(!development).ToString().ToLowerInvariant()}}},\"developmentModeBaselines\":{{}},");
+        var restored = JsonSerializer.Deserialize(json, CoreJsonSerializerContext.Default.AppRecord)!;
+        await fixture.Apps.UpsertAppAsync(restored);
 
-        var off = (await fixture.Service.ListAppsAsync()).Single(item => item.Id == "com.example.toggle");
-        Assert.False(off.Live);
-        Assert.False(off.RuntimeProfiles.Single().DevelopmentMode);
-        Assert.True(off.SupportsSource);
-
-        // The operator flips Development Mode ON for the release runtime → it runs live from its source.
-        await fixture.Service.ConfigureDevelopmentModeAsync("com.example.toggle", new AppDevelopmentModeRequest("release", Enabled: true));
-        var on = (await fixture.Service.ListAppsAsync()).Single(item => item.Id == "com.example.toggle");
-        Assert.True(on.Live);
-        Assert.True(on.RuntimeProfiles.Single().DevelopmentMode);
-
-        // And back OFF, restoring the locked/reviewed behavior.
-        await fixture.Service.ConfigureDevelopmentModeAsync("com.example.toggle", new AppDevelopmentModeRequest("release", Enabled: false));
-        var backOff = (await fixture.Service.ListAppsAsync()).Single(item => item.Id == "com.example.toggle");
-        Assert.False(backOff.Live);
-        Assert.False(backOff.RuntimeProfiles.Single().DevelopmentMode);
+        var summary = (await fixture.Service.ListAppsAsync()).Single(candidate => candidate.Id == id);
+        Assert.Equal(development, summary.RuntimeProfiles.Single().Development);
+        Assert.Equal(development, summary.Live);
+        var started = await fixture.Service.StartAsync(id);
+        Assert.Equal(development, started.App!.Live);
+        var restarted = await fixture.Service.RestartAsync(id);
+        Assert.Equal(development, restarted.App!.Live);
+        await fixture.Service.StopAsync(id);
+        var persisted = JsonSerializer.Serialize(await fixture.Apps.GetAppAsync(id), CoreJsonSerializerContext.Default.AppRecord);
+        Assert.DoesNotContain("developmentModes", persisted);
+        Assert.DoesNotContain("developmentModeBaselines", persisted);
     }
 
-    [Fact]
-    public async Task ConfigureDevelopmentMode_RejectsNonSourceRuntime()
+    // An arbitrarily named local source profile; its declaration alone controls development.
+    private static async Task<string> InstallDevelopmentSourceAppAsync(LifecycleFixture fixture, bool development = false)
     {
-        var fixture = await LifecycleFixture.CreateAsync();
-        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
-
-        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
-            fixture.Service.ConfigureDevelopmentModeAsync("com.example.notes", new AppDevelopmentModeRequest("docker", Enabled: true)));
-
-        Assert.Equal("development_mode_unsupported_runtime", error.Code);
-    }
-
-    [Fact]
-    public async Task ConfigureDevelopmentMode_Enable_SnapshotsDataAndRecordsBaseline()
-    {
-        var fixture = await LifecycleFixture.CreateAsync();
-        var id = await InstallToggleSourceAppAsync(fixture);
-        var dataPath = Path.Combine(fixture.Paths.AppsRoot, id, "data");
-        Directory.CreateDirectory(dataPath);
-        await File.WriteAllTextAsync(Path.Combine(dataPath, "notes.db"), "v1-data");
-
-        var enabled = await fixture.Service.ConfigureDevelopmentModeAsync(id, new AppDevelopmentModeRequest("release", Enabled: true));
-        // Enabling is not risky (nothing to roll back to yet).
-        Assert.Null(enabled.DevelopmentModeRestore);
-
-        var snapshot = (await fixture.Backups.ListBackupsAsync(id)).Single(backup => backup.Reason == "pre-development-mode");
-        var app = await fixture.Apps.GetAppAsync(id);
-        Assert.NotNull(app!.DevelopmentModeBaselines);
-        var baseline = app.DevelopmentModeBaselines!["release"];
-        Assert.Equal("1.0.0", baseline.Version);
-        Assert.Equal(snapshot.BackupId, baseline.BackupId);
-    }
-
-    [Fact]
-    public async Task ConfigureDevelopmentMode_Enable_WithoutDataDirectory_TakesNoSnapshot()
-    {
-        var fixture = await LifecycleFixture.CreateAsync();
-        var id = await InstallToggleSourceAppAsync(fixture);
-        var dataPath = Path.Combine(fixture.Paths.AppsRoot, id, "data");
-        if (Directory.Exists(dataPath))
-        {
-            Directory.Delete(dataPath, recursive: true);
-        }
-
-        await fixture.Service.ConfigureDevelopmentModeAsync(id, new AppDevelopmentModeRequest("release", Enabled: true));
-
-        var backups = await fixture.Backups.ListBackupsAsync(id);
-        Assert.DoesNotContain(backups, backup => backup.Reason == "pre-development-mode");
-        // The baseline is still recorded so a later disable can compare versions; it just has no snapshot.
-        var app = await fixture.Apps.GetAppAsync(id);
-        Assert.Null(app!.DevelopmentModeBaselines!["release"].BackupId);
-    }
-
-    [Fact]
-    public async Task ConfigureDevelopmentMode_Disable_RecommendsRestoreWhenVersionDriftedInDevMode()
-    {
-        var fixture = await LifecycleFixture.CreateAsync();
-        var id = await InstallToggleSourceAppAsync(fixture);
-        var dataPath = Path.Combine(fixture.Paths.AppsRoot, id, "data");
-        Directory.CreateDirectory(dataPath);
-        await File.WriteAllTextAsync(Path.Combine(dataPath, "notes.db"), "v1-data");
-
-        await fixture.Service.ConfigureDevelopmentModeAsync(id, new AppDevelopmentModeRequest("release", Enabled: true));
-        var snapshotId = (await fixture.Backups.ListBackupsAsync(id)).Single(backup => backup.Reason == "pre-development-mode").BackupId;
-
-        // Simulate the dev-mode runtime having adopted a newer manifest version while running live.
-        _ = await fixture.Apps.UpdateAppAsync(id, current => current with { Version = "1.1.0" });
-
-        var disabled = await fixture.Service.ConfigureDevelopmentModeAsync(id, new AppDevelopmentModeRequest("release", Enabled: false));
-
-        Assert.NotNull(disabled.DevelopmentModeRestore);
-        Assert.True(disabled.DevelopmentModeRestore!.Recommended);
-        Assert.Equal("release", disabled.DevelopmentModeRestore.Runtime);
-        Assert.Equal(snapshotId, disabled.DevelopmentModeRestore.BackupId);
-        Assert.Equal("1.0.0", disabled.DevelopmentModeRestore.BaselineVersion);
-        Assert.Equal("1.1.0", disabled.DevelopmentModeRestore.CurrentVersion);
-
-        // The baseline is cleared on disable so a re-enable captures a fresh one.
-        var app = await fixture.Apps.GetAppAsync(id);
-        Assert.True(app!.DevelopmentModeBaselines is null || !app.DevelopmentModeBaselines.ContainsKey("release"));
-    }
-
-    [Fact]
-    public async Task ConfigureDevelopmentMode_Disable_NoRestoreHintWhenVersionUnchanged()
-    {
-        var fixture = await LifecycleFixture.CreateAsync();
-        var id = await InstallToggleSourceAppAsync(fixture);
-        var dataPath = Path.Combine(fixture.Paths.AppsRoot, id, "data");
-        Directory.CreateDirectory(dataPath);
-        await File.WriteAllTextAsync(Path.Combine(dataPath, "notes.db"), "v1-data");
-
-        await fixture.Service.ConfigureDevelopmentModeAsync(id, new AppDevelopmentModeRequest("release", Enabled: true));
-        var disabled = await fixture.Service.ConfigureDevelopmentModeAsync(id, new AppDevelopmentModeRequest("release", Enabled: false));
-
-        Assert.Null(disabled.DevelopmentModeRestore);
-    }
-
-    [Fact]
-    public async Task ConfigureDevelopmentMode_Disable_NoRestoreHintWhenEnableTookNoSnapshot()
-    {
-        var fixture = await LifecycleFixture.CreateAsync();
-        var id = await InstallToggleSourceAppAsync(fixture);
-        var dataPath = Path.Combine(fixture.Paths.AppsRoot, id, "data");
-        if (Directory.Exists(dataPath))
-        {
-            Directory.Delete(dataPath, recursive: true);
-        }
-
-        // Enable with no data directory → a baseline is recorded but its BackupId is null.
-        await fixture.Service.ConfigureDevelopmentModeAsync(id, new AppDevelopmentModeRequest("release", Enabled: true));
-
-        // Even with version drift there is no snapshot to restore, so a disable must not recommend a
-        // rollback (and must not leave the app stranded stopped with no rollback path).
-        _ = await fixture.Apps.UpdateAppAsync(id, current => current with { Version = "1.1.0" });
-        var disabled = await fixture.Service.ConfigureDevelopmentModeAsync(id, new AppDevelopmentModeRequest("release", Enabled: false));
-
-        Assert.Null(disabled.DevelopmentModeRestore);
-    }
-
-    // A source (localCommand) app with Development Mode defaulting OFF, plus a data directory the
-    // pre-development-mode snapshot can capture. Mirrors the manifest of the toggle test above.
-    private static async Task<string> InstallToggleSourceAppAsync(LifecycleFixture fixture)
-    {
+        var command = OperatingSystem.IsWindows() ? "ping -n 30 127.0.0.1 > nul" : "sleep 30";
         var folder = Path.Combine(fixture.Root, $"toggle-{Guid.NewGuid():N}");
         Directory.CreateDirectory(folder);
         var manifestPath = Path.Combine(folder, "manifest.json");
-        await File.WriteAllTextAsync(manifestPath, """
+        await File.WriteAllTextAsync(manifestPath, $$"""
             {
               "schemaVersion": "app.0.1",
               "id": "com.example.toggle",
               "name": "Toggle",
               "version": "1.0.0",
-              "runtimeProfiles": [{ "key": "release", "type": "localCommand", "default": true }],
+              "runtimeProfiles": [{ "key": "release", "type": "localCommand", "default": true, "development": {{(development ? "true" : "false")}} }],
               "defaultRuntime": "release",
-              "services": [{ "key": "app", "runtimes": { "release": { "type": "localCommand", "command": "echo hi" } } }]
+              "services": [{ "key": "app", "runtimes": { "release": { "type": "localCommand", "command": "{{command}}" } } }]
             }
             """);
         await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath));
@@ -3564,7 +3467,7 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Fact]
-    public async Task EnsurePinnedCommit_ForcesCleanWorkingTreeAndIgnoresOverrideCommit()
+    public async Task EnsurePinnedCommit_RefusesDirtyWorkingTreeAndPreservesOverrideCommit()
     {
         var fixture = await LifecycleFixture.CreateAsync();
         var repository = await CreateLocalCommandGitRepositoryAsync(fixture.Root);
@@ -3589,13 +3492,36 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.NotEqual(reviewedCommit, afterOverride?.OverrideCommit);
         Assert.Equal(reviewedCommit, afterOverride?.Commit);
 
-        // Re-pin (Dev Mode off): the reviewed commit is restored with a clean working tree, ignoring the
-        // override's commit.
-        var repinned = await fixture.Sources.EnsurePinnedCommitAsync("com.example.notes");
-        Assert.Equal(reviewedCommit, repinned.Source?.Commit);
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Sources.EnsurePinnedCommitAsync("com.example.notes"));
+        Assert.Equal("source_changes_present", error.Code);
+        Assert.Equal(reviewedCommit, (await fixture.Apps.GetAppAsync("com.example.notes"))!.SourceState!.Commit);
         Assert.Equal(reviewedCommit, await RunGitAsync(checkout, ["rev-parse", "HEAD"]));
-        Assert.Equal("remote local command app", (await File.ReadAllTextAsync(trackedFile)).Trim());
-        Assert.False(File.Exists(Path.Combine(checkout, "stray.txt")));
+        Assert.Equal("locally edited", await File.ReadAllTextAsync(trackedFile));
+        Assert.Equal("untracked", await File.ReadAllTextAsync(Path.Combine(checkout, "stray.txt")));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task EnsurePinnedCommit_PreservesStagedAndUntrackedWork(bool staged)
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var repository = await CreateLocalCommandGitRepositoryAsync(fixture.Root);
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0", sourceRepository: repository)));
+        var pinned = await fixture.Sources.EnsurePinnedCommitAsync("com.example.notes");
+        var checkout = pinned.Source!.ManagedCheckoutPath!;
+        var file = Path.Combine(checkout, "new-file.txt");
+        await File.WriteAllTextAsync(file, "operator work");
+        if (staged)
+        {
+            await RunGitAsync(checkout, ["add", "new-file.txt"]);
+        }
+        var before = await RunGitAsync(checkout, ["status", "--porcelain=v1"]);
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() => fixture.Sources.EnsurePinnedCommitAsync("com.example.notes"));
+        Assert.Equal("source_changes_present", error.Code);
+        Assert.Equal("operator work", await File.ReadAllTextAsync(file));
+        Assert.Equal(before, await RunGitAsync(checkout, ["status", "--porcelain=v1"]));
     }
 
     [Fact]

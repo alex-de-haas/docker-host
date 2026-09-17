@@ -49,7 +49,6 @@ export function ShellDashboardRoute() {
         onInstall={shellActions.openInstallDialog}
         onAction={shellActions.runAppAction}
         onSwitchRuntime={shellActions.switchAppRuntime}
-        onSetDevelopmentMode={shellActions.configureAppDevelopmentMode}
         onUpdateApp={shellActions.applyUpdateFromRow}
         onCheckUpdates={shellActions.startUpdateCheck}
         onUpdateAll={shellActions.updateAllApps}

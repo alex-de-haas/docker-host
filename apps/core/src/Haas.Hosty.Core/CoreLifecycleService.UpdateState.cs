@@ -12,7 +12,7 @@ internal sealed partial class CoreLifecycleService
         return HashPlanSeed(new AppUpdateBase(app.Id, app.InstalledAt, app.Version, app.SelectedRuntime,
             manifestHash, app.ManifestPath, app.ManifestUrl, app.InstallManifestPath, app.FeedsUrl,
             app.FollowedFeedId, app.SourceState is { } source ? source with { UpdatedAt = null } : null,
-            app.DevelopmentModes, app.ArtifactLocks));
+            app.ArtifactLocks));
     }
 
     private async Task<AppUpdateSnapshot?> ReadUpdateSnapshotAsync(

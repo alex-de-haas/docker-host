@@ -42,7 +42,7 @@ struct ModelDecodingTests {
             }
           ],
           "runtimeProfiles": [
-            {"key": "docker", "type": "docker", "default": true, "development": false, "developmentMode": false}
+            {"key": "docker", "type": "docker", "default": true, "development": false}
           ],
           "entryPath": "/",
           "embeddedUrl": null,

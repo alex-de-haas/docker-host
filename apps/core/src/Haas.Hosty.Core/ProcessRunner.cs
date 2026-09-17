@@ -20,7 +20,8 @@ internal static class ProcessRunner
     public static async Task<ProcessRunResult> RunAsync(
         ProcessStartInfo startInfo,
         TimeSpan? timeout = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        int? outputLimit = null)
     {
         startInfo.RedirectStandardOutput = true;
         startInfo.RedirectStandardError = true;
@@ -69,8 +70,8 @@ internal static class ProcessRunner
         {
             // Drain both pipes to EOF on an uncancellable token so that after a kill (below) they complete
             // naturally with whatever was captured; only WaitForExit observes the deadline/cancellation.
-            var stdoutTask = stdoutReader.ReadToEndAsync(CancellationToken.None);
-            var stderrTask = stderrReader.ReadToEndAsync(CancellationToken.None);
+            var stdoutTask = ReadOutputAsync(stdoutReader, outputLimit);
+            var stderrTask = ReadOutputAsync(stderrReader, outputLimit);
 
             try
             {
@@ -105,6 +106,21 @@ internal static class ProcessRunner
             stdoutReader.Dispose();
             stderrReader.Dispose();
         }
+    }
+
+    // Keep one extra character as an explicit truncation marker while continuing to drain both pipes.
+    private static async Task<string> ReadOutputAsync(StreamReader reader, int? limit)
+    {
+        if (limit is null) return await reader.ReadToEndAsync(CancellationToken.None);
+        var text = new System.Text.StringBuilder();
+        var buffer = new char[4096];
+        int read;
+        while ((read = await reader.ReadAsync(buffer)) > 0)
+        {
+            var remaining = Math.Max(0, limit.Value + 1 - text.Length);
+            text.Append(buffer, 0, Math.Min(read, remaining));
+        }
+        return text.ToString();
     }
 
     private static void KillProcessTree(Process process)

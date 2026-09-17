@@ -38,7 +38,8 @@ This feature consumes both shared capabilities; it does not introduce prototype-
 
 Owner clarification: reuse existing source/dev-mode/lifecycle mechanisms wherever they satisfy the
 requirements, without forcing new behavior into an unsuitable abstraction. The remaining source work
-is no-Git support, change observations, warnings before source loss and a usable Git push flow.
+is internal no-Git source recognition, consuming the shared change observations, warnings before
+source loss and a usable Git push flow.
 No parallel source-management platform is required.
 
 These product decisions are recorded; the implementation plan remains Draft, with no implementation
@@ -64,7 +65,7 @@ release/feed generation and catalog PRs belong to [publication](../app-publicati
 Do not build a template catalog, editor/terminal UI, native-client creation flow, new Core runtime
 kind, toolchain manager or Hosty source-history/export/restore service. The first slice includes a
 visible Save to Git/Push entry point backed by the existing assistant's
-Git capabilities. It does not wait for release/catalog publication or add a Core Git writer. No automatic image publishing or public network exposure is part of creation.
+Git capabilities. It does not wait for release/catalog publication or add arbitrary Core Git command execution. No automatic image publishing or public network exposure is part of creation.
 
 ## Baseline Checked In Code
 
@@ -211,28 +212,15 @@ scope and are not advertised as source backups.
 
 ## Source And Git Status
 
-Core observes the effective registered source, for newly authored and existing source-backed apps.
-Expose a bounded read and a compact summary for Shell/app details and bound-session context:
+Shared source status, selected-file diff and reviewed Git discard are implemented for existing
+apps by [source workflows](../runtime-source-workflows/feature.md). Reuse that contract in newly
+authored apps and bound-session UI. Do not duplicate its state probes, Git mutation implementation,
+no-Git semantics, scope boundaries or recovery claims. Assistant access still requires its own
+verified source grants; app association alone does not authorize these administrator APIs.
 
-| State | Meaning |
-| --- | --- |
-| No source | No usable registered source; omit Git controls/badges, including on image-only apps |
-| Source missing | Source was configured but its directory is unavailable |
-| Local folder / no Git | Source exists, no Git history; no clean/dirty or recoverability claim |
-| Git clean | Observed worktree has no staged, unstaged or untracked changes |
-| Git changes | Staged/unstaged/untracked changes or conflicts, with bounded counts/summary |
-| Status unavailable | Git missing, timeout or access/probe error; never reported as clean |
-
-No Git initialization, fetch, reset, stash, commit, push or content snapshot in this reader. Inspect
-working-tree facts with bounded, non-interactive commands, support unborn repositories and linked
-worktrees, and scope monorepo observations to the app's actual source contract. Do not accidentally
-report the entire Core state tree because an unrelated ancestor happens to be a repository. Return
-observation time and truncation/unknown flags. Use bounded caching; refresh on explicit request and
-relevant source/edit/lifecycle events without recursively watching every app forever.
-
-A clean worktree is not proof of a pushed commit or backup. A remote URL is not a published release.
-Do not store credentials in source-status output. Git operations remain the operator/agent's work;
-provider-specific publication automation is tracked in its own feature.
+A minimal prototype may declare only one `development: true` profile. A clean worktree is not proof
+of a pushed commit or backup, and a remote URL is not a published release. Provider-specific
+publication remains in its own feature.
 
 ## Warnings Before Source Loss
 
@@ -446,6 +434,9 @@ a reviewed recipe. Ordinary Restart remains available even when no recipe is con
 
 ## Implementation Phases And Deliverables
 
+- [ ] Add an explicit upstream fetch/status flow with observation time, without automatic pull; decide
+      fast-forward updates and branch switching in a later approved extension.
+
 All phases belong to one complete feature PR after the shared app-context feature.
 
 ### Phase 1 — Core Source And Bootstrap
@@ -457,8 +448,6 @@ All phases belong to one complete feature PR after the shared app-context featur
       partial-operation reconciliation and existing keep/delete-source uninstall semantics.
 - [ ] Package the three-file placeholder and verified bootstrap executable binding; prove immediate
       install/start/open with autostart off and no prospective application toolchain requirement.
-- [ ] Expose bounded Core source/Git observations and Shell status, including unborn/dirty/clean,
-      missing source, no Git and command errors; keep reads non-mutating and credential-free.
 - [ ] Add source-loss warnings to the relevant existing lifecycle paths, including stale/unknown
       observations, no-Git deletion and dirty pinned starts; preserve explicit operator choice.
 - [ ] Package the Core development guide and bounded MCP/control/CLI readers, with SDK map/direct

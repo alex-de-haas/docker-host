@@ -249,7 +249,6 @@ public struct AppRuntimeProfile: Hashable, Sendable, Codable {
     public let type: String
     public let `default`: Bool
     public let development: Bool?
-    public let developmentMode: Bool?
 }
 
 public struct AppDependency: Hashable, Sendable, Codable {

@@ -323,22 +323,6 @@ internal static class LifecycleEndpoints
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
-        app.MapPost("/api/apps/{appId}/development-mode", async (
-            string appId,
-            HttpRequest request,
-            UserDirectoryStore users,
-            IClock clock,
-            CoreLifecycleService lifecycle,
-            AppDevelopmentModeRequest input,
-            CancellationToken cancellationToken) =>
-            await CoreSessionAuthorization.RequireAdminSessionAsync(
-                request,
-                users,
-                clock,
-                async () => await HandleLifecycleError(() => lifecycle.ConfigureDevelopmentModeAsync(appId, input, cancellationToken)),
-                requireCsrf: true,
-                cancellationToken: cancellationToken));
-
         app.MapPost("/api/apps/{appId}/update/plan", async (
             string appId,
             HttpRequest request,
@@ -732,16 +716,6 @@ internal static class LifecycleEndpoints
             CancellationToken cancellationToken) =>
             await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
                 await HandleLifecycleError(() => lifecycle.SetFeedAsync(appId, input, cancellationToken))));
-
-        app.MapPost("/control/v1/apps/{appId}/development-mode", async (
-            string appId,
-            HttpRequest request,
-            ControlSecret secret,
-            CoreLifecycleService lifecycle,
-            AppDevelopmentModeRequest input,
-            CancellationToken cancellationToken) =>
-            await HostyCoreApplication.RequireControlSecret(request, secret, async () =>
-                await HandleLifecycleError(() => lifecycle.ConfigureDevelopmentModeAsync(appId, input, cancellationToken))));
 
         app.MapPost("/control/v1/apps/{appId}/start", async (
             string appId,
