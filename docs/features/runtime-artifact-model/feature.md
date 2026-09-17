@@ -17,8 +17,8 @@ A runtime profile declares a command recipe and an execution type. Docker profil
 | `localCommand` | `prebuilt` | Content-hashed immutable folder copy |
 
 Development profiles use `development: true`. More than one profile may declare it; profiles share
-the app's source state. Docker development profiles are rejected by manifest validation. Prebuilt artifacts stay immutable;
-marking a profile does not make their copied files editable.
+the app's source state. Docker development profiles and development profiles containing prebuilt services are rejected by
+manifest validation. Prebuilt artifacts stay immutable and require a reviewed profile.
 The profile supplies `setup` and service `command` values. Core does not infer hot reload from the
 name, install watchers on behalf of the app, or equate the working tree with code loaded by a process.
 A source `setup` command runs before service startup; the application chooses how to cache its build.
@@ -58,7 +58,8 @@ remain app-level under `apps/<id>/source`, with persisted legacy paths honored.
 ## Testing Expectations
 
 - Arbitrary names and multiple declared development profiles work; `dev` without the flag is reviewed.
-- Docker development profiles are rejected; prebuilt artifacts retain immutable execution.
+- Docker development profiles and mixed source/prebuilt development profiles are rejected, including
+  unselected profiles; reviewed prebuilt artifacts retain immutable execution.
 - Obsolete mode fields cannot override the manifest on reads, starts or restarts and are omitted on write.
 - Failed runtime switches retain the previous selection and recoverable source state.
 - A pinned start preserves staged, unstaged, untracked and ignored source files; dirty work refuses startup.

@@ -64,7 +64,7 @@ export function SourceVersionCell({ app }: { app: CoreApp }) {
   const { canManageApps } = useShellState();
   const [open, setOpen] = useState(false);
   const { status, error, refresh } = useSourceStatus(app, canManageApps && !open);
-  if (!canManageApps) return <span className="text-sm text-muted-foreground">Development source</span>;
+  if (!canManageApps) return <span className="font-mono text-sm" title="Manifest version">{app.version}</span>;
   return <>
     <TooltipProvider delayDuration={150}>
       <Tooltip>
@@ -120,7 +120,8 @@ function SourceChangesDialog({ app, onClose }: { app: CoreApp; onClose: () => vo
   const [message, setMessage] = useState<string | null>(null);
   const diffSequence = useRef(0);
   const selectablePaths = status?.files.filter((file) => file.canDiscard).map((file) => file.path) ?? [];
-  const selectedCount = selectablePaths.filter((path) => selected.includes(path)).length;
+  const selectedPaths = selectablePaths.filter((path) => selected.includes(path));
+  const selectedCount = selectedPaths.length;
   const allSelected = selectablePaths.length > 0 && selectedCount === selectablePaths.length;
   const partlySelected = selectedCount > 0 && !allSelected;
   const endpoint = `${coreOrigin}/api/apps/${encodeURIComponent(app.id)}/source`;
@@ -134,9 +135,10 @@ function SourceChangesDialog({ app, onClose }: { app: CoreApp; onClose: () => vo
     } catch (failure) { if (sequence === diffSequence.current) setError(failure instanceof Error ? failure.message : "Diff unavailable."); }
   };
   const review = async () => {
+    if (!selectedCount || selectedCount > 32 || statusError || status?.truncated || !status?.head) return;
     setBusy(true); setError(null); setMessage(null);
     try {
-      const response = await sendCsrfJson(`${endpoint}/discard/plan`, { paths: selected });
+      const response = await sendCsrfJson(`${endpoint}/discard/plan`, { paths: selectedPaths });
       setPlan(await response.json() as DiscardPlan);
     } catch (failure) { setError(failure instanceof Error ? failure.message : "Review failed."); refresh(); }
     finally { setBusy(false); }
@@ -189,7 +191,7 @@ function SourceChangesDialog({ app, onClose }: { app: CoreApp; onClose: () => vo
             </div>}
             <div className="max-h-56 overflow-auto">
             {status?.files.map((file) => <div key={file.path} className="flex items-center gap-2 border-b px-3 py-2 last:border-b-0">
-              <input type="checkbox" aria-label={`Select ${file.path}`} checked={selected.includes(file.path)} disabled={busy || !file.canDiscard || status.truncated || (selected.length >= 32 && !selected.includes(file.path))}
+              <input type="checkbox" aria-label={`Select ${file.path}`} checked={selectedPaths.includes(file.path)} disabled={busy || !file.canDiscard || status.truncated || (selectedCount >= 32 && !selected.includes(file.path))}
                 onChange={(event) => setSelected((current) => event.target.checked ? [...current, file.path] : current.filter((path) => path !== file.path))} />
               <code className="whitespace-pre text-xs text-muted-foreground">{file.status}</code>
               <button type="button" className="min-w-0 break-all text-left text-sm hover:underline" disabled={busy} onClick={() => void showDiff(file.path)}>{file.path}</button>
@@ -206,8 +208,8 @@ function SourceChangesDialog({ app, onClose }: { app: CoreApp; onClose: () => vo
       </DialogBody>
       <DialogFooter>
         <Button type="button" variant="outline" disabled={busy} onClick={() => plan ? setPlan(null) : onClose()}>{plan ? "Back" : "Close"}</Button>
-        <Button type="button" variant={plan ? "destructive" : "default"} disabled={busy || (!plan && (selected.length === 0 || !!statusError || status?.truncated || !status?.head))} onClick={() => void (plan ? discard() : review())}>
-          {busy && <LoaderCircle className="size-4 animate-spin" />}{plan ? "Discard selected changes" : `Review discard (${selected.length})`}
+        <Button type="button" variant={plan ? "destructive" : "default"} disabled={busy || (!plan && (selectedCount === 0 || !!statusError || status?.truncated || !status?.head))} onClick={() => void (plan ? discard() : review())}>
+          {busy && <LoaderCircle className="size-4 animate-spin" />}{plan ? "Discard selected changes" : `Review discard (${selectedCount})`}
         </Button>
       </DialogFooter>
     </DialogContent>

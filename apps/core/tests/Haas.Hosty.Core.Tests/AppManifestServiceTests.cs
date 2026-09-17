@@ -906,6 +906,37 @@ public sealed class AppManifestServiceTests
         Assert.Equal(2, selection.Manifest.RuntimeProfiles.Count(profile => profile.Development));
     }
 
+    [Theory]
+    [InlineData("dev")]
+    [InlineData("release")]
+    public async Task LoadAsync_RejectsDevelopmentProfileContainingPrebuiltService(string selectedRuntime)
+    {
+        var manifestPath = await WriteRawManifestAsync("""
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.notes", "name": "Notes", "version": "1.0.0",
+              "runtimeProfiles": [
+                { "key": "dev", "type": "localCommand", "development": true },
+                { "key": "release", "type": "localCommand" }
+              ],
+              "services": [{
+                "key": "web", "runtimes": {
+                  "dev": { "type": "localCommand", "command": "npm run dev" },
+                  "release": { "type": "localCommand", "command": "npm start" }
+                }
+              }, {
+                "key": "api", "runtimes": {
+                  "dev": { "type": "localCommand", "artifact": "prebuilt", "delivery": { "type": "folder", "path": "dist" }, "command": "node api.js" },
+                  "release": { "type": "localCommand", "artifact": "prebuilt", "delivery": { "type": "folder", "path": "dist" }, "command": "node api.js" }
+                }
+              }]
+            }
+            """);
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath, selectedRuntime));
+        Assert.Contains(error.Errors, item => item.Code == "app_manifest_development_requires_source");
+    }
+
     [Fact]
     public async Task LoadAsync_AcceptsPrebuiltRuntimeWithFolderDelivery()
     {

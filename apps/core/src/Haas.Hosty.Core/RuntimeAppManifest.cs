@@ -559,6 +559,13 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
                 errors.Add(new("app_manifest_development_requires_local_command", $"Runtime profile '{profile.Key}' sets development: true, which is only supported for a localCommand runtime.", "$.runtimeProfiles[].development"));
             }
 
+            if (profile.Development && manifest.Services.Any(service =>
+                service.Runtimes.TryGetValue(profile.Key, out var runtime)
+                && string.Equals(runtime.Artifact?.Trim(), "prebuilt", StringComparison.OrdinalIgnoreCase)))
+            {
+                errors.Add(new("app_manifest_development_requires_source", $"Development profile '{profile.Key}' cannot contain prebuilt services. Use a reviewed profile for immutable builds.", "$.runtimeProfiles[].development"));
+            }
+
             if (profile.Default)
             {
                 defaultProfileCount++;

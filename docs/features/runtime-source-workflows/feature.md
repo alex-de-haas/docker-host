@@ -81,7 +81,9 @@ a rename appears as the old path's deletion and the new path's addition, so each
 Symlinks, submodule directories and special files cannot be previewed through this panel.
 
 **Select all** above the file list selects/deselects all eligible files and shows a mixed state for
-partial selection. Unsupported files remain unavailable; lists above the 32-file review limit
+partial selection. After status refreshes, review requests and counts include only currently discardable
+selected files. Viewers without source-management rights see the manifest version instead of Git details.
+Unsupported files remain unavailable; lists above the 32-file review limit
 explain the limit and require manual selection rather than silently selecting only a subset.
 
 **Review discard** accepts 1–32 selected paths. The review names the exact HEAD, source scope and
