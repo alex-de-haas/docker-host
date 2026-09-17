@@ -109,6 +109,8 @@ their version block, vertically centered across the installed and available vers
 are present; development apps show their Git branch icon instead. The live-source icon beside the
 runtime exposes the full explanation and last adopted manifest changes in a hover/focus tooltip,
 without a repeated informational banner in the expanded service details.
+The tooltip distinguishes an active live-source runtime from a selected development profile whose
+source is not active; only the active live state says reviewed updates are unavailable.
 
 ### Secret settings
 

@@ -1512,18 +1512,20 @@ function RuntimeSwitcher({
         <TooltipProvider delayDuration={150}>
           <Tooltip>
             <TooltipTrigger asChild>
-              <span tabIndex={0} className="inline-flex shrink-0 cursor-help text-emerald-600 dark:text-emerald-400" role="img" aria-label="Live source runtime">
+              <span tabIndex={0} className="inline-flex shrink-0 cursor-help text-emerald-600 dark:text-emerald-400" role="img" aria-label={app.live ? "Live source runtime" : "Development runtime"}>
                 <Radio aria-hidden="true" className="size-3.5" />
               </span>
             </TooltipTrigger>
             <TooltipContent className="max-w-sm">
               <div className="flex flex-col gap-2">
-                <p className="font-medium">Live source runtime</p>
-                <p>Core runs this app from your source folder and adopts manifest edits on restart — there is no reviewed update. Switch to a compiled runtime for locked, reviewed updates.</p>
+                <p className="font-medium">{app.live ? "Live source runtime" : "Development runtime"}</p>
+                {app.live
+                  ? <p>Core runs this app from your source folder and adopts manifest edits on restart — there is no reviewed update. Switch to a compiled runtime for locked, reviewed updates.</p>
+                  : <p>A development profile is selected, but live source is not active. Reviewed updates may still be available.</p>}
                 <p>Reload behavior depends on the runtime commands.</p>
-                {app.liveChanges && app.liveChanges.length > 0 && <div>
+                {app.live && app.liveChanges && app.liveChanges.length > 0 && <div>
                   <p className="font-medium">Adopted at last start</p>
-                  <ul className="mt-1 flex list-disc flex-col gap-0.5 pl-4">
+                  <ul className="mt-1 list-disc pl-4 [&>li+li]:mt-0.5">
                     {app.liveChanges.map((change) => <li key={change}>{formatUpdateChange(change)}</li>)}
                   </ul>
                 </div>}
