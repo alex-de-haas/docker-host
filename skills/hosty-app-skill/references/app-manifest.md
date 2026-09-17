@@ -66,7 +66,7 @@ A profile with `development: true` can use `type: docker` or `type: mixed`. Mixe
 
 Docker source recipes declare `sourceMount: { path: ".", target: "/workspace", mode: "ro", caches: ["bin", "obj"] }`, a `command`, and either `image` or `build: { context: ".", dockerfile: "Dockerfile.dev", revision: "1" }`. Paths are contained in the authorized checkout; workingDirectory is relative to the source mount. Cache directories use isolated Docker volumes. Setup/command become CMD, preserving the image entrypoint (including VPN initialization). Build environments lock by image ID; change the build revision through manifest review to rebuild. Source mounts require a local Docker engine. Image/build/mount/privilege/network edits require review even in development.
 
-`source.paths` optionally lists sibling source directories relative to the repository root for source inspection/discard; do not include unrelated monorepo code. Service-specific data/cache targets use `service` alongside the profile's `runtime` key. See [Mixed Development Runtimes](../../../docs/features/mixed-development-runtimes/feature.md) for the full contract and example.
+`source.paths` optionally lists source files or directories relative to the repository root for source inspection/discard; do not include unrelated monorepo code. Service-specific data/cache targets use `service` alongside the profile's `runtime` key. See [Mixed Development Runtimes](../../../docs/features/mixed-development-runtimes/feature.md) for the full contract and example.
 
 ### Service Dependencies
 

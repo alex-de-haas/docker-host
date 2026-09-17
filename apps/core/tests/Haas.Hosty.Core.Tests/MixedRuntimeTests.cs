@@ -118,6 +118,28 @@ public sealed class MixedRuntimeTests
         Assert.Throws<AppManifestException>(() => Selection(Manifest.Replace("\"type\":\"localCommand\",", "")));
     }
 
+    [Fact]
+    public async Task StartWithoutNewLocks_DoesNotOverwriteExistingLocks()
+    {
+        var context = Context();
+        var events = new List<string>();
+        var adapter = new MixedRuntimeAdapter([new FakeAdapter("docker", events), new FakeAdapter("localCommand", events)]);
+        var result = await adapter.StartAsync(context);
+        Assert.Null(result.ArtifactLocks);
+    }
+
+    [Fact]
+    public void LiveManifest_DoesNotAdoptOtherProfilesCommands()
+    {
+        var json = System.Text.Json.Nodes.JsonNode.Parse(Manifest)!;
+        json["runtimeProfiles"]!.AsArray().Add(System.Text.Json.Nodes.JsonNode.Parse("""{"key":"prod","type":"localCommand"}"""));
+        foreach (var service in json["services"]!.AsArray())
+            service!["runtimes"]!["prod"] = System.Text.Json.Nodes.JsonNode.Parse("""{"type":"localCommand","command":"reviewed","ports":[{"key":"metrics","containerPort":9464},{"key":"query","containerPort":8080}]}""");
+        var baseline = Selection(json.ToJsonString());
+        json["services"]![0]!["runtimes"]!["prod"]!["command"] = "not-reviewed";
+        Assert.True(DockerSourceRuntime.RequiresReview(baseline, Selection(json.ToJsonString())));
+    }
+
     private sealed class FakeAdapter(string type, List<string> events, string? fail = null, bool running = false, string? failStop = null, bool recreated = false) : IAppRuntimeAdapter
     {
         public string Type => type;

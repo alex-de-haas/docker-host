@@ -30,7 +30,7 @@ internal static class DockerSourceRuntime
             foreach (var key in new[] { "name", "description", "version", "catalogMetadata", "ui" }) node.Remove(key);
             foreach (var service in node["services"]!.AsArray())
             {
-                foreach (var runtime in service!["runtimes"]!.AsObject())
+                foreach (var runtime in service!["runtimes"]!.AsObject().Where(runtime => runtime.Key == selection.RuntimeProfile.Key))
                 {
                     if (runtime.Value is not JsonObject recipe) continue;
                     if (recipe["type"]?.GetValue<string>() == "localCommand" || recipe["sourceMount"] is not null)
@@ -44,6 +44,10 @@ internal static class DockerSourceRuntime
         }
         return !JsonNode.DeepEquals(ProtectedContract(baseline), ProtectedContract(candidate));
     }
+
+    internal static string BuildFingerprint(RuntimeDockerBuildManifest build)
+        => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
+            JsonSerializer.Serialize(build, CoreJsonSerializerContext.Default.RuntimeDockerBuildManifest)))).ToLowerInvariant();
 
     internal sealed record Launch(IReadOnlyList<string> Arguments, IReadOnlyList<string> Command);
 
@@ -105,8 +109,7 @@ internal static class DockerSourceRuntime
         RuntimeSelectedService service, IDockerCommandRunner runner, ArtifactLock? existing, CancellationToken cancellationToken)
     {
         var build = service.Runtime.Build!;
-        var recipe = JsonSerializer.Serialize(build, CoreJsonSerializerContext.Default.RuntimeDockerBuildManifest);
-        var fingerprint = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(recipe))).ToLowerInvariant();
+        var fingerprint = BuildFingerprint(build);
         if (existing is { Kind: "development-image", ImageDigest: not null } && existing.BundleHash == fingerprint)
         {
             var check = await runner.RunAsync(["image", "inspect", existing.ImageDigest], null, cancellationToken);

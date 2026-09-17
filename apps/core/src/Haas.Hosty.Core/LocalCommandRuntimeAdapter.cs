@@ -506,7 +506,7 @@ internal sealed class LocalCommandRuntimeAdapter(
         return (startInfo, false, null);
     }
 
-    private void InjectEnvironment(
+    internal void InjectEnvironment(
         System.Diagnostics.ProcessStartInfo startInfo,
         RuntimeLifecycleContext context,
         RuntimeSelectedService service,
@@ -577,7 +577,9 @@ internal sealed class LocalCommandRuntimeAdapter(
         foreach (var serviceUrl in RuntimeServiceDiscovery.BuildEnvironment(
             context.AllServices,
             service,
-            (target, port) => servicePorts.TryGetValue(target.Key, out var targetPorts) &&
+            (target, port) => context.Manifest.RuntimeProfile.Type == "mixed"
+                ? RuntimeServiceDiscovery.BuildPeerUrl(context, service, target, port)
+                : servicePorts.TryGetValue(target.Key, out var targetPorts) &&
                     targetPorts.TryGetValue(RuntimeServiceDiscovery.PortKey(port), out var hostPort)
                 ? $"{RuntimeServiceDiscovery.Scheme(port)}://{config.RuntimePublicHost}:{hostPort}"
                 : null))

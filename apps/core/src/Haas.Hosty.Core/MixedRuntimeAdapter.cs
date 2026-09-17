@@ -67,7 +67,7 @@ internal sealed class MixedRuntimeAdapter(IEnumerable<IAppRuntimeAdapter> adapte
                 throw new AppLifecycleException("mixed_start_cleanup_incomplete", string.Join("; ", failures.Select(error => error.Message)));
             throw;
         }
-        return new("running", endpoints, locks);
+        return new("running", endpoints, locks.Count > 0 ? locks : null);
     }
 
     public Task<AppRuntimeOperationResult> StopAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)

@@ -126,7 +126,9 @@ One platform feature PR contains the complete Core contract and Telemetry adopti
 uses a companion PR in its own repository after the minimum Core version is established. The owner approved this scope in chat on 2026-09-17.
 Keep unrelated artifact delivery and assistant authority work in their existing owning plans.
 
-The owner requested paired PRs before the remaining platform acceptance and intends to test
+The owner requested paired PRs and explicitly authorized resolving reviews and merging on
+2026-09-17 before the remaining platform acceptance. This is an owner-approved exception to
+waiting for all platform acceptance in the feature PR. The owner intends to test
 Telemetry runtime switching on the Windows production host. macOS is the development host;
 no native Linux host is available. Windows/embedded UI and IPv6 checks are not reported as
 passed, and this plan remains open until its remaining acceptance deliverables are satisfied.
@@ -184,6 +186,17 @@ Telemetry 0.9.2 → 0.10.0, and companion Torrent Engine 0.8.0 → 0.9.0.
 - Windows, native Linux and embedded Shell acceptance remain unchecked. IPv6-enabled VPN isolation and
   collector-egress acceptance remain in Torrent Engine's VPN isolation plan. The installed production
   Torrent image has not been updated with the firewall correction.
+
+## Review Verification (2026-09-17)
+
+- Core full suite: 1952 passed, four opt-in Docker/VPN fixtures skipped by default.
+- The Core-managed mixed Telemetry integration fixture was rerun with real Docker and passed.
+- Telemetry backend: 120 passed; Shell: 162 passed; changed-file ESLint and Webpack build passed.
+- Native AOT publish for macOS ARM64, version consistency, docs index and whitespace checks passed.
+- Added regression coverage for unchanged build-image locks on reviewed updates, new-port
+  reservations on update/runtime switch, legacy inactive profiles, exact-file source scopes,
+  inactive command review, empty lock results, LAN-hostname peer discovery and backend port selection.
+- The previously recorded Windows/native Linux/embedded UI and IPv6 limits still apply.
 
 ## Windows Operator Acceptance
 

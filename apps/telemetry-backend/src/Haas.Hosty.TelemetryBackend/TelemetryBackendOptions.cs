@@ -108,7 +108,9 @@ internal sealed record TelemetryBackendOptions
             LogsRetention = ParseDays("HOSTY_TELEMETRY_LOGS_RETENTION_DAYS", 3),
             TracesRetention = ParseDays("HOSTY_TELEMETRY_TRACES_RETENTION_DAYS", 3),
             MaxDatabaseBytes = ParseBytes("HOSTY_TELEMETRY_MAX_DB_BYTES", 1L * 1024 * 1024 * 1024),
-            QueryPort = ParseInt("HOSTY_TELEMETRY_QUERY_PORT", ParseInt("HOSTY_PORT_QUERY", 8080)),
+            QueryPort = ParseInt("HOSTY_TELEMETRY_QUERY_PORT",
+                Environment.GetEnvironmentVariable("HOSTY_TELEMETRY_BIND_LOOPBACK") == "1"
+                    ? ParseInt("HOSTY_PORT_QUERY", 8080) : 8080),
         };
     }
 

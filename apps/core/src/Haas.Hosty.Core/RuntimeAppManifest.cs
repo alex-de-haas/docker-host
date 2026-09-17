@@ -54,7 +54,8 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
     public async Task<RuntimeAppManifestSelection> LoadAsync(
         string manifestPath,
         string? selectedRuntime = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool validateAllProfiles = false)
     {
         if (string.IsNullOrWhiteSpace(manifestPath))
         {
@@ -70,7 +71,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
             localManifestCache.TryGetValue(localPath, out var cached) &&
             cached.Stamp == stamp)
         {
-            return Select(cached.Manifest, localPath, cached.Digest, selectedRuntime, cached.Json, manifestUrl: null);
+            return Select(cached.Manifest, localPath, cached.Digest, selectedRuntime, cached.Json, manifestUrl: null, validateAllProfiles: validateAllProfiles);
         }
 
         var source = await ReadManifestSourceAsync(trimmed, cancellationToken);
@@ -95,7 +96,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
             localManifestCache[localPath] = new CachedLocalManifest(manifest, source.Json, digest, stamp);
         }
 
-        return Select(manifest, source.Reference, digest, selectedRuntime, source.Json, source.ManifestUrl);
+        return Select(manifest, source.Reference, digest, selectedRuntime, source.Json, source.ManifestUrl, validateAllProfiles: validateAllProfiles);
     }
 
     // Mirrors ReadManifestSourceAsync/ReadLocalManifestAsync resolution for the cache key: null for a
@@ -526,7 +527,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
         foreach (var path in manifest.Source?.Paths ?? [])
         {
             if (!DockerSourceRuntime.SafeRelative(path) || path == ".")
-                errors.Add(new("app_manifest_source_path_invalid", "Source paths must be explicit relative subdirectories of the checkout.", "$.source.paths"));
+                errors.Add(new("app_manifest_source_path_invalid", "Source paths must be explicit relative files or directories within the checkout.", "$.source.paths"));
         }
 
         var defaultProfileCount = 0;

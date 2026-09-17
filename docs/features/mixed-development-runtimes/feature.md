@@ -9,7 +9,9 @@ A `development: true` profile can use `type: docker` or `type: mixed`, in additi
 `localCommand`. Mixed profiles require an explicit `docker` or `localCommand` type on each
 service. A development profile requires at least one source service; image dependencies are
 permitted, while prebuilt folder artifacts remain restricted to reviewed profiles. Core validates
-all declared profiles, including unselected profiles and dependency cycles. The additive contract
+all declared profiles, including unselected profiles and dependency cycles, on installation,
+manifest updates and live adoption. Ordinary lifecycle reads validate only the selected profile
+so a legacy invalid alternative does not break an existing app. The additive contract
 uses `app.0.1`; these new profiles require Core 0.104.0 or later.
 
 ## Docker Source Execution
@@ -45,8 +47,8 @@ command. Capabilities, devices and external mounts remain explicit manifest/oper
 No Docker socket, privileged mode or host networking is added by development mode.
 
 The first build uses the authorized checkout and Docker build cache, then records the immutable
-image ID. Restarts reuse that ID. Source edits are visible through the mount; the app's watch command
-owns reload. Dockerfile/dependency changes require a reviewed build-revision change before Core
+image ID. Restarts and reviewed metadata-only updates reuse that ID when the build recipe is
+unchanged. Source edits are visible through the mount; the app's watch command owns reload. Dockerfile/dependency changes require a reviewed build-revision change before Core
 builds a new environment. A local supplied image without a registry digest is also locked by image
 ID. Missing locked environments produce an actionable error rather than silently following a tag.
 Builds execute the checkout's Dockerfile with normal Docker semantics; the reviewed manifest is
@@ -57,8 +59,8 @@ are refused because their filesystem cannot be assumed to contain the operator's
 
 ## Mixed Lifecycle
 
-Core reserves host ports before startup and validates the complete dependency graph before
-launching services. The mixed adapter starts services in dependency order and stops/removes them
+Core reserves host ports at installation and reconciles reservations on reviewed updates and
+runtime switches. It validates the complete dependency graph before launching services. The mixed adapter starts services in dependency order and stops/removes them
 in reverse order. It aggregates health and logs. Failure cleanup removes services created by that
 start while preserving adopted containers; cleanup failures are reported. Local processes retain
 the existing process-tree supervision and container services retain Docker ownership checks.
@@ -71,7 +73,8 @@ semantics remain unchanged: ordinary declared ports publish on loopback, explici
 publishes on all interfaces. Data/cache targets can name a service; local services receive host
 paths while Docker services receive their declared container paths.
 
-Live command/setup edits remain restart-adoptable. Changes to image dependencies, environment
+Live command/setup edits in the selected development profile remain restart-adoptable.
+Commands in other profiles remain part of the reviewed contract. Changes to image dependencies, environment
 build recipes, mounts, privileges, ports and other protected contract fields require an explicit
 manifest update review. The last accepted contract remains usable while a protected edit awaits
 review. Ordinary reviewed runtime switching applies to mixed profiles too.
@@ -88,11 +91,19 @@ app restart operates on the whole graph.
 `source.paths` restricts source inspection and discard to the three sibling directories
 `apps/telemetry`, `apps/telemetry-backend`, and `apps/telemetry-ui`. These are directories relative
 to the app source root; unrelated monorepo paths are excluded. Shell/CLI service health details
-show execution type and artifact type separately.
+show execution type and artifact type separately. Source settings remain available for Docker
+and mixed development profiles. The backend uses the assigned host query port only in its
+loopback dev process; Docker continues listening on its declared internal port.
+
+Source scopes can also name individual files. Exact file matches and directory descendants are
+included in inspection, preview and discard; similarly named neighboring files remain excluded.
 
 ## Testing Expectations
 
-- Validate every profile, source/build path containment, image locks and protected manifest changes.
+- Validate every new/adopted profile while preserving selected-profile reads for legacy installations.
+- Cover source/build path containment, unchanged-image lock retention across updates, and review
+  requirements for commands in inactive profiles.
+- Cover new-port reservations on update/switch and loopback discovery with a configured LAN hostname.
 - Cover graph order, cross-runtime URL preflight, recreated versus adopted service cleanup, and
   continued cleanup after a service fails.
 - Cover monorepo preview/discard confinement and preserve existing source/profile-switch tests.

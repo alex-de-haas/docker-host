@@ -43,7 +43,7 @@ internal sealed partial class AppSourceService
                 var fullPath = Path.GetFullPath(Path.Combine(root, entry[3..]));
                 if (!IsWithinScope(scope, fullPath)) continue;
                 var relative = Path.GetRelativePath(scope, fullPath).Replace(Path.DirectorySeparatorChar, '/');
-                if (app.SourceState?.InspectionPaths is { Count: > 0 } allowed && !allowed.Any(path => relative.StartsWith(path.TrimEnd('/') + "/", StringComparison.Ordinal))) continue;
+                if (app.SourceState?.InspectionPaths is { Count: > 0 } allowed && !allowed.Any(path => relative == path || relative.StartsWith(path.TrimEnd('/') + "/", StringComparison.Ordinal))) continue;
                 // `git rm --cached` can list the same path as both deleted and untracked. Restore
                 // that tracked path once, rather than presenting it again as a new-file deletion.
                 if (!seen.Add(relative)) continue;

@@ -1043,7 +1043,8 @@ internal sealed record AppSummary(
             .ToArray();
 
         // Source settings remain available for any source-capable profile, including reviewed ones.
-        var supportsSource = profiles.Any(profile => string.Equals(profile.Type, "localCommand", StringComparison.Ordinal));
+        // Every validated development profile contains at least one editable source service.
+        var supportsSource = profiles.Any(profile => profile.Development || string.Equals(profile.Type, "localCommand", StringComparison.Ordinal));
 
         return new(
             app.Id,
