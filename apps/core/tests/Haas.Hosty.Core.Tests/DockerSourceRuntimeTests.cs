@@ -49,12 +49,66 @@ public sealed class DockerSourceRuntimeTests : IDisposable
     }
 
     [Fact]
+    public async Task CacheMountpoints_PrepareFreshCheckoutAndPreserveExistingContents()
+    {
+        var service = SourceService(new() { Caches = ["src/Engine/bin", "src/Engine/obj"] });
+        Assert.False(Directory.Exists(Path.Combine(root, "src")));
+        var first = await DockerSourceRuntime.PrepareAsync(Context, service, new Runner(), default);
+        Assert.Empty(Directory.EnumerateFileSystemEntries(Path.Combine(root, "src/Engine/bin")));
+        Assert.Empty(Directory.EnumerateFileSystemEntries(Path.Combine(root, "src/Engine/obj")));
+        var hostOutput = Path.Combine(root, "src/Engine/bin/host-output");
+        await File.WriteAllTextAsync(hostOutput, "retain host output");
+        var second = await DockerSourceRuntime.PrepareAsync(Context, service, new Runner(), default);
+        Assert.Equal(first!.Arguments, second!.Arguments);
+        Assert.Equal("retain host output", await File.ReadAllTextAsync(hostOutput));
+    }
+
+    [Theory]
+    [InlineData("cache")]
+    [InlineData("cache/bin")]
+    public async Task CacheMountpoints_RejectFileCollisionsBeforeCreatingDirectories(string cache)
+    {
+        await File.WriteAllTextAsync(Path.Combine(root, "cache"), "source content");
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() => DockerSourceRuntime.PrepareAsync(
+            Context, SourceService(new() { Caches = ["should-not-be-created", cache] }), new Runner(), default));
+        Assert.Equal("docker_source_cache_invalid", error.Code);
+        Assert.False(Directory.Exists(Path.Combine(root, "should-not-be-created")));
+        Assert.Equal("source content", await File.ReadAllTextAsync(Path.Combine(root, "cache")));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CacheMountpoints_RejectExistingAndDanglingSymlinks(bool dangling)
+    {
+        var outside = Path.Combine(Path.GetTempPath(), "hosty-cache-outside-" + Guid.NewGuid().ToString("N"));
+        if (!dangling) Directory.CreateDirectory(outside);
+        var link = Path.Combine(root, "cache");
+        Directory.CreateSymbolicLink(link, outside);
+        try
+        {
+            var error = await Assert.ThrowsAsync<AppLifecycleException>(() => DockerSourceRuntime.PrepareAsync(
+                Context, SourceService(new() { Caches = ["cache/bin"] }), new Runner(), default));
+            Assert.Equal("docker_source_cache_invalid", error.Code);
+            Assert.False(Directory.Exists(Path.Combine(outside, "bin")));
+            Assert.Equal(!dangling, Directory.Exists(outside));
+        }
+        finally
+        {
+            if (dangling && !OperatingSystem.IsWindows()) File.Delete(link);
+            else Directory.Delete(link);
+            if (Directory.Exists(outside)) Directory.Delete(outside);
+        }
+    }
+
+    [Fact]
     public async Task RemoteDocker_RefusesHostSourceMount()
     {
         // Context inspection must be authoritative when DOCKER_HOST is not explicitly configured.
         if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DOCKER_HOST"))) return;
-        var error = await Assert.ThrowsAsync<AppLifecycleException>(() => DockerSourceRuntime.PrepareAsync(Context, SourceService(), new Runner(remote: true), default));
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() => DockerSourceRuntime.PrepareAsync(Context, SourceService(new() { Caches = ["bin"] }), new Runner(remote: true), default));
         Assert.Equal("docker_source_remote_unsupported", error.Code);
+        Assert.False(Directory.Exists(Path.Combine(root, "bin")));
     }
 
     [Fact]

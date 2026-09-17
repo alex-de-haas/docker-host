@@ -222,6 +222,7 @@ public sealed partial class CoreLifecycleServiceTests
             fixture.Sources, [docker, local], new NoopIngressController(), NullLogger<CoreLifecycleService>.Instance,
             portAllocator: new RuntimePortAllocator(config));
         const string appId = "com.example.docker-development";
+        Assert.False(Directory.Exists(Path.Combine(source, "src")));
         try
         {
             try { await lifecycle.InstallAsync(new(Path.Combine(source, "manifest.json"), "dev")); }
@@ -229,6 +230,17 @@ public sealed partial class CoreLifecycleServiceTests
             await lifecycle.StartAsync(appId);
             var app = (await fixture.Apps.GetAppAsync(appId))!;
             Assert.True(app.RuntimeState == "running", $"Start failed: {app.LastError}");
+            var runner = new ProcessDockerCommandRunner();
+            var container = DockerRuntimeAdapter.BuildContainerName(config.InstanceId, appId, "web");
+            var cacheWrite = await runner.RunAsync(["exec", container, "/bin/sh", "-c",
+                "echo container-only > /workspace/src/Fixture/bin/output && echo cache > /workspace/src/Fixture/obj/restore"], null, default);
+            Assert.True(cacheWrite.ExitCode == 0, cacheWrite.StandardError);
+            Assert.Empty(Directory.EnumerateFileSystemEntries(Path.Combine(source, "src/Fixture/bin")));
+            Assert.Empty(Directory.EnumerateFileSystemEntries(Path.Combine(source, "src/Fixture/obj")));
+            var sourceWrite = await runner.RunAsync(["exec", container, "/bin/sh", "-c",
+                "echo forbidden > /workspace/should-not-exist"], null, default);
+            Assert.NotEqual(0, sourceWrite.ExitCode);
+            Assert.False(File.Exists(Path.Combine(source, "should-not-exist")));
             var endpoint = Assert.Single(app.Endpoints).Url!;
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
             async Task<string> ReadReady()
