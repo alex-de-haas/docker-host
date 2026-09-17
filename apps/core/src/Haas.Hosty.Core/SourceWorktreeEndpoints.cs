@@ -4,6 +4,26 @@ internal static class SourceWorktreeEndpoints
 {
     public static void Map(WebApplication app)
     {
+        app.MapGet("/api/apps/{appId}/source/summary", async (
+            string appId, HttpRequest request, HttpResponse response,
+            UserDirectoryStore users, IClock clock, AppSourceService sources,
+            CancellationToken cancellationToken) =>
+        {
+            response.Headers.CacheControl = "no-store";
+            return await CoreSessionAuthorization.RequireAdminSessionAsync(request, users, clock,
+                async () => await Handle(() => sources.GetWorktreeSummaryAsync(appId, cancellationToken)),
+                requireCsrf: false, cancellationToken: cancellationToken);
+        });
+
+        app.MapGet("/control/v1/apps/{appId}/source/summary", async (
+            string appId, HttpRequest request, HttpResponse response, ControlSecret secret,
+            AppSourceService sources, CancellationToken cancellationToken) =>
+        {
+            response.Headers.CacheControl = "no-store";
+            return await HostyCoreApplication.RequireControlSecret(request, secret,
+                async () => await Handle(() => sources.GetWorktreeSummaryAsync(appId, cancellationToken)));
+        });
+
         app.MapGet("/api/apps/{appId}/source/status", async (
             string appId,
             HttpRequest request,

@@ -406,10 +406,10 @@ function DashboardColumns() {
   return (
     <colgroup>
       <col />
-      <col className="w-28" />
-      <col className="w-28" />
-      <col className="w-52" />
-      <col className="w-48" />
+      <col className="w-[12%]" />
+      <col className="w-[17%]" />
+      <col className="w-[20%]" />
+      <col className="w-56" />
     </colgroup>
   );
 }
@@ -465,7 +465,7 @@ function CoreSection({
 
   return (
     <div className="overflow-hidden rounded-lg border bg-card text-sm">
-      <Table className="min-w-[920px] table-fixed" aria-label="Hosty Core">
+      <Table className="min-w-[1040px] table-fixed" aria-label="Hosty Core">
         <DashboardColumns />
         <DashboardTableHeader />
         <TableBody>
@@ -978,7 +978,7 @@ function InstalledAppsTable({
 
   return (
     <div className="overflow-hidden rounded-lg border bg-card">
-      <Table className="min-w-[920px] table-fixed" aria-label="Installed apps">
+      <Table className="min-w-[1040px] table-fixed" aria-label="Installed apps">
         <DashboardColumns />
         <DashboardTableHeader />
         <TableBody>
