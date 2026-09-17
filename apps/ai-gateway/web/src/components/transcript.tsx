@@ -61,9 +61,9 @@ export function TranscriptEvent({
       const names = (Array.isArray(event.attachments) ? event.attachments : []).map(String);
       return (
         <div className="space-y-1">
-          <div className="ml-8 rounded-lg bg-primary/10 px-3 py-2 text-sm whitespace-pre-wrap">
+          {String(event.text ?? "").trim() && <div className="ml-8 rounded-lg bg-primary/10 px-3 py-2 text-sm whitespace-pre-wrap">
             {String(event.text ?? "")}
-          </div>
+          </div>}
           {names.length > 0 && (
             <AttachmentRow files={names.map((name) => ({ name, size: attachments?.sizes.get(name) ?? null }))} />
           )}
