@@ -130,7 +130,7 @@ For production-runtime validation, build the local image tag declared by the man
 
 `localCommand` profiles are process runtimes supervised by Core. Core starts each service command through the platform shell (`/bin/sh -c` on Unix-like systems and `cmd.exe /c` on Windows), captures stdout/stderr into app logs, injects Hosty environment variables, and reports process health through `hosty apps health`. The resolved working directory must already exist; Core does not create missing source directories.
 
-Core checks out the app's source but does not install dependencies or build it. A source that needs preparation (a Node app has no `node_modules`, a compiled app has no build output) must declare a `setup` command on the `localCommand` runtime; Core runs it to completion in the working directory before the long-running `command`, on every start. Without it, `command` launches against a bare checkout and fails (e.g. `sh: next: command not found`). See the `setup` field in [Runtime app manifest](runtime-app-manifest.md).
+Core checks out the app's source but does not install dependencies or build it. A source that needs preparation (a Node app has no `node_modules`, a compiled app has no build output) must declare a `setup` command on the `localCommand` runtime; Core runs it to completion in the working directory before the long-running `command`, on every start. Without it, `command` launches against a bare checkout and fails (e.g. `sh: next: command not found`). See the `setup` field in [Runtime app manifest](runtime-app-manifest/feature.md).
 
 Production installers should treat `localCommand` as platform-specific unless the command is known to be portable. Prefer commands that:
 

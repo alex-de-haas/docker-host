@@ -1,7 +1,7 @@
 # Swift Shell
 
 Created: 2026-07-29
-Updated: 2026-08-28
+Updated: 2026-09-17
 
 `apps/shell-swift` is a native SwiftUI client for iOS, iPadOS, and macOS that manages a Hosty host's
 installed apps: their state, lifecycle, and updates.
@@ -9,6 +9,8 @@ installed apps: their state, lifecycle, and updates.
 It is a **remote client, not a runtime app**. It is installed on the operator's own device, has no
 `manifest.json`, and is never the `ui-client` Core redirects browsers to. It consumes the same browser API
 as `apps/shell`, which it neither replaces nor changes.
+
+Runtime profile models expose the manifest `development` flag without a separate mode override.
 
 ## Host requirement
 

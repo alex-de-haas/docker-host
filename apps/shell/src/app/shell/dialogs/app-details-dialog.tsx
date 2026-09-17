@@ -1,5 +1,6 @@
 "use client";
 
+import { SourceChangesButton } from "../source/source-changes";
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Archive, Database, FileText, FolderGit2, HardDrive, Info, LoaderCircle, Lock, Plus, Radio, RefreshCw, Rss, Settings, Sparkles, Trash2, TriangleAlert, Upload } from "lucide-react";
@@ -61,7 +62,6 @@ export function AppDetailsDialog({
   onConfigureMounts,
   onConfigureSource,
   onClearSource,
-  onSetDevelopmentMode,
   onApplyUpdate,
   onSetFeed,
   onRemove,
@@ -91,7 +91,6 @@ export function AppDetailsDialog({
   onConfigureMounts: (app: CoreApp, mounts: MountBindingInput[]) => void;
   onConfigureSource: (app: CoreApp, path: string) => void;
   onClearSource: (app: CoreApp) => void;
-  onSetDevelopmentMode: (app: CoreApp, runtime: string, enabled: boolean) => void;
   onApplyUpdate: (app: CoreApp, plan: CoreUpdatePlan, manifestPath?: string) => void;
   onSetFeed: (app: CoreApp, feedId: string) => void;
   onRemove: (app: CoreApp, options: RemoveOptions) => void;
@@ -150,7 +149,6 @@ export function AppDetailsDialog({
             onConfigureMounts={onConfigureMounts}
             onConfigureSource={onConfigureSource}
             onClearSource={onClearSource}
-            onSetDevelopmentMode={onSetDevelopmentMode}
             onRevealSetting={onRevealSetting}
           />
         ) : (
@@ -393,7 +391,6 @@ function SettingsDialog({
   onConfigureMounts,
   onConfigureSource,
   onClearSource,
-  onSetDevelopmentMode,
   onRevealSetting,
 }: {
   app: CoreApp;
@@ -405,7 +402,6 @@ function SettingsDialog({
   onConfigureMounts: (app: CoreApp, mounts: MountBindingInput[]) => void;
   onConfigureSource: (app: CoreApp, path: string) => void;
   onClearSource: (app: CoreApp) => void;
-  onSetDevelopmentMode: (app: CoreApp, runtime: string, enabled: boolean) => void;
   onRevealSetting?: (app: CoreApp, key: string) => Promise<string | null>;
 }) {
   const settings = app.settings || [];
@@ -484,7 +480,6 @@ function SettingsDialog({
             canManageApps={canManageApps}
             onConfigureSource={onConfigureSource}
             onClearSource={onClearSource}
-            onSetDevelopmentMode={onSetDevelopmentMode}
           />
         </div>
       )}
@@ -825,22 +820,14 @@ function SourceForm({
   canManageApps,
   onConfigureSource,
   onClearSource,
-  onSetDevelopmentMode,
 }: {
   app: CoreApp;
   busyAction: string | null;
   canManageApps: boolean;
   onConfigureSource: (app: CoreApp, path: string) => void;
   onClearSource: (app: CoreApp) => void;
-  onSetDevelopmentMode: (app: CoreApp, runtime: string, enabled: boolean) => void;
 }) {
-  // Source (localCommand) runtimes can be flipped between live (Development Mode ON) and reviewed (OFF).
-  // Require developmentMode to be present so the toggle only appears against a Core that supports it
-  // (older Core omits the field and has no /development-mode endpoint).
-  const sourceRuntimes = (app.runtimeProfiles ?? []).filter(
-    (profile) => profile.type === "localCommand" && profile.developmentMode !== undefined,
-  );
-  const devBusy = busyAction === `${app.id}:development-mode`;
+  const sourceRuntimes = (app.runtimeProfiles ?? []).filter((profile) => profile.development === true);
   const overridePath = app.sourceOverridePath ?? "";
   const [mode, setMode] = useState<"standard" | "custom">(overridePath ? "custom" : "standard");
   const [pathDraft, setPathDraft] = useState(overridePath);
@@ -878,59 +865,20 @@ function SourceForm({
   return (
     <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col gap-4">
       <DialogBody className="space-y-4">
-        {sourceRuntimes.length > 0 && (
-          <div className="space-y-2">
-            <div className="text-sm font-medium">Development Mode</div>
-            <p className="text-xs text-muted-foreground">
-              On runs the runtime live from the source folder below (edits adopted on restart, no reviewed
-              update). Off uses the reviewed manifest and hides the Live badge. Takes effect on the
-              runtime&apos;s next start.
-            </p>
-            <div className="space-y-1.5">
-              {sourceRuntimes.map((profile) => {
-                const on = (profile.developmentMode ?? profile.development) === true;
-                return (
-                  <div key={profile.key} className="flex items-center gap-3 rounded-md border p-3">
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm font-medium">
-                        <code className="font-mono">{profile.key}</code>
-                        {profile.key === app.selectedRuntime ? (
-                          <span className="ml-2 text-xs text-muted-foreground">selected</span>
-                        ) : null}
-                      </div>
-                      <div className={cn("text-xs", on ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground")}>
-                        {on ? "Live — runs from source" : "Reviewed — not run live"}
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={on}
-                      aria-label={`Development Mode for ${profile.key}`}
-                      disabled={!canManageApps || devBusy}
-                      onClick={() => onSetDevelopmentMode(app, profile.key, !on)}
-                      className={cn(
-                        "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50",
-                        on ? "bg-emerald-600 dark:bg-emerald-500" : "bg-input",
-                      )}
-                    >
-                      <span
-                        className={cn(
-                          "inline-block h-4 w-4 transform rounded-full bg-background shadow transition-transform",
-                          on ? "translate-x-4" : "translate-x-0.5",
-                        )}
-                      />
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
+        <div className="space-y-2">
+          <div className="text-sm font-medium">Development profiles</div>
+          {canManageApps && <SourceChangesButton app={app} />}
+          <p className="text-sm text-muted-foreground">
+            {sourceRuntimes.length > 0
+              ? `Select ${sourceRuntimes.map((profile) => profile.key).join(" or ")} from the dashboard runtime menu to develop this app.`
+              : "This app does not declare a development profile."}
+          </p>
+
+        </div>
         <div className="flex items-start gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-sm">
           <Radio className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
           <p className="text-muted-foreground">
-            When a runtime&apos;s Development Mode is on, Core runs the app live from the selected source folder and adopts manifest edits on restart. The folder must exist on the host.
+            Development profiles run from the selected source folder and adopt manifest edits on restart. Hot reload depends on the profile commands. A local folder without a Git baseline is not an immutable release.
           </p>
         </div>
         <div className="space-y-2">

@@ -90,7 +90,7 @@ internal sealed partial class CoreLifecycleService(
     // on one app can still interleave — a concurrent Configure committing mid-update is silently reverted,
     // concurrent Starts interleave docker rm -f/run. This holds one app's verb to completion. Keyed by app
     // id and unbounded like appLocks (bounded in practice by the number of distinct apps ever operated).
-    // NOT reentrant: verbs that internally start an app (ConfigureDevelopmentMode, ApplyUpdate,
+    // NOT reentrant: verbs that internally start an app (ApplyUpdate,
     // ApplyRuntimeSwitch, CreateManualBackup) call StartCoreAsync — the unlocked body — never StartAsync.
     private readonly ConcurrentDictionary<string, SemaphoreSlim> operationLocks = new(StringComparer.Ordinal);
 
@@ -660,150 +660,8 @@ internal sealed partial class CoreLifecycleService(
         return new AppLifecycleResponse(await BuildAppSummaryAsync(document.App, cancellationToken), null, "configured");
     }
 
-    // Operator toggle of a runtime's Development Mode (runtime-artifact-model.md). Records an explicit
-    // per-runtime override; an unset runtime falls back to the manifest `development` default. Valid only
-    // for a source (localCommand) runtime — image/prebuilt have no working copy to run live. Takes effect
-    // on the next start of that runtime; when it is the selected runtime the summary's Live flag flips
-    // immediately.
-    public Task<AppLifecycleResponse> ConfigureDevelopmentModeAsync(
-        string appId,
-        AppDevelopmentModeRequest request,
-        CancellationToken cancellationToken = default)
-        => WithAppLockAsync(appId, () => ConfigureDevelopmentModeCoreAsync(appId, request, cancellationToken), cancellationToken);
-
-    private async Task<AppLifecycleResponse> ConfigureDevelopmentModeCoreAsync(
-        string appId,
-        AppDevelopmentModeRequest request,
-        CancellationToken cancellationToken)
-    {
-        var app = await RequireAppAsync(appId, cancellationToken);
-        var profiles = await ResolveRuntimeProfilesAsync(app, cancellationToken);
-        var profile = profiles.FirstOrDefault(candidate => string.Equals(candidate.Key, request.Runtime, StringComparison.Ordinal))
-            ?? throw new AppLifecycleException("runtime_not_found", $"Runtime '{request.Runtime}' is not declared by app '{appId}'.");
-        if (!string.Equals(profile.Type, "localCommand", StringComparison.Ordinal))
-        {
-            throw new AppLifecycleException(
-                "development_mode_unsupported_runtime",
-                $"Development Mode is only available for a source (localCommand) runtime, not '{profile.Key}' ({profile.Type}).");
-        }
-
-        var currentlyOn = AppSummary.ResolveDevelopmentMode(app, profile);
-        var targetsSelected = string.Equals(request.Runtime, app.SelectedRuntime, StringComparison.Ordinal);
-        var enabling = request.Enabled && !currentlyOn;
-        var disabling = !request.Enabled && currentlyOn;
-        var changing = enabling || disabling;
-        // System apps (e.g. the Shell) are never stopped/snapshotted/restarted from here: silently
-        // cycling the app that is serving this very call is worse than deferring. Their toggle just
-        // flips the flag and takes effect on their next start — which the operator can trigger from
-        // the Shell's lifecycle controls, available for system apps like for any other runtime app.
-        var manageLifecycle = !app.System;
-
-        // Detect a risky disable up front — before we flip or restart, while app.Version still reflects
-        // the version that ran live in dev mode. Risk = a pre-dev-mode snapshot exists AND the app has
-        // since run a different version (a likely one-way data migration the reviewed version may not
-        // read back). Require the snapshot (baseline.BackupId): without one there is nothing to roll back
-        // to (also implies the app had no data at enable), so a restart is fine. When risky the app is
-        // left stopped and the caller is handed the snapshot to offer before the reviewed version boots.
-        AppDevelopmentModeRestoreHint? restoreHint = null;
-        if (disabling && targetsSelected && manageLifecycle
-            && app.DevelopmentModeBaselines is not null
-            && app.DevelopmentModeBaselines.TryGetValue(request.Runtime, out var baseline)
-            && baseline.BackupId is not null
-            && !string.Equals(baseline.Version, app.Version, StringComparison.Ordinal))
-        {
-            restoreHint = new AppDevelopmentModeRestoreHint(
-                Recommended: true,
-                Runtime: request.Runtime,
-                BackupId: baseline.BackupId,
-                BaselineVersion: baseline.Version,
-                CurrentVersion: app.Version);
-        }
-
-        // Development Mode is only read at start, so flipping the *selected* running runtime needs a
-        // stop/start cycle to take effect. A no-op call (mode already matches) or a non-selected runtime
-        // cycles nothing, so an idempotent retry never interrupts a running app. Mirror the manual-backup
-        // path's stop->operate->restart so the enable snapshot below copies stopped (consistent) data —
-        // and, per that pattern, the stop lives inside the try so the finally still restores a running app
-        // if the snapshot or persistence step fails partway.
-        var wasRunning = targetsSelected && manageLifecycle && changing && AppRuntimeStates.IsUp(app.RuntimeState);
-        var completed = false;
-        try
-        {
-            if (wasRunning)
-            {
-                var selection = await LoadSelectionForAppAsync(app, cancellationToken);
-                _ = await ResolveAdapter(selection.RuntimeProfile.Type)
-                    .StopAsync(await CreateRuntimeContextAsync(app, selection, cancellationToken), cancellationToken);
-                _ = await apps.UpdateAppAsync(appId, current => current with { RuntimeState = "stopped" }, cancellationToken);
-            }
-
-            // Snapshot the pre-migration data before going live so a later disable can roll back to the
-            // reviewed version's last-known-good state. CreateBackupAsync returns null when the app has no
-            // data directory (nothing to migrate), which the baseline records faithfully.
-            AppBackupRecord? backup = enabling && manageLifecycle
-                ? await backups.CreateBackupAsync(appId, "pre-development-mode", cancellationToken: cancellationToken)
-                : null;
-            var baselineVersion = app.Version;
-            var recordBaseline = enabling && manageLifecycle;
-
-            var document = await apps.UpdateAppAsync(appId, current =>
-            {
-                var modes = current.DevelopmentModes is not null
-                    ? new Dictionary<string, bool>(current.DevelopmentModes, StringComparer.Ordinal)
-                    : new Dictionary<string, bool>(StringComparer.Ordinal);
-                modes[request.Runtime] = request.Enabled;
-
-                // Record the reviewed baseline (version + snapshot) on enable so a later disable can weigh a
-                // rollback; clear it on any disable so a re-enable captures a fresh baseline.
-                var baselines = current.DevelopmentModeBaselines is not null
-                    ? new Dictionary<string, DevelopmentModeBaseline>(current.DevelopmentModeBaselines, StringComparer.Ordinal)
-                    : new Dictionary<string, DevelopmentModeBaseline>(StringComparer.Ordinal);
-                if (recordBaseline)
-                {
-                    baselines[request.Runtime] = new DevelopmentModeBaseline(baselineVersion, backup?.BackupId);
-                }
-                else if (!request.Enabled)
-                {
-                    baselines.Remove(request.Runtime);
-                }
-
-                return current with
-                {
-                    DevelopmentModes = modes,
-                    DevelopmentModeBaselines = baselines.Count > 0 ? baselines : null,
-                    OperationStatus = "configured",
-                    LastOperation = "configure-development-mode",
-                    LastError = null,
-                };
-            }, cancellationToken);
-            await ClearUpdateAvailability(appId);
-
-            // The flip is now durable; the restart below is best-effort, so mark the operation complete
-            // here — the finally must not double-restart if StartAsync itself throws (it records + rethrows
-            // its own failure), nor restart a risky disable that is intentionally left stopped.
-            completed = true;
-
-            // Restart to apply — except a risky disable, which is left stopped so the operator can restore
-            // the snapshot (via the returned hint) before the reviewed version boots onto migrated data.
-            if (wasRunning && restoreHint is null)
-            {
-                var restarted = await StartCoreAsync(appId, afterOwnStop: wasRunning, cancellationToken);
-                return new AppLifecycleResponse(restarted.App, backup, "configured", restoreHint);
-            }
-
-            return new AppLifecycleResponse(await BuildAppSummaryAsync(document.App, cancellationToken), backup, "configured", restoreHint);
-        }
-        finally
-        {
-            // The snapshot/persistence step failed or was cancelled after we stopped a running app: restore
-            // its prior running state so the toggle never silently leaves it down. CancellationToken.None so
-            // a cancelled operation still restarts; a restart failure surfaces through StartAsync.
-            if (wasRunning && !completed)
-            {
-                _ = await StartCoreAsync(appId, afterOwnStop: true, CancellationToken.None);
-            }
-        }
-    }
+    public Task<AppSourceStatus> ApplySourceDiscardAsync(string appId, AppSourceDiscardApplyRequest request, CancellationToken cancellationToken = default)
+        => WithAppLockAsync(appId, () => sources.ApplyDiscardAsync(appId, request, cancellationToken), cancellationToken);
 
     // Operator-configured external mount bindings. Replaces the full set for the app (idempotent
     // PUT semantics), validating each host path against the manifest-declared slots and the path
@@ -923,6 +781,8 @@ internal sealed partial class CoreLifecycleService(
     private async Task<AppLifecycleResponse> StartCoreAsync(string appId, bool afterOwnStop, CancellationToken cancellationToken)
     {
         var app = await RequireAppAsync(appId, cancellationToken);
+        // Legacy source behavior remains valid for ordinary starts. Requiring a profile migration
+        // here would strand previously working apps during Core startup, before an operator can review.
         // Captured BEFORE the stamp below, because the stamp destroys the evidence: an app whose runtime
         // is already up (a Core restart that kept its containers, a repeated start) legitimately holds
         // its own reserved ports, and the port preflight must keep exempting them.
@@ -4293,9 +4153,9 @@ internal sealed partial class CoreLifecycleService(
             AppCachePath: GetAppCachePath(app.Id));
     }
 
-    // The source root a locked (Development Mode off) source runtime executes from: the managed checkout
+    // The source root a locked (development: false) source runtime executes from: the managed checkout
     // pinned to its commit by EnsureLocalCommandSourceReadyAsync, so the reviewed source runs and any live
-    // override is ignored. Null for a live runtime (Dev Mode on — the adapter uses override/checkout HEAD),
+    // override is ignored. Null for a live runtime (development: true — the adapter uses override/checkout HEAD),
     // a non-source runtime, or a locked runtime with no pinnable URL/git source (a folder install runs
     // from its own folder). Passed to the adapter via RuntimeLifecycleContext.SourceRoot.
     private string? ResolveLockedSourceRoot(AppRecord app, IReadOnlyList<AppRuntimeProfileSummary>? profiles)
@@ -4304,7 +4164,7 @@ internal sealed partial class CoreLifecycleService(
             .FirstOrDefault(profile => string.Equals(profile.Key, app.SelectedRuntime, StringComparison.Ordinal));
         if (selectedProfile is null
             || !string.Equals(selectedProfile.Type, "localCommand", StringComparison.Ordinal)
-            || AppSummary.ResolveDevelopmentMode(app, selectedProfile))
+            || selectedProfile.Development)
         {
             return null;
         }
@@ -4397,15 +4257,15 @@ internal sealed partial class CoreLifecycleService(
 
         var source = app.SourceState;
 
-        // A locked (Development Mode off) source runtime from a URL/publisher install runs the reviewed
+        // A locked (development: false) source runtime from a URL/publisher install runs the reviewed
         // source pinned to its commit, from the managed checkout — ignoring any live override. This is the
         // honest lock: only a reviewed source-resolve/update advances the commit. A folder install has no
         // separate reviewed source to pin (the operator's own folder is the source), so it falls through
         // to the live path below.
         var profiles = await ResolveRuntimeProfilesAsync(app, cancellationToken);
         var selectedProfile = profiles.FirstOrDefault(profile => string.Equals(profile.Key, app.SelectedRuntime, StringComparison.Ordinal));
-        var developmentModeOn = selectedProfile is not null && AppSummary.ResolveDevelopmentMode(app, selectedProfile);
-        if (!developmentModeOn
+        var development = selectedProfile is not null && selectedProfile.Development;
+        if (!development
             && !string.IsNullOrWhiteSpace(app.ManifestUrl)
             && !string.IsNullOrWhiteSpace(source?.Repository))
         {
@@ -4739,12 +4599,11 @@ internal sealed partial class CoreLifecycleService(
     // development: true (a build-to-production source runtime is locked/reviewed, never live).
     private string? ResolveLiveSourcePath(AppRecord app, IReadOnlyList<AppRuntimeProfileSummary>? profiles = null)
     {
-        // Only a source (localCommand) runtime whose effective Development Mode is ON runs live from an
-        // operator folder — the operator's per-runtime toggle, defaulting to the manifest `development`
-        // flag. OFF (or a non-source runtime) is locked/reviewed, so it is not "live".
+        // A development profile runs from an editable folder. Legacy bindings remain visible until
+        // reviewed migration; start/update guards prevent silently adopting a different mode.
         var selectedProfile = ((profiles ?? app.RuntimeProfiles) ?? [])
             .FirstOrDefault(profile => string.Equals(profile.Key, app.SelectedRuntime, StringComparison.Ordinal));
-        if (selectedProfile is null || !AppSummary.ResolveDevelopmentMode(app, selectedProfile))
+        if (selectedProfile is null || !selectedProfile.Development)
         {
             return null;
         }
@@ -4968,6 +4827,11 @@ internal sealed partial class CoreLifecycleService(
         if (!string.Equals(app.SelectedRuntime, targetSelection.RuntimeProfile.Key, StringComparison.Ordinal))
         {
             changes.Add($"runtime:{app.SelectedRuntime}->{targetSelection.RuntimeProfile.Key}");
+        }
+
+        if (currentSelection.RuntimeProfile.Development != targetSelection.RuntimeProfile.Development)
+        {
+            changes.Add($"development:{currentSelection.RuntimeProfile.Development.ToString().ToLowerInvariant()}->{targetSelection.RuntimeProfile.Development.ToString().ToLowerInvariant()}");
         }
 
         // A manifest that newly declares role: system escalates the app to a system app. Listing it
@@ -5276,6 +5140,7 @@ internal sealed partial class CoreLifecycleService(
             ? $"runtimeType:{targetSelection.RuntimeProfile.Type}"
             : $"runtimeType:{currentSelection.RuntimeProfile.Type}->{targetSelection.RuntimeProfile.Type}");
 
+        changes.Add($"development:{targetSelection.RuntimeProfile.Development.ToString().ToLowerInvariant()}");
         AddServiceChanges(changes, app.Id, instanceId, currentSelection, targetSelection);
         AddSettingChanges(changes, app.Settings, BuildSettingDefinitions(targetSelection));
         AddDependencyChanges(changes, app.Dependencies, targetSelection.Manifest.Dependencies);
@@ -6306,7 +6171,6 @@ internal sealed record AppAutostartRequest(bool Autostart);
 /// <summary>One setting's stored value, served only through the admin-gated reveal endpoint.</summary>
 internal sealed record AppSettingValueResponse(string Key, string? Value);
 
-internal sealed record AppDevelopmentModeRequest(string Runtime, bool Enabled);
 
 internal sealed record AppMountsRequest(IReadOnlyList<AppMountBindingInput>? Mounts = null);
 
@@ -6448,19 +6312,7 @@ internal sealed record AppBackgroundLifecycleResult(
 internal sealed record AppLifecycleResponse(
     AppSummary? App,
     AppBackupRecord? Backup,
-    string Status,
-    // Set only on a Development-Mode *disable* that looks risky: the app ran a different version live
-    // than the reviewed baseline, so its data may have been migrated one-way. Carries the pre-dev-mode
-    // backup to offer for rollback. The app is left stopped in this case so the operator can restore
-    // before the reviewed version boots onto migrated data. Null on every other lifecycle response.
-    AppDevelopmentModeRestoreHint? DevelopmentModeRestore = null);
-
-internal sealed record AppDevelopmentModeRestoreHint(
-    bool Recommended,
-    string Runtime,
-    string? BackupId,
-    string BaselineVersion,
-    string CurrentVersion);
+    string Status);
 
 internal sealed record AppInstallPlan(
     string AppId,

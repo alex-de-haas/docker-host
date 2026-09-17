@@ -2,7 +2,7 @@
 
 Status: Draft
 Created: 2026-09-16
-Updated: 2026-09-16
+Updated: 2026-09-17
 
 ## Goal
 
@@ -41,15 +41,16 @@ No implementation is authorized by this Draft.
 
 ## Existing Foundation And Gaps
 
-Repository inspection: `76da3d7f`, 2026-09-16. These are code/document findings, not a live end-to-end
-verification of app generation.
+Initial repository inspection: `76da3d7f`, 2026-09-16; runtime-profile behavior updated with the
+profile-bound development change on the same date. These are code/document findings, not a live
+end-to-end verification of app generation.
 
 | Concern | Present today | Missing for this experience |
 | --- | --- | --- |
 | Local source without Git | Local manifest installs infer a source folder without `.git` or `source.repository` | Internal no-Git source recognition, change/loss warnings and creation UI |
-| Live iteration | Source `localCommand`, per-runtime Development Mode, live manifest reconciliation on start/restart | App-bound assistant session and reliable edit/preview workflow |
+| Live iteration | Source `localCommand`, declared development profiles, live manifest reconciliation on start/restart | App-bound assistant session and reliable edit/preview workflow |
 | Runtime selection | CLI/Core digest-reviewed switch between declared compatible profiles | Typed agent workflow; a source-less image cannot be turned into source by a switch |
-| Development Mode | Core browser/control endpoints and Shell toggle | Dedicated CLI command and Core MCP tools |
+| Development entry | Reviewed selection of a `development: true` profile | Typed Core MCP runtime-switch workflow |
 | Assistant | Host-resident Claude/Codex harnesses with files, commands, sessions and approval handling | Development context and persistent app workspace binding |
 | Core MCP | Reads, lifecycle and update tools | Source/development/runtime-switch tools; built-in assistant mutations also need an authority design |
 | Session workspace | `cache/sessions/<id>/workspace`, removed on session deletion/retention | App source must outlive both session and gateway cache |
@@ -61,9 +62,9 @@ Evidence entry points:
 - [Source behavior](../runtime-source-workflows/feature.md) and
   `CoreLifecycleService.ResolveInstallLocalSourcePath`; the no-Git inference also has a regression
   test, `InstallAsync_StripsDotSegmentFromWorkingDirectoryWhenInferringLocalSourceRoot`.
-- `CoreLifecycleService.ConfigureDevelopmentModeAsync`, `LifecycleEndpoints`, and
-  `apps/cli/src/Haas.Hosty.Cli/Commands/AppsCommand.cs` distinguish the shipped HTTP toggle from the
-  absent CLI verb. `McpEndpoints.cs` contains no dev-mode or runtime-switch tool.
+- `CoreLifecycleService.ApplyRuntimeSwitchAsync` and the CLI use reviewed profile selection. The
+  old development-mode endpoint and stored overrides are removed; no separate toggle is needed.
+  `McpEndpoints.cs` still has no runtime-switch tool.
 - `apps/ai-gateway/src/sessions/manager.ts` supplies a per-session cwd;
   `sessions/store.ts` deletes that workspace with the session. App context is not cwd binding.
 - [Gateway](../ai-gateway/feature.md), [Core MCP](../core-mcp/feature.md),
@@ -147,9 +148,9 @@ not a claimed tested wizard. It assumes the required runtime/harness tools exist
 This existing external-folder recipe is only a current-code diagnostic; the new creation UI uses
 `apps/<id>/source` and the narrow source-recognition changes recorded in the prototype plan.
 
-For existing apps, inspect source and profiles first; use Shell's existing Development Mode toggle
-where necessary. Do not suggest a nonexistent CLI dev-mode command. Runtime switching uses the
-existing CLI plan/digest apply pair. Disabling Development Mode is not a save or publish operation.
+For existing apps, inspect source and profiles first; select a declared development profile through
+Shell or the CLI plan/digest apply pair. Returning to a reviewed profile preserves source and is not
+a discard, save or publish operation. Pinned starts refuse dirty checkouts.
 
 ## Interactions With Existing Plans
 

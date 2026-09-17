@@ -879,8 +879,7 @@ public sealed class AppManifestServiceTests
     [Fact]
     public async Task LoadAsync_AcceptsMultipleDevelopmentRuntimes()
     {
-        // development is now only the default for the per-runtime operator Development Mode toggle, so
-        // several flagged runtimes are valid (each just defaults to live). See runtime-artifact-model.md.
+        // Multiple declared development recipes may share the app source root.
         var manifestPath = await WriteRawManifestAsync("""
             {
               "schemaVersion": "app.0.1",
@@ -905,6 +904,37 @@ public sealed class AppManifestServiceTests
         var selection = await new AppManifestService().LoadAsync(manifestPath);
 
         Assert.Equal(2, selection.Manifest.RuntimeProfiles.Count(profile => profile.Development));
+    }
+
+    [Theory]
+    [InlineData("dev")]
+    [InlineData("release")]
+    public async Task LoadAsync_RejectsDevelopmentProfileContainingPrebuiltService(string selectedRuntime)
+    {
+        var manifestPath = await WriteRawManifestAsync("""
+            {
+              "schemaVersion": "app.0.1",
+              "id": "com.example.notes", "name": "Notes", "version": "1.0.0",
+              "runtimeProfiles": [
+                { "key": "dev", "type": "localCommand", "development": true },
+                { "key": "release", "type": "localCommand" }
+              ],
+              "services": [{
+                "key": "web", "runtimes": {
+                  "dev": { "type": "localCommand", "command": "npm run dev" },
+                  "release": { "type": "localCommand", "command": "npm start" }
+                }
+              }, {
+                "key": "api", "runtimes": {
+                  "dev": { "type": "localCommand", "artifact": "prebuilt", "delivery": { "type": "folder", "path": "dist" }, "command": "node api.js" },
+                  "release": { "type": "localCommand", "artifact": "prebuilt", "delivery": { "type": "folder", "path": "dist" }, "command": "node api.js" }
+                }
+              }]
+            }
+            """);
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath, selectedRuntime));
+        Assert.Contains(error.Errors, item => item.Code == "app_manifest_development_requires_source");
     }
 
     [Fact]

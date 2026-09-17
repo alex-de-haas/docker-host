@@ -1,7 +1,7 @@
 # AI Gateway
 
 Created: 2026-08-09
-Updated: 2026-09-16
+Updated: 2026-09-17
 
 The Hosty assistant: an optional, removable system app (`hosty.ai-gateway`) hosting admin-only
 operator chat sessions on a host-resident agent harness, plus the Shell surface that renders them.
@@ -50,8 +50,13 @@ are documented in [Assistant App Context](../assistant-app-context/feature.md).
 
 ## Gateway App
 
-- `apps/ai-gateway`: headless Node/TypeScript system app, single localCommand runtime profile
-  ("local") — it spawns harness processes on the host, so it never runs in a container. Distributed
+- `apps/ai-gateway`: headless Node/TypeScript system app with two `localCommand` profiles:
+  `local` (default, `npm run start`) and `dev` (`development: true`, `npm run dev` / `tsx watch`).
+  The development profile watches backend source changes and restarts the gateway process; active
+  harness turns can be interrupted by that restart. Both profiles use the same data/cache directories,
+  assigned port and healthcheck. The settings UI remains a static export built by setup at startup;
+  its source edits need a rebuild/restart rather than backend watch alone. The gateway spawns harness
+  processes on the host, so it never runs in a container. Distributed
   with `defaultEnabled: false`: the assistant is opt-in and removable. Port comes from
   `HOSTY_PORT_HTTP`, data lives in `HOSTY_APP_DATA_DIR`, and each harness session starts in a
   workspace of its own under `HOSTY_APP_CACHE_DIR` — see
@@ -526,3 +531,6 @@ gateway restart.
   the root it names, and one naming neither falls back to JSON.
 - Capabilities: every harness reports `autoAllow` and `denyReason`, asserted on health alongside
   the other flags.
+- Runtime profiles: Core validates both `local` and `dev`; `local` stays the default, only `dev`
+  declares development, and both bind the same data/cache environment targets. Backend watch does
+  not imply hot reload for the statically exported settings UI.

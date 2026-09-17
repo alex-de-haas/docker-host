@@ -1,7 +1,7 @@
 # Runtime App Update
 
 Created: 2026-06-04
-Updated: 2026-09-16
+Updated: 2026-09-17
 
 ## Description
 
@@ -52,9 +52,9 @@ git server and works even when scheduled update checks are disabled.
 
 Before serving a verdict or pending plan, Core matches its base against the current installation:
 installation timestamp, version, runtime, installed manifest contents and paths, feed binding, source
-identity and pin, development-mode settings, and artifact locks. Runtime state changes and ordinary
+identity and pin, and artifact locks. Runtime state changes and ordinary
 source timestamp refreshes do not invalidate it. A mismatched base or a live-source runtime drops
-the snapshot; successful apply consumes it, removal and runtime/development-mode switches clear it,
+the snapshot; successful apply consumes it, removal and runtime switches clear it,
 and sweep pruning removes snapshots for apps that are no longer targets. A concurrent replacement
 plan is identified separately so consuming an older plan cannot delete it.
 

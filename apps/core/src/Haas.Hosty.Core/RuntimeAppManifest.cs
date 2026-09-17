@@ -559,6 +559,13 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
                 errors.Add(new("app_manifest_development_requires_local_command", $"Runtime profile '{profile.Key}' sets development: true, which is only supported for a localCommand runtime.", "$.runtimeProfiles[].development"));
             }
 
+            if (profile.Development && manifest.Services.Any(service =>
+                service.Runtimes.TryGetValue(profile.Key, out var runtime)
+                && string.Equals(runtime.Artifact?.Trim(), "prebuilt", StringComparison.OrdinalIgnoreCase)))
+            {
+                errors.Add(new("app_manifest_development_requires_source", $"Development profile '{profile.Key}' cannot contain prebuilt services. Use a reviewed profile for immutable builds.", "$.runtimeProfiles[].development"));
+            }
+
             if (profile.Default)
             {
                 defaultProfileCount++;
@@ -570,9 +577,8 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
             errors.Add(new("app_manifest_runtime_default_duplicate", "Only one runtime profile may set default: true.", "$.runtimeProfiles"));
         }
 
-        // `development` is now only the *default* for a per-runtime operator Development Mode toggle, so
-        // several flagged runtimes are harmless (each just defaults to live) — the former "at most one
-        // development runtime" rule is retired. See runtime-artifact-model.md.
+        // Multiple development profiles may supply different command recipes over the same source.
+        // The profile key is arbitrary; the development declaration controls live source behavior.
 
         var resolvedRuntime = selectedRuntime?.Trim();
         if (string.IsNullOrWhiteSpace(resolvedRuntime))
@@ -3209,7 +3215,7 @@ internal sealed record RuntimeLifecycleContext(
     // adapter injects OTEL_* env from this only for an app whose manifest opts into telemetry.
     string? TelemetryEndpoint = null,
     // The effective source root the lifecycle service resolved for this start, honoring the runtime's
-    // Development Mode. Set for a locked (Dev Mode off) source runtime — the managed checkout pinned to
+    // the development profile flag. Set for a locked (development: false) source runtime — the managed checkout pinned to
     // its commit — so execution ignores any live override. Null lets the localCommand adapter fall back
     // to its own resolution (override → managed checkout → app root), the live/default path.
     string? SourceRoot = null,

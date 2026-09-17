@@ -8,6 +8,19 @@ namespace Haas.Hosty.Core.Tests;
 public sealed class ProcessRunnerTests
 {
     [Fact]
+    public async Task RunAsync_OutputLimitStillDrainsBothPipes()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var result = await ProcessRunner.RunAsync(
+            Shell("i=0; while [ $i -lt 20000 ]; do printf abcdefghij; printf abcdefghij >&2; i=$((i+1)); done"),
+            TimeSpan.FromSeconds(30), outputLimit: 512);
+        Assert.False(result.TimedOut);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(513, result.StandardOutput.Length);
+        Assert.Equal(513, result.StandardError.Length);
+    }
+
+    [Fact]
     public async Task RunAsync_LargeStderrWhileStdoutOpen_DoesNotDeadlock()
     {
         if (OperatingSystem.IsWindows())

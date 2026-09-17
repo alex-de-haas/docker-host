@@ -81,7 +81,7 @@ Do not implement repository URL install yet. Keep the current supported flows as
 
 ## Links
 
-- [Runtime app manifest](../features/runtime-app-manifest.md)
+- [Runtime app manifest](../features/runtime-app-manifest/feature.md)
 - [Runtime source workflows](../features/runtime-source-workflows/feature.md)
 - [Runtime source extensions](runtime-source-extensions.md)
 

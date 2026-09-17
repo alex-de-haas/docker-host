@@ -76,7 +76,6 @@ export type ShellActionsContextValue = {
   applyUpdateFromRow: (app: CoreApp) => Promise<void>;
   startUpdateCheck: () => Promise<void>;
   updateAllApps: () => Promise<void>;
-  configureAppDevelopmentMode: (app: CoreApp, runtime: string, enabled: boolean) => Promise<void>;
   createManualBackup: (app: CoreApp) => Promise<void>;
   openAppPanel: OpenAppPanel;
   // Host settings mutations, and the Core self-update Dashboard offers beside the version.

@@ -193,7 +193,8 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Equal(summary.UpdateCheck.LastSuccessfulCheckAt, failed.LastSuccessfulCheckAt);
         await fixture.Apps.UpdateAppAsync(plan.AppId, app => app with
         {
-            DevelopmentModes = new Dictionary<string, bool> { ["dev"] = true },
+            RuntimeProfiles = app.RuntimeProfiles!.Select(profile => profile.Key == "dev"
+                ? profile with { Development = true } : profile).ToArray(),
         });
         var live = Assert.Single(await fixture.RecreateService().ListAppsAsync());
         Assert.True(live.Live);

@@ -21,7 +21,6 @@ internal sealed record AppUpdateBase(
     string Id, DateTimeOffset InstalledAt, string Version, string? Runtime,
     string ManifestHash, string? ManifestPath, string? ManifestUrl, string? InstallManifestPath,
     string? FeedsUrl, string? FeedId, AppSourceState? Source,
-    IReadOnlyDictionary<string, bool>? DevelopmentModes,
     IReadOnlyDictionary<string, ArtifactLock>? ArtifactLocks);
 
 // One atomic document keeps the verdict and the exact reviewed target together. It lives outside

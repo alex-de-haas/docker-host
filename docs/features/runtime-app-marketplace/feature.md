@@ -126,7 +126,7 @@ Marketplace supports a Docker runtime and a Core-managed `dev` local-command run
 ## Links
 
 - [Runtime App Repository Feeds](../catalog-hosted-app-feeds.md)
-- [Runtime App Manifest](../runtime-app-manifest.md)
+- [Runtime App Manifest](../runtime-app-manifest/feature.md)
 - [Direct-Origin Runtime App UI](../direct-origin-runtime-app-ui.md)
 - [Shell Access And System Apps](../shell-access-and-system-apps.md)
 - [Marketplace As A System App idea](../../ideas/marketplace-system-app.md)

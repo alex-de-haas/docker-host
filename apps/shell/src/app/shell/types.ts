@@ -493,22 +493,6 @@ export type BackupsResponse = {
   backups: CoreBackup[];
 };
 
-// Returned on a Development-Mode disable that Core judged risky: the app ran a different version live
-// than the reviewed baseline, so its data may have been migrated one-way. Core leaves the app stopped
-// and hands back the pre-development-mode snapshot to offer for rollback. See ConfigureDevelopmentModeAsync.
-export type CoreDevelopmentModeRestoreHint = {
-  recommended: boolean;
-  runtime: string;
-  backupId?: string | null;
-  baselineVersion: string;
-  currentVersion: string;
-};
-
-export type CoreAppLifecycleResult = {
-  status?: string;
-  developmentModeRestore?: CoreDevelopmentModeRestoreHint | null;
-};
-
 export type CoreBackupRetentionStatus = {
   eligible: boolean;
   reason: string;
@@ -688,14 +672,8 @@ export type CoreRuntimeProfile = {
   key: string;
   type: string;
   default: boolean;
-  // The manifest author's declared default for Development Mode on this runtime (the intent marker).
-  // Optional for backwards compatibility with older Core builds. See runtime-artifact-model.md.
+  // Declares a development profile; its name is arbitrary.
   development?: boolean;
-  // The effective Development Mode after the operator's per-runtime toggle is applied (override else the
-  // `development` default; false for a non-source runtime). This is what actually governs liveness — ON
-  // runs the runtime live from source, OFF runs it locked/reviewed — so the Live/Locked badge and the
-  // toggle switch read from it. Optional for older Core builds (fall back to `development`).
-  developmentMode?: boolean;
 };
 
 export type CoreInstallRuntimeProfile = CoreRuntimeProfile;

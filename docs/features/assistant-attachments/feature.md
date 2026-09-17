@@ -8,7 +8,7 @@ belongs to the session, the transcript records that it did, and the harness is t
 it. Cross-cuts [ai-gateway](../ai-gateway/feature.md) and
 [agent-background-sessions](../agent-background-sessions/feature.md); the storage it stands on is
 the [cache](../app-cache-storage/feature.md) kind of the
-[runtime-app manifest](../runtime-app-manifest.md#storage).
+[runtime-app manifest](../runtime-app-manifest/feature.md#storage).
 
 ## A Workspace Per Session
 

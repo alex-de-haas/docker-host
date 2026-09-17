@@ -1,7 +1,7 @@
 # Hosty Platform Vision
 
 Created: 2026-08-19
-Updated: 2026-09-16
+Updated: 2026-09-17
 
 The umbrella document: where Hosty is going, so individual decisions have a criterion to be judged
 against. It authorizes no implementation and owns no deliverables — work it names is tracked in the
@@ -59,7 +59,7 @@ Git owns history, and the assistant provides the explicit save/commit/push path.
 source snapshots or restore history. Ordinary runtime command failures remain Core errors,
 restarts are operator/agent-triggered, and new prototype autostart defaults to off.
 
-The same loop extends to source-capable installed apps through Development Mode and compatible
+The same loop extends to source-capable installed apps through declared development profiles and compatible
 runtime profiles. Integration with installed apps uses their published interfaces and authorization
 contracts. Optional promotion proceeds through repository history, remote source, installable
 release/feed and a catalog contribution; the catalog maintainer retains the approval decision.
@@ -149,6 +149,25 @@ Decisions 1–5: 2026-08-19.
    sandbox; it does not provide filesystem isolation between apps. This qualifies decision 5's
    containment language for localCommand: API identity checks remain, but they do not isolate local
    processes. Explain this at development setup without prompting on every edit or restart.
+
+7. **First development slice prioritizes app boundaries (2026-09-16).** Immediate revocation of
+   already-running commands and further experiments on it are deferred tracked work. Permission
+   changes apply to subsequent dispatch/resume; existing processes may finish with their original
+   rights. Isolation between temporary folders is not a first-slice requirement. Shared scratch
+   space is acceptable, while Hosty app source outside granted roots, Core state and credentials
+   remain protected. Canonical protected roots under broadly accessible temporary directories need
+   an explicit unsupported-placement policy, not an isolation promise. The remaining work and scope
+   are owned by [assistant approval rules](features/assistant-approval-rules/plan.md).
+
+8. **Profile-bound development; existing apps first (2026-09-16).** Development is a declared
+   `development: true` runtime profile; `dev` is a convention, not a reserved key. Replace the independent
+   operator toggle with reviewed profile selection and explicit compatibility handling. Profile commands
+   supply hot reload; Core preserves edited source when returning to a reviewed runtime. Prioritize the
+   existing-app edit → view/diff → explicit Git discard loop before creation. Development UI identifies
+   branch/commit/changes rather than presenting manifest version as the source identity. Ordinary release
+   updates and explicit Git synchronization stay separate. Git owns history; no-Git folders have no
+   promised undo. Source and development-control plans own implementation; future branch management and
+   Docker development are not prerequisites.
 
 ## Expectations And Later Directions
 

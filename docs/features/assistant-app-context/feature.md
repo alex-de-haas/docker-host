@@ -1,7 +1,7 @@
 # Assistant App Context
 
 Created: 2026-09-16
-Updated: 2026-09-16
+Updated: 2026-09-17
 
 Administrators associate up to 16 installed apps with an assistant session. The gateway persists
 an ordered, unique `appIds` selection and an `appContextRevision`; it resolves fresh metadata from
@@ -107,10 +107,11 @@ remain authoritative. Selecting a system app creates no extra authority over it.
 
 Selection is distinct from both a primary development workspace and execution grants. The
 [assistant approval rules](../assistant-approval-rules/plan.md) plan owns their implementation,
-source binding and safe native-thread reconfiguration. Its integration must quiesce affected
-execution before revoking grants or removing a primary binding; re-adding an app restores context
-only. This feature's selection mutation documents that integration boundary and performs no
-implicit rebinding. [Prototype workspaces](../app-prototype-workspaces/plan.md) consume these
+source binding and safe native-thread reconfiguration. Its first-slice scope applies grant removal
+to subsequent dispatch/resume; immediate termination of already-running commands is deferred by the
+owner decision of 2026-09-16. Re-adding an app restores context only. This feature's selection mutation
+documents that integration boundary and performs no implicit rebinding.
+[Prototype workspaces](../app-prototype-workspaces/plan.md) consume these
 associations rather than implementing another session binding mechanism.
 
 ## Testing Expectations

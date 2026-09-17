@@ -1,5 +1,6 @@
 "use client";
 
+import { SourceVersionCell } from "../source/source-changes";
 import { AppSessionMenuItem } from "../assistant/app-session-action";
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
@@ -113,7 +114,6 @@ export function DashboardPage({
   onInstall,
   onAction,
   onSwitchRuntime,
-  onSetDevelopmentMode,
   onUpdateApp,
   onCheckUpdates,
   onUpdateAll,
@@ -142,7 +142,6 @@ export function DashboardPage({
   onInstall: () => void;
   onAction: (app: CoreApp, action: AppAction) => void;
   onSwitchRuntime: (app: CoreApp, targetRuntime: string) => void;
-  onSetDevelopmentMode: (app: CoreApp, runtime: string, enabled: boolean) => void;
   onUpdateApp: (app: CoreApp) => void;
   onCheckUpdates: () => void;
   onUpdateAll: () => void;
@@ -355,7 +354,6 @@ export function DashboardPage({
           updateStatusByApp={updateStatusByApp}
           onAction={onAction}
           onSwitchRuntime={onSwitchRuntime}
-          onSetDevelopmentMode={onSetDevelopmentMode}
           onUpdateApp={onUpdateApp}
           onCheckUpdate={(target) => void checkAppUpdate(target)}
           onOpenPanel={onOpenPanel}
@@ -421,7 +419,7 @@ function DashboardTableHeader() {
   return (
     <TableHeader className="[&_tr]:border-0">
       <TableRow className="border-0">
-        {["App", "Runtime", "Version", "Status", "Actions"].map((label) => (
+        {["App", "Runtime", "Version / source", "Status", "Actions"].map((label) => (
           <TableHead key={label} scope="col" className="h-0 border-0 p-0">
             <span className="sr-only">{label}</span>
           </TableHead>
@@ -885,7 +883,6 @@ function InstalledAppsTable({
   updateStatusByApp,
   onAction,
   onSwitchRuntime,
-  onSetDevelopmentMode,
   onUpdateApp,
   onCheckUpdate,
   onOpenPanel,
@@ -899,7 +896,6 @@ function InstalledAppsTable({
   updateStatusByApp: Record<string, UpdateStatusState>;
   onAction: (app: CoreApp, action: AppAction) => void;
   onSwitchRuntime: (app: CoreApp, targetRuntime: string) => void;
-  onSetDevelopmentMode: (app: CoreApp, runtime: string, enabled: boolean) => void;
   onUpdateApp: (app: CoreApp) => void;
   onCheckUpdate: (app: CoreApp) => void;
   onOpenPanel: OpenAppPanel;
@@ -1005,7 +1001,6 @@ function InstalledAppsTable({
                   onToggleExpanded={() => toggleAppExpanded(app)}
                   onAction={onAction}
                   onSwitchRuntime={onSwitchRuntime}
-                  onSetDevelopmentMode={onSetDevelopmentMode}
                   onUpdateApp={onUpdateApp}
                   onCheckUpdate={onCheckUpdate}
                   onOpenPanel={onOpenPanel}
@@ -1042,7 +1037,6 @@ function InstalledAppRow({
   onToggleExpanded,
   onAction,
   onSwitchRuntime,
-  onSetDevelopmentMode,
   onUpdateApp,
   onCheckUpdate,
   onOpenPanel,
@@ -1058,7 +1052,6 @@ function InstalledAppRow({
   onToggleExpanded: () => void;
   onAction: (app: CoreApp, action: AppAction) => void;
   onSwitchRuntime: (app: CoreApp, targetRuntime: string) => void;
-  onSetDevelopmentMode: (app: CoreApp, runtime: string, enabled: boolean) => void;
   onUpdateApp: (app: CoreApp) => void;
   onCheckUpdate: (app: CoreApp) => void;
   onOpenPanel: OpenAppPanel;
@@ -1101,15 +1094,6 @@ function InstalledAppRow({
   // uninstalled by omitting a token. System apps are removable too — "system" governs who may see and
   // reach an app, not whether it can be uninstalled; the remove panel explains the consequences.
   const canRemove = canManageApps;
-  // Development Mode is a per-source-runtime toggle (localCommand + Core reports developmentMode).
-  // Surface it in the actions menu only for the *selected* source runtime, so an operator can flip
-  // live/reviewed without opening Settings → Source. See runtime-artifact-model.md.
-  const selectedDevRuntime = (app.runtimeProfiles ?? []).find(
-    (profile) =>
-      profile.key === app.selectedRuntime &&
-      profile.type === "localCommand" &&
-      profile.developmentMode !== undefined,
-  );
   const isBusy = (action: string) => busyAction === `${app.id}:${action}`;
   const autostartEnabled = isAppAutostartEnabled(app);
   // Same call the details panel makes, so the row's icons and the panel's alerts always describe the
@@ -1196,20 +1180,7 @@ function InstalledAppRow({
                 <Hand />
               </Badge>
             )}
-            {app.live && (
-              <Badge
-                variant="outline"
-                className="size-6 gap-0 border-emerald-500/40 p-0 text-emerald-700 dark:text-emerald-300 [&>svg]:size-3.5"
-                aria-label="Live source runtime"
-                title={
-                  app.sourceLivePath
-                    ? `Runs live from ${app.sourceLivePath}; the manifest is adopted on restart. Switch to a compiled runtime for reviewed updates.`
-                    : "Runs live from your source folder; the manifest is adopted on restart. Switch to a compiled runtime for reviewed updates."
-                }
-              >
-                <Radio />
-              </Badge>
-            )}
+
           </div>
           <AppUpdateFeedback key={app.updateProgress?.changedAt ?? "no-update"} app={app} />
         </div>
@@ -1274,13 +1245,9 @@ function InstalledAppRow({
             canCheckUpdate={canUpdate}
             canReviewUpdate={updateVisible}
             checkingUpdate={checkingUpdate}
-            devRuntime={canManageApps ? selectedDevRuntime : undefined}
-            devWillRestart={!app.system && running}
-            devBusy={isBusy("development-mode")}
             onLifecycleAction={(action) => onAction(app, action)}
             onCheckUpdate={() => onCheckUpdate(app)}
             onReviewUpdate={() => onOpenPanel(app, "update")}
-            onSetDevelopmentMode={onSetDevelopmentMode}
             onOpenPanel={onOpenPanel}
           />
         </div>
@@ -1375,6 +1342,9 @@ function AppVersionCell({
   onApply: () => void;
   onReview: () => void;
 }) {
+  const profile = (app.runtimeProfiles ?? []).find((profile) => profile.key === app.selectedRuntime);
+  const development = profile?.development;
+  if (development) return <SourceVersionCell key={app.id} app={app} />;
   const installedRevisions = collectInstalledRevisions(app);
   // Only ever read when an update is actually available, so a stale verdict's target never shows up
   // under a row that has nothing to apply.
@@ -1517,12 +1487,9 @@ function AppProblemIcon({ severity, problems }: { severity: AlertSeverity; probl
   );
 }
 
-// Per-runtime mode marker in the switcher, so an operator sees which target runs live from source
-// vs. runs a locked build before switching. Driven by the effective Development Mode (the operator's
-// per-runtime toggle over the manifest default), falling back to the raw flag for older Core builds.
-// See runtime-artifact-model.md.
+// Display the target profile declaration before switching, independent of legacy overrides.
 function RuntimeModeBadge({ profile }: { profile: CoreRuntimeProfile }) {
-  const live = (profile.developmentMode ?? profile.development) === true;
+  const live = profile.development === true;
   return (
     <span
       className={cn(
@@ -1531,8 +1498,8 @@ function RuntimeModeBadge({ profile }: { profile: CoreRuntimeProfile }) {
       )}
       title={
         live
-          ? "Development Mode on: runs live from your source folder; the manifest is adopted on restart (no reviewed update)."
-          : "Development Mode off: uses the reviewed manifest/contract — a fixed image/build, or a source runtime not run live — advanced by a reviewed update."
+          ? "Development profile: runs from editable source. Reload behavior depends on its commands; manifest changes require restart."
+          : "Reviewed profile: uses a fixed image/build or pinned source, advanced by a reviewed update."
       }
     >
       {live ? <Radio className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
@@ -1555,16 +1522,18 @@ function RuntimeSwitcher({
   const runtimeProfiles = app.runtimeProfiles ?? [];
   const currentRuntime = app.selectedRuntime || "none";
   const switchable = canSwitch && runtimeProfiles.length > 1;
+  const development = runtimeProfiles.find((profile) => profile.key === app.selectedRuntime)?.development === true;
   const switching = busyAction?.startsWith(`${app.id}:switch-runtime:`) ?? false;
 
-  if (!switchable) {
-    return <span className="font-mono text-sm">{currentRuntime}</span>;
-  }
-
   return (
-    <div className="flex min-w-0 items-center gap-1">
+    <div className="flex min-w-0 flex-wrap items-center gap-x-1">
       <span className="min-w-0 truncate font-mono text-sm">{currentRuntime}</span>
-      <DropdownMenu>
+      {development && (
+        <span className="inline-flex shrink-0 text-emerald-600 dark:text-emerald-400" role="img" aria-label="Live source runtime" title="Development profile: runs from editable source. Reload behavior depends on its commands; manifest changes require restart.">
+          <Radio className="h-3.5 w-3.5" />
+        </span>
+      )}
+      {switchable && <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
             type="button"
@@ -1600,7 +1569,8 @@ function RuntimeSwitcher({
             );
           })}
         </DropdownMenuContent>
-      </DropdownMenu>
+      </DropdownMenu>}
+
     </div>
   );
 }
@@ -1620,13 +1590,9 @@ function InstalledAppActionsMenu({
   canCheckUpdate,
   canReviewUpdate,
   checkingUpdate,
-  devRuntime,
-  devWillRestart,
-  devBusy,
   onLifecycleAction,
   onCheckUpdate,
   onReviewUpdate,
-  onSetDevelopmentMode,
   onOpenPanel,
 }: {
   app: CoreApp;
@@ -1651,20 +1617,12 @@ function InstalledAppActionsMenu({
   checkingUpdate: boolean;
   onCheckUpdate: () => void;
   onReviewUpdate: () => void;
-  // The selected source runtime whose Development Mode can be toggled here (undefined when the
-  // selected runtime is not a source runtime, or the operator cannot manage apps).
-  devRuntime?: CoreRuntimeProfile;
-  // True when toggling will auto-restart the app (a running, non-system app); drives the caption.
-  devWillRestart: boolean;
-  devBusy: boolean;
-  onSetDevelopmentMode: (app: CoreApp, runtime: string, enabled: boolean) => void;
   onOpenPanel: OpenAppPanel;
 }) {
   const hasMenuActions =
     canControl ||
     canCheckUpdate ||
     canReviewUpdate ||
-    Boolean(devRuntime) ||
     canViewLogs ||
     canBackup ||
     canConfigure ||
@@ -1674,7 +1632,6 @@ function InstalledAppActionsMenu({
     return null;
   }
 
-  const devOn = devRuntime ? (devRuntime.developmentMode ?? devRuntime.development) === true : false;
 
   return (
     <DropdownMenu>
@@ -1726,31 +1683,7 @@ function InstalledAppActionsMenu({
           </DropdownMenuItem>
         )}
         {(canCheckUpdate || canReviewUpdate) &&
-          (Boolean(devRuntime) || canViewLogs || canBackup || canConfigure || canRemove) && <DropdownMenuSeparator />}
-        {devRuntime && (
-          <>
-            <DropdownMenuLabel>Development mode</DropdownMenuLabel>
-            <DropdownMenuItem
-              disabled={devBusy}
-              onClick={() => onSetDevelopmentMode(app, devRuntime.key, !devOn)}
-            >
-              {devBusy ? (
-                <LoaderCircle className="h-4 w-4 animate-spin" />
-              ) : devOn ? (
-                <Lock className="h-4 w-4" />
-              ) : (
-                <Radio className="h-4 w-4" />
-              )}
-              <div className="min-w-0 flex-1">
-                <div>{devOn ? "Disable development mode" : "Enable development mode"}</div>
-                <div className="text-[11px] text-muted-foreground">
-                  {devWillRestart ? "Restarts the app now" : "Applies on next start"}
-                </div>
-              </div>
-            </DropdownMenuItem>
-            {(canViewLogs || canBackup || canConfigure || canRemove) && <DropdownMenuSeparator />}
-          </>
-        )}
+          (canViewLogs || canBackup || canConfigure || canRemove) && <DropdownMenuSeparator />}
         {canViewLogs && (
           <DropdownMenuItem onClick={() => onOpenPanel(app, "logs")}>
             <Terminal className="h-4 w-4" />

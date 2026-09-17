@@ -769,7 +769,7 @@ internal sealed class LocalCommandRuntimeAdapter(
                 string.Equals(setting.Key, "PORT", StringComparison.OrdinalIgnoreCase) &&
                 !string.IsNullOrWhiteSpace(setting.Value));
 
-    // The effective source root: the lifecycle-resolved root (honors Development Mode — e.g. a locked
+    // The effective source root: the lifecycle-resolved root (honors the profile declaration — e.g. a locked
     // runtime's pinned checkout) when set, else an override folder, else the managed checkout, else the
     // app root. Drives source runtimes' working directory and resolves a prebuilt service's relative
     // delivery.

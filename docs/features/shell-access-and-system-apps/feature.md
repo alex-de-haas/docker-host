@@ -1,7 +1,7 @@
 # Feature: Shell Access And System Apps
 
 Created: 2026-06-04
-Updated: 2026-07-30
+Updated: 2026-09-17
 
 ## Goal
 
@@ -40,7 +40,7 @@ System app actions should stay limited in Shell:
 
 - logs are allowed when the app exposes the `logs` capability and the active user is `host.admin`;
 - runtime switching is allowed for administrators when the app exposes more than one runtime profile;
-- settings, public origins, external mounts, source override, and development-mode configuration are allowed for administrators through the ordinary app settings dialog;
+- settings, public origins, external mounts, and source override configuration are allowed for administrators through the ordinary app settings dialog;
 - reviewed updates are allowed for administrators whenever the app does not run a live source runtime — the same eligibility as runtime apps, served by the same check/plan/apply flow. Updating is inherent to Core managing an app and is authorized on the endpoint, never by the manifest `capabilities` list;
 - lifecycle controls such as start, stop, restart, autostart, backup, restore, and remove are available for system apps too; removing one opens the same confirmation panel, with the computed impact and a recovery hint.
 

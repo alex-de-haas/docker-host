@@ -12,4 +12,4 @@
 - App-owned roles are stored under the app data directory.
 - Apps declaring `interfaces.mcp` accept both delegated tokens and scoped access tokens carrying `mcp:read`, answer `notifications/initialized` with HTTP 202 and an empty body (never an empty 200), and declare `annotations.readOnlyHint` on every tool (see `app-manifest.md`, "MCP Interface").
 - Local validation uses `hosty apps install apps/demo-app --runtime dev` or `hosty apps install . --runtime <profile>` from the target app directory.
-- Documentation links point to `docs/features/runtime-app-manifest.md` when the manifest contract changes.
+- Documentation links point to `docs/features/runtime-app-manifest/feature.md` when the manifest contract changes.
