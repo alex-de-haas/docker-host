@@ -1,7 +1,7 @@
 # Assistant App Context
 
 Created: 2026-09-16
-Updated: 2026-09-16
+Updated: 2026-09-17
 
 Administrators associate up to 16 installed apps with an assistant session. The gateway persists
 an ordered, unique `appIds` selection and an `appContextRevision`; it resolves fresh metadata from

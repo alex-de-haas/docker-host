@@ -2,7 +2,7 @@
 
 Status: Draft
 Created: 2026-09-02
-Updated: 2026-09-16
+Updated: 2026-09-17
 
 Operator-owned rules for which assistant actions run without an approval card, beyond the per-app
 read-only grant that ships today. This is the "second iteration informed by real usage" that the

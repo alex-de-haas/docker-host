@@ -1,7 +1,7 @@
 # Runtime App Manifest
 
 Created: 2026-06-04
-Updated: 2026-07-11
+Updated: 2026-09-17
 
 ## Description
 
@@ -60,13 +60,13 @@ A system app that declares `ui` is validated strictly and fail-closed: the entry
 
 The optional top-level `provides` field lists platform capability *slots* the app fulfills — a concept distinct from `capabilities` (the client action list, below) and from a service's `runtimes[].capabilities` (Linux `--cap-add`). Each entry is a lowercase kebab token (`^[a-z][a-z0-9-]{0,62}$`); blanks or duplicates fail validation (`app_manifest_provides_invalid` / `app_manifest_provides_duplicate`). Unknown slot names are accepted (forward-compatible: a manifest may declare a slot a newer Core understands).
 
-Core reacts to a provided slot it has a handler for by running Core-owned provisioning on the app's start path and by ordering the app's autostart relative to others — keyed by the capability, not the app id or how the app was installed. The one slot Core registers today is `otlp-collector`: a provider is given the Core-owned OpenTelemetry collector config and sink directories before its services start, and is started before OTLP-exporting apps so its endpoint resolves first. This is why the telemetry collector works whether it was installed by the first-boot seeding, the marketplace, or a direct `hosty apps install`. See [Removable system apps](removable-system-apps/feature.md).
+Core reacts to a provided slot it has a handler for by running Core-owned provisioning on the app's start path and by ordering the app's autostart relative to others — keyed by the capability, not the app id or how the app was installed. The one slot Core registers today is `otlp-collector`: a provider is given the Core-owned OpenTelemetry collector config and sink directories before its services start, and is started before OTLP-exporting apps so its endpoint resolves first. This is why the telemetry collector works whether it was installed by the first-boot seeding, the marketplace, or a direct `hosty apps install`. See [Removable system apps](../removable-system-apps/feature.md).
 
 ## Runtime Profiles
 
 Each `runtimeProfiles[]` entry has `key`, `type` (`docker` or `localCommand`), an optional `default: true` (at most one), and an optional `development: true`.
 
-`development: true` marks a runtime meant for local development. It is only valid for a `localCommand` profile (rejected on `docker` with `app_manifest_development_requires_local_command`), and multiple profiles may declare it. A development profile cannot contain `artifact: prebuilt` services (`app_manifest_development_requires_source`); those immutable builds require a reviewed profile. A development runtime has two coupled effects: the operator may point it at their own source folder (source override), and it runs **live** from that folder — the manifest is adopted on restart, so there is no reviewed-update path (clients show a "Live" badge and hide Update). A `localCommand` runtime **without** `development` runs from source too, but is treated as a locked, reviewed-update artifact (e.g. it builds a production bundle via `setup`), not as live. See [Runtime artifact & storage model](runtime-artifact-model/feature.md).
+`development: true` marks a runtime meant for local development. It is only valid for a `localCommand` profile (rejected on `docker` with `app_manifest_development_requires_local_command`), and multiple profiles may declare it. A development profile cannot contain `artifact: prebuilt` services (`app_manifest_development_requires_source`); those immutable builds require a reviewed profile. A development runtime has two coupled effects: the operator may point it at their own source folder (source override), and it runs **live** from that folder — the manifest is adopted on restart, so there is no reviewed-update path (clients show a "Live" badge and hide Update). A `localCommand` runtime **without** `development` runs from source too, but is treated as a locked, reviewed-update artifact (e.g. it builds a production bundle via `setup`), not as live. See [Runtime artifact & storage model](../runtime-artifact-model/feature.md).
 
 `docker` profiles run service images through Docker. `localCommand` profiles run repository-local commands under Core supervision. Core injects app environment such as:
 
@@ -77,7 +77,7 @@ Each `runtimeProfiles[]` entry has `key`, `type` (`docker` or `localCommand`), a
 - `HOSTY_CORE_ORIGIN`
 - `HOSTY_APP_DATA_DIR`
 - `HOSTY_PORT_{KEY}`
-- `HOSTY_DEPENDENCY_{ALIAS}_URL` (cross-app: a wired endpoint of another installed app — see [Cross-app dependencies](cross-app-dependencies/feature.md))
+- `HOSTY_DEPENDENCY_{ALIAS}_URL` (cross-app: a wired endpoint of another installed app — see [Cross-app dependencies](../cross-app-dependencies/feature.md))
 - `HOSTY_SERVICE_{KEY}_URL` (intra-app: a sibling service's internal base URL — see below)
 - `HOSTY_MOUNT_{KEY}` (one per configured `externalMounts` slot)
 
@@ -101,7 +101,7 @@ Each entry in a service runtime's `ports` array accepts:
 - `expose` - `loopback` (default) or `host`. `host` binds the published port on `0.0.0.0` (all interfaces) instead of `127.0.0.1`, for raw L4 listeners reachable off the host. A `host`-exposed port **must** pin `hostPort` (or `localPort`); recommended `hostPort == containerPort`. Docker runtime only.
 - `transport` - subset of `["tcp", "udp"]`, default `["tcp"]`. Each transport is published as a separate `-p` rule. Docker runtime only.
 
-`expose` and `transport` are opt-in and off by default; a port that omits both publishes exactly as before (loopback, TCP). See [Raw L4 ports](raw-ports.md).
+`expose` and `transport` are opt-in and off by default; a port that omits both publishes exactly as before (loopback, TCP). See [Raw L4 ports](../raw-ports.md).
 
 ### Local command setup
 
@@ -132,7 +132,7 @@ A `localCommand` service may set `artifact: "prebuilt"` to run an already-compil
 }
 ```
 
-The folder `path` resolves relative to the app's source root (or absolute). On start Core content-hashes the folder, materializes an immutable copy under `apps/<id>/runtimes/<key>/artifact/<hash>/`, records the hash as a run-lock (`ArtifactLock.BundleHash`), and runs `command` from the copy (plus any `workingDirectory`). This mirrors the docker image digest lock: Core re-runs the locked copy on every start, and any reviewed update drops the lock so the next start re-hashes and adopts the current delivery (the per-start `rolling` re-hash was removed). `delivery` is required for `prebuilt` (`app_manifest_prebuilt_delivery_required`), rejected for other artifact kinds (`app_manifest_delivery_requires_prebuilt`), and `prebuilt` is `localCommand`-only. Update plans do not yet probe prebuilt movement, so a changed delivery under an unchanged manifest surfaces only through the next reviewed update. See [Runtime artifact & storage model](runtime-artifact-model/feature.md).
+The folder `path` resolves relative to the app's source root (or absolute). On start Core content-hashes the folder, materializes an immutable copy under `apps/<id>/runtimes/<key>/artifact/<hash>/`, records the hash as a run-lock (`ArtifactLock.BundleHash`), and runs `command` from the copy (plus any `workingDirectory`). This mirrors the docker image digest lock: Core re-runs the locked copy on every start, and any reviewed update drops the lock so the next start re-hashes and adopts the current delivery (the per-start `rolling` re-hash was removed). `delivery` is required for `prebuilt` (`app_manifest_prebuilt_delivery_required`), rejected for other artifact kinds (`app_manifest_delivery_requires_prebuilt`), and `prebuilt` is `localCommand`-only. Update plans do not yet probe prebuilt movement, so a changed delivery under an unchanged manifest surfaces only through the next reviewed update. See [Runtime artifact & storage model](../runtime-artifact-model/feature.md).
 
 ### Service network mode
 
@@ -140,7 +140,7 @@ A `docker` service runtime accepts an optional `network` field:
 
 - `network` - `"bridge"` (default) or `"host"`. `"host"` runs the container with `--network host`: it shares the host's network namespace, so its listeners bind the host interfaces directly with no NAT and no `-p` publishing (each declared port's `HOSTY_PORT_{KEY}` carries its `containerPort`). Docker runtime only; `"host"` under `localCommand` is rejected. Off by default.
 
-Host networking is for high-churn peer-to-peer workloads (e.g. BitTorrent) where the docker bridge NAT — and, on Docker Desktop/WSL2, the VM network layer — collapses throughput. It exposes **all** of the service's ports on the host (no per-port isolation), and on Windows/WSL2 also requires WSL2 mirrored networking. See [Host networking](host-networking.md).
+Host networking is for high-churn peer-to-peer workloads (e.g. BitTorrent) where the docker bridge NAT — and, on Docker Desktop/WSL2, the VM network layer — collapses throughput. It exposes **all** of the service's ports on the host (no per-port isolation), and on Windows/WSL2 also requires WSL2 mirrored networking. See [Host networking](../host-networking.md).
 
 ### Service capabilities and devices
 
@@ -149,7 +149,7 @@ A `docker` service runtime accepts two optional privileged lists (empty by defau
 - `capabilities` - Linux capabilities to add (`--cap-add`), e.g. `["NET_ADMIN"]`. Accepted with or without the `CAP_` prefix; must be real capability names. No blanket `--privileged`.
 - `devices` - host device nodes to expose (`--device`), each an absolute path under `/dev`, e.g. `["/dev/net/tun"]`.
 
-Both are docker-only (rejected under `localCommand`), widen container privilege, and are surfaced for install review. The canonical use is an in-container VPN (`NET_ADMIN` + `/dev/net/tun`). See [Container capabilities & devices](container-capabilities.md).
+Both are docker-only (rejected under `localCommand`), widen container privilege, and are surfaced for install review. The canonical use is an in-container VPN (`NET_ADMIN` + `/dev/net/tun`). See [Container capabilities & devices](../container-capabilities.md).
 
 ### Service dependencies and intra-app discovery
 
@@ -163,7 +163,7 @@ A service may declare `dependsOn` to reference one or more sibling services in t
 `dependsOn` does two things from one declaration:
 
 - **Ordering** — Core starts a depended-on service before its dependents (topological order).
-- **Intra-app discovery** — Core injects the depended-on service's **internal** base URL into the dependent as `HOSTY_SERVICE_{KEY}_URL`, where `{KEY}` is the sibling's service key normalized to env style (e.g. `HOSTY_SERVICE_API_URL`). This is distinct from the cross-app `HOSTY_DEPENDENCY_{ALIAS}_URL` namespace, which wires an endpoint of a *different* installed app (see [Cross-app dependencies](cross-app-dependencies/feature.md)).
+- **Intra-app discovery** — Core injects the depended-on service's **internal** base URL into the dependent as `HOSTY_SERVICE_{KEY}_URL`, where `{KEY}` is the sibling's service key normalized to env style (e.g. `HOSTY_SERVICE_API_URL`). This is distinct from the cross-app `HOSTY_DEPENDENCY_{ALIAS}_URL` namespace, which wires an endpoint of a *different* installed app (see [Cross-app dependencies](../cross-app-dependencies/feature.md)).
 
 The target port is the one named in the object form, otherwise the sibling's first non-`public` port (falling back to its first declared port). A dependency on a sibling that declares no ports is ordering-only and injects no URL. The reachable URL differs by runtime:
 
@@ -182,7 +182,7 @@ A top-level `dependencies` array declares dependencies on **other installed apps
 ]
 ```
 
-Each wired endpoint is injected into this app as `HOSTY_DEPENDENCY_{ALIAS}_URL` (alias defaults to the endpoint `key`). A cross-app dependency is discovery + reported state only — Core does not auto-install/auto-start the dependency, and it is **not** an access barrier. See [Cross-app dependencies](cross-app-dependencies/feature.md).
+Each wired endpoint is injected into this app as `HOSTY_DEPENDENCY_{ALIAS}_URL` (alias defaults to the endpoint `key`). A cross-app dependency is discovery + reported state only — Core does not auto-install/auto-start the dependency, and it is **not** an access barrier. See [Cross-app dependencies](../cross-app-dependencies/feature.md).
 
 ## Source
 
@@ -210,7 +210,7 @@ Backups cover only this primary app data directory. External mounts and dependen
 
 ## External Mounts
 
-When the app needs large operator-owned host folders outside app data (for example media catalog roots), declare `externalMounts` slots. The manifest declares the slot; the operator binds concrete host paths after install. Core injects each configured slot as `HOSTY_MOUNT_{KEY}` — container paths under `docker`, host paths under `localCommand`. See [External host-path mounts](external-mounts.md) for the full contract.
+When the app needs large operator-owned host folders outside app data (for example media catalog roots), declare `externalMounts` slots. The manifest declares the slot; the operator binds concrete host paths after install. Core injects each configured slot as `HOSTY_MOUNT_{KEY}` — container paths under `docker`, host paths under `localCommand`. See [External host-path mounts](../external-mounts.md) for the full contract.
 
 ## User Directory
 
@@ -225,7 +225,7 @@ The response includes enabled Host users explicitly assigned to that app.
 
 ## Catalog Metadata
 
-Optional catalog-style display metadata for an installed app. It is **entirely optional** and its content lives **outside runtime validation** — a manifest without it is fully valid, and its values never fail runtime validation (Core normalizes them best-effort *after* parsing and surfaces them for display only). It must still be well-formed, deserializable JSON of the shape below: a type mismatch (e.g. `tags` as a string instead of an array) fails the whole manifest parse like any other field. Strict content checks (SPDX license, category enum) belong to catalog publishing, not Core. The Marketplace app reads display-ready metadata from its catalog entry and does not query Core for installed manifest metadata. See [Marketplace System App](runtime-app-marketplace/feature.md) for the catalog boundary.
+Optional catalog-style display metadata for an installed app. It is **entirely optional** and its content lives **outside runtime validation** — a manifest without it is fully valid, and its values never fail runtime validation (Core normalizes them best-effort *after* parsing and surfaces them for display only). It must still be well-formed, deserializable JSON of the shape below: a type mismatch (e.g. `tags` as a string instead of an array) fails the whole manifest parse like any other field. Strict content checks (SPDX license, category enum) belong to catalog publishing, not Core. The Marketplace app reads display-ready metadata from its catalog entry and does not query Core for installed manifest metadata. See [Marketplace System App](../runtime-app-marketplace/feature.md) for the catalog boundary.
 
 ```json
 "catalogMetadata": {
@@ -243,3 +243,11 @@ Optional catalog-style display metadata for an installed app. It is **entirely o
 ```
 
 All fields are optional; blanks are dropped and an all-empty block is ignored. `category` is catalog-style metadata, distinct from the simpler `ui.category` used by the app directory. `icon` is an asset path or URL (richer than `ui.icon`, which is a Lucide name). Core exposes the normalized block on each installed app summary as `catalogMetadata` for Shell's installed-app surfaces.
+
+
+## Testing Expectations
+
+- Manifest validation covers required fields, runtime profile selection, service/runtime compatibility, and optional contract sections.
+- Development profiles accept arbitrary names and multiple declarations; Docker and prebuilt development profiles are rejected, including unselected profiles.
+- Reviewed source and prebuilt profiles preserve immutable execution, while source development profiles adopt valid source manifests on restart.
+- Manifest projection tests keep install, update, and live reconciliation aligned across app contracts.

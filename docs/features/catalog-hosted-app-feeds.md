@@ -93,5 +93,5 @@ The first-party Demo App publishes [its feed document](../../apps/demo-app/feeds
 
 - [Marketplace System App](runtime-app-marketplace/feature.md)
 - [Runtime App Update](runtime-app-update.md)
-- [Runtime App Manifest](runtime-app-manifest.md)
+- [Runtime App Manifest](runtime-app-manifest/feature.md)
 - [Runtime App Repository Feeds idea](../ideas/runtime-app-repository-feeds.md)
