@@ -37,6 +37,22 @@ public sealed class McpLifecycleHttpTests
     }
 
     [Fact]
+    public async Task CoreOperationsDistinguishInvalidInputFromConflicts()
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        using var client = harness.CreateClient();
+        var admin = await SeedSessionAsync(harness, "host.admin");
+        using var invalidLookup = await SendAsync(client, HttpMethod.Get, "/api/core/operations/not-a-uuid", admin);
+        Assert.Equal(HttpStatusCode.BadRequest, invalidLookup.StatusCode);
+        using var invalidRestart = await SendAsync(client, HttpMethod.Post, "/api/core/restart", admin,
+            new { requestId = "not-a-uuid", instance = "stale", sourceRevision = "initial" });
+        Assert.Equal(HttpStatusCode.BadRequest, invalidRestart.StatusCode);
+        using var conflict = await SendAsync(client, HttpMethod.Post, "/api/core/restart", admin,
+            new { requestId = Guid.NewGuid().ToString("N"), instance = "stale", sourceRevision = "initial" });
+        Assert.Equal(HttpStatusCode.Conflict, conflict.StatusCode);
+    }
+
+    [Fact]
     public async Task CoreRestartRequiresItsOwnScopeAndChecksTheLiveInstance()
     {
         await using var harness = await CoreHttpHarness.StartAsync();

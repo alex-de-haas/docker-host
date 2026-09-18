@@ -82,6 +82,7 @@ internal static class LocalCommandRunner
             await child.WaitForExitAsync();
             await Task.WhenAny(output, Task.Delay(TimeSpan.FromSeconds(2)));
             log.TryWriteLine($"[hosty] command exited with code {child.ExitCode}");
+            if (job is not null) await job.WaitForDescendantsAsync();
             return child.ExitCode;
         }
         finally { job?.Dispose(); }

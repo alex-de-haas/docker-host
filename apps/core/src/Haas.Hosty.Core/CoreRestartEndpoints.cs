@@ -87,7 +87,9 @@ internal static class CoreRestartEndpoints
     private static async Task<IResult> HandleAsync(Func<Task<IResult>> action)
     {
         try { return await action(); }
-        catch (Exception ex) when (ex is IOException or InvalidOperationException or ArgumentException or System.ComponentModel.Win32Exception)
+        catch (ArgumentException ex)
+        { return CoreJson.Json(new ErrorResponse("invalid_request", ex.Message), statusCode: 400); }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
         { return CoreJson.Json(new ErrorResponse("core_operation_failed", ex.Message), statusCode: 409); }
     }
 

@@ -297,7 +297,50 @@ public sealed class LocalCommandRuntimeAdapterTests
     }
 
     [Fact]
-    public async Task StopAsync_OnWindowsKillsJobDescendantAfterRootExited()
+    public async Task ExplicitStopClearsStaleAdoptionConflictAndAllowsStart()
+    {
+        var workRoot = CreateTempDirectory();
+        var (adapter, registry, context) = CreateSetupScenario(workRoot, null,
+            OperatingSystem.IsWindows() ? "ping -n 30 127.0.0.1 >nul" : "sleep 30");
+        using var unrelated = System.Diagnostics.Process.GetCurrentProcess();
+        try
+        {
+            await LocalCommandProcessReclaim.WriteAsync(workRoot, new(unrelated.Id,
+                unrelated.StartTime.ToUniversalTime().AddMinutes(-5), context.App.Id, "app", false));
+            await Assert.ThrowsAsync<IOException>(() => registry.TryAdoptAsync(workRoot, context.App.Id, "app", default));
+            registry.Block(context.App.Id, "Unverified PID");
+            await Assert.ThrowsAsync<AppLifecycleException>(() => adapter.StartAsync(context));
+            await adapter.StopAsync(context);
+            Assert.Null(registry.Conflict(context.App.Id));
+            Assert.False(unrelated.HasExited);
+            Assert.Equal("running", (await adapter.StartAsync(context)).RuntimeState);
+        }
+        finally
+        {
+            await adapter.StopAsync(context);
+            TryDeleteDirectory(workRoot);
+        }
+    }
+
+    [Fact]
+    public async Task ExplicitStopKeepsConflictWhenOwnershipRecordCannotBeRemoved()
+    {
+        var workRoot = CreateTempDirectory();
+        try
+        {
+            var (adapter, registry, context) = CreateSetupScenario(workRoot, null, "unused");
+            // An unreadable ownership path cannot be cleared by the best-effort file reclaim.
+            Directory.CreateDirectory(LocalCommandProcessReclaim.PidFilePath(workRoot, "app"));
+            registry.Block(context.App.Id, "Unverified PID");
+            await adapter.StopAsync(context);
+            Assert.Equal("Unverified PID", registry.Conflict(context.App.Id));
+            await Assert.ThrowsAsync<AppLifecycleException>(() => adapter.StartAsync(context));
+        }
+        finally { TryDeleteDirectory(workRoot); }
+    }
+
+    [Fact]
+    public async Task StopAsync_OnWindowsKillsAdoptedJobDescendantAfterShellExited()
     {
         if (!OperatingSystem.IsWindows())
         {
@@ -365,20 +408,19 @@ public sealed class LocalCommandRuntimeAdapterTests
 
             var running = registry.Get("com.example.app", "app");
             Assert.NotNull(running);
-            // Poll HasExited instead of awaiting WaitForExitAsync: that also waits for the redirected
-            // output to reach EOF, and the descendant spawned above holds Core's inherited pipe handles
-            // until the job kills it. What this step is about is the recorded root being gone.
+            // The command shell has exited, but the independent runner must retain its job and
+            // detached service. A fresh Core registry can adopt it and explicitly stop the whole job.
             using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20)))
             {
-                while (!running!.Process.HasExited)
-                {
+                while (!ReadServiceLog(workRoot).Contains("[hosty] command exited with code 0", StringComparison.Ordinal))
                     await Task.Delay(50, timeout.Token);
-                }
             }
-
+            Assert.False(running!.Process.HasExited);
             Assert.False(child.HasExited);
 
-            await adapter.StopAsync(context);
+            var (replacement, replacementRegistry, _) = CreateSetupScenario(workRoot, null, Path.GetFileName(scriptPath));
+            Assert.True(await replacementRegistry.TryAdoptAsync(workRoot, context.App.Id, "app", default, instanceId: ""));
+            await replacement.StopAsync(context);
 
             using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
             {

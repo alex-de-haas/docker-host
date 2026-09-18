@@ -179,6 +179,19 @@ internal static class WindowsProcessControl
     {
         public string Name { get; } = name;
 
+        // The runner itself is a job member. Keep its owning handle alive when a launcher exits
+        // before its service descendants; an explicit Stop kills the runner and closes the job.
+        public async Task WaitForDescendantsAsync()
+        {
+            while (true)
+            {
+                if (!TryGetActiveProcessCount(out var activeProcesses))
+                    throw new Win32Exception(Marshal.GetLastPInvokeError(), "Failed to inspect the localCommand job.");
+                if (activeProcesses <= 1) return;
+                await Task.Delay(JobPollInterval);
+            }
+        }
+
         // Termination itself is asynchronous with respect to process teardown. Polling ActiveProcesses
         // keeps StopAsync from returning while a dying Node process still holds the app's port. The
         // bounded wait is best-effort; Dispose retains KILL_ON_JOB_CLOSE as the final fallback.

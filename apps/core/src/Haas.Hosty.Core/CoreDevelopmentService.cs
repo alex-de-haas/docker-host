@@ -49,7 +49,7 @@ internal sealed class CoreDevelopmentService(HostyCoreRuntimeConfig config, Core
             catch (Exception ex) when (ex is IOException or InvalidOperationException or System.ComponentModel.Win32Exception) { error = ex.Message; }
         }
         else error = "Source checkout is not prepared.";
-        return new(launch, Instance, launch.Mode is "dev" or "release" && CoreCliLauncher.ResolveCliPath() is not null,
+        return new(launch, Instance, (launch.Mode is "dev" or "release") && CoreCliLauncher.ResolveCliPath() is not null,
             settings, ManagedPath, sourceRoot, Project(sourceRoot), launch.Mode == "dev" && settings.PendingForInstance == Instance,
             branch, commit, changed, additions, deletions, error);
     }

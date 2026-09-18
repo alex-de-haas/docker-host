@@ -324,6 +324,12 @@ internal sealed class LocalCommandRuntimeAdapter(
             await StopServiceAsync(context.App.Id, service.Key, context.AppRoot, cancellationToken);
         }
 
+        // Explicit recovery may discard stale ownership records without touching foreign processes.
+        // Keep the startup guard if any record remains: reclaim is best-effort and may have failed.
+        var runDirectory = Path.Combine(context.AppRoot, "run");
+        if (!Directory.Exists(runDirectory) || !Directory.EnumerateFileSystemEntries(runDirectory, "*.json").Any())
+            registry.ClearConflict(context.App.Id);
+
         return new AppRuntimeOperationResult("stopped");
     }
 
@@ -952,6 +958,7 @@ internal sealed class LocalCommandProcessRegistry
 
     private readonly ConcurrentDictionary<string, string> conflicts = new(StringComparer.Ordinal);
     public void Block(string appId, string reason) => conflicts[appId] = reason;
+    public void ClearConflict(string appId) => conflicts.TryRemove(appId, out _);
     public string? Conflict(string appId) => conflicts.GetValueOrDefault(appId);
     public bool HasApp(string appId) => conflicts.ContainsKey(appId) || processes.Any(pair => pair.Key.StartsWith(appId + "/", StringComparison.Ordinal)
         && !pair.Value.Process.HasExited);

@@ -28,6 +28,7 @@ project explicitly. A conflicting `core start` is refused rather than silently s
 already-running instance. Status includes mode, absolute project and generation paths, PID, and
 process start time on authenticated/control surfaces. A direct launch without launcher metadata
 reports `unmanaged`; Shell disables launch control and directs the operator to the CLI.
+Managed dev/release launches also require a resolvable Hosty CLI to enable these controls.
 
 Start, Restart, Stop, Update, Source edits and detached restart operations coordinate through one
 per-data-root launch lease. `hosty update` updates installed release artifacts while a dev Core
@@ -61,7 +62,8 @@ Admin HTTP routes are:
   protection. Omitted mode preserves the live target and applies pending Source changes.
 - `GET /api/core/operations/{requestId}`: durable operation status and diagnostics.
 
-Request IDs are UUIDs formatted as 32 hexadecimal characters. The accepted record is persisted
+Request IDs are UUIDs formatted as 32 hexadecimal characters. Invalid request arguments return
+HTTP 400; stale instance/source state and busy operations return HTTP 409. The accepted record is persisted
 before spawning the detached CLI helper. Retrying the same ID returns its existing operation.
 Statuses distinguish accepted, building, starting, completed and failed. Completion requires the
 replacement Core's reported launch target to match the prepared target. A dead helper is reported
@@ -83,7 +85,9 @@ cannot start, the local CLI and log files remain the recovery interface.
 
 A minimal independent runner owns each newly launched `localCommand` service's stdout/stderr,
 process group on POSIX, and kill-on-close Job Object on Windows. Core-only shutdown does not
-close the Windows job. Runners append console logs and rotate at 10 MiB with two previous files;
+close the Windows job. On Windows the runner also remains alive after the command shell exits
+while service descendants remain in its job, so a replacement Core can adopt and stop them.
+Runners append console logs and rotate at 10 MiB with two previous files;
 Core reads these files after handover. OTLP telemetry is independent.
 
 PID records include process start time, instance/app/service identity, executable, runtime,
@@ -92,7 +96,8 @@ injected credentials. Startup adopts verified live services before autostart rec
 including unhealthy services and apps with autostart disabled. Adoption does not run setup or
 replace the process. Unverifiable ownership blocks automatic startup and records an error;
 foreign listeners are never evidence of ownership. Explicit app Stop/Restart still controls
-the process tree after adoption.
+the process tree after adoption. An explicit Stop clears an adoption conflict only after all
+ownership records have been removed; failed record cleanup keeps automatic startup blocked.
 
 Existing legacy PID records can be adopted using their recorded PID/start identity, but their
 old Core-owned pipes cannot be reattached. Full log and Windows lifetime continuity applies
@@ -156,6 +161,12 @@ CLI/Shell end-to-end run and a real provider-backed active agent turn remain unv
 tracked in [the remaining plan](plan.md). The four opt-in Docker/VPN/telemetry suites were not enabled;
 the separate disposable Docker-container continuity check above did run.
 The fake harness is an in-process fixture and is not evidence of a provider subprocess surviving.
+
+PR review regression checks cover unavailable CLI paths for both managed modes, HTTP 400 versus
+409, and explicit recovery of adoption conflicts without killing reused PIDs. The complete local
+Core suite passes 1976 tests with the same four opt-in skips. The Windows process-control CI lane
+also covers runner log survival and explicit recovery, including adoption and Stop after the command
+shell exits while its detached descendant remains alive.
 
 ## Testing Expectations
 
