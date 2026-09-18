@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-08-09
-Updated: 2026-08-28
+Updated: 2026-09-17
 
 Two changes to the shipped assistant ([feature.md](feature.md)): the operator can be **asked a
 question**, and the operator can **configure the assistant** in a UI of its own. Kept in one plan and
@@ -72,15 +72,18 @@ happened.
 - The section holds:
   - **System prompt.** Operator-authored text **appended to** the harness's own instruction sources,
     never replacing them. The Claude adapter runs with `settingSources: ["user", "project"]`, so the
-    operator's own `CLAUDE.md` and skills already flow in; silently displacing them would make the
-    agent stop behaving the way the same operator's CLI does, with nothing on screen explaining why.
+    project instructions and connection-local user settings flow in. Provider connections isolate
+    their native homes, so they do not inherit the operator's global Claude settings.
   - **MCP providers.** Installed apps declaring an `mcp` interface, read from Core, with a per-app
     toggle. **New apps default to off.** Tool names and descriptions are third-party text that lands
     in the context of a model holding host shell, so an app appearing in the fleet must not silently
     gain a channel into the agent — enabling it is a decision, not a side effect of installing
     something.
-  - **Harness and credentials.** Selected harness, credential state, and the health reason when it is
-    unusable. These live in generic key/value app settings today, which cannot render the list above.
+  - **Harness and credentials.** Shipped in
+    [AI Gateway Provider Connections](../ai-gateway-providers/feature.md): gateway-owned named
+    connections, provider-specific authentication forms, a default for new chats and per-chat
+    selection without restarting the gateway. Credentials use Core secrets; native auth copies
+    remain outside app backup scope.
 - **Where state lives:** Core stays the registry (which apps exist, which declare `mcp`, at what URL);
   the gateway owns the policy (which are enabled). Toggles never go into Core.
 

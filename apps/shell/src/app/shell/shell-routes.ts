@@ -45,7 +45,11 @@ export const SHELL_VIEW_LABELS: Record<ShellView, string> = {
 
 const ADMIN_SHELL_VIEWS = new Set<ShellView>(["dashboard", "settings"]);
 
-const HOST_SETTINGS_TABS = new Set<string>(["users", "tokens", "core", "ingress", "mounts"]);
+export const HOST_SETTINGS_SECTIONS: { id: HostSettingsTab; label: string }[] = [
+  { id: "users", label: "Users" }, { id: "tokens", label: "Access tokens" },
+  { id: "core", label: "Core" }, { id: "ingress", label: "Ingress" }, { id: "mounts", label: "Shared mounts" },
+];
+const HOST_SETTINGS_TABS = new Set<string>(HOST_SETTINGS_SECTIONS.map(section => section.id));
 
 // A settings surface the URL does not name resolves to Users rather than erroring — the same
 // principle that makes an unrecognized route fall through instead of blanking the screen. Every

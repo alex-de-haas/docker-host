@@ -62,8 +62,8 @@ export function ShellSettingsRoute() {
   const shell = useShellState();
   const shellActions = useShellActions();
 
+  if (!shell.canManageApps && shell.settingsTab !== "tokens") return <ShellAvailableAppsRoute />;
   return (
-    <AdminShellRoute>
       <SettingsPage
         activeTab={shell.settingsTab}
         appTabs={shell.appSettingsTabs}
@@ -90,7 +90,6 @@ export function ShellSettingsRoute() {
         onSaveMount={shellActions.saveGlobalMount}
         onDeleteMount={shellActions.deleteGlobalMount}
       />
-    </AdminShellRoute>
   );
 }
 

@@ -1,7 +1,7 @@
 # Runtime App Manifest
 
 Created: 2026-06-04
-Updated: 2026-09-17
+Updated: 2026-09-18
 
 ## Description
 
@@ -32,6 +32,12 @@ hosty core start
 hosty apps install apps/demo-app --runtime dev
 hosty apps start com.haas.demo-app
 ```
+
+## Settings Page Declarations
+
+`ui.settings` declares one administrator settings surface per app. Shell lists it by app name;
+apps own any tabs or other navigation inside that surface. See
+[App UI Surfaces](../app-ui-surfaces/feature.md) for placement and access rules.
 
 ## Required Fields
 

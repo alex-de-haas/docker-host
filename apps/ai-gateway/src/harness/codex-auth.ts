@@ -1,23 +1,15 @@
+import { cleanAgentEnvironment } from "../connections/codex-login.js";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { isNodeEntry, resolveCodexCommand } from "./codex-binary.js";
 
-// Codex offers two ways in, and the administrator picks:
-//
-//   * Interactive: the operator runs `codex login` on the host and the harness uses that session.
-//     Simple, but a ChatGPT session expires — observed going offline mid-day.
-//   * API key: set as an app setting. Codex ignores API keys in the environment, so the gateway
-//     performs `codex login --with-api-key` on the operator's behalf, feeding the key over stdin.
-//
-// The API-key login writes credentials into a Codex home, which is why that mode gets its OWN home
-// under the app's data directory: logging in there can never overwrite the operator's personal
-// ~/.codex session. Choosing the key mode therefore does not cost the operator their own login.
-
 export interface CodexAuthConfig {
   /** Operator-provided API key. Empty/undefined selects the interactive mode. */
   apiKey?: string;
+  managedHome?: string;
+  isolated?: boolean;
   /** Explicit credential directory. Ignored in API-key mode, which owns its home. */
   codexHome?: string;
   /** App data directory; the API-key mode's home lives under it. */
@@ -41,7 +33,7 @@ export function authMode(config: CodexAuthConfig): CodexAuthMode {
 }
 
 function apiKeyHome(config: CodexAuthConfig): string {
-  return path.join(config.dataDir, "codex-home");
+  return config.managedHome ?? path.join(config.dataDir, "codex-home");
 }
 
 /**
@@ -62,13 +54,13 @@ export async function ensureCodexAuth(config: CodexAuthConfig): Promise<CodexAut
   const fingerprintPath = path.join(home, FINGERPRINT_FILE);
 
   const stored = await readFile(fingerprintPath, "utf8").catch(() => null);
-  if (stored?.trim() === fingerprint) {
+  if (stored?.trim() === fingerprint && await readFile(path.join(home, "auth.json")).catch(() => null)) {
     return { mode: "api-key", env };
   }
 
   try {
     await mkdir(home, { recursive: true });
-    await loginWithApiKey(key, env);
+    await loginWithApiKey(key, env, config.isolated);
     // Only recorded after a successful login, so a failed attempt retries rather than sticking.
     await writeFile(fingerprintPath, fingerprint, { encoding: "utf8", mode: 0o600 });
     return { mode: "api-key", env };
@@ -77,24 +69,25 @@ export async function ensureCodexAuth(config: CodexAuthConfig): Promise<CodexAut
       mode: "api-key",
       env,
       error: `Signing Codex in with the configured API key failed: ${
-        error instanceof Error ? error.message : String(error)
+        config.isolated ? "Check the key and provider connectivity." : error instanceof Error ? error.message : String(error)
       }`,
     };
   }
 }
 
-function loginWithApiKey(key: string, env: Record<string, string>): Promise<void> {
+function loginWithApiKey(key: string, env: Record<string, string>, isolated = false): Promise<void> {
   return new Promise((resolve, reject) => {
     const resolved = resolveCodexCommand();
-    const args = ["login", "--with-api-key"];
+    const args = ["login", "--with-api-key", ...(isolated ? ["-c", 'cli_auth_credentials_store="file"'] : [])];
     const child = isNodeEntry(resolved)
-      ? spawn(process.execPath, [resolved, ...args], { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, ...env } })
-      : spawn(resolved, args, { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, ...env } });
+      ? spawn(process.execPath, [resolved, ...args], { stdio: ["pipe", "pipe", "pipe"], env: { ...(isolated ? cleanAgentEnvironment() : process.env), ...env } })
+      : spawn(resolved, args, { stdio: ["pipe", "pipe", "pipe"], env: { ...(isolated ? cleanAgentEnvironment() : process.env), ...env } });
 
     let output = "";
     child.stdout.on("data", (chunk: Buffer) => (output += chunk.toString()));
     child.stderr.on("data", (chunk: Buffer) => (output += chunk.toString()));
     child.on("error", reject);
+    child.stdin.on("error", () => reject(new Error("Login input closed.")));
     child.on("exit", (code) =>
       code === 0 ? resolve() : reject(new Error(output.trim().slice(0, 200) || `exit ${code}`)),
     );

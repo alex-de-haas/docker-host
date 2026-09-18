@@ -9,6 +9,14 @@ This is the operator milestone of the [AI Agent Bridge](../ai-agent-bridge/featu
 decisions recorded there (execution profiles, placement, token mechanics, approval policy) govern
 this feature.
 
+## Agent Provider Connections
+
+The Gateway settings page manages named Claude/Codex connections, authentication and the default
+for new chats. Each started chat keeps its own provider/account binding across restarts. Managed
+credentials use Core's App Secrets Store and native homes outside app backup data. See
+[AI Gateway Provider Connections](../ai-gateway-providers/feature.md) for setup, device-code sign-in,
+secret lifecycle, legacy migration and the session-selection contract.
+
 ## Session App Context
 
 Administrators select one or several installed apps through the chat's Apps picker, or open a new
@@ -93,10 +101,10 @@ are documented in [Assistant App Context](../assistant-app-context/feature.md).
 
 ## Settings Surface
 
-- The manifest declares a `ui` block, so the gateway appears as its own **sidebar section** the way
-  `hosty.marketplace` and `hosty.telemetry` do — those get their navigation entries purely from
-  `ui.navigation`. Pages are served from the same Node process; nothing is split out (telemetry only
-  split because its backend is .NET).
+- The manifest declares one `ui.settings` surface, listed as **Hosty AI Gateway** under Shell's
+  Settings. Its app-owned page has **Providers**, **System prompt** and **MCP access** tabs.
+  The iframe fills the workspace, so dialogs cover both the content and its internal tabs while
+  the Shell header and sidebar remain accessible. Pages are served from the same Node process.
 - Why here and not in Shell: the assistant is optional, removable and replaceable, so a settings
   page baked into Shell would make Shell know one provider's configuration schema. Observability was
   moved out of Shell into its own app for the same reason. The page itself is a Next app in
@@ -157,10 +165,10 @@ are documented in [Assistant App Context](../assistant-app-context/feature.md).
   update tools on that credential whatever the operator's role — the rule the facade's path already
   lives under (see [core-mcp](../core-mcp/feature.md)). The host preamble says so and points the
   model at the CLI for those, so it does not spend a turn discovering the refusal.
-- **The approval select is greyed out on a harness that never consults it.** Each harness reports an
-  `autoAllow` capability; Codex reports false, because it raises approvals by its own sandbox rules
-  and an app tool call never passes through the adapter's hands. The page says so in a note rather
-  than offering a control that does nothing, and the select's tooltip names the harness.
+- **Approval behavior depends on the chat's agent provider.** Claude supports the read-only
+  auto-allow mode; Codex raises approvals through its native sandbox rules. The shared settings
+  surface explains this distinction and keeps the controls available for Claude chats even when
+  Codex is the default. Per-chat health reports the actual adapter's capabilities.
   Each provider carries two controls, shaped so neither can be read two ways: a **switch** for
   enable/disable — its position is the state, after a button labelled "Disabled" proved equally
   readable as "this is off" and "click to disable" — and a **select** for the approval mode ("Ask
@@ -179,21 +187,17 @@ are documented in [Assistant App Context](../assistant-app-context/feature.md).
 ## Harness
 
 The adapter contract is start / send / resolveApproval / resolveQuestion / interrupt / stop plus a
-single event callback; the concrete harness stays replaceable, and the operator picks one with the
-`HOSTY_AI_GATEWAY_HARNESS` setting (`claude` | `codex`; an unrecognized value falls back to
-`claude` rather than taking the assistant down on a typo, and `fake` is a test-only in-process
-harness that is not offered as an operator choice). Each harness is pinned as a dependency and
-needs its own credential; the health probe names the selected harness and, when it is unusable,
-the reason. Approval policy is identical across harnesses: every write pauses, with no exceptions
-and no session-scoped blanket approvals. A failed run is dropped on its error event so the next
-message starts a fresh one, and the harness-native session id is captured for resume after a
-gateway restart.
+single event callback. Each chat resolves the adapter from its persisted provider connection;
+`HOSTY_AI_GATEWAY_HARNESS` is a legacy import preference (`fake` remains test-only). Each native
+harness is pinned as a dependency. Health and capability checks are per chat, with aggregate
+availability for discovery. The harness-native session id is captured for resume after a restart;
+a stopped process does not transfer a chat to another provider.
 
-### Claude (default)
+### Claude
 
 - Drives the Claude Agent SDK with streaming input, partial-message deltas, and
-  `settingSources: ["user", "project"]` — an operator session behaves like the admin running Claude
-  Code by hand, their instructions and skills included.
+  `settingSources: ["user", "project"]` — project instructions and connection-local user settings
+  are included. The isolated connection home does not inherit the operator's global Claude home.
 - `permissionMode: "default"` with read-only tools (Read, Glob, Grep, WebFetch, WebSearch,
   TodoWrite, Task) auto-allowed; every other tool pauses inside `canUseTool` until the operator
   decides in Shell. A deny unblocks the harness with a message. The SDK's third `canUseTool`
@@ -203,9 +207,9 @@ gateway restart.
   behind a fixed prefix, so a refusal stays a refusal whatever was typed. The reason is collapsed to
   one line first: the prefix guards the line it is on, and a second line would arrive unprefixed,
   reading like an instruction of its own.
-- Credential: the Agent SDK does not read an interactive `claude login` — it needs an environment
-  credential (`ANTHROPIC_API_KEY`, a `claude setup-token` OAuth token, or a provider
-  `CLAUDE_CODE_USE_*` configuration), offered as optional secret app settings.
+- Each connection supplies an isolated environment with an Anthropic API key or manual
+  `claude setup-token` token from Core secrets. Its own `CLAUDE_CONFIG_DIR` keeps native state
+  separate from other accounts; inherited credentials for other providers are removed.
 - Every session's prompt begins with the host's own preamble
   ([host-prompt.ts](../../../apps/ai-gateway/src/sessions/host-prompt.ts)): identity, the approval
   gate's semantics, the platform's ground rules (never a second Core, never raw docker on managed
@@ -244,25 +248,12 @@ gateway restart.
   as `item/agentMessage/delta`; `thread/start` yields the id that `thread/resume` restores, and it
   works across process restarts. (The older "Codex cannot pause per tool call" limitation is true
   of `codex exec` only.)
-- Credential — **two modes, the administrator picks**:
-  - *API key* (`CODEX_API_KEY` app setting): the gateway signs Codex in on the operator's behalf.
-    A key set **only as an environment variable authenticates nothing** — verified against a clean
-    `CODEX_HOME`, where neither `OPENAI_API_KEY` nor `CODEX_API_KEY` produced a session; Codex
-    accepts a key exclusively through `codex login --with-api-key`, which reads it from stdin and
-    writes it into the credential store. The gateway therefore runs that login itself, passing the
-    key over stdin — never argv, where process listings would expose it. An API key does not
-    expire, which is what a long-running service wants.
-  - *Interactive* (no key set): someone runs `codex login` on the host **as the user Core runs as**
-    — credentials are per-user, so signing in as a different account leaves the harness
-    unauthenticated. The optional `CODEX_HOME` setting points at a non-default credential
-    directory; the login must then carry the same directory (`CODEX_HOME=<path> codex login`),
-    which the health reason spells out with the configured path filled in.
-- The API-key mode writes into **its own Codex home** under the app data directory, so choosing it
-  never overwrites the operator's personal `~/.codex` session (verified live: after the gateway
-  signed in with a key, `codex login status` on the host still reported the operator's own
-  session). A SHA-256 fingerprint of the key is stored beside those credentials, so rotating the
-  key in app settings re-authenticates on the next health check; the fingerprint is written only
-  after a successful login, so a bad key retries instead of sticking.
+- Authentication comes from the chat's named connection: ChatGPT device-code sign-in, an API key,
+  or an existing host login. Managed API keys are passed over stdin to `codex login --with-api-key`;
+  managed OAuth uses the native app-server login protocol. Managed homes live in Core cache, with
+  conversation directories linked to durable app data. Credentials are reconstructed from Core's
+  App Secrets Store, and refreshed ChatGPT auth is synchronized back there. An existing external
+  Codex home stays operator-owned. See [provider connections](../ai-gateway-providers/feature.md).
 - The binary resolves override → the pinned `@openai/codex` dependency → PATH.
 - **A failed turn is reported by `turn/completed` itself**, carrying `status: "failed"` and the
   reason on `turn.error`; the status vocabulary is `inProgress | completed | failed | declined`.

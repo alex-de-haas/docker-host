@@ -1,7 +1,7 @@
 # Shell Navigation
 
 Created: 2026-07-30
-Updated: 2026-09-10
+Updated: 2026-09-18
 
 The browser Shell has three top-level destinations: **Dashboard**, the host you manage; **Settings**,
 the host you configure; and **Apps**, the apps you use. This document owns the route table and the
@@ -54,7 +54,7 @@ before loading the iframe; codes are single-use, so a refresh re-mints rather th
 
 Two groups:
 
-- **Host** — Dashboard, Settings. Administrator-only.
+- **Host** — Dashboard for administrators; Settings contains administrator sections and the viewer's own Access tokens section.
 - **Apps** — every UI-capable app the session can see, ordinary and system alike, a system app marked
   by a badge. The Shell itself is excluded: opening it inside itself resolves back to Dashboard, so a
   row for it could only be a dead end.
@@ -91,6 +91,9 @@ after a short delay; it is non-modal so sliding along the rail previews one app 
 hover open never takes focus and a hover close never returns it to the trigger — pointing at the
 rail must not pull focus out of the embedded app. A single-page app and an app that is not running
 keep the plain icon behavior: direct launch, or the disabled state tooltip.
+
+The compact Settings menu shares this hover behavior, including delayed opening, focus preservation
+and click-to-pin. Expanded app page lists place their vertical guide beneath the parent app icon.
 
 A row opens by the readiness of the service that serves its primary page, not by the app's state
 ([App Readiness](../app-readiness/feature.md)): while that service is still inside its readiness
@@ -198,8 +201,11 @@ start establishes a known applied snapshot. Source and Docker runtimes share the
 
 ## Settings
 
-The page starts with its tabs. Settings appears in the top strip; the content retains a
-screen-reader heading without a duplicate visible title or introductory description. The Users tab
+Settings sections live in the expandable sidebar item, or its compact flyout. Built-in sections
+and app-owned pages share that navigation, with exactly one app-named entry per application. The selected section
+appears beside Settings in the top strip. The horizontal tab bar is absent. App settings occupy the
+full workspace through an iframe; their content padding and modal overlays belong to the app.
+Native host sections retain a screen-reader heading without a duplicate visible title. The Users section
 also omits its repeated User Management title and description. The invitation button sits beside
 search inside the Users section, with no separate refresh button. Users and Pending Invitations
 have no outer border, shadow, separate background, or former card padding; table row separators remain visible.
@@ -220,7 +226,7 @@ the groups stack vertically. The repeated Core settings title and introduction a
 Saving still submits only changed keys; default resets, errors and the public-origin warning remain
 available.
 
-One route with host and system-app tabs:
+One route with addressable host sections and app pages:
 
 - **Users** — accounts, invitations, roles, per-app assignment.
 - **Access tokens** — client credentials and OAuth connections.
@@ -228,7 +234,8 @@ One route with host and system-app tabs:
   live-applied and another administrator may have changed them.
 - **Ingress** — public ingress and the Cloudflare connection.
 - **Shared mounts** — host folders apps attach by reference.
-- System-app tabs expose their app-owned settings.
+- Each app settings entry exposes its manifest-declared `ui.settings`. Internal tabs belong to the app.
+  See [App UI Surfaces](../app-ui-surfaces/feature.md) for compatibility and routing.
 
 Per-app settings stay in the app details dialog. They describe an app, not the host.
 

@@ -26,6 +26,11 @@ export type SessionStatus =
 
 export interface SessionRecord {
   id: string;
+  connectionId?: string;
+  connectionRevision?: number;
+  connectionIdentity?: string;
+  harnessKind?: "claude" | "codex";
+  providerLocked?: boolean;
   title: string | null;
   /**
    * Who chose the title. An operator's own name is never overwritten by a derived one — a session

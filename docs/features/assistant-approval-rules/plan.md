@@ -4,8 +4,9 @@ Status: Draft
 Created: 2026-09-02
 Updated: 2026-09-17
 
-Operator-owned rules for which assistant actions run without an approval card, beyond the per-app
-read-only grant that ships today. This is the "second iteration informed by real usage" that the
+Operator-owned rules for which assistant tools are disabled, ask before execution, or run without
+an approval card, beyond the per-app read-only grant that ships today. This is the "second iteration
+informed by real usage" that the
 [AI Agent Bridge](../ai-agent-bridge/feature.md#approval-posture) deferred when every write became
 approval-gated on 2026-08-08. The usage informing it: an operator answering a card for every
 `hosty apps update-plan`, and for every repeat of the same command inside one long session.
@@ -20,6 +21,12 @@ Let the operator decide, in advance and in the open, which actions of which prov
 a card — per tool, for one session, or for a shell command prefix — with every such decision visible
 on the settings page, honoured identically by both harnesses, and leaving an audit line whenever it
 lets something through.
+
+Owner decision, 2026-09-17: keep the provider enable/disable switch and expose three modes for
+each MCP tool in its expandable settings list: **Ask**, **Run unprompted**, and **Disabled**.
+The gateway owns MCP enforcement for both Claude and Codex, including the approval pause; it must
+not depend on a native harness requesting approval for an MCP call. This records the agreed product
+behavior, not implementation approval for this entire Draft or proof of the transport mechanism.
 
 Owner decision, 2026-09-16: the administrator can grant source writes and project-command execution
 for any source-capable app selected in a session's context, including existing apps and several apps
@@ -58,11 +65,33 @@ the separately accepted localCommand runtime responsibility.
 - Under each enabled provider's row the settings page can expand **the provider's tool list**, read
   from its `tools/list` the way the facade's catalog and the read-only probe already do: name,
   description, and the app's `readOnlyHint` / `destructiveHint` as labels.
-- Each tool carries a mode, **Ask** or **Run unprompted**. Read-only tools inherit the provider's
-  existing select and show it greyed; mutation tools are set one by one, never by a provider-wide
-  switch. A tool declaring `destructiveHint` carries a warning beside its control.
-- A tool the provider stops listing loses its rule at the next settings read, the way an uninstalled
-  app loses its toggle today.
+- Keep the provider's master enable/disable switch. Each tool, including read-only tools, carries
+  one selectable mode: **Ask**, **Run unprompted**, or **Disabled**. The labels describe the
+  gateway's behavior, not a grant of missing authority in Core or the target app. Display the
+  app's annotations as app-declared hints. A destructive hint remains visible beside the control.
+- **Ask** keeps the tool available to the model, but the gateway holds each call for an approval
+  card before forwarding it. Approval authorizes that exact provider, tool and argument set.
+- **Run unprompted** keeps the tool available and forwards authorized calls without a gateway
+  approval card. Core and app authorization checks still apply.
+- **Disabled** removes the tool from the model-facing catalog and rejects calls by name, including
+  names retained in an existing conversation. A prompt instruction or catalog filter alone is
+  insufficient. Disabling the provider takes precedence over all of its tool modes.
+- New tools default to **Ask**. During migration preserve existing read-only auto-allow choices
+  for tools verified against a complete catalog snapshot; discovery failure must not create an
+  unprompted grant. Define this migration explicitly so a later new tool does not silently inherit
+  permission from an old provider-wide setting.
+- Bind rules to the provider/interface identity and tool name. Prune obsolete rules only after
+  authoritative removal or successful complete discovery, never because a stopped provider or
+  failed catalog read looks empty. A reappearing tool starts with the new-tool default.
+- Policy changes govern subsequent calls in existing sessions. Recheck current policy before
+  forwarding a waiting call; an old card or session grant cannot override a disabled tool/provider.
+  Refresh advertised catalogs where supported; otherwise show when a session refresh is needed.
+  Call-time enforcement must not wait for that refresh. Disabling does not undo an already
+  dispatched upstream action.
+- These controls cover MCP calls through the gateway's assistant-session route. They do not
+  prohibit an equivalent CLI/HTTP action or grant filesystem development access. External facade
+  callers retain their existing read-only restriction; this decision adds no external write path
+  or remote approval-card workflow.
 
 ### B. Session grants from the card
 
@@ -73,6 +102,8 @@ the separately accepted localCommand runtime responsibility.
 - Session grants live in the gateway's live session only — never in settings, never in the harness's
   own permission store — and end with the session. A new session starts with none.
 - A session grant leaves an audit line when it is made and a line each time it lets a call through.
+- For MCP, a session grant can satisfy **Ask** only while the provider and tool remain enabled.
+  Policy revocation must invalidate conflicting grants and pending decisions.
 
 ### C. Shell prefix rules
 
@@ -88,10 +119,25 @@ the separately accepted localCommand runtime responsibility.
 
 ### D. Where the policy is evaluated
 
-- **Owned by the gateway, for both harnesses.** Approval callbacks consult the shared policy;
-  development grants also configure native enforcement and require event-based auditing for actions
-  that do not raise callbacks (G). Do not write hidden grants to the harness's own permission store.
-  Native options must be derived from the visible Hosty policy, with verified enforcement and audit.
+- **Owned by the gateway, for both harnesses.** MCP catalogs and calls are governed at the
+  session MCP boundary before upstream dispatch. The existing transparent proxy needs protocol-aware
+  filtering and approval handling; this is not implemented by the current byte forwarder.
+  **Ask** creates the existing session approval event/card and waits for its decision before
+  invoking the app. **Disabled** never reaches the upstream tool. **Run unprompted** bypasses the
+  gateway card only after policy and session authorization checks.
+- Coordinate adapter permissions so one MCP call produces at most one Hosty approval card and
+  **Run unprompted** does not encounter a second native approval for that same call. Any native
+  allowance must cover only gateway-controlled MCP routes, never blanket shell/file permission.
+  Verify this against both pinned adapters rather than assuming their callbacks or defaults.
+- Shell/file approval callbacks continue to consult the shared policy; development grants also
+  configure native enforcement and require event-based auditing for actions that do not raise
+  callbacks (G). Do not write hidden grants to the harness's own permission store. Native options
+  must be derived from the visible Hosty policy, with verified enforcement and audit.
+- Bind a pending MCP decision to the session, request and arguments. Resolve denial, cancellation,
+  disconnect and timeout without forwarding the held action. Define retry/deduplication behavior
+  and restart recovery before shipping, so a retried request or replayed card cannot execute a
+  mutation twice or release a stale call. Support the actual JSON/SSE transports used by providers;
+  pending approval must not rely on an unbounded HTTP request surviving every client timeout.
 - The policy takes the tool name, input and effective session grant revision; a shell rule is about
   the command and a source grant is about the resolved target, not just the tool name.
 
@@ -178,8 +224,8 @@ authorization and sandboxed commands. Neither `danger-full-access` nor blanket B
 the implementation. If enforcement is unavailable, show development execution as unavailable; never
 silently run outside the boundary. Explicit exceptional authorization remains visible and separate.
 
-The gateway owns policy and audit. Native enforcement is necessary even when an action does not
-produce an approval callback; revise D's callback-only design accordingly. Observe actual tool events
+The gateway owns policy and audit. Native enforcement is necessary even when a shell/file action does
+not produce an approval callback; the MCP boundary in D does not cover these paths. Observe actual tool events
 for authorized operations and verify audit coverage on both adapters. An approval callback predicate
 alone cannot establish parity or containment. Persist policy decisions, not secrets or full command
 output, in audit.
@@ -276,11 +322,17 @@ parity. A disposable spike establishes the contract; this Draft does not authori
       and command switches, instruction loading without permission-setting inheritance, declared
       scratch-space policy, and WebFetch/subagent/MCP paths against the same effective grant.
 - [ ] Rule model in the gateway's settings store: per-tool modes keyed by provider and tool name,
-  shell prefix rules, with validation and pruning against the live tool list.
+  with interface identity, all three modes, explicit migration of existing read-only grants,
+  shell prefix rules, and validation/pruning against complete authoritative discovery.
+- [ ] Protocol-aware session MCP enforcement: filtered catalogs, call-time disabled checks,
+      gateway-owned Ask pauses, unprompted dispatch, policy changes and audit on both adapters.
+- [ ] Pending MCP request lifecycle: exact-call approval binding, cancellation/denial/timeouts,
+      retry deduplication, restart recovery, and no duplicate native/gateway approval prompts.
 - [ ] One policy over tool name, input and effective session grants, consulted by both adapters;
       include native sandbox configuration and event auditing where no approval callback occurs.
-- [ ] Settings page: expandable tool list per provider with per-tool mode and hint labels; a Shell
-  section for prefix rules.
+- [ ] Settings page: provider master switch and expandable tool list with Ask / Run unprompted /
+      Disabled per tool, descriptions, hint labels and effective-policy feedback; a Shell section
+      for prefix rules.
 - [ ] Card: **Allow for this session**, with the grant it would make shown on the button.
 - [ ] Compound-command refusal, unit-tested against every separator listed in C.
 - [ ] `ai_action_auto_allowed` audit report with the matching rule, and the Core side accepting it
@@ -304,10 +356,12 @@ parity. A disposable spike establishes the contract; this Draft does not authori
   and validating them against the grant before each run. G recommends exclusion with explicit
   instruction loading. Any validation alternative must address changes after validation and native
   settings merge semantics, not just scan a file once before launch.
-- **Codex and app tools.** Codex raises approval requests for command execution and file changes.
-  Whether it raises one for an MCP tool call at all is not established; if it does not, app
-  mutations on Codex already run unprompted and this plan's Codex branch is a fix, not a feature.
-  Establish it against the pinned binary before D is designed in detail.
+- **MCP approval transport and adapter coordination.** The owner selected gateway-owned enforcement,
+  so native MCP approval callbacks are not its foundation. Verify held-call behavior and timeout,
+  cancellation, retry and restart semantics on both pinned clients and supported provider transports.
+  Determine the narrow adapter configuration that avoids duplicate MCP prompts without widening
+  shell/file permissions. The current Codex path's native MCP approval behavior remains unverified;
+  the new policy must not inherit that uncertainty as its enforcement boundary.
 - **Core mutations in the panel.** The panel reaches Core with a delegated token, which never carries
   scopes, so Core refuses lifecycle and update tools on it and `update-plan` / `update` stay on the
   CLI. Giving the panel a credential that can carry `mcp:lifecycle` / `mcp:update` for the operator's
@@ -325,6 +379,16 @@ parity. A disposable spike establishes the contract; this Draft does not authori
 
 ## Verification
 
+- MCP policy on real Claude and Codex sessions: Ask shows one card and forwards exactly once only
+  after Allow; Deny forwards nothing; Run unprompted completes without a card; Disabled disappears
+  from tools/list and rejects a direct tools/call using a previously known name. Confirm effects at
+  the upstream app, not only transcript events. Existing Core/app permission refusals still hold.
+- Exercise provider disable, tool disable while a card waits, policy changes in an existing session,
+  client cancellation/timeouts/retries, reconnect and gateway restart. No stale approval releases a
+  call and no retry duplicates a mutation. Cover plain JSON and streaming provider responses.
+- Migration and catalog discovery: existing accepted read-only grants survive a successful migration;
+  new tools ask; unavailable/partial catalogs do not erase Disabled rules or create permissions;
+  confirmed removal/reappearance cannot resurrect an old unprompted grant.
 - Live development-grant acceptance on both adapters: one existing no-Git app and one second app;
   context-only selection grants neither writes nor commands. Explicit grants allow repeated edits,
   dependency setup/build/test without cards inside the approved boundary. Ungranted roots, synthetic

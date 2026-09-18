@@ -4,6 +4,7 @@ import {
   getAppPanelTabs,
   getAppSettingsTabs,
   resolveActiveSurfaceTab,
+  resolveSettingsSurface,
   resolveLaunchGate,
 } from "../src/app/shell/surfaces/app-surface-tabs.ts";
 
@@ -209,4 +210,13 @@ test("the active tab survives what it can and falls back rather than pointing at
   assert.equal(resolveActiveSurfaceTab(tabs, "gone#0")?.label, "Kept");
   assert.equal(resolveActiveSurfaceTab(tabs, null)?.label, "Kept");
   assert.equal(resolveActiveSurfaceTab([], "b#0"), null);
+});
+
+test("settings use one app-named entry and accept previous page-specific bookmarks", () => {
+  const tabs = getAppSettingsTabs([app({ settingsSurface: { path: "/settings", label: "Internal label" } })]);
+  assert.equal(tabs.length, 1);
+  assert.equal(tabs[0].label, "Example");
+  assert.equal(resolveSettingsSurface(tabs, "com.example.app"), tabs[0]);
+  assert.equal(resolveSettingsSurface(tabs, "com.example.app#http:%2Fsettings%2Fproviders"), tabs[0]);
+  assert.equal(resolveSettingsSurface(tabs, "removed.app"), undefined);
 });
