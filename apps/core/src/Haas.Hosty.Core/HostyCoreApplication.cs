@@ -125,9 +125,9 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<RuntimePortAllocator>();
         builder.Services.AddSingleton<CoreLifecycleService>();
         builder.Services.AddSingleton<LocalCommandProcessRegistry>();
-        // Resolve the re-exec shim path once. Published Core uses it to place localCommand trees inside
-        // a POSIX process group or a Windows kill-on-close job before the platform shell starts.
-        // A dll-hosted run has no re-executable Core path and retains the direct-spawn fallback.
+        builder.Services.AddSingleton<CoreDevelopmentService>();
+        // Resolve the executable for independent localCommand runners once. DLL-hosted Core copies
+        // its managed output closure instead; both paths keep logs and tree ownership outside Core.
         builder.Services.AddSingleton(new LocalCommandShimOptions(LocalCommandShim.ResolveShimPath()));
         builder.Services.AddSingleton<IHealthProbe, NetworkHealthProbe>();
         // Shared docker CLI runner so the runtime adapter and the telemetry scrape loop go through one
@@ -1700,7 +1700,7 @@ internal sealed class RuntimeAppSupervisorService(
             var reclaimed = await lifecycle.ReclaimOrphanedLocalCommandProcessesAsync(cancellationToken);
             if (reclaimed > 0)
             {
-                logger.LogInformation("Reclaimed {Count} orphaned localCommand process tree(s) left by a previous Core.", reclaimed);
+                logger.LogInformation("Adopted {Count} localCommand process tree(s) left running by a previous Core.", reclaimed);
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -2094,7 +2094,8 @@ internal sealed record CoreStatusResponse(
     string IngressProvider,
     string? IngressConfigPath,
     IReadOnlyList<string> Warnings,
-    DateTimeOffset ServerTime)
+    DateTimeOffset ServerTime,
+    Haas.Hosty.Launch.CoreLaunchIdentity? Launch = null)
 {
     // Core and CLI ship as one release bundle and share this version (see Directory.Build.props),
     // so reporting Core's assembly version also tells the Shell which CLI release is in play.
@@ -2156,7 +2157,8 @@ internal sealed record CoreStatusResponse(
             ingress.Provider,
             ingress.DerivesPublicOrigins ? config.EffectiveIngressConfigPath : null,
             [.. HostyCoreRuntimeConfig.BuildPublicOriginWarnings(coreOrigins.Configured), .. ingress.BuildWarnings(cloudflareConnected)],
-            DateTimeOffset.UtcNow);
+            DateTimeOffset.UtcNow,
+            Haas.Hosty.Launch.CoreLaunchIdentity.Current());
 
     // Public liveness payload. `/api/core/status` is unauthenticated and, under cloudflared, published at
     // core.<domain>, so the detailed From() payload (DataRoot, manifest/ingress paths, host-path warnings)

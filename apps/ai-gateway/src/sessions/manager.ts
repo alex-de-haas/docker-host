@@ -631,7 +631,11 @@ export class SessionManager {
       return;
     }
 
+    let nextAttempt = Date.now() + TOKEN_REFRESH_MARGIN_MS * 3;
+    let refreshing = false;
     session.refreshTimer = setInterval(() => {
+      if (refreshing || Date.now() < nextAttempt) return;
+      refreshing = true;
       void (async () => {
         const live = this.live.get(id);
         if (!live?.run || !live.credential) {
@@ -645,6 +649,7 @@ export class SessionManager {
         }
 
         live.credential = renewed.token;
+        nextAttempt = Date.now() + TOKEN_REFRESH_MARGIN_MS * 3;
 
         // Re-earn the auto-allow grants on the same tick. The set is keyed by tool NAME, and a
         // trusted app updated mid-session can keep a name while making it mutating — after which the
@@ -657,9 +662,10 @@ export class SessionManager {
         // started reading the settings file: an unhandled rejection in a timer kills Node, and the
         // gateway is a long-running process whose sessions would go with it. Losing one refresh is a
         // session that keeps its current credential until the next tick.
+        nextAttempt = Date.now() + 15_000;
         console.warn(`[session ${id}] refresh tick failed`, error);
-      });
-    }, TOKEN_REFRESH_MARGIN_MS * 3);
+      }).finally(() => { refreshing = false; });
+    }, 15_000);
     session.refreshTimer.unref?.();
   }
 

@@ -157,7 +157,9 @@ internal static class AccessTokenScopes
 
     /// <summary>Every scope this host issues. Public so a refusal can name them rather than leaving
     /// the caller to guess what it should have asked for.</summary>
-    public static readonly string[] Known = [McpRead, McpLifecycle, McpUpdate];
+    public const string McpCoreRestart = "mcp:core-restart";
+
+    public static readonly string[] Known = [McpRead, McpLifecycle, McpUpdate, McpCoreRestart];
 
     /// <summary>
     /// Scopes that are Core's own authority and mean nothing on an app audience.
@@ -166,7 +168,7 @@ internal static class AccessTokenScopes
     /// A set rather than a check per scope: the guards that use it were written for one scope, and a
     /// second copied beside it is how the next scope gets added to only one of them.
     /// </remarks>
-    public static readonly string[] CoreOnly = [McpLifecycle, McpUpdate];
+    public static readonly string[] CoreOnly = [McpLifecycle, McpUpdate, McpCoreRestart];
 
     public static bool IsKnownScope(string scope)
         => Known.Contains(scope, StringComparer.Ordinal);

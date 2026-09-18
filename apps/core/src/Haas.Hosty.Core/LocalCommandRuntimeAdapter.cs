@@ -32,6 +32,8 @@ internal sealed class LocalCommandRuntimeAdapter(
 
     public async Task<AppRuntimeStartResult> StartAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
     {
+        if (registry.Conflict(context.App.Id) is { } conflict)
+            throw new AppLifecycleException("local_process_conflict", conflict);
         var endpoints = new List<AppEndpointContract>();
         var startedServices = new List<string>();
         // Content-hash locks for prebuilt services, keyed by service (mirrors the docker image-digest
@@ -114,10 +116,18 @@ internal sealed class LocalCommandRuntimeAdapter(
 
                 System.Diagnostics.ProcessStartInfo startInfo;
                 bool processGroup;
+                string? runnerGeneration = null;
                 WindowsProcessControl.WindowsKillOnCloseJob? windowsJob = null;
                 try
                 {
-                    (startInfo, processGroup, windowsJob) = CreateShellStartInfo(service.Runtime.Command, workingDirectory);
+                    if (shim is not null)
+                    {
+                        var prepared = LocalCommandRunner.Prepare(config.DataRoot, shim.ShimPath);
+                        runnerGeneration = prepared.Generation;
+                        startInfo = LocalCommandRunner.CreateStartInfo(prepared.Executable, service.Runtime.Command, workingDirectory, logPath, prepared.Executable is null ? runnerGeneration : null);
+                        processGroup = !OperatingSystem.IsWindows();
+                    }
+                    else (startInfo, processGroup, windowsJob) = CreateShellStartInfo(service.Runtime.Command, workingDirectory);
                     InjectEnvironment(startInfo, context, service, endpoints, servicePorts);
                 }
                 catch
@@ -151,6 +161,7 @@ internal sealed class LocalCommandRuntimeAdapter(
                     process.Start();
                     process.BeginOutputReadLine();
                     process.BeginErrorReadLine();
+                    if (shim is not null) logWriter.Dispose(); // The runner now owns rotation and console capture.
                 }
                 catch
                 {
@@ -165,7 +176,7 @@ internal sealed class LocalCommandRuntimeAdapter(
                     service.Key,
                     new LocalCommandProcess(process, logPath, workingDirectory, servicePorts[service.Key], processGroup, windowsJob));
                 startedServices.Add(service.Key);
-                await WritePidFileAsync(context, service.Key, process, processGroup, cancellationToken);
+                await WritePidFileAsync(context, service.Key, process, processGroup, workingDirectory, servicePorts[service.Key], runnerGeneration, cancellationToken);
                 await Task.Delay(250, cancellationToken);
                 if (process.HasExited)
                 {
@@ -816,8 +827,8 @@ internal sealed class LocalCommandRuntimeAdapter(
     // non-gracefully and loses the in-memory registry handle. Reading StartTime of a process that
     // exited between Start() and here can throw; on failure the write is skipped — the 250ms HasExited
     // check in the caller fails the start regardless, so no orphan is left unrecorded.
-    private static async Task WritePidFileAsync(
-        RuntimeLifecycleContext context, string serviceKey, System.Diagnostics.Process process, bool processGroup, CancellationToken cancellationToken)
+    private async Task WritePidFileAsync(
+        RuntimeLifecycleContext context, string serviceKey, System.Diagnostics.Process process, bool processGroup, string workingDirectory, IReadOnlyDictionary<string, int> ports, string? runnerGeneration, CancellationToken cancellationToken)
     {
         DateTimeOffset startedAtUtc;
         try
@@ -831,7 +842,10 @@ internal sealed class LocalCommandRuntimeAdapter(
 
         await LocalCommandProcessReclaim.WriteAsync(
             context.AppRoot,
-            new LocalCommandPidFile(process.Id, startedAtUtc, context.App.Id, serviceKey, processGroup),
+            new LocalCommandPidFile(process.Id, startedAtUtc, context.App.Id, serviceKey, processGroup,
+                workingDirectory, ports, runnerGeneration, config.InstanceId, context.App.SelectedRuntime,
+                context.Manifest.Services.First(service => service.Key == serviceKey).Runtime.Command,
+                process.MainModule?.FileName, Path.Combine(context.AppRoot, "logs", serviceKey + ".log")),
             cancellationToken);
     }
 
@@ -936,6 +950,43 @@ internal sealed class LocalCommandProcessRegistry
 {
     private readonly ConcurrentDictionary<string, LocalCommandProcess> processes = new(StringComparer.Ordinal);
 
+    private readonly ConcurrentDictionary<string, string> conflicts = new(StringComparer.Ordinal);
+    public void Block(string appId, string reason) => conflicts[appId] = reason;
+    public string? Conflict(string appId) => conflicts.GetValueOrDefault(appId);
+    public bool HasApp(string appId) => conflicts.ContainsKey(appId) || processes.Any(pair => pair.Key.StartsWith(appId + "/", StringComparison.Ordinal)
+        && !pair.Value.Process.HasExited);
+
+    public async Task<bool> TryAdoptAsync(string appRoot, string appId, string serviceKey, CancellationToken cancellationToken, string? instanceId = null)
+    {
+        var saved = await JsonStorage.ReadAsync<LocalCommandPidFile>(LocalCommandProcessReclaim.PidFilePath(appRoot, serviceKey), cancellationToken);
+        if (saved is null) return false;
+        if (saved.Pid <= 1 || saved.AppId != appId || saved.ServiceKey != serviceKey || saved.InstanceId is not null && saved.InstanceId != instanceId) throw new IOException("Local service ownership could not be verified; explicit operator recovery is required.");
+        System.Diagnostics.Process process;
+        try { process = System.Diagnostics.Process.GetProcessById(saved.Pid); }
+        catch (ArgumentException)
+        {
+            if (saved.ProcessGroup && !OperatingSystem.IsWindows() && UnixProcessControl.ProbeProcessGroup(saved.Pid) != ProcessGroupProbe.Absent)
+                throw new IOException("The local runner exited but its process group still exists; explicit recovery is required.");
+            return false;
+        }
+        var startMatches = saved.RunnerGeneration is null
+            ? LocalCommandProcessReclaim.StartTimeMatches(saved.StartedAtUtc, process.StartTime)
+            : Math.Abs((saved.StartedAtUtc.UtcDateTime - process.StartTime.ToUniversalTime()).TotalMilliseconds) < 100;
+        if (process.HasExited || !startMatches)
+        {
+            process.Dispose();
+            throw new IOException("The recorded local service PID belongs to another process; it was left untouched.");
+        }
+        if (saved.ExecutablePath is not null && !string.Equals(saved.ExecutablePath, process.MainModule?.FileName, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+        {
+            process.Dispose();
+            throw new IOException("Local service executable identity changed; the process was left untouched.");
+        }
+        Set(appId, serviceKey, new LocalCommandProcess(process, Path.Combine(appRoot, "logs", serviceKey + ".log"),
+            saved.WorkingDirectory ?? appRoot, saved.Ports ?? new Dictionary<string, int>(), saved.ProcessGroup, null));
+        return true;
+    }
+
     public void Set(string appId, string serviceKey, LocalCommandProcess process)
         => processes[$"{appId}/{serviceKey}"] = process;
 
@@ -954,9 +1005,9 @@ internal sealed record LocalCommandProcess(
     bool ProcessGroup,
     WindowsProcessControl.WindowsKillOnCloseJob? WindowsJob);
 
-// The resolved Core executable path re-execed as the localCommand shim: a setsid group leader on POSIX
-// and the first member of a kill-on-close job on Windows. Null for dll-hosted runs, where the adapter
-// falls back to a direct spawn. Optional so tests (and any unregistered path) get that fallback.
+// The resolved Core executable used to prepare independent runners. A null path means dotnet-hosted
+// Core: copy its managed output and run the copied DLL. Omitting the options object is a test-only
+// direct-spawn path.
 internal sealed record LocalCommandShimOptions(string? ShimPath);
 
 internal sealed class LocalCommandLogWriter(TextWriter writer) : IDisposable

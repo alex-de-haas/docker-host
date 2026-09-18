@@ -1,4 +1,5 @@
 export type CoreStatus = {
+  launch?: import("./core-development").CoreLaunch | null;
   status: string;
   component: string;
   version?: string;

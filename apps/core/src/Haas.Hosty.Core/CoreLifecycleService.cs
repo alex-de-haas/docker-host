@@ -60,7 +60,8 @@ internal sealed partial class CoreLifecycleService(
     // Runtime config, for the instance id that scopes docker container names in change previews.
     // Optional only for unit fixtures, which then preview the default instance's unscoped names;
     // production DI always supplies it.
-    HostyCoreRuntimeConfig? runtimeConfig = null)
+    HostyCoreRuntimeConfig? runtimeConfig = null,
+    LocalCommandProcessRegistry? localProcesses = null)
 {
     private static readonly Regex BackupReasonPattern = new("^[a-z0-9][a-z0-9-]{0,30}$", RegexOptions.Compiled);
     private static readonly Regex MountLabelPattern = new("^[a-z0-9][a-z0-9._-]{0,62}$", RegexOptions.Compiled);
@@ -3144,7 +3145,7 @@ internal sealed partial class CoreLifecycleService(
         var tiers = records
             .Where(app =>
                 string.Equals(app.Kind, "runtime", StringComparison.Ordinal) &&
-                (app.Autostart ?? true))
+                (app.Autostart ?? true) && localProcesses?.HasApp(app.Id) != true)
             .GroupBy(app => (CapabilityPriority: PlatformCapabilities.StartPriority(app.Provides), app.System))
             .OrderByDescending(tier => tier.Key.CapabilityPriority)
             .ThenByDescending(tier => tier.Key.System);
@@ -3189,7 +3190,7 @@ internal sealed partial class CoreLifecycleService(
         var records = await apps.ListAppRecordsAsync(cancellationToken);
         foreach (var app in records.Where(app =>
             string.Equals(app.Kind, "runtime", StringComparison.Ordinal) &&
-            !(app.Autostart ?? true)).OrderByDescending(app => app.Id, StringComparer.Ordinal))
+            !(app.Autostart ?? true) && localProcesses?.HasApp(app.Id) != true).OrderByDescending(app => app.Id, StringComparer.Ordinal))
         {
             cancellationToken.ThrowIfCancellationRequested();
             results.Add(await RunBackgroundLifecycleActionAsync(
@@ -3223,10 +3224,9 @@ internal sealed partial class CoreLifecycleService(
         return await Task.WhenAll(tasks);
     }
 
-    // Startup sweep: kills localCommand process trees a previous, non-gracefully-exited Core left
-    // orphaned (holding their ports) by reading the durable pidfiles under each app's {AppRoot}/run.
-    // Runs regardless of an app's currently selected runtime — an orphan survives a runtime switch — and
-    // per-file failures are logged without breaking the loop. Returns how many trees were reclaimed.
+    // Reattach surviving services by PID and start identity before boot reconciliation. Health does
+    // not determine ownership. Conflicts block automatic start instead of killing or duplicating a
+    // process whose identity cannot be established.
     public async Task<int> ReclaimOrphanedLocalCommandProcessesAsync(CancellationToken cancellationToken = default)
     {
         var reclaimed = 0;
@@ -3245,14 +3245,16 @@ internal sealed partial class CoreLifecycleService(
                 var serviceKey = Path.GetFileNameWithoutExtension(pidFilePath);
                 try
                 {
-                    if (await LocalCommandProcessReclaim.ReclaimAsync(GetAppRoot(app.Id), serviceKey, logger, cancellationToken))
+                    if (localProcesses is not null && await localProcesses.TryAdoptAsync(GetAppRoot(app.Id), app.Id, serviceKey, cancellationToken, instanceId))
                     {
                         reclaimed++;
                     }
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    logger.LogWarning(ex, "Failed to reclaim orphaned localCommand process for app {AppId} service {Service}.", app.Id, serviceKey);
+                    localProcesses?.Block(app.Id, ex.Message);
+                    await apps.UpdateAppAsync(app.Id, current => current with { LastError = ex.Message }, cancellationToken);
+                    logger.LogWarning(ex, "Could not adopt localCommand process for app {AppId} service {Service}; left untouched.", app.Id, serviceKey);
                 }
             }
         }

@@ -122,9 +122,8 @@ internal static class WindowsProcessControl
         return GetHandleInformation(handle, out var flags) && (flags & HANDLE_FLAG_INHERIT) != 0;
     }
 
-    // Creates the Core-owned half of the job before the shim starts. KILL_ON_JOB_CLOSE is the durable
-    // boundary: a normal stop terminates the job explicitly, while a Core crash closes this last handle
-    // in the kernel and kills the same tree without needing a live registry or a process enumeration.
+    // The independent runner owns this handle for long-lived services; Core owns it only for setup
+    // commands and legacy direct-spawn fixtures. Closing the last handle kills the member tree.
     [SupportedOSPlatform("windows")]
     public static WindowsKillOnCloseJob CreateKillOnCloseJob()
     {

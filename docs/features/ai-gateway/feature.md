@@ -1,7 +1,7 @@
 # AI Gateway
 
 Created: 2026-08-09
-Updated: 2026-09-17
+Updated: 2026-09-18
 
 The Hosty assistant: an optional, removable system app (`hosty.ai-gateway`) hosting admin-only
 operator chat sessions on a host-resident agent harness, plus the Shell surface that renders them.
@@ -437,6 +437,16 @@ gateway restart.
 - "Ask assistant" on an app's details appends to the composer draft of the open session, prefixed
   `From <app id>:` — it does not open a session of its own. The record still carries an optional
   `context` field that a client may set at creation; no client sends one today, and nothing reads it.
+
+## Core Restart Continuity
+
+Core's independent local-command runner preserves the Gateway process and its active harness
+across keep-apps Core restarts. A transient Core/token-exchange outage preserves session credentials
+and MCP routes instead of treating the delegation as revoked. Background refresh retries in 15
+seconds; an unavailable on-demand mint returns 503 before forwarding the tool call. Mutations are
+not replayed automatically. Actual authorization refusal still expires the delegation. This does
+not broaden delegated Core MCP authority: restart uses an authorized host CLI or explicitly granted
+direct Core connection. See [Core development mode](../core-dev-target/feature.md).
 
 ## Testing Expectations
 

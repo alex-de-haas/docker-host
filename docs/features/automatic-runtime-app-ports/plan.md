@@ -61,7 +61,7 @@ Written as a diff against [feature.md](feature.md).
 - [ ] Cover the reassign dialog's extractable logic (manual-port bounds, request payload) with
       `node --test`, alongside the existing `app-problems` coverage.
 - [ ] Document the reassign endpoints in [core-api/feature.md](../core-api/feature.md) and install-time reservation
-      plus `HOSTY_PORT_{SERVICE}_{KEY}` in [local-development.md](../local-development.md).
+      plus `HOSTY_PORT_{SERVICE}_{KEY}` in [local-development.md](../local-development/feature.md).
 - [ ] Validate a never-started app end to end against a live Core: install with start disabled,
       configure a public origin, first start, Core restart.
 

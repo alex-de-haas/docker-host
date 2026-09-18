@@ -180,7 +180,12 @@ export class McpProxy {
       }
     }
 
-    const token = await this.tokenFor(sessionId, registration, appId);
+    let token: MintedToken | null;
+    try { token = await this.tokenFor(sessionId, registration, appId); }
+    catch {
+      sendJson(response, 503, { code: "core_unavailable", message: "Core is temporarily unavailable. Retry after reconnecting; this request was not forwarded." });
+      return true;
+    }
     if (!token) {
       sendChainExpired(response, body);
       return true;
