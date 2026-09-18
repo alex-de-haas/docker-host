@@ -27,6 +27,9 @@ There is no custom Claude OAuth login flow. Provider type and authentication met
 an existing connection; create another connection to change them. Secret fields are write-only.
 **Test** checks local adapter/credential setup, not paid inference or remote API entitlements. The
 first real turn can still report an expired credential, denied model access or upstream outage.
+Managed conversation directories use junctions on Windows so setup does not require symbolic-link
+privileges; other hosts use directory symlinks. Recognized filesystem failures report their error
+code and storage guidance without exposing paths or credentials.
 
 ChatGPT sign-in uses the pinned Codex app-server's `account/login/start` with `chatgptDeviceCode`.
 The Gateway waits for `account/login/completed`, stores the native renewable auth document in Core,
@@ -143,6 +146,8 @@ Gateway version: **0.29.0 → 0.30.0**; Core and SDK contracts are unchanged.
 
 ## Testing Expectations
 
+- Windows storage setup succeeds without symlink privileges for both providers; removing cache
+  preserves durable history, and recognized storage errors contain no paths or credentials.
 - Test registry CRUD, idempotent import, failure between secret and metadata changes, cleanup retry,
   cancelled/failed device sign-in, native token refresh, cache loss and old/fresh-host restores.
 - Assert secret absence in settings responses and backed-up data, with successful native auth as

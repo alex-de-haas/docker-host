@@ -191,6 +191,9 @@ out of Shell in the first place, and hosting an iframe honours it.
 Version outcome for settings navigation: Shell **0.77.0 → 0.78.0**; Core/CLI is unchanged.
 Gateway's internal settings tabs are included in its **0.30.0** provider-connections release.
 
+Shell sends the initial theme only after the embedded app document loads. The initial blank frame
+inherits Shell's origin and receives no messages intended for the app's different origin.
+
 ## Testing Expectations
 
 - Each declaring app contributes exactly one app-named Settings entry in compact and expanded
