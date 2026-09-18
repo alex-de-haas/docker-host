@@ -177,6 +177,9 @@ shell exits while its detached descendant remains alive.
   dedicated MCP grants, inherited/delegated refusal, readiness identity and AOT JSON metadata.
 - Runner: surviving closed parent pipes, continued console capture, PID/port adoption, reused-PID
   refusal, unhealthy/autostart-disabled adoption, rotation and explicit tree stop after handover.
+  On Windows, verify a detached descendant's actual TCP port can be rebound immediately when
+  Stop returns, both with the original registry and after adoption. Do not hide teardown races
+  by awaiting the descendant or retrying the bind before this assertion.
 - Shell: live mode and Git/version cells, Source dialog, one Restart action for pending and normal
   use, compiler diagnostics, operation reconciliation after connection loss, and hidden dev updates.
 - Gateway: token outage versus revocation and recovery through the same proxy route without

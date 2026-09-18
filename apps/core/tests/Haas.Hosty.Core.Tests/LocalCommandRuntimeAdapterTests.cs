@@ -1,3 +1,5 @@
+using System.Net;
+using System.Net.Sockets;
 using Haas.Hosty.Core;
 
 namespace Haas.Hosty.Core.Tests;
@@ -339,8 +341,10 @@ public sealed class LocalCommandRuntimeAdapterTests
         finally { TryDeleteDirectory(workRoot); }
     }
 
-    [Fact]
-    public async Task StopAsync_OnWindowsKillsAdoptedJobDescendantAfterShellExited()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task StopAsync_OnWindowsKillsAdoptedJobDescendantAfterShellExited(bool adopt)
     {
         if (!OperatingSystem.IsWindows())
         {
@@ -354,13 +358,15 @@ public sealed class LocalCommandRuntimeAdapterTests
         try
         {
             var childPidPath = Path.Combine(workRoot, "child.pid");
+            var portPath = Path.Combine(workRoot, "child.port");
+            var escapedPortPath = portPath.Replace("'", "''", StringComparison.Ordinal);
             var escapedPidPath = childPidPath.Replace("'", "''", StringComparison.Ordinal);
             var scriptPath = Path.Combine(workRoot, "spawn-child.cmd");
             await File.WriteAllTextAsync(
                 scriptPath,
                 $"""
                 @echo off
-                start "" /b powershell.exe -NoProfile -NonInteractive -Command "Set-Content -LiteralPath '{escapedPidPath}' -Value $PID; Start-Sleep -Seconds 30" >nul 2>&1
+                start "" /b powershell.exe -NoProfile -NonInteractive -Command "$listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0); $listener.ExclusiveAddressUse = $true; $listener.Start(); Set-Content -LiteralPath '{escapedPortPath}' -Value $listener.LocalEndpoint.Port; Set-Content -LiteralPath '{escapedPidPath}' -Value $PID; Start-Sleep -Seconds 120" >nul 2>&1
                 powershell.exe -NoProfile -NonInteractive -Command "Start-Sleep -Seconds 2"
                 """);
 
@@ -398,7 +404,7 @@ public sealed class LocalCommandRuntimeAdapterTests
             {
                 // File.Exists turns true the moment Set-Content creates the file, before the pid is
                 // written and while PowerShell may still hold it open, so poll for a value that parses.
-                while (!TryReadChildPid(childPidPath, out childPid))
+                while (!TryReadPositiveInteger(childPidPath, out childPid))
                 {
                     await Task.Delay(50, timeout.Token);
                 }
@@ -418,9 +424,23 @@ public sealed class LocalCommandRuntimeAdapterTests
             Assert.False(running!.Process.HasExited);
             Assert.False(child.HasExited);
 
-            var (replacement, replacementRegistry, _) = CreateSetupScenario(workRoot, null, Path.GetFileName(scriptPath));
-            Assert.True(await replacementRegistry.TryAdoptAsync(workRoot, context.App.Id, "app", default, instanceId: ""));
-            await replacement.StopAsync(context);
+            Assert.True(TryReadPositiveInteger(portPath, out var port));
+            using (var occupied = new TcpListener(IPAddress.Loopback, port) { ExclusiveAddressUse = true })
+                Assert.Throws<SocketException>(() => occupied.Start());
+
+            var stoppingAdapter = adapter;
+            if (adopt)
+            {
+                var (replacement, replacementRegistry, _) = CreateSetupScenario(workRoot, null, Path.GetFileName(scriptPath));
+                Assert.True(await replacementRegistry.TryAdoptAsync(workRoot, context.App.Id, "app", default, instanceId: ""));
+                stoppingAdapter = replacement;
+            }
+            await stoppingAdapter.StopAsync(context);
+
+            // The original regression was a port left occupied when Stop returned. Do not wait for
+            // the child or retry the bind: either would hide a race before an immediate app restart.
+            using (var reused = new TcpListener(IPAddress.Loopback, port) { ExclusiveAddressUse = true })
+                reused.Start();
 
             using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
             {
@@ -554,14 +574,14 @@ public sealed class LocalCommandRuntimeAdapterTests
         }
     }
 
-    private static bool TryReadChildPid(string path, out int pid)
+    private static bool TryReadPositiveInteger(string path, out int value)
     {
-        pid = 0;
+        value = 0;
         try
         {
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             using var reader = new StreamReader(stream);
-            return int.TryParse(reader.ReadToEnd().Trim(), System.Globalization.CultureInfo.InvariantCulture, out pid);
+            return int.TryParse(reader.ReadToEnd().Trim(), System.Globalization.CultureInfo.InvariantCulture, out value) && value > 0;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
