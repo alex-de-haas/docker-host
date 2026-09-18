@@ -50,7 +50,8 @@ Source saves use a revision check. A dev Source change creates a pending change 
 current Core instance. The row shows `Restart required` and an inline Restart with the same action
 as the normal Restart button. Preparation failure preserves the pending change and live instance.
 A successful replacement clears that instance's pending indication. Release Source edits need no
-restart. A stale instance or Source revision is refused.
+restart. A stale instance or Source revision is refused. The running project path is normalized
+before comparison so Windows separator differences do not leave a spurious pending restart.
 
 ## Durable Restart Operations
 

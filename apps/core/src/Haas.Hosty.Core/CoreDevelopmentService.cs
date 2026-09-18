@@ -70,7 +70,8 @@ internal sealed class CoreDevelopmentService(HostyCoreRuntimeConfig config, Core
                 path = Path.TrimEndingDirectorySeparator(Path.GetFullPath(request.OverridePath));
                 if (!File.Exists(Project(path))) throw new InvalidOperationException("The selected folder does not contain the Core project.");
             }
-            var pending = launch.Mode == "dev" && !string.Equals(Project(path ?? ManagedPath), launch.ProjectPath, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+            var runningProject = launch.ProjectPath is { } project ? Path.GetFullPath(project) : null;
+            var pending = launch.Mode == "dev" && !string.Equals(Project(path ?? ManagedPath), runningProject, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
             if (old.OverridePath == path && old.PendingForInstance == (pending ? Instance : null)) return old;
             var updated = new CoreSourceSettings(path, Guid.NewGuid().ToString("N"), pending ? Instance : null);
             CoreLaunchFiles.Write(CoreLaunchFiles.SourcePath(config.DataRoot), updated, CoreLaunchJson.Default.CoreSourceSettings);

@@ -158,5 +158,16 @@ public sealed class CoreDevelopmentTests : IDisposable
         Assert.Null(registry.Get("test.app", "web"));
     }
 
-    public void Dispose() { try { Directory.Delete(root, true); } catch (IOException) { } }
+    public void Dispose()
+    {
+        try
+        {
+            if (!Directory.Exists(root)) return;
+            // Git objects are read-only on Windows, including in this disposable local clone.
+            foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+                File.SetAttributes(file, File.GetAttributes(file) & ~FileAttributes.ReadOnly);
+            Directory.Delete(root, true);
+        }
+        catch (IOException) { }
+    }
 }
