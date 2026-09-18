@@ -1,7 +1,7 @@
 # Hosty Platform Vision
 
 Created: 2026-08-19
-Updated: 2026-09-17
+Updated: 2026-09-18
 
 The umbrella document: where Hosty is going, so individual decisions have a criterion to be judged
 against. It authorizes no implementation and owns no deliverables — work it names is tracked in the
@@ -168,6 +168,15 @@ Decisions 1–5: 2026-08-19.
    updates and explicit Git synchronization stay separate. Git owns history; no-Git folders have no
    promised undo. Source and development-control plans own implementation; future branch management and
    Docker development are not prerequisites.
+
+9. **App permissions and trusted confirmation (2026-09-18).** Runtime apps declare requested Core
+   operations in their manifests; administrator review grants that set. User identity alone does
+   not give an app the user's Core authority. Installation permission allows preparing a request;
+   the final decision belongs to a Core-owned browser surface, independent of any Shell, and cannot
+   be forged with an app token. Custom preparation UI remains supported. Permission increases on
+   update cross the same trusted boundary. This adds app grants, not a redesign of user roles or
+   external OAuth scopes. [App installation](features/app-installation-sdk/feature.md) describes
+   the implementation; its [plan](features/app-installation-sdk/plan.md) owns remaining verification.
 
 ## Expectations And Later Directions
 

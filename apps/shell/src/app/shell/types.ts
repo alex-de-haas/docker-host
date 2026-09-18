@@ -243,6 +243,7 @@ export type CoreNavigationItem = {
 
 export type CoreApp = {
   id: string;
+  grantedCorePermissions?: string[] | null;
   displayName: string;
   description?: string | null;
   version: string;
@@ -630,6 +631,8 @@ export type UpdateStatusState = {
 };
 
 export type CoreUpdatePlan = {
+  currentCorePermissions?: string[];
+  targetCorePermissions?: string[];
   appId: string;
   currentVersion: string;
   targetVersion: string;
@@ -680,43 +683,6 @@ export type CoreRuntimeProfile = {
 };
 
 export type CoreInstallRuntimeProfile = CoreRuntimeProfile;
-
-export type CoreInstallPlan = {
-  appId: string;
-  displayName: string;
-  description?: string | null;
-  action: string;
-  // Single-use handle echoed back on apply so Core installs exactly the reviewed manifest bytes.
-  // Absent on the plan embedded in a feed-install flow (that flow binds by plan digest).
-  planId?: string | null;
-  currentVersion?: string | null;
-  targetVersion: string;
-  currentRuntime?: string | null;
-  targetRuntime: string;
-  targetRuntimeType: string;
-  manifestPath: string;
-  currentManifestDigest?: string | null;
-  targetManifestDigest: string;
-  defaultAutostart?: boolean | null;
-  // True when this install produces a system app (manifest role: system). Surfaced in review so the
-  // escalation is visible before the operator confirms — a system app is admin-only and hidden from
-  // ordinary users.
-  system?: boolean | null;
-  runtimeProfiles?: CoreInstallRuntimeProfile[];
-  settings: CoreInstallSetting[];
-};
-
-// Reviewed feed install envelope from POST /api/apps/install/feed/plan. Core owns feed resolution and
-// binds apply to planDigest; Shell renders the nested ordinary install plan and returns the envelope's
-// source selection + digest on apply.
-export type CoreFeedInstallPlan = {
-  install: CoreInstallPlan;
-  feedsUrl: string;
-  feedId: string;
-  manifestUrl: string;
-  feedDocumentDigest: string;
-  planDigest: string;
-};
 
 export type CoreAppFeed = {
   id: string;
@@ -885,12 +851,6 @@ export type DetailPanelState = {
   updatePlan: CoreUpdatePlan | null;
 };
 
-export type InstallPanelState = {
-  loading: boolean;
-  error: string | null;
-  plan: CoreInstallPlan | null;
-  feedPlan: CoreFeedInstallPlan | null;
-};
 
 export type ActivePanel = {
   appId: string;

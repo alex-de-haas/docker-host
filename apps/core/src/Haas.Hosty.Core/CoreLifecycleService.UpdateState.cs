@@ -23,8 +23,12 @@ internal sealed partial class CoreLifecycleService
         var stale = false;
         var snapshot = await updateSnapshots.ChangeAsync(app.Id, current =>
         {
-            stale = current?.Plan is not null && (live.Value || current.Base != fingerprint);
-            return !live.Value && current?.Base == fingerprint ? current : null;
+            // Explicit reviews can approve permissions for a live source app. They are not fleet
+            // update offers, but listing the app must not erase the plan before it is approved.
+            var liveReview = live.Value && current?.Plan?.LiveSourceReview == true;
+            stale = current?.Plan is not null && ((live.Value && !liveReview) || current.Base != fingerprint);
+            if (current?.Base != fingerprint || (live.Value && !liveReview)) return null;
+            return liveReview && current.Verdict is not null ? current with { Verdict = null } : current;
         }, cancellationToken);
         if (rejectStale && stale)
             throw new AppLifecycleException("update_plan_stale",

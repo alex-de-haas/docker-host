@@ -114,3 +114,69 @@ The design contract lives in the Hosty repository:
 [`docs/features/hosty-app-sdk/feature.md`](https://github.com/alex-de-haas/docker-host/blob/main/docs/features/hosty-app-sdk/feature.md).
 
 License: AGPL-3.0-only.
+
+## Installing apps
+
+Declare `"corePermissions": ["apps.install"]` in the manifest and have an administrator approve
+that permission when installing/updating your app. This grants the ability to **request** an
+installation; it never grants the ability to approve it on the user's behalf.
+
+Mount an app-local handler using the existing Hosty identity-cookie configuration:
+
+```ts
+// app/api/hosty/installations/[[...path]]/route.ts
+import { createInstallationRouteHandler } from "@hosty-sdk/app/install/server";
+export const GET = createInstallationRouteHandler({
+  appIdFallback: "com.example.marketplace",
+  identityCookieName: "my_app_hosty_identity",
+}, {
+  publicOrigin: process.env.HOSTY_PUBLIC_ORIGIN_HTTP,
+});
+export const POST = GET;
+```
+
+Set `publicOrigin` to the Core-injected public origin for your UI endpoint when the framework
+exposes an internal request URL. The adapter checks browser `Origin` against this configured
+value, or against the request URL when it is omitted; forwarded-host headers are never trusted.
+
+The default dialog includes runtime selection, settings and a link to Core confirmation:
+
+```tsx
+"use client";
+import { createInstallationClient } from "@hosty-sdk/app/install";
+import { InstallDialog } from "@hosty-sdk/app/install/react";
+const client = createInstallationClient();
+
+// Render conditionally while open; unmount it when closed.
+<InstallDialog
+  client={client}
+  source={{ feedsUrl: "https://example.com/feeds.json", feedId: "stable" }}
+  onClose={() => setOpen(false)}
+  onInstalled={() => { setOpen(false); refreshInstalledApps(); }}
+/>;
+```
+
+For a custom UI, use `useInstallation(client)` or the framework-independent `InstallationFlow`.
+For direct API use, the same client provides the full request sequence:
+
+```ts
+const draft = await client.prepare({ manifestPath: "https://example.com/manifest.json" });
+// Render draft.plan and collect settings in your UI.
+const pending = await client.submit(draft.id, { APP_MODE: "standard" }, true);
+// Open pending.approvalUrl from a user gesture, or render it as a new-tab link.
+// Poll client.status(pending.id) until succeeded, denied or failed.
+```
+
+Open an empty confirmation window synchronously in the click handler with
+`openInstallationConfirmation()`, before awaiting `submit`, then navigate it using
+`showInstallationConfirmation(popup, pending)`. Always retain a visible new-tab link for popup
+blocking. No installation-specific Shell messages or shared administrative credentials are needed.
+`prepare({ updateAppId, planDigest })` similarly requests approval of a reviewed update for clients
+with `apps.update`. A transport override supports existing Core operator clients:
+`createInstallationClient({ baseUrl: coreOrigin + "/api/installations", request: sendCsrfJson })`.
+
+Core's final page cannot be embedded or replaced by a custom permission-grant dialog. It requires
+an administrator browser login issued on a dedicated Core hostname, separate from app cookie
+hosts. Existing sessions need a fresh login. Requests expire after 15 minutes and Core restart
+invalidates them. Closing your UI does not cancel a confirmed operation; status is the authority.
+Never automatically retry an execution after a lost response.

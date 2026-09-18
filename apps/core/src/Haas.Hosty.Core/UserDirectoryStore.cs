@@ -161,7 +161,10 @@ internal sealed record AuthSessionRecord(
     IReadOnlyList<string>? Scopes = null,
     // The OAuth grant (refresh-token chain) this access token descends from, so revoking the grant
     // finds and revokes every access token it issued. Null on everything the OAuth path did not mint.
-    string? GrantId = null);
+    string? GrantId = null,
+    // Origin that issued a browser login. Legacy/browser-token sessions cannot approve app requests
+    // until a fresh login on a Core hostname isolated from runtime app cookies.
+    string? BrowserOrigin = null);
 
 internal sealed record LocalPasswordCredentialRecord(
     string UserId,

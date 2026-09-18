@@ -6,6 +6,48 @@ namespace Haas.Hosty.Core.Tests;
 
 public sealed partial class CoreLifecycleServiceTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UpdateSnapshot_ExplicitLivePermissionReviewSurvivesListingButRejectsSourceDrift(bool changeSource)
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var folder = Path.Combine(fixture.Root, "live-permissions");
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, "manifest.json");
+        const string manifest = """
+            {"schemaVersion":"app.0.1","id":"com.example.live-permissions","name":"Live permissions","version":"1.0.0",
+             "corePermissions":[],
+             "runtimeProfiles":[{"key":"dev","type":"localCommand","development":true,"default":true}],"defaultRuntime":"dev",
+             "services":[{"key":"app","runtimes":{"dev":{"type":"localCommand","command":"echo unused","workingDirectory":"."}}}]}
+            """;
+        await File.WriteAllTextAsync(path, manifest);
+        await fixture.Service.InstallAsync(new AppInstallRequest(path, Autostart: false));
+        Assert.True(Assert.Single(await fixture.Service.ListAppsAsync()).Live);
+        await File.WriteAllTextAsync(path, manifest.Replace("\"corePermissions\":[]", "\"corePermissions\":[\"apps.install\"]"));
+        var plan = await fixture.Service.CreateUpdatePlanAsync("com.example.live-permissions", new AppUpdatePlanRequest(path));
+        var restarted = fixture.RecreateService();
+        Assert.Null(Assert.Single(await restarted.ListAppsAsync()).UpdateCheck);
+        var sweep = new AppUpdateSweepService(restarted, fixture.Clock,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<AppUpdateSweepService>.Instance);
+        await sweep.RunAsync(CancellationToken.None);
+        Assert.Equal(plan.PlanDigest, (await restarted.GetPendingUpdatePlanAsync(plan.AppId)).Plan?.PlanDigest);
+        var denied = await Assert.ThrowsAsync<AppLifecycleException>(() => restarted.EnqueueUpdateAsync(plan.AppId, new AppUpdateApplyRequest(plan.PlanDigest)));
+        Assert.Equal("approval_required", denied.Code);
+        if (changeSource)
+        {
+            await File.AppendAllTextAsync(path, "\n ");
+            var stale = await Assert.ThrowsAsync<AppLifecycleException>(() => restarted.ApplyUpdateAsync(plan.AppId, new AppUpdateApplyRequest(plan.PlanDigest)));
+            Assert.Equal("update_plan_stale", stale.Code);
+            Assert.Empty((await fixture.Apps.GetAppAsync(plan.AppId))!.GrantedCorePermissions!);
+        }
+        else
+        {
+            await restarted.ApplyUpdateAsync(plan.AppId, new AppUpdateApplyRequest(plan.PlanDigest));
+            Assert.Equal(["apps.install"], (await fixture.Apps.GetAppAsync(plan.AppId))!.GrantedCorePermissions);
+        }
+    }
+
     [Fact]
     public async Task UpdateSnapshot_RestoresExactDockerPlanOfflineAndConsumesIt()
     {

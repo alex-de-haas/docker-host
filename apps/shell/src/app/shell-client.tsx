@@ -19,7 +19,8 @@ import { waitForShellUpdateToSettle } from "./shell/self-update";
 import { readCoreStatus, reconcileCoreUpdate } from "./shell/core-status";
 import { reconcileAppList } from "./shell/app-list-snapshot";
 import { AppDetailsDialog } from "./shell/dialogs/app-details-dialog";
-import { InstallReviewDialog } from "./shell/dialogs/install-review-dialog";
+import { InstallDialog } from "@hosty-sdk/app/install/react";
+import { createInstallationClient, openInstallationConfirmation, showInstallationConfirmation } from "@hosty-sdk/app/install";
 import { assistantSupportsContext, createAppSession, findAssistantGateway } from "./shell/assistant/assistant-client";
 import { ShellSidebar } from "./shell/sidebar/shell-sidebar";
 import { ShellTopStrip } from "./shell/chrome/shell-top-strip";
@@ -42,13 +43,12 @@ import {
   readAssistantSessionParam,
   getShellAuthorizationRedirect,
 } from "./shell/shell-routes";
-import { emptyDetailPanelState, emptyInstallPanelState } from "./shell/state";
+import { emptyDetailPanelState } from "./shell/state";
 import { appendHostyLaunchParam } from "./shell/launch";
 import { normalizeThemePreference, resolveShellTheme } from "./shell/theme";
 import { EmptyState } from "./shell/ui";
 import { EmbeddedWorkspacePanel } from "./shell/workspace/embedded-workspace-panel";
 import { EmbeddedWorkspacePendingPanel } from "./shell/workspace/embedded-workspace-pending-panel";
-import { appMayRequestFeedInstall, type InstallFeedIntent } from "./shell/workspace/install-intent";
 import {
   appMayReceiveDelegatedToken,
   createDelegatedTokenCache,
@@ -70,8 +70,6 @@ import type {
   CoreBackupCleanupPlan,
   CoreSettingsState,
   CoreGlobalMount,
-  CoreFeedInstallPlan,
-  CoreInstallPlan,
   CoreRemovalImpact,
   CoreRuntimeSwitchPlan,
   CoreStatus,
@@ -81,7 +79,6 @@ import type {
   DetailView,
   EmbeddedWorkspace,
   MountBindingInput,
-  InstallPanelState,
   LoadState,
   OpenPanelOptions,
   RemoveOptions,
@@ -175,12 +172,10 @@ export function ShellClient({
   const [detailPanel, setDetailPanel] = useState<DetailPanelState>(emptyDetailPanelState);
   const [installOpen, setInstallOpen] = useState(false);
   const [installInitialManifest, setInstallInitialManifest] = useState<string | null>(null);
-  const [installFeedIntent, setInstallFeedIntent] = useState<InstallFeedIntent | null>(null);
   // Bumped on every openInstallDialog and folded into the dialog's key, so each open remounts a fresh
   // instance. The manifest alone is not enough: reopening the same manifestRef would keep the key,
   // skip the mount-only auto-review, and (with the panel state wiped on open) render an empty dialog.
   const [installNonce, setInstallNonce] = useState(0);
-  const [installPanel, setInstallPanel] = useState<InstallPanelState>(emptyInstallPanelState);
   const [globalMounts, setGlobalMounts] = useState<CoreGlobalMount[]>([]);
   const [coreSettings, setCoreSettings] = useState<CoreSettingsState | null>(null);
   const [coreSettingsError, setCoreSettingsError] = useState<string | null>(null);
@@ -243,7 +238,6 @@ export function ShellClient({
   const refreshRequestRef = useRef(0);
   const appsReadSequence = useRef(0);
   const detailRequestRef = useRef(0);
-  const installRequestRef = useRef(0);
   // Last launch-code reissue per app id, so a chatty frame cannot storm Core with reissues.
   const authReissueLimiter = useRef(createReissueRateLimiter(AUTH_REISSUE_MIN_INTERVAL_MS));
   // An ask is cheap for the app and expensive for the operator: it reveals the rail, switches the
@@ -1352,11 +1346,34 @@ export function ShellClient({
   // moved, expired, was consumed, or an apply is already running) answers with an actionable error —
   // surface it and refresh so the row's affordance corrects itself instead of resending a dead
   // digest.
+  const installationClient = useMemo(() => createInstallationClient({
+    baseUrl: `${coreOrigin}/api/installations`, request: sendCsrfJson,
+  }), [coreOrigin, sendCsrfJson]);
+
   const enqueueUpdate = useCallback(
     async (app: CoreApp, planDigest: string) => {
       const actionKey = `${app.id}:update`;
       setBusyAction(actionKey);
       try {
+        const reviewedPlan = detailPanel.updatePlan;
+        if (reviewedPlan?.planDigest === planDigest && reviewedPlan.targetCorePermissions?.some(permission =>
+          !reviewedPlan.currentCorePermissions?.includes(permission))) {
+          const popup = openInstallationConfirmation();
+          try {
+            const draft = await installationClient.prepare({ updateAppId: app.id, planDigest });
+            const pending = await installationClient.submit(draft.id, {}, true);
+            showInstallationConfirmation(popup, pending);
+            toast.info("Confirm new permissions in Hosty Core", {
+              duration: 60_000,
+              action: { label: "Open confirmation", onClick: () => window.open(pending.approvalUrl, "_blank", "noopener,noreferrer") },
+            });
+            setActivePanel(null);
+          } catch (error) {
+            popup?.close();
+            throw error;
+          }
+          return;
+        }
         await sendCsrfJson(appEndpoint(app, "/update"), { planDigest });
         // Close this app's dialog if it is the one open; another app's panel is left alone.
         setActivePanel((current) => (current?.appId === app.id ? null : current));
@@ -1422,7 +1439,7 @@ export function ShellClient({
         setBusyAction((current) => (current === actionKey ? null : current));
       }
     },
-    [appEndpoint, coreOrigin, refresh, sendCsrfJson, shellAppId],
+    [appEndpoint, coreOrigin, refresh, sendCsrfJson, shellAppId, detailPanel.updatePlan, installationClient],
   );
 
   const applyUpdate = useCallback(
@@ -1565,116 +1582,6 @@ export function ShellClient({
       }
     },
     [appEndpoint, refresh, sendCsrfJson, workspace?.appId],
-  );
-
-  const loadInstallPlan = useCallback(
-    async (manifestPath: string, selectedRuntime?: string | null) => {
-      const requestToken = ++installRequestRef.current;
-      setInstallPanel((current) => ({ loading: true, error: null, plan: current.plan, feedPlan: null }));
-      try {
-        // Plan routes require the CSRF header like their apply twins (C-M9); sendCsrfJson attaches it.
-        const response = await sendCsrfJson(`${coreOrigin}/api/apps/install/plan`, {
-          manifestPath,
-          selectedRuntime: selectedRuntime?.trim() || null,
-          system: false,
-        });
-        const plan = (await response.json()) as CoreInstallPlan;
-        if (requestToken === installRequestRef.current) {
-          setInstallPanel({ loading: false, error: null, plan, feedPlan: null });
-        }
-      } catch (error) {
-        if (isAuthRequiredRedirectError(error) || requestToken !== installRequestRef.current) {
-          return;
-        }
-
-        setInstallPanel({
-          loading: false,
-          error: error instanceof Error ? error.message : "Install review is unavailable.",
-          plan: null,
-          feedPlan: null,
-        });
-      }
-    },
-    [coreOrigin, sendCsrfJson],
-  );
-
-  const loadFeedInstallPlan = useCallback(
-    async (intent: InstallFeedIntent, selectedRuntime?: string | null, autostart?: boolean | null) => {
-      const requestToken = ++installRequestRef.current;
-      setInstallPanel((current) => ({ loading: true, error: null, plan: current.plan, feedPlan: current.feedPlan }));
-      try {
-        const response = await sendCsrfJson(`${coreOrigin}/api/apps/install/feed/plan`, {
-          feedsUrl: intent.feedsUrl,
-          feedId: intent.feedId,
-          selectedRuntime: selectedRuntime?.trim() || null,
-          autostart: autostart ?? null,
-        });
-        const feedPlan = (await response.json()) as CoreFeedInstallPlan;
-        if (requestToken === installRequestRef.current) {
-          setInstallPanel({ loading: false, error: null, plan: feedPlan.install, feedPlan });
-        }
-      } catch (error) {
-        if (isAuthRequiredRedirectError(error) || requestToken !== installRequestRef.current) {
-          return;
-        }
-
-        setInstallPanel({
-          loading: false,
-          error: error instanceof Error ? error.message : "Feed install review is unavailable.",
-          plan: null,
-          feedPlan: null,
-        });
-      }
-    },
-    [coreOrigin, sendCsrfJson],
-  );
-
-  const applyInstall = useCallback(
-    async (plan: CoreInstallPlan, settings: Record<string, string | null>, autostart: boolean) => {
-      setBusyAction("install");
-      try {
-        const feedPlan = installPanel.feedPlan;
-        if (feedPlan && installFeedIntent) {
-          await sendCsrfJson(`${coreOrigin}/api/apps/install/feed`, {
-            feedsUrl: feedPlan.feedsUrl,
-            feedId: feedPlan.feedId,
-            selectedRuntime: plan.targetRuntime,
-            settings,
-            autostart,
-            planDigest: feedPlan.planDigest,
-            startOnInstall: true,
-          });
-        } else {
-          await sendCsrfJson(`${coreOrigin}/api/apps/install`, {
-            manifestPath: plan.manifestPath,
-            selectedRuntime: plan.targetRuntime,
-            system: false,
-            settings,
-            autostart,
-            // Core installs exactly the manifest bytes this plan was built from; without the id the
-            // install is rejected (install_plan_required).
-            planId: plan.planId,
-          });
-        }
-        await refresh();
-        setInstallOpen(false);
-        setInstallPanel(emptyInstallPanelState());
-        toast.success("App installed", { description: plan.displayName });
-      } catch (error) {
-        if (isAuthRequiredRedirectError(error)) {
-          return;
-        }
-
-        setInstallPanel((current) => ({
-          ...current,
-          loading: false,
-          error: error instanceof Error ? error.message : "Install failed.",
-        }));
-      } finally {
-        setBusyAction((current) => (current === "install" ? null : current));
-      }
-    },
-    [coreOrigin, installFeedIntent, installPanel.feedPlan, refresh, sendCsrfJson],
   );
 
   useEffect(() => {
@@ -1908,30 +1815,10 @@ export function ShellClient({
   }
 
   const openInstallDialog = useCallback((manifestPath?: string) => {
-    installRequestRef.current += 1;
-    setInstallFeedIntent(null);
     setInstallInitialManifest(typeof manifestPath === "string" ? manifestPath : null);
     setInstallNonce((nonce) => nonce + 1);
     setInstallOpen(true);
-    setInstallPanel(emptyInstallPanelState());
   }, []);
-
-  const openFeedInstallDialog = useCallback(
-    (intent: InstallFeedIntent) => {
-      if (!canManageApps) {
-        toast.error("Administrator access is required to install apps.");
-        return;
-      }
-
-      installRequestRef.current += 1;
-      setInstallInitialManifest(null);
-      setInstallFeedIntent(intent);
-      setInstallNonce((nonce) => nonce + 1);
-      setInstallOpen(true);
-      setInstallPanel(emptyInstallPanelState());
-    },
-    [canManageApps],
-  );
 
   const handleAuthRequired = useCallback(
     (appId: string) => {
@@ -2018,7 +1905,6 @@ export function ShellClient({
   }, [assistantGateway?.appId, workspace?.appId, issueDelegatedToken]);
 
   const closeInstallDialog = useCallback(() => {
-    installRequestRef.current += 1;
     setInstallOpen(false);
   }, []);
 
@@ -2406,11 +2292,9 @@ export function ShellClient({
             {workspace ? (
               <EmbeddedWorkspacePanel
                 workspace={workspace}
+                grantedCorePermissions={state.apps.find((app) => app.id === workspace.appId)?.grantedCorePermissions}
                 theme={shellResolvedTheme}
                 themePreference={shellThemePreference}
-                // Only the Marketplace frame may hand Shell an install intent; every other embedded
-                // app gets no handler, so its messages are never listened for.
-                onInstallFeedIntent={appMayRequestFeedInstall(workspace.appId) ? openFeedInstallDialog : undefined}
                 onAuthRequired={handleAuthRequired}
                 onDelegatedTokenRequest={handleDelegatedTokenRequest}
                 onAskAssistant={assistantAvailable ? askAssistant : undefined}
@@ -2471,18 +2355,17 @@ export function ShellClient({
         )}
       </div>
 
-        <InstallReviewDialog
-          key={`${installNonce}:${installInitialManifest ?? installFeedIntent?.feedsUrl ?? "manual"}`}
-          opened={installOpen}
-          initialManifestPath={installInitialManifest ?? ""}
-          initialFeedIntent={installFeedIntent}
-          detail={installPanel}
-          busyAction={busyAction}
+        {installOpen && <InstallDialog
+          key={installNonce}
+          client={installationClient}
+          source={installInitialManifest ? { manifestPath: installInitialManifest } : undefined}
           onClose={closeInstallDialog}
-          onReview={loadInstallPlan}
-          onReviewFeed={loadFeedInstallPlan}
-          onApply={applyInstall}
-        />
+          onInstalled={() => {
+            setInstallOpen(false);
+            toast.success("App installed");
+            void refresh();
+          }}
+        />}
 
         {selectedApp && activePanel && (
           <AppDetailsDialog

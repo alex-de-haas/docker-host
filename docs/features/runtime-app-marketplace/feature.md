@@ -1,13 +1,13 @@
 # Marketplace System App
 
 Created: 2026-06-25
-Updated: 2026-09-10
+Updated: 2026-09-18
 
 ## Description
 
-Hosty Marketplace is the optional first-party `hosty.marketplace` system runtime app. It owns catalog discovery, renders the storefront on its own app origin, and hands an untrusted app feed URL to Shell when an administrator chooses Install.
+Hosty Marketplace is the optional first-party `hosty.marketplace` system runtime app. It owns catalog discovery, renders the storefront on its own app origin, and prepares a Core-confirmed installation request when an administrator chooses Install.
 
-Core has no Marketplace or catalog domain API. It understands runtime-app manifests and generic app-owned feed documents only. Marketplace has no lifecycle authority and cannot install, update, remove, or inspect installed apps.
+Core has no Marketplace or catalog domain API. It understands runtime-app manifests and generic app-owned feed documents only. Marketplace declares `apps.install` to request installations. Core validates its app/user credentials and requires a separate administrator confirmation before executing a request.
 
 ## Ownership Boundary
 
@@ -17,7 +17,8 @@ Core has no Marketplace or catalog domain API. It understands runtime-app manife
 | Catalog entry metadata and `feedsUrl` | Catalog publisher |
 | `feeds.json`, manifests, and runtime artifacts | Runtime app repository |
 | Feed validation, install/update plans, apply, backups, and installed state | Core |
-| User review and Marketplace-to-Core handoff | Shell |
+| Installation settings and preliminary review | Shared SDK dialog inside the initiating app |
+| Final administrator confirmation | Core-origin page |
 
 Marketplace failure affects discovery only. Direct installs and lifecycle operations for installed apps remain available.
 
@@ -79,22 +80,15 @@ The storefront supports search/filtering, catalog cards, detail metadata, feed c
 
 ## Install Handoff
 
-Marketplace sends this versioned message to its Shell parent after explicit user activation:
+Marketplace mounts the shared SDK installation dialog with the selected feed URL and feed ID.
+Its app-local server adapter calls Core using its service token and the user's app identity grant.
+The approved `apps.install` permission and the user's current administrator role are both required.
 
-```json
-{
-  "type": "hosty:install-feed",
-  "version": 1,
-  "feedsUrl": "https://example.invalid/notes/feeds.json",
-  "feedId": "main"
-}
-```
-
-The optional `feedId` is omitted when Core should select the sole or explicit default feed. Marketplace targets the origin derived from its embedding referrer and reports an error when it is not embedded by Shell.
-
-Shell treats the message as untrusted. It accepts it only from the active app iframe and exact resolved app origin, requires the known type and version, bounds string lengths, and permits only HTTP(S) feed URLs. A valid message opens the ordinary Core-owned install review. Shell then uses the administrator's Core session and CSRF token to create and apply a digest-bound generic feed install plan.
-
-Marketplace receives no Core session cookie, control secret, or lifecycle capability through this flow.
+The dialog prepares settings and opens Core's separate confirmation page. Only that page can approve
+the frozen request. Marketplace polls request status and refreshes its installed badges on success.
+The same flow works standalone or embedded; no Shell installation listener is involved. See
+[App Installation SDK And Core Confirmation](../app-installation-sdk/feature.md) for the permission,
+origin-isolation and migration requirements.
 
 ## Bootstrap
 

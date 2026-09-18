@@ -5,6 +5,21 @@ namespace Haas.Hosty.Core.Tests;
 
 public sealed class AppRegistryStoreTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ListAppsAsync_ExposesOnlyPersistedCoreGrants(bool granted)
+    {
+        var root = await CreateTempRootAsync();
+        var store = new AppRegistryStore(CreatePaths(root));
+        await store.UpsertAppAsync(CreateApp("com.example.notes") with
+        {
+            GrantedCorePermissions = granted ? [CoreAppPermissions.Install, CoreAppPermissions.Update] : null,
+        });
+        var summary = Assert.Single(await store.ListAppsAsync());
+        Assert.Equal(granted ? [CoreAppPermissions.Install, CoreAppPermissions.Update] : Array.Empty<string>(), summary.GrantedCorePermissions);
+    }
+
     [Fact]
     public async Task ListAppsAsync_ReadsAppNativeRecords()
     {

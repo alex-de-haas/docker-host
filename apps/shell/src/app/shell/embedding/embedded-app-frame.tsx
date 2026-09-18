@@ -15,6 +15,7 @@ import type { HostyResolvedTheme, HostyThemePreference } from "../types";
 import { parseActiveFrameAuthRequired } from "../workspace/auth-intent";
 import type { DelegatedTokenGrant } from "../workspace/delegated-token-intent";
 import { getEmbedOrigin, isInsecureEmbedBlocked, isLoopbackEmbedHost } from "../workspace/insecure-embed";
+import { appFrameSandbox } from "./frame-sandbox";
 
 // Every place Shell embeds an app's page. There are three now — the workspace, a Settings tab, and a
 // right-panel tab (docs/features/app-ui-surfaces/plan.md) — and they share this one component rather
@@ -30,6 +31,7 @@ export function EmbeddedAppFrame({
   title,
   frameKey,
   appId,
+  grantedCorePermissions,
   theme,
   themePreference,
   className,
@@ -45,6 +47,7 @@ export function EmbeddedAppFrame({
   /** Remounts the iframe when it changes, so a navigation is a fresh document rather than a reused one. */
   frameKey?: string;
   appId: string;
+  grantedCorePermissions?: readonly string[] | null;
   theme: HostyResolvedTheme;
   themePreference: HostyThemePreference;
   className?: string;
@@ -58,7 +61,7 @@ export function EmbeddedAppFrame({
    * context that passes nothing attaches no listener, so a frame that asks is simply never answered.
    */
   onDelegatedTokenRequest?: (refresh: boolean) => Promise<DelegatedTokenGrant>;
-  /** Extra verified-sender message handling for one context (the Marketplace's install intents). */
+  /** Extra verified-sender message handling for one context. */
   onMessage?: (event: MessageEvent, frameWindow: Window | null) => void;
   /**
    * The app asked for its text to be put in the operator's assistant draft.
@@ -84,13 +87,15 @@ export function EmbeddedAppFrame({
    */
   onAttention?: (count: number) => void;
 }) {
+  const sandbox = appFrameSandbox(grantedCorePermissions);
+  const documentKey = `${frameKey ?? ""}:${src}:${sandbox}`;
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [loaded, setLoaded] = useState(false);
-  const [loadedSrc, setLoadedSrc] = useState(src);
+  const [loadedDocument, setLoadedDocument] = useState(documentKey);
 
   // Reset while rendering rather than in an effect: https://react.dev/learn/you-might-not-need-an-effect
-  if (loadedSrc !== src) {
-    setLoadedSrc(src);
+  if (loadedDocument !== documentKey) {
+    setLoadedDocument(documentKey);
     setLoaded(false);
   }
 
@@ -110,8 +115,8 @@ export function EmbeddedAppFrame({
   // Until load, the initial about:blank document inherits Shell's origin. Posting to the app's
   // origin then produces a target-origin error; deliver the theme after the app document loads.
   useEffect(() => {
-    if (loaded && loadedSrc === src) postTheme();
-  }, [postTheme, loaded, loadedSrc, src]);
+    if (loaded && loadedDocument === documentKey) postTheme();
+  }, [postTheme, loaded, loadedDocument, documentKey]);
 
   useEffect(() => {
     if (!onAuthRequired) {
@@ -227,7 +232,7 @@ export function EmbeddedAppFrame({
   }, [loaded, outboundMessage, outboundNonce, src]);
 
   const handleLoad = useCallback(() => setLoaded(true), []);
-  const currentFrameLoaded = loaded && loadedSrc === src;
+  const currentFrameLoaded = loaded && loadedDocument === documentKey;
 
   // Read through useSyncExternalStore so a server render stays hydration-safe: the server snapshot
   // reports "http:" (never blocked), and a client mount reads the real protocol on its first render.
@@ -239,11 +244,11 @@ export function EmbeddedAppFrame({
   return (
     <iframe
       ref={iframeRef}
-      key={frameKey ?? src}
+      key={documentKey}
       className={cn("hosty-app-frame transition-opacity duration-100", currentFrameLoaded ? "opacity-100" : "opacity-0", className)}
       title={title}
       src={src}
-      sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads"
+      sandbox={sandbox}
       allow="clipboard-write"
       style={{ colorScheme: theme }}
       onLoad={handleLoad}

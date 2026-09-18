@@ -101,5 +101,9 @@
     },
     "summary": "The browser management UI for a Hosty host: installed apps, settings, updates, and users.",
     "descriptionFile": "docs/store.md"
-  }
+  },
+  "corePermissions": [
+    "apps.install",
+    "apps.update"
+  ]
 }

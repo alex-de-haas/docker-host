@@ -21,6 +21,19 @@ const app = (overrides) => ({
   ...overrides,
 });
 
+test("settings and panel surfaces follow current approved grants, never app identity or requested permissions", () => {
+  const marketplace = app({
+    id: "hosty.marketplace", system: true, corePermissions: ["apps.install"],
+    settingsSurface: { path: "/s", embeddedUrl: "http://a/s" },
+    panelSurfaces: [{ path: "/p", embeddedUrl: "http://a/p" }],
+  });
+  for (const tabs of [getAppSettingsTabs, getAppPanelTabs]) {
+    assert.equal(tabs([marketplace])[0].grantedCorePermissions, undefined);
+    assert.deepEqual(tabs([{ ...marketplace, grantedCorePermissions: ["apps.update"] }])[0].grantedCorePermissions, ["apps.update"]);
+    assert.deepEqual(tabs([{ ...marketplace, grantedCorePermissions: [] }])[0].grantedCorePermissions, []);
+  }
+});
+
 test("an app gets a tab only where it declares a surface", () => {
   // The pair that matters: a declaring app and a non-declaring one in the same fleet. Either
   // assertion alone is satisfied by a rule that always answers the same way.

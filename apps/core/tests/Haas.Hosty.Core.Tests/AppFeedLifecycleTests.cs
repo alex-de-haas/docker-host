@@ -11,6 +11,31 @@ public sealed class AppFeedLifecycleTests
     private const string BetaManifestUrl = "https://apps.example.test/notes/beta/manifest.json";
     private const string NextManifestUrl = "https://apps.example.test/notes/next/manifest.json";
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ApprovalFeedPlan_FullCacheAdmitsNewReview_AndNewestPlanStillInstalls(bool expired)
+    {
+        using var fixture = CreateFixture();
+        fixture.Set(FeedsUrl, FeedDocument(MainManifestUrl));
+        fixture.Set(MainManifestUrl, Manifest("1.0.0"));
+        var first = await fixture.Lifecycle.CreateApprovalFeedPlanAsync(new(FeedsUrl), default);
+        for (var i = 1; i < 64; i++)
+        {
+            fixture.Clock.UtcNow += TimeSpan.FromSeconds(1);
+            _ = await fixture.Lifecycle.CreateApprovalFeedPlanAsync(new(FeedsUrl), default);
+        }
+        fixture.Clock.UtcNow += expired ? TimeSpan.FromHours(2) : TimeSpan.FromSeconds(1);
+
+        var newest = await fixture.Lifecycle.CreateApprovalFeedPlanAsync(new(FeedsUrl), default);
+        var rejected = await Assert.ThrowsAsync<AppLifecycleException>(() => fixture.Lifecycle.InstallAsync(
+            new(MainManifestUrl, PlanId: first.Install.PlanId, StartOnInstall: false)));
+        Assert.Equal("install_plan_expired", rejected.Code);
+        var installed = await fixture.Lifecycle.InstallAsync(
+            new(MainManifestUrl, PlanId: newest.Install.PlanId, StartOnInstall: false));
+        Assert.Equal("com.example.notes", installed.App!.Id);
+    }
+
     [Fact]
     public async Task FeedInstallPlanAndApply_UsesSoleDefaultAndPersistsFeedState()
     {
@@ -260,7 +285,7 @@ public sealed class AppFeedLifecycleTests
                 AuthRoot: Path.Combine(root, "core", "auth"),
                 AuditLogPath: Path.Combine(root, "core", "audit", "audit.ndjson"));
             Apps = new AppRegistryStore(Paths);
-            var clock = new TestClock();
+            var clock = Clock;
             var handler = new StubHttpMessageHandler(Handle);
             var manifests = new AppManifestService(new HttpClient(handler, disposeHandler: false));
             var feeds = new AppFeedService(new HttpClient(handler, disposeHandler: false));
@@ -280,6 +305,7 @@ public sealed class AppFeedLifecycleTests
         }
 
         public string Root { get; }
+        public TestClock Clock { get; } = new();
         public CoreDataPaths Paths { get; }
         public AppRegistryStore Apps { get; }
         public CoreLifecycleService Lifecycle { get; }
@@ -311,7 +337,7 @@ public sealed class AppFeedLifecycleTests
 
     private sealed class TestClock : IClock
     {
-        public DateTimeOffset UtcNow { get; } = DateTimeOffset.Parse("2026-07-11T12:00:00Z");
+        public DateTimeOffset UtcNow { get; set; } = DateTimeOffset.Parse("2026-07-11T12:00:00Z");
     }
 
     private sealed class NoopDockerRuntimeAdapter : IAppRuntimeAdapter

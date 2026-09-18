@@ -492,6 +492,13 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
         }
 
         ValidateProvides(manifest.Provides, errors);
+        foreach (var permission in manifest.CorePermissions)
+        {
+            if (!CoreAppPermissions.Known.Contains(permission, StringComparer.Ordinal))
+                errors.Add(new("app_manifest_core_permission_invalid", $"Unknown Core permission '{permission}'.", "$.corePermissions"));
+        }
+        if (manifest.CorePermissions.Distinct(StringComparer.Ordinal).Count() != manifest.CorePermissions.Count)
+            errors.Add(new("app_manifest_core_permission_duplicate", "Core permissions must be unique.", "$.corePermissions"));
         ValidateInterfaces(manifest.Interfaces, errors);
         ValidateAgent(manifest.Agent, errors);
 
@@ -3354,6 +3361,8 @@ internal sealed class RuntimeAppManifest
     // Core reacts only to slots it has a handler for (PlatformCapabilities); unknown slots are inert
     // and forward-compatible. Additive under app.0.1.
     public IReadOnlyList<string> Provides { get => field ?? []; init; } = [];
+    // Requested authority. Approved grants live separately in Core and are never inferred on restart.
+    public IReadOnlyList<string> CorePermissions { get => field ?? []; init; } = [];
     // Platform interfaces this app exposes for other components to discover through the registry,
     // keyed by interface name (e.g. "ai-gateway" tells UI clients an assistant service is installed).
     // Like `provides`, unknown interface names are inert and forward-compatible; declarations are

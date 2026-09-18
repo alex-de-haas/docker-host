@@ -13,6 +13,7 @@ internal sealed record CachedUpdatePlan(
     DateTimeOffset CreatedAt)
 {
     public string CacheId { get; init; } = Guid.NewGuid().ToString("N");
+    public bool LiveSourceReview { get; init; }
 }
 
 internal sealed record AppUpdateSnapshot(int SchemaVersion, string Base, CachedUpdatePlan? Plan, AppUpdateAvailability? Verdict);
