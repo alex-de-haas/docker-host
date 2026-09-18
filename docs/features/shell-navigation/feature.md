@@ -260,6 +260,10 @@ Version tooltips include the last successful update-check time; failed checks re
 and are excluded from bulk apply. Core updates use live status and release checks for completion,
 with reconnecting, verifying and unconfirmed states instead of a fixed completion delay.
 
+The client authorization redirect uses the same section-aware policy as rendering: ordinary users
+stay on their Access tokens page, while host and app administration sections redirect to Apps.
+The check also runs when only the settings query parameter changes.
+
 ## Testing Expectations
 
 - Route parsing covers each destination, the legacy paths, an unrecognized path, and a missing or

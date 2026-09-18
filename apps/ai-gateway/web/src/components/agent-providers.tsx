@@ -59,7 +59,7 @@ export function AgentProviders() {
     setDirectory((await (await call("/connections")).json()) as Directory);
   }, []);
   useEffect(() => {
-    void refresh().catch((e) => setError(String(e.message)));
+    void refresh().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
   }, [refresh]);
   const loginId = login?.id;
   const loginStatus = login?.status;

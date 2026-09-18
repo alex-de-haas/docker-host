@@ -40,7 +40,7 @@ import {
   SHELL_VIEW_LABELS,
   HOST_SETTINGS_SECTIONS,
   readAssistantSessionParam,
-  shellViewRequiresAdmin,
+  getShellAuthorizationRedirect,
 } from "./shell/shell-routes";
 import { emptyDetailPanelState, emptyInstallPanelState } from "./shell/state";
 import { appendHostyLaunchParam } from "./shell/launch";
@@ -1705,13 +1705,12 @@ export function ShellClient({
     [],
   );
 
+  const authorizationRedirect = getShellAuthorizationRedirect(
+    shellRoute, Boolean(state.session?.authenticated), Boolean(canManageApps),
+  );
   useEffect(() => {
-    if (!state.session?.authenticated || canManageApps || shellRoute.workspace || !shellViewRequiresAdmin(shellRoute.view)) {
-      return;
-    }
-
-    router.replace(getShellViewHref("available-apps"));
-  }, [canManageApps, router, shellRoute.view, shellRoute.workspace, state.session?.authenticated]);
+    if (authorizationRedirect) router.replace(authorizationRedirect);
+  }, [authorizationRedirect, router]);
 
   useEffect(() => {
     if (normalizedRoutePath === "/workspace" && !shellRoute.workspace) {

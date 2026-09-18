@@ -2,7 +2,7 @@
 
 Status: Draft
 Created: 2026-09-02
-Updated: 2026-09-17
+Updated: 2026-09-18
 
 Operator-owned rules for which assistant tools are disabled, ask before execution, or run without
 an approval card, beyond the per-app read-only grant that ships today. This is the "second iteration

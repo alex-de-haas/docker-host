@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   getAuthorizedShellView,
+  getShellAuthorizationRedirect,
   getSettingsHref,
   getShellViewHref,
   getWorkspaceHref,
@@ -141,4 +142,19 @@ test("an ordinary user reaches Settings only for the access-tokens tab", () => {
   // An administrator is unaffected, and a non-admin view never depended on the tab at all.
   assert.equal(getAuthorizedShellView("settings", true, "core"), "settings");
   assert.equal(getAuthorizedShellView("available-apps", false, undefined), "available-apps");
+});
+
+
+test("authorization redirects preserve personal tokens and react to settings tab changes", () => {
+  const tokens = readShellRoute("/settings", params("tab=tokens"));
+  assert.equal(getShellAuthorizationRedirect(tokens, true, false), null);
+  for (const tab of ["users", "core", "hosty.ai-gateway", "unknown"]) {
+    const route = readShellRoute("/settings", params(`tab=${tab}`));
+    assert.equal(getShellAuthorizationRedirect(route, true, false), "/apps");
+    assert.equal(getShellAuthorizationRedirect(route, true, true), null);
+    assert.equal(getShellAuthorizationRedirect(route, false, false), null);
+  }
+  assert.equal(getShellAuthorizationRedirect(readShellRoute("/dashboard", params()), true, false), "/apps");
+  assert.equal(getShellAuthorizationRedirect(readShellRoute("/apps", params()), true, false), null);
+  assert.equal(getShellAuthorizationRedirect(readShellRoute("/workspace", params("app=demo")), true, false), null);
 });

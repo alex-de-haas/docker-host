@@ -95,6 +95,17 @@ export function getAuthorizedShellView(
     : "available-apps";
 }
 
+/** Keep the URL aligned with the same tab-aware authorization used for rendering. */
+export function getShellAuthorizationRedirect(
+  route: ShellRouteState,
+  authenticated: boolean,
+  canManageApps: boolean,
+): string | null {
+  if (!authenticated || route.workspace) return null;
+  const view = getAuthorizedShellView(route.view, canManageApps, route.settingsTab);
+  return view === route.view ? null : getShellViewHref(view);
+}
+
 export function readHostSettingsTab(value: string | null | undefined): HostSettingsTab {
   const tab = value?.trim();
   return tab && HOST_SETTINGS_TABS.has(tab) ? (tab as HostSettingsTab) : DEFAULT_HOST_SETTINGS_TAB;

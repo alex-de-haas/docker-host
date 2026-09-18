@@ -80,6 +80,10 @@ function fail(reason) {
 }
 
 function handle(msg) {
+  if (msg.method === "account/read") {
+    send({ jsonrpc: "2.0", id: msg.id, result: { account: null } });
+    return;
+  }
   // Reply to an approval we raised.
   if (msg.id !== undefined && msg.result !== undefined && msg.id === pendingApprovalId) {
     const decision = msg.result?.decision;

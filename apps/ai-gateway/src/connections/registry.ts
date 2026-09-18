@@ -695,7 +695,10 @@ export class AgentConnections {
     const defaultHealth = await this.health();
     if (defaultHealth.available) return defaultHealth;
     for (const connection of (await this.load()).connections) {
-      const health = await this.health(await this.binding(connection.id));
+      // Resolving a host login can fail before health() gets a binding. Treat that
+      // connection as unavailable and keep checking the remaining providers.
+      const binding = await this.binding(connection.id).catch(() => null);
+      const health = await this.health(binding);
       if (health.available) return { ...health, name: "Agent providers" };
     }
     return defaultHealth;

@@ -160,6 +160,28 @@ describe("sessions with provider connections", () => {
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
 
+  it("keeps health endpoints available when a host login cannot resolve its identity", async () => {
+    const broken = await registry.update({
+      name: "Signed-out host",
+      kind: "codex",
+      auth: "host-login",
+      hostDirectory: path.join(root, "signed-out-home"),
+    });
+    await registry.setDefault(broken.id);
+    await expect(registry.binding(broken.id)).rejects.toMatchObject({
+      code: "provider_host_identity_unavailable",
+    });
+    const checkHealth = async (available: boolean) => {
+      for (const response of [await fetch(`${origin}/healthz`), await request("/health")]) {
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({ status: "ok", harness: { available } });
+      }
+    };
+    await checkHealth(false);
+    await connection("codex", "Working managed account");
+    await checkHealth(true);
+  });
+
   it("runs two providers and two Claude accounts concurrently without environment leakage; binds defaults and resumes identity", async () => {
     const claude = await connection("claude");
     const codex = await connection("codex");

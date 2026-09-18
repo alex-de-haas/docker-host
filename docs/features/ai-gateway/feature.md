@@ -429,6 +429,10 @@ a stopped process does not transfer a chat to another provider.
   `From <app id>:` — it does not open a session of its own. The record still carries an optional
   `context` field that a client may set at creation; no client sends one today, and nothing reads it.
 
+Aggregate health treats an unreadable or signed-out host login as unavailable and continues checking
+other provider connections. Both `/healthz` and `/api/health` report availability without failing
+the request because one connection cannot resolve its account.
+
 ## Testing Expectations
 
 - Core: manifest `interfaces` validation (names, keys, paths, forward-compat), `AppSummary`

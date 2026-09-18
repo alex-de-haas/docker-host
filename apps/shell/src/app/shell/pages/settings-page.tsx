@@ -67,16 +67,16 @@ export function SettingsPage({
   // An ordinary user reaches this page for exactly one tab — their own access tokens — so the rest,
   // which administer the host, are not offered to them.
   const visibleTabs = canManageApps ? HOST_SETTINGS_SECTIONS : HOST_SETTINGS_SECTIONS.filter((tab) => isNonAdminHostSettingsTab(tab.id));
-  // App pages are grouped in sidebar navigation; this component only resolves the selected page.
+  // Each app has one sidebar entry; this component resolves its settings surface.
   const visibleAppTabs = canManageApps ? appTabs : [];
   const activeAppTab = resolveSettingsSurface(visibleAppTabs, activeTab);
+  if (activeAppTab) return <AppSettingsTabPanel key={activeAppTab.key} tab={activeAppTab} {...appTabProps} />;
+
   // The URL may name a tab that is neither a host one nor an installed app — a stale link, or an app
   // since removed. Resolution lives here rather than in the parser, which has no app list to check
   // against; without the fallback such a link renders a page with no section at all.
   const resolvedTab =
-    activeAppTab || visibleTabs.some((tab) => tab.id === activeTab) ? activeTab : DEFAULT_HOST_SETTINGS_TAB;
-
-  if (activeAppTab) return <AppSettingsTabPanel key={activeAppTab.key} tab={activeAppTab} {...appTabProps} />;
+    visibleTabs.some((tab) => tab.id === activeTab) ? activeTab : DEFAULT_HOST_SETTINGS_TAB;
 
   return (
     <div className="space-y-6">
