@@ -8,6 +8,8 @@ import {
   rm,
   stat,
   writeFile,
+  symlink,
+  realpath,
 } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
@@ -15,6 +17,11 @@ import { AgentConnections } from "./registry.js";
 import type { ConnectionSecrets } from "./secrets.js";
 import { cleanAgentEnvironment } from "./codex-login.js";
 import { captureEnv } from "../test-env.js";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, symlink: vi.fn(actual.symlink) };
+});
 
 class MemorySecrets implements ConnectionSecrets {
   values = new Map<string, string>();
@@ -117,6 +124,39 @@ describe("provider connections", () => {
     ).toBe("conversation");
     expect((await registry.list()).defaultId).toBe(first.id);
     expect(JSON.stringify(await registry.list())).not.toContain("synthetic-");
+  });
+
+  it.each(["claude", "codex"] as const)("prepares %s storage without Windows symlink privileges and preserves history after cache removal", async (kind) => {
+    vi.spyOn(os, "platform").mockReturnValue("win32");
+    const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    vi.mocked(symlink).mockImplementation(async (target, link, type) => {
+      if (type !== "junction") throw Object.assign(new Error("Symlink privilege is not held"), { code: "EPERM" });
+      // Exercise real directory linkage and cleanup on this host while modelling Windows permissions.
+      await actual.symlink(target, link, type);
+    });
+    const c = await registry.update({ ...api(), kind });
+    const binding = (await registry.binding(c.id))!;
+    await registry.adapter(binding);
+    const directory = kind === "claude" ? "projects" : "sessions";
+    const link = path.join(cache, "agent-providers", c.id, "1", directory);
+    const durable = path.join(data, "provider-sessions", c.id, "1", directory);
+    expect(await realpath(link)).toBe(await realpath(durable));
+    await writeFile(path.join(link, "history.jsonl"), "conversation");
+    await rm(cache, { recursive: true });
+    expect(await readFile(path.join(durable, "history.jsonl"), "utf8")).toBe("conversation");
+    await registry.adapter(binding);
+    expect(await readFile(path.join(link, "history.jsonl"), "utf8")).toBe("conversation");
+    vi.mocked(symlink).mockImplementation(actual.symlink);
+  });
+
+  it("reports storage failures without exposing paths or secrets", async () => {
+    const c = await registry.update(api());
+    vi.mocked(symlink).mockRejectedValueOnce(Object.assign(new Error("EPERM private-path synthetic-Codex"), { code: "EPERM" }));
+    const health = await registry.health(await registry.binding(c.id));
+    expect(health.available).toBe(false);
+    expect(health.reason).toContain("storage setup failed (EPERM)");
+    expect(health.reason).not.toContain("private-path");
+    expect(health.reason).not.toContain("synthetic-Codex");
   });
 
   it("rotates revisions only for credentials and leaves the last working secret on write failure", async () => {

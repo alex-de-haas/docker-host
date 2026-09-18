@@ -524,7 +524,13 @@ export class AgentConnections {
       await mkdir(durable, { recursive: true, mode: 0o700 });
       const link = path.join(home, directory);
       const info = await lstat(link).catch(() => null);
-      if (!info) await symlink(durable, link, "dir");
+      // Windows directory symlinks require elevation or Developer Mode; junctions do not.
+      if (!info)
+        await symlink(
+          path.resolve(durable),
+          link,
+          os.platform() === "win32" ? "junction" : "dir",
+        );
       else if (
         !info.isSymbolicLink() ||
         (await realpath(link)) !== (await realpath(durable))
@@ -749,7 +755,10 @@ export class AgentConnections {
         reason:
           error instanceof ConnectionError
             ? error.message
-            : "Provider setup failed. Check Core connectivity and reconnect the provider.",
+            : error instanceof Error && "code" in error &&
+                ["EACCES", "EPERM", "ENOENT", "ENOSPC", "EROFS"].includes(String(error.code))
+              ? `Provider storage setup failed (${String(error.code)}). Check Gateway data/cache directory access and free disk space.`
+              : "Provider setup failed. Check the Gateway installation and provider configuration.",
       };
     }
   }
