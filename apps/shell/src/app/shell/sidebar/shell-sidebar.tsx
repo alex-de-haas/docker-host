@@ -1,7 +1,8 @@
 "use client";
 
-import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
-import { useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
+import { useState } from "react";
+import { useCompactMenu } from "./use-compact-menu";
 import {
   Boxes,
   ChevronDown,
@@ -14,7 +15,6 @@ import {
   LogIn,
   LogOut,
   Play,
-  Settings,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -31,7 +31,8 @@ import { cn } from "@/lib/utils";
 import { getAccountInitials, getAppPageLinks, resolveAssetSrc } from "../app-helpers";
 import { AppIcon } from "../app-icon";
 import { isAppBusy } from "../runtime-states";
-import { resolveLaunchGate } from "../surfaces/app-surface-tabs";
+import { SettingsNavigation } from "./settings-navigation";
+import { resolveLaunchGate, type AppSurfaceTab } from "../surfaces/app-surface-tabs";
 import type { AppOpenTarget, AppPageLink, CoreApp, EmbeddedWorkspace, SessionResponse, ShellView } from "../types";
 
 export function ShellSidebar({
@@ -44,6 +45,9 @@ export function ShellSidebar({
   uiApps,
   busyAction,
   onNavigate,
+  settingsPages,
+  selectedSettings,
+  onOpenSettings,
   onOpenApps,
   onLaunchApp,
   onStartApp,
@@ -62,6 +66,9 @@ export function ShellSidebar({
   uiApps: CoreApp[];
   busyAction: string | null;
   onNavigate: (view: ShellView) => void;
+  settingsPages: AppSurfaceTab[];
+  selectedSettings: string;
+  onOpenSettings(key: string): void;
   onOpenApps: () => void;
   onLaunchApp: (app: CoreApp, page: AppPageLink, target?: AppOpenTarget) => Promise<void>;
   /**
@@ -78,12 +85,10 @@ export function ShellSidebar({
 
       <nav className={cn("min-h-0 flex-1 overflow-y-auto py-4 pl-3", compact ? "pr-[11px]" : "pr-3")} aria-label="Host navigation">
         <div className={cn(compact ? "space-y-4" : "space-y-6")}>
-          {canManageApps && (
-            <NavigationSection title="Host" compact={compact}>
-              <SidebarButton compact={compact} active={activeView === "dashboard" && !workspace} icon={Gauge} label="Dashboard" onClick={() => onNavigate("dashboard")} />
-              <SidebarButton compact={compact} active={activeView === "settings"} icon={Settings} label="Settings" onClick={() => onNavigate("settings")} />
-            </NavigationSection>
-          )}
+          <NavigationSection title="Host" compact={compact}>
+            {canManageApps && <SidebarButton compact={compact} active={activeView === "dashboard" && !workspace} icon={Gauge} label="Dashboard" onClick={() => onNavigate("dashboard")} />}
+            <SettingsNavigation compact={compact} active={activeView === "settings" && !workspace} selected={selectedSettings} pages={settingsPages} canManageApps={canManageApps} onSelect={onOpenSettings} />
+          </NavigationSection>
 
           {/* The heading is the overview and the rows are the shortcuts — the same pair the native
               client's Apps tab makes. Collapsed, headings are not rendered at all, so the rail gets
@@ -378,7 +383,7 @@ function AppNavigationItem({
       {/* Gated on `running` as well as on `expanded`: an app stopped while its pages were open would
           otherwise leave a list of launch buttons behind, each one a request Core cannot serve. */}
       {!compact && running && expanded && pages.length > 1 && (
-        <div className="ml-6 space-y-1 border-l pl-2">
+        <div className="ml-[18px] space-y-1 border-l pl-2">
           {pages.map((page) => (
             <button
               key={`${app.id}:${page.path}`}
@@ -404,12 +409,6 @@ function AppNavigationItem({
   );
 }
 
-// Hover-intent timings for the compact flyout. Close stays shorter than open: the flyouts are
-// non-modal and per-app with no cross-item coordination, so when the pointer slides along the rail
-// the previous app's menu must be gone before the next one appears, or two overlap.
-const COMPACT_MENU_HOVER_OPEN_MS = 250;
-const COMPACT_MENU_HOVER_CLOSE_MS = 200;
-
 // Compact-rail item for a running app with more than one page: the icon triggers a flyout instead
 // of launching directly, because the rail has no room for the page list or the standalone-open
 // control. The flyout opens on click (Radix's own path — also keyboard and touch) and on hover
@@ -433,80 +432,10 @@ function CompactAppMenu({
   onLaunch: (app: CoreApp, page: AppPageLink, target?: AppOpenTarget) => Promise<void>;
   getStandaloneHref: (app: CoreApp, page: AppPageLink) => string;
 }) {
-  const [open, setOpen] = useState(false);
-  // Whether the current open state came from the hover timer rather than click/keyboard: a hover
-  // open must not steal focus, and a trigger click while hover-opened pins the menu instead of
-  // toggling it closed — the user is completing the click the hover pre-empted.
-  const hoverOpenedRef = useRef(false);
-  // Set when the hover-close timer fires so onCloseAutoFocus skips Radix's focus return: mousing
-  // away from a menu that never had focus must not yank focus (and a scroll) to the trigger.
-  const hoverClosedRef = useRef(false);
-  const openTimerRef = useRef<number | null>(null);
-  const closeTimerRef = useRef<number | null>(null);
-
-  useEffect(
-    () => () => {
-      if (openTimerRef.current !== null) window.clearTimeout(openTimerRef.current);
-      if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current);
-    },
-    [],
-  );
-
-  const cancelOpenTimer = () => {
-    if (openTimerRef.current !== null) {
-      window.clearTimeout(openTimerRef.current);
-      openTimerRef.current = null;
-    }
-  };
-  const cancelCloseTimer = () => {
-    if (closeTimerRef.current !== null) {
-      window.clearTimeout(closeTimerRef.current);
-      closeTimerRef.current = null;
-    }
-  };
-
-  // Touch has no hover; its emulated pointerenter on tap must not race the click-open path.
-  const handleHoverStart = (event: ReactPointerEvent) => {
-    if (event.pointerType !== "mouse") return;
-    cancelCloseTimer();
-    if (open || openTimerRef.current !== null) return;
-    openTimerRef.current = window.setTimeout(() => {
-      openTimerRef.current = null;
-      hoverOpenedRef.current = true;
-      setOpen(true);
-    }, COMPACT_MENU_HOVER_OPEN_MS);
-  };
-  const handleHoverEnd = (event: ReactPointerEvent) => {
-    if (event.pointerType !== "mouse") return;
-    cancelOpenTimer();
-    // Only a hover-opened menu closes on hover-out. A click-opened or pinned one behaves like a
-    // normal dropdown — outside click, Escape, or a selection closes it — and it took focus on
-    // open, so an auto-close here would also strand that focus (the hover-close path suppresses
-    // the focus return, which is only correct when the menu never had it).
-    if (!open || !hoverOpenedRef.current || closeTimerRef.current !== null) return;
-    closeTimerRef.current = window.setTimeout(() => {
-      closeTimerRef.current = null;
-      hoverOpenedRef.current = false;
-      hoverClosedRef.current = true;
-      setOpen(false);
-    }, COMPACT_MENU_HOVER_CLOSE_MS);
-  };
+  const menu = useCompactMenu();
 
   return (
-    <DropdownMenu
-      open={open}
-      // Non-modal so the rest of the rail keeps receiving hover while a flyout is open — modal
-      // Radix menus set pointer-events: none on the page, which would kill sliding along the rail.
-      modal={false}
-      onOpenChange={(next) => {
-        cancelOpenTimer();
-        cancelCloseTimer();
-        if (!next) {
-          hoverOpenedRef.current = false;
-        }
-        setOpen(next);
-      }}
-    >
+    <DropdownMenu {...menu.menuProps}>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
@@ -518,18 +447,7 @@ function CompactAppMenu({
           )}
           title={app.displayName}
           aria-label={app.displayName}
-          onPointerEnter={handleHoverStart}
-          onPointerLeave={handleHoverEnd}
-          onPointerDown={(event) => {
-            // preventDefault stops Radix's trigger toggle (composeEventHandlers honors it):
-            // without this, hover opens the menu and the click the user was already making
-            // immediately closes it again. Clearing the hover flag pins the menu — from here on
-            // it ignores hover-out and closes like a click-opened one.
-            if (open && hoverOpenedRef.current) {
-              event.preventDefault();
-              hoverOpenedRef.current = false;
-            }
-          }}
+          {...menu.triggerProps}
         >
           <AppIcon src={resolveAssetSrc(coreOrigin, app.iconUrl)} name={app.icon} fallback={LayoutGrid} className="h-5 w-5 shrink-0 rounded-sm" alt="" />
         </button>
@@ -538,22 +456,7 @@ function CompactAppMenu({
         side="right"
         align="start"
         className="w-56"
-        onPointerEnter={(event) => {
-          if (event.pointerType !== "mouse") return;
-          cancelCloseTimer();
-        }}
-        onPointerLeave={handleHoverEnd}
-        onOpenAutoFocus={(event) => {
-          if (hoverOpenedRef.current) {
-            event.preventDefault();
-          }
-        }}
-        onCloseAutoFocus={(event) => {
-          if (hoverClosedRef.current) {
-            hoverClosedRef.current = false;
-            event.preventDefault();
-          }
-        }}
+        {...menu.contentProps}
       >
         <DropdownMenuLabel className="truncate">{app.displayName}</DropdownMenuLabel>
         <DropdownMenuSeparator />

@@ -1,3 +1,5 @@
+import { AgentConnections } from "./connections/registry.js";
+import { CoreConnectionSecrets } from "./connections/secrets.js";
 import { WaitingNotifier } from "./notifications.js";
 import { mkdir } from "node:fs/promises";
 import { loadConfig } from "./config.js";
@@ -28,6 +30,10 @@ const adapter: HarnessAdapter =
           dataDir: config.dataDir,
         })
       : new ClaudeHarnessAdapter();
+const connections = config.harness === "fake" ? null : new AgentConnections(config.dataDir, config.cacheDir,
+  new CoreConnectionSecrets(config.coreOrigin, config.appId, config.serviceToken));
+// Import errors keep settings available for repair. Never fall back to environment credentials.
+await connections?.importEnvironment(process.env).catch(() => console.warn("[providers] Legacy provider migration is incomplete; check Core and provider connectivity, then restart Gateway."));
 const store = new SessionStore(config.dataDir, config.cacheDir);
 const audit = new AuditReporter(config.coreOrigin, config.serviceToken, config.appId);
 const notifier = new WaitingNotifier(config.coreOrigin, config.serviceToken, config.appId);
@@ -56,6 +62,7 @@ const manager: SessionManager = new SessionManager(
   proxy,
   proxyBaseUrl,
   notifier,
+  connections,
 );
 
 // Retention: once at boot, then daily. The sweep is cheap (a directory listing), and running it
@@ -105,7 +112,7 @@ const facade = new McpFacade(
   settings,
 );
 
-const server = createGatewayServer(manager, adapter, settings, providers, proxy, facade);
+const server = createGatewayServer(manager, adapter, settings, providers, proxy, facade, connections);
 server.listen(config.port, () => {
   console.log(
     `hosty.ai-gateway listening on :${config.port} (harness=${adapter.name}, data=${config.dataDir})`,
@@ -116,7 +123,7 @@ const shutdown = (): void => {
   clearInterval(sweepTimer);
   clearInterval(abandonTimer);
   server.close();
-  void manager.shutdown().finally(() => process.exit(0));
+  void manager.shutdown().then(() => connections?.shutdown()).finally(() => process.exit(0));
 };
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);

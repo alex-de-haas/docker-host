@@ -257,7 +257,7 @@ it looks like settings:
 | Field | How many | Audience | Where it lands |
 | --- | --- | --- | --- |
 | `ui.navigation` | any | users | the shell's sidebar |
-| `ui.settings` | at most one | administrators | a tab on Shell's Settings page |
+| `ui.settings` | at most one | administrators | one app-named entry under Settings |
 | `ui.panels` | any | users | tabs on Shell's right panel |
 
 Litmus tests: *would a `host.user` ever legitimately open it?* → `navigation` or `panels`. *Does it
@@ -272,6 +272,9 @@ Both fields are additive under `app.0.1` and need no `schemaVersion` bump. `endp
 defaults to the entrypoint's; `path` is absolute on that origin. A panel's `label` names its tab —
 several apps' tools share one strip, so the app's own name is a poor label, and a system app must
 declare one. Two panels of one app may not share a label.
+
+Each app contributes one Settings entry. Organize larger settings inside that app-owned page using
+internal tabs or navigation. Apps own padding and modal overlays inside the full-workspace iframe.
 
 **A surface declaration is placement metadata, not access control.** The page stays reachable
 standalone (`hosty apps open`) and Shell's embedding grants it nothing, so the app keeps enforcing

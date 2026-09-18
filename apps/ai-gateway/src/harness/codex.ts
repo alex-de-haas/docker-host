@@ -1,3 +1,4 @@
+import { cleanAgentEnvironment } from "../connections/codex-login.js";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { toCodexMcpConfig } from "./codex-mcp.js";
 import { randomUUID } from "node:crypto";
@@ -59,7 +60,7 @@ export class CodexHarnessAdapter implements HarnessAdapter {
   constructor(private readonly auth: CodexAuthConfig) {}
 
   async probe(): Promise<HarnessAvailability> {
-    const probe = await runCodex(["--version"], {}).catch((error: Error) => error);
+    const probe = await runCodex(["--version"], {}, this.auth.isolated).catch((error: Error) => error);
     if (probe instanceof Error) {
       return {
         available: false,
@@ -74,7 +75,7 @@ export class CodexHarnessAdapter implements HarnessAdapter {
       return { available: false, reason: resolution.error };
     }
 
-    const status = await runCodex(["login", "status"], resolution.env).catch(() => null);
+    const status = await runCodex(["login", "status"], resolution.env, this.auth.isolated).catch(() => null);
     if (status === null || /not logged in|no credentials/i.test(status)) {
       // A login run without the configured CODEX_HOME writes credentials into the default home,
       // where the harness never looks — so the suggested command carries the same directory the
@@ -126,12 +127,12 @@ class CodexRun implements HarnessRun {
 
   constructor(
     private readonly options: HarnessStartOptions,
-    auth: CodexAuthConfig,
+    private readonly auth: CodexAuthConfig,
   ) {
     // Resolved synchronously from the mode: the login itself already happened during probe, and a
     // session must not wait on it. In interactive mode this is the operator's own home.
     const env = authMode(auth) === "api-key"
-      ? { CODEX_HOME: path.join(auth.dataDir, "codex-home") }
+      ? { CODEX_HOME: auth.managedHome ?? path.join(auth.dataDir, "codex-home") }
       : auth.codexHome?.trim()
         ? { CODEX_HOME: auth.codexHome.trim() }
         : {};
@@ -140,18 +141,24 @@ class CodexRun implements HarnessRun {
     // the environment. Nothing is written to the operator's ~/.codex — these servers belong to one
     // session of one gateway, not to the machine.
     const mcp = toCodexMcpConfig(options.mcpServers);
-    const target = spawnTarget(["app-server", ...mcp.args]);
+    const target = spawnTarget(["app-server", ...(auth.managedHome ? ["-c", 'cli_auth_credentials_store="file"'] : []), ...mcp.args]);
     this.child = spawn(target.command, target.args, {
       stdio: ["pipe", "pipe", "pipe"],
       cwd: options.cwd,
-      env: { ...process.env, ...env, ...mcp.env },
+      env: { ...(auth.isolated ? cleanAgentEnvironment() : process.env), ...env, ...mcp.env },
+    });
+    this.child.stdin.on("error", () => {});
+    this.child.on("error", () => {
+      for (const pending of this.pendingRequests.values()) pending.reject(new Error("Codex process could not start."));
+      this.pendingRequests.clear();
+      if (!this.stopped) this.emit({ type: "error", message: "Codex process could not start." });
     });
     this.child.stdout.on("data", (chunk: Buffer) => this.onStdout(chunk));
     this.child.stderr.on("data", (chunk: Buffer) => {
       const text = chunk.toString().trim();
       // Codex logs routine startup noise (MCP status, OAuth refreshes) to stderr; only surface a
       // hard failure, which arrives as the process exiting.
-      if (text) {
+      if (text && !auth.isolated) {
         console.warn(`[codex] ${text.slice(0, 400)}`);
       }
     });
@@ -165,6 +172,8 @@ class CodexRun implements HarnessRun {
       this.pendingRequests.clear();
     });
     this.ready = this.handshake();
+    // Stop can race initialization before send() attaches its own failure handler.
+    void this.ready.catch(() => {});
   }
 
   send(text: string): void {
@@ -246,7 +255,7 @@ class CodexRun implements HarnessRun {
     if (this.options.resumeHarnessSessionId) {
       const resumed = (await this.request(CODEX_METHODS.threadResume, {
         threadId: this.options.resumeHarnessSessionId,
-      }).catch(() => null)) as { thread?: { id?: string } } | null;
+      }).catch((error) => { if (this.auth.isolated) throw new Error("The native session could not be resumed. Start a new chat; existing history is preserved."); return null; })) as { thread?: { id?: string } } | null;
       if (resumed) {
         this.threadId = resumed.thread?.id ?? this.options.resumeHarnessSessionId;
       }
@@ -536,12 +545,12 @@ function readItemText(item: Record<string, unknown>): string {
   return "";
 }
 
-function runCodex(args: string[], env: Record<string, string>): Promise<string> {
+function runCodex(args: string[], env: Record<string, string>, isolated = false): Promise<string> {
   return new Promise((resolve, reject) => {
     const target = spawnTarget(args);
     const child = spawn(target.command, target.args, {
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, ...env },
+      env: { ...(isolated ? cleanAgentEnvironment() : process.env), ...env },
     });
     let out = "";
     child.stdout.on("data", (chunk: Buffer) => (out += chunk.toString()));

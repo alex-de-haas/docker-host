@@ -1,3 +1,4 @@
+import { ConnectionError, type AgentConnections } from "./connections/registry.js";
 import { AppContextError, readContextApps, parseAppIds, captureContext, contextFromRoster } from "./sessions/app-context.js";
 import { AttachmentRefusedError, listAttachments, storeAttachment, type AttachmentRefusal } from "./sessions/attachments.js";
 import { pipeline } from "node:stream/promises";
@@ -42,10 +43,11 @@ export function createGatewayServer(
   providers: ProviderDirectory | null = null,
   proxy: McpProxy | null = null,
   facade: McpFacade | null = null,
+  connections: AgentConnections | null = null,
 ): Server {
   return createServer((request, response) => {
-    void route(request, response, manager, adapter, settings, providers, proxy, facade).catch((error) => {
-      if (error instanceof AppContextError) {
+    void route(request, response, manager, adapter, settings, providers, proxy, facade, connections).catch((error) => {
+      if (error instanceof AppContextError || error instanceof ConnectionError) {
         sendJson(response, error.status, { code: error.code, message: error.message });
         return;
       }
@@ -78,6 +80,7 @@ async function route(
   providers: ProviderDirectory | null,
   proxy: McpProxy | null,
   facade: McpFacade | null,
+  connections: AgentConnections | null,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", "http://gateway.local");
   const method = request.method ?? "GET";
@@ -103,10 +106,10 @@ async function route(
   }
 
   if (method === "GET" && url.pathname === "/healthz") {
-    const availability = await adapter.probe();
+    const health = connections ? await connections.summary() : { name: adapter.name, capabilities: { ...adapter.capabilities, appContext: true }, ...await adapter.probe() };
     sendJson(response, 200, {
       status: "ok",
-      harness: { name: adapter.name, capabilities: { ...adapter.capabilities, appContext: true }, ...availability },
+      harness: health,
     });
     return;
   }
@@ -209,15 +212,37 @@ async function route(
   }
 
   if (method === "GET" && url.pathname === "/api/health") {
-    const availability = await adapter.probe();
+    const health = url.searchParams.get("sessionId") ? await manager.sessionHealth(url.searchParams.get("sessionId")!)
+      : connections ? await connections.summary() : { name: adapter.name, capabilities: { ...adapter.capabilities, appContext: true }, ...await adapter.probe() };
     // Capabilities travel with health because the client needs them to decide what to render: a
     // harness that cannot ask questions must not get a question card, and one that cannot be
     // reconfigured live must not be described as applying a toggle immediately.
     sendJson(response, 200, {
       status: "ok",
-      harness: { name: adapter.name, capabilities: { ...adapter.capabilities, appContext: true }, ...availability },
+      harness: health,
     });
     return;
+  }
+
+  if (connections && url.pathname === "/api/connections") {
+    if (method === "GET") { sendJson(response, 200, await connections.list()); return; }
+    if (method === "POST") { sendJson(response, 201, await connections.update(await readJson(request))); return; }
+  }
+  if (connections && url.pathname === "/api/connections/default" && method === "PUT") {
+    await connections.setDefault((await readJson(request)).connectionId); sendJson(response, 200, await connections.list()); return;
+  }
+  const loginMatch = url.pathname.match(/^\/api\/provider-logins\/([a-zA-Z0-9-]+)$/);
+  if (connections && loginMatch) {
+    if (method === "DELETE") await connections.cancelLogin(loginMatch[1]!);
+    if (method === "GET" || method === "DELETE") { sendJson(response, 200, connections.loginView(loginMatch[1]!)); return; }
+  }
+  const connectionMatch = url.pathname.match(/^\/api\/connections\/([a-zA-Z0-9-]+)(\/test|\/login)?$/);
+  if (connections && connectionMatch) {
+    const id = connectionMatch[1]!; const action = connectionMatch[2] ?? "";
+    if (action === "/test" && method === "POST") { sendJson(response, 200, await connections.health(await connections.binding(id))); return; }
+    if (action === "/login" && method === "POST") { sendJson(response, 200, await connections.startLogin(id)); return; }
+    if (!action && method === "PUT") { sendJson(response, 200, await connections.update(await readJson(request), id)); return; }
+    if (!action && method === "DELETE") { await connections.remove(id); sendJson(response, 200, { removed: true }); return; }
   }
 
   // Approving one app's changed skill.
@@ -339,7 +364,8 @@ async function route(
       pendingSkills,
       providers: [...(core ? [core] : []), ...(discovered?.providers ?? [])],
       discovery: discovered ? "ok" : "unavailable",
-      harness: { name: adapter.name, capabilities: adapter.capabilities },
+      harness: connections ? { name: "Selected chat provider", capabilities: { autoAllow: true, liveReconfigure: false } } : { name: adapter.name, capabilities: adapter.capabilities },
+      agentConnections: Boolean(connections),
       limits: { systemPromptChars: MAX_SYSTEM_PROMPT_CHARS },
     });
     return;
@@ -368,6 +394,7 @@ async function route(
       createdBy: actor.userId,
       appIds: body.appIds,
       clientRequestId: body.clientRequestId,
+      connectionId: body.connectionId,
     });
     sendJson(response, 200, record);
     return;
@@ -394,6 +421,11 @@ async function route(
   const sessionId = sessionMatch[1]!;
   const rest = sessionMatch[2] ?? "";
 
+  if (rest === "/provider" && method === "PUT") {
+    const body = await readJson(request);
+    sendJson(response, 200, await manager.setConnection(sessionId, body.connectionId, body.confirmLegacy === true)); return;
+  }
+
   if (rest === "/apps" && method === "PUT") {
     const body = await readJson(request);
     sendJson(response, 200, await manager.setAppContext(sessionId, body.appIds, body.expectedRevision, actor.userId));
@@ -409,7 +441,7 @@ async function route(
     // Copy before discovery yields: an SSE update may mutate the live record in the meantime.
     const current = { ...record };
     const appContext = await captureContext(providers, current.appIds ?? [], current.appContextRevision ?? 0, true);
-    sendJson(response, 200, { ...current, appContext });
+    sendJson(response, 200, { ...current, appContext, ...(connections ? { providerLocked: await manager.sessionProviderLocked(current) } : {}) });
     return;
   }
 
@@ -489,12 +521,12 @@ async function route(
     // The operator's reason for a deny, bounded like every other operator-typed field: it lands in
     // the transcript and in the model's context, and neither wants a pasted log by mistake.
     const reason = typeof body.message === "string" ? body.message.trim().slice(0, MAX_DENY_REASON_CHARS) : "";
-    if (reason && !adapter.capabilities.denyReason) {
+    if (reason && !(connections ? (await manager.sessionHealth(sessionId)).capabilities.denyReason : adapter.capabilities.denyReason)) {
       // Refused rather than stored: a reason the harness cannot deliver would sit in the transcript
       // looking delivered. The panel hides the box on such a harness; this covers every other client.
       sendJson(response, 400, {
         code: "deny_reason_unsupported",
-        message: `The ${adapter.name} harness cannot deliver a reason with a deny.`,
+        message: "The provider selected for this chat cannot deliver a reason with a deny.",
       });
       return;
     }

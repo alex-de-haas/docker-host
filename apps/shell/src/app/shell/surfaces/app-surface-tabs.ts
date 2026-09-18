@@ -25,6 +25,7 @@ export type SurfaceReadiness = "ready" | "starting" | "degraded";
 /** One placed surface, as Shell's chrome consumes it. */
 export type AppSurfaceTab = {
   appId: string;
+  appLabel?: string;
   /** Stable within its strip: an app may ship several panels, and each needs its own tab. */
   key: string;
   label: string;
@@ -135,6 +136,7 @@ function labelFor(app: CoreApp, surface: CoreAppSurface, fallbackIndex: number |
 function tabFor(app: CoreApp, surface: CoreAppSurface, key: string, label: string): AppSurfaceTab {
   return {
     appId: app.id,
+    appLabel: app.displayName,
     key,
     label,
     embeddedUrl: embeddableUrl(app, surface),
@@ -146,15 +148,15 @@ function tabFor(app: CoreApp, surface: CoreAppSurface, key: string, label: strin
 }
 
 /**
- * The Settings page's per-app tabs: at most one per app, in installation order.
+ * One settings entry per app, in installation order; internal navigation belongs to the app.
  *
- * Admin gating is not applied here and must not be: the Settings page itself is administrator-only,
+ * Admin gating is not applied here and must not be: app settings are administrator-only,
  * so a second copy of that rule is the copy that goes stale.
  */
 export function getAppSettingsTabs(apps: readonly CoreApp[]): AppSurfaceTab[] {
   return apps.flatMap((app) => {
     const surface = app.settingsSurface;
-    return surface ? [tabFor(app, surface, app.id, labelFor(app, surface, null))] : [];
+    return surface ? [tabFor(app, surface, app.id, app.displayName?.trim() || app.id)] : [];
   });
 }
 
@@ -198,4 +200,9 @@ export function resolveLaunchGate(app: CoreApp, service: string | null | undefin
   const up = isServiceUp(app, service);
   const readiness = resolveReadiness(app, service);
   return { up, readiness, allowed: up && readiness !== "starting" };
+}
+
+/** Accept old page-specific bookmarks while presenting one settings entry per app. */
+export function resolveSettingsSurface(tabs: readonly AppSurfaceTab[], key: string): AppSurfaceTab | undefined {
+  return tabs.find(tab => tab.key === key) ?? tabs.find(tab => tab.appId === key.split("#", 1)[0]);
 }
