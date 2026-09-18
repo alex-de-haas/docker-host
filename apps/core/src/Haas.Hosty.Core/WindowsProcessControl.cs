@@ -37,6 +37,8 @@ internal static class WindowsProcessControl
     private const int STD_ERROR_HANDLE = -12;
     private const int HANDLE_FLAG_INHERIT = 0x1;
     private const uint JOB_OBJECT_ASSIGN_PROCESS = 0x0001;
+    private const uint JOB_OBJECT_QUERY = 0x0004;
+    private const uint JOB_OBJECT_TERMINATE = 0x0008;
     private const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
     private static readonly IntPtr InvalidHandleValue = new(-1);
 
@@ -68,6 +70,10 @@ internal static class WindowsProcessControl
     [DllImport("kernel32", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool AssignProcessToJobObject(SafeJobHandle hJob, IntPtr hProcess);
+
+    [DllImport("kernel32", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsProcessInJob(IntPtr processHandle, SafeJobHandle jobHandle, [MarshalAs(UnmanagedType.Bool)] out bool result);
 
     [DllImport("kernel32", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -125,9 +131,9 @@ internal static class WindowsProcessControl
     // The independent runner owns this handle for long-lived services; Core owns it only for setup
     // commands and legacy direct-spawn fixtures. Closing the last handle kills the member tree.
     [SupportedOSPlatform("windows")]
-    public static WindowsKillOnCloseJob CreateKillOnCloseJob()
+    public static WindowsKillOnCloseJob CreateKillOnCloseJob(string? name = null)
     {
-        var name = $"Local\\Hosty.LocalCommand.{Guid.NewGuid():N}";
+        name ??= $"Local\\Hosty.LocalCommand.{Guid.NewGuid():N}";
         var handle = CreateJobObject(IntPtr.Zero, name);
         if (handle.IsInvalid)
         {
@@ -155,6 +161,37 @@ internal static class WindowsProcessControl
         }
 
         return new WindowsKillOnCloseJob(name, handle);
+    }
+
+    // Derive the name from the verified OS process identity so a replacement Core can open it
+    // only for explicit Stop. Core keeps no job handle during normal operation or handover.
+    internal static string RunnerJobName(System.Diagnostics.Process runner)
+        => $"Local\\Hosty.LocalCommand.Runner.{runner.Id}.{runner.StartTime.ToUniversalTime().Ticks}";
+
+    [SupportedOSPlatform("windows")]
+    internal static WindowsKillOnCloseJob? TryOpenRunnerJob(System.Diagnostics.Process runner)
+    {
+        var name = RunnerJobName(runner);
+        var handle = OpenJobObject(JOB_OBJECT_QUERY | JOB_OBJECT_TERMINATE, false, name);
+        if (handle.IsInvalid)
+        {
+            var error = Marshal.GetLastPInvokeError();
+            handle.Dispose();
+            if (error == 2) return null; // A runner from before named-job support, or already exited.
+            throw new IOException("Could not open the localCommand runner job.", new Win32Exception(error));
+        }
+
+        try
+        {
+            if (!IsProcessInJob(runner.Handle, handle, out var member) || !member)
+                throw new IOException("LocalCommand runner job membership could not be verified.");
+            return new WindowsKillOnCloseJob(name, handle);
+        }
+        catch
+        {
+            handle.Dispose();
+            throw;
+        }
     }
 
     // Called inside the re-execed shim, before it starts cmd.exe. Assigning the shim first is what
@@ -194,7 +231,8 @@ internal static class WindowsProcessControl
 
         // Termination itself is asynchronous with respect to process teardown. Polling ActiveProcesses
         // keeps StopAsync from returning while a dying Node process still holds the app's port. The
-        // bounded wait is best-effort; Dispose retains KILL_ON_JOB_CLOSE as the final fallback.
+        // A failed/expired wait must fail Stop instead of reporting success while ports remain held.
+        // Dispose retains KILL_ON_JOB_CLOSE as the final fallback.
         public async Task TerminateAndWaitAsync(CancellationToken cancellationToken = default)
         {
             if (handle.IsClosed || handle.IsInvalid)
@@ -202,12 +240,17 @@ internal static class WindowsProcessControl
                 return;
             }
 
-            _ = TerminateJobObject(handle, 137);
+            if (!TerminateJobObject(handle, 137))
+                throw new IOException("Failed to terminate the localCommand job.", new Win32Exception(Marshal.GetLastPInvokeError()));
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-            while (stopwatch.Elapsed < JobTerminationTimeout && TryGetActiveProcessCount(out var activeProcesses) && activeProcesses > 0)
+            while (stopwatch.Elapsed < JobTerminationTimeout)
             {
+                if (!TryGetActiveProcessCount(out var activeProcesses))
+                    throw new IOException("Failed to inspect the stopping localCommand job.", new Win32Exception(Marshal.GetLastPInvokeError()));
+                if (activeProcesses == 0) return;
                 await Task.Delay(JobPollInterval, cancellationToken);
             }
+            throw new IOException("Timed out waiting for the localCommand job to stop.");
         }
 
         public void Dispose() => handle.Dispose();

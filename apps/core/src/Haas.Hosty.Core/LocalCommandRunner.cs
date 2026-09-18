@@ -60,7 +60,8 @@ internal static class LocalCommandRunner
             if (OperatingSystem.IsWindows())
             {
                 WindowsProcessControl.MakeStandardHandlesNonInheritable();
-                job = WindowsProcessControl.CreateKillOnCloseJob();
+                using var runner = Process.GetCurrentProcess();
+                job = WindowsProcessControl.CreateKillOnCloseJob(WindowsProcessControl.RunnerJobName(runner));
                 WindowsProcessControl.AssignCurrentProcessToJob(job.Name);
             }
             else UnixProcessControl.SetSid();

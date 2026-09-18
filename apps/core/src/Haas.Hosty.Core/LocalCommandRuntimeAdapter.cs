@@ -174,7 +174,7 @@ internal sealed class LocalCommandRuntimeAdapter(
                 registry.Set(
                     context.App.Id,
                     service.Key,
-                    new LocalCommandProcess(process, logPath, workingDirectory, servicePorts[service.Key], processGroup, windowsJob));
+                    new LocalCommandProcess(process, logPath, workingDirectory, servicePorts[service.Key], processGroup, windowsJob, shim is not null));
                 startedServices.Add(service.Key);
                 await WritePidFileAsync(context, service.Key, process, processGroup, workingDirectory, servicePorts[service.Key], runnerGeneration, cancellationToken);
                 await Task.Delay(250, cancellationToken);
@@ -865,13 +865,16 @@ internal sealed class LocalCommandRuntimeAdapter(
                 // A Windows job can still contain a live Node descendant after its recorded root has
                 // exited. Terminate it unconditionally; checking only Process.HasExited recreates the
                 // exact orphan that prevents an immediate app restart.
-                if (running.WindowsJob is not null)
+                using var runnerJob = OperatingSystem.IsWindows() && running.IndependentRunner && !running.Process.HasExited
+                    ? WindowsProcessControl.TryOpenRunnerJob(running.Process) : null;
+                var job = running.WindowsJob ?? runnerJob;
+                if (job is not null)
                 {
-                    await running.WindowsJob.TerminateAndWaitAsync(cancellationToken);
+                    await job.TerminateAndWaitAsync(cancellationToken);
                     // KILL_ON_JOB_CLOSE is the fallback if explicit termination raced assignment or
                     // was rejected. Dispose before waiting so no surviving descendant can hold the
                     // recorded app port while StopAsync returns.
-                    running.WindowsJob.Dispose();
+                    job.Dispose();
                 }
                 else if (!running.Process.HasExited && running.ProcessGroup && !OperatingSystem.IsWindows())
                 {
@@ -990,7 +993,7 @@ internal sealed class LocalCommandProcessRegistry
             throw new IOException("Local service executable identity changed; the process was left untouched.");
         }
         Set(appId, serviceKey, new LocalCommandProcess(process, Path.Combine(appRoot, "logs", serviceKey + ".log"),
-            saved.WorkingDirectory ?? appRoot, saved.Ports ?? new Dictionary<string, int>(), saved.ProcessGroup, null));
+            saved.WorkingDirectory ?? appRoot, saved.Ports ?? new Dictionary<string, int>(), saved.ProcessGroup, null, saved.RunnerGeneration is not null));
         return true;
     }
 
@@ -1010,7 +1013,8 @@ internal sealed record LocalCommandProcess(
     string WorkingDirectory,
     IReadOnlyDictionary<string, int> Ports,
     bool ProcessGroup,
-    WindowsProcessControl.WindowsKillOnCloseJob? WindowsJob);
+    WindowsProcessControl.WindowsKillOnCloseJob? WindowsJob,
+    bool IndependentRunner = false);
 
 // The resolved Core executable used to prepare independent runners. A null path means dotnet-hosted
 // Core: copy its managed output and run the copied DLL. Omitting the options object is a test-only

@@ -88,6 +88,10 @@ A minimal independent runner owns each newly launched `localCommand` service's s
 process group on POSIX, and kill-on-close Job Object on Windows. Core-only shutdown does not
 close the Windows job. On Windows the runner also remains alive after the command shell exits
 while service descendants remain in its job, so a replacement Core can adopt and stop them.
+For explicit Stop, Core opens the runner's named job using its verified PID/start identity,
+checks membership and waits for all job processes to exit. No Core-owned handle is retained
+during normal operation. A failure to terminate or confirm job shutdown fails Stop. Runners
+created before named-job support retain the legacy best-effort stop path until their next app restart.
 Runners append console logs and rotate at 10 MiB with two previous files;
 Core reads these files after handover. OTLP telemetry is independent.
 
