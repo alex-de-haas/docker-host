@@ -1,5 +1,11 @@
 using System.Net.Sockets;
 using Haas.Hosty.Core;
+using Haas.Hosty.Launch;
+
+if (args.Length >= 1 && args[0] == LocalCommandRunner.Verb)
+{
+    return await LocalCommandRunner.RunAsync(args);
+}
 
 // Hidden re-exec: Core spawns localCommand roots through itself before the platform shell. The shim
 // becomes a POSIX process-group leader or joins a Windows kill-on-close job, so Core owns the whole
@@ -39,6 +45,14 @@ catch (CoreRootLockedException ex)
 }
 
 config = config with { InstanceId = CoreInstanceId.LoadOrCreate(config.DataRoot) };
+// Claim a prepared generation before startup can time out at the caller. Retention must preserve
+// even a slow-starting process after the launcher has exited.
+var launch = CoreLaunchIdentity.Current();
+var generation = launch.GenerationPath;
+if (!string.IsNullOrWhiteSpace(generation) && Path.GetDirectoryName(Path.GetFullPath(generation)) == Path.Combine(config.DataRoot, "core", "builds")
+    && File.Exists(Path.Combine(generation, CoreBuildRetention.Marker)))
+    CoreBuildRetention.Mark(generation, "starting", launch.ProjectPath);
+else generation = null;
 
 HostyCoreApplication.ConfigureServices(builder, config);
 // Registered for disposal with the host so the lock is held for the full process lifetime and
@@ -46,6 +60,8 @@ HostyCoreApplication.ConfigureServices(builder, config);
 builder.Services.AddSingleton(_ => rootLock);
 
 var app = builder.Build();
+if (generation is not null)
+    app.Lifetime.ApplicationStarted.Register(() => CoreBuildRetention.Mark(generation, "ready", launch.ProjectPath));
 // Materialize the lock registration so the container tracks it for disposal — nothing else ever
 // resolves it.
 _ = app.Services.GetRequiredService<CoreRootLock>();

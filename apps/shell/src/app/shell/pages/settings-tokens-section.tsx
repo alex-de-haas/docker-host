@@ -30,6 +30,7 @@ const CORE_CONTROL = "hosty:core+lifecycle";
 // stop things for me" has not chosen "change which versions run". Folding it in here would have
 // undone the distinction at the only place anyone actually makes the choice.
 const CORE_UPDATE = "hosty:core+update";
+const CORE_RESTART = "hosty:core+restart";
 
 // Credentials for clients that have no browser: a device console, a native client, a
 // script. Two ways in — a device approves itself here after showing a code, or a credential is created
@@ -163,6 +164,8 @@ export function SettingsTokensSection({
         `${coreOrigin}/api/auth/credentials`,
         audience === FULL_ACCESS
           ? { label }
+          : audience === CORE_RESTART
+            ? { label, audience: CORE_AUDIENCE, scopes: ["mcp:read", "mcp:core-restart"] }
           : audience === CORE_CONTROL
             ? { label, audience: CORE_AUDIENCE, scopes: ["mcp:read", "mcp:lifecycle"] }
             : audience === CORE_UPDATE
@@ -291,6 +294,7 @@ export function SettingsTokensSection({
                     >
                       <option value={FULL_ACCESS}>Full access — everything you can do</option>
                       <option value={CORE_AUDIENCE}>Core MCP — read-only</option>
+                      <option value={CORE_RESTART}>Core MCP — read + Core restart</option>
                       <option value={CORE_CONTROL}>Core MCP — read + app control</option>
                       <option value={CORE_UPDATE}>Core MCP — read + app control + updates</option>
                       {mcpApps.map((app) => (

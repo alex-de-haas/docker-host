@@ -11,6 +11,18 @@ public sealed class StdHandleMutationCollection;
 [Collection("StdHandleMutation")]
 public sealed class WindowsProcessControlTests
 {
+    [Fact]
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    public void OpenRunnerJob_RejectsMatchingNameWithoutProcessMembership()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        using var current = System.Diagnostics.Process.GetCurrentProcess();
+        using var unrelated = WindowsProcessControl.CreateKillOnCloseJob(WindowsProcessControl.RunnerJobName(current));
+        // Naming alone is not ownership evidence. Do not assign the test process to the job.
+        Assert.Throws<IOException>(() => WindowsProcessControl.TryOpenRunnerJob(current));
+        Assert.False(current.HasExited);
+    }
+
     // Regression: a localCommand child that outlives Core kept core.log open (Core's redirected stdout was
     // inherited because .NET spawns redirected-stdio children with bInheritHandles=TRUE), so the next Core
     // start's `> core.log` redirect failed and core.exe never launched. Clearing the inherit flag on the

@@ -87,8 +87,8 @@ jobs:
           # `telemetry-backend:build` scripts the .NET jobs invoke, so it is not Node-only.
           #
           # The four Node apps also depend on the `@hosty-sdk/app` workspace package, so they list
-          # `packages/app-sdk/**` too. The .NET projects reference nothing outside their own tree
-          # (verified: each test csproj references only its sibling src csproj), so they stay narrow.
+          # `packages/app-sdk/**` too. Core and CLI also compile the shared launch contracts; other
+          # .NET components keep their own source paths.
           filters: |
             node_shared: &node_shared
               - 'package.json'
@@ -137,12 +137,14 @@ jobs:
             core:
               - *dotnet_shared
               - 'apps/core/**'
+              - 'shared/**'
               # The AOT gate is part of this job, so a change to the gate itself must run it.
               - 'scripts/check-core-aot.mjs'
 
             cli:
               - *dotnet_shared
               - 'apps/cli/**'
+              - 'shared/**'
               - 'scripts/install.sh'
               - 'scripts/install.ps1'
 
@@ -371,7 +373,7 @@ jobs:
         run: >-
           dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj
           --filter
-          "FullyQualifiedName~WindowsProcessControlTests|FullyQualifiedName~StopAsync_OnWindowsKillsJobDescendantAfterRootExited"
+          "FullyQualifiedName~WindowsProcessControlTests|FullyQualifiedName~StopAsync_OnWindowsKillsAdoptedJobDescendantAfterShellExited|FullyQualifiedName~CoreDevelopmentTests|FullyQualifiedName~ExplicitStop"
 
   cli:
     name: CLI

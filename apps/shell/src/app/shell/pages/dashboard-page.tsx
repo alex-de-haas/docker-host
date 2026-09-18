@@ -1,10 +1,10 @@
 "use client";
 
+import { CoreGitCell, CoreModeControl, CoreSourceDialog, useCoreDevelopment } from "../core-development";
 import { SourceVersionCell } from "../source/source-changes";
 import { AppSessionMenuItem } from "../assistant/app-session-action";
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import Link from "next/link";
 import { isRoutineUpdate, updateFeedback, updateCheckDescription, UPDATE_SUCCESS_DURATION } from "../update-feedback";
 import {
   Activity,
@@ -70,7 +70,6 @@ import {
 } from "../app-versions";
 import { isAppBusy, isAppUp, matchesAppStateFilter, matchesAppSearch, type AppStateFilter } from "../runtime-states";
 import { AppIcon } from "../app-icon";
-import { getShellViewHref } from "../shell-routes";
 import { copyTextToClipboard } from "../clipboard";
 import { isAuthRequiredRedirectError, readCoreError, redirectToCoreLoginIfAuthRequired } from "../core-api";
 import { ingressProviderLabel } from "../ingress";
@@ -450,7 +449,10 @@ function CoreSection({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [logsOpen, setLogsOpen] = useState(false);
-  const showUpdate = canManageApps && (coreUpdate?.updateAvailable === true || coreUpdating);
+  const [sourceOpen, setSourceOpen] = useState(false);
+  const development = useCoreDevelopment(coreOrigin, canManageApps);
+  const dev = (development.state?.launch.mode ?? status?.launch?.mode) === "dev";
+  const showUpdate = !dev && canManageApps && (coreUpdate?.updateAvailable === true || coreUpdating);
 
   // Two URLs in the shape an app endpoint uses — the address it listens on, and the origin it is
   // reached at — because three flat "…URL" facts side by side said nothing about which was which.
@@ -494,14 +496,14 @@ function CoreSection({
                     <Badge variant="outline">Platform</Badge>
                   </div>
                   <div className="truncate text-xs text-muted-foreground">{status?.component ?? "hosty-core"}</div>
+                  {development.state?.restartRequired && <div className="flex items-center gap-2 text-xs text-amber-700 dark:text-amber-400"><span>Restart required</span><Button variant="link" size="sm" className="h-auto p-0 text-xs text-inherit" disabled={development.busy || coreUpdating} onClick={() => void development.restart()}>Restart</Button></div>}
                 </div>
               </div>
             </TableCell>
-            <TableCell><span className="sr-only">Not applicable</span></TableCell>
+            <TableCell><CoreModeControl state={development.state} disabled={!canManageApps || development.busy || coreUpdating} onChange={mode => void development.restart(mode)} /></TableCell>
             <TableCell>
               <div className="flex items-center gap-1.5">
-                <Package aria-hidden="true" className="size-3.5 shrink-0" />
-                <CoreVersionBlock status={status} coreUpdate={coreUpdate} />
+                {dev ? <CoreGitCell state={development.state} /> : <><Package aria-hidden="true" className="size-3.5 shrink-0" /><CoreVersionBlock status={status} coreUpdate={coreUpdate} /></>}
                 {showUpdate && (
                   <Button
                     type="button"
@@ -510,7 +512,7 @@ function CoreSection({
                     className="shrink-0 text-sky-600 hover:bg-sky-500/10 hover:text-sky-600 dark:text-sky-400 dark:hover:text-sky-400"
                     title={coreUpdating ? "Updating Core…" : "Update Core"}
                     aria-label={coreUpdating ? "Updating Core…" : "Update Core"}
-                    disabled={coreUpdating}
+                    disabled={coreUpdating || development.busy}
                     onClick={onUpdateCore}
                   >
                     {coreUpdating ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ArrowUpCircle className="h-4 w-4" />}
@@ -520,24 +522,22 @@ function CoreSection({
             </TableCell>
             <TableCell><div className="space-y-1">
               <StatusBadge value={status ? status.status : "offline"} />
-              {(coreUpdating || coreUpdate?.clientPhase) && <div role="status" className="flex items-center gap-1 text-xs text-muted-foreground">
+              {development.phase && <div role="status" className="text-xs text-muted-foreground">{development.phase}</div>}
+              {!dev && (coreUpdating || coreUpdate?.clientPhase) && <div role="status" className="flex items-center gap-1 text-xs text-muted-foreground">
                 {coreUpdating && <LoaderCircle className="size-3 animate-spin" />}
                 {coreUpdate?.clientPhase === "completed" ? "Updated" : coreUpdate?.clientPhase === "reconnecting" ? "Reconnecting" : coreUpdate?.clientPhase === "verifying" ? "Verifying update" : coreUpdate?.clientPhase === "unconfirmed" ? "Update not confirmed" : "Installing update"}
               </div>}
-              {coreUpdate?.error && <span title={updateCheckDescription(coreUpdate)} className="text-xs text-amber-600">Check failed</span>}
+              {!dev && coreUpdate?.error && <span title={updateCheckDescription(coreUpdate)} className="text-xs text-amber-600">Check failed</span>}
             </div></TableCell>
             <TableCell>
               <div className="flex justify-end gap-1">
                 {canManageApps && (
                   <>
+                    <IconButton title="Restart Core" disabled={development.busy || coreUpdating || !development.state?.manageable} onClick={() => void development.restart()}><RotateCcw className="h-4 w-4" /></IconButton>
                     <IconButton title="Core console logs" onClick={() => setLogsOpen(true)}>
                       <Terminal className="h-4 w-4" />
                     </IconButton>
-                    <Button variant="ghost" size="icon-sm" asChild>
-                      <Link href={getShellViewHref("settings")} title="Host settings" aria-label="Host settings">
-                        <Settings className="h-4 w-4" />
-                      </Link>
-                    </Button>
+                    <IconButton title="Core source settings" onClick={() => setSourceOpen(true)}><Settings className="h-4 w-4" /></IconButton>
                   </>
                 )}
               </div>
@@ -579,6 +579,7 @@ function CoreSection({
         </div>
       )}
 
+      <CoreSourceDialog open={sourceOpen} onOpenChange={setSourceOpen} state={development.state} disabled={development.busy || coreUpdating} onSave={development.save} />
       <CoreLogsDialog open={logsOpen} coreOrigin={coreOrigin} onOpenChange={setLogsOpen} />
     </div>
   );

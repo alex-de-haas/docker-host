@@ -1,3 +1,4 @@
+using Haas.Hosty.Launch;
 namespace Haas.Hosty.Cli.Commands;
 
 using System.Text.Json;
@@ -38,6 +39,8 @@ internal sealed partial class UpdateCommand(CommandContext context)
         context.Console.MarkupLine($"[grey]Updating CLI and Core from release tag[/] [white]{Markup.Escape(releaseTag)}[/][grey].[/]");
         WarnOnDowngrade(selectedChannel);
 
+        using var launchLease = CoreLaunchFiles.Lock(context.Environment.RootDirectory);
+        CoreLaunchFiles.AssertNoPendingOperations(context.Environment.RootDirectory);
         try
         {
             await new SelfUpdateService(context).UpdateAsync(releaseTag);
@@ -51,6 +54,14 @@ internal sealed partial class UpdateCommand(CommandContext context)
 
         context.Console.MarkupLine("[green]Bootstrap CLI update step completed.[/]");
 
+        var devRunning = false;
+        using (var liveCore = await CoreControlClient.TryCreateAsync(context))
+        {
+            if (liveCore is not null)
+                devRunning = (await liveCore.GetAsync<CoreStatusDocument>("core/status"))?.Launch?.Mode == "dev";
+        }
+        if (devRunning) context.Console.WriteLine("Dev Core remains running; updating installed release artifacts only.");
+
         // Light-stop Core before replacing its executable. On Windows the running exe is file-locked and
         // cannot be overwritten otherwise; on every platform the new binary only takes effect after a
         // restart. --keep-apps means this stop leaves the app containers running (Core does not run its
@@ -61,7 +72,7 @@ internal sealed partial class UpdateCommand(CommandContext context)
         // StoppedRunning, skip the restart — leaving the old Core serving with a newer binary on disk
         // and the update-available badge stuck on. The CLI step above already completed; rerunning
         // `hosty update` finishes the Core half.
-        var stopOutcome = await new CoreCommand(context).StopForUpdateAsync();
+        var stopOutcome = devRunning ? CoreCommand.CoreUpdateStopOutcome.NotRunning : await new CoreCommand(context).StopForUpdateAsync();
         if (stopOutcome == CoreCommand.CoreUpdateStopOutcome.Failed)
         {
             context.Error.MarkupLine("[red]Hosty Core did not stop cleanly; the Core update was aborted before replacing the executable.[/]");
@@ -91,7 +102,7 @@ internal sealed partial class UpdateCommand(CommandContext context)
                 context.Error.MarkupLine("[yellow]Hosty Core did not report ready after the update; check [white]hosty core status[/] and [white]hosty core logs[/].[/]");
             }
         }
-        else
+        else if (!devRunning)
         {
             context.Console.MarkupLine("[grey]Core was not running; start it with [white]hosty core start[/] to run the updated binary.[/]");
         }
@@ -285,7 +296,7 @@ internal sealed partial class UpdateCommand(CommandContext context)
         return args[index];
     }
 
-    internal sealed record CoreStatusDocument(string? Status);
+    internal sealed record CoreStatusDocument(string? Status, CoreLaunchIdentity? Launch = null);
 
     internal sealed record AppsResponse(IReadOnlyList<AppSummary> Apps);
 

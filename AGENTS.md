@@ -124,6 +124,22 @@ index. `node scripts/docs-index.mjs --fix` rewrites the block between the
 edit the generated block by hand; regenerate it in any change that adds,
 renames, deletes, or changes the status of a doc.
 
+## Core Development Feedback Loop
+
+- Identify the intended data root and factual launch mode/project before changing its lifecycle. See [Core development mode](docs/features/core-dev-target/feature.md).
+- Finish a coherent batch of edits, successfully build the exact target Core project after the last edit, and run affected tests before restarting. Use a separate artifacts/output directory if an IDE-launched Core still executes the normal build output. A later code edit invalidates the build check.
+- CLI `core start/restart --project <absolute-csproj>` prepares an isolated Debug generation before stopping Core, then launches the prepared apphost without rebuilding. A compilation error preserves the active Core and returns .NET diagnostics and a log path. There is no watch/hot reload.
+- Always repeat `--project` on CLI source restarts. Without it, Start/Restart select the installed release. Shell and authorized direct Core MCP Restart preserve the factual live target and apply pending Source changes explicitly:
+  ```bash
+  hosty --data-root <instance-root> core restart --keep-apps --project <absolute-core-csproj-path>
+  hosty --data-root <instance-root> core status
+  ```
+- Verify a new process-start identity, expected mode/project, readiness and changed behavior. A successful build, accepted restart operation or changed worktree does not prove that the replacement started. Diagnose `core logs` and retained operation/build logs; do not silently switch to release.
+- `restart_core` requires a direct `hosty:core` grant with `mcp:read` and `mcp:core-restart`, or an administrator session. Call `get_core_development`, supply its instance/source revision and a fresh 32-hex UUID, then reconnect and query `get_core_operation` with that same ID. Never replace an uncertain request with a fresh ID. Gateway's delegated/facade connection does not gain mutation authority; use the authorized local CLI or an explicitly granted direct connection.
+- `--keep-apps` preserves and adopts verified live local services as well as eligible Docker containers. Independent runners retain their process tree and console logs. Legacy services still using Core-owned pipes need an explicit app restart to gain the new runner; do not force that migration during active work.
+- Managed generation cleanup is automatic. Do not delete active/prepared/previous output or runner-referenced generations manually; age and health are not ownership evidence. Leave source, operator output, data and logs untouched.
+- Runtime app edits use the app's own build/lifecycle workflow. Restart Core to apply Core changes, not merely because Core manages the app.
+
 ## Hosty Runtime App Development
 
 - Do not validate Hosty identity, Shell embedding, app assignments, or scoped directory behavior by running an app only in standalone mode.

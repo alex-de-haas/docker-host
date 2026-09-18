@@ -37,6 +37,8 @@ internal static class WindowsProcessControl
     private const int STD_ERROR_HANDLE = -12;
     private const int HANDLE_FLAG_INHERIT = 0x1;
     private const uint JOB_OBJECT_ASSIGN_PROCESS = 0x0001;
+    private const uint JOB_OBJECT_QUERY = 0x0004;
+    private const uint JOB_OBJECT_TERMINATE = 0x0008;
     private const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
     private static readonly IntPtr InvalidHandleValue = new(-1);
 
@@ -71,6 +73,10 @@ internal static class WindowsProcessControl
 
     [DllImport("kernel32", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsProcessInJob(IntPtr processHandle, SafeJobHandle jobHandle, [MarshalAs(UnmanagedType.Bool)] out bool result);
+
+    [DllImport("kernel32", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool TerminateJobObject(SafeJobHandle hJob, uint uExitCode);
 
     [DllImport("kernel32", SetLastError = true)]
@@ -81,6 +87,15 @@ internal static class WindowsProcessControl
         out JobObjectBasicAccountingInformation lpJobObjectInformation,
         uint cbJobObjectInformationLength,
         IntPtr lpReturnLength);
+
+    [DllImport("kernel32", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool QueryInformationJobObject(
+        SafeJobHandle hJob,
+        JobObjectInformationClass jobObjectInformationClass,
+        IntPtr information,
+        uint informationLength,
+        IntPtr returnLength);
 
     [DllImport("kernel32")]
     private static extern IntPtr GetCurrentProcess();
@@ -122,13 +137,12 @@ internal static class WindowsProcessControl
         return GetHandleInformation(handle, out var flags) && (flags & HANDLE_FLAG_INHERIT) != 0;
     }
 
-    // Creates the Core-owned half of the job before the shim starts. KILL_ON_JOB_CLOSE is the durable
-    // boundary: a normal stop terminates the job explicitly, while a Core crash closes this last handle
-    // in the kernel and kills the same tree without needing a live registry or a process enumeration.
+    // The independent runner owns this handle for long-lived services; Core owns it only for setup
+    // commands and legacy direct-spawn fixtures. Closing the last handle kills the member tree.
     [SupportedOSPlatform("windows")]
-    public static WindowsKillOnCloseJob CreateKillOnCloseJob()
+    public static WindowsKillOnCloseJob CreateKillOnCloseJob(string? name = null)
     {
-        var name = $"Local\\Hosty.LocalCommand.{Guid.NewGuid():N}";
+        name ??= $"Local\\Hosty.LocalCommand.{Guid.NewGuid():N}";
         var handle = CreateJobObject(IntPtr.Zero, name);
         if (handle.IsInvalid)
         {
@@ -158,6 +172,37 @@ internal static class WindowsProcessControl
         return new WindowsKillOnCloseJob(name, handle);
     }
 
+    // Derive the name from the verified OS process identity so a replacement Core can open it
+    // only for explicit Stop. Core keeps no job handle during normal operation or handover.
+    internal static string RunnerJobName(System.Diagnostics.Process runner)
+        => $"Local\\Hosty.LocalCommand.Runner.{runner.Id}.{runner.StartTime.ToUniversalTime().Ticks}";
+
+    [SupportedOSPlatform("windows")]
+    internal static WindowsKillOnCloseJob? TryOpenRunnerJob(System.Diagnostics.Process runner)
+    {
+        var name = RunnerJobName(runner);
+        var handle = OpenJobObject(JOB_OBJECT_QUERY | JOB_OBJECT_TERMINATE, false, name);
+        if (handle.IsInvalid)
+        {
+            var error = Marshal.GetLastPInvokeError();
+            handle.Dispose();
+            if (error == 2) return null; // A runner from before named-job support, or already exited.
+            throw new IOException("Could not open the localCommand runner job.", new Win32Exception(error));
+        }
+
+        try
+        {
+            if (!IsProcessInJob(runner.Handle, handle, out var member) || !member)
+                throw new IOException("LocalCommand runner job membership could not be verified.");
+            return new WindowsKillOnCloseJob(name, handle);
+        }
+        catch
+        {
+            handle.Dispose();
+            throw;
+        }
+    }
+
     // Called inside the re-execed shim, before it starts cmd.exe. Assigning the shim first is what
     // closes the race in Process.Kill(entireProcessTree): every later npm/tsx/node descendant inherits
     // membership from birth, so a fast-exiting parent cannot escape the stop-time kill.
@@ -180,9 +225,23 @@ internal static class WindowsProcessControl
     {
         public string Name { get; } = name;
 
+        // The runner itself is a job member. Keep its owning handle alive when a launcher exits
+        // before its service descendants; an explicit Stop kills the runner and closes the job.
+        public async Task WaitForDescendantsAsync()
+        {
+            while (true)
+            {
+                if (!TryGetActiveProcessCount(out var activeProcesses))
+                    throw new Win32Exception(Marshal.GetLastPInvokeError(), "Failed to inspect the localCommand job.");
+                if (activeProcesses <= 1) return;
+                await Task.Delay(JobPollInterval);
+            }
+        }
+
         // Termination itself is asynchronous with respect to process teardown. Polling ActiveProcesses
         // keeps StopAsync from returning while a dying Node process still holds the app's port. The
-        // bounded wait is best-effort; Dispose retains KILL_ON_JOB_CLOSE as the final fallback.
+        // A failed/expired wait must fail Stop instead of reporting success while ports remain held.
+        // Dispose retains KILL_ON_JOB_CLOSE as the final fallback.
         public async Task TerminateAndWaitAsync(CancellationToken cancellationToken = default)
         {
             if (handle.IsClosed || handle.IsInvalid)
@@ -190,11 +249,76 @@ internal static class WindowsProcessControl
                 return;
             }
 
-            _ = TerminateJobObject(handle, 137);
-            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-            while (stopwatch.Elapsed < JobTerminationTimeout && TryGetActiveProcessCount(out var activeProcesses) && activeProcesses > 0)
+            // Job accounting can drop a terminating process before its kernel object is signaled.
+            // Retain handles before termination so detached descendants' I/O teardown is awaited too.
+            var members = CaptureMembers();
+            try
             {
-                await Task.Delay(JobPollInterval, cancellationToken);
+                if (!TerminateJobObject(handle, 137))
+                    throw new IOException("Failed to terminate the localCommand job.", new Win32Exception(Marshal.GetLastPInvokeError()));
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                timeout.CancelAfter(JobTerminationTimeout);
+                try
+                {
+                    await Task.WhenAll(members.Select(process => process.WaitForExitAsync(timeout.Token)));
+                    while (true)
+                    {
+                        if (!TryGetActiveProcessCount(out var activeProcesses))
+                            throw new IOException("Failed to inspect the stopping localCommand job.", new Win32Exception(Marshal.GetLastPInvokeError()));
+                        if (activeProcesses == 0) return;
+                        await Task.Delay(JobPollInterval, timeout.Token);
+                    }
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                { throw new IOException("Timed out waiting for the localCommand job to stop."); }
+            }
+            finally { foreach (var process in members) process.Dispose(); }
+        }
+
+        private List<System.Diagnostics.Process> CaptureMembers()
+        {
+            var members = new List<System.Diagnostics.Process>();
+            try
+            {
+                for (var capacity = 32; capacity <= 65536; capacity *= 2)
+                {
+                    var size = checked(8 + capacity * IntPtr.Size);
+                    var buffer = Marshal.AllocHGlobal(size);
+                    try
+                    {
+                        if (!QueryInformationJobObject(handle, JobObjectInformationClass.BasicProcessIdList, buffer, (uint)size, IntPtr.Zero))
+                        {
+                            var error = Marshal.GetLastPInvokeError();
+                            if (error == 234) continue; // ERROR_MORE_DATA: membership grew since allocation.
+                            throw new IOException("Failed to list localCommand job processes.", new Win32Exception(error));
+                        }
+                        var count = Marshal.ReadInt32(buffer, 4);
+                        if (count < 0 || count > capacity) throw new IOException("Invalid localCommand job process list.");
+                        for (var index = 0; index < count; index++)
+                        {
+                            System.Diagnostics.Process? process = null;
+                            try
+                            {
+                                var pid = Marshal.ReadIntPtr(buffer, 8 + index * IntPtr.Size).ToInt32();
+                                process = System.Diagnostics.Process.GetProcessById(pid);
+                                // Acquire and retain the handle now, before PID reuse or termination.
+                                if (!IsProcessInJob(process.Handle, handle, out var member))
+                                    throw new IOException("Failed to verify localCommand job member.", new Win32Exception(Marshal.GetLastPInvokeError()));
+                                if (member) { members.Add(process); process = null; }
+                            }
+                            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException) { }
+                            finally { process?.Dispose(); }
+                        }
+                        return members;
+                    }
+                    finally { Marshal.FreeHGlobal(buffer); }
+                }
+                throw new IOException("LocalCommand job process list exceeds the supported size.");
+            }
+            catch
+            {
+                foreach (var process in members) process.Dispose();
+                throw;
             }
         }
 
@@ -227,6 +351,7 @@ internal static class WindowsProcessControl
     private enum JobObjectInformationClass
     {
         BasicAccountingInformation = 1,
+        BasicProcessIdList = 3,
         ExtendedLimitInformation = 9,
     }
 

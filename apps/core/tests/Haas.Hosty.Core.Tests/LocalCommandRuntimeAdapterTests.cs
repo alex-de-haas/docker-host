@@ -1,3 +1,5 @@
+using System.Net;
+using System.Net.Sockets;
 using Haas.Hosty.Core;
 
 namespace Haas.Hosty.Core.Tests;
@@ -297,7 +299,52 @@ public sealed class LocalCommandRuntimeAdapterTests
     }
 
     [Fact]
-    public async Task StopAsync_OnWindowsKillsJobDescendantAfterRootExited()
+    public async Task ExplicitStopClearsStaleAdoptionConflictAndAllowsStart()
+    {
+        var workRoot = CreateTempDirectory();
+        var (adapter, registry, context) = CreateSetupScenario(workRoot, null,
+            OperatingSystem.IsWindows() ? "ping -n 30 127.0.0.1 >nul" : "sleep 30");
+        using var unrelated = System.Diagnostics.Process.GetCurrentProcess();
+        try
+        {
+            await LocalCommandProcessReclaim.WriteAsync(workRoot, new(unrelated.Id,
+                unrelated.StartTime.ToUniversalTime().AddMinutes(-5), context.App.Id, "app", false));
+            await Assert.ThrowsAsync<IOException>(() => registry.TryAdoptAsync(workRoot, context.App.Id, "app", default));
+            registry.Block(context.App.Id, "Unverified PID");
+            await Assert.ThrowsAsync<AppLifecycleException>(() => adapter.StartAsync(context));
+            await adapter.StopAsync(context);
+            Assert.Null(registry.Conflict(context.App.Id));
+            Assert.False(unrelated.HasExited);
+            Assert.Equal("running", (await adapter.StartAsync(context)).RuntimeState);
+        }
+        finally
+        {
+            await adapter.StopAsync(context);
+            TryDeleteDirectory(workRoot);
+        }
+    }
+
+    [Fact]
+    public async Task ExplicitStopKeepsConflictWhenOwnershipRecordCannotBeRemoved()
+    {
+        var workRoot = CreateTempDirectory();
+        try
+        {
+            var (adapter, registry, context) = CreateSetupScenario(workRoot, null, "unused");
+            // An unreadable ownership path cannot be cleared by the best-effort file reclaim.
+            Directory.CreateDirectory(LocalCommandProcessReclaim.PidFilePath(workRoot, "app"));
+            registry.Block(context.App.Id, "Unverified PID");
+            await adapter.StopAsync(context);
+            Assert.Equal("Unverified PID", registry.Conflict(context.App.Id));
+            await Assert.ThrowsAsync<AppLifecycleException>(() => adapter.StartAsync(context));
+        }
+        finally { TryDeleteDirectory(workRoot); }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task StopAsync_OnWindowsKillsAdoptedJobDescendantAfterShellExited(bool adopt)
     {
         if (!OperatingSystem.IsWindows())
         {
@@ -311,13 +358,15 @@ public sealed class LocalCommandRuntimeAdapterTests
         try
         {
             var childPidPath = Path.Combine(workRoot, "child.pid");
+            var portPath = Path.Combine(workRoot, "child.port");
+            var escapedPortPath = portPath.Replace("'", "''", StringComparison.Ordinal);
             var escapedPidPath = childPidPath.Replace("'", "''", StringComparison.Ordinal);
             var scriptPath = Path.Combine(workRoot, "spawn-child.cmd");
             await File.WriteAllTextAsync(
                 scriptPath,
                 $"""
                 @echo off
-                start "" /b powershell.exe -NoProfile -NonInteractive -Command "Set-Content -LiteralPath '{escapedPidPath}' -Value $PID; Start-Sleep -Seconds 30" >nul 2>&1
+                start "" /b powershell.exe -NoProfile -NonInteractive -Command "$listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, [int]$env:HOSTY_PORT_HTTP); $listener.ExclusiveAddressUse = $true; $listener.Start(); Set-Content -LiteralPath '{escapedPortPath}' -Value $listener.LocalEndpoint.Port; Set-Content -LiteralPath '{escapedPidPath}' -Value $PID; Start-Sleep -Seconds 120" >nul 2>&1
                 powershell.exe -NoProfile -NonInteractive -Command "Start-Sleep -Seconds 2"
                 """);
 
@@ -333,7 +382,8 @@ public sealed class LocalCommandRuntimeAdapterTests
                 // command line, and cmd.exe reads those literally, so the launch fails with ERRORLEVEL 1
                 // before the script ever runs.
                 command: Path.GetFileName(scriptPath),
-                shim: new LocalCommandShimOptions(coreExecutable));
+                shim: new LocalCommandShimOptions(coreExecutable),
+                ports: [new RuntimePortManifest { Key = "http", Protocol = "http" }]);
 
             AppRuntimeStartResult started;
             try
@@ -355,7 +405,7 @@ public sealed class LocalCommandRuntimeAdapterTests
             {
                 // File.Exists turns true the moment Set-Content creates the file, before the pid is
                 // written and while PowerShell may still hold it open, so poll for a value that parses.
-                while (!TryReadChildPid(childPidPath, out childPid))
+                while (!TryReadPositiveInteger(childPidPath, out childPid))
                 {
                     await Task.Delay(50, timeout.Token);
                 }
@@ -365,20 +415,58 @@ public sealed class LocalCommandRuntimeAdapterTests
 
             var running = registry.Get("com.example.app", "app");
             Assert.NotNull(running);
-            // Poll HasExited instead of awaiting WaitForExitAsync: that also waits for the redirected
-            // output to reach EOF, and the descendant spawned above holds Core's inherited pipe handles
-            // until the job kills it. What this step is about is the recorded root being gone.
+            // The command shell has exited, but the independent runner must retain its job and
+            // detached service. A fresh Core registry can adopt it and explicitly stop the whole job.
             using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20)))
             {
-                while (!running!.Process.HasExited)
-                {
+                while (!ReadServiceLog(workRoot).Contains("[hosty] command exited with code 0", StringComparison.Ordinal))
                     await Task.Delay(50, timeout.Token);
-                }
             }
-
+            Assert.False(running!.Process.HasExited);
+            Assert.True(running.IndependentRunner);
+            using (var job = WindowsProcessControl.TryOpenRunnerJob(running.Process)) Assert.NotNull(job);
             Assert.False(child.HasExited);
 
-            await adapter.StopAsync(context);
+            Assert.True(TryReadPositiveInteger(portPath, out var port));
+            Assert.Equal(port, running.Ports["http"]);
+            using (var occupied = new TcpListener(IPAddress.Loopback, port) { ExclusiveAddressUse = true })
+                Assert.Throws<SocketException>(() => occupied.Start());
+
+            var stoppingAdapter = adapter;
+            if (adopt)
+            {
+                // A real predecessor Core has exited: its Process object and redirected pipes are
+                // closed. Keeping them alive here is not a process handover and can retain handles.
+                Assert.Null(running.WindowsJob);
+                Assert.Same(running, registry.Remove(context.App.Id, "app"));
+                running.Process.EnableRaisingEvents = false;
+                running.Process.Dispose();
+                Assert.False(child.HasExited);
+                var (replacement, replacementRegistry, _) = CreateSetupScenario(workRoot, null, Path.GetFileName(scriptPath));
+                Assert.True(await replacementRegistry.TryAdoptAsync(workRoot, context.App.Id, "app", default, instanceId: ""));
+                Assert.True(replacementRegistry.Get(context.App.Id, "app")!.IndependentRunner);
+                Assert.Equal(port, replacementRegistry.Get(context.App.Id, "app")!.Ports["http"]);
+                stoppingAdapter = replacement;
+            }
+            await stoppingAdapter.StopAsync(context);
+            Assert.True(child.HasExited, "Stop returned while the detached service process was still alive.");
+
+            // The original regression was a port left occupied when Stop returned. Do not wait for
+            // the child or retry the bind: either would hide a race before an immediate app restart.
+            try
+            {
+                using var reused = new TcpListener(IPAddress.Loopback, port) { ExclusiveAddressUse = true };
+                reused.Start();
+            }
+            catch (SocketException ex)
+            {
+                using var netstat = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("netstat.exe", "-ano -p tcp")
+                { UseShellExecute = false, RedirectStandardOutput = true })!;
+                var table = await netstat.StandardOutput.ReadToEndAsync();
+                await netstat.WaitForExitAsync();
+                var rows = string.Join(Environment.NewLine, table.Split('\n').Where(line => line.Contains($":{port}", StringComparison.Ordinal)));
+                Assert.Fail($"Port {port} could not be rebound after Stop: {ex.SocketErrorCode}; child {childPid} exited={child.HasExited}.{Environment.NewLine}{rows}");
+            }
 
             using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
             {
@@ -512,14 +600,14 @@ public sealed class LocalCommandRuntimeAdapterTests
         }
     }
 
-    private static bool TryReadChildPid(string path, out int pid)
+    private static bool TryReadPositiveInteger(string path, out int value)
     {
-        pid = 0;
+        value = 0;
         try
         {
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             using var reader = new StreamReader(stream);
-            return int.TryParse(reader.ReadToEnd().Trim(), System.Globalization.CultureInfo.InvariantCulture, out pid);
+            return int.TryParse(reader.ReadToEnd().Trim(), System.Globalization.CultureInfo.InvariantCulture, out value) && value > 0;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -532,7 +620,8 @@ public sealed class LocalCommandRuntimeAdapterTests
         string? setup,
         string command,
         bool cacheEnabled = false,
-        LocalCommandShimOptions? shim = null)
+        LocalCommandShimOptions? shim = null,
+        IReadOnlyList<RuntimePortManifest>? ports = null)
     {
         var registry = new LocalCommandProcessRegistry();
         var adapter = new LocalCommandRuntimeAdapter(
@@ -544,7 +633,7 @@ public sealed class LocalCommandRuntimeAdapterTests
         var service = new RuntimeSelectedService(
             "app",
             [],
-            new RuntimeServiceProfileManifest { Type = "localCommand", Setup = setup, Command = command },
+            new RuntimeServiceProfileManifest { Type = "localCommand", Setup = setup, Command = command, Ports = ports ?? [] },
             null,
             "source");
         var manifest = new RuntimeAppManifest

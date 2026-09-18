@@ -505,6 +505,8 @@ export function ShellClient({
   // Keep the last successful availability through transient HTTP/network failures.
   const loadCoreUpdateStatus = useCallback(async (force = false, signal?: AbortSignal) => {
     try {
+      const live = await readCoreStatus(coreOrigin, signal);
+      if (!live || live.launch?.mode === "dev") { setCoreUpdate(null); return; }
       const url = `${coreOrigin}/api/core/update-status${force ? "?refresh=true" : ""}`;
       const response = await fetch(url, { credentials: "include", cache: "no-store", signal });
       if (!response.ok) throw new Error(`Core answered HTTP ${response.status}.`);
@@ -2222,7 +2224,7 @@ export function ShellClient({
       coreSettings,
       coreSettingsError,
       globalMounts,
-      coreUpdate: reconcileCoreUpdate(coreUpdate, state.status?.version),
+      coreUpdate: state.status?.launch?.mode === "dev" ? null : reconcileCoreUpdate(coreUpdate, state.status?.version),
       coreUpdating,
     }),
     [

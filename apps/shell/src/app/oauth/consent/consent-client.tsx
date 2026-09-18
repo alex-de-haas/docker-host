@@ -29,6 +29,7 @@ const SCOPE_TEXT: Record<string, string> = {
   "mcp:read": "Use read-only tools — look things up, never change anything",
   "mcp:lifecycle": "Start, stop and restart apps",
   "mcp:update": "Plan and apply app updates",
+  "mcp:core-restart": "Rebuild and restart Core",
 };
 
 export function OAuthConsentPage({ coreOrigin }: { coreOrigin: string }) {

@@ -18,6 +18,58 @@ namespace Haas.Hosty.Core.Tests.Http;
 public sealed class McpLifecycleHttpTests
 {
     [Fact]
+    public async Task DevelopmentRoutesRequireAdminAndBrowserMutationsRequireCsrf()
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        using var client = harness.CreateClient();
+        var ordinary = await SeedSessionAsync(harness, "host.user");
+        using var anonymous = await client.GetAsync("/api/core/development");
+        Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
+        using var denied = await SendAsync(client, HttpMethod.Get, "/api/core/development", ordinary);
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+        var admin = await SeedSessionAsync(harness, "host.admin");
+        using var allowed = await SendAsync(client, HttpMethod.Get, "/api/core/development", admin);
+        Assert.Equal(HttpStatusCode.OK, allowed.StatusCode);
+        using var request = new HttpRequestMessage(HttpMethod.Put, "/api/core/source") { Content = JsonContent.Create(new { overridePath = (string?)null, revision = "initial" }) };
+        request.Headers.Add("Cookie", $"{CoreSessionAuthorization.SessionCookieName}={admin}");
+        using var csrfDenied = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Forbidden, csrfDenied.StatusCode);
+    }
+
+    [Fact]
+    public async Task CoreOperationsDistinguishInvalidInputFromConflicts()
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        using var client = harness.CreateClient();
+        var admin = await SeedSessionAsync(harness, "host.admin");
+        using var invalidLookup = await SendAsync(client, HttpMethod.Get, "/api/core/operations/not-a-uuid", admin);
+        Assert.Equal(HttpStatusCode.BadRequest, invalidLookup.StatusCode);
+        using var invalidRestart = await SendAsync(client, HttpMethod.Post, "/api/core/restart", admin,
+            new { requestId = "not-a-uuid", instance = "stale", sourceRevision = "initial" });
+        Assert.Equal(HttpStatusCode.BadRequest, invalidRestart.StatusCode);
+        using var conflict = await SendAsync(client, HttpMethod.Post, "/api/core/restart", admin,
+            new { requestId = Guid.NewGuid().ToString("N"), instance = "stale", sourceRevision = "initial" });
+        Assert.Equal(HttpStatusCode.Conflict, conflict.StatusCode);
+    }
+
+    [Fact]
+    public async Task CoreRestartRequiresItsOwnScopeAndChecksTheLiveInstance()
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        var admin = await SeedSessionAsync(harness, "host.admin");
+        using var client = harness.CreateClient();
+        var lifecycle = await CreateCredentialAsync(client, admin, "apps only", ["mcp:read", "mcp:lifecycle"]);
+        var restart = await CreateCredentialAsync(client, admin, "Core restart", ["mcp:read", "mcp:core-restart"]);
+        var args = new { requestId = Guid.NewGuid().ToString("N"), instance = "stale", sourceRevision = "initial" };
+        var refused = await CallToolAsync(client, lifecycle, "restart_core", args);
+        Assert.Contains("mcp:core-restart", refused.GetProperty("error").GetString());
+        var permitted = await CallToolAsync(client, restart, "restart_core", args);
+        Assert.Contains("Core changed", permitted.GetProperty("error").GetString());
+        var session = await CallToolAsync(client, admin, "restart_core", args);
+        Assert.Contains("Core changed", session.GetProperty("error").GetString());
+    }
+
+    [Fact]
     public async Task TheScopeIsTheGate_AndTheRefusalNamesIt()
     {
         // The pair: a credential with mcp:lifecycle passes the gate; the same shape of credential

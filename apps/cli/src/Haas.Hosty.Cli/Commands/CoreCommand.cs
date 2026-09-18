@@ -1,3 +1,4 @@
+using Haas.Hosty.Launch;
 namespace Haas.Hosty.Cli.Commands;
 
 using Haas.Hosty.Cli.Configuration;
@@ -16,6 +17,10 @@ internal sealed partial class CoreCommand(CommandContext context)
     [JsonSerializable(typeof(CoreStatusDocument))]
     internal partial class CoreJsonContext : JsonSerializerContext;
 
+    private string? preparationError;
+    private string? activeOperationId;
+    private FileStream? launchLease;
+    private CoreStartTarget? launchedTarget;
     private static readonly TimeSpan StartTimeout = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan HealthProbeTimeout = TimeSpan.FromSeconds(2);
     // Short deadline for control-plane probes (status/stop) so an unresponsive Core fails fast instead
@@ -33,19 +38,62 @@ internal sealed partial class CoreCommand(CommandContext context)
             return 0;
         }
 
+        if (args[0] is "start" or "restart")
+        {
+            using var launchLock = CoreLaunchFiles.Lock(context.Environment.RootDirectory);
+            launchLease = launchLock;
+            var operationIndex = Array.IndexOf(args, "--operation-id");
+            string? operationId = null;
+            if (operationIndex >= 0)
+            {
+                if (operationIndex + 1 >= args.Length) throw new CommandUsageException("Missing operation id.", Usage);
+                operationId = args[operationIndex + 1];
+                activeOperationId = operationId;
+                _ = CoreLaunchFiles.OperationPath(context.Environment.RootDirectory, operationId);
+                args = args.Where((_, index) => index != operationIndex && index != operationIndex + 1).ToArray();
+            }
+            CoreLaunchFiles.AssertNoPendingOperations(context.Environment.RootDirectory, operationId);
+            var result = 1;
+            string? error = null;
+            if (operationId is not null)
+            {
+                var path = CoreLaunchFiles.OperationPath(context.Environment.RootDirectory, operationId);
+                var operation = CoreLaunchFiles.Read(path, CoreLaunchJson.Default.CoreLaunchOperation);
+                if (operation is not null) CoreLaunchFiles.Write(path, operation with { HelperPid = Environment.ProcessId, HelperStartedAt = Process.GetCurrentProcess().StartTime.ToUniversalTime(), Status = "building" }, CoreLaunchJson.Default.CoreLaunchOperation);
+            }
+            try { result = args[0] == "start" ? await StartAsync(args[1..]) : await RestartAsync(args[1..]); }
+            catch (Exception ex) when (ex is IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+                error = ex.Message;
+                context.Error.WriteLine(error);
+            }
+            if (operationId is not null)
+            {
+                var path = CoreLaunchFiles.OperationPath(context.Environment.RootDirectory, operationId);
+                var operation = CoreLaunchFiles.Read(path, CoreLaunchJson.Default.CoreLaunchOperation);
+                if (operation is not null) CoreLaunchFiles.Write(path, operation with
+                { Status = result == 0 ? "completed" : "failed", GenerationPath = launchedTarget?.GenerationPath, Error = result == 0 ? null : error ?? preparationError ?? "Core startup failed; inspect the operation log." }, CoreLaunchJson.Default.CoreLaunchOperation);
+            }
+            if (launchLease is not null) CoreBuildRetention.Cleanup(context.Environment.RootDirectory);
+            return result;
+        }
+
+        if (args[0] == "stop")
+        {
+            using var lease = CoreLaunchFiles.Lock(context.Environment.RootDirectory);
+            CoreLaunchFiles.AssertNoPendingOperations(context.Environment.RootDirectory);
+            return await StopAsync(args[1..]);
+        }
         return args[0] switch
         {
-            "start" => await StartAsync(args[1..]),
             "status" => await StatusAsync(args[1..]),
-            "stop" => await StopAsync(args[1..]),
-            "restart" => await RestartAsync(args[1..]),
             "logs" => await LogsAsync(args[1..]),
             "settings" => await new CoreSettingsCommand(context).ExecuteAsync(args[1..]),
             _ => throw new CommandUsageException($"Unknown core command '{args[0]}'.", Usage),
         };
     }
 
-    private async Task<int> StartAsync(string[] args)
+    private async Task<int> StartAsync(string[] args, CoreStartTarget? prepared = null)
     {
         var options = ParseStartOptions(args);
         Directory.CreateDirectory(context.Environment.RootDirectory);
@@ -73,7 +121,7 @@ internal sealed partial class CoreCommand(CommandContext context)
         CoreStartTarget target;
         try
         {
-            target = await ResolveStartTargetAsync(options);
+            target = prepared ?? await ResolveStartTargetAsync(options);
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or UnauthorizedAccessException or PlatformNotSupportedException or OperationCanceledException)
         {
@@ -81,10 +129,18 @@ internal sealed partial class CoreCommand(CommandContext context)
             return 1;
         }
 
+        launchedTarget = target;
         if (options.Foreground)
         {
             var process = StartForeground(target, options);
             context.Console.MarkupLine($"[green]Hosty Core starting.[/] PID {process.Id}{DescribeUrl(options)}");
+            var ready = await WaitForStatusAsync(target);
+            if (ready?.Launch is { } foregroundLaunch && target.GenerationPath is { } foregroundGeneration)
+                CoreBuildRetention.Mark(foregroundGeneration, "ready", target.ProjectPath, foregroundLaunch.ProcessId, foregroundLaunch.StartedAt);
+            if (ready is null) context.Error.WriteLine("Core startup was not confirmed; inspect foreground diagnostics.");
+            CoreBuildRetention.Cleanup(context.Environment.RootDirectory);
+            launchLease?.Dispose();
+            launchLease = null;
             await process.WaitForExitAsync();
             return process.ExitCode;
         }
@@ -93,7 +149,7 @@ internal sealed partial class CoreCommand(CommandContext context)
         context.Console.MarkupLine($"[green]Hosty Core starting.[/]{DescribeUrl(options)}");
         context.Console.MarkupLine($"[grey]Log:[/] {Markup.Escape(logPath)}");
 
-        var status = await WaitForStatusAsync();
+        var status = await WaitForStatusAsync(target);
         if (status is null)
         {
             context.Error.MarkupLine("[yellow]Hosty Core process started, but local control discovery was not ready before the timeout.[/]");
@@ -101,6 +157,8 @@ internal sealed partial class CoreCommand(CommandContext context)
             return 1;
         }
 
+        if (target.GenerationPath is { } generation && status.Launch is { } launch)
+            CoreBuildRetention.Mark(generation, "ready", target.ProjectPath, launch.ProcessId, launch.StartedAt);
         RenderStatus(status);
         return 0;
     }
@@ -144,6 +202,11 @@ internal sealed partial class CoreCommand(CommandContext context)
             refusedRequest = $"port {requested}";
         }
 
+        var liveStatus = await ReadCoreStatusAsync(suppressErrors: true);
+        if (liveStatus?.Launch is { } liveLaunch &&
+            (liveLaunch.Mode != (options.ProjectPath is null ? "release" : "dev") ||
+             options.ProjectPath is not null && !string.Equals(Path.GetFullPath(options.ProjectPath), liveLaunch.ProjectPath, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)))
+            refusedRequest = "a different launch mode or project; use core restart with explicit --project for dev";
         if (refusedRequest is not null)
         {
             context.Error.MarkupLine(
@@ -182,7 +245,7 @@ internal sealed partial class CoreCommand(CommandContext context)
                 throw new CommandUsageException($"Hosty Core project was not found: {projectPath}", Usage);
             }
 
-            return CoreStartTarget.FromProject(projectPath);
+            return await new CoreBuildService(context).PrepareAsync(projectPath);
         }
 
         var installation = await new CoreInstallationService(context).EnsureInstalledAsync();
@@ -254,7 +317,7 @@ internal sealed partial class CoreCommand(CommandContext context)
             return logPath;
         }
 
-        var environment = BuildCoreEnvironment(options)
+        var environment = BuildCoreEnvironment(options, target)
             .Select(pair => $"{pair.Key}={ShellQuote(pair.Value)}");
         var command = string.Join(" ", [
             .. environment,
@@ -304,7 +367,7 @@ internal sealed partial class CoreCommand(CommandContext context)
             WorkingDirectory = target.WorkingDirectory,
         };
 
-        foreach (var pair in BuildCoreEnvironment(options))
+        foreach (var pair in BuildCoreEnvironment(options, target))
         {
             startInfo.Environment[pair.Key] = pair.Value;
         }
@@ -325,7 +388,7 @@ internal sealed partial class CoreCommand(CommandContext context)
             startInfo.ArgumentList.Add(argument);
         }
 
-        foreach (var pair in BuildCoreEnvironment(options))
+        foreach (var pair in BuildCoreEnvironment(options, target))
         {
             startInfo.Environment[pair.Key] = pair.Value;
         }
@@ -333,7 +396,7 @@ internal sealed partial class CoreCommand(CommandContext context)
         return startInfo;
     }
 
-    internal IReadOnlyDictionary<string, string> BuildCoreEnvironment(StartOptions options)
+    internal IReadOnlyDictionary<string, string> BuildCoreEnvironment(StartOptions options, CoreStartTarget? target = null)
     {
         var environment = new Dictionary<string, string>(StringComparer.Ordinal)
         {
@@ -341,6 +404,9 @@ internal sealed partial class CoreCommand(CommandContext context)
             // Core resolves the same default on its own, but pinning it here guarantees the spawned
             // Core lands on exactly the root this CLI will discover and control.
             ["HOSTY_DATA_ROOT"] = context.Environment.RootDirectory,
+            ["HOSTY_CORE_LAUNCH_MODE"] = target?.ProjectPath is null ? "release" : "dev",
+            ["HOSTY_CORE_PROJECT"] = target?.ProjectPath ?? "",
+            ["HOSTY_CORE_GENERATION"] = target?.GenerationPath ?? "",
         };
 
         // --port is forwarded as the this-run-only override (inside Core: flag/env outranks the
@@ -499,6 +565,25 @@ internal sealed partial class CoreCommand(CommandContext context)
         // Validate start options up front so a bad flag fails before we stop the running Core.
         _ = ParseStartOptions(startArgs);
 
+        CoreStartTarget prepared;
+        try
+        {
+            prepared = await ResolveStartTargetAsync(ParseStartOptions(startArgs));
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or HttpRequestException)
+        {
+            preparationError = ex.Message;
+            context.Error.WriteLine($"Core preparation failed: {ex.Message}");
+            return 1;
+        }
+
+        if (activeOperationId is not null)
+        {
+            var path = CoreLaunchFiles.OperationPath(context.Environment.RootDirectory, activeOperationId);
+            var operation = CoreLaunchFiles.Read(path, CoreLaunchJson.Default.CoreLaunchOperation);
+            if (operation is not null) CoreLaunchFiles.Write(path, operation with { Status = "starting", GenerationPath = prepared.GenerationPath }, CoreLaunchJson.Default.CoreLaunchOperation);
+        }
+
         // StopCoreAsync waits for the old process to fully exit (port released, discovery file
         // removed), so the start below binds cleanly and cannot have its discovery clobbered by the
         // old Core's shutdown. NotRunning is fine — there is simply nothing to stop. With --keep-apps
@@ -517,7 +602,7 @@ internal sealed partial class CoreCommand(CommandContext context)
                 return 1;
         }
 
-        return await StartAsync(startArgs);
+        return await StartAsync(startArgs, prepared);
     }
 
     internal enum CoreUpdateStopOutcome
@@ -689,16 +774,16 @@ internal sealed partial class CoreCommand(CommandContext context)
         return 0;
     }
 
-    private async Task<CoreStatusDocument?> WaitForStatusAsync()
+    private async Task<CoreStatusDocument?> WaitForStatusAsync(CoreStartTarget target)
     {
         var deadline = DateTimeOffset.UtcNow + StartTimeout;
         while (DateTimeOffset.UtcNow < deadline)
         {
             var status = await ReadCoreStatusAsync(suppressErrors: true);
-            if (status is not null)
-            {
+            if (status is not null && (status.Launch is null && target.ProjectPath is null ||
+                status.Launch is { } launch && launch.Mode == (target.ProjectPath is null ? "release" : "dev") &&
+                launch.ProjectPath == target.ProjectPath && (target.GenerationPath is null || launch.GenerationPath == target.GenerationPath)))
                 return status;
-            }
 
             await Task.Delay(500);
         }
@@ -807,6 +892,7 @@ internal sealed partial class CoreCommand(CommandContext context)
         }
 
         table
+            .Field("Launch", status.Launch is { } launch ? Markup.Escape($"{launch.Mode} {launch.ProjectPath}") : "unknown")
             .Field("Data root", Markup.Escape(status.DataRoot ?? ""))
             .Field("Core origin", Markup.Escape(status.CorePublicOrigin ?? "not configured"))
             // Core resolves this from Shell's app record, so a blank means Shell is not installed at all
@@ -830,14 +916,10 @@ internal sealed partial class CoreCommand(CommandContext context)
     internal sealed record CoreStartTarget(
         string FileName,
         string WorkingDirectory,
-        IReadOnlyList<string> Arguments)
+        IReadOnlyList<string> Arguments,
+        string? ProjectPath = null,
+        string? GenerationPath = null)
     {
-        public static CoreStartTarget FromProject(string projectPath)
-            => new(
-                "dotnet",
-                Path.GetDirectoryName(projectPath) ?? Directory.GetCurrentDirectory(),
-                ["run", "--project", projectPath, "--no-launch-profile"]);
-
         public static CoreStartTarget FromExecutable(string executablePath)
             => new(
                 executablePath,
@@ -871,7 +953,8 @@ internal sealed partial class CoreCommand(CommandContext context)
         int CorePort,
         string? CorePublicOrigin,
         string? ShellPublicOrigin,
-        IReadOnlyList<string> Warnings);
+        IReadOnlyList<string> Warnings,
+        CoreLaunchIdentity? Launch = null);
 
     private const string Usage = """
         hosty core

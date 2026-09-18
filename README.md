@@ -102,7 +102,7 @@ Use $hosty-app-skill to wrap this app as a Hosty runtime app.
 
 ## Local development
 
-See [Local development and testing](docs/features/local-development.md) for detailed guidance.
+See [Local development and testing](docs/features/local-development/feature.md) for detailed guidance.
 
 Run Core and Shell from source with seeded development users:
 
