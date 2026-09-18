@@ -433,6 +433,13 @@ public sealed class LocalCommandRuntimeAdapterTests
             var stoppingAdapter = adapter;
             if (adopt)
             {
+                // A real predecessor Core has exited: its Process object and redirected pipes are
+                // closed. Keeping them alive here is not a process handover and can retain handles.
+                Assert.Null(running.WindowsJob);
+                Assert.Same(running, registry.Remove(context.App.Id, "app"));
+                running.Process.EnableRaisingEvents = false;
+                running.Process.Dispose();
+                Assert.False(child.HasExited);
                 var (replacement, replacementRegistry, _) = CreateSetupScenario(workRoot, null, Path.GetFileName(scriptPath));
                 Assert.True(await replacementRegistry.TryAdoptAsync(workRoot, context.App.Id, "app", default, instanceId: ""));
                 Assert.True(replacementRegistry.Get(context.App.Id, "app")!.IndependentRunner);
@@ -443,8 +450,20 @@ public sealed class LocalCommandRuntimeAdapterTests
 
             // The original regression was a port left occupied when Stop returned. Do not wait for
             // the child or retry the bind: either would hide a race before an immediate app restart.
-            using (var reused = new TcpListener(IPAddress.Loopback, port) { ExclusiveAddressUse = true })
+            try
+            {
+                using var reused = new TcpListener(IPAddress.Loopback, port) { ExclusiveAddressUse = true };
                 reused.Start();
+            }
+            catch (SocketException ex)
+            {
+                using var netstat = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("netstat.exe", "-ano -p tcp")
+                { UseShellExecute = false, RedirectStandardOutput = true })!;
+                var table = await netstat.StandardOutput.ReadToEndAsync();
+                await netstat.WaitForExitAsync();
+                var rows = string.Join(Environment.NewLine, table.Split('\n').Where(line => line.Contains($":{port}", StringComparison.Ordinal)));
+                Assert.Fail($"Port {port} could not be rebound after Stop: {ex.SocketErrorCode}; child {childPid} exited={child.HasExited}.{Environment.NewLine}{rows}");
+            }
 
             using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
             {
