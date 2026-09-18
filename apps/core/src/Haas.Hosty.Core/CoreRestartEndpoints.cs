@@ -9,19 +9,49 @@ internal static class CoreRestartEndpoints
 {
     public static void Map(WebApplication app)
     {
-        // Light restart on the current binary (apps kept running).
-        app.MapPost("/api/core/restart", (
-            HttpRequest request,
-            UserDirectoryStore users,
-            IClock clock,
-            HostyCoreRuntimeConfig config,
-            ILoggerFactory loggerFactory,
-            CancellationToken cancellationToken) =>
-            SpawnCliAsync(
-                request, users, clock, config, loggerFactory, cancellationToken,
-                args: ["core", "restart", "--keep-apps"],
-                logFileName: "core-restart.log",
-                operation: "restart"));
+        app.MapGet("/api/core/development", (HttpRequest request, UserDirectoryStore users, IClock clock,
+            CoreDevelopmentService development, CancellationToken cancellationToken) =>
+            CoreSessionAuthorization.RequireAdminSessionAsync(request, users, clock,
+                async () => CoreJson.Json(await development.GetAsync(cancellationToken)), cancellationToken: cancellationToken));
+
+        app.MapPut("/api/core/source", (HttpRequest request, CoreSourceRequest input, UserDirectoryStore users,
+            IClock clock, CoreDevelopmentService development, CancellationToken cancellationToken) =>
+            CoreSessionAuthorization.RequireAdminSessionAsync(request, users, clock,
+                () => HandleAsync(async () => CoreJson.Json(await development.SaveAsync(input, cancellationToken))),
+                requireCsrf: true, cancellationToken: cancellationToken));
+
+        app.MapPost("/api/core/restart", (HttpRequest request, CoreRestartRequest input, UserDirectoryStore users,
+            IClock clock, CoreDevelopmentService development, AuditStore audit, CancellationToken cancellationToken) =>
+            CoreSessionAuthorization.RequireAdminSessionAsync(request, users, clock,
+                () => HandleAsync(async () =>
+                {
+                    var actor = await CoreSessionAuthorization.TryResolveSessionAsync(request, users, clock, cancellationToken);
+                    var outcome = "failed";
+                    try
+                    {
+                        var operation = await development.RestartAsync(input, cancellationToken);
+                        outcome = operation.Status;
+                        return CoreJson.Json(operation, statusCode: 202);
+                    }
+                    finally
+                    {
+                        try
+                        {
+                            await audit.AppendAsync(new AuditRecord($"audit_{Guid.NewGuid():N}", "core.lifecycle.restart", "core",
+                                "hosty-core", outcome, actor?.Id, clock.UtcNow,
+                                new Dictionary<string, string> { ["via"] = "http", ["operation"] = input.RequestId }), CancellationToken.None);
+                        }
+                        catch (Exception ex) { Console.Error.WriteLine($"[audit] Core restart audit failed: {ex.Message}"); }
+                    }
+                }),
+                requireCsrf: true, cancellationToken: cancellationToken));
+
+        app.MapGet("/api/core/operations/{id}", (string id, HttpRequest request, UserDirectoryStore users,
+            IClock clock, CoreDevelopmentService development, CancellationToken cancellationToken) =>
+            CoreSessionAuthorization.RequireAdminSessionAsync(request, users, clock,
+                () => HandleAsync(() => Task.FromResult(development.GetOperation(id) is { } operation
+                    ? CoreJson.Json(operation) : CoreJson.Json(new ErrorResponse("operation_not_found", "Core operation was not found."), statusCode: 404))),
+                cancellationToken: cancellationToken));
 
         // Update: self-update the CLI + Core binaries, then light-restart onto the new Core.
         app.MapPost("/api/core/update", (
@@ -52,6 +82,15 @@ internal static class CoreRestartEndpoints
                     forceRefresh: string.Equals(request.Query["refresh"], "true", StringComparison.OrdinalIgnoreCase),
                     cancellationToken)),
                 cancellationToken: cancellationToken));
+    }
+
+    private static async Task<IResult> HandleAsync(Func<Task<IResult>> action)
+    {
+        try { return await action(); }
+        catch (ArgumentException ex)
+        { return CoreJson.Json(new ErrorResponse("invalid_request", ex.Message), statusCode: 400); }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        { return CoreJson.Json(new ErrorResponse("core_operation_failed", ex.Message), statusCode: 409); }
     }
 
     private static Task<IResult> SpawnCliAsync(

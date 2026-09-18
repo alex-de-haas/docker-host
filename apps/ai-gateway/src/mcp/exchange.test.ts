@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { TokenExchange, toMcpServerConfig, serverName } from "./exchange.js";
+import { CoreTemporarilyUnavailable, TokenExchange, toMcpServerConfig, serverName } from "./exchange.js";
 import type { McpProvider } from "../settings/providers.js";
 
 // The gateway half of the delegated-token exchange: turning enabled providers into MCP servers the
@@ -92,15 +92,14 @@ describe("token exchange", () => {
     expect(targets).toEqual([GATEWAY]);
   });
 
-  it("reports nothing rather than throwing when Core is unreachable", async () => {
-    // A discovery or exchange failure must degrade the session, never end it: the agent keeps its
-    // host tools and simply has no app MCP.
-    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("connection refused"));
+  it("distinguishes a transient Core outage from expired authorization", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("ECONNREFUSED")));
     const exchange = new TokenExchange(CORE, GATEWAY);
-
-    expect(await exchange.exchange("seed", "com.example.notes")).toBeNull();
-    expect(await exchange.buildServers("seed", [provider("com.example.notes")], { "com.example.notes": true }))
-      .toEqual([]);
+    await expect(exchange.exchange("seed", "com.example.notes")).rejects.toBeInstanceOf(CoreTemporarilyUnavailable);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("", { status: 503 })));
+    await expect(exchange.refreshSelf("seed")).rejects.toBeInstanceOf(CoreTemporarilyUnavailable);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("", { status: 401 })));
+    expect(await exchange.refreshSelf("seed")).toBeNull();
   });
 
   it("is inert without a Core origin", async () => {

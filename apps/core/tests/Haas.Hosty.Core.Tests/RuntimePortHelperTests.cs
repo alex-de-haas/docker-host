@@ -1,9 +1,16 @@
 using System.Net;
+using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using Haas.Hosty.Core;
 
 namespace Haas.Hosty.Core.Tests;
 
+// Availability assertions deliberately release a socket before probing its port. Other parallel
+// test fixtures must not acquire that port in between and turn a correct probe into a false failure.
+[CollectionDefinition("PortAvailability", DisableParallelization = true)]
+public sealed class PortAvailabilityCollection;
+
+[Collection("PortAvailability")]
 public sealed class RuntimePortHelperTests
 {
     [Fact]
@@ -64,13 +71,13 @@ public sealed class RuntimePortHelperTests
     }
 
     [Fact]
-    public void IsLoopbackTcpPortAvailable_PortLeftInTimeWait_IsStillAvailable()
+    public async Task IsLoopbackTcpPortAvailable_PortLeftInTimeWait_IsStillAvailable()
     {
         // The false positive the wildcard probes must not introduce: an app that served traffic and was
         // then stopped leaves TIME_WAIT sockets on its port for up to a minute. Nothing is listening, so
         // the restart must be allowed through — every probe binds with SO_REUSEADDR, which is exactly the
         // flag that makes a TIME_WAIT remnant non-blocking.
-        var port = ServeOneConnectionThenStop();
+        var port = await ServeOneConnectionThenStopAsync();
 
         Assert.True(RuntimePortHelper.IsLoopbackTcpPortAvailable(port));
     }
@@ -214,21 +221,32 @@ public sealed class RuntimePortHelperTests
 
     // Runs a listener, serves one connection, closes the server side first (so the server end is the one
     // left in TIME_WAIT), then drops the listener — the state a just-stopped app leaves behind.
-    private static int ServeOneConnectionThenStop()
+    private static async Task<int> ServeOneConnectionThenStopAsync()
     {
-        var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        using (var client = new TcpClient())
+        // Keep this listener outside the ephemeral pool used by unrelated outbound connections.
+        using var listener = HoldAnyBandPort(out var port);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using (var client = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp))
         {
-            client.Connect(IPAddress.Loopback, port);
-            using var accepted = listener.AcceptTcpClient();
-            accepted.Client.Shutdown(SocketShutdown.Both);
-            accepted.Close();
-            client.Client.Shutdown(SocketShutdown.Both);
+            await client.ConnectAsync(IPAddress.Loopback, port, timeout.Token);
+            using var accepted = await listener.AcceptAsync(timeout.Token);
+            var clientPort = ((IPEndPoint)client.LocalEndPoint!).Port;
+            // Complete an orderly server-first FIN handshake. Merely calling Shutdown on both
+            // ends can leave FIN_WAIT/LAST_ACK in flight when the availability assertion runs.
+            accepted.Shutdown(SocketShutdown.Send);
+            Assert.Equal(0, await client.ReceiveAsync(new byte[1].AsMemory(), SocketFlags.None, timeout.Token));
+            client.Shutdown(SocketShutdown.Send);
+            Assert.Equal(0, await accepted.ReceiveAsync(new byte[1].AsMemory(), SocketFlags.None, timeout.Token));
+
+            // Wait for the fixture's advertised precondition, never for the production probe to
+            // start passing: a probe that rejects TIME_WAIT must still fail the assertion above.
+            while (!IPGlobalProperties.GetIPGlobalProperties().GetActiveTcpConnections().Any(connection =>
+                connection.LocalEndPoint.Port == port && connection.RemoteEndPoint.Port == clientPort &&
+                connection.State == TcpState.TimeWait))
+                await Task.Delay(10, timeout.Token);
         }
 
-        listener.Stop();
+        listener.Close();
         return port;
     }
 }

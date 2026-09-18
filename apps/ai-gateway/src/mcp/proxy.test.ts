@@ -27,7 +27,7 @@ describe("per-session MCP proxy", () => {
   let proxyOrigin: string;
 
   /** Tokens the minter will hand out, in order; a null entry is a refused (lapsed) chain. */
-  let minted: (MintedToken | null)[];
+  let minted: (MintedToken | null | Error)[];
   let mintCalls: string[];
   let proxy: McpProxy;
   let sessionKey: string;
@@ -77,9 +77,9 @@ describe("per-session MCP proxy", () => {
       mintCalls.push(`${sessionId}:${appId}`);
       // Length-checked rather than `?? fallback`: a queued null IS the refusal under test, and `??`
       // would quietly turn it back into a working token.
-      return minted.length > 0
-        ? (minted.shift() ?? null)
-        : { token: "fallback", expiresAtMs: Date.now() + 300_000 };
+      const next = minted.length > 0 ? (minted.shift() ?? null) : { token: "fallback", expiresAtMs: Date.now() + 300_000 };
+      if (next instanceof Error) throw next;
+      return next;
     });
 
     proxyServer = createServer((request, response) => {
@@ -97,6 +97,19 @@ describe("per-session MCP proxy", () => {
   afterEach(async () => {
     await new Promise((resolve) => upstream.close(resolve));
     await new Promise((resolve) => proxyServer.close(resolve));
+  });
+
+  it("keeps the same harness route after a transient token mint failure without forwarding the interrupted mutation", async () => {
+    register();
+    minted.push(new Error("Core restarting"), { token: "recovered", expiresAtMs: Date.now() + 300_000 });
+    const path = `/internal/mcp/${SESSION}/${APP}`;
+    const first = await call(path, { body: JSON.stringify({ jsonrpc: "2.0", id: 8, method: "tools/call", params: { name: "mutation" } }) });
+    expect(first.status).toBe(503);
+    expect(calls).toHaveLength(0);
+    const second = await call(path);
+    expect(second.status).toBe(200);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.authorization).toBe("Bearer recovered");
   });
 
   it("mints at request time, so a call released long after it was prepared still carries a live token", async () => {

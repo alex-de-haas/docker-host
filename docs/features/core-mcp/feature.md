@@ -1,7 +1,7 @@
 # Core MCP
 
 Created: 2026-08-09
-Updated: 2026-09-08
+Updated: 2026-09-18
 
 An embedded Model Context Protocol endpoint on Core, giving agent clients typed tools for the things
 Core already knows — which apps exist, what state they are in, what their logs say — instead of
@@ -46,7 +46,7 @@ New authorization creates a new grant; refresh cannot exceed its approved author
 
 ## Tools
 
-Four reads and three lifecycle mutations, and every one **says what it is on the wire**: the read
+Read tools and lifecycle/update mutations, and every one **says what it is on the wire**: the read
 tools advertise `annotations.readOnlyHint: true`, the mutations do not, and `stop_app`/`restart_app`
 declare `destructiveHint`. A tool's nature is not something a client can see from the design — an
 agent client with an approval gate must assume an unannotated tool may mutate (run unattended, that
@@ -170,6 +170,21 @@ A root `NuGet.config` pins the package source and clears inherited ones. Core ha
 the machine's global NuGet configuration irrelevant here; with one, a developer who has an unrelated
 private feed configured gets every restore in this repository blocking on that feed's authentication,
 which presents as a build that hangs for minutes with no output.
+
+## Core Restart And Recovery
+
+`get_core_development` reads factual launch identity, selected Source and pending revisions.
+`restart_core(requestId, instance, sourceRevision)` preserves the running mode/project, applies
+pending Source changes, and returns a durable operation. Use a fresh 32-hex UUID for an intentional
+restart; after transport loss call `get_core_operation` with the original ID. Accepted/building/
+starting are not completion. `get_host_status` includes process-start identity and launch target.
+
+The separate `mcp:core-restart` grant requires `mcp:read` and audience `hosty:core`. Administrator
+sessions also carry it; app-lifecycle-only and delegated credentials do not. Shell token issuance
+and OAuth consent expose the explicit scope. The tool is disruptive, with deduplication by request
+ID, and records audit outcomes. Build/test final source edits first. If Core cannot start, use local
+CLI logs and `core restart --keep-apps --project <absolute-csproj>` for recovery; omitting project
+selects release. See [Core development mode](../core-dev-target/feature.md).
 
 ## Testing Expectations
 

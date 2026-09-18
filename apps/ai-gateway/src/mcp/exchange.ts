@@ -33,6 +33,10 @@ interface IssuedToken {
   expiresAt: string;
 }
 
+export class CoreTemporarilyUnavailable extends Error {
+  constructor() { super("Core is temporarily unavailable; retry after it reconnects."); }
+}
+
 export class TokenExchange {
   constructor(
     private readonly coreOrigin: string | null,
@@ -44,10 +48,8 @@ export class TokenExchange {
   }
 
   /**
-   * Trades `presented` for a token scoped to `targetAppId`. Returns null on any refusal — an expired
-   * chain, a target the actor may not reach, Core being unreachable — because every one of those
-   * means the same thing to the caller: this provider is not available for this session right now.
-   * The distinction is Core's to record in its audit, not the gateway's to reinterpret.
+   * Trades `presented` for a token scoped to `targetAppId`. Returns null on a credential or policy refusal. A transient
+   * Core outage throws CoreTemporarilyUnavailable so callers retain the credential and routes.
    */
   async exchange(presented: string, targetAppId: string): Promise<IssuedToken | null> {
     if (!this.coreOrigin) {
@@ -63,15 +65,16 @@ export class TokenExchange {
           signal: AbortSignal.timeout(5_000),
         },
       );
-      if (!response.ok) {
-        return null;
-      }
+      if (response.status === 429 || response.status >= 500) throw new CoreTemporarilyUnavailable();
+      if (!response.ok) return null;
       const body = (await response.json()) as { token?: unknown; expiresAt?: unknown };
       return typeof body.token === "string" && typeof body.expiresAt === "string"
         ? { token: body.token, expiresAt: body.expiresAt }
         : null;
     } catch {
-      return null;
+      // A network outage is not a revoked delegation. Keep the session credential and tools;
+      // the manager retries refresh and the proxy reports a retryable unavailable response.
+      throw new CoreTemporarilyUnavailable();
     }
   }
 

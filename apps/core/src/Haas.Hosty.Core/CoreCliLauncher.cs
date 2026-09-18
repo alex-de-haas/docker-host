@@ -52,12 +52,12 @@ internal static class CoreCliLauncher
     // would fail the next spawn's redirect with a sharing violation, the same wedge PR #192 fixed for
     // core.log. Logs of earlier spawns are deleted best-effort; a file a surviving tree still holds just
     // stays until that tree exits.
-    public static string SpawnDetached(string cliPath, IReadOnlyList<string> args, HostyCoreRuntimeConfig config, string logFileName)
+    public static string SpawnDetached(string cliPath, IReadOnlyList<string> args, HostyCoreRuntimeConfig config, string logFileName, string? outputPath = null)
     {
         var logDirectory = Path.Combine(config.DataRoot, "core", "logs");
         Directory.CreateDirectory(logDirectory);
         CleanUpStaleLogs(logDirectory, logFileName);
-        var logPath = Path.Combine(logDirectory, BuildLogFileName(logFileName, DateTimeOffset.UtcNow));
+        var logPath = outputPath ?? Path.Combine(logDirectory, BuildLogFileName(logFileName, DateTimeOffset.UtcNow));
         var workingDirectory = Path.GetDirectoryName(cliPath) ?? config.DataRoot;
 
         if (OperatingSystem.IsWindows())

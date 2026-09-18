@@ -8,12 +8,8 @@ namespace Haas.Hosty.Core;
 // registry data Core already owns, so an agent client gets typed tools instead of guessing at shell
 // commands. Control-plane only — it never proxies an app's domain API.
 //
-// Read-only. Lifecycle mutations are the obvious next step, but Core MCP has no approval mechanism
-// of its own and the assistant's gate lives in its harness, which only pauses that harness's own
-// calls — a mutation tool here would be reachable by any external client with a credential,
-// bypassing it. Adding one means deciding where its approval lives first; the scope machinery this
-// endpoint now accepts is where that decision is expected to land
-// (docs/features/core-mcp/feature.md).
+// Mutation authority is explicit: each tool checks the caller's standing scope or administrator
+// session. Delegated/facade credentials remain read-only even when the actor is an administrator.
 internal static class McpEndpoints
 {
     public static void Map(WebApplication app)
@@ -127,7 +123,8 @@ internal static class McpEndpoints
                     http.Items[McpCallerGrants.Key] = new McpCallerGrants(
                         AccessTokenScopes.Grants(scoped.Record.Scopes, AccessTokenScopes.McpLifecycle),
                         AccessTokenScopes.Grants(scoped.Record.Scopes, AccessTokenScopes.McpUpdate),
-                        scoped.User.Id);
+                        scoped.User.Id,
+                        AccessTokenScopes.Grants(scoped.Record.Scopes, AccessTokenScopes.McpCoreRestart));
                     return await next(context);
                 }
             }
@@ -152,7 +149,7 @@ internal static class McpEndpoints
                     // An administrator's session is the full-role credential; lifecycle and update
                     // come with the role, exactly as they do on every /api route the same person
                     // could call directly. The scopes narrow *tokens*, never the role itself.
-                    sessionGrants = new McpCallerGrants(Lifecycle: true, Update: true, user.Id);
+                    sessionGrants = new McpCallerGrants(Lifecycle: true, Update: true, user.Id, CoreRestart: true);
                     return Task.FromResult<IResult>(Results.Empty);
                 },
                 requireCsrf: true,
@@ -252,8 +249,51 @@ internal sealed class HostyCoreTools
             apps.Count,
             running,
             apps.Count - running,
-            failing));
+            failing, Haas.Hosty.Launch.CoreLaunchIdentity.Current()));
     }
+
+    [McpServerTool(Name = "restart_core", ReadOnly = false, Destructive = true, Idempotent = false)]
+    [Description("Prepare and restart Core, preserving its live release/dev target and applying pending Source changes. Build and test final edits first. Requires mcp:core-restart and mcp:read for hosty:core; delegated credentials cannot restart. Supply a new UUID without hyphens and the instance and source.revision from get_core_development. An accepted operation is not completion: reconnect and call get_core_operation with the same id. Never repeat an interrupted mutation with a new id. If Core cannot start, use hosty core restart --keep-apps with explicit --project for dev (without --project selects release).")]
+    public static async Task<string> RestartCoreAsync(string requestId, string instance, string sourceRevision,
+        CoreDevelopmentService development, IHttpContextAccessor accessor, AuditStore audit, IClock clock,
+        CancellationToken cancellationToken)
+    {
+        var grants = accessor.HttpContext?.Items[McpCallerGrants.Key] as McpCallerGrants;
+        string outcome = "refused";
+        try
+        {
+            if (grants?.CoreRestart != true) return CoreJson.Text(new McpError("The mcp:core-restart scope is required."));
+            outcome = "failed";
+            var operation = await development.RestartAsync(new(requestId, instance, SourceRevision: sourceRevision), cancellationToken);
+            outcome = operation.Status;
+            return CoreJson.Text(operation);
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or ArgumentException or System.ComponentModel.Win32Exception)
+        { return CoreJson.Text(new McpError(ex.Message)); }
+        finally
+        {
+            try
+            {
+                await audit.AppendAsync(new AuditRecord($"audit_{Guid.NewGuid():N}", "core.lifecycle.restart", "core",
+                    "hosty-core", outcome, grants?.ActorUserId, clock.UtcNow,
+                    new Dictionary<string, string> { ["via"] = "mcp", ["operation"] = requestId }), CancellationToken.None);
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[audit] Core restart audit failed: {ex.Message}"); }
+        }
+    }
+
+    [McpServerTool(Name = "get_core_operation", ReadOnly = true)]
+    [Description("Read the durable result of a Core restart after reconnecting. accepted/building/starting are pending; completed confirms startup; failed contains diagnostics and the host log path. Reuse the original request id after transport loss.")]
+    public static string GetCoreOperation(string requestId, CoreDevelopmentService development)
+    {
+        try { return development.GetOperation(requestId) is { } operation ? CoreJson.Text(operation) : CoreJson.Text(new McpError("Operation not found.")); }
+        catch (ArgumentException ex) { return CoreJson.Text(new McpError(ex.Message)); }
+    }
+
+    [McpServerTool(Name = "get_core_development", ReadOnly = true)]
+    [Description("Read the factual Core launch instance, mode, project, selected Source and pending restart state. Use the instance in restart_core; browser preferences never determine the running target.")]
+    public static async Task<string> GetCoreDevelopmentAsync(CoreDevelopmentService development, CancellationToken cancellationToken)
+        => CoreJson.Text(await development.GetAsync(cancellationToken));
 
     // Deliberately named "tail": Core's logs are an on-demand read of the process/container output,
     // not a searchable store. Structured, queryable logs belong to the telemetry app.
@@ -631,7 +671,7 @@ internal sealed class HostyCoreTools
 /// <c>mcp:lifecycle</c> scope. A delegated token never carries it, because it does not carry the
 /// scopes of the credential it descends from — role alone must not stand in for the grant.
 /// </remarks>
-internal sealed record McpCallerGrants(bool Lifecycle, bool Update, string ActorUserId)
+internal sealed record McpCallerGrants(bool Lifecycle, bool Update, string ActorUserId, bool CoreRestart = false)
 {
     /// <summary>The <c>HttpContext.Items</c> slot the filter writes and the tools read.</summary>
     public const string Key = "hosty:mcp-caller-grants";
@@ -677,7 +717,7 @@ internal sealed record McpAppEndpoint(string Key, string? Url, string? Availabil
 
 internal sealed record McpAppInterface(string Name, string? Url);
 
-internal sealed record McpHostStatus(string CoreVersion, int Apps, int Running, int NotRunning, int WithErrors);
+internal sealed record McpHostStatus(string CoreVersion, int Apps, int Running, int NotRunning, int WithErrors, Haas.Hosty.Launch.CoreLaunchIdentity? Launch = null);
 
 internal sealed record McpLogTail(string AppId, int Lines, string? Text, string? Error);
 

@@ -1,7 +1,7 @@
 # CLI Bootstrap
 
 Created: 2026-05-13
-Updated: 2026-09-01
+Updated: 2026-09-18
 
 ## Description
 
@@ -135,6 +135,16 @@ If Core rejects a control request with HTTP 401, the CLI treats the discovery as
 ## Uninstall
 
 `hosty uninstall` requests Core shutdown when local control discovery is available, then removes Hosty-owned state while preserving the CLI executable directory. The resolved root is the data root it cleans; an external root is addressed with `--data-root` like any other command.
+
+## Source Builds And Light Restart
+
+Explicit `core start/restart --project <absolute-csproj>` uses isolated build-before-stop preparation
+and launches the resulting apphost directly. Without `--project`, Start/Restart always select the
+installed release. Shell/MCP preserve source launches by passing the project explicitly. Status
+reports factual launch identity; `hosty update` updates release artifacts without stopping a dev
+Core. `--keep-apps` adopts verified local services through independent runners as well as eligible
+containers. See [Core development mode](../core-dev-target/feature.md) for failures, retention and
+agent recovery.
 
 ## Testing Expectations
 

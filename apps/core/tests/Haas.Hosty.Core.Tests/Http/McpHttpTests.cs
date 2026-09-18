@@ -33,8 +33,8 @@ public sealed class McpHttpTests
             .ToArray();
         Assert.Equal(
             [
-                "apply_app_update", "get_app", "get_host_status", "list_apps", "plan_app_update",
-                "restart_app", "search_audit", "start_app", "stop_app", "tail_app_logs",
+                "apply_app_update", "get_app", "get_core_development", "get_core_operation", "get_host_status", "list_apps", "plan_app_update",
+                "restart_app", "restart_core", "search_audit", "start_app", "stop_app", "tail_app_logs",
             ],
             names);
 
@@ -148,7 +148,7 @@ public sealed class McpHttpTests
 
         // plan_app_update is here too: it changes nothing, but it reaches the app's source and reports
         // what is available, which is not the "safe to call unattended" promise readOnlyHint makes.
-        string[] mutations = ["start_app", "stop_app", "restart_app", "plan_app_update", "apply_app_update"];
+        string[] mutations = ["start_app", "stop_app", "restart_app", "restart_core", "plan_app_update", "apply_app_update"];
         var tools = await CallAsync(client, admin, "tools/list", new { });
         foreach (var tool in tools.GetProperty("tools").EnumerateArray())
         {

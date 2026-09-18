@@ -4,15 +4,20 @@ using Microsoft.Extensions.Logging;
 namespace Haas.Hosty.Core;
 
 // A durable record of a spawned localCommand root, written under {AppRoot}/run/{serviceKey}.json. It
-// survives a Core crash (macOS sleep/wake, kill -9, abandoned shutdown) so a future Core can find and
-// kill an orphaned process tree the in-memory registry lost. ProcessGroup records whether Pid is a
-// process-group leader (spawned through the setsid shim), which selects the reclaim path.
+// survives Core restarts/crashes so a replacement can adopt the service and explicit Stop can still
+// control the tree. ProcessGroup records whether Pid is a process-group leader, which selects the
+// stop-time reclaim path; startup verifies and adopts live processes without killing them.
 internal sealed record LocalCommandPidFile(
     int Pid,
     DateTimeOffset StartedAtUtc,
     string AppId,
     string ServiceKey,
-    bool ProcessGroup);
+    bool ProcessGroup,
+    string? WorkingDirectory = null,
+    IReadOnlyDictionary<string, int>? Ports = null,
+    string? RunnerGeneration = null,
+    string? InstanceId = null, string? RuntimeProfile = null, string? Command = null,
+    string? ExecutablePath = null, string? LogPath = null);
 
 internal static class LocalCommandProcessReclaim
 {

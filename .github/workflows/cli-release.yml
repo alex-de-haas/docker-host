@@ -8,6 +8,7 @@ on:
     paths:
       - "apps/core/**"
       - "apps/cli/**"
+      - "shared/**"
       - "scripts/install.sh"
       - "scripts/install.ps1"
       - "global.json"

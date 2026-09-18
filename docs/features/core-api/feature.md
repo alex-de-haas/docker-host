@@ -1,7 +1,7 @@
 # Core API
 
 Created: 2026-05-13
-Updated: 2026-09-08
+Updated: 2026-09-18
 
 ## Description
 
@@ -117,6 +117,14 @@ An operator-triggered manual backup of a running app briefly stops it to copy a 
 - `POST /api/auth/oauth/requests/{id}/decide`: browser session plus CSRF; optional `scopes` on an
   approval selects a validated subset of the parked request (omitted means read). Core audience
   approval requires an administrator. See [OAuth](../mcp-oauth/feature.md) for issuance/refresh policy.
+
+## Core Development Control
+
+The admin Source/status/operation routes and the CSRF-protected restart contract are documented in
+[Core development mode](../core-dev-target/feature.md#durable-restart-operations). Restart takes a
+client UUID and live instance identity; its 202 result means accepted, with durable status lookup.
+Source saves use revisions, and stale launch intent is refused. Public status omits launch paths;
+authenticated status and local control include the factual mode/project/generation and start identity.
 
 ## Testing Expectations
 

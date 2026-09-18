@@ -1,9 +1,19 @@
 # Local Development And Testing
 
 Created: 2026-05-13
-Updated: 2026-08-09
+Updated: 2026-09-18
 
 This document describes the current local feedback loops after the Core/Shell/runtime app split.
+
+## Core Source Feedback Loop
+
+Build and test final edits before requesting a restart. The CLI also prepares a separate managed
+Debug generation before stopping the old Core, so compiler errors leave it running. Repeat the
+absolute `--project` argument for every CLI dev restart; omitting it selects release. Shell/MCP
+preserve the live target explicitly. Verify the replacement's start identity and behavior, and use
+the durable operation ID after a transport interruption. Watch is not enabled. Output cleanup
+retains live/previous/diagnostic builds and surviving-runner references automatically. See
+[Core development mode](../core-dev-target/feature.md) and the repository agent instructions.
 
 ## Development Loops
 
@@ -128,9 +138,9 @@ For production-runtime validation, build the local image tag declared by the man
 
 ## Local Command Constraints
 
-`localCommand` profiles are process runtimes supervised by Core. Core starts each service command through the platform shell (`/bin/sh -c` on Unix-like systems and `cmd.exe /c` on Windows), captures stdout/stderr into app logs, injects Hosty environment variables, and reports process health through `hosty apps health`. The resolved working directory must already exist; Core does not create missing source directories.
+`localCommand` profiles are process runtimes supervised by Core. Core starts each service command through the platform shell (`/bin/sh -c` on Unix-like systems and `cmd.exe /c` on Windows), uses independent runners to capture and rotate stdout/stderr into app logs across keep-apps Core restarts, injects Hosty environment variables, and reports process health through `hosty apps health`. The resolved working directory must already exist; Core does not create missing source directories.
 
-Core checks out the app's source but does not install dependencies or build it. A source that needs preparation (a Node app has no `node_modules`, a compiled app has no build output) must declare a `setup` command on the `localCommand` runtime; Core runs it to completion in the working directory before the long-running `command`, on every start. Without it, `command` launches against a bare checkout and fails (e.g. `sh: next: command not found`). See the `setup` field in [Runtime app manifest](runtime-app-manifest/feature.md).
+Core checks out the app's source but does not install dependencies or build it. A source that needs preparation (a Node app has no `node_modules`, a compiled app has no build output) must declare a `setup` command on the `localCommand` runtime; Core runs it to completion in the working directory before the long-running `command`, on every start. Without it, `command` launches against a bare checkout and fails (e.g. `sh: next: command not found`). See the `setup` field in [Runtime app manifest](../runtime-app-manifest/feature.md).
 
 Production installers should treat `localCommand` as platform-specific unless the command is known to be portable. Prefer commands that:
 
@@ -171,7 +181,7 @@ The Core suite runs test classes in parallel inside a single process, so anythin
 - **Ephemeral TCP ports.** Binding a port to learn its number and closing it again proves only that the port was free at that moment — another test, or an unrelated process on the machine, can take it before the assertion runs. A test that needs a port nothing answers on keeps the socket bound and never calls `Listen`: the kernel refuses connections exactly as it would for an unused port, and the bind holds the port for the test's whole run. What makes that a reservation and not a hint is the bind itself: no platform's ephemeral allocator hands out a port that is already bound, and an ephemeral bind is the only way a parallel test asks for a port. Do not lean on `ExclusiveAddressUse` for it — measured on .NET 10, macOS honours the flag and refuses a deliberate rival bind, while on Linux `Bind` puts `SO_REUSEADDR` on the kernel socket regardless of it and the rival binds anyway.
 - **Environment variables.** `HostyCoreApplication.ConfigureServices` accepts a `HostyCoreRuntimeConfig` and falls back to `HostyCoreRuntimeConfig.FromEnvironment` only when none is given, so a test host boots from an explicit config and reads no environment at all. Environment mutation is confined to the config-parsing tests, in the one class that owns the temporary-environment helper — xUnit serializes tests within a class, so any new test that sets a `HOSTY_*` variable belongs there too.
 
-## Verification Checklist
+## Testing Expectations
 
 For normal feature work:
 
