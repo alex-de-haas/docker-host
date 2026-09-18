@@ -22,6 +22,7 @@ export type PendingSkill = {
 
 export type SettingsResponse = {
   settings: Settings;
+  agentConnections?: boolean;
   providers: Provider[];
   pendingSkills?: PendingSkill[];
   discovery: string;

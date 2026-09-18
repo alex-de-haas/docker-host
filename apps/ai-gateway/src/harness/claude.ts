@@ -58,8 +58,10 @@ export class ClaudeHarnessAdapter implements HarnessAdapter {
     denyReason: true,
   };
 
+  constructor(private readonly environment: NodeJS.ProcessEnv = process.env) {}
+
   async probe(): Promise<HarnessAvailability> {
-    if (!AUTH_ENV_KEYS.some((key) => process.env[key]?.trim())) {
+    if (!AUTH_ENV_KEYS.some((key) => this.environment[key]?.trim())) {
       return {
         available: false,
         reason:
@@ -80,7 +82,7 @@ export class ClaudeHarnessAdapter implements HarnessAdapter {
   }
 
   start(options: HarnessStartOptions): HarnessRun {
-    return new ClaudeRun(options);
+    return new ClaudeRun(options, this.environment);
   }
 }
 
@@ -106,7 +108,7 @@ class ClaudeRun implements HarnessRun {
   } | null = null;
   private stopped = false;
 
-  constructor(private readonly options: HarnessStartOptions) {
+  constructor(private readonly options: HarnessStartOptions, private readonly environment: NodeJS.ProcessEnv) {
     void this.runLoop();
   }
 
@@ -204,6 +206,7 @@ class ClaudeRun implements HarnessRun {
           // Host operator context: the harness reads the operator's own user+project settings
           // (CLAUDE.md, skills), exactly like an admin running Claude Code by hand.
           settingSources: ["user", "project"],
+          env: this.environment,
           ...(this.options.mcpServers ? { mcpServers: this.options.mcpServers } : {}),
           canUseTool: (toolName: string, input: Record<string, unknown>, context?: ApprovalContext) =>
             this.requestApproval(toolName, input, context),

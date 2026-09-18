@@ -144,6 +144,11 @@ with `npm run build --workspace @haas/hosty-shell -- --webpack`; the default Tur
 not run in this environment. Core Native AOT published for osx-arm64 without new trim/AOT warnings.
 Version consistency and documentation-index checks pass.
 
+After integrating main at `c502a77c`, Shell tests passed 164 and Gateway tests passed 300.
+Both components passed lint (the same two existing Shell warnings) and production webpack builds.
+Core/CLI sources are unchanged by that integration. Release versions are platform 0.105.0,
+Shell 0.79.0 and Gateway 0.30.2; shared launch sources are included in CI and release path filters.
+
 Linux ARM64 validation used the official `mcr.microsoft.com/dotnet/sdk:10.0` container with an
 isolated source copy: Core tests filtered to `CoreDevelopmentTests`, `McpLifecycleHttpTests` and
 `LocalCommand` passed 69 tests; the full CLI suite passed 221. Windows execution, a complete Linux

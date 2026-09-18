@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { SessionProvider } from "@/components/session-provider";
 import { AppContextPicker } from "@/components/app-context-picker";
 import { ArrowLeft, History, Loader2, MessageSquarePlus, Paperclip, Send, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -18,6 +19,7 @@ import {
   createSession,
   deleteSession,
   getHealth,
+  stopSession,
   getSession,
   listAppNames,
   listSessions,
@@ -97,6 +99,8 @@ export default function AssistantPage() {
     streamAbortRef.current?.abort();
     activeSessionId.current = record.id;
     setSession(record);
+    setHealth(null);
+    void getHealth(record.id).then(value => { if (activeSessionId.current === record.id) setHealth(value); }).catch(() => {});
     setError(null);
     setContextUnavailable(false);
     setWithoutAppDetails(false);
@@ -122,6 +126,12 @@ export default function AssistantPage() {
       record.id,
       (event) => {
         if (abort.signal.aborted) return;
+        if (event.type === "session_provider_changed") {
+          void getSession(record.id).then(value => { if (activeSessionId.current === record.id) setSession(value); }).catch(() => {});
+          void getHealth(record.id).then(value => { if (activeSessionId.current === record.id) setHealth(value); }).catch(() => {});
+          return;
+        }
+        if (event.type === "user_message") setSession(current => current?.id === record.id ? { ...current, ...(current.providerLocked !== undefined ? { providerLocked: true } : {}) } : current);
         if (event.type === "app_context_changed") {
           const revision = Number(event.appContextRevision);
           setSession(current => current?.id === record.id && revision > (current.appContextRevision ?? 0)
@@ -193,9 +203,7 @@ export default function AssistantPage() {
         // An unavailable listing leaves the list as it was rather than emptying it: "we could not
         // ask" and "there are none" are different statements, and only one of them is knowledge.
         setSessions(list ?? []);
-        if (!harness.available) {
-          return;
-        }
+
 
         // Reattach first: the stream replays from seq 0, which rebuilds unresolved approval cards.
         let stored: string | null = null;
@@ -374,7 +382,7 @@ export default function AssistantPage() {
 
   const send = useCallback(async () => {
     const trimmed = input.trim();
-    if (!hasMessageContent(trimmed, pending.length, uploaded.length) || !session || sending) {
+    if (!hasMessageContent(trimmed, pending.length, uploaded.length) || !session || sending || !health?.available) {
       return;
     }
     setSending(true);
@@ -424,7 +432,7 @@ export default function AssistantPage() {
     } finally {
       setSending(false);
     }
-  }, [input, pending, sending, session, uploaded, withoutAppDetails]);
+  }, [input, pending, sending, session, uploaded, withoutAppDetails, health?.available]);
 
   // Deletion clears the active conversation without creating or selecting another one.
   const detachDeleted = useCallback((sessionId: string) => {
@@ -552,7 +560,7 @@ export default function AssistantPage() {
           <>
             {session && <Button variant="ghost" size="icon-sm" aria-label="Back to conversation" title="Back to conversation" onClick={() => setHistoryOpen(false)}><ArrowLeft /></Button>}
             <h1 className="min-w-0 flex-1 truncate text-sm font-medium">Session history</h1>
-            <Button variant="ghost" size="sm" disabled={!ready || !health?.available} onClick={() => void startNew()}><MessageSquarePlus data-icon="inline-start" />New session</Button>
+            <Button variant="ghost" size="sm" disabled={!ready} onClick={() => void startNew()}><MessageSquarePlus data-icon="inline-start" />New session</Button>
           </>
         ) : (
           <>
@@ -560,15 +568,20 @@ export default function AssistantPage() {
             <span className="hosty-shell-chrome text-sm font-medium">Assistant</span>
             <StatusBadge value={status} />
             <div className="ml-auto flex items-center gap-1">
+              {session && status !== "cancelled" && <Button size="sm" variant="ghost" disabled={sending} onClick={() => void stopSession(session.id).catch(cause => setError(cause.message))}>Stop</Button>}
               <Button variant="ghost" size="icon-sm" title="Session history" aria-label="Session history" disabled={!ready} onClick={() => {
                 setHistoryOpen(true);
                 void listSessions().then(setSessions).catch(cause => setError(cause instanceof Error ? cause.message : String(cause)));
               }}><History /></Button>
-              <Button variant="ghost" size="icon-sm" title="New session" aria-label="New session" disabled={!ready || !health?.available} onClick={() => void startNew()}><MessageSquarePlus /></Button>
+              <Button variant="ghost" size="icon-sm" title="New session" aria-label="New session" disabled={!ready} onClick={() => void startNew()}><MessageSquarePlus /></Button>
             </div>
           </>
         )}
       </header>
+      {!showSessions && session && session.providerLocked !== undefined && <SessionProvider key={`${session.id}:${session.connectionId}:${session.connectionRevision}`} session={session} busy={sending} onChange={record => {
+        setSession(current => current?.id === record.id ? record : current);
+        void getHealth(record.id).then(value => { if (activeSessionId.current === record.id) setHealth(value); }).catch(() => {});
+      }} />}
       {error && <div className="shrink-0 p-3" role="alert"><InlineError message={error} /></div>}
 
       {showSessions ? (
@@ -707,7 +720,7 @@ export default function AssistantPage() {
             >
               <Paperclip />
             </Button>
-            <Button type="submit" size="icon" disabled={!session || sending || !hasMessageContent(input, pending.length, uploaded.length)} aria-label="Send">
+            <Button type="submit" size="icon" disabled={!session || sending || !health?.available || !hasMessageContent(input, pending.length, uploaded.length)} aria-label="Send">
               {sending ? <Loader2 className="animate-spin" /> : <Send />}
             </Button>
           </form>

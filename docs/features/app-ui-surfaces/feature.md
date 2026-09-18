@@ -1,7 +1,7 @@
 # App UI Surfaces
 
 Created: 2026-08-19
-Updated: 2026-09-16
+Updated: 2026-09-18
 
 An app declares **where** its pages belong, and Shell places them. Before this, an app had exactly
 one placement — the sidebar — so operator configuration, domain work, and always-at-hand tools all
@@ -14,7 +14,7 @@ Chosen by **who the page is for and what it changes**, not by whether it looks l
 | Manifest field | How many | Audience | Where it lands |
 | --- | --- | --- | --- |
 | `ui.navigation` | any | users | the shell's sidebar |
-| `ui.settings` | at most one | administrators | a tab on Shell's Settings page |
+| `ui.settings` | at most one | administrators | one app-named entry under Settings |
 | `ui.panels` | any | users | tabs on Shell's right panel |
 
 Litmus tests: *would a `host.user` ever legitimately open it?* → sidebar or panel. *Does it change
@@ -34,6 +34,23 @@ explicit, paths absolute, every panel labelled and labels unique within the app 
 administrator Shell surfaces, so it must not lean on the permissive fallbacks ordinary `app.0.1`
 manifests keep for compatibility. An ordinary app keeps those fallbacks, so Shell supplies a label
 for a panel that declared none.
+
+## Settings Navigation
+
+Settings is expandable in the sidebar and opens a flyout in compact mode. It contains the built-in
+Users, Access tokens, Core, Ingress and Shared mounts sections, followed by one entry per app declaring
+`ui.settings`, labelled with the app name. Internal settings navigation belongs to the app. Ordinary users only see their own Access tokens section. Stopped apps keep
+their settings entries and display the existing start/readiness UI when selected.
+
+The former horizontal tab strip is removed. Selection stays in `/settings?tab=...`, so bookmarks,
+reload and back/forward retain the page. App entries use the app id as their key.
+Old page-specific bookmarks resolve to the same app entry. Removed or unknown apps fall back to
+the host's normal default.
+
+An app settings iframe fills the full workspace beside the sidebar and beneath the header, with no
+Shell padding or height subtraction for tabs. The app owns content padding; its modal overlay covers
+the full iframe without covering Shell navigation or an independently docked panel. Built-in host
+settings remain native Shell pages and retain their own layout.
 
 ## Placement Is Not Access Control
 
@@ -165,16 +182,24 @@ always asked for. Nothing becomes unreachable by it: `hosty apps open` and an ex
 still resolve a path against the entrypoint, because asking for a page by name is not the same as
 being offered one.
 
-An embedded settings page is given the **whole content column**, background included. An app paints
-its own page background, so a muted column around a white frame drew a seam under the tab strip that
-no other tab has — and padding around the frame turned the app into a box floating on the page. Shell
-already does exactly this for a workspace app; a settings tab is the same claim on the same column.
+An embedded settings page owns the **whole content column**, including its background, spacing and
+scrolling. Shell uses the same full-height container as a workspace app.
 
 Shell never learns any app's settings schema. That was the objection that moved the gateway's page
 out of Shell in the first place, and hosting an iframe honours it.
 
+Version outcome for settings navigation: Shell **0.77.0 → 0.78.0**; Core/CLI is unchanged.
+Gateway's internal settings tabs are included in its **0.30.0** provider-connections release.
+
+Shell sends the initial theme only after the embedded app document loads. The initial blank frame
+inherits Shell's origin and receives no messages intended for the app's different origin.
+
 ## Testing Expectations
 
+- Each declaring app contributes exactly one app-named Settings entry in compact and expanded
+  navigation. Old page-specific links resolve to that entry, including for stopped apps.
+- App settings fill the workspace; internal tabs and modal overlays belong to the app. Host
+  sections retain administrator gating and the viewer's own Access tokens section.
 - **Tab derivation as a pair**: a declaring app and a non-declaring one in the same fleet, since
   either assertion alone is satisfied by a rule that always answers the same way. Independence of the
   two surfaces is asserted the same way.

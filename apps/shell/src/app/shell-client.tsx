@@ -24,7 +24,7 @@ import { assistantSupportsContext, createAppSession, findAssistantGateway } from
 import { ShellSidebar } from "./shell/sidebar/shell-sidebar";
 import { ShellTopStrip } from "./shell/chrome/shell-top-strip";
 import { ShellRightPanel } from "./shell/surfaces/shell-right-panel";
-import { getAppPanelTabs, getAppSettingsTabs, resolveActiveSurfaceTab } from "./shell/surfaces/app-surface-tabs";
+import { getAppPanelTabs, getAppSettingsTabs, resolveSettingsSurface, resolveActiveSurfaceTab } from "./shell/surfaces/app-surface-tabs";
 import { ShellActionsContext, ShellStateContext } from "./shell/shell-context";
 import {
   getAuthorizedShellView,
@@ -38,8 +38,9 @@ import {
   SIDEBAR_COMPACT_PREF_KEY,
   RIGHT_PANEL_OPEN_PREF_KEY,
   SHELL_VIEW_LABELS,
+  HOST_SETTINGS_SECTIONS,
   readAssistantSessionParam,
-  shellViewRequiresAdmin,
+  getShellAuthorizationRedirect,
 } from "./shell/shell-routes";
 import { emptyDetailPanelState, emptyInstallPanelState } from "./shell/state";
 import { appendHostyLaunchParam } from "./shell/launch";
@@ -1706,13 +1707,12 @@ export function ShellClient({
     [],
   );
 
+  const authorizationRedirect = getShellAuthorizationRedirect(
+    shellRoute, Boolean(state.session?.authenticated), Boolean(canManageApps),
+  );
   useEffect(() => {
-    if (!state.session?.authenticated || canManageApps || shellRoute.workspace || !shellViewRequiresAdmin(shellRoute.view)) {
-      return;
-    }
-
-    router.replace(getShellViewHref("available-apps"));
-  }, [canManageApps, router, shellRoute.view, shellRoute.workspace, state.session?.authenticated]);
+    if (authorizationRedirect) router.replace(authorizationRedirect);
+  }, [authorizationRedirect, router]);
 
   useEffect(() => {
     if (normalizedRoutePath === "/workspace" && !shellRoute.workspace) {
@@ -2150,7 +2150,7 @@ export function ShellClient({
   // takes the same surface. An embedded page paints its own background, and leaving the column
   // muted around it drew a seam under the tab strip that no other tab has.
   const appSettingsSurfaceActive =
-    effectiveView === "settings" && appSettingsTabs.some((tab) => tab.appId === shellRoute.settingsTab);
+    effectiveView === "settings" && Boolean(resolveSettingsSurface(appSettingsTabs, shellRoute.settingsTab));
 
   const rightPanelVisible = appPanelTabs.length > 0 && rightPanelOpen;
   const activePanelTab = useMemo(
@@ -2160,7 +2160,11 @@ export function ShellClient({
 
   // What the strip names: the app whose page fills the content area, or the Shell page itself.
   const stripTitle = workspace?.title ?? SHELL_VIEW_LABELS[effectiveView] ?? "Hosty";
-  const stripSubtitle = workspace?.pageLabel ?? null;
+  const selectedSettingsPage = resolveSettingsSurface(appSettingsTabs, shellRoute.settingsTab);
+  const stripSubtitle = workspace?.pageLabel ?? (effectiveView === "settings"
+    ? selectedSettingsPage ? selectedSettingsPage.label
+      : HOST_SETTINGS_SECTIONS.find(section => section.id === shellRoute.settingsTab)?.label ?? "Users"
+    : null);
 
   // Passes through the existing rule rather than restating it: only an app that already qualifies is
   // answered, in this context as in the workspace.
@@ -2359,6 +2363,14 @@ export function ShellClient({
             coreOrigin={coreOrigin}
             activeUser={activeUser}
             canManageApps={Boolean(canManageApps)}
+            settingsPages={appSettingsTabs}
+            selectedSettings={shellRoute.settingsTab}
+            onOpenSettings={(key) => {
+              setMobileSidebarOpen(false);
+              setWorkspace(null);
+              setOptimisticWorkspaceRoute(null);
+              router.push(`/settings?${new URLSearchParams({ tab: key })}`);
+            }}
             uiApps={uiApps}
             busyAction={busyAction}
             onStartApp={canManageApps ? startAppById : undefined}
@@ -2386,11 +2398,11 @@ export function ShellClient({
         <div
           className={cn(
             "h-full min-w-0",
-            workspaceSurfaceActive ? "overflow-hidden bg-background" : "overflow-y-auto",
+            (workspaceSurfaceActive || appSettingsSurfaceActive) ? "overflow-hidden bg-background" : "overflow-y-auto",
             appSettingsSurfaceActive && "bg-background",
           )}
         >
-          <main className={cn("w-full", workspaceSurfaceActive ? "h-full" : "mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8")}>
+          <main className={cn("w-full", (workspaceSurfaceActive || appSettingsSurfaceActive) ? "h-full" : "mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8")}>
             {workspace ? (
               <EmbeddedWorkspacePanel
                 workspace={workspace}

@@ -80,6 +80,10 @@ function fail(reason) {
 }
 
 function handle(msg) {
+  if (msg.method === "account/read") {
+    send({ jsonrpc: "2.0", id: msg.id, result: { account: null } });
+    return;
+  }
   // Reply to an approval we raised.
   if (msg.id !== undefined && msg.result !== undefined && msg.id === pendingApprovalId) {
     const decision = msg.result?.decision;
@@ -126,6 +130,21 @@ function handle(msg) {
     return;
   }
 
+  if (msg.method === "account/login/cancel") {
+    send({ id: msg.id, result: { status: "canceled" } });
+    return;
+  }
+
+  if (msg.method === "account/login/start") {
+    if (msg.params?.type !== "chatgptDeviceCode" || !authFile) fail("expected isolated device login");
+    send({ id: msg.id, result: { type: "chatgptDeviceCode", loginId: "native-login", verificationUrl: "https://auth.openai.com/codex/device", userCode: "FAKE-CODE" } });
+    if (process.env.HOSTY_TEST_LOGIN_MODE !== "pending") setTimeout(() => {
+      writeFileSync(authFile, JSON.stringify({ tokens: { access_token: "synthetic-access", refresh_token: "synthetic-refresh", account_id: "synthetic-account" } }), { mode: 0o600 });
+      send({ method: "account/login/completed", params: { loginId: "native-login", success: process.env.HOSTY_TEST_LOGIN_MODE !== "fail" } });
+    }, 50);
+    return;
+  }
+
   if (msg.method === "thread/resume") {
     send({ jsonrpc: "2.0", id: msg.id, result: { thread: { id: msg.params?.threadId ?? "thread-fake-1" } } });
     return;
@@ -137,6 +156,7 @@ function handle(msg) {
       fail("turn/start sandboxPolicy must be an internally tagged object");
     }
     currentTurnText = String(msg.params?.input?.[0]?.text ?? "");
+    if (currentTurnText.startsWith("[Hosty operator instructions]")) currentTurnText = currentTurnText.slice(currentTurnText.lastIndexOf("\n\n") + 2);
     send({ jsonrpc: "2.0", id: msg.id, result: {} });
 
     if (currentTurnText.includes("write")) {

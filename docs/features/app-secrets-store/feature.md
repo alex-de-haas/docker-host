@@ -1,7 +1,7 @@
 # App Secrets Store
 
 Created: 2026-07-22
-Updated: 2026-09-06
+Updated: 2026-09-17
 
 ## Description
 
@@ -179,8 +179,9 @@ secret", so a broken Core or proxy cannot masquerade as a reconnect-required sta
 
 ## Boundaries
 
-- Not a settings replacement: operator-configured secrets (e.g. `TMDB_API_KEY`) stay in manifest
-  `settings` with `secret: true`. The keychain is only for values acquired at runtime.
+- Static infrastructure settings: operator-configured secrets (e.g. `TMDB_API_KEY`) stay in manifest
+  `settings` with `secret: true`. The keychain covers runtime-acquired values and the scoped
+  app-managed provider credentials described below.
 - Not a blob store — it is bounded key/value.
 - No cross-app sharing; the keychain is strictly per-app.
 - No per-service scoping inside multi-service apps: any service holding the app's token reads the
@@ -193,6 +194,16 @@ secret", so a broken Core or proxy cannot masquerade as a reconnect-required sta
 - [Core API](../core-api/feature.md)
 - [App data backup retention](../app-data-backup-retention/feature.md)
 - [Hosty App SDK](../hosty-app-sdk/feature.md)
+
+## App-managed provider credentials
+
+AI Gateway's [provider connections](../ai-gateway-providers/feature.md) extend the original
+runtime-acquired-only boundary to credentials entered through an app-owned connection UI. The app
+stores only opaque references in backed-up metadata and writes values using its existing service
+identity. This scoped use includes provider API keys, manual Claude tokens and native ChatGPT auth
+with refresh tokens. It requires no new Core endpoints and does not turn the store into a general
+Dashboard settings read API. Native credential copies must also stay outside app data; excluding
+the original secret alone does not exclude copies written by SDKs or CLIs.
 
 ## Testing Expectations
 

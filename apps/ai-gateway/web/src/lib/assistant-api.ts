@@ -1,5 +1,6 @@
 "use client";
 
+import type { AgentConnection } from "@/components/agent-providers";
 import { getDelegatedToken } from "./delegated-token";
 
 // The assistant's own API, called from the page the gateway serves.
@@ -26,6 +27,10 @@ export type AssistantQuestion = {
 
 export type AssistantSession = {
   id: string;
+  connectionId?: string;
+  connectionRevision?: number;
+  harnessKind?: "claude" | "codex";
+  providerLocked?: boolean;
   title: string | null;
   status: string;
   createdAt: string;
@@ -97,9 +102,9 @@ async function call(path: string, init: RequestInit = {}, retried = false): Prom
   return response;
 }
 
-export async function getHealth(): Promise<HarnessHealth> {
+export async function getHealth(sessionId?: string): Promise<HarnessHealth> {
   // The route answers an envelope; the harness is the part that matters here.
-  const body = (await (await call("/health")).json()) as { harness: HarnessHealth };
+  const body = (await (await call(sessionId ? `/health?sessionId=${encodeURIComponent(sessionId)}` : "/health")).json()) as { harness: HarnessHealth };
   return body.harness;
 }
 
@@ -114,7 +119,7 @@ export async function listSessions(): Promise<AssistantSession[]> {
   return body.sessions ?? [];
 }
 
-export async function createSession(input: { title?: string; context?: Record<string, string>; appIds?: string[]; clientRequestId?: string } = {}): Promise<AssistantSession> {
+export async function createSession(input: { connectionId?: string; title?: string; context?: Record<string, string>; appIds?: string[]; clientRequestId?: string } = {}): Promise<AssistantSession> {
   return (await call("/sessions", { method: "POST", body: JSON.stringify(input) })).json() as Promise<AssistantSession>;
 }
 
@@ -299,4 +304,14 @@ export async function streamEvents(
     }
     await new Promise((resolve) => setTimeout(resolve, 2_000));
   }
+}
+
+export async function listAgentConnections(): Promise<{ connections: AgentConnection[]; defaultId: string | null }> {
+  return (await call("/connections")).json();
+}
+export async function setSessionProvider(id: string, connectionId: string, confirmLegacy = false): Promise<AssistantSession> {
+  return (await call(`/sessions/${encodeURIComponent(id)}/provider`, { method: "PUT", body: JSON.stringify({ connectionId, confirmLegacy }) })).json();
+}
+export async function stopSession(id: string): Promise<void> {
+  await call(`/sessions/${encodeURIComponent(id)}/cancel`, { method: "POST" });
 }
