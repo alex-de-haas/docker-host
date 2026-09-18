@@ -155,7 +155,9 @@ internal sealed class AppUpdateSweepService(
             var targets = apps
                 .Where(app => string.Equals(app.Kind, "runtime", StringComparison.Ordinal) && !app.Live)
                 .ToList();
-            await lifecycle.PruneUpdateAvailability(targets.Select(target => target.Id).ToHashSet(StringComparer.Ordinal));
+            // Keep explicit live-source permission reviews. ListAppsAsync already suppresses their
+            // fleet verdicts and invalidates plans that predate switching to a live runtime.
+            await lifecycle.PruneUpdateAvailability(apps.Select(app => app.Id).ToHashSet(StringComparer.Ordinal));
 
             // No cross-app fetch dedupe is needed here: app-feeds.0.1 documents are per-app (a single
             // appId that must match the installed app), so each app's feed and manifest URLs are its

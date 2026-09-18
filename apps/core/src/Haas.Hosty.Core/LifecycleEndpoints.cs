@@ -30,9 +30,7 @@ internal static class LifecycleEndpoints
                 request,
                 users,
                 clock,
-                async () => await HandleLifecycleError(() => lifecycle.ApplyFeedInstallAsync(
-                    input with { StartOnInstall = input.StartOnInstall ?? true },
-                    cancellationToken)),
+                () => Task.FromResult<IResult>(CoreJson.Json(new ErrorResponse("approval_required", "Use the Core installation confirmation flow."), 403)),
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
@@ -64,20 +62,7 @@ internal static class LifecycleEndpoints
                 request,
                 users,
                 clock,
-                // Interactive installs start the app immediately unless the client opts out (StartOnInstall
-                // false); an absent value defaults to true so autostart apps run without a Core restart.
-                // System is coerced off for the same reason as the plan endpoint above.
-                async () => await HandleLifecycleError(() =>
-                {
-                    RequireInstallPlanId(input);
-                    return lifecycle.InstallAsync(input with
-                    {
-                        StartOnInstall = input.StartOnInstall ?? true,
-                        System = false,
-                        FeedsUrl = null,
-                        FeedId = null,
-                    }, cancellationToken);
-                }),
+                () => Task.FromResult<IResult>(CoreJson.Json(new ErrorResponse("approval_required", "Use the Core installation confirmation flow."), 403)),
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 

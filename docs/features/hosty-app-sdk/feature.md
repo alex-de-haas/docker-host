@@ -1,10 +1,10 @@
 # Hosty App SDK
 
 Created: 2026-07-15
-Updated: 2026-09-10
+Updated: 2026-09-18
 
 Shared Host integration for runtime apps, in two published packages: **`@hosty-sdk/app`** on npmjs
-(TypeScript, 0.13.0) and **`HostySdk.App`** on NuGet (.NET, 0.6.0). They own the app half of the
+(TypeScript, 0.14.0) and **`HostySdk.App`** on NuGet (.NET, 0.6.0). They own the app half of the
 [auth session lifecycle](../auth-session-lifecycle/feature.md) contract — session classification,
 recovery, Core revalidation, launch-mode awareness — plus the app secrets client, delegated-token
 validation, and (TypeScript only) the theme protocol between a shell and the pages it embeds.
@@ -18,6 +18,10 @@ offered code sitting at `consumedAt: null`). Marketplace, separately, rendered a
 `HOSTY_APP_SERVICE_TOKEN` — an operator problem — as a login prompt the user could not act on, which
 is what the `misconfigured` state exists to prevent.
 
+Installation also has a pure client/state flow, a React dialog and an app-local server adapter.
+[App installation](../app-installation-sdk/feature.md) owns their permission and Core confirmation
+contract; none depends on the default Shell or its embedding messages.
+
 ## Packages And Slices
 
 ```text
@@ -26,6 +30,9 @@ is what the `misconfigured` state exists to prevent.
 @hosty-sdk/app/delegated       # local ECDSA validation of Core-issued delegated tokens
 @hosty-sdk/app/react           # 'use client': AppIdentityBridge, HostLaunchBridge, HostThemeBridge, useLaunchMode
 @hosty-sdk/app/embedder        # 'use client': the verified responders a shell owes its frames, the theme sender half
+@hosty-sdk/app/install         # pure: typed client and InstallationFlow
+@hosty-sdk/app/install/react   # client: useInstallation and InstallDialog
+@hosty-sdk/app/install/server  # server-only: app-local installation route adapter
 @hosty-sdk/app/theme           # pure: the shell→app theme protocol, its resolver, and the bootstrap script
 
 HostySdk.App                   # NuGet — Hosty auth scheme, cached Core revalidation,

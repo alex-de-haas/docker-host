@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 const { version: shellVersion } = createRequire(import.meta.url)("./package.json") as { version: string };
 
 const nextConfig: NextConfig = {
-  allowedDevOrigins: ["127.0.0.1", "localhost"],
+  allowedDevOrigins: ["127.0.0.1", "localhost", "*.hosty.localhost"],
   env: {
     NEXT_PUBLIC_SHELL_VERSION: shellVersion,
   },

@@ -243,7 +243,7 @@ export function EmbeddedAppFrame({
       className={cn("hosty-app-frame transition-opacity duration-100", currentFrameLoaded ? "opacity-100" : "opacity-0", className)}
       title={title}
       src={src}
-      sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads"
+      sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads"
       allow="clipboard-write"
       style={{ colorScheme: theme }}
       onLoad={handleLoad}

@@ -1,7 +1,12 @@
 # Runtime App Update
 
 Created: 2026-06-04
-Updated: 2026-09-17
+Updated: 2026-09-18
+
+Update plans also display `corePermissions` additions/removals. New permissions require
+[Core-owned confirmation](../app-installation-sdk/feature.md); the queued HTTP/MCP apply path
+refuses additions with `approval_required`. Confirmed application records the reviewed grant set.
+Existing approved grants are preserved during live-source projection and runtime switches.
 
 ## Description
 

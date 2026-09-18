@@ -251,6 +251,13 @@ Optional catalog-style display metadata for an installed app. It is **entirely o
 All fields are optional; blanks are dropped and an all-empty block is ignored. `category` is catalog-style metadata, distinct from the simpler `ui.category` used by the app directory. `icon` is an asset path or URL (richer than `ui.icon`, which is a Lucide name). Core exposes the normalized block on each installed app summary as `catalogMetadata` for Shell's installed-app surfaces.
 
 
+## Core Operation Permissions
+
+`corePermissions` requests named Core operations. The supported initial values are `apps.install`
+and `apps.update`; unknown or duplicate names fail validation. They authorize preparation of
+requests, with final confirmation performed on Core's own page. Core stores approved grants
+separately from live manifest projections. See [App installation](../app-installation-sdk/feature.md).
+
 ## Testing Expectations
 
 - Manifest validation covers required fields, runtime profile selection, service/runtime compatibility, and optional contract sections.

@@ -462,8 +462,10 @@ internal static class AuthEndpoints
 
     internal static bool IsAllowedLoginReturnTo(string? returnTo)
         => IsRelativeContinuation(returnTo, out var path) &&
-            path.StartsWith("/api/apps/", StringComparison.Ordinal) &&
-            path.EndsWith("/open", StringComparison.Ordinal);
+            ((path.StartsWith("/api/apps/", StringComparison.Ordinal) &&
+              path.EndsWith("/open", StringComparison.Ordinal)) ||
+             (path.StartsWith("/install/confirm/", StringComparison.Ordinal) && path.Length == 65 &&
+              path[17..].IndexOfAnyExcept("0123456789abcdef") < 0));
 
     internal static bool IsAllowedShellReturnTo(string? returnTo)
         => IsRelativeContinuation(returnTo, out _);
@@ -526,7 +528,8 @@ internal static class AuthEndpoints
                 now,
                 now.Add(lifetimes.CoreSessionAbsolute),
                 null,
-                LastSeenAt: now);
+                LastSeenAt: now,
+                BrowserOrigin: $"{response.HttpContext.Request.Scheme}://{response.HttpContext.Request.Host}");
             var sessions = PruneSessions(state.Sessions, now, lifetimes).Append(newSession).ToArray();
             return (state with { Sessions = sessions }, new AuthSessionCreateResult(true, user, newSession));
         }, cancellationToken);

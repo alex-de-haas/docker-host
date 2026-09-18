@@ -2,8 +2,8 @@
   "schemaVersion": "app.0.1",
   "id": "hosty.marketplace",
   "name": "Hosty Marketplace",
-  "description": "Catalog discovery and storefront UI for Hosty runtime apps. Marketplace has no lifecycle authority; install review and apply remain in Core.",
-  "version": "0.4.3",
+  "description": "Catalog discovery and storefront UI for Hosty runtime apps. Installation requests use declared permissions and require final confirmation in Core.",
+  "version": "0.5.0",
   "role": "system",
   "source": {
     "type": "git",
@@ -31,7 +31,7 @@
           "type": "docker",
           "image": {
             "repository": "ghcr.io/alex-de-haas/hosty-marketplace",
-            "tag": "0.4.3"
+            "tag": "0.5.0"
           },
           "environment": {
             "PORT": "3000",
@@ -122,8 +122,13 @@
       "description": "HTTP(S) URL of the marketplace.0.2 catalog displayed by this Marketplace app."
     }
   ],
-  "capabilities": ["logs"],
+  "capabilities": [
+    "logs"
+  ],
   "catalogMetadata": {
     "icon": "assets/icon.svg"
-  }
+  },
+  "corePermissions": [
+    "apps.install"
+  ]
 }

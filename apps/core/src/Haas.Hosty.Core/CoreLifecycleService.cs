@@ -273,7 +273,36 @@ internal sealed partial class CoreLifecycleService(
             Settings: selection.Manifest.Settings
                 .Where(setting => !PublicOriginSettings.IsSettingKey(setting.Key))
                 .Select(setting => new AppInstallSetting(setting.Key, setting.Type, setting.Secret ? null : setting.Default, setting.Secret, setting.Required, setting.Label, setting.Description))
-                .ToArray());
+                .ToArray(),
+            CorePermissions: selection.Manifest.CorePermissions.ToArray());
+    }
+
+    internal async Task<AppUpdatePlan> GetReviewedUpdatePlanAsync(string appId, string digest)
+    {
+        var reviewed = await ResolveConfirmedUpdatePlan(appId, digest);
+        var app = await RequireAppAsync(appId, CancellationToken.None);
+        return reviewed.Plan with
+        {
+            CurrentCorePermissions = app.GrantedCorePermissions ?? [],
+            TargetCorePermissions = reviewed.Selection.Manifest.CorePermissions.ToArray(),
+        };
+    }
+
+    // Freeze the exact feed selection in the existing single-use install-plan cache. Approval must
+    // execute the content shown by Core, not fetch another manifest after the user confirms.
+    internal async Task<AppFeedInstallPlan> CreateApprovalFeedPlanAsync(AppFeedInstallPlanRequest request, CancellationToken cancellationToken)
+    {
+        var reviewed = await CreateFeedInstallPlanCoreAsync(request, cancellationToken);
+        var probes = await ProbeServiceArtifactsAsync(reviewed.Plan.Install.AppId, null, reviewed.Selection, cancellationToken);
+        var plan = reviewed.Plan.Install with
+        {
+            PlanId = $"instp_{Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16)).ToLowerInvariant()}",
+            ArtifactDigests = probes,
+        };
+        if (reviewedInstallPlans.Count >= MaxPendingInstallPlans)
+            throw new AppLifecycleException("install_plan_limit", "Too many pending installation plans. Try again later.");
+        reviewedInstallPlans[plan.PlanId!] = new CachedInstallPlan(plan, reviewed.Selection, probes, clock.UtcNow);
+        return reviewed.Plan with { Install = plan };
     }
 
     public async Task<AppFeedInstallPlan> CreateFeedInstallPlanAsync(
@@ -433,6 +462,7 @@ internal sealed partial class CoreLifecycleService(
             OperationStatus = "installed",
             RuntimeState = "stopped",
             LastOperation = "install",
+            GrantedCorePermissions = selection.Manifest.CorePermissions.ToArray(),
             Autostart = request.Autostart ?? true,
             FeedsUrl = string.IsNullOrWhiteSpace(request.FeedsUrl) ? null : request.FeedsUrl.Trim(),
             FollowedFeedId = string.IsNullOrWhiteSpace(request.FeedId) ? null : request.FeedId.Trim(),
@@ -1530,6 +1560,10 @@ internal sealed partial class CoreLifecycleService(
         // A followed feed is an external source in its own right, whatever its manifestRef looks like.
         var sourceConfigured = feedResolution is not null || HasExternalUpdateSource(app, request.ManifestPath);
         var changes = BuildUpdateChanges(app, currentSelection, selection).ToList();
+        foreach (var permission in selection.Manifest.CorePermissions.Except(app.GrantedCorePermissions ?? [], StringComparer.Ordinal))
+            changes.Add($"Core permission added: {permission}");
+        foreach (var permission in (app.GrantedCorePermissions ?? []).Except(selection.Manifest.CorePermissions, StringComparer.Ordinal))
+            changes.Add($"Core permission removed: {permission}");
         // Surface a compiled-artifact change even when the manifest JSON is byte-identical (a
         // re-pushed tag): resolve the target tag's digest with a light remote lookup and compare it
         // to the current lock. This closes the invisible-update gap and folds the artifact delta into
@@ -1582,7 +1616,11 @@ internal sealed partial class CoreLifecycleService(
             WillCreatePreUpdateBackup: willCreateBackup,
             Changes: changes,
             SourceConfigured: sourceConfigured,
-            RequiresReview: PlanRequiresReview(changes));
+            RequiresReview: PlanRequiresReview(changes))
+        {
+            CurrentCorePermissions = app.GrantedCorePermissions ?? [],
+            TargetCorePermissions = selection.Manifest.CorePermissions.ToArray(),
+        };
 
         // Retain the fully-resolved plan so apply can use exactly what the operator confirmed instead of
         // rebuilding it. The rebuild was never reproducible across the plan->apply gap: it re-resolved the
@@ -1590,7 +1628,10 @@ internal sealed partial class CoreLifecycleService(
         // the feed seed fields, mismatching every time) and re-hit the registry (a blip flipped an
         // artifact digest to "unknown", mismatching the rest). currentSelection.ManifestDigest rides along
         // for the base-state guard in apply. Overwrites any prior pending plan for this app.
-        var cached = new CachedUpdatePlan(plan, selection, currentSelection.ManifestDigest, artifactProbes, resolvedSourceCommit, clock.UtcNow);
+        var cached = new CachedUpdatePlan(plan, selection, currentSelection.ManifestDigest, artifactProbes, resolvedSourceCommit, clock.UtcNow)
+        {
+            LiveSourceReview = !string.IsNullOrWhiteSpace(request.ManifestPath) && IsLiveSourceApp(app, profiles),
+        };
 
         // Every successful plan build — sweep, dialog open, status probe — refreshes the app's
         // availability projection, so the apps-list verdict and the plan cache never disagree.
@@ -1659,6 +1700,8 @@ internal sealed partial class CoreLifecycleService(
         // moved since it was reviewed.
         var confirmed = await ResolveConfirmedUpdatePlan(appId, request.PlanDigest);
         var app = await RequireAppAsync(appId, cancellationToken);
+        if (confirmed.Selection.Manifest.CorePermissions.Except(app.GrantedCorePermissions ?? [], StringComparer.Ordinal).Any())
+            throw new AppLifecycleException("approval_required", "New Core permissions require confirmation on the Core approval page.");
         var currentSelection = await LoadSelectionForAppAsync(app, cancellationToken);
         if (!string.Equals(app.Version, confirmed.Plan.CurrentVersion, StringComparison.Ordinal) ||
             !string.Equals(app.SelectedRuntime, confirmed.Plan.CurrentRuntime, StringComparison.Ordinal) ||
@@ -2058,6 +2101,7 @@ internal sealed partial class CoreLifecycleService(
             UpdateProgress = new AppUpdateProgress("installing", clock.UtcNow),
             RuntimeState = "stopped",
             LastOperation = "update",
+            GrantedCorePermissions = selection.Manifest.CorePermissions.ToArray(),
             LastError = null,
         };
         if (sourcePinCommit is not null && next.SourceState is not null)
@@ -3388,7 +3432,8 @@ internal sealed partial class CoreLifecycleService(
             // reservation whose service/port key the new manifest no longer declares is inert (nothing
             // resolves or projects it) and is reconciled when install-time allocation is wired into the
             // update/switch apply path.
-            PortAssignments: existing?.PortAssignments);
+            PortAssignments: existing?.PortAssignments,
+            GrantedCorePermissions: existing?.GrantedCorePermissions);
 
         return ApplyManifestProjections(record, manifest);
     }
@@ -6372,7 +6417,8 @@ internal sealed record AppInstallPlan(
     // Per-service image digests resolved at plan time (C-CR1 Fix B): CandidateDigest is what the
     // bound apply pins as the run-lock; null when unresolvable (offline / local-only image), in
     // which case that service TOFU-backfills at first start. Absent on the feed-embedded plan.
-    IReadOnlyList<AppServiceArtifactProbe>? ArtifactDigests = null);
+    IReadOnlyList<AppServiceArtifactProbe>? ArtifactDigests = null,
+    IReadOnlyList<string>? CorePermissions = null);
 
 internal sealed record AppFeedInstallPlan(
     AppInstallPlan Install,
@@ -6416,7 +6462,11 @@ internal sealed record AppUpdatePlan(
     // movement, so a client must show the plan to a human instead of applying it silently (see
     // CoreLifecycleService.PlanRequiresReview). Derived from Changes, which the plan digest already
     // covers — excluded from the digest seed. Defaulted so older payloads stay compatible.
-    bool RequiresReview = false);
+    bool RequiresReview = false)
+{
+    public IReadOnlyList<string> CurrentCorePermissions { get; init; } = [];
+    public IReadOnlyList<string> TargetCorePermissions { get; init; } = [];
+}
 
 // Pending reviewed-update plan read (see GetPendingUpdatePlanAsync). A null plan means nothing is
 // pending for the app: never built, expired, or already consumed by an apply.

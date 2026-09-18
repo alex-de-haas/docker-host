@@ -381,7 +381,8 @@ internal sealed record AppRecord(
     AppHealthSummary? Health = null,
     AppUpdateProgress? UpdateProgress = null,
     // Private start-time settings/mount digest; retained across Core restarts, never sent in summaries.
-    string? AppliedConfigurationHash = null);
+    string? AppliedConfigurationHash = null,
+    IReadOnlyList<string>? GrantedCorePermissions = null);
 
 // Last observed update stage, retained through completion for reconnecting clients.
 internal sealed record AppUpdateProgress(string Stage, DateTimeOffset ChangedAt, string? Service = null);

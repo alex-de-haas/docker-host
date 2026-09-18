@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-07-15
-Updated: 2026-09-07
+Updated: 2026-09-18
 
 Auth was phase 1 and shipped ([feature.md](feature.md)). What remains is the rest of the platform glue
 every app still hand-writes, plus the last adoption debts of the auth slice itself.
@@ -79,10 +79,13 @@ Version outcome: `@hosty-sdk/app` minor per slice, `HostySdk.App` minor for the 
 platform change — every item is app-side glue against contracts Core already serves.
 
 Checked and rejected as non-candidates: `app.0.1` manifest types (Core is the only parser — there is
-no app-side duplication to collapse); `hosty:install-feed` (a single producer and a single consumer;
-it stays a marketplace/Shell private protocol until a second party appears); project-manager's
+no app-side duplication to collapse); project-manager's
 `safe-fetch.ts` (an SSRF guard for user-configured outbound URLs — app business logic that only looks
 like platform glue).
+
+The former private installation protocol is removed by
+[app-installation-sdk](../app-installation-sdk/feature.md), which owns the shared client, dialog
+and Core confirmation workflow.
 
 ## Open Questions
 

@@ -10,7 +10,10 @@ import type {
   CatalogAppsResponse,
   CatalogDiagnostic,
 } from "@/lib/catalog-types";
-import { postInstallFeedIntent } from "@/lib/install-intent";
+import { createInstallationClient, type InstallationSource } from "@hosty-sdk/app/install";
+import { InstallDialog } from "@hosty-sdk/app/install/react";
+
+const installationClient = createInstallationClient();
 import { fetchAppUpdateAvailable, fetchCatalogApp, fetchCatalogApps, fetchInstalledAppIds, MarketplaceApiError } from "@/lib/marketplace-api";
 import { MarkdownDescription } from "@/components/markdown-description";
 import { Badge } from "@/components/ui/badge";
@@ -26,6 +29,7 @@ const initialCatalog: CatalogAppsResponse = {
 };
 
 export function Storefront() {
+  const [installSource, setInstallSource] = useState<InstallationSource | null>(null);
   const [catalog, setCatalog] = useState(initialCatalog);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -147,18 +151,16 @@ export function Storefront() {
   };
 
   const requestInstall = (feedsUrl: string, feed: CatalogAppFeed) => {
-    const result = postInstallFeedIntent(feedsUrl, feed.id);
-    if (result.ok) {
-      // No success banner — the Shell's install-review dialog opening is confirmation enough.
-      setNotice(null);
-      setSelected(null);
-    } else {
-      setNotice(result.message);
-    }
+    setSelected(null);
+    setNotice(null);
+    setInstallSource({ feedsUrl, feedId: feed.id });
   };
 
   return (
     <main className="mx-auto w-full max-w-6xl space-y-6 px-4 py-6 sm:px-6">
+      {installSource && <InstallDialog client={installationClient} source={installSource}
+        onClose={() => setInstallSource(null)}
+        onInstalled={() => { setInstallSource(null); loadInstalledAppIds(); }} />}
       <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         {/* Shell already renders the app name; Refresh acts on the catalog below. */}
         <div className={cn("min-w-0 space-y-1", SHELL_DUPLICATED_CHROME_CLASS)}>

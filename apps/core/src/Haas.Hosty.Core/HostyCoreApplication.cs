@@ -176,6 +176,8 @@ internal static class HostyCoreApplication
         // status block read it) and its scheduler runs it on the Core-settings cadence.
         builder.Services.AddSingleton<AppUpdateSweepService>();
         builder.Services.AddHostedService<AppUpdateSweepScheduler>();
+        builder.Services.AddSingleton<InstallationApprovalStore>();
+        builder.Services.AddSingleton<InstallationApprovalService>();
         builder.Services.AddCors();
         // Registered after AddCors so it wins over the default provider it TryAdds. The Shell policy is
         // built per request because its origin now lives in Shell's app record, which the operator can
@@ -195,6 +197,7 @@ internal static class HostyCoreApplication
     {
         app.UseForwardedHeaders();
         app.UseCors("HostyShell");
+        InstallationApprovalEndpoints.Map(app);
 
         app.MapGet("/healthz", () => CoreJson.Json(new HealthResponse("ok")));
         app.MapGet("/api/core/status", async (
