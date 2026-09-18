@@ -91,7 +91,9 @@ while service descendants remain in its job, so a replacement Core can adopt and
 For explicit Stop, Core opens the runner's named job using its verified PID/start identity,
 checks membership and retains member process handles until their exit signals, as well as checking
 that job accounting is empty. No Core-owned handle is retained
-during normal operation. A failure to terminate or confirm job shutdown fails Stop. Runners
+during normal operation. A failure to terminate or confirm job shutdown fails Stop. Core
+also waits for the recorded Core-assigned TCP ports to become available before Stop returns;
+a port that remains unavailable fails Stop without killing any unrelated holder. Runners
 created before named-job support retain the legacy best-effort stop path until their next app restart.
 Runners append console logs and rotate at 10 MiB with two previous files;
 Core reads these files after handover. OTLP telemetry is independent.

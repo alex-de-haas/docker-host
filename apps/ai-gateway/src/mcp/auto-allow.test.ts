@@ -242,11 +242,12 @@ describe("Core's default grant", () => {
   it("runs Core's read-only tools unprompted with nothing written to settings", async () => {
     const record = await manager.createSession({ createdBy: "user_admin" });
     await manager.postMessage(record.id, "coretool please", "seed-credential");
-    await new Promise((resolve) => setTimeout(resolve, 20));
-
-    const events = (await store.readEvents(record.id)).map((event) => event.type);
+    const events = await vi.waitFor(async () => {
+      const events = (await store.readEvents(record.id)).map((event) => event.type);
+      expect(events).toContain("assistant_text");
+      return events;
+    });
     expect(events).not.toContain("approval_request");
-    expect(events).toContain("assistant_text");
     // Only what Core declared read-only: `stop_app` declares nothing and stays behind the card, the
     // app's tools are absent because the app was never enabled.
     expect([...granted(record.id)]).toEqual([CORE_TOOL]);
@@ -257,8 +258,8 @@ describe("Core's default grant", () => {
 
     const record = await manager.createSession({ createdBy: "user_admin" });
     await manager.postMessage(record.id, "coretool please", "seed-credential");
-    await new Promise((resolve) => setTimeout(resolve, 20));
-
-    expect((await store.readEvents(record.id)).map((event) => event.type)).toContain("approval_request");
+    await vi.waitFor(async () => {
+      expect((await store.readEvents(record.id)).map((event) => event.type)).toContain("approval_request");
+    });
   });
 });

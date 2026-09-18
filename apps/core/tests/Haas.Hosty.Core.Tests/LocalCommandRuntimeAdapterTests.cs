@@ -366,7 +366,7 @@ public sealed class LocalCommandRuntimeAdapterTests
                 scriptPath,
                 $"""
                 @echo off
-                start "" /b powershell.exe -NoProfile -NonInteractive -Command "$listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0); $listener.ExclusiveAddressUse = $true; $listener.Start(); Set-Content -LiteralPath '{escapedPortPath}' -Value $listener.LocalEndpoint.Port; Set-Content -LiteralPath '{escapedPidPath}' -Value $PID; Start-Sleep -Seconds 120" >nul 2>&1
+                start "" /b powershell.exe -NoProfile -NonInteractive -Command "$listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, [int]$env:HOSTY_PORT_HTTP); $listener.ExclusiveAddressUse = $true; $listener.Start(); Set-Content -LiteralPath '{escapedPortPath}' -Value $listener.LocalEndpoint.Port; Set-Content -LiteralPath '{escapedPidPath}' -Value $PID; Start-Sleep -Seconds 120" >nul 2>&1
                 powershell.exe -NoProfile -NonInteractive -Command "Start-Sleep -Seconds 2"
                 """);
 
@@ -382,7 +382,8 @@ public sealed class LocalCommandRuntimeAdapterTests
                 // command line, and cmd.exe reads those literally, so the launch fails with ERRORLEVEL 1
                 // before the script ever runs.
                 command: Path.GetFileName(scriptPath),
-                shim: new LocalCommandShimOptions(coreExecutable));
+                shim: new LocalCommandShimOptions(coreExecutable),
+                ports: [new RuntimePortManifest { Key = "http", Protocol = "http" }]);
 
             AppRuntimeStartResult started;
             try
@@ -427,6 +428,7 @@ public sealed class LocalCommandRuntimeAdapterTests
             Assert.False(child.HasExited);
 
             Assert.True(TryReadPositiveInteger(portPath, out var port));
+            Assert.Equal(port, running.Ports["http"]);
             using (var occupied = new TcpListener(IPAddress.Loopback, port) { ExclusiveAddressUse = true })
                 Assert.Throws<SocketException>(() => occupied.Start());
 
@@ -443,6 +445,7 @@ public sealed class LocalCommandRuntimeAdapterTests
                 var (replacement, replacementRegistry, _) = CreateSetupScenario(workRoot, null, Path.GetFileName(scriptPath));
                 Assert.True(await replacementRegistry.TryAdoptAsync(workRoot, context.App.Id, "app", default, instanceId: ""));
                 Assert.True(replacementRegistry.Get(context.App.Id, "app")!.IndependentRunner);
+                Assert.Equal(port, replacementRegistry.Get(context.App.Id, "app")!.Ports["http"]);
                 stoppingAdapter = replacement;
             }
             await stoppingAdapter.StopAsync(context);
@@ -617,7 +620,8 @@ public sealed class LocalCommandRuntimeAdapterTests
         string? setup,
         string command,
         bool cacheEnabled = false,
-        LocalCommandShimOptions? shim = null)
+        LocalCommandShimOptions? shim = null,
+        IReadOnlyList<RuntimePortManifest>? ports = null)
     {
         var registry = new LocalCommandProcessRegistry();
         var adapter = new LocalCommandRuntimeAdapter(
@@ -629,7 +633,7 @@ public sealed class LocalCommandRuntimeAdapterTests
         var service = new RuntimeSelectedService(
             "app",
             [],
-            new RuntimeServiceProfileManifest { Type = "localCommand", Setup = setup, Command = command },
+            new RuntimeServiceProfileManifest { Type = "localCommand", Setup = setup, Command = command, Ports = ports ?? [] },
             null,
             "source");
         var manifest = new RuntimeAppManifest

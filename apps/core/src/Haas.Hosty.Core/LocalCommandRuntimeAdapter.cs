@@ -902,6 +902,20 @@ internal sealed class LocalCommandRuntimeAdapter(
                         appId,
                         serviceKey);
                 }
+
+                if (OperatingSystem.IsWindows())
+                {
+                    // Windows can briefly retain a bound TCP endpoint after process exit is signaled.
+                    // Stop's contract includes immediate restart on the same Core-assigned ports.
+                    var ports = running.Ports.Values.Distinct().ToArray();
+                    var release = System.Diagnostics.Stopwatch.StartNew();
+                    while (ports.Any(port => !RuntimePortHelper.IsLoopbackTcpPortAvailable(port)))
+                    {
+                        if (release.Elapsed >= LogDrainTimeout)
+                            throw new IOException($"Ports for {appId}/{serviceKey} remain unavailable after process termination.");
+                        await Task.Delay(50, cancellationToken);
+                    }
+                }
             }
             catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
             {
