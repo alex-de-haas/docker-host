@@ -2290,10 +2290,9 @@ export function ShellClient({
             {workspace ? (
               <EmbeddedWorkspacePanel
                 workspace={workspace}
+                grantedCorePermissions={state.apps.find((app) => app.id === workspace.appId)?.grantedCorePermissions}
                 theme={shellResolvedTheme}
                 themePreference={shellThemePreference}
-                // Only the Marketplace frame may hand Shell an install intent; every other embedded
-                // app gets no handler, so its messages are never listened for.
                 onAuthRequired={handleAuthRequired}
                 onDelegatedTokenRequest={handleDelegatedTokenRequest}
                 onAskAssistant={assistantAvailable ? askAssistant : undefined}

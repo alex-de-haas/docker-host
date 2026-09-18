@@ -13,7 +13,8 @@ Core-owned final confirmation on 2026-09-18, then authorized local deployment an
 ## Remaining Deliverables
 
 - [ ] Complete an installation from embedded Marketplace, including a generic embedder with no
-  installation responder. Both embedded surfaces load with an authenticated app session; the
+  installation responder, and verify frame reload after revoking installation grants. Both
+  embedded surfaces load with an authenticated app session; the
   in-app browser's automation currently fails to activate controls inside the iframe.
 - [ ] Verify popup-blocker fallback and mobile layouts in a browser with working popup/viewport
   automation. The current in-app browser opens separate native popup windows outside the tool's
@@ -89,13 +90,17 @@ its existing operator-session transport rather than delegated app credentials.
 
 ## Automated Verification
 
-- Final Core full suite: 1975 passed, 4 existing opt-in integration tests skipped.
-- Core Native AOT publish for osx-arm64 passed without new trim/AOT warnings during PR preparation.
+- Final Core full suite after review fixes: 1981 passed, 4 existing opt-in integration tests skipped.
+- Core Native AOT publish for osx-arm64 passed without new trim/AOT warnings after review fixes.
 - Focused update-snapshot, fleet-sweep and confirmation suite: 44 passed.
 - SDK: 104 tests passed and package build passed.
 - Marketplace: 104 tests passed, lint passed, and production Webpack build passed after the adapter fix.
-- Shell's earlier 159 tests and Webpack production build passed; its only subsequent code change is
-  the development-host allowlist.
+- Shell after review fixes: 162 tests passed, lint passed with two existing navigation warnings,
+  and the Webpack production build passed. Marketplace lint also passed after grouping imports.
+- Review regressions: the four feed-cache/audit-failure cases failed before the fix; the focused
+  Core suite now passes all 62 cases. Grant projection and sandbox policy have automated coverage
+  across workspace/settings/panel wiring; live popup/revocation behavior has not been rechecked
+  after this refinement.
 - Version consistency, documentation index and whitespace checks pass.
 
 ## Version Outcome

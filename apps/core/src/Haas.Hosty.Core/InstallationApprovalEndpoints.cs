@@ -175,7 +175,8 @@ internal static class InstallationApprovalEndpoints
             })).WithMetadata(new DisableCorsAttribute());
         app.MapPost("/install/confirm/{id}", async (string id, HttpContext context,
             InstallationApprovalStore store, InstallationApprovalService service,
-            UserDirectoryStore users, AppRegistryStore apps, IClock clock, IHostApplicationLifetime lifetime) => await HandleAsync(async () =>
+            UserDirectoryStore users, AppRegistryStore apps, IClock clock, IHostApplicationLifetime lifetime,
+            ILogger<InstallationApprovalService> logger) => await HandleAsync(async () =>
             {
                 ProtectPage(context.Response);
                 if (!await HasIsolatedCookieHostAsync(context.Request, apps, context.RequestAborted))
@@ -189,7 +190,18 @@ internal static class InstallationApprovalEndpoints
                 var form = await context.Request.ReadFormAsync(context.RequestAborted);
                 var approve = form["decision"] == "approve";
                 store.Decide(entry, form["nonce"].ToString(), CoreSessionAuthorization.ReadSessionId(context.Request)!, approve);
-                await service.RecordAsync(entry, approve ? "approved" : "denied", lifetime.ApplicationStopping);
+                try
+                {
+                    await service.RecordAsync(entry, approve ? "approved" : "denied", lifetime.ApplicationStopping);
+                }
+                catch (Exception ex)
+                {
+                    // The nonce is already consumed. Fail closed, clear credentials and allow normal
+                    // expiration instead of leaving an executing request with no worker to finish it.
+                    store.Complete(entry, "The decision could not be recorded. No installation or update was started. Prepare a new request after Core's audit log is available.");
+                    logger.LogError(ex, "Could not record installation decision for request {RequestId}", entry.Id);
+                    return Results.Content(Render(entry, ""), "text/html", statusCode: 503);
+                }
                 // The accepted decision outlives this window. The app polls Core for completion;
                 // closing the popup must not cancel installation or wait for runtime startup.
                 if (approve) _ = service.ExecuteAsync(entry, lifetime.ApplicationStopping);

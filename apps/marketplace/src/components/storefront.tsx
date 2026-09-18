@@ -13,7 +13,6 @@ import type {
 import { createInstallationClient, type InstallationSource } from "@hosty-sdk/app/install";
 import { InstallDialog } from "@hosty-sdk/app/install/react";
 
-const installationClient = createInstallationClient();
 import { fetchAppUpdateAvailable, fetchCatalogApp, fetchCatalogApps, fetchInstalledAppIds, MarketplaceApiError } from "@/lib/marketplace-api";
 import { MarkdownDescription } from "@/components/markdown-description";
 import { Badge } from "@/components/ui/badge";
@@ -21,6 +20,8 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+
+const installationClient = createInstallationClient();
 
 const initialCatalog: CatalogAppsResponse = {
   apps: [],

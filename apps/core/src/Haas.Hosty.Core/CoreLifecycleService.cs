@@ -145,6 +145,13 @@ internal sealed partial class CoreLifecycleService(
             ArtifactDigests = probes,
         };
 
+        CacheReviewedInstallPlan(plan, selection, probes);
+        return plan;
+    }
+
+    private void CacheReviewedInstallPlan(AppInstallPlan plan, RuntimeAppManifestSelection selection,
+        IReadOnlyList<AppServiceArtifactProbe> probes)
+    {
         // The apply path consumes this cached selection verbatim instead of re-fetching the manifest,
         // so the fetch that produced the reviewed digest is the fetch that installs — a source that
         // answers the plan and the apply differently gains nothing (C-CR1). The TTL is enforced on
@@ -167,7 +174,6 @@ internal sealed partial class CoreLifecycleService(
         }
 
         reviewedInstallPlans[plan.PlanId!] = new CachedInstallPlan(plan, selection, probes, clock.UtcNow);
-        return plan;
     }
 
     // Reviewed install plans awaiting apply, keyed by the random single-use plan id (an install has no
@@ -299,9 +305,7 @@ internal sealed partial class CoreLifecycleService(
             PlanId = $"instp_{Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16)).ToLowerInvariant()}",
             ArtifactDigests = probes,
         };
-        if (reviewedInstallPlans.Count >= MaxPendingInstallPlans)
-            throw new AppLifecycleException("install_plan_limit", "Too many pending installation plans. Try again later.");
-        reviewedInstallPlans[plan.PlanId!] = new CachedInstallPlan(plan, reviewed.Selection, probes, clock.UtcNow);
+        CacheReviewedInstallPlan(plan, reviewed.Selection, probes);
         return reviewed.Plan with { Install = plan };
     }
 

@@ -25,6 +25,7 @@ export type SurfaceReadiness = "ready" | "starting" | "degraded";
 /** One placed surface, as Shell's chrome consumes it. */
 export type AppSurfaceTab = {
   appId: string;
+  grantedCorePermissions?: readonly string[] | null;
   appLabel?: string;
   /** Stable within its strip: an app may ship several panels, and each needs its own tab. */
   key: string;
@@ -136,6 +137,7 @@ function labelFor(app: CoreApp, surface: CoreAppSurface, fallbackIndex: number |
 function tabFor(app: CoreApp, surface: CoreAppSurface, key: string, label: string): AppSurfaceTab {
   return {
     appId: app.id,
+    grantedCorePermissions: app.grantedCorePermissions,
     appLabel: app.displayName,
     key,
     label,

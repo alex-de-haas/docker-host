@@ -137,6 +137,7 @@ export function AppSettingsTabPanel({
         src={src}
         title={`${tab.label} settings`}
         appId={tab.appId}
+        grantedCorePermissions={tab.grantedCorePermissions}
         theme={theme}
         themePreference={themePreference}
         onAuthRequired={onAuthRequired}

@@ -994,7 +994,9 @@ internal sealed record AppSummary(
     // Manifest ui.icon name for clients to use when no display image is available.
     string? Icon = null,
     AppUpdateProgress? UpdateProgress = null,
-    bool RestartRequired = false)
+    bool RestartRequired = false,
+    // Persisted administrator grants, never inferred from the current source manifest.
+    IReadOnlyList<string>? GrantedCorePermissions = null)
 {
     public static AppSummary From(
         AppRecord app,
@@ -1089,7 +1091,8 @@ internal sealed record AppSummary(
             app.FollowedFeedId,
             Interfaces: BuildInterfaceSummaries(app.Interfaces, endpoints),
             Health: app.Health,
-            Icon: app.Ui?.Icon);
+            Icon: app.Ui?.Icon,
+            GrantedCorePermissions: app.GrantedCorePermissions ?? []);
     }
 
     private static IReadOnlyDictionary<string, IReadOnlyList<AppInterfaceSummary>>? BuildInterfaceSummaries(

@@ -9,6 +9,7 @@ import type { DelegatedTokenGrant } from "./delegated-token-intent";
 // which Settings tabs and panel tabs use too. Installation stays in the app that initiates it.
 export function EmbeddedWorkspacePanel({
   workspace,
+  grantedCorePermissions,
   theme,
   themePreference,
   onAuthRequired,
@@ -16,6 +17,7 @@ export function EmbeddedWorkspacePanel({
   onDelegatedTokenRequest,
 }: {
   workspace: EmbeddedWorkspace;
+  grantedCorePermissions?: readonly string[] | null;
   theme: HostyResolvedTheme;
   themePreference: HostyThemePreference;
   // Called when the embedded app reports its Hosty session expired and asks for a fresh launch code.
@@ -31,6 +33,7 @@ export function EmbeddedWorkspacePanel({
         title={`${workspace.title}: ${workspace.pageLabel}`}
         frameKey={`${workspace.appId}:${workspace.path}:${workspace.src}`}
         appId={workspace.appId}
+        grantedCorePermissions={grantedCorePermissions}
         theme={theme}
         themePreference={themePreference}
         onAuthRequired={onAuthRequired}

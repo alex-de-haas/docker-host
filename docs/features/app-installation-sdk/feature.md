@@ -58,6 +58,11 @@ The SDK opens `/install/confirm/{id}` in a top-level window; a visible link is a
 popup is blocked. The page displays the target, version, source, requester and Core permissions.
 Permission additions are marked on updates. Direct host-command installs carry a warning.
 
+Shell allows confirmation popups to escape the iframe sandbox only when Core's app summary
+reports persisted `apps.install` or `apps.update` grants. Workspace, settings and panel surfaces
+use the same policy; ordinary apps retain sandboxed popups. Missing grants remain restricted,
+and a changed sandbox policy remounts the frame.
+
 After Core accepts either decision, the response attempts to close the confirmation window.
 Approved work continues on Core's application lifetime token, and the requesting app polls for
 completion or failure. The final page retains a readable result for manually opened tabs that the
@@ -73,9 +78,15 @@ replayed. The request store is bounded to 64 entries, expires pending requests a
 and is cleared by a Core restart. Status responses expose neither secret settings nor decision
 nonces. Approval events are recorded in the audit log.
 
+If recording a decision fails, Core returns HTTP 503, marks the request failed and clears its
+credentials without starting the operation. The error page stays open, and normal expiration
+releases the failed request's store capacity.
+
 Installations consume the cached manifest selection, including feed-selected content. Changes to
 the source after review do not alter the approved installation. Legacy `/api/apps/install` and
 `/api/apps/install/feed` apply routes refuse direct execution with `approval_required`.
+Feed and direct-manifest plans share cache admission: expired entries are pruned and the oldest
+pending plan is evicted when the 64-plan cache fills, so abandoned reviews do not block new ones.
 
 ## Browser Cookie Boundary And Migration
 
@@ -103,6 +114,8 @@ running as Core's OS account are separate trust boundaries; it is not an OS sand
 - Test real HTTP decisions, separate app/user credentials, rejected cross-origin decisions,
   framing headers, nonce secrecy, ownership, expiration and single-use behavior.
 - Test frozen manifest execution and persisted grants, including source changes during approval.
+- Test cache recovery after abandoned reviews and decision audit failures without stuck execution.
+- Test that only persisted installation grants enable unsandboxed popups across Shell surfaces.
 - Test permission additions on updates and that source adoption cannot silently grant rights.
 - Test client races, duplicate submits, lost responses, API errors and the server adapter boundary.
 - Build and test Core, SDK, Shell and Marketplace; check package exports and artifact versions.

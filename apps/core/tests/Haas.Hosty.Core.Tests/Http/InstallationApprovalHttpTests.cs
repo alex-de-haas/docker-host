@@ -8,6 +8,55 @@ namespace Haas.Hosty.Core.Tests.Http;
 
 public sealed class InstallationApprovalHttpTests
 {
+    [Theory]
+    [InlineData("approve")]
+    [InlineData("deny")]
+    public async Task AuditFailure_TerminatesDecision_ClearsSecrets_AndReleasesCapacity(string decision)
+    {
+        var clock = new DecisionClock();
+        await using var harness = await CoreHttpHarness.StartAsync(clock);
+        var session = await SeedAdmin(harness);
+        var store = harness.Services.GetRequiredService<InstallationApprovalStore>();
+        var entry = store.Add(new InstallationApproval
+        {
+            UserId = "admin", CallerName = "Test", IdentityToken = "private-identity",
+            ExpiresAt = clock.UtcNow.AddMinutes(15),
+        });
+        store.Submit(entry, new(new Dictionary<string, string?> { ["secret"] = "private-setting" }));
+        for (var i = 1; i < InstallationApprovalStore.Capacity; i++)
+            store.Add(new InstallationApproval { UserId = "admin", CallerName = "Test", ExpiresAt = clock.UtcNow.AddMinutes(15) });
+        var nonce = store.IssueNonce(entry, session);
+        // A directory at the log's file path reliably fails append on every OS, including as root.
+        Directory.CreateDirectory(harness.Services.GetRequiredService<CoreDataPaths>().AuditLogPath);
+        using var client = harness.CreateClient();
+        client.DefaultRequestHeaders.Add("Cookie", $"hosty_session={session}");
+        HttpRequestMessage DecisionRequest() => new(HttpMethod.Post, $"/install/confirm/{entry.Id}")
+        {
+            Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["nonce"] = nonce, ["decision"] = decision }),
+            Headers = { { "Origin", "http://localhost" } },
+        };
+        using var request = DecisionRequest();
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Equal("failed", entry.Status);
+        Assert.Null(entry.IdentityToken);
+        Assert.Null(entry.Settings);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("No installation or update was started", body);
+        Assert.DoesNotContain("window.close()", body);
+        Assert.DoesNotContain("private-", body);
+        using var replay = DecisionRequest();
+        using var replayed = await client.SendAsync(replay);
+        Assert.Equal(HttpStatusCode.Conflict, replayed.StatusCode);
+
+        clock.UtcNow += TimeSpan.FromMinutes(16);
+        for (var i = 0; i < InstallationApprovalStore.Capacity; i++)
+            store.Add(new InstallationApproval { UserId = "admin", CallerName = "Test", ExpiresAt = clock.UtcNow.AddMinutes(15) });
+        Assert.Equal("approval_expired", Assert.Throws<AppLifecycleException>(() => store.Get(entry.Id)).Code);
+    }
+
+    private sealed class DecisionClock : IClock { public DateTimeOffset UtcNow { get; set; } = DateTimeOffset.UtcNow; }
+
     [Fact]
     public async Task CorePageIsTheOnlyDecisionSurface_AndDenialLeavesTheHostUnchanged()
     {

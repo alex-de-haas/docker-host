@@ -257,6 +257,7 @@ function RightPanelBody({
       src={src}
       title={activeTab.label}
       appId={activeTab.appId}
+      grantedCorePermissions={activeTab.grantedCorePermissions}
       theme={theme}
       themePreference={themePreference}
       onAuthRequired={onAuthRequired}
