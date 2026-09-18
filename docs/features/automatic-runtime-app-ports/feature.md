@@ -1,7 +1,7 @@
 # Feature: Automatic Runtime App Ports
 
 Created: 2026-06-05
-Updated: 2026-09-17
+Updated: 2026-09-18
 
 Runtime apps do not hard-code host ports. Core reserves an available host port for every declared
 service port at install and reconciles reservations on reviewed updates and runtime switches.
@@ -360,6 +360,10 @@ beyond blocking its own app's reassigned ports.
   IPv6 wildcard, dual-stack wildcard — and reports a port left in TIME_WAIT by a stopped app as
   available
   ([RuntimePortHelperTests.cs](../../../apps/core/tests/Haas.Hosty.Core.Tests/RuntimePortHelperTests.cs)).
+  The fixture completes an orderly server-first FIN handshake and confirms the connection's
+  TIME_WAIT state before making the single availability assertion. Port-availability tests run
+  outside the parallel pool, and this fixture uses a port outside the OS ephemeral band so another
+  test or outgoing connection cannot take its released port during the assertion.
 - A wildcard-bound holder on a reserved port raises `runtime_port_unavailable` naming the endpoint.
 - An `unavailable` endpoint becomes an app problem naming the endpoint, and `assigned` / `running`
   endpoints raise nothing
