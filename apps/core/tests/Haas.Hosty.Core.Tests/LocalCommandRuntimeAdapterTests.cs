@@ -422,6 +422,8 @@ public sealed class LocalCommandRuntimeAdapterTests
                     await Task.Delay(50, timeout.Token);
             }
             Assert.False(running!.Process.HasExited);
+            Assert.True(running.IndependentRunner);
+            using (var job = WindowsProcessControl.TryOpenRunnerJob(running.Process)) Assert.NotNull(job);
             Assert.False(child.HasExited);
 
             Assert.True(TryReadPositiveInteger(portPath, out var port));
@@ -433,9 +435,11 @@ public sealed class LocalCommandRuntimeAdapterTests
             {
                 var (replacement, replacementRegistry, _) = CreateSetupScenario(workRoot, null, Path.GetFileName(scriptPath));
                 Assert.True(await replacementRegistry.TryAdoptAsync(workRoot, context.App.Id, "app", default, instanceId: ""));
+                Assert.True(replacementRegistry.Get(context.App.Id, "app")!.IndependentRunner);
                 stoppingAdapter = replacement;
             }
             await stoppingAdapter.StopAsync(context);
+            Assert.True(child.HasExited, "Stop returned while the detached service process was still alive.");
 
             // The original regression was a port left occupied when Stop returned. Do not wait for
             // the child or retry the bind: either would hide a race before an immediate app restart.

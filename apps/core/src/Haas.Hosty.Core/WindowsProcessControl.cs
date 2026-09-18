@@ -88,6 +88,15 @@ internal static class WindowsProcessControl
         uint cbJobObjectInformationLength,
         IntPtr lpReturnLength);
 
+    [DllImport("kernel32", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool QueryInformationJobObject(
+        SafeJobHandle hJob,
+        JobObjectInformationClass jobObjectInformationClass,
+        IntPtr information,
+        uint informationLength,
+        IntPtr returnLength);
+
     [DllImport("kernel32")]
     private static extern IntPtr GetCurrentProcess();
 
@@ -240,17 +249,77 @@ internal static class WindowsProcessControl
                 return;
             }
 
-            if (!TerminateJobObject(handle, 137))
-                throw new IOException("Failed to terminate the localCommand job.", new Win32Exception(Marshal.GetLastPInvokeError()));
-            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-            while (stopwatch.Elapsed < JobTerminationTimeout)
+            // Job accounting can drop a terminating process before its kernel object is signaled.
+            // Retain handles before termination so detached descendants' I/O teardown is awaited too.
+            var members = CaptureMembers();
+            try
             {
-                if (!TryGetActiveProcessCount(out var activeProcesses))
-                    throw new IOException("Failed to inspect the stopping localCommand job.", new Win32Exception(Marshal.GetLastPInvokeError()));
-                if (activeProcesses == 0) return;
-                await Task.Delay(JobPollInterval, cancellationToken);
+                if (!TerminateJobObject(handle, 137))
+                    throw new IOException("Failed to terminate the localCommand job.", new Win32Exception(Marshal.GetLastPInvokeError()));
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                timeout.CancelAfter(JobTerminationTimeout);
+                try
+                {
+                    await Task.WhenAll(members.Select(process => process.WaitForExitAsync(timeout.Token)));
+                    while (true)
+                    {
+                        if (!TryGetActiveProcessCount(out var activeProcesses))
+                            throw new IOException("Failed to inspect the stopping localCommand job.", new Win32Exception(Marshal.GetLastPInvokeError()));
+                        if (activeProcesses == 0) return;
+                        await Task.Delay(JobPollInterval, timeout.Token);
+                    }
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                { throw new IOException("Timed out waiting for the localCommand job to stop."); }
             }
-            throw new IOException("Timed out waiting for the localCommand job to stop.");
+            finally { foreach (var process in members) process.Dispose(); }
+        }
+
+        private List<System.Diagnostics.Process> CaptureMembers()
+        {
+            var members = new List<System.Diagnostics.Process>();
+            try
+            {
+                for (var capacity = 32; capacity <= 65536; capacity *= 2)
+                {
+                    var size = checked(8 + capacity * IntPtr.Size);
+                    var buffer = Marshal.AllocHGlobal(size);
+                    try
+                    {
+                        if (!QueryInformationJobObject(handle, JobObjectInformationClass.BasicProcessIdList, buffer, (uint)size, IntPtr.Zero))
+                        {
+                            var error = Marshal.GetLastPInvokeError();
+                            if (error == 234) continue; // ERROR_MORE_DATA: membership grew since allocation.
+                            throw new IOException("Failed to list localCommand job processes.", new Win32Exception(error));
+                        }
+                        var count = Marshal.ReadInt32(buffer, 4);
+                        if (count < 0 || count > capacity) throw new IOException("Invalid localCommand job process list.");
+                        for (var index = 0; index < count; index++)
+                        {
+                            System.Diagnostics.Process? process = null;
+                            try
+                            {
+                                var pid = Marshal.ReadIntPtr(buffer, 8 + index * IntPtr.Size).ToInt32();
+                                process = System.Diagnostics.Process.GetProcessById(pid);
+                                // Acquire and retain the handle now, before PID reuse or termination.
+                                if (!IsProcessInJob(process.Handle, handle, out var member))
+                                    throw new IOException("Failed to verify localCommand job member.", new Win32Exception(Marshal.GetLastPInvokeError()));
+                                if (member) { members.Add(process); process = null; }
+                            }
+                            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException) { }
+                            finally { process?.Dispose(); }
+                        }
+                        return members;
+                    }
+                    finally { Marshal.FreeHGlobal(buffer); }
+                }
+                throw new IOException("LocalCommand job process list exceeds the supported size.");
+            }
+            catch
+            {
+                foreach (var process in members) process.Dispose();
+                throw;
+            }
         }
 
         public void Dispose() => handle.Dispose();
@@ -282,6 +351,7 @@ internal static class WindowsProcessControl
     private enum JobObjectInformationClass
     {
         BasicAccountingInformation = 1,
+        BasicProcessIdList = 3,
         ExtendedLimitInformation = 9,
     }
 
