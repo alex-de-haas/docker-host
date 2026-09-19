@@ -1,7 +1,46 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Dialog, DropdownMenu } from "radix-ui";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import { Separator } from "@/components/ui/separator";
 import {
   Ellipsis,
   LogIn,
@@ -9,7 +48,6 @@ import {
   Star,
   Trash2,
   CircleCheck,
-  X,
 } from "lucide-react";
 import {
   ProviderLoginDialog,
@@ -30,9 +68,6 @@ export type AgentConnection = {
 };
 type Directory = { connections: AgentConnection[]; defaultId: string | null };
 type Login = ProviderLogin;
-const menuItem =
-  "flex cursor-default select-none items-center gap-2 rounded px-2 py-2 text-sm outline-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-40 [&_svg]:size-4";
-const control = "w-full rounded-md border bg-background px-3 py-2 text-sm";
 const authLabels = {
   "api-key": "API key",
   "claude-token": "Claude Code token",
@@ -59,7 +94,9 @@ export function AgentProviders() {
     setDirectory((await (await call("/connections")).json()) as Directory);
   }, []);
   useEffect(() => {
-    void refresh().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+    void refresh().catch((e: unknown) =>
+      setError(e instanceof Error ? e.message : String(e)),
+    );
   }, [refresh]);
   const loginId = login?.id;
   const loginStatus = login?.status;
@@ -131,15 +168,12 @@ export function AgentProviders() {
 
   return (
     <section className="grid gap-3" aria-labelledby="agent-providers-heading">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <h2
-            id="agent-providers-heading"
-            className="text-[15px] font-semibold"
-          >
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0 flex-1 basis-64">
+          <h2 id="agent-providers-heading" className="text-base font-semibold">
             Agent providers
           </h2>
-          <p className="text-[13px] text-muted-foreground">
+          <p className="text-sm text-muted-foreground">
             Connect accounts, choose a default, or select a different provider
             for a new chat.
           </p>
@@ -155,12 +189,9 @@ export function AgentProviders() {
         </Button>
       </div>
       {error && !editing && !login && (
-        <p
-          role="alert"
-          className="rounded-md border border-destructive/40 p-3 text-sm text-destructive"
-        >
-          {error}
-        </p>
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       )}
       {notice && (
         <p role="status" className="text-sm text-muted-foreground">
@@ -171,22 +202,25 @@ export function AgentProviders() {
         <p className="text-sm text-muted-foreground">Loading providers…</p>
       )}
       {directory?.connections.length === 0 && !editing && (
-        <p className="rounded-lg border border-dashed p-5 text-sm text-muted-foreground">
-          No providers connected. Add Codex or Claude to start chatting.
-        </p>
+        <Empty>
+          <EmptyHeader>
+            <EmptyTitle>No providers connected</EmptyTitle>
+            <EmptyDescription>
+              Add Codex or Claude to start chatting.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
       )}
       {directory?.connections.map((connection) => (
         <div
           key={connection.id}
           className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"
         >
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 text-sm font-medium">
               <span className="truncate">{connection.name}</span>
               {directory.defaultId === connection.id && (
-                <span className="rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                  Default
-                </span>
+                <Badge variant="outline">Default</Badge>
               )}
             </div>
             <p className="text-xs text-muted-foreground">
@@ -197,8 +231,8 @@ export function AgentProviders() {
                 : (connection.reason ?? "Reconnect required")}
             </p>
           </div>
-          <DropdownMenu.Root>
-            <DropdownMenu.Trigger asChild>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
               <Button
                 size="icon-sm"
                 variant="ghost"
@@ -213,16 +247,15 @@ export function AgentProviders() {
               >
                 <Ellipsis aria-hidden />
               </Button>
-            </DropdownMenu.Trigger>
-            <DropdownMenu.Portal>
-              <DropdownMenu.Content
-                align="end"
-                sideOffset={4}
-                className="z-40 min-w-48 rounded-lg border bg-popover p-1 text-popover-foreground shadow-lg"
-              >
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              sideOffset={4}
+              className="min-w-48"
+            >
+              <DropdownMenuGroup>
                 {directory.defaultId !== connection.id && (
-                  <DropdownMenu.Item
-                    className={menuItem}
+                  <DropdownMenuItem
                     disabled={!connection.available}
                     onSelect={() =>
                       void act(async () => {
@@ -239,11 +272,10 @@ export function AgentProviders() {
                   >
                     <Star aria-hidden />
                     Set default
-                  </DropdownMenu.Item>
+                  </DropdownMenuItem>
                 )}
                 {connection.auth === "chatgpt" && (
-                  <DropdownMenu.Item
-                    className={menuItem}
+                  <DropdownMenuItem
                     disabled={login?.status === "pending"}
                     onSelect={() => void act(() => beginLogin(connection.id))}
                   >
@@ -251,10 +283,9 @@ export function AgentProviders() {
                     {connection.available
                       ? "Sign in again"
                       : "Sign in with ChatGPT"}
-                  </DropdownMenu.Item>
+                  </DropdownMenuItem>
                 )}
-                <DropdownMenu.Item
-                  className={menuItem}
+                <DropdownMenuItem
                   onSelect={() =>
                     void act(async () => {
                       const result = (await (
@@ -274,27 +305,27 @@ export function AgentProviders() {
                 >
                   <CircleCheck aria-hidden />
                   Test connection
-                </DropdownMenu.Item>
-                <DropdownMenu.Item
-                  className={menuItem}
-                  onSelect={() => open(connection)}
-                >
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => open(connection)}>
                   <Pencil aria-hidden />
                   Edit
-                </DropdownMenu.Item>
-                <DropdownMenu.Separator className="my-1 h-px bg-border" />
-                <DropdownMenu.Item
-                  className={`${menuItem} text-destructive focus:text-destructive`}
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuGroup>
+                <DropdownMenuItem
+                  variant="destructive"
                   onSelect={() => setRemoving(connection.id)}
                 >
                   <Trash2 aria-hidden />
                   Remove
-                </DropdownMenu.Item>
-              </DropdownMenu.Content>
-            </DropdownMenu.Portal>
-          </DropdownMenu.Root>
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
           {removing === connection.id && (
-            <div className="flex w-full flex-wrap items-center gap-2 border-t pt-3 text-sm">
+            <div className="flex w-full flex-wrap items-center gap-2 text-sm">
+              <Separator className="mb-1" />
               <p className="flex-1">
                 Remove {connection.name}? Its chat history stays, but those
                 chats cannot continue.
@@ -346,99 +377,103 @@ export function AgentProviders() {
         />
       )}
       {editing && (
-        <Dialog.Root
+        <Dialog
           open
           onOpenChange={(isOpen) => {
             if (!isOpen) closeEditor();
           }}
         >
-          <Dialog.Portal>
-            <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" />
-            <Dialog.Content
-              className="fixed left-1/2 top-1/2 z-50 max-h-[90dvh] w-[calc(100%_-_2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border bg-background p-6 text-sm shadow-xl"
-              onCloseAutoFocus={(event) => {
+          <DialogContent
+            className="max-h-[90dvh] overflow-y-auto"
+            showCloseButton={!busy}
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              const trigger =
+                editing === "new"
+                  ? addButton.current
+                  : providerButtons.current.get(editing.id);
+              trigger?.focus();
+            }}
+          >
+            <form
+              className="flex flex-col gap-6"
+              onSubmit={(event) => {
                 event.preventDefault();
-                const trigger =
-                  editing === "new"
-                    ? addButton.current
-                    : providerButtons.current.get(editing.id);
-                trigger?.focus();
+                void act(async () => {
+                  const saved = (await (
+                    await call(
+                      editing === "new"
+                        ? "/connections"
+                        : `/connections/${editing.id}`,
+                      {
+                        method: editing === "new" ? "POST" : "PUT",
+                        body: JSON.stringify({
+                          name,
+                          kind,
+                          auth,
+                          ...(secret ? { secret } : {}),
+                          ...(auth === "host-login" ? { hostDirectory } : {}),
+                        }),
+                      },
+                    )
+                  ).json()) as AgentConnection;
+                  setSecret("");
+                  setEditing(null);
+                  await refresh();
+                  if (auth === "chatgpt" && editing === "new")
+                    await beginLogin(saved.id);
+                  else
+                    setNotice(
+                      "Provider saved. Choose Set default in its menu to use it for new chats.",
+                    );
+                });
               }}
             >
-              <form
-                className="grid gap-4"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void act(async () => {
-                    const saved = (await (
-                      await call(
-                        editing === "new"
-                          ? "/connections"
-                          : `/connections/${editing.id}`,
-                        {
-                          method: editing === "new" ? "POST" : "PUT",
-                          body: JSON.stringify({
-                            name,
-                            kind,
-                            auth,
-                            ...(secret ? { secret } : {}),
-                            ...(auth === "host-login" ? { hostDirectory } : {}),
-                          }),
-                        },
-                      )
-                    ).json()) as AgentConnection;
-                    setSecret("");
-                    setEditing(null);
-                    await refresh();
-                    if (auth === "chatgpt" && editing === "new")
-                      await beginLogin(saved.id);
-                    else
-                      setNotice(
-                        "Provider saved. Choose Set default in its menu to use it for new chats.",
-                      );
-                  });
-                }}
-              >
-                <div className="grid gap-2 pr-5">
-                  <Dialog.Title className="text-base font-semibold">
-                    {editing === "new"
-                      ? "Add provider"
-                      : `Edit ${editing.name}`}
-                  </Dialog.Title>
-                  <Dialog.Description className="text-muted-foreground">
-                    {editing === "new"
-                      ? "Choose a provider and connect your account."
-                      : "Update this connection’s name or credentials."}
-                  </Dialog.Description>
-                </div>
-                {error && (
-                  <p role="alert" className="text-sm text-destructive">
-                    {error}
-                  </p>
-                )}
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <label className="grid gap-1.5 text-xs">
-                    Provider
-                    <select
-                      className={control}
+              <DialogHeader>
+                <DialogTitle>
+                  {editing === "new" ? "Add provider" : `Edit ${editing.name}`}
+                </DialogTitle>
+                <DialogDescription>
+                  {editing === "new"
+                    ? "Choose a provider and connect your account."
+                    : "Update this connection’s name or credentials."}
+                </DialogDescription>
+              </DialogHeader>
+              {error && (
+                <Alert variant="destructive">
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              )}
+              <FieldGroup>
+                <FieldGroup className="sm:flex-row">
+                  <Field data-disabled={busy || editing !== "new"}>
+                    <FieldLabel htmlFor="connection-kind">Provider</FieldLabel>
+                    <Select
                       value={kind}
                       disabled={busy || editing !== "new"}
-                      onChange={(event) => {
-                        const value = event.target
-                          .value as AgentConnection["kind"];
+                      onValueChange={(value: AgentConnection["kind"]) => {
                         setKind(value);
                         setAuth(value === "codex" ? "chatgpt" : "api-key");
                         setSecret("");
                       }}
                     >
-                      <option value="codex">Codex</option>
-                      <option value="claude">Claude</option>
-                    </select>
-                  </label>
-                  <label className="grid gap-1.5 text-xs">
-                    Connection name
-                    <input
-                      className={control}
+                      <SelectTrigger id="connection-kind">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>
+                          <SelectItem value="codex">Codex</SelectItem>
+                          <SelectItem value="claude">Claude</SelectItem>
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                  <Field data-disabled={busy}>
+                    <FieldLabel htmlFor="connection-name">
+                      Connection name
+                    </FieldLabel>
+                    <Input
+                      id="connection-name"
                       value={name}
                       placeholder={kind === "codex" ? "My Codex" : "My Claude"}
                       required
@@ -446,29 +481,37 @@ export function AgentProviders() {
                       disabled={busy}
                       onChange={(e) => setName(e.target.value)}
                     />
-                  </label>
-                </div>
-                <label className="grid gap-1.5 text-xs">
-                  Authentication
-                  <select
-                    className={control}
+                  </Field>
+                </FieldGroup>
+                <Field data-disabled={busy || editing !== "new"}>
+                  <FieldLabel htmlFor="connection-auth">
+                    Authentication
+                  </FieldLabel>
+                  <Select
                     value={auth}
                     disabled={busy || editing !== "new"}
-                    onChange={(e) => {
-                      setAuth(e.target.value as AgentConnection["auth"]);
+                    onValueChange={(value: AgentConnection["auth"]) => {
+                      setAuth(value);
                       setSecret("");
                     }}
                   >
-                    {(kind === "codex"
-                      ? (["chatgpt", "api-key", "host-login"] as const)
-                      : (["api-key", "claude-token"] as const)
-                    ).map((value) => (
-                      <option key={value} value={value}>
-                        {authLabels[value]}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                    <SelectTrigger id="connection-auth">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        {(kind === "codex"
+                          ? (["chatgpt", "api-key", "host-login"] as const)
+                          : (["api-key", "claude-token"] as const)
+                        ).map((value) => (
+                          <SelectItem key={value} value={value}>
+                            {authLabels[value]}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </Field>
                 {auth === "chatgpt" && (
                   <p className="text-sm text-muted-foreground">
                     Sign in using your ChatGPT account in the browser. Hosty
@@ -476,43 +519,45 @@ export function AgentProviders() {
                   </p>
                 )}
                 {auth === "host-login" && (
-                  <>
-                    <label className="grid gap-1.5 text-xs">
+                  <Field data-disabled={busy}>
+                    <FieldLabel htmlFor="connection-home">
                       Codex home on the Hosty server
-                      <input
-                        className={control}
-                        value={hostDirectory}
-                        placeholder="/home/hosty/.codex"
-                        required
-                        disabled={busy}
-                        onChange={(e) => setHostDirectory(e.target.value)}
-                      />
-                    </label>
-                    <p className="text-xs text-muted-foreground">
+                    </FieldLabel>
+                    <Input
+                      id="connection-home"
+                      aria-describedby="connection-home-description"
+                      value={hostDirectory}
+                      placeholder="/home/hosty/.codex"
+                      required
+                      disabled={busy}
+                      onChange={(e) => setHostDirectory(e.target.value)}
+                    />
+                    <FieldDescription id="connection-home-description">
                       Use the directory where you ran{" "}
                       <code>CODEX_HOME=&lt;directory&gt; codex login</code>,
                       accessible to the user running Core. Hosty uses this
                       existing account and leaves the directory in place when
                       you remove the connection.
-                    </p>
-                  </>
+                    </FieldDescription>
+                  </Field>
                 )}
                 {(auth === "api-key" || auth === "claude-token") && (
-                  <>
-                    <label className="grid gap-1.5 text-xs">
+                  <Field data-disabled={busy}>
+                    <FieldLabel htmlFor="connection-secret">
                       {authLabels[auth]}
                       {editing !== "new" && " (leave blank to keep current)"}
-                      <input
-                        className={control}
-                        type="password"
-                        autoComplete="new-password"
-                        value={secret}
-                        required={editing === "new"}
-                        disabled={busy}
-                        onChange={(e) => setSecret(e.target.value)}
-                      />
-                    </label>
-                    <p className="text-xs text-muted-foreground">
+                    </FieldLabel>
+                    <Input
+                      id="connection-secret"
+                      aria-describedby="connection-secret-description"
+                      type="password"
+                      autoComplete="new-password"
+                      value={secret}
+                      required={editing === "new"}
+                      disabled={busy}
+                      onChange={(e) => setSecret(e.target.value)}
+                    />
+                    <FieldDescription id="connection-secret-description">
                       {auth === "claude-token" ? (
                         <>
                           Paste the token from <code>claude setup-token</code>.
@@ -547,51 +592,38 @@ export function AgentProviders() {
                           . API usage uses that account&apos;s API billing.
                         </>
                       )}
-                    </p>
-                  </>
+                    </FieldDescription>
+                  </Field>
                 )}
-                {editing !== "new" && (
-                  <p className="text-xs text-muted-foreground">
-                    Stop open chats before replacing credentials. Chats started
-                    with the previous credentials keep their history and require
-                    a new chat to use the updated account.
-                  </p>
-                )}
-                <div className="flex gap-2">
-                  <Button size="sm" disabled={busy}>
-                    {busy
-                      ? "Saving…"
-                      : auth === "chatgpt" && editing === "new"
-                        ? "Add and sign in"
-                        : "Save provider"}
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    disabled={busy}
-                    onClick={closeEditor}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              </form>
-              <Dialog.Close asChild>
+              </FieldGroup>
+              {editing !== "new" && (
+                <p className="text-xs text-muted-foreground">
+                  Stop open chats before replacing credentials. Chats started
+                  with the previous credentials keep their history and require a
+                  new chat to use the updated account.
+                </p>
+              )}
+              <DialogFooter>
+                <Button type="submit" size="sm" disabled={busy}>
+                  {busy
+                    ? "Saving…"
+                    : auth === "chatgpt" && editing === "new"
+                      ? "Add and sign in"
+                      : "Save provider"}
+                </Button>
                 <Button
                   type="button"
-                  className="absolute right-2 top-2"
-                  size="icon-sm"
-                  variant="ghost"
+                  size="sm"
+                  variant="outline"
                   disabled={busy}
-                  title="Close"
-                  aria-label="Close provider editor"
+                  onClick={closeEditor}
                 >
-                  <X aria-hidden />
+                  Cancel
                 </Button>
-              </Dialog.Close>
-            </Dialog.Content>
-          </Dialog.Portal>
-        </Dialog.Root>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
       )}
     </section>
   );

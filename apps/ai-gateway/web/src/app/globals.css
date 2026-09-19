@@ -122,19 +122,3 @@ html[data-hosty-launch="embedded"] .hosty-shell-chrome,
 html[data-hosty-launch="native"] .hosty-shell-chrome {
   display: none;
 }
-
-/* Settings own their spacing inside the full-workspace iframe. */
-.hosty-page-padding {
-  padding: 1.5rem;
-  width: 100%;
-  max-width: 80rem;
-  margin-inline: auto;
-}
-
-/* Chrome a shell already renders — this app's own name — is hidden while a shell embeds the page.
-   The rule is the SDK's `hosty-shell-chrome` contract; contextual controls never carry the class. */
-html[data-hosty-launch="embedded"] .hosty-shell-chrome,
-html[data-hosty-launch="native"] .hosty-shell-chrome {
-  display: none;
-}
-

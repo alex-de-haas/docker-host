@@ -1,7 +1,29 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Tabs } from "radix-ui";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyTitle,
+} from "@/components/ui/empty";
 import { Button } from "@/components/ui/button";
 import { AgentProviders } from "@/components/agent-providers";
 import { ProviderRow } from "@/components/provider-row";
@@ -83,17 +105,17 @@ export function GatewaySettings({
 
   if (error && !data) {
     return (
-      <main className="hosty-page-padding">
-        <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">
-          {error}
-        </p>
+      <main className="mx-auto w-full max-w-7xl p-4 sm:p-6">
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       </main>
     );
   }
 
   if (!data) {
     return (
-      <main className="hosty-page-padding text-sm text-muted-foreground">
+      <main className="mx-auto w-full max-w-7xl p-4 sm:p-6 text-sm text-muted-foreground">
         Loading…
       </main>
     );
@@ -108,39 +130,51 @@ export function GatewaySettings({
   );
 
   return (
-    <main className="hosty-page-padding">
-      <Tabs.Root defaultValue={section}>
-        <Tabs.List aria-label="Gateway settings" className="mb-6 flex gap-1 overflow-x-auto border-b">
-          {([
-            ["providers", "Providers"],
-            ["prompt", "System prompt"],
-            ["access", "MCP access"],
-          ] as const).map(([value, label]) => (
-            <Tabs.Trigger
-              key={value}
-              value={value}
-              className="shrink-0 border-b-2 border-transparent px-3 py-2 text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[state=active]:border-foreground data-[state=active]:text-foreground"
-            >
-              {label}
-            </Tabs.Trigger>
-          ))}
-        </Tabs.List>
-        <Tabs.Content value="providers" forceMount className="data-[state=inactive]:hidden">
+    <main className="mx-auto w-full max-w-7xl p-4 sm:p-6">
+      <Tabs defaultValue={section} className="gap-6">
+        <div className="-m-1 overflow-x-auto overflow-y-hidden p-1">
+          <TabsList aria-label="Gateway settings">
+            {(
+              [
+                ["providers", "Providers"],
+                ["prompt", "System prompt"],
+                ["access", "MCP access"],
+              ] as const
+            ).map(([value, label]) => (
+              <TabsTrigger key={value} value={value}>
+                {label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </div>
+        <TabsContent
+          value="providers"
+          forceMount
+          className="data-[state=inactive]:hidden"
+        >
           {data.agentConnections && <AgentProviders />}
-        </Tabs.Content>
-        <Tabs.Content value="prompt" forceMount className="data-[state=inactive]:hidden">
-          <section>
-            <h2 className="text-[15px] font-semibold">System prompt</h2>
-            <p className="mb-3 text-[13px] text-muted-foreground">
-              Appended to the harness&apos;s own instruction sources, never
-              replacing them.
-            </p>
-            <textarea
-              className="min-h-40 w-full resize-y rounded-lg border bg-transparent p-2.5 text-sm"
-              value={prompt}
-              onChange={(event) => setPrompt(event.target.value)}
-            />
-            <div className="mt-2 flex items-center gap-3">
+        </TabsContent>
+        <TabsContent
+          value="prompt"
+          forceMount
+          className="data-[state=inactive]:hidden"
+        >
+          <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor="system-prompt">System prompt</FieldLabel>
+              <FieldDescription id="system-prompt-description">
+                Appended to the harness&apos;s own instruction sources, never
+                replacing them.
+              </FieldDescription>
+              <Textarea
+                id="system-prompt"
+                aria-describedby="system-prompt-description"
+                className="min-h-40 resize-y"
+                value={prompt}
+                onChange={(event) => setPrompt(event.target.value)}
+              />
+            </Field>
+            <div className="flex flex-wrap items-center gap-3">
               <Button
                 size="sm"
                 disabled={busy}
@@ -149,19 +183,27 @@ export function GatewaySettings({
                 Save prompt
               </Button>
               {status && (
-                <span className="text-xs text-muted-foreground">{status}</span>
-              )}
-              {error && (
-                <span className="text-xs text-destructive">{error}</span>
+                <p role="status" className="text-sm text-muted-foreground">
+                  {status}
+                </p>
               )}
             </div>
-          </section>
-        </Tabs.Content>
-        <Tabs.Content value="access" forceMount className="grid gap-7 data-[state=inactive]:hidden">
+            {error && (
+              <Alert variant="destructive">
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
+          </FieldGroup>
+        </TabsContent>
+        <TabsContent
+          value="access"
+          forceMount
+          className="grid gap-7 data-[state=inactive]:hidden"
+        >
           {error && (
-            <p role="alert" className="text-sm text-destructive">
-              {error}
-            </p>
+            <Alert variant="destructive">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
           )}
           {status && (
             <p role="status" className="text-sm text-muted-foreground">
@@ -170,10 +212,10 @@ export function GatewaySettings({
           )}
           {(data.pendingSkills ?? []).length > 0 && (
             <section>
-              <h2 className="text-[15px] font-semibold">
+              <h2 className="text-base font-semibold">
                 Changed app instructions
               </h2>
-              <p className="mb-3 text-[13px] text-muted-foreground">
+              <p className="mb-3 text-sm text-muted-foreground">
                 These apps rewrote the documentation they give the assistant.
                 Enabling an app accepted the text it had then, so the new text
                 is being withheld until you have read it — an update cannot put
@@ -182,43 +224,42 @@ export function GatewaySettings({
               </p>
               <div className="grid gap-3">
                 {(data.pendingSkills ?? []).map((skill) => (
-                  <div
-                    key={skill.appId}
-                    className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-3"
-                  >
-                    <div className="mb-2 flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-medium">
-                          {skill.displayName}
-                        </div>
-                        <div className="truncate font-mono text-xs text-muted-foreground">
-                          {skill.appId}
-                        </div>
-                      </div>
-                      <Button
-                        size="sm"
-                        disabled={busy}
-                        onClick={() =>
-                          void approve(skill.appId, skill.markdown)
-                        }
-                      >
-                        Approve
-                      </Button>
-                    </div>
-                    {/* The text itself, not a summary of it: approving prose you cannot read is not
+                  <Card key={skill.appId}>
+                    <CardHeader>
+                      <CardTitle className="min-w-0 truncate">
+                        {skill.displayName}
+                      </CardTitle>
+                      <CardDescription className="min-w-0 truncate">
+                        {skill.appId}
+                      </CardDescription>
+                      <CardAction>
+                        <Button
+                          size="sm"
+                          disabled={busy}
+                          onClick={() =>
+                            void approve(skill.appId, skill.markdown)
+                          }
+                        >
+                          Approve
+                        </Button>
+                      </CardAction>
+                    </CardHeader>
+                    <CardContent>
+                      {/* The text itself, not a summary of it: approving prose you cannot read is not
                     approval, and a diff would still hide what the whole now says. */}
-                    <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-md bg-background p-3 text-xs">
-                      {skill.markdown}
-                    </pre>
-                  </div>
+                      <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-md bg-background p-3 text-xs">
+                        {skill.markdown}
+                      </pre>
+                    </CardContent>
+                  </Card>
                 ))}
               </div>
             </section>
           )}
 
           <section>
-            <h2 className="text-[15px] font-semibold">MCP access</h2>
-            <p className="mb-3 text-[13px] text-muted-foreground">
+            <h2 className="text-base font-semibold">MCP access</h2>
+            <p className="mb-3 text-sm text-muted-foreground">
               Hosty Core and the installed apps that expose an MCP interface.
               Core starts on, with its read-only tools running unprompted,
               because its tools and their annotations are the platform&apos;s
@@ -228,27 +269,33 @@ export function GatewaySettings({
               a decision rather than a side effect of installing it.
             </p>
             {data.agentConnections && (
-              <p className="mb-3 rounded-md border p-3 text-[13px] text-muted-foreground">
-                Approval behavior depends on the provider selected for each
-                chat. Claude supports the read-only mode below; Codex uses its
-                own approval rules. Live tool changes apply where the selected
-                provider supports them.
-              </p>
+              <Alert role="note" className="mb-3">
+                <AlertDescription>
+                  Approval behavior depends on the provider selected for each
+                  chat. Claude supports the read-only mode below; Codex uses its
+                  own approval rules. Live tool changes apply where the selected
+                  provider supports them.
+                </AlertDescription>
+              </Alert>
             )}
             {!autoAllowSupported && (
-              <p className="mb-3 rounded-md border p-3 text-[13px] text-muted-foreground">
-                The {harnessName} harness decides on its own which calls pause,
-                so the approval mode below has no effect on it — every provider
-                asks by that harness&apos;s rules.
-              </p>
+              <Alert role="note" className="mb-3">
+                <AlertDescription>
+                  The {harnessName} harness decides on its own which calls
+                  pause, so the approval mode below has no effect on it — every
+                  provider asks by that harness&apos;s rules.
+                </AlertDescription>
+              </Alert>
             )}
 
             {discovery !== "ok" && (
-              <p className="mb-2 rounded-md border p-3 text-[13px] text-muted-foreground">
-                Could not reach Core, so the app list could not be loaded.
-                Providers you have already enabled are unchanged and still in
-                effect.
-              </p>
+              <Alert className="mb-2">
+                <AlertDescription>
+                  Could not reach Core, so the app list could not be loaded.
+                  Providers you have already enabled are unchanged and still in
+                  effect.
+                </AlertDescription>
+              </Alert>
             )}
             {providers.length > 0 && (
               <div className="grid gap-2">
@@ -282,14 +329,19 @@ export function GatewaySettings({
               </div>
             )}
             {discovery === "ok" && apps.length === 0 && (
-              <p className="mt-2 text-[13px] text-muted-foreground">
-                No installed app declares an MCP interface yet. Apps appear here
-                once they do, switched off.
-              </p>
+              <Empty>
+                <EmptyHeader>
+                  <EmptyTitle>No app tools yet</EmptyTitle>
+                  <EmptyDescription>
+                    No installed app declares an MCP interface yet. Apps appear
+                    here once they do, switched off.
+                  </EmptyDescription>
+                </EmptyHeader>
+              </Empty>
             )}
           </section>
-        </Tabs.Content>
-      </Tabs.Root>
+        </TabsContent>
+      </Tabs>
     </main>
   );
 }

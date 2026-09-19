@@ -1,6 +1,15 @@
 "use client";
 
 import { CORE_PROVIDER_ID, type Provider } from "@/lib/api";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 
 // Both controls say what they DO, not what they are. A button labelled "Disabled" reads equally as
 // "this is off" and "click to disable", and the operator cannot tell which without clicking — which
@@ -38,8 +47,8 @@ export function ProviderRow({
       : "The app declares which of its tools are read-only. Choosing to run them unprompted means trusting that declaration: a tool the app mislabels would then run without asking you.";
 
   return (
-    <div className="flex items-center gap-3 rounded-lg border p-3">
-      <div className="min-w-0 flex-1">
+    <div className="flex flex-wrap items-center gap-3 rounded-lg border p-3">
+      <div className="min-w-0 basis-full sm:flex-1 sm:basis-auto">
         <div className="text-sm font-medium">{name}</div>
         <div className="truncate text-xs text-muted-foreground">
           {isCore
@@ -48,37 +57,33 @@ export function ProviderRow({
         </div>
       </div>
 
-      <select
-        className="rounded-md border bg-muted/40 px-2 py-1.5 text-sm disabled:opacity-50"
+      <Select
         value={autoAllow ? "auto" : "ask"}
         // Meaningless while the app cannot be reached at all, or on a harness that never asks.
         disabled={!enabled || busy || !autoAllowSupported}
-        aria-label={`Approval for ${name}`}
-        title={approvalTitle}
-        onChange={(event) => onApprovalChange(event.target.value === "auto")}
+        onValueChange={(value) => onApprovalChange(value === "auto")}
       >
-        <option value="ask">Ask before every tool</option>
-        <option value="auto">Run read-only tools unprompted</option>
-      </select>
-
-      <label className="relative inline-flex h-5 w-9 flex-none cursor-pointer items-center">
-        <input
-          type="checkbox"
-          className="peer absolute inset-0 z-10 m-0 h-full w-full cursor-pointer opacity-0"
-          checked={enabled}
-          disabled={busy}
-          aria-label={`Let the assistant use ${name}'s tools`}
-          onChange={(event) => onToggle(event.target.checked)}
-        />
-        <span
-          className="h-full w-full rounded-full bg-muted transition-colors peer-checked:bg-primary peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-ring peer-disabled:opacity-50"
-          aria-hidden
-        />
-        <span
-          className="pointer-events-none absolute left-0.5 h-4 w-4 rounded-full bg-background transition-transform peer-checked:translate-x-4"
-          aria-hidden
-        />
-      </label>
+        <SelectTrigger
+          size="sm"
+          className="min-w-0 flex-1 sm:flex-none"
+          aria-label={`Approval for ${name}`}
+          title={approvalTitle}
+        >
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectGroup>
+            <SelectItem value="ask">Ask before every tool</SelectItem>
+            <SelectItem value="auto">Run read-only tools unprompted</SelectItem>
+          </SelectGroup>
+        </SelectContent>
+      </Select>
+      <Switch
+        checked={enabled}
+        disabled={busy}
+        aria-label={`Let the assistant use ${name}'s tools`}
+        onCheckedChange={onToggle}
+      />
     </div>
   );
 }
