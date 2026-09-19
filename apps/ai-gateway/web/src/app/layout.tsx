@@ -22,7 +22,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       */}
       <head>
         {/*
-          The launch mode, so the page drops the chrome and the outer padding a shell already
+          The launch mode, so the page hides the chrome a shell already
           supplies (globals.css) without a flash of the standalone layout. This was a hand-written
           copy of the SDK's contract while the workspace carried no SDK dependency; it now carries
           one, and a second implementation of a protocol is what this fleet keeps paying for.

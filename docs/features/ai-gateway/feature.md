@@ -1,7 +1,7 @@
 # AI Gateway
 
 Created: 2026-08-09
-Updated: 2026-09-18
+Updated: 2026-09-19
 
 The Hosty assistant: an optional, removable system app (`hosty.ai-gateway`) hosting admin-only
 operator chat sessions on a host-resident agent harness, plus the Shell surface that renders them.
@@ -110,6 +110,11 @@ are documented in [Assistant App Context](../assistant-app-context/feature.md).
   moved out of Shell into its own app for the same reason. The page itself is a Next app in
   `apps/ai-gateway/web`, built as a static export (`output: "export"`, `distDir: out-build`) that the
   gateway's own process serves — the standard component stack without a second runtime.
+- Settings use the app's shadcn/ui components for tabs, provider menus and dialogs, labelled
+  fields, inputs, selects, switches, alerts and empty states. Layout uses Tailwind utilities and
+  semantic theme tokens; the root stylesheet holds theme definitions and the SDK launch-mode
+  chrome rule. MCP control rows wrap at narrow widths. Switching tabs preserves unsaved prompt
+  text and ongoing provider-login polling.
 - **The build runs at every start, from a clean cache.** The app is `localCommand`, so its manifest
   `setup` step installs both workspaces and runs `build:web` before the service command. A `prebuild`
   script deletes `web/.next` first, because Turbopack's persistent cache there survives a failed
@@ -444,6 +449,11 @@ not broaden delegated Core MCP authority: restart uses an authorized host CLI or
 direct Core connection. See [Core development mode](../core-dev-target/feature.md).
 
 ## Testing Expectations
+
+- Settings UI refactors retain keyboard navigation, labelled form controls, modal focus return,
+  pending-save guards and provider-login polling. Verify Providers, System prompt and MCP access
+  through the Core-managed Shell surface in light/dark themes and at narrow widths; standalone
+  rendering alone does not verify delegated identity or embedding.
 
 - Core: manifest `interfaces` validation (names, keys, paths, forward-compat), `AppSummary`
   interface URL projection, delegated-token unit + HTTP suites (issue policy incl. system-app-admin
