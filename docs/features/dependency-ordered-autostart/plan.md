@@ -2,7 +2,7 @@
 
 Status: Draft
 Created: 2026-07-28
-Updated: 2026-09-16
+Updated: 2026-09-21
 
 ## Goal
 
@@ -11,9 +11,9 @@ of its own — `waiting` — instead of leaving it indistinguishable from `stopp
 
 ## Why it does not exist today
 
-Autostart groups by `(CapabilityPriority, System)`: higher capability priority first, then system
-apps before ordinary apps at the same priority. These tiers run in sequence, starting the apps
-*within* a tier concurrently
+Autostart groups by capability priority, with higher-priority tiers completing first. Within each
+tier, a shared four-slot queue prefers system apps, then ordinary apps, without waiting for all
+system starts to finish. Available slots refill as individual starts complete
 ([CoreLifecycleService.StartAutostartAppsAsync](../../../apps/core/src/Haas.Hosty.Core/CoreLifecycleService.cs));
 the dependency graph is never consulted. A consumer and its provider in the same tier simply start
 together, and the consumer comes up with a dead `HOSTY_DEPENDENCY_{ALIAS}_URL`. Nothing is broken
@@ -31,11 +31,11 @@ carry a non-terminal value without every `!= "running"` gate misreading it
 
 ## Target behavior
 
-- Autostart preserves the `(CapabilityPriority, System)` tier order: capability providers such as
-  the OTLP collector stay first, and system apps such as Shell precede ordinary apps at the same
-  capability priority. The dependency graph orders only within each complete tier, without merging
-  system and ordinary apps back into one queue. Ordering within a tier means dependency *waves* —
-  parallel inside a wave, barriered between them — rather than a return to one-at-a-time.
+- Autostart preserves capability-priority completion barriers: providers such as the OTLP collector
+  stay first. Within a tier, schedule dependency-ready apps through the shared bounded queue,
+  preferring eligible system apps such as Shell over eligible ordinary apps. Dependency completion
+  releases only its consumers; unrelated apps must not wait for a whole dependency wave or system
+  group. A slow system app must not prevent eligible ordinary apps from taking free slots.
 - An app whose required dependency is not yet running is not started and is not left looking stopped:
   its `RuntimeState` becomes `waiting`, which the Shell renders distinctly from both `stopped` and
   `starting`.
@@ -66,8 +66,9 @@ carry a non-terminal value without every `!= "running"` gate misreading it
 ## Deliverables
 
 - [ ] Answer questions 1–6; 1, 4 and 5 change the shape of the implementation, not just its details.
-- [ ] Topological waves within each `(CapabilityPriority, System)` tier of `StartAutostartAppsAsync`,
-      preserving capability and system ordering, with cycle detection that reports rather than hangs.
+- [ ] Dependency-ready scheduling within each capability-priority tier of `StartAutostartAppsAsync`,
+      preserving capability barriers, system preference among eligible apps, and immediate slot refill,
+      with cycle detection that reports rather than hangs.
 - [ ] `waiting` added to the runtime-state vocabulary, its predicate classification, the boot recovery
       sweep, and the supervisor's observation filter.
 - [ ] Wake path so a `waiting` app starts when its dependency does, including providers in later
@@ -80,10 +81,11 @@ carry a non-terminal value without every `!= "running"` gate misreading it
 
 - Unit: a consumer declared before its provider alphabetically still starts after it; a cycle is
   reported and boot continues.
-- Unit: dependency waves preserve capability-provider priority and system-before-ordinary ordering;
-  Shell starts before unrelated ordinary apps, regardless of their ids or dependency graphs.
+- Unit: dependency scheduling preserves capability-provider barriers and system queue preference
+  among eligible apps. A slow system app or independent dependency chain does not prevent eligible
+  ordinary apps from taking available slots.
 - Unit: a system app depending on an ordinary app waits without delaying independent system apps
-  or the later provider tier, then wakes after its provider starts.
+  or its provider in the same or a later capability tier, then wakes after its provider starts.
 - Unit: a `waiting` app is not swept into `stopped` by the boot recovery, and is not force-started by
   system-app bootstrap.
 - Live: stop `torrent-engine`, restart Core, and watch `media-server` sit in `waiting` and then start

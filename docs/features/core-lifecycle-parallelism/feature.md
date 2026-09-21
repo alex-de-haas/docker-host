@@ -1,7 +1,7 @@
 # Core Lifecycle Parallelism
 
 Created: 2026-08-26
-Updated: 2026-09-16
+Updated: 2026-09-21
 
 Core does its per-app lifecycle work concurrently and asks docker in batches, so boot latency and
 steady-state process churn stop scaling with the number of installed apps. Implements findings H4 and
@@ -11,39 +11,44 @@ M1 of the 2026-08-25 Core performance review, since superseded; see
 ## Autostart runs a priority tier at a time, concurrently within it
 
 `CoreLifecycleService.StartAutostartAppsAsync` groups autostart apps by
-`PlatformCapabilities.StartPriority`, then by the installed `System` flag, and runs the tiers
-**strictly in sequence**, with the apps inside one tier running **concurrently**, at most
-`MaxConcurrentAutostarts` (4) at a time. At each capability priority, system apps such as Shell
-finish their start attempts (including the normal readiness check) before ordinary apps start.
-This keeps Shell out of the ordinary app queue so administrators can watch the rest of boot.
-Capability providers still precede their consumers, including system apps; the OTLP collector
-therefore starts before Shell. System priority follows the installed role, independent of app id
-or install origin, and does not override a disabled autostart setting. A failed system-app start
-is reported per app and does not prevent the remaining tiers from starting.
+`PlatformCapabilities.StartPriority` and runs the capability tiers **strictly in sequence**.
+Within each tier, apps start **concurrently**, at most `MaxConcurrentAutostarts` (4) at a time.
+The queue places system apps first, then ordinary apps, with each category sorted by ordinal
+app id. System priority follows the installed role, independent of app id or install origin,
+and does not override a disabled autostart setting. Already-adopted live local processes are
+excluded from autostart.
 
-The tier boundary is a barrier, not a sort key, and that is the load-bearing part: the telemetry
-collector is the OTLP sink other apps point at, so its endpoint URL must be resolved and persisted
-before a lower tier's start-time env injection reads it
-([observability](../observability/feature.md)). Nothing inside a tier needs that treatment — each
+System role is a queue preference, not a completion barrier. Shell gets an early start opportunity,
+but ordinary apps do not wait for every system app to become ready. In particular, AI Gateway's
+local-command setup (`npm install` and web build) occupies one slot while unrelated Docker apps
+use the others. Each completed or failed start immediately frees a slot for the next queued app;
+there is no wait for a fixed batch to finish. A single dispatcher admits the next ordered app
+after `Task.WhenAny` observes a free slot; ordering does not depend on semaphore waiter fairness.
+Docker and local-command starts share the same limit.
+
+The capability-tier boundary remains a completion barrier: the telemetry collector is the OTLP
+sink other apps point at, so its endpoint URL must be resolved and persisted before a lower tier's
+start-time environment injection reads it ([observability](../observability/feature.md)).
+The collector therefore finishes starting before Shell and ordinary apps. Within a tier, each
 start holds only its own app's operation lock, the port allocator serializes on its own gate, and
-every failure is captured per app by `RunBackgroundLifecycleActionAsync` — so serializing them only
-made boot cost the *sum* of every app's start, where one slow image pull delayed every app behind it.
-Concurrency is bounded rather than unlimited because a start can pull: twenty simultaneous
-`docker pull`s starve each other of bandwidth and finish later than a smaller batch would.
+expected failures are captured per app by `RunBackgroundLifecycleActionAsync` without blocking
+other starts. Concurrency is bounded because simultaneous image pulls compete for bandwidth.
 
-Submission order inside a tier stays alphabetical by app id, and `Task.WhenAll` preserves it, so the
-reported result order — what the boot log prints — follows the tiers, then app id. `Task.WhenAll`
-also waits for every task even when one faults, so a boot cancelled midway never leaves a start
-running detached against a Core that is already tearing down. Stops were parallelized earlier for the same reasons
-(`StopRuntimeAppsAsync`).
+Reported results follow capability priority, system preference, then app id, regardless of
+completion order. `Task.WhenAll` waits for every submitted task even when one faults. Cancellation
+prevents queued starts from proceeding and waits for active lifecycle operations to settle, so
+no detached start outlives boot cancellation. Stops also run concurrently (`StopRuntimeAppsAsync`).
 
-**Cross-app dependency order is still not honoured**, and this changes how that shows up. Autostart
-has never consulted the dependency graph: a consumer whose id sorted before its provider already
-started first and came up against an address nothing was listening on yet. What is gone is the
-alphabetical accident that ordered *some* pairs correctly by luck — within a tier both now start
-together. Nothing regresses for a pair that was already unlucky, and dependency URL injection itself
-is unaffected (it reads the provider's persisted record, not its running state). The real fix is
-[dependency-ordered-autostart](../dependency-ordered-autostart/plan.md)'s `waiting` state.
+The limit covers each complete lifecycle start, including preparation and readiness. Four stalled
+starts can still fill every slot, and a stalled capability provider holds its tier barrier. The
+supervisor begins periodic health observation only after all autostarts finish. The readiness
+budget does not limit setup commands or image pulls.
+
+**Cross-app dependency order is still not honoured.** Declared dependencies do not gate this
+queue, and system queue preference does not guarantee that a system provider is ready before an
+ordinary consumer. Dependency URL injection reads the provider's persisted record, not its
+running state. Dependency-aware scheduling and the `waiting` state are tracked in
+[dependency-ordered-autostart](../dependency-ordered-autostart/plan.md).
 
 ## Supervision observes apps concurrently and inspects containers in batches
 
@@ -76,11 +81,13 @@ container count for a reading that is usually unchanged.
 
 ## Testing Expectations
 
-- `CoreLifecycleServiceTests`: two apps in one tier are in flight at the same time (a rendezvous both
-  starts must reach before either finishes — unsatisfiable if they run serially); a capability
-  provider's start *finishes* before system apps start, and system-app starts finish before ordinary
-  apps start, regardless of app id; disabled system apps stay stopped and a failed system-app start
-  does not block ordinary apps. Autostart reports results by tier, then alphabetical submission order.
+- `CoreLifecycleServiceTests`: two apps in one tier are in flight at the same time; a capability
+  provider finishes before lower-priority system or ordinary apps start. A held system local-command
+  start does not prevent more than four ordinary Docker apps from finishing, demonstrating queue
+  refill. System apps take queued slots before ordinary apps regardless of id, and no more than four
+  starts are active. Disabled apps remain stopped, adopted local processes are skipped, and a failed
+  system start is reported independently. Results follow capability priority, system preference,
+  then app id. Cancellation awaits active cleanup and does not launch queued apps.
 - `DockerRuntimeAdapterTests`: a multi-service app's health costs exactly one container inspect; a
   container missing from the batch reads `stopped` while its siblings' lines still parse (the
   non-zero exit must not discard them); an image's repo digest is resolved once and served from cache
