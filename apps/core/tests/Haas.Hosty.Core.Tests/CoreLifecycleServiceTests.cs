@@ -3095,14 +3095,16 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Equal(["com.example.notes", "com.example.other"], results.Select(result => result.AppId));
     }
 
-    [Fact]
-    public async Task StartAutostartAppsAsync_FinishesACapabilityProviderBeforeTheNextTierStarts()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task StartAutostartAppsAsync_FinishesACapabilityProviderBeforeTheNextTierStarts(bool system)
     {
         // Capability start-priority is a barrier, not a sort key: the collector's endpoint URL must be
         // persisted before a lower tier's start-time env injection reads it, so parallelism inside a
         // tier must never leak across one.
         var fixture = await LifecycleFixture.CreateAsync();
-        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0"), System: system));
         await fixture.Service.InstallAsync(new AppInstallRequest(
             await fixture.WriteManifestAsync("1.0.0", id: "com.example.collector", name: "Collector")));
         await fixture.Apps.UpdateAppAsync("com.example.collector", app => app with
@@ -3111,9 +3113,13 @@ public sealed partial class CoreLifecycleServiceTests
         });
 
         var timeline = new ConcurrentQueue<string>();
-        fixture.Adapter.StartProbe = async () =>
+        fixture.Adapter.StartContextProbe = async (context, _) =>
         {
-            var appId = fixture.Adapter.LastContext!.App.Id;
+            var appId = context.App.Id;
+            if (appId == "com.example.notes")
+            {
+                Assert.Equal("running", (await fixture.Apps.GetAppAsync("com.example.collector"))!.RuntimeState);
+            }
             timeline.Enqueue($"enter:{appId}");
             // Yields the continuation, so anything running concurrently gets to interleave its own
             // entry between this enter and its exit — which is exactly what must not happen here.
@@ -3135,60 +3141,221 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Theory]
-    [InlineData("hosty.shell", false)]
-    [InlineData("org.example.shell", false)]
-    [InlineData("org.example.shell", true)]
-    public async Task StartAutostartAppsAsync_FinishesSystemAppsBeforeOrdinaryApps(
+    [InlineData("hosty.ai-gateway", false)]
+    [InlineData("org.example.assistant", false)]
+    [InlineData("org.example.assistant", true)]
+    public async Task StartAutostartAppsAsync_SlowSystemLocalCommandDoesNotBlockDockerApps(
         string systemAppId,
         bool failSystemStart)
     {
-        var fixture = await LifecycleFixture.CreateAsync();
-        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        var localAdapter = new RecordingRuntimeAdapter("localCommand");
+        var fixture = await LifecycleFixture.CreateAsync(localRuntimeAdapter: localAdapter);
         await fixture.Service.InstallAsync(new AppInstallRequest(
-            await fixture.WriteManifestAsync("1.0.0", id: systemAppId, name: "Shell"), System: true));
-        await fixture.Service.InstallAsync(new AppInstallRequest(
-            await fixture.WriteManifestAsync("1.0.0", id: "org.example.telemetry", name: "Collector")));
-        await fixture.Apps.UpdateAppAsync("org.example.telemetry", app => app with
+            await fixture.WriteLocalCommandManifestAsync(id: systemAppId), System: true));
+        var ordinaryIds = Enumerable.Range(0, 6).Select(i => $"com.example.app{i}").ToArray();
+        foreach (var id in ordinaryIds)
         {
-            Provides = [PlatformCapabilities.OtlpCollector],
-        });
+            await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0", id: id)));
+        }
 
-        var timeline = new ConcurrentQueue<string>();
-        fixture.Adapter.StartProbe = async () =>
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var systemEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseSystem = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        localAdapter.StartContextProbe = async (_, cancellationToken) =>
         {
-            var appId = fixture.Adapter.LastContext!.App.Id;
-            timeline.Enqueue($"enter:{appId}");
-            if (appId == "com.example.notes")
-            {
-                // The barrier covers the whole lifecycle operation, including readiness and the
-                // persisted state, rather than only submitting the system app's runtime start first.
-                var systemApp = await fixture.Apps.GetAppAsync(systemAppId);
-                Assert.Equal(failSystemStart ? "stopped" : "running", systemApp!.RuntimeState);
-                Assert.Equal(failSystemStart ? "failed" : "started", systemApp.OperationStatus);
-            }
-
-            await Task.Yield();
-            timeline.Enqueue($"exit:{appId}");
-            if (appId == systemAppId && failSystemStart)
+            systemEntered.SetResult();
+            await releaseSystem.Task.WaitAsync(cancellationToken);
+            if (failSystemStart)
             {
                 throw new AppLifecycleException("runtime_start_failed", "System app failed to start.");
             }
         };
 
-        var results = await fixture.Service.StartAutostartAppsAsync();
+        var startup = fixture.Service.StartAutostartAppsAsync(timeout.Token);
+        try
+        {
+            await systemEntered.Task.WaitAsync(timeout.Token);
+            // More ordinary apps than free slots: all must finish while the system app remains held.
+            // This fails both a system-role barrier and a scheduler that waits for fixed batches.
+            await WaitUntilAsync(async () =>
+            {
+                var records = await fixture.Apps.ListAppRecordsAsync();
+                return ordinaryIds.All(id => records.Single(app => app.Id == id).RuntimeState == "running");
+            });
+            Assert.False(startup.IsCompleted);
+            Assert.Equal("starting", (await fixture.Apps.GetAppAsync(systemAppId))!.RuntimeState);
+        }
+        finally
+        {
+            releaseSystem.TrySetResult();
+            await startup;
+        }
 
-        Assert.Equal(["org.example.telemetry", systemAppId, "com.example.notes"], results.Select(result => result.AppId));
+        var results = await startup;
+        Assert.Equal(new[] { systemAppId }.Concat(ordinaryIds), results.Select(result => result.AppId));
         Assert.All(results, result => Assert.Equal(!(failSystemStart && result.AppId == systemAppId), result.Succeeded));
-        Assert.Equal(
-            [
-                "enter:org.example.telemetry",
-                "exit:org.example.telemetry",
-                $"enter:{systemAppId}",
-                $"exit:{systemAppId}",
-                "enter:com.example.notes",
-                "exit:com.example.notes",
-            ],
-            timeline);
+        Assert.Equal(1, localAdapter.StartCount);
+        Assert.Equal(ordinaryIds.Length, fixture.Adapter.StartCount);
+        Assert.Equal(failSystemStart ? "stopped" : "running", (await fixture.Apps.GetAppAsync(systemAppId))!.RuntimeState);
+    }
+
+    [Fact]
+    public async Task StartAutostartAppsAsync_QueuesSystemAppsFirstAndLimitsActiveStarts()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        // Ordinary ids sort earlier alphabetically; installed role must still take precedence.
+        var systemIds = Enumerable.Range(0, 6).Select(i => $"org.example.system{i}").ToArray();
+        var ordinaryIds = Enumerable.Range(0, 3).Select(i => $"com.example.app{i}").ToArray();
+        foreach (var id in ordinaryIds.Concat(systemIds.Reverse()))
+        {
+            await fixture.Service.InstallAsync(new AppInstallRequest(
+                await fixture.WriteManifestAsync("1.0.0", id: id), System: systemIds.Contains(id)));
+        }
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var entered = systemIds.Concat(ordinaryIds).ToDictionary(id => id,
+            _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+        var release = systemIds.ToDictionary(id => id,
+            _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+        var active = 0;
+        var concurrency = new ConcurrentQueue<int>();
+        fixture.Adapter.StartContextProbe = async (context, cancellationToken) =>
+        {
+            concurrency.Enqueue(Interlocked.Increment(ref active));
+            try
+            {
+                entered[context.App.Id].SetResult();
+                if (release.TryGetValue(context.App.Id, out var gate))
+                {
+                    await gate.Task.WaitAsync(cancellationToken);
+                }
+            }
+            finally
+            {
+                Interlocked.Decrement(ref active);
+            }
+        };
+
+        var startup = fixture.Service.StartAutostartAppsAsync(timeout.Token);
+        try
+        {
+            await Task.WhenAll(systemIds.Take(4).Select(id => entered[id].Task)).WaitAsync(timeout.Token);
+            Assert.All(systemIds.Skip(4).Concat(ordinaryIds), id => Assert.False(entered[id].Task.IsCompleted));
+
+            // Release just one slot at a time to verify queue order beyond the initial four starts.
+            release[systemIds[0]].SetResult();
+            await entered[systemIds[4]].Task.WaitAsync(timeout.Token);
+            Assert.All(ordinaryIds, id => Assert.False(entered[id].Task.IsCompleted));
+            release[systemIds[1]].SetResult();
+            await entered[systemIds[5]].Task.WaitAsync(timeout.Token);
+            Assert.All(ordinaryIds, id => Assert.False(entered[id].Task.IsCompleted));
+        }
+        finally
+        {
+            foreach (var gate in release.Values)
+            {
+                gate.TrySetResult();
+            }
+            await startup;
+        }
+
+        Assert.Equal(4, concurrency.Max());
+        Assert.Equal(0, active);
+        var results = await startup;
+        Assert.All(results, result => Assert.True(result.Succeeded, result.Message));
+        Assert.Equal(systemIds.Concat(ordinaryIds), results.Select(result => result.AppId));
+    }
+
+    [Fact]
+    public async Task StartAutostartAppsAsync_CancellationDrainsActiveStartsWithoutLaunchingQueuedApps()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var ids = Enumerable.Range(0, 7).Select(i => $"com.example.app{i}").ToArray();
+        foreach (var id in ids)
+        {
+            await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0", id: id)));
+        }
+
+        using var cancellation = new CancellationTokenSource();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var fourEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var fourCancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseCleanup = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var entered = 0;
+        var cancelled = 0;
+        fixture.Adapter.StartContextProbe = async (_, cancellationToken) =>
+        {
+            if (Interlocked.Increment(ref entered) == 4)
+            {
+                fourEntered.SetResult();
+            }
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+            finally
+            {
+                if (Interlocked.Increment(ref cancelled) == 4)
+                {
+                    fourCancelled.SetResult();
+                }
+                // Model asynchronous adapter cleanup after cancellation: the scheduler must await it.
+                await releaseCleanup.Task.WaitAsync(timeout.Token);
+            }
+        };
+
+        var startup = fixture.Service.StartAutostartAppsAsync(cancellation.Token);
+        try
+        {
+            await fourEntered.Task.WaitAsync(timeout.Token);
+            cancellation.Cancel();
+            await fourCancelled.Task.WaitAsync(timeout.Token);
+            Assert.False(startup.IsCompleted);
+        }
+        finally
+        {
+            cancellation.Cancel();
+            releaseCleanup.TrySetResult();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await startup);
+        }
+
+        Assert.Equal(4, entered);
+        Assert.Equal(4, cancelled);
+        Assert.All(await fixture.Apps.ListAppRecordsAsync(), app =>
+        {
+            // Active starts settle to unknown on cancellation; queued apps stay untouched.
+            Assert.Equal(ids.Take(4).Contains(app.Id) ? "unknown" : "stopped", app.RuntimeState);
+            Assert.Null(app.Health);
+        });
+    }
+
+    [Fact]
+    public async Task StartAutostartAppsAsync_SkipsAdoptedLocalProcesses()
+    {
+        var localAdapter = new RecordingRuntimeAdapter("localCommand");
+        var fixture = await LifecycleFixture.CreateAsync(localRuntimeAdapter: localAdapter);
+        const string localId = "com.example.local";
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteLocalCommandManifestAsync(), System: true));
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        await fixture.Apps.UpdateAppAsync(localId, app => app with { RuntimeState = "running" });
+        // A live process handle models the already-adopted registry entry without launching a child.
+        using var process = Process.GetCurrentProcess();
+        var adopted = new LocalCommandProcess(process, Path.Combine(fixture.Root, "app.log"), fixture.Root,
+            new Dictionary<string, int>(), ProcessGroup: false, WindowsJob: null, IndependentRunner: true);
+        fixture.LocalProcesses.Set(localId, "app", adopted);
+        try
+        {
+            var results = await fixture.Service.StartAutostartAppsAsync();
+            Assert.Equal("com.example.notes", Assert.Single(results).AppId);
+            Assert.Equal(0, localAdapter.StartCount);
+            Assert.Equal(1, fixture.Adapter.StartCount);
+            Assert.Same(adopted, fixture.LocalProcesses.Get(localId, "app"));
+            Assert.Equal("running", (await fixture.Apps.GetAppAsync(localId))!.RuntimeState);
+        }
+        finally
+        {
+            fixture.LocalProcesses.Remove(localId, "app");
+        }
     }
 
     [Fact]
@@ -6841,7 +7008,8 @@ public sealed partial class CoreLifecycleServiceTests
             // own signal as the only one. The budget defaults to 2 s here so a fixture that starts a
             // real localCommand process cannot sit in the production 30 s wait.
             IHealthProbe? healthProbe = null,
-            TimeSpan? readinessTimeout = null)
+            TimeSpan? readinessTimeout = null,
+            IAppRuntimeAdapter? localRuntimeAdapter = null)
         {
             var root = Path.Combine(Path.GetTempPath(), $"hosty-core-lifecycle-tests-{Guid.NewGuid():N}");
             Directory.CreateDirectory(root);
@@ -6892,7 +7060,7 @@ public sealed partial class CoreLifecycleServiceTests
             var portAllocator = withPortAllocator ? new RuntimePortAllocator(runtimeConfig) : null;
             var publications = new CloudflarePublicationStore(paths);
             var publicOrigins = new PublicOriginOwnership(coreSettings, publications);
-            var service = new CoreLifecycleService(paths, apps, manifests, backups, sources, [adapter, localAdapter], ingress, Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreLifecycleService>.Instance, notifications: null, clock: clock, portAllocator: portAllocator, selfRestartPortReleaseTimeout: selfRestartPortReleaseTimeout, publicOrigins: publicOrigins, healthProbe: healthProbe, readinessTimeout: readinessTimeout ?? TimeSpan.FromSeconds(2));
+            var service = new CoreLifecycleService(paths, apps, manifests, backups, sources, [adapter, localRuntimeAdapter ?? localAdapter], ingress, Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreLifecycleService>.Instance, notifications: null, clock: clock, portAllocator: portAllocator, selfRestartPortReleaseTimeout: selfRestartPortReleaseTimeout, publicOrigins: publicOrigins, healthProbe: healthProbe, readinessTimeout: readinessTimeout ?? TimeSpan.FromSeconds(2), localProcesses: localProcesses);
             return new LifecycleFixture(root, paths, apps, backups, manifests, sources, service, adapter, localAdapter, localProcesses, clock, coreSettings, publications);
         }
 
@@ -7125,7 +7293,7 @@ public sealed partial class CoreLifecycleServiceTests
             return path;
         }
 
-        public async Task<string> WriteLocalCommandManifestAsync(int? localPort = null, string version = "1.0.0")
+        public async Task<string> WriteLocalCommandManifestAsync(int? localPort = null, string version = "1.0.0", string id = "com.example.local")
         {
             var path = Path.Combine(Root, "local-command.json");
             var localPortJson = localPort is null
@@ -7134,7 +7302,7 @@ public sealed partial class CoreLifecycleServiceTests
             await File.WriteAllTextAsync(path, $$"""
                 {
                   "schemaVersion": "app.0.1",
-                  "id": "com.example.local",
+                  "id": "{{id}}",
                   "name": "Local App",
                   "version": "{{version}}",
                   "runtimeProfiles": [{ "key": "dev", "type": "localCommand", "default": true }],
@@ -7269,9 +7437,9 @@ public sealed partial class CoreLifecycleServiceTests
         }
     }
 
-    private sealed class RecordingRuntimeAdapter : IAppRuntimeAdapter, IImageDigestResolver, IRunningContainerProbe
+    private sealed class RecordingRuntimeAdapter(string type = "docker") : IAppRuntimeAdapter, IImageDigestResolver, IRunningContainerProbe
     {
-        public string Type => "docker";
+        public string Type => type;
 
         // App ids the fake docker daemon reports as having a running labelled container (C-M1 sweep).
         public HashSet<string> RunningAppIds { get; } = new(StringComparer.Ordinal);
@@ -7306,6 +7474,9 @@ public sealed partial class CoreLifecycleServiceTests
         // flight — which is the only moment the transitional state is persisted.
         public Func<Task>? StartProbe { get; set; }
 
+        // Parallel tests must use the call's context, not the shared LastContext of another start.
+        public Func<RuntimeLifecycleContext, CancellationToken, Task>? StartContextProbe { get; set; }
+
         public Func<Task>? StopProbe { get; set; }
 
         public int? FailOnStopCount { get; set; }
@@ -7314,6 +7485,11 @@ public sealed partial class CoreLifecycleServiceTests
         {
             var attempt = Interlocked.Increment(ref startCount);
             LastContext = context;
+            if (StartContextProbe is { } contextProbe)
+            {
+                await contextProbe(context, cancellationToken);
+            }
+
             if (StartProbe is { } probe)
             {
                 await probe();

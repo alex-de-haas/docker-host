@@ -1,7 +1,7 @@
 # App Readiness — Readiness Is Health
 
 Created: 2026-09-09
-Updated: 2026-09-09
+Updated: 2026-09-21
 
 A client — Shell, a dependent app, `hosty mcp` — acts on an app's endpoint when that endpoint can
 answer, and not a moment before. No third state axis was added for it: `runtimeState` says whether
@@ -139,8 +139,12 @@ state for dependents ([Dependency-Ordered Autostart](../dependency-ordered-autos
 `availability: "unavailable"` for a port another process holds
 ([Automatic Runtime App Ports](../automatic-runtime-app-ports/plan.md)); and realigning the health
 words with ASP.NET's severities, which the lifecycle document records as deliberately left alone.
-Autostart keeps its four slots and its barrier at the adapter's return; the worst added wait for a
-tier of `N` apps is about `ceil(N / 4) × 30 s`.
+Autostart keeps four slots per capability-priority tier, each held through the complete start and
+readiness wait. System apps have queue preference without a separate completion barrier; an
+ordinary app can start while a system app is still preparing or waiting for readiness. The
+capability barrier waits for all starts in the tier to finish. Readiness adds up to the configured
+budget per slot occupant; preparation and image pulls are outside that budget. See
+[Core Lifecycle Parallelism](../core-lifecycle-parallelism/feature.md).
 
 ## Testing Expectations
 

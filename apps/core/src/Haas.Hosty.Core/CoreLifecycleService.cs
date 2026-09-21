@@ -3174,16 +3174,17 @@ internal sealed partial class CoreLifecycleService(
         // collector is the OTLP sink other apps point at, so its endpoint URL must be resolved and
         // persisted before a lower tier's start-time env injection reads it (see
         // ResolveTelemetryEndpointAsync). Tiers therefore run strictly in sequence.
-        // Within each capability priority, system apps get a separate earlier tier so Shell is
-        // available while ordinary apps boot. Use the installed role rather than a first-party id;
-        // capability providers still start before any system app that consumes them.
+        // Within each capability priority, queue system apps first so Shell gets an early start
+        // opportunity, but do not wait for all system apps to finish before starting ordinary apps.
+        // A slow local-command setup (such as AI Gateway's build) must occupy only its own slot.
+        // Use the installed role rather than a first-party id.
         //
         // Within a tier the apps are independent — each start holds only its own app's operation lock,
         // the port allocator serializes on its own gate, and every failure is captured per app by
         // RunBackgroundLifecycleActionAsync — so they run concurrently. Serially, boot took the SUM of
         // every app's start (image pull, source checkout, port-release wait); one slow pull delayed
-        // every app behind it. Concurrently a tier costs about its slowest app. Stops were parallelized
-        // for the same reason (StopRuntimeAppsAsync).
+        // every app behind it. Free slots immediately take the next queued app, even while a slower
+        // start remains in flight. Stops were parallelized for the same reason (StopRuntimeAppsAsync).
         //
         // NOTE: cross-app dependency order is still not honoured here — it never was (autostart has
         // never consulted the dependency graph, so a consumer sorting before its provider already
@@ -3194,23 +3195,24 @@ internal sealed partial class CoreLifecycleService(
             .Where(app =>
                 string.Equals(app.Kind, "runtime", StringComparison.Ordinal) &&
                 (app.Autostart ?? true) && localProcesses?.HasApp(app.Id) != true)
-            .GroupBy(app => (CapabilityPriority: PlatformCapabilities.StartPriority(app.Provides), app.System))
-            .OrderByDescending(tier => tier.Key.CapabilityPriority)
-            .ThenByDescending(tier => tier.Key.System);
+            .GroupBy(app => PlatformCapabilities.StartPriority(app.Provides))
+            .OrderByDescending(tier => tier.Key);
 
         foreach (var tier in tiers)
         {
             cancellationToken.ThrowIfCancellationRequested();
             using var slots = new SemaphoreSlim(MaxConcurrentAutostarts, MaxConcurrentAutostarts);
-            // Alphabetical within the tier so the *submission* order — and therefore the reported
-            // result order, which Task.WhenAll preserves — is stable within each tier.
+            // System role is a queue preference, not another barrier. Task.WhenAll preserves this
+            // submission order in the results regardless of which starts finish first.
             var tasks = tier
-                .OrderBy(app => app.Id, StringComparer.Ordinal)
+                .OrderByDescending(app => app.System)
+                .ThenBy(app => app.Id, StringComparer.Ordinal)
                 .Select(async app =>
                 {
                     await slots.WaitAsync(cancellationToken);
                     try
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
                         return await RunBackgroundLifecycleActionAsync(
                             app.Id,
                             "autostart",
