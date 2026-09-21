@@ -3242,7 +3242,8 @@ public sealed partial class CoreLifecycleServiceTests
             await Task.WhenAll(systemIds.Take(4).Select(id => entered[id].Task)).WaitAsync(timeout.Token);
             Assert.All(systemIds.Skip(4).Concat(ordinaryIds), id => Assert.False(entered[id].Task.IsCompleted));
 
-            // Release just one slot at a time to verify queue order beyond the initial four starts.
+            // Release one slot at a time: the dispatcher must admit the next ordered app, including
+            // beyond the initial four starts, independently of task-continuation scheduling.
             release[systemIds[0]].SetResult();
             await entered[systemIds[4]].Task.WaitAsync(timeout.Token);
             Assert.All(ordinaryIds, id => Assert.False(entered[id].Task.IsCompleted));

@@ -3201,34 +3201,38 @@ internal sealed partial class CoreLifecycleService(
         foreach (var tier in tiers)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            using var slots = new SemaphoreSlim(MaxConcurrentAutostarts, MaxConcurrentAutostarts);
-            // System role is a queue preference, not another barrier. Task.WhenAll preserves this
-            // submission order in the results regardless of which starts finish first.
-            var tasks = tier
-                .OrderByDescending(app => app.System)
-                .ThenBy(app => app.Id, StringComparer.Ordinal)
-                .Select(async app =>
+            var tasks = new List<Task<AppBackgroundLifecycleResult>>();
+            var active = new List<Task<AppBackgroundLifecycleResult>>(MaxConcurrentAutostarts);
+            // One dispatcher admits apps in order; semaphore waiter fairness is not a queue contract.
+            // System role is a queue preference, not another barrier. WhenAll preserves submission
+            // order in the results regardless of which starts finish first.
+            try
+            {
+                foreach (var app in tier.OrderByDescending(app => app.System).ThenBy(app => app.Id, StringComparer.Ordinal))
                 {
-                    await slots.WaitAsync(cancellationToken);
-                    try
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (active.Count == MaxConcurrentAutostarts)
                     {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        return await RunBackgroundLifecycleActionAsync(
-                            app.Id,
-                            "autostart",
-                            async () => await StartAsync(app.Id, cancellationToken),
-                            cancellationToken);
+                        var completed = await Task.WhenAny(active).WaitAsync(cancellationToken);
+                        active.Remove(completed);
                     }
-                    finally
-                    {
-                        slots.Release();
-                    }
-                })
-                .ToArray();
 
-            // WhenAll waits for every task even when one faults, so a cancelled boot never leaves a
-            // start running detached against a Core that is already tearing down.
-            results.AddRange(await Task.WhenAll(tasks));
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var task = RunBackgroundLifecycleActionAsync(
+                        app.Id,
+                        "autostart",
+                        async () => await StartAsync(app.Id, cancellationToken),
+                        cancellationToken);
+                    tasks.Add(task);
+                    active.Add(task);
+                }
+            }
+            finally
+            {
+                // Cancellation can interrupt dispatch with starts still active. Always drain every
+                // admitted task, including adapter cleanup, before disposing the boot operation.
+                results.AddRange(await Task.WhenAll(tasks));
+            }
         }
 
         return results;

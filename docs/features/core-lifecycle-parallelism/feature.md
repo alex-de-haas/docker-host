@@ -22,7 +22,9 @@ System role is a queue preference, not a completion barrier. Shell gets an early
 but ordinary apps do not wait for every system app to become ready. In particular, AI Gateway's
 local-command setup (`npm install` and web build) occupies one slot while unrelated Docker apps
 use the others. Each completed or failed start immediately frees a slot for the next queued app;
-there is no wait for a fixed batch to finish. Docker and local-command starts share the same limit.
+there is no wait for a fixed batch to finish. A single dispatcher admits the next ordered app
+after `Task.WhenAny` observes a free slot; ordering does not depend on semaphore waiter fairness.
+Docker and local-command starts share the same limit.
 
 The capability-tier boundary remains a completion barrier: the telemetry collector is the OTLP
 sink other apps point at, so its endpoint URL must be resolved and persisted before a lower tier's
