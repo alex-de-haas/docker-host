@@ -12,10 +12,11 @@ import {
   MessageScroller, MessageScrollerButton, MessageScrollerContent,
   MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport,
 } from "@/components/ui/message-scroller";
-import { isListedToolUse } from "@/lib/tool-display";
+import { transcriptItems } from "@/lib/transcript-items";
+import { InputGroup, InputGroupAddon, InputGroupTextarea } from "@/components/ui/input-group";
 import { SessionList } from "@/components/session-list";
 import { hasMessageContent, indexAttachments, takeChosenFiles, takePastedImages } from "@/lib/attachments";
-import { TranscriptEvent, type ApprovalDecision } from "@/components/transcript";
+import { ToolActivity, TranscriptEvent, type ApprovalDecision } from "@/components/transcript";
 import { establishSession } from "@/lib/api";
 import { composeAskDraft } from "@/lib/ask-draft";
 import { clearDraft, pruneDrafts, readDraft, writeDraft } from "@/lib/draft-store";
@@ -68,6 +69,7 @@ export default function AssistantPage() {
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [contextSaving, setContextSaving] = useState(false);
   const [contextUnavailable, setContextUnavailable] = useState(false);
   const [withoutAppDetails, setWithoutAppDetails] = useState(false);
   // Chosen but not yet sent. Uploaded only when the message goes, so a file picked and then
@@ -388,7 +390,7 @@ export default function AssistantPage() {
 
   const send = useCallback(async () => {
     const trimmed = input.trim();
-    if (!hasMessageContent(trimmed, pending.length, uploaded.length) || !session || sending || !health?.available) {
+    if (!hasMessageContent(trimmed, pending.length, uploaded.length) || !session || sending || contextSaving || !health?.available) {
       return;
     }
     setSending(true);
@@ -446,7 +448,7 @@ export default function AssistantPage() {
       if (activeSessionId.current === session.id) setUploadingFile(null);
       setSending(false);
     }
-  }, [input, pending, sending, session, uploaded, withoutAppDetails, health?.available]);
+  }, [input, pending, sending, contextSaving, session, uploaded, withoutAppDetails, health?.available]);
 
   // Deletion clears the active conversation without creating or selecting another one.
   const detachDeleted = useCallback((sessionId: string) => {
@@ -515,11 +517,7 @@ export default function AssistantPage() {
       if (!session) {
         return;
       }
-      try {
-        await resolveApproval(session.id, approvalId, decision, message);
-      } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause));
-      }
+      await resolveApproval(session.id, approvalId, decision, message);
     },
     [session],
   );
@@ -529,11 +527,7 @@ export default function AssistantPage() {
       if (!session) {
         return;
       }
-      try {
-        await resolveQuestion(session.id, questionId, answers);
-      } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause));
-      }
+      await resolveQuestion(session.id, questionId, answers);
     },
     [session],
   );
@@ -568,6 +562,7 @@ export default function AssistantPage() {
   // Which message each uploaded file belongs to, so a claimed file is drawn under its message and
   // nowhere else.
   const attachmentIndex = useMemo(() => indexAttachments(events), [events]);
+  const items = useMemo(() => transcriptItems(events, attachmentIndex.claimed), [events, attachmentIndex]);
 
   return (
     <div className="flex h-dvh min-h-0 flex-col">
@@ -627,14 +622,18 @@ export default function AssistantPage() {
                     </p></MessageScrollerItem>
                   )}
 
-                  {events.filter(event => isVisibleEvent(event, attachmentIndex.claimed)).map((event) => (
-                    <MessageScrollerItem key={event.seq} messageId={`event-${event.seq}`}>
+                  {items.map((item) => item.kind === "activity" ? (
+                    <MessageScrollerItem key={item.key} messageId={item.key}>
+                      <ToolActivity events={item.events} appNames={appNames} />
+                    </MessageScrollerItem>
+                  ) : (
+                    <MessageScrollerItem key={item.key} messageId={item.key}>
                     <TranscriptEvent
-                      event={event}
+                      event={item.event}
                       appNames={appNames}
                       attachments={attachmentIndex}
-                      decision={event.type === "approval_request" ? decidedApprovals.get(String(event.approvalId)) ?? null : null}
-                      answers={event.type === "question_request" ? answeredQuestions.get(String(event.questionId)) ?? null : null}
+                      decision={item.event.type === "approval_request" ? decidedApprovals.get(String(item.event.approvalId)) ?? null : null}
+                      answers={item.event.type === "question_request" ? answeredQuestions.get(String(item.event.questionId)) ?? null : null}
                       // Absent reads as "cannot": a reason box on a harness whose decline carries nothing
                       // would promise delivery the gateway then refuses.
                       denyReason={health?.capabilities?.denyReason === true}
@@ -660,100 +659,98 @@ export default function AssistantPage() {
             </MessageScroller>
           </MessageScrollerProvider>
 
-          {session && (
-            <AppContextPicker key={session.id} session={session} busy={sending} running={["running", "awaiting_approval", "awaiting_question"].includes(status)}
-              onChange={record => setSession(current => current?.id === record.id && (record.appContextRevision ?? 0) >= (current.appContextRevision ?? 0) ? record : current)} />
-          )}
           {contextUnavailable && (
             <label className="flex gap-2 px-3 py-2 text-xs">
               <input type="checkbox" checked={withoutAppDetails} onChange={event => setWithoutAppDetails(event.target.checked)} />
               Send without fresh app details for this message
             </label>
           )}
-          {(pending.length > 0 || uploaded.length > 0) && (
-            <div className="flex max-h-48 shrink-0 flex-col gap-2 overflow-y-auto border-t px-3 py-2" aria-label="Attachments to send">
-              {uploaded.map((attachment) => (
-                <ChatAttachment key={`stored-${attachment.name}`} name={attachment.name} size={attachment.size}
-                  description="Uploaded · ready to send" />
-              ))}
-              {pending.map((file, index) => (
-                <ChatAttachment key={`${file.name}-${index}`} name={file.name} size={file.size} file={file}
-                  state={uploadingFile === file ? "uploading" : failedUpload === file ? "error" : "idle"}
-                  description={uploadingFile === file ? "Uploading…" : failedUpload === file ? "Upload failed · send to retry" : "Ready to upload"}
-                  disabled={sending}
-                  onRemove={() => setPending(current => current.filter((_, i) => i !== index))} />
-              ))}
-            </div>
-          )}
           <form
-            className="flex shrink-0 flex-col gap-2 border-t p-3"
+            className="shrink-0 p-3" aria-label="Message composer"
             onSubmit={(event) => {
               event.preventDefault();
               void send();
             }}
           >
-            <textarea
-              ref={composerRef}
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              onPaste={(event) => {
-                // Leave native paste intact for every text flavor, including HTML-only clipboards.
-                const images = takePastedImages(event.clipboardData);
-                if (images.length === 0) return;
-                setPending((current) => [...current, ...images]);
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  void send();
-                }
-              }}
-              rows={2}
-              placeholder={session ? "Ask the operator assistant…" : "Waiting for the gateway…"}
-              disabled={!session || sending}
-              className="min-w-0 w-full resize-none rounded-md border bg-transparent px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50"
-            />
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              hidden
-              onChange={(event) => {
-                // Read before the state update is scheduled. A functional updater runs when React
-                // flushes, after this handler has returned — and by then the reset on the next line
-                // has already emptied `files`. Written that way first, every selection appended
-                // nothing: no chip, no upload, a message sent without the file the operator chose.
-                const chosen = takeChosenFiles(event.target);
-                setPending((current) => [...current, ...chosen]);
-              }}
-            />
-            <div className="flex items-center gap-2" role="group" aria-label="Message actions">
-              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="ghost"
-                  disabled={!session || sending}
-                  aria-label="Attach files"
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  <Paperclip />
-                </Button>
-              </div>
-              <Button type="submit" size="icon" className="shrink-0" disabled={!session || sending || !health?.available || !hasMessageContent(input, pending.length, uploaded.length)} aria-label="Send">
-                {sending ? <Loader2 className="animate-spin" /> : <Send />}
-              </Button>
-            </div>
+            <InputGroup aria-label="Message and context">
+              <InputGroupTextarea
+                ref={composerRef}
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+                onPaste={(event) => {
+                  // Leave native paste intact for every text flavor, including HTML-only clipboards.
+                  const images = takePastedImages(event.clipboardData);
+                  if (images.length === 0) return;
+                  setPending((current) => [...current, ...images]);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) {
+                    event.preventDefault();
+                    void send();
+                  }
+                }}
+                rows={2}
+                aria-label="Message"
+                placeholder={session ? "Ask the operator assistant…" : "Waiting for the gateway…"}
+                disabled={!session || sending}
+                className="max-h-48 min-h-20 w-full px-3"
+              />
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                hidden
+                onChange={(event) => {
+                  // Read before the state update is scheduled. A functional updater runs when React
+                  // flushes, after this handler has returned — and by then the reset on the next line
+                  // has already emptied `files`. Written that way first, every selection appended
+                  // nothing: no chip, no upload, a message sent without the file the operator chose.
+                  const chosen = takeChosenFiles(event.target);
+                  setPending((current) => [...current, ...chosen]);
+                }}
+              />
+              <InputGroupAddon align="block-end" className="flex-col items-stretch gap-2" onClick={() => {}}>
+                {(pending.length > 0 || uploaded.length > 0) && (
+                  <div className="flex max-h-48 shrink-0 flex-col gap-2 overflow-y-auto pb-2" aria-label="Attachments to send">
+                    {uploaded.map((attachment) => (
+                      <ChatAttachment key={`stored-${attachment.name}`} name={attachment.name} size={attachment.size}
+                        description="Uploaded · ready to send" />
+                    ))}
+                    {pending.map((file, index) => (
+                      <ChatAttachment key={`${file.name}-${index}`} name={file.name} size={file.size} file={file}
+                        state={uploadingFile === file ? "uploading" : failedUpload === file ? "error" : "idle"}
+                        description={uploadingFile === file ? "Uploading…" : failedUpload === file ? "Upload failed · send to retry" : "Ready to upload"}
+                        disabled={sending}
+                        onRemove={() => setPending(current => current.filter((_, i) => i !== index))} />
+                    ))}
+                  </div>
+                )}
+                <div className="flex items-end gap-2" role="group" aria-label="Message actions">
+                  <div className="flex min-w-0 flex-1 items-start gap-1">
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      disabled={!session || sending}
+                      aria-label="Attach files"
+                      onClick={() => fileInputRef.current?.click()}
+                    >
+                      <Paperclip />
+                    </Button>
+                    {session && (
+                      <AppContextPicker key={session.id} session={session} busy={sending} onBusyChange={setContextSaving} running={["running", "awaiting_approval", "awaiting_question"].includes(status)}
+                        onChange={record => setSession(current => current?.id === record.id && (record.appContextRevision ?? 0) >= (current.appContextRevision ?? 0) ? record : current)} />
+                    )}
+                  </div>
+                  <Button type="submit" size="icon" className="shrink-0" disabled={!session || sending || contextSaving || !health?.available || !hasMessageContent(input, pending.length, uploaded.length)} aria-label="Send">
+                    {sending ? <Loader2 className="animate-spin" /> : <Send />}
+                  </Button>
+                </div>
+              </InputGroupAddon>
+            </InputGroup>
           </form>
         </>
       )}
     </div>
   );
-}
-
-/** Skip nonvisual log records so the scroller measures only rows the operator can see. */
-function isVisibleEvent(event: AssistantEvent, claimed: ReadonlySet<string>): boolean {
-  if (event.type === "attachment_added") return !claimed.has(String(event.name ?? ""));
-  if (event.type === "tool_use") return isListedToolUse(String(event.toolName ?? "tool"));
-  return ["user_message", "assistant_text", "app_context_changed", "approval_request", "question_request", "notice", "error"].includes(event.type);
 }

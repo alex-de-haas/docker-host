@@ -1,7 +1,7 @@
 "use client";
 
-import { Fragment, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, HelpCircle, Loader2, Wrench } from "lucide-react";
+import { Fragment, useMemo, useRef, useState } from "react";
+import { Check, ChevronDown, ChevronRight, HelpCircle, Loader2, ShieldCheck, Wrench, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { InlineError } from "@/components/status";
@@ -9,6 +9,12 @@ import { Markdown } from "@/components/markdown";
 import { ChatAttachment } from "@/components/chat-attachment";
 import { ChatCodeBlock } from "@/components/chat-code-block";
 import { cn } from "@/lib/utils";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   describeApproval,
   isListedToolUse,
@@ -138,6 +144,25 @@ function AttachmentRow({ files }: { files: { name: string; size: number | null }
   );
 }
 
+/** An event records that a tool was called; it does not establish success or completion. */
+export function ToolActivity({ events, appNames }: { events: AssistantEvent[]; appNames?: Record<string, string> }) {
+  const [open, setOpen] = useState(false);
+  const labels = [...new Set(events.map(event => summarizeToolUse(String(event.toolName ?? "tool"), event.input, appNames, event.mcp).label))];
+  return <Collapsible open={open} onOpenChange={setOpen} className="min-w-0" data-slot="tool-activity">
+    <CollapsibleTrigger asChild>
+      <button type="button" className="flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-2 text-left text-xs text-muted-foreground hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring">
+        <Wrench className="size-3.5 shrink-0" aria-hidden />
+        <span className="shrink-0 font-medium">{events.length} tool {events.length === 1 ? "call" : "calls"}</span>
+        <span className="min-w-0 truncate">{labels.join(", ")}</span>
+        <ChevronDown className={cn("ml-auto size-3.5 shrink-0", open && "rotate-180")} aria-hidden />
+      </button>
+    </CollapsibleTrigger>
+    <CollapsibleContent className="ml-3 flex min-w-0 flex-col gap-2 border-l pl-3 pt-1">
+      {events.map(event => <ToolRow key={event.seq} toolName={String(event.toolName ?? "tool")} input={event.input} appNames={appNames} mcp={event.mcp} />)}
+    </CollapsibleContent>
+  </Collapsible>;
+}
+
 // One line per tool call: what it was for, not what it was called. A run that reads thirty files is
 // thirty rows, so the row carries the model's own description (or the path, the pattern, the query)
 // and the raw input waits behind a click — a transcript that showed every input would be a wall of
@@ -203,82 +228,64 @@ function ApprovalCard({
   const view = useMemo(() => describeApproval(toolName, input, appNames), [toolName, input, appNames]);
   const [why, setWhy] = useState("");
   const [busy, setBusy] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const locked = useRef(false);
+  const category = view.kind === "mcp" ? view.server : view.kind === "command" ? "Command" : view.kind === "file" ? "File changes" : "Tool";
+  const disabled = busy || submitted;
 
-  const category =
-    view.kind === "mcp"
-      ? `App tool · ${view.server}`
-      : view.kind === "command"
-        ? "Shell"
-        : view.kind === "file"
-          ? "Files"
-          : toolName;
-
-  const decide = (verdict: "allow" | "deny") => {
+  const decide = async (verdict: "allow" | "deny") => {
+    if (locked.current || decision) return;
+    locked.current = true;
     setBusy(true);
-    const message = verdict === "deny" && why.trim() ? why.trim() : undefined;
-    void onDecide(approvalId, verdict, message).finally(() => setBusy(false));
+    setError(null);
+    try {
+      await onDecide(approvalId, verdict, verdict === "deny" && why.trim() ? why.trim() : undefined);
+      setSubmitted(true);
+    } catch (cause) {
+      locked.current = false;
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally { setBusy(false); }
   };
 
   return (
-    <div className="space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm">
-      <div className="text-[11px] tracking-wide text-muted-foreground uppercase">Approve · {category}</div>
-      <div className="font-medium">{view.heading}</div>
-      {title && title !== view.heading && <div className="text-xs text-muted-foreground">{title}</div>}
-      <ApprovalBody view={view} />
-      {reason && <div className="text-xs text-muted-foreground">{reason}</div>}
-      {decision ? (
+    <Card className="min-w-0 gap-3 py-3" data-slot="approval-card" aria-busy={busy}>
+      <CardHeader className="gap-2 px-3">
         <div className="flex flex-wrap items-center gap-2">
-          <Badge
-            variant="outline"
-            className={cn(decision.decision === "allow" ? "text-emerald-700" : "text-destructive")}
-          >
-            {decision.decision === "allow" ? "Allowed" : "Denied"}
+          <ShieldCheck className="size-4 text-muted-foreground" aria-hidden />
+          <span className="text-xs text-muted-foreground">{category}</span>
+          <Badge variant={decision ? "outline" : "secondary"} className="ml-auto">
+            {decision ? (decision.decision === "allow" ? "Allowed" : "Denied") : submitted ? "Decision sent" : "Needs approval"}
           </Badge>
-          {decision.message && <span className="text-xs text-muted-foreground">{decision.message}</span>}
         </div>
-      ) : (
-        <div className="flex flex-wrap items-center gap-2">
-          <Button type="button" size="sm" disabled={busy} onClick={() => decide("allow")}>
-            Allow
-          </Button>
-          <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => decide("deny")}>
-            Deny
-          </Button>
-          {/* Enter here is a deny: typing a reason is already the decision, and a reason that had to
-              be followed by a second click would be the one nobody types. */}
-          {reasonBox && (
-            <>
-              <input
-                value={why}
-                disabled={busy}
-                onChange={(event) => setWhy(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    decide("deny");
-                  }
-                }}
-                // Short enough to survive the panel at its narrowest — the sentence that was here
-                // truncated to "Sent to the assist…", which told the operator less than nothing.
-                // What it was saying moves to the description below, which every reader gets: a
-                // `title` alone reaches a mouse and leaves out the keyboard and the screen reader.
-                placeholder="Why not? (optional)"
-                title="Sent to the assistant with your denial."
-                aria-label="Reason for denying"
-                aria-describedby={`${approvalId}-reason-hint`}
-                className="min-w-40 flex-1 rounded-md border bg-transparent px-2 py-1 text-xs outline-none focus-visible:border-ring"
-              />
-              {/* The accessible description, keyed by the approval so several open cards cannot
-                  share one id. Not the label: the label names the field, this says where the words
-                  go, and folding the two together would have the name read as a sentence. */}
-              <span id={`${approvalId}-reason-hint`} className="sr-only">
-                Sent to the assistant with your denial.
-              </span>
-            </>
-          )}
-        </div>
-      )}
-    </div>
+        <CardTitle className="text-sm leading-snug wrap-anywhere">{view.heading}</CardTitle>
+        {title && title !== view.heading && <CardDescription className="wrap-anywhere">{title}</CardDescription>}
+      </CardHeader>
+      <CardContent className="flex min-w-0 flex-col gap-2 px-3">
+        <ApprovalBody view={view} />
+        {reason && <p className="text-xs text-muted-foreground wrap-anywhere">{reason}</p>}
+        {decision?.message && <p className="text-sm wrap-anywhere">{decision.message}</p>}
+        {!decision && reasonBox && <FieldGroup className="gap-2"><Field>
+          <FieldLabel htmlFor={`${approvalId}-reason`} className="text-xs">Reason for denying (optional)</FieldLabel>
+          <Input id={`${approvalId}-reason`} value={why} disabled={disabled}
+            aria-describedby={`${approvalId}-reason-hint`} placeholder="Explain what should change…"
+            onChange={event => setWhy(event.target.value)}
+            onKeyDown={event => {
+              if (event.key === "Enter" && !event.nativeEvent.isComposing && event.keyCode !== 229) {
+                event.preventDefault(); void decide("deny");
+              }
+            }} />
+          <FieldDescription id={`${approvalId}-reason-hint`} className="text-xs">Sent to the assistant with your denial.</FieldDescription>
+        </Field></FieldGroup>}
+        {error && <div role="alert"><InlineError message={error} /></div>}
+      </CardContent>
+      {!decision && <CardFooter className="flex-wrap justify-end gap-2 border-t px-3 pt-3">
+        {submitted ? <span role="status" className="mr-auto text-xs text-muted-foreground">Waiting for confirmation…</span> : <>
+          <Button type="button" size="sm" variant="outline" disabled={disabled} onClick={() => void decide("deny")}><X data-icon="inline-start" />Deny</Button>
+          <Button type="button" size="sm" disabled={disabled} onClick={() => void decide("allow")}>{busy ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Check data-icon="inline-start" />}Allow</Button>
+        </>}
+      </CardFooter>}
+    </Card>
   );
 }
 
@@ -359,130 +366,99 @@ function clip(content: string): string {
     : content;
 }
 
-// Deliberately not styled like the amber approval card: an approval asks the operator to authorize
-// something the agent wants to do, a question asks them to decide something the agent cannot. Making
-// them look alike would train the operator to treat both as "click to make it go away", which is
-// exactly the reflex an approval gate must not build.
-function QuestionCard({
-  questionId,
-  questions,
-  answers,
-  onAnswer,
-}: {
+/** Questions choose an answer; they never authorize an operation. */
+function QuestionCard({ questionId, questions, answers, onAnswer }: {
   questionId: string;
   questions: AssistantQuestion[];
-  /** Non-null once answered: the card collapses to what was chosen. */
   answers: Record<string, string> | null;
   onAnswer: (questionId: string, answers: Record<string, string>) => Promise<void>;
 }) {
-  // Selections are per question text — the same keying the gateway and harness use end to end.
   const [selected, setSelected] = useState<Record<string, string[]>>({});
   const [other, setOther] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
-
-  const toggle = (question: AssistantQuestion, label: string) => {
-    setSelected((current) => {
-      const previous = current[question.question] ?? [];
-      if (!question.multiSelect) {
-        return { ...current, [question.question]: [label] };
-      }
-      return {
-        ...current,
-        [question.question]: previous.includes(label)
-          ? previous.filter((entry) => entry !== label)
-          : [...previous, label],
-      };
-    });
-  };
-
-  // A question counts as answered when an option is picked or free text is typed. Multi-select
-  // answers are joined into one comma-separated value, the shape the tool contract expects.
+  const [submitted, setSubmitted] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const locked = useRef(false);
+  const disabled = submitting || submitted;
   const collected = useMemo(() => {
     const result: Record<string, string> = {};
     for (const question of questions) {
       const picks = [...(selected[question.question] ?? [])];
       const free = (other[question.question] ?? "").trim();
-      if (free) {
-        picks.push(free);
-      }
-      if (picks.length > 0) {
-        result[question.question] = picks.join(", ");
-      }
+      if (free) picks.push(free);
+      if (picks.length) result[question.question] = picks.join(", ");
     }
     return result;
   }, [questions, selected, other]);
+  const complete = questions.length > 0 && questions.every(question => collected[question.question]);
+  const submit = async () => {
+    if (locked.current || !complete || answers) return;
+    locked.current = true;
+    setSubmitting(true); setError(null);
+    try {
+      await onAnswer(questionId, collected);
+      setSubmitted(true);
+    } catch (cause) {
+      locked.current = false;
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally { setSubmitting(false); }
+  };
 
-  const complete = questions.length > 0 && questions.every((question) => collected[question.question]);
-
-  if (answers) {
-    return (
-      <div className="space-y-1.5 rounded-lg border border-sky-500/40 bg-sky-500/5 px-3 py-2 text-sm">
-        {questions.map((question) => (
-          <div key={question.question} className="flex flex-wrap items-baseline gap-1.5">
-            <span className="text-muted-foreground text-xs">{question.question}</span>
-            <Badge variant="outline">{answers[question.question] ?? "—"}</Badge>
-          </div>
-        ))}
+  return <Card className="min-w-0 gap-3 py-3" data-slot="question-card" aria-busy={submitting}>
+    <CardHeader className="px-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <HelpCircle className="size-4 text-muted-foreground" aria-hidden />
+        <CardTitle className="text-sm">{answers ? "Your answers" : "Your input is needed"}</CardTitle>
+        <Badge variant="outline" className="ml-auto">{answers ? "Answered" : submitted ? "Answer sent" : "Question"}</Badge>
       </div>
-    );
-  }
-
-  return (
-    <div className="space-y-3 rounded-lg border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-sm">
-      {questions.map((question) => {
+    </CardHeader>
+    <CardContent className="min-w-0 px-3">
+      {answers ? <dl className="flex flex-col gap-3">{questions.map(question => <div key={question.question} className="min-w-0">
+        <dt className="text-xs text-muted-foreground wrap-anywhere">{question.question}</dt>
+        <dd className="mt-1 text-sm whitespace-pre-wrap wrap-anywhere">{answers[question.question] ?? "—"}</dd>
+      </div>)}</dl> : <FieldGroup className="gap-5">{questions.map((question, questionIndex) => {
         const picks = selected[question.question] ?? [];
-        return (
-          <div key={question.question} className="space-y-2">
-            <div className="flex items-center gap-1.5">
-              <HelpCircle className="h-3.5 w-3.5 shrink-0 text-sky-600" aria-hidden />
-              <span className="font-medium">{question.question}</span>
-              {question.multiSelect && (
-                <Badge variant="outline" className="font-normal">
-                  choose any
-                </Badge>
-              )}
-            </div>
-            <div className="space-y-1">
-              {question.options.map((option) => (
-                <button
-                  key={option.label}
-                  type="button"
-                  onClick={() => toggle(question, option.label)}
-                  className={cn(
-                    "w-full rounded-md border px-2 py-1.5 text-left transition-colors",
-                    picks.includes(option.label)
-                      ? "border-sky-500 bg-sky-500/20"
-                      : "border-transparent bg-background/60 hover:border-sky-500/40",
-                  )}
-                >
-                  <div className="text-sm font-medium">{option.label}</div>
-                  {option.description && <div className="text-muted-foreground text-xs">{option.description}</div>}
-                </button>
-              ))}
-            </div>
-            {/* "Other" is part of the tool contract, not a nicety: the model is told an Other option
-                is provided automatically, so it never lists one and the card must supply it. */}
-            <input
-              value={other[question.question] ?? ""}
-              onChange={(event) => setOther((current) => ({ ...current, [question.question]: event.target.value }))}
-              placeholder="Other…"
-              className="w-full rounded-md border bg-transparent px-2 py-1 text-xs outline-none focus-visible:border-ring"
-            />
-          </div>
-        );
-      })}
-      <Button
-        type="button"
-        size="sm"
-        disabled={!complete || submitting}
-        onClick={() => {
-          setSubmitting(true);
-          void onAnswer(questionId, collected).finally(() => setSubmitting(false));
-        }}
-      >
-        {submitting ? <Loader2 className="animate-spin" /> : null}
-        Answer
-      </Button>
-    </div>
-  );
+        const baseId = `${questionId}-${questionIndex}`;
+        const choose = (label: string, checked = true) => {
+          setSelected(current => ({ ...current, [question.question]: question.multiSelect
+            ? checked ? [...(current[question.question] ?? []), label] : (current[question.question] ?? []).filter(value => value !== label)
+            : [label] }));
+          if (!question.multiSelect) setOther(current => ({ ...current, [question.question]: "" }));
+        };
+        const options = question.options.map((option, index) => <Field key={option.label} orientation="horizontal"
+          className="items-start rounded-md border p-2.5 has-data-[state=checked]:border-primary has-data-[state=checked]:bg-muted" data-disabled={disabled}>
+          {question.multiSelect ? <Checkbox id={`${baseId}-${index}`} checked={picks.includes(option.label)} disabled={disabled}
+            onCheckedChange={checked => choose(option.label, checked === true)} />
+            : <RadioGroupItem id={`${baseId}-${index}`} value={String(index)} disabled={disabled} />}
+          <FieldContent className="min-w-0 gap-1">
+            <FieldLabel htmlFor={`${baseId}-${index}`} className="wrap-anywhere">{option.label}</FieldLabel>
+            {option.description && <FieldDescription className="text-xs wrap-anywhere">{option.description}</FieldDescription>}
+          </FieldContent>
+        </Field>);
+        return <FieldSet key={question.question} className="min-w-0 gap-2">
+          <FieldLegend id={`${baseId}-legend`} className="mb-0 text-sm wrap-anywhere">{question.question}</FieldLegend>
+          <FieldDescription className="text-xs">{question.multiSelect ? "Choose one or more, or add your own answer." : "Choose one, or write your own answer."}</FieldDescription>
+          {question.multiSelect ? <div className="flex flex-col gap-2">{options}</div>
+            : <RadioGroup aria-labelledby={`${baseId}-legend`} className="gap-2"
+              value={picks.length ? String(question.options.findIndex(option => option.label === picks[0])) : ""}
+              onValueChange={value => choose(question.options[Number(value)].label)}>{options}</RadioGroup>}
+          <Field className="gap-1.5" data-disabled={disabled}>
+            <FieldLabel htmlFor={`${baseId}-other`} className="text-xs">Your own answer</FieldLabel>
+            <Input id={`${baseId}-other`} value={other[question.question] ?? ""} disabled={disabled} placeholder="Other…"
+              onChange={event => {
+                setOther(current => ({ ...current, [question.question]: event.target.value }));
+                if (!question.multiSelect) setSelected(current => ({ ...current, [question.question]: [] }));
+              }} />
+          </Field>
+        </FieldSet>;
+      })}</FieldGroup>}
+      {error && <div className="mt-3" role="alert"><InlineError message={error} /></div>}
+    </CardContent>
+    {!answers && <CardFooter className="justify-end border-t px-3 pt-3">
+      {submitted ? <span role="status" className="mr-auto text-xs text-muted-foreground">Waiting for confirmation…</span>
+        : <Button type="button" size="sm" disabled={!complete || disabled} onClick={() => void submit()}>
+          {submitting && <Loader2 className="animate-spin" data-icon="inline-start" />}Send answer
+        </Button>}
+    </CardFooter>}
+  </Card>;
 }
