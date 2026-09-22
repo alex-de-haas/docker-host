@@ -1,6 +1,8 @@
 import { defineConfig } from "vitest/config";
+import { fileURLToPath } from "node:url";
 
 export default defineConfig({
+  resolve: { alias: { "@": fileURLToPath(new URL("./web/src", import.meta.url)) } },
   test: {
     environment: "node",
     // The suites configure the harness through process.env (the Codex binary override, the

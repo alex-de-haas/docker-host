@@ -25,6 +25,7 @@ import { assistantSupportsContext, createAppSession, findAssistantGateway } from
 import { ShellSidebar } from "./shell/sidebar/shell-sidebar";
 import { ShellTopStrip } from "./shell/chrome/shell-top-strip";
 import { ShellRightPanel } from "./shell/surfaces/shell-right-panel";
+import { ShellWorkspaceSplit } from "./shell/chrome/shell-workspace-split";
 import { getAppPanelTabs, getAppSettingsTabs, resolveSettingsSurface, resolveActiveSurfaceTab } from "./shell/surfaces/app-surface-tabs";
 import { ShellActionsContext, ShellStateContext } from "./shell/shell-context";
 import {
@@ -142,12 +143,14 @@ export function ShellClient({
   // stored state. null = no cookie: the mount effect then migrates the legacy localStorage value.
   initialSidebarCompact,
   initialRightPanelOpen,
+  initialRightPanelWidth,
   children,
 }: {
   coreOrigin: string;
   shellAppId: string;
   initialSidebarCompact: boolean | null;
   initialRightPanelOpen: boolean | null;
+  initialRightPanelWidth: number;
   children: ReactNode;
 }) {
   const router = useRouter();
@@ -2221,13 +2224,9 @@ export function ShellClient({
         className={cn(
           "relative grid min-h-0 flex-1",
           chromeTransitions && !narrowViewport && "motion-safe:transition-[grid-template-columns] motion-safe:duration-200",
-          rightPanelVisible
-            ? (narrowViewport || sidebarCompact)
-              ? "grid-cols-[60px_minmax(0,1fr)_360px]"
-              : "grid-cols-[280px_minmax(0,1fr)_360px]"
-            : (narrowViewport || sidebarCompact)
-              ? "grid-cols-[60px_minmax(0,1fr)]"
-              : "grid-cols-[280px_minmax(0,1fr)]",
+          (narrowViewport || sidebarCompact)
+            ? "grid-cols-[60px_minmax(0,1fr)]"
+            : "grid-cols-[280px_minmax(0,1fr)]",
         )}
       >
         {narrowViewport && mobileSidebarOpen && (
@@ -2281,78 +2280,80 @@ export function ShellClient({
         </aside>
         {narrowViewport && mobileSidebarOpen && <div aria-hidden />}
 
-        <div
-          className={cn(
-            "h-full min-w-0",
-            (workspaceSurfaceActive || appSettingsSurfaceActive) ? "overflow-hidden bg-background" : "overflow-y-auto",
-            appSettingsSurfaceActive && "bg-background",
-          )}
-        >
-          <main className={cn("w-full", (workspaceSurfaceActive || appSettingsSurfaceActive) ? "h-full" : "mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8")}>
-            {workspace ? (
-              <EmbeddedWorkspacePanel
-                workspace={workspace}
-                grantedCorePermissions={state.apps.find((app) => app.id === workspace.appId)?.grantedCorePermissions}
-                theme={shellResolvedTheme}
-                themePreference={shellThemePreference}
-                onAuthRequired={handleAuthRequired}
-                onDelegatedTokenRequest={handleDelegatedTokenRequest}
-                onAskAssistant={assistantAvailable ? askAssistant : undefined}
-              />
-            ) : activeWorkspaceRoute ? (
-              <EmbeddedWorkspacePendingPanel
-                error={state.error}
-              />
-            ) : (
-              <>
-                {state.error && (
-                  <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                    {state.error}
-                  </div>
-                )}
-
-                {state.status?.warnings?.length ? (
-                  <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
-                    {state.status.warnings.map((warning) => (
-                      <p key={warning}>{warning}</p>
-                    ))}
-                  </div>
-                ) : null}
-
-                {state.loading && !state.status ? (
-                  <EmptyState icon={LoaderCircle} title="Loading Core state" description="Waiting for Core status and current session." iconClassName="animate-spin" />
-                ) : (
-                  children
-                )}
-              </>
+        <ShellWorkspaceSplit initialPanelWidth={initialRightPanelWidth} panel={
+          rightPanelVisible ? (
+            <ShellRightPanel
+              tabs={appPanelTabs}
+              activeTab={activePanelTab}
+              theme={shellResolvedTheme}
+              themePreference={shellThemePreference}
+              onSelectTab={setActivePanelKey}
+              onAuthRequired={handleSurfaceAuthRequired}
+              resolveDelegatedTokenRequest={requestDelegatedTokenFor}
+              onOpenSurfaceFrame={openSurfaceFrame}
+              attention={panelAttention}
+              onAttention={(appId, count) =>
+                setPanelAttention((current) => (current[appId] === count ? current : { ...current, [appId]: count }))
+              }
+              onAskAssistant={assistantAvailable ? askAssistant : undefined}
+              // Panels are deliberately not administrator-only, but starting an app is: Core refuses a
+              // host.user, so offering them the button would promise something guaranteed to fail.
+              onStartApp={canManageApps ? startAppById : undefined}
+              reloadKey={surfaceAuthNonce}
+              // Only the assistant's own tab is handed Shell's ask; another app's panel must not
+              // receive a message addressed to the gateway.
+              outbound={activePanelTab?.appId === assistantGateway?.appId ? assistantAsk : null}
+            />
+          ) : null
+        }>
+          <div
+            className={cn(
+              "h-full min-w-0",
+              (workspaceSurfaceActive || appSettingsSurfaceActive) ? "overflow-hidden bg-background" : "overflow-y-auto",
+              appSettingsSurfaceActive && "bg-background",
             )}
-          </main>
-        </div>
+          >
+            <main className={cn("w-full", (workspaceSurfaceActive || appSettingsSurfaceActive) ? "h-full" : "mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8")}>
+              {workspace ? (
+                <EmbeddedWorkspacePanel
+                  workspace={workspace}
+                  grantedCorePermissions={state.apps.find((app) => app.id === workspace.appId)?.grantedCorePermissions}
+                  theme={shellResolvedTheme}
+                  themePreference={shellThemePreference}
+                  onAuthRequired={handleAuthRequired}
+                  onDelegatedTokenRequest={handleDelegatedTokenRequest}
+                  onAskAssistant={assistantAvailable ? askAssistant : undefined}
+                />
+              ) : activeWorkspaceRoute ? (
+                <EmbeddedWorkspacePendingPanel
+                  error={state.error}
+                />
+              ) : (
+                <>
+                  {state.error && (
+                    <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                      {state.error}
+                    </div>
+                  )}
 
-        {rightPanelVisible && (
-          <ShellRightPanel
-            tabs={appPanelTabs}
-            activeTab={activePanelTab}
-            theme={shellResolvedTheme}
-            themePreference={shellThemePreference}
-            onSelectTab={setActivePanelKey}
-            onAuthRequired={handleSurfaceAuthRequired}
-            resolveDelegatedTokenRequest={requestDelegatedTokenFor}
-            onOpenSurfaceFrame={openSurfaceFrame}
-            attention={panelAttention}
-            onAttention={(appId, count) =>
-              setPanelAttention((current) => (current[appId] === count ? current : { ...current, [appId]: count }))
-            }
-            onAskAssistant={assistantAvailable ? askAssistant : undefined}
-            // Panels are deliberately not administrator-only, but starting an app is: Core refuses a
-            // host.user, so offering them the button would promise something guaranteed to fail.
-            onStartApp={canManageApps ? startAppById : undefined}
-            reloadKey={surfaceAuthNonce}
-            // Only the assistant's own tab is handed Shell's ask; another app's panel must not
-            // receive a message addressed to the gateway.
-            outbound={activePanelTab?.appId === assistantGateway?.appId ? assistantAsk : null}
-          />
-        )}
+                  {state.status?.warnings?.length ? (
+                    <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
+                      {state.status.warnings.map((warning) => (
+                        <p key={warning}>{warning}</p>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  {state.loading && !state.status ? (
+                    <EmptyState icon={LoaderCircle} title="Loading Core state" description="Waiting for Core status and current session." iconClassName="animate-spin" />
+                  ) : (
+                    children
+                  )}
+                </>
+              )}
+            </main>
+          </div>
+        </ShellWorkspaceSplit>
       </div>
 
         {installOpen && <InstallDialog

@@ -385,8 +385,9 @@ a stopped process does not transfer a chat to another provider.
     plain text. Code is untouched — inline or fenced, its newlines live in the node's value.
 - Headings are remapped down (`h1`/`h2` → `h4`, `h3` → `h5`): inside a chat bubble a heading is a
   size, not a rank, and the panel's own headings outrank anything the assistant writes.
-- Streaming needs no special case — every delta re-renders the whole message, and an unterminated
-  fence closes at the end of the document, so a code block appears as it is typed.
+- Every delta re-renders the message; an unterminated fence closes at the document boundary and
+  appears as it is typed. [Chat components](../ai-gateway-chat-ui/feature.md) provide stream-aware
+  code blocks, reader-controlled transcript scrolling, and attachment cards.
 - The operator's own message is *not* rendered as markdown: it is shown back exactly as typed, so
   there is never a question of which of two texts the harness received.
 - Closing the panel only drops the SSE connection — the harness run keeps working. Reopening

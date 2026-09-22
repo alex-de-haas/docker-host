@@ -1,11 +1,13 @@
 "use client";
 
 import { Fragment, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, HelpCircle, Loader2, Paperclip, Wrench } from "lucide-react";
+import { ChevronDown, ChevronRight, HelpCircle, Loader2, Wrench } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { InlineError } from "@/components/status";
 import { Markdown } from "@/components/markdown";
+import { ChatAttachment } from "@/components/chat-attachment";
+import { ChatCodeBlock } from "@/components/chat-code-block";
 import { cn } from "@/lib/utils";
 import {
   describeApproval,
@@ -127,45 +129,11 @@ export function TranscriptEvent({
   }
 }
 
-/**
- * Attached files, collapsed to a paperclip and a count.
- *
- * Shaped like {@link ToolRow} on purpose: the transcript already teaches that a small row with a
- * chevron opens, and a second idiom for the same gesture would be one more thing to learn. Names
- * here are the operator's own file names — long, and often longer than the column — so a lone name
- * truncates and several collapse to a count, with the full list one click away.
- *
- * A size of `null` means the log no longer holds the upload event for that name; the file is still
- * named, because which file this turn carried is the part worth showing.
- */
+/** Stored metadata remains visible even when the session cache no longer contains the file. */
 function AttachmentRow({ files }: { files: { name: string; size: number | null }[] }) {
-  const [open, setOpen] = useState(false);
-  const Chevron = open ? ChevronDown : ChevronRight;
-  const first = files[0];
-
   return (
-    <div className="ml-8 px-1 text-xs text-muted-foreground">
-      <button
-        type="button"
-        onClick={() => setOpen((current) => !current)}
-        aria-expanded={open}
-        className="flex w-full min-w-0 items-center gap-1.5 text-left hover:text-foreground"
-      >
-        <Paperclip className="h-3 w-3 shrink-0" aria-hidden />
-        <span className="shrink-0 font-medium">{files.length === 1 ? "Attachment" : `${files.length} attachments`}</span>
-        {files.length === 1 && first && <span className="min-w-0 truncate">{first.name}</span>}
-        <Chevron className="ml-auto h-3 w-3 shrink-0" aria-hidden />
-      </button>
-      {open && (
-        <ul className="mt-1 space-y-0.5 rounded bg-muted/60 p-2 break-all">
-          {files.map((file) => (
-            <li key={file.name}>
-              {file.name}
-              {file.size !== null && <span className="text-muted-foreground"> ({formatBytes(file.size)})</span>}
-            </li>
-          ))}
-        </ul>
-      )}
+    <div className="ml-8 flex min-w-0 flex-col gap-2" aria-label="Message attachments">
+      {files.map((file, index) => <ChatAttachment key={`${file.name}-${index}`} name={file.name} size={file.size} />)}
     </div>
   );
 }
@@ -195,9 +163,7 @@ function ToolRow({ toolName, input, appNames, mcp }: {
         <Chevron className="ml-auto h-3 w-3 shrink-0" aria-hidden />
       </button>
       {open && (
-        <pre className="mt-1 max-h-48 overflow-auto rounded bg-muted/60 p-2 break-all whitespace-pre-wrap">
-          {JSON.stringify(input ?? {}, null, 2)}
-        </pre>
+        <ChatCodeBlock code={JSON.stringify(input ?? {}, null, 2)} language="json" title="Tool input" />
       )}
     </div>
   );
@@ -321,12 +287,8 @@ function ApprovalBody({ view }: { view: ApprovalView }) {
     case "command":
       return (
         <div className="flex min-w-0 flex-col gap-2">
-          {/* No wrapping on purpose: a command is read left to right, and a digest or a long path
-              broken across lines is a command the operator has to reassemble before approving.
-              Reserve bottom padding for overlay scrollbars so they cannot cover the command. */}
-          <pre className="max-h-48 min-w-0 shrink-0 overflow-auto rounded bg-background/60 p-2 pb-5 font-mono text-xs whitespace-pre">
-            {view.command}
-          </pre>
+          {/* Commands start unwrapped so paths stay on one line; Wrap is an explicit reader choice. */}
+          <ChatCodeBlock code={view.command} language="shell" title="Command" />
           {view.cwd && <div className="text-xs break-all text-muted-foreground">in {view.cwd}</div>}
         </div>
       );
@@ -353,9 +315,7 @@ function ApprovalBody({ view }: { view: ApprovalView }) {
       );
     default:
       return (
-        <pre className="max-h-48 overflow-auto rounded bg-background/60 p-2 text-xs break-all whitespace-pre-wrap">
-          {view.json}
-        </pre>
+        <ChatCodeBlock code={view.json} language="json" title="Tool input" />
       );
   }
 }
@@ -525,10 +485,4 @@ function QuestionCard({
       </Button>
     </div>
   );
-}
-
-function formatBytes(size: number): string {
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }

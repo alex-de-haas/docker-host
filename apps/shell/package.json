@@ -1,6 +1,6 @@
 {
   "name": "@haas/hosty-shell",
-  "version": "0.80.0",
+  "version": "0.81.0",
   "private": true,
   "license": "AGPL-3.0-only",
   "type": "module",
@@ -26,6 +26,7 @@
     "radix-ui": "^1.6.7",
     "react": "19.3.0",
     "react-dom": "^19.3.0",
+    "react-resizable-panels": "^4.13.2",
     "recharts": "^3.10.1",
     "sonner": "^2.0.8",
     "tailwind-merge": "^3.7.0"
