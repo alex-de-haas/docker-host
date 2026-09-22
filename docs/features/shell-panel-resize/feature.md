@@ -7,6 +7,7 @@ Shell's [right panel](../app-ui-surfaces/feature.md#shells-chrome) shares a hori
 shadcn Resizable group with the workspace. The navigation rail remains outside this
 group. A visible divider supports pointer dragging and keyboard resizing; double-clicking
 it resets the preferred right-panel width to 360 px.
+The Resizable wrapper uses Shell's existing `cn` helper for Tailwind class merging.
 
 The panel normally has a 280 px minimum and an 800 px maximum. Its maximum also reserves
 workspace space: 240 px or 30% of the available group width, whichever is smaller.

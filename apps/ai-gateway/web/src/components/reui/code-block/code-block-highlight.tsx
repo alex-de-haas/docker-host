@@ -813,8 +813,8 @@ export async function highlightCode(
   try {
     const highlighter = await loadHighlighter()
     const [light, dark] = await Promise.all([
-      ensureTheme(highlighter, themes.light),
-      ensureTheme(highlighter, themes.dark),
+      ensureTheme(highlighter, themes.light, "light"),
+      ensureTheme(highlighter, themes.dark, "dark"),
     ])
     await ensureLanguage(highlighter, language)
 

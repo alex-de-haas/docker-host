@@ -13,11 +13,14 @@ its existing design tokens and Button implementation.
 from `@reui/code-block`; Message Scroller and Attachment use the shadcn components
 referenced by ReUI's examples. These are local source files, with `@shadcn/react`
 providing scroll behavior and Shiki providing syntax highlighting.
+Imported components use the app's existing `cn` helper for Tailwind class merging.
 
 The imported Code Block includes local compatibility adjustments: React lint fixes,
 appropriate non-selectable region semantics, exact copying of an explicit code value,
 clipboard failure feedback, and a scroll boundary that prevents code streaming from
 moving the surrounding conversation. Registry updates require reviewing these changes.
+Unknown highlight themes fall back to the matching light or dark default. Fold controls
+use source line numbers even when the displayed numbering starts at an offset.
 
 ## Conversation Scrolling
 
@@ -60,6 +63,8 @@ the selection changes or unmounts. The underlying
 
 - Run `npm run ai-gateway:test`, including chat-rendering tests for unfinished code fences,
   inline code and URL policy, attachment errors, and transcript association after replay.
+- Code Block regression tests cover theme fallback, unfolding with offset line numbers,
+  and stream-completion announcements across repeated streams in React Strict Mode.
 - Run `npm run ai-gateway:lint` and `npm run ai-gateway:build-web`.
 - Check live streaming follow/pause/jump and switching sessions; code streaming must also
   respect manual transcript scrolling. Verify tool JSON, command copy, wrapping and expansion.

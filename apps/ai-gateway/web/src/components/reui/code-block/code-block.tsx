@@ -43,7 +43,7 @@ import type {
   CodeBlockWordSpec,
 } from "@/components/reui/code-block/code-block-highlight"
 
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 
 /* -------------------------------------------------------------------------- */
@@ -651,7 +651,7 @@ const CodeBlockLineRow = memo(function CodeBlockLineRow({
             aria-label={`Unfold ${hiddenCount} hidden lines`}
             onClick={(event) => {
               event.stopPropagation()
-              onToggleFold?.(line.number)
+              onToggleFold?.(line.number - startLine + 1)
             }}
             /* Same centring as the fold toggle: chip height matches the fold
                channel and the translate makes up the difference to the line
