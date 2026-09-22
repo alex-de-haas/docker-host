@@ -1,7 +1,7 @@
 # App UI Surfaces
 
 Created: 2026-08-19
-Updated: 2026-09-18
+Updated: 2026-09-22
 
 An app declares **where** its pages belong, and Shell places them. Before this, an app had exactly
 one placement — the sidebar — so operator configuration, domain work, and always-at-hand tools all
@@ -107,6 +107,8 @@ the choice remembered like the sidebar's. The property that motivated it is **do
 content sits beside the workspace, so an operator reads an app's error and works with a tool about it
 at the same time. The tab strip scrolls horizontally when labels exceed the available width;
 tab underlines stay within its height and do not create a vertical scrollbar.
+A [resizable divider](../shell-panel-resize/feature.md) separates the panel from the
+workspace, with a remembered width, keyboard controls, and a double-click reset.
 
 Tabs are keyed rather than indexed, because stopping or removing an app reorders the strip and an
 index would then point at somebody else's tool. A stopped app **keeps** its tab, dimmed and saying

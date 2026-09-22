@@ -78,7 +78,7 @@ export function ShellRightPanel({
   const { src, error } = useAppSurfaceSrc(embedTab, onOpenSurfaceFrame, "Could not open this panel.", reloadKey);
 
   return (
-    <aside className="flex h-full min-h-0 min-w-0 flex-col border-l bg-sidebar text-sidebar-foreground">
+    <aside className="flex h-full min-h-0 min-w-0 flex-col bg-sidebar text-sidebar-foreground">
       <div className="flex items-center border-b px-2">
         <div className="flex min-w-0 flex-1 items-center gap-3 overflow-x-auto overflow-y-hidden" role="tablist" aria-label="Panels">
           {tabs.map((tab) => {

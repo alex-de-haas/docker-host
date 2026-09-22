@@ -4,6 +4,8 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { remarkSoftBreaks, transformChatUrl } from "@/lib/markdown";
 import { cn } from "@/lib/utils";
+import { ChatCodeBlock } from "@/components/chat-code-block";
+import { markdownCodeProps } from "@/components/reui/code-block/code-block-highlight";
 
 // Assistant prose, rendered the way Marketplace renders an app description
 // (`apps/marketplace/src/components/markdown-description.tsx`): react-markdown with remark-gfm, and
@@ -22,16 +24,14 @@ const PROSE_CLASS = [
   "[&_h6]:mt-3 [&_h6]:mb-1 [&_h6]:font-medium",
   "[&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-1",
   "[&_blockquote]:my-2 [&_blockquote]:border-l-2 [&_blockquote]:border-muted-foreground/40 [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground",
-  "[&_code]:rounded [&_code]:bg-background/70 [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-xs",
-  "[&_pre]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:border [&_pre]:bg-background/60 [&_pre]:p-2 [&_pre]:text-xs",
-  "[&_pre_code]:bg-transparent [&_pre_code]:p-0",
+  "[&_code:not(pre_code)]:rounded [&_code:not(pre_code)]:bg-background/70 [&_code:not(pre_code)]:px-1 [&_code:not(pre_code)]:py-0.5 [&_code]:font-mono [&_code]:text-xs",
   "[&_hr]:my-3 [&_hr]:border-muted-foreground/30",
   "[&_table]:w-full [&_table]:border-collapse [&_table]:text-xs",
   "[&_th]:border-b [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_th]:font-medium",
   "[&_td]:border-b [&_td]:border-muted-foreground/15 [&_td]:px-2 [&_td]:py-1",
 ].join(" ");
 
-export function Markdown({ text, className }: { text: string; className?: string }) {
+export function Markdown({ text, className, streaming = false }: { text: string; className?: string; streaming?: boolean }) {
   return (
     <div className={cn(PROSE_CLASS, className)}>
       <ReactMarkdown
@@ -40,6 +40,7 @@ export function Markdown({ text, className }: { text: string; className?: string
         remarkPlugins={[remarkGfm, remarkSoftBreaks]}
         urlTransform={transformChatUrl}
         components={{
+          pre: ({ children }) => <ChatCodeBlock {...markdownCodeProps({ children })} streaming={streaming} />,
           // A document heading inside a chat bubble is a size, not a rank: the panel's own headings
           // outrank anything the assistant writes, so h1-h3 land where they read as emphasis.
           h1: ({ children }) => <h4>{children}</h4>,

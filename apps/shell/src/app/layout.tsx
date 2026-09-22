@@ -7,6 +7,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { ShellClient } from "./shell-client";
 import { getCoreOrigin, getShellAppId } from "./shell/server-env";
 import { RIGHT_PANEL_OPEN_PREF_KEY, SIDEBAR_COMPACT_PREF_KEY } from "./shell/shell-routes";
+import { RIGHT_PANEL_WIDTH_PREF_KEY, readPanelWidth } from "./shell/chrome/panel-width";
 
 // null means "no stored preference": the client then falls back to the legacy localStorage value
 // once, instead of treating the absence as an explicit default.
@@ -44,6 +45,7 @@ export default async function RootLayout({
               shellAppId={getShellAppId()}
               initialSidebarCompact={readChromePref(cookieStore.get(SIDEBAR_COMPACT_PREF_KEY)?.value)}
               initialRightPanelOpen={readChromePref(cookieStore.get(RIGHT_PANEL_OPEN_PREF_KEY)?.value)}
+              initialRightPanelWidth={readPanelWidth(cookieStore.get(RIGHT_PANEL_WIDTH_PREF_KEY)?.value)}
             >
               {children}
             </ShellClient>

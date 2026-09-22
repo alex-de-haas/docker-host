@@ -3,10 +3,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SessionProvider } from "@/components/session-provider";
 import { AppContextPicker } from "@/components/app-context-picker";
-import { ArrowLeft, History, Loader2, MessageSquarePlus, Paperclip, Send, Sparkles, X } from "lucide-react";
+import { ArrowLeft, History, Loader2, MessageSquarePlus, Paperclip, Send, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, InlineError, StatusBadge } from "@/components/status";
 import { Markdown } from "@/components/markdown";
+import { ChatAttachment } from "@/components/chat-attachment";
+import {
+  MessageScroller, MessageScrollerButton, MessageScrollerContent,
+  MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport,
+} from "@/components/ui/message-scroller";
+import { isListedToolUse } from "@/lib/tool-display";
 import { SessionList } from "@/components/session-list";
 import { hasMessageContent, indexAttachments, takeChosenFiles, takePastedImages } from "@/lib/attachments";
 import { TranscriptEvent, type ApprovalDecision } from "@/components/transcript";
@@ -67,6 +73,8 @@ export default function AssistantPage() {
   // Chosen but not yet sent. Uploaded only when the message goes, so a file picked and then
   // reconsidered never reaches the gateway.
   const [pending, setPending] = useState<File[]>([]);
+  const [uploadingFile, setUploadingFile] = useState<File | null>(null);
+  const [failedUpload, setFailedUpload] = useState<File | null>(null);
   // Fetched once: the roster changes when apps are installed, not between messages, and a failed
   // read leaves every label as the wire name — which is what the transcript showed before.
   const [appNames, setAppNames] = useState<Record<string, string>>({});
@@ -91,7 +99,7 @@ export default function AssistantPage() {
   // Sessions this tab deleted itself. The deletion fans out to every subscriber including this one,
   // and its own click must not come back as "this session was deleted" from somewhere else.
   const selfDeleted = useRef(new Set<string>());
-  const transcriptRef = useRef<HTMLDivElement | null>(null);
+
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
 
   /** Attaches to one session and follows its log. Shared by reattach, switch and new. */
@@ -114,6 +122,8 @@ export default function AssistantPage() {
     // the next and be uploaded there.
     setPending([]);
     setUploaded([]);
+    setUploadingFile(null);
+    setFailedUpload(null);
     try {
       window.localStorage.setItem(SESSION_STORAGE_KEY, record.id);
     } catch {
@@ -256,10 +266,6 @@ export default function AssistantPage() {
     };
   }, [attach]);
 
-  useEffect(() => {
-    transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight });
-  }, [events, streamed]);
-
   /**
    * An "ask the assistant" handed in by the embedder.
    *
@@ -387,13 +393,18 @@ export default function AssistantPage() {
     }
     setSending(true);
     setError(null);
+    setFailedUpload(null);
+    let activeFile: File | null = null;
     try {
       // Files first, then the message that names them by their stored names — which may differ from
       // what the operator called them. A failed upload stops here with the text kept, so nothing is
       // sent that refers to a file the gateway does not have.
       const stored = [...uploaded];
       for (const file of pending) {
+        activeFile = file;
+        if (activeSessionId.current === session.id) setUploadingFile(file);
         const attachment = await uploadAttachment(session.id, file);
+        activeFile = null;
         // Moved as each lands, not after all have: a failure part-way leaves the ones that made it
         // in `uploaded` and the rest still pending, so the retry sends exactly what is missing.
         stored.push(attachment);
@@ -402,6 +413,7 @@ export default function AssistantPage() {
           setPending((current) => current.filter((candidate) => candidate !== file));
         }
       }
+      if (activeSessionId.current === session.id) setUploadingFile(null);
       await postMessage(session.id, trimmed, stored.map((attachment) => attachment.name), session.appContextRevision ?? 0, withoutAppDetails);
       // Clear only after acceptance, and never overwrite another session opened during the request.
       clearDraft(session.id);
@@ -423,6 +435,7 @@ export default function AssistantPage() {
       }
     } catch (cause) {
       if (activeSessionId.current !== session.id) return;
+      setFailedUpload(activeFile);
       if (cause instanceof AssistantApiError && cause.code === "app_context_unavailable") setContextUnavailable(true);
       if (cause instanceof AssistantApiError && cause.code === "app_context_conflict") {
         const current = await getSession(session.id).catch(() => null);
@@ -430,6 +443,7 @@ export default function AssistantPage() {
       }
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
+      if (activeSessionId.current === session.id) setUploadingFile(null);
       setSending(false);
     }
   }, [input, pending, sending, session, uploaded, withoutAppDetails, health?.available]);
@@ -446,6 +460,8 @@ export default function AssistantPage() {
     setInput("");
     setPending([]);
     setUploaded([]);
+    setUploadingFile(null);
+    setFailedUpload(null);
     setContextUnavailable(false);
     setWithoutAppDetails(false);
     setHistoryOpen(true);
@@ -597,41 +613,52 @@ export default function AssistantPage() {
         />
       ) : (
         <>
-          <div ref={transcriptRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
-            {health && !health.available && (
-              <Alert severity="warning" title="Assistant unavailable" detail={health.reason} />
-            )}
-            {ready && health?.available && events.length === 0 && !streamed && (
-              <p className="px-1 text-xs text-muted-foreground">
-                Operator session on this host — every write asks first.
-              </p>
-            )}
+          <MessageScrollerProvider key={session?.id ?? "connecting"} autoScroll>
+            <MessageScroller className="h-auto flex-1">
+              <MessageScrollerViewport aria-label="Assistant conversation">
+                <MessageScrollerContent className="gap-3 p-3" aria-busy={Boolean(streamed)}>
 
-            {events.map((event) => (
-              <TranscriptEvent
-                key={event.seq}
-                event={event}
-                appNames={appNames}
-                attachments={attachmentIndex}
-                decision={event.type === "approval_request" ? decidedApprovals.get(String(event.approvalId)) ?? null : null}
-                answers={event.type === "question_request" ? answeredQuestions.get(String(event.questionId)) ?? null : null}
-                // Absent reads as "cannot": a reason box on a harness whose decline carries nothing
-                // would promise delivery the gateway then refuses.
-                denyReason={health?.capabilities?.denyReason === true}
-                onDecide={decide}
-                onAnswer={answer}
-              />
-            ))}
-            {streamed && (
-              // Formatted while it streams, not once it lands: the parser closes an unfinished block
-              // at the end of what has arrived, so a half-written table is a table with fewer rows
-              // rather than a paragraph of pipes that reflows the moment the turn ends.
-              <div className="rounded-lg bg-muted/60 px-3 py-2">
-                <Markdown text={streamed} />
-                <Loader2 className="ml-1 inline h-3 w-3 animate-spin text-muted-foreground" aria-hidden />
-              </div>
-            )}
-          </div>
+                  {health && !health.available && (
+                    <MessageScrollerItem messageId="unavailable"><Alert severity="warning" title="Assistant unavailable" detail={health.reason} /></MessageScrollerItem>
+                  )}
+                  {ready && health?.available && events.length === 0 && !streamed && (
+                    <MessageScrollerItem messageId="welcome"><p className="px-1 text-xs text-muted-foreground">
+                      Operator session on this host — every write asks first.
+                    </p></MessageScrollerItem>
+                  )}
+
+                  {events.filter(event => isVisibleEvent(event, attachmentIndex.claimed)).map((event) => (
+                    <MessageScrollerItem key={event.seq} messageId={`event-${event.seq}`}>
+                    <TranscriptEvent
+                      event={event}
+                      appNames={appNames}
+                      attachments={attachmentIndex}
+                      decision={event.type === "approval_request" ? decidedApprovals.get(String(event.approvalId)) ?? null : null}
+                      answers={event.type === "question_request" ? answeredQuestions.get(String(event.questionId)) ?? null : null}
+                      // Absent reads as "cannot": a reason box on a harness whose decline carries nothing
+                      // would promise delivery the gateway then refuses.
+                      denyReason={health?.capabilities?.denyReason === true}
+                      onDecide={decide}
+                      onAnswer={answer}
+                    />
+                    </MessageScrollerItem>
+                  ))}
+                  {streamed && (
+                    // Formatted while it streams, not once it lands: the parser closes an unfinished block
+                    // at the end of what has arrived, so a half-written table is a table with fewer rows
+                    // rather than a paragraph of pipes that reflows the moment the turn ends.
+                    <MessageScrollerItem messageId="streaming">
+                    <div className="rounded-lg bg-muted/60 px-3 py-2">
+                      <Markdown text={streamed} streaming />
+                      <Loader2 className="ml-1 inline h-3 w-3 animate-spin text-muted-foreground" aria-hidden />
+                    </div>
+                    </MessageScrollerItem>
+                  )}
+                </MessageScrollerContent>
+              </MessageScrollerViewport>
+              <MessageScrollerButton aria-label="Jump to latest message" />
+            </MessageScroller>
+          </MessageScrollerProvider>
 
           {session && (
             <AppContextPicker key={session.id} session={session} busy={sending} running={["running", "awaiting_approval", "awaiting_question"].includes(status)}
@@ -644,32 +671,22 @@ export default function AssistantPage() {
             </label>
           )}
           {(pending.length > 0 || uploaded.length > 0) && (
-            <div className="flex shrink-0 flex-wrap gap-1 border-t px-3 pt-2 text-xs">
+            <div className="flex max-h-48 shrink-0 flex-col gap-2 overflow-y-auto border-t px-3 py-2" aria-label="Attachments to send">
               {uploaded.map((attachment) => (
-                <span key={`stored-${attachment.name}`} className="inline-flex max-w-[16rem] items-center gap-1 rounded border px-1.5 py-0.5">
-                  <Paperclip className="h-3 w-3 shrink-0" aria-hidden />
-                  <span className="truncate">{attachment.name}</span>
-                </span>
+                <ChatAttachment key={`stored-${attachment.name}`} name={attachment.name} size={attachment.size}
+                  description="Uploaded · ready to send" />
               ))}
               {pending.map((file, index) => (
-                <span key={`${file.name}-${index}`} className="inline-flex max-w-[16rem] items-center gap-1 rounded border px-1.5 py-0.5">
-                  {file.type.startsWith("image/") ? <PendingImagePreview file={file} /> : <Paperclip className="h-3 w-3 shrink-0" aria-hidden />}
-                  <span className="truncate">{file.name}</span>
-                  <button
-                    type="button"
-                    aria-label={`Remove ${file.name}`}
-                    disabled={sending}
-                    className="text-muted-foreground hover:text-foreground"
-                    onClick={() => setPending((current) => current.filter((_, i) => i !== index))}
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </span>
+                <ChatAttachment key={`${file.name}-${index}`} name={file.name} size={file.size} file={file}
+                  state={uploadingFile === file ? "uploading" : failedUpload === file ? "error" : "idle"}
+                  description={uploadingFile === file ? "Uploading…" : failedUpload === file ? "Upload failed · send to retry" : "Ready to upload"}
+                  disabled={sending}
+                  onRemove={() => setPending(current => current.filter((_, i) => i !== index))} />
               ))}
             </div>
           )}
           <form
-            className="flex shrink-0 items-end gap-2 border-t p-3"
+            className="flex shrink-0 flex-col gap-2 border-t p-3"
             onSubmit={(event) => {
               event.preventDefault();
               void send();
@@ -694,7 +711,7 @@ export default function AssistantPage() {
               rows={2}
               placeholder={session ? "Ask the operator assistant…" : "Waiting for the gateway…"}
               disabled={!session || sending}
-              className="flex-1 resize-none rounded-md border bg-transparent px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50"
+              className="min-w-0 w-full resize-none rounded-md border bg-transparent px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50"
             />
             <input
               ref={fileInputRef}
@@ -710,19 +727,23 @@ export default function AssistantPage() {
                 setPending((current) => [...current, ...chosen]);
               }}
             />
-            <Button
-              type="button"
-              size="icon"
-              variant="ghost"
-              disabled={!session || sending}
-              aria-label="Attach files"
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <Paperclip />
-            </Button>
-            <Button type="submit" size="icon" disabled={!session || sending || !health?.available || !hasMessageContent(input, pending.length, uploaded.length)} aria-label="Send">
-              {sending ? <Loader2 className="animate-spin" /> : <Send />}
-            </Button>
+            <div className="flex items-center gap-2" role="group" aria-label="Message actions">
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  disabled={!session || sending}
+                  aria-label="Attach files"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <Paperclip />
+                </Button>
+              </div>
+              <Button type="submit" size="icon" className="shrink-0" disabled={!session || sending || !health?.available || !hasMessageContent(input, pending.length, uploaded.length)} aria-label="Send">
+                {sending ? <Loader2 className="animate-spin" /> : <Send />}
+              </Button>
+            </div>
           </form>
         </>
       )}
@@ -730,23 +751,9 @@ export default function AssistantPage() {
   );
 }
 
-function PendingImagePreview({ file }: { file: File }) {
-  const imageRef = useRef<HTMLImageElement>(null);
-  useEffect(() => {
-    const image = imageRef.current;
-    if (!image) return;
-    const url = URL.createObjectURL(file);
-    image.hidden = false;
-    image.src = url;
-    return () => URL.revokeObjectURL(url);
-  }, [file]);
-  // Local blobs never go through the server image optimizer. The filename remains if decoding fails.
-  // eslint-disable-next-line @next/next/no-img-element
-  return <img ref={imageRef} alt={`Preview of ${file.name}`} className="h-16 w-16 shrink-0 rounded object-contain" onError={event => {
-    URL.revokeObjectURL(event.currentTarget.src);
-    event.currentTarget.hidden = true;
-  }} />;
+/** Skip nonvisual log records so the scroller measures only rows the operator can see. */
+function isVisibleEvent(event: AssistantEvent, claimed: ReadonlySet<string>): boolean {
+  if (event.type === "attachment_added") return !claimed.has(String(event.name ?? ""));
+  if (event.type === "tool_use") return isListedToolUse(String(event.toolName ?? "tool"));
+  return ["user_message", "assistant_text", "app_context_changed", "approval_request", "question_request", "notice", "error"].includes(event.type);
 }
-
-// The history the Shell panel never had: closing it used to be the only way back to a previous
-// conversation, and there was no way back at all.
