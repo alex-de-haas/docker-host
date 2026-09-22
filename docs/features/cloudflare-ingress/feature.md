@@ -1,7 +1,7 @@
 # Feature: Cloudflare Ingress
 
 Created: 2026-06-17
-Updated: 2026-08-16
+Updated: 2026-09-22
 
 Runtime app services listen only on loopback. Ingress is the layer that accepts public traffic,
 terminates HTTPS, and routes by hostname to the right loopback port. Core never runs a reverse proxy
@@ -408,7 +408,6 @@ The `hosty` CLI has no ingress or Cloudflare commands.
 
 ## Links
 
-- [Cloudflare Ingress Plan](plan.md) — the one deliverable that remains, and what it is blocked on.
 - [Public Origins](../public-origins/feature.md) — the control, the ownership rule and the reconcile
   both Cloudflare providers share with the manual one.
 - [Shell Navigation](../shell-navigation/feature.md) — the Settings page this feature's tab belongs to.
