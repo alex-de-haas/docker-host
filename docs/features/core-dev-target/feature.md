@@ -1,7 +1,7 @@
 # Core Development Mode
 
 Created: 2026-09-18
-Updated: 2026-09-18
+Updated: 2026-09-22
 
 Core remains a CLI-launched platform process. The Dashboard Core row exposes release/dev selection,
 Restart, console logs, and a Source-only settings dialog. Its state comes from the running Core;
@@ -27,7 +27,12 @@ of Source settings or any previous launch. Shell and MCP preserve the live mode 
 project explicitly. A conflicting `core start` is refused rather than silently switching an
 already-running instance. Status includes mode, absolute project and generation paths, PID, and
 process start time on authenticated/control surfaces. A direct launch without launcher metadata
-reports `unmanaged`; Shell disables launch control and directs the operator to the CLI.
+reports `unmanaged`; Shell displays it as `external` with a keyboard-accessible tooltip explaining
+the external launch and CLI recovery. No runtime dropdown is shown when launch control is unavailable.
+Managed Core modes use the same runtime label typography, separate chevron button, and menu layout
+as app runtime selectors, with a checkmark on the current mode. The dev indicator describes source
+builds that require a restart, rather than live reload. When Git inspection fails, the indicator
+turns amber and exposes the diagnostic through its accessible name and hover/keyboard tooltip.
 Managed dev/release launches also require a resolvable Hosty CLI to enable these controls.
 
 Start, Restart, Stop, Update, Source edits and detached restart operations coordinate through one
@@ -37,7 +42,11 @@ continues running; Shell hides release updates and does not initiate release che
 ## Source
 
 Source configuration is stored in `<root>/core/source-settings.json`, independently of live launch
-identity. Standard uses `<root>/core/source` and clones the official repository's default branch
+identity. The Core settings dialog follows app settings layout: a wide dialog with the component ID,
+a Source section, Standard Hosty source and Custom source folder cards, and a fixed Save source footer.
+Save is enabled only for a changed, nonempty custom path or clearing an existing override.
+Save failures appear inline with alert semantics for assistive technology.
+Standard uses `<root>/core/source` and clones the official repository's default branch
 on first use. Restart reuses the checkout without an implicit pull. Override is an absolute host
 repository directory containing `apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj`; saving it
 does not rewrite or clean the repository.
@@ -189,6 +198,10 @@ shell exits while its detached descendant remains alive.
   by awaiting the descendant or retrying the bind before this assertion.
 - Shell: live mode and Git/version cells, Source dialog, one Restart action for pending and normal
   use, compiler diagnostics, operation reconciliation after connection loss, and hidden dev updates.
+  Runtime controls match app selector styling; external launches explain their unavailable controls
+  on hover and keyboard focus, and the current managed mode is checked without triggering a restart.
+  Git inspection errors retain the amber dev warning and accessible diagnostic even with cached Git
+  data; Source save failures expose an alert without requiring focus to move.
 - Gateway: token outage versus revocation and recovery through the same proxy route without
   forwarding or replaying the failed mutation.
 - Exercise a Core-managed instance on each supported OS; verify the actual Gateway/harness turn

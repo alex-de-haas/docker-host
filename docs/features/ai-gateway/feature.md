@@ -1,7 +1,7 @@
 # AI Gateway
 
 Created: 2026-08-09
-Updated: 2026-09-19
+Updated: 2026-09-22
 
 The Hosty assistant: an optional, removable system app (`hosty.ai-gateway`) hosting admin-only
 operator chat sessions on a host-resident agent harness, plus the Shell surface that renders them.
@@ -531,7 +531,9 @@ direct Core connection. See [Core development mode](../core-dev-target/feature.m
   suite pins the reserved server name (Core's target maps to it, an app id spelling it does not).
   The auto-allow suite's Core pair: the same call aimed at Core's server runs unprompted with no
   operator decision on record, covering only the tools Core declared read-only, and asks again once
-  the operator sets Core to ask.
+  the operator sets Core to ask. Per-app approval assertions wait for the expected persisted
+  approval or assistant event with a bounded timeout; a fixed sleep cannot establish that the
+  asynchronous harness event has reached the store.
 - Tool display (`web/src/lib` suite): a shell row prefers the description to the command and takes
   only the command's first line; an app tool is named by server and tool with scalar arguments; a
   long line is bounded; an unknown tool or a non-object input degrades without throwing. Cards: a

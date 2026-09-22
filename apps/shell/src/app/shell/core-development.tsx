@@ -1,15 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { GitBranch, Radio } from "lucide-react";
+import { Check, ChevronDown, FolderGit2, GitBranch, LoaderCircle, Lock, Radio } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 import { useShellActions } from "./shell-context";
 import { readCoreError } from "./core-api";
+import { InlineError } from "./ui";
 
 export type CoreLaunch = { mode: string; projectPath: string | null; generationPath: string | null; processId: number; startedAt: string };
 export type CoreDevelopment = {
@@ -98,9 +100,72 @@ export function useCoreDevelopment(coreOrigin: string, enabled: boolean) {
 }
 
 export function CoreModeControl({ state, disabled, onChange }: { state: CoreDevelopment | null; disabled: boolean; onChange: (mode: "release" | "dev") => void }) {
-  return <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="sm" className="gap-1 font-mono text-xs" disabled={disabled || !state?.manageable} title={state?.manageable ? "Core launch mode" : "Restart with the Hosty CLI to manage this Core"}>
-    {state?.launch.mode ?? "unknown"}{state?.launch.mode === "dev" && <Radio className={state.gitError ? "size-3 text-amber-600" : "size-3 text-emerald-600"} />}<span aria-hidden>⌄</span>
-  </Button></DropdownMenuTrigger><DropdownMenuContent align="start"><DropdownMenuItem disabled={state?.launch.mode === "release"} onSelect={() => onChange("release")}>release</DropdownMenuItem><DropdownMenuItem disabled={state?.launch.mode === "dev"} onSelect={() => onChange("dev")}>dev</DropdownMenuItem></DropdownMenuContent></DropdownMenu>;
+  const mode = state?.launch.mode;
+  const external = mode === "unmanaged";
+  const description = external
+    ? "Core was started outside the Hosty CLI, for example from an IDE or with dotnet run. Its launch mode is unknown, so Shell cannot switch or restart it. Start Core through the Hosty CLI to enable these controls."
+    : !state
+      ? "Core launch information is unavailable."
+      : !state.manageable
+        ? "The Hosty CLI is unavailable. Restore CLI access to switch or restart Core."
+        : mode === "dev"
+          ? "Core runs a build from source. Restart to rebuild and apply changes; there is no hot reload."
+          : "Core runs the installed release. Switching runtime restarts Core.";
+
+  return (
+    <TooltipProvider delayDuration={150}>
+      <div className="flex min-w-0 flex-wrap items-center gap-x-1">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span tabIndex={0} className="min-w-0 cursor-help truncate font-mono text-sm">
+              {external ? "external" : mode ?? "unknown"}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-sm">{description}</TooltipContent>
+        </Tooltip>
+        {mode === "dev" && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span
+                tabIndex={0}
+                role="img"
+                aria-label={state?.gitError ? `Development runtime — Git warning: ${state.gitError}` : "Development runtime"}
+                className={cn("inline-flex shrink-0 cursor-help", state?.gitError ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400")}
+              >
+                <Radio aria-hidden="true" className="size-3.5" />
+              </span>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-sm">
+              {state?.gitError ? `Git warning: ${state.gitError}` : "Core runs a build from source. Restart to rebuild and apply changes; there is no hot reload."}
+            </TooltipContent>
+          </Tooltip>
+        )}
+        {state?.manageable && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button type="button" variant="ghost" size="icon-sm" aria-label="Switch runtime for Hosty Core" title="Switch runtime" disabled={disabled}>
+                <ChevronDown className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-56">
+              <DropdownMenuLabel>Runtime</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              {(["release", "dev"] as const).map(target => (
+                <DropdownMenuItem key={target} disabled={disabled || mode === target} onSelect={() => onChange(target)}>
+                  <Check className={cn("h-4 w-4", mode === target ? "opacity-100" : "opacity-0")} />
+                  <span className="min-w-0 flex-1 truncate">{target}</span>
+                  <span className={cn("ml-auto inline-flex shrink-0 items-center gap-1 text-[11px]", target === "dev" ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground")}>
+                    {target === "dev" ? <Radio className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
+                    {target === "dev" ? "Source" : "Locked"}
+                  </span>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+      </div>
+    </TooltipProvider>
+  );
 }
 
 export function CoreGitCell({ state }: { state: CoreDevelopment | null }) {
@@ -115,21 +180,85 @@ export function CoreSourceDialog({ open, onOpenChange, state, disabled, onSave }
   const [path, setPath] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Mount a fresh form for each opening (the parent keys it by the opening state).
+  // Refresh the draft when the dialog opens or the saved source changes.
   useEffect(() => { if (open) { setOverride(!!state?.source.overridePath); setPath(state?.source.overridePath ?? ""); setError(null); } }, [open, state?.source.overridePath]);
-  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent><DialogHeader><DialogTitle>Hosty Core</DialogTitle><DialogDescription>Configure the source checkout used for development.</DialogDescription></DialogHeader><DialogBody className="space-y-4">
-    <div className="border-b pb-2 text-sm font-medium">Source</div>
-    <p className="text-xs text-muted-foreground">Repository: <a className="underline" href="https://github.com/alex-de-haas/docker-host" target="_blank" rel="noreferrer">alex-de-haas/docker-host</a></p>
-    {state && <p className="break-all text-xs text-muted-foreground">Selected project: {state.selectedProjectPath}</p>}
-    {state?.launch.projectPath && <p className="break-all text-xs text-muted-foreground">Running from: {state.launch.projectPath}</p>}
-    <fieldset className="space-y-3" disabled={disabled || saving || !state}>
-      <Label className="flex items-center gap-2"><input type="radio" name="core-source" checked={!override} onChange={() => setOverride(false)} />Standard</Label>
-      {!override && <p className="break-all text-xs text-muted-foreground">{state?.managedPath}<br />The default branch is cloned when dev mode is first started.</p>}
-      <Label className="flex items-center gap-2"><input type="radio" name="core-source" checked={override} onChange={() => setOverride(true)} />Override</Label>
-      {override && <><Label htmlFor="core-source-path">Repository folder on this host</Label><Input id="core-source-path" value={path} onChange={event => setPath(event.target.value)} placeholder="Absolute path to the repository" /></>}
-      {state?.launch.mode === "dev" && <p className="text-xs text-muted-foreground">Changing Source requires a Core restart. Save now and use Restart when ready.</p>}
-      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-      <Button disabled={override && !path.trim()} onClick={async () => { setSaving(true); setError(null); try { await onSave(override ? path.trim() : null); onOpenChange(false); } catch (e) { setError(e instanceof Error ? e.message : "Could not save source."); } finally { setSaving(false); } }}>{saving ? "Saving…" : "Save"}</Button>
-    </fieldset>
-  </DialogBody></DialogContent></Dialog>;
+  const unavailable = disabled || saving || !state;
+  const trimmedPath = path.trim();
+  const dirty = override ? trimmedPath !== (state?.source.overridePath ?? "") : !!state?.source.overridePath;
+  const canSave = !unavailable && dirty && (!override || trimmedPath.length > 0);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>Settings · Hosty Core</DialogTitle>
+          <DialogDescription>hosty-core</DialogDescription>
+        </DialogHeader>
+        <div className="flex min-h-0 flex-1 flex-col gap-3">
+          <div className="flex gap-1 border-b">
+            <div className="-mb-px border-b-2 border-foreground px-3 py-2 text-sm font-medium text-foreground">Source</div>
+          </div>
+          <form className="flex min-h-0 flex-1 flex-col gap-4" onSubmit={async event => {
+            event.preventDefault();
+            if (!canSave) return;
+            setSaving(true);
+            setError(null);
+            try {
+              await onSave(override ? trimmedPath : null);
+              onOpenChange(false);
+            } catch (e) {
+              setError(e instanceof Error ? e.message : "Could not save source.");
+            } finally {
+              setSaving(false);
+            }
+          }}>
+            <DialogBody className="space-y-4">
+              {error && <div role="alert"><InlineError message={error} /></div>}
+              <div className="space-y-2">
+                <div className="text-sm font-medium">Development profiles</div>
+                <p className="text-sm text-muted-foreground">Select dev from the dashboard runtime menu to develop Core.</p>
+                <p className="text-xs text-muted-foreground">Repository: <a className="underline" href="https://github.com/alex-de-haas/docker-host" target="_blank" rel="noreferrer">alex-de-haas/docker-host</a></p>
+              </div>
+              <div className="flex items-start gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-sm">
+                <Radio className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                <p className="text-muted-foreground">Core builds from the selected source folder. Restart to rebuild and apply source changes; there is no hot reload.</p>
+              </div>
+              <fieldset className="min-w-0 space-y-2" disabled={unavailable}>
+                <legend className="sr-only">Source folder</legend>
+                <label className={cn("flex cursor-pointer items-start gap-3 rounded-md border p-3", !override && "border-foreground")}>
+                  <input type="radio" name="core-source" className="mt-1" checked={!override} onChange={() => setOverride(false)} />
+                  <div className="min-w-0 space-y-0.5">
+                    <div className="text-sm font-medium">Standard Hosty source</div>
+                    <div className="text-xs text-muted-foreground">
+                      Use Hosty&apos;s managed checkout. The default branch is cloned when dev mode is first started.
+                      {state?.managedPath && <> · <code className="break-all font-mono">{state.managedPath}</code></>}
+                    </div>
+                  </div>
+                </label>
+                <label className={cn("flex cursor-pointer items-start gap-3 rounded-md border p-3", override && "border-foreground")}>
+                  <input type="radio" name="core-source" className="mt-1" checked={override} onChange={() => setOverride(true)} />
+                  <div className="min-w-0 flex-1 space-y-1.5">
+                    <div className="text-sm font-medium">Custom source folder</div>
+                    <div className="text-xs text-muted-foreground">Point Core at a repository folder on the host.</div>
+                    <Input id="core-source-path" aria-label="Repository folder on this host" className="font-mono text-xs" value={path} disabled={!override} onChange={event => setPath(event.target.value)} placeholder="Absolute path to the repository" />
+                  </div>
+                </label>
+              </fieldset>
+              <div className="space-y-1 text-xs text-muted-foreground">
+                {state && <p className="break-all">Selected project: <code className="font-mono">{state.selectedProjectPath}</code></p>}
+                {state?.launch.projectPath && <p className="break-all">Running from: <code className="font-mono">{state.launch.projectPath}</code></p>}
+                {state?.launch.mode === "dev" && <p>Changing Source requires a Core restart. Save now and use Restart when ready.</p>}
+              </div>
+            </DialogBody>
+            <DialogFooter>
+              <Button type="submit" disabled={!canSave}>
+                {saving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <FolderGit2 className="h-4 w-4" />}
+                Save source
+              </Button>
+            </DialogFooter>
+          </form>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
 }
