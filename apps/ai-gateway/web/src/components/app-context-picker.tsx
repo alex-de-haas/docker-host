@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { Loader2, Plus, X } from "lucide-react";
+import { Blocks, ChevronDown, Loader2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -9,8 +9,8 @@ import { ContextAppIcon } from "@/components/context-app-icon";
 import { Button } from "@/components/ui/button";
 import { AssistantApiError, getSession, listContextApps, selectedContextApps, setSessionApps, type AssistantSession, type ContextApp } from "@/lib/assistant-api";
 
-export function AppContextPicker({ session, busy, running, onChange }: {
-  session: AssistantSession; busy: boolean; running: boolean; onChange: (session: AssistantSession) => void;
+export function AppContextPicker({ session, busy, running, onChange, onBusyChange }: {
+  session: AssistantSession; busy: boolean; running: boolean; onChange: (session: AssistantSession) => void; onBusyChange?: (busy: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
@@ -27,7 +27,13 @@ export function AppContextPicker({ session, busy, running, onChange }: {
   const [rosterError, setRosterError] = useState<string | null>(null);
   const generation = useRef(0);
   const trigger = useRef<HTMLButtonElement>(null);
+  const busyListener = useRef(onBusyChange);
   const ids = session.appIds ?? [];
+  useEffect(() => {
+    busyListener.current = onBusyChange;
+    onBusyChange?.(saving);
+  }, [saving, onBusyChange]);
+  useEffect(() => () => busyListener.current?.(false), []);
   useEffect(() => {
     const current = ++generation.current;
     let cancelled = false;
@@ -62,14 +68,13 @@ export function AppContextPicker({ session, busy, running, onChange }: {
       }
     } finally { setSaving(false); }
   };
-  return <div className="shrink-0 border-t px-3 py-2 text-xs">
-    <div className="flex flex-wrap items-center gap-1.5" aria-label="Session app context">
+  return <div className="min-w-0 w-full text-xs" data-slot="composer-app-context">
+    <div className="flex max-h-24 flex-wrap items-center gap-1.5 overflow-y-auto" role="group" aria-label="Session app context">
       {ids.map(id => <Badge key={id} variant="outline" className="max-w-full gap-1.5 py-1" title={id}>
         <ContextAppIcon app={labels[id]} className="size-4" />
         <span className="truncate">{labels[id]?.displayName ?? id}{labels[id]?.available === false ? " · Unavailable" : ""}</span>
-        <button type="button" className="inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50" disabled={busy || saving} aria-label={`Remove ${id} from context`} onClick={() => void save(ids.filter(value => value !== id), session.appContextRevision ?? 0)}><X className="size-3" /></button>
+        <button type="button" className="inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50" disabled={busy || saving} aria-label={`Remove ${labels[id]?.displayName ?? id} from context`} onClick={() => void save(ids.filter(value => value !== id), session.appContextRevision ?? 0)}><X className="size-3" /></button>
       </Badge>)}
-      {!ids.length && <span className="text-muted-foreground">General context</span>}
       <Popover open={open} onOpenChange={nextOpen => {
         if (saving) return;
         if (nextOpen) {
@@ -78,7 +83,7 @@ export function AppContextPicker({ session, busy, running, onChange }: {
         setOpen(nextOpen);
       }}>
         <PopoverTrigger asChild>
-          <Button ref={trigger} variant="ghost" size="icon-sm" disabled={busy || saving} aria-label="Add apps to context" title="Add apps to context"><Plus /></Button>
+          <Button type="button" ref={trigger} variant="ghost" size="sm" disabled={busy || saving} aria-label="Select app context" title="Select app context"><Blocks data-icon="inline-start" />{ids.length ? "Apps" : "General context"}<ChevronDown data-icon="inline-end" /></Button>
         </PopoverTrigger>
         <PopoverContent side="top" align="start" sideOffset={8} collisionPadding={12} aria-label="Select apps for this session"
           className="flex max-h-[var(--radix-popover-content-available-height)] w-[min(22rem,calc(100vw-1.5rem))] flex-col gap-3 p-3">
@@ -96,20 +101,20 @@ export function AppContextPicker({ session, busy, running, onChange }: {
             </label>)}
             {!loading && !rosterError && apps.length === 0 && <p className="p-2 text-sm text-muted-foreground">No matching apps</p>}
           </fieldset>
-          {next !== null && <Button variant="ghost" size="sm" disabled={loading} onClick={() => {
+          {next !== null && <Button type="button" variant="ghost" size="sm" disabled={loading} onClick={() => {
             const current = generation.current; setLoading(true);
             void listContextApps(search, next).then(page => { if (generation.current === current) { setApps(previous => [...previous, ...page.apps]); setNext(page.nextOffset); } })
               .catch(cause => { if (generation.current === current) setRosterError(String(cause.message ?? cause)); }).finally(() => { if (generation.current === current) setLoading(false); });
           }}>Load more</Button>}
           {(error || rosterError) && <p role="alert" className="text-xs text-destructive">{error ?? rosterError}</p>}
           <div className="flex shrink-0 justify-end gap-2">
-            <Button variant="ghost" size="sm" disabled={saving} onClick={close}>Cancel</Button>
-            <Button size="sm" disabled={saving || busy} onClick={() => void save(selected, revision)}>{saving ? "Applying…" : "Apply"}</Button>
+            <Button type="button" variant="ghost" size="sm" disabled={saving} onClick={close}>Cancel</Button>
+            <Button type="button" size="sm" disabled={saving || busy} onClick={() => void save(selected, revision)}>{saving ? "Applying…" : "Apply"}</Button>
           </div>
         </PopoverContent>
       </Popover>
     </div>
     {running && <p className="mt-1 text-muted-foreground">Applies to your next message</p>}
-    {(error || rosterError || labelsUnavailable) && <div className="mt-2 flex items-center gap-2"><p role="alert" className="text-destructive">{error ?? rosterError ?? "App context is unavailable."}</p><Button variant="ghost" size="sm" onClick={() => { setError(null); setRetry(value => value + 1); }}>Retry</Button></div>}
+    {(error || rosterError || labelsUnavailable) && <div className="mt-2 flex items-center gap-2"><p role="alert" className="text-destructive">{error ?? rosterError ?? "App context is unavailable."}</p><Button type="button" variant="ghost" size="sm" onClick={() => { setError(null); setRetry(value => value + 1); }}>Retry</Button></div>}
   </div>;
 }
