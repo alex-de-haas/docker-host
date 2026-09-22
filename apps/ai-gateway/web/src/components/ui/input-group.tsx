@@ -60,6 +60,7 @@ const inputGroupAddonVariants = cva(
 function InputGroupAddon({
   className,
   align = "inline-start",
+  onClick,
   ...props
 }: React.ComponentProps<"div"> & VariantProps<typeof inputGroupAddonVariants>) {
   return (
@@ -69,10 +70,16 @@ function InputGroupAddon({
       data-align={align}
       className={cn(inputGroupAddonVariants({ align }), className)}
       onClick={(e) => {
-        if ((e.target as HTMLElement).closest("button")) {
+        onClick?.(e)
+        // Portaled popovers bubble through React but own their focus independently.
+        if (e.defaultPrevented || !e.currentTarget.contains(e.target as Node)) {
           return
         }
-        e.currentTarget.parentElement?.querySelector("input")?.focus()
+        if ((e.target as Element).closest('button, input, textarea, select, a, label, [contenteditable="true"]')) {
+          return
+        }
+        e.currentTarget.closest('[data-slot="input-group"]')
+          ?.querySelector<HTMLElement>('[data-slot="input-group-control"]:not(:disabled):not([hidden]):not([type="hidden"]):not([type="file"])')?.focus()
       }}
       {...props}
     />

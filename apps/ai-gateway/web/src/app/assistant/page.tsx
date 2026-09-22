@@ -709,7 +709,7 @@ export default function AssistantPage() {
                   setPending((current) => [...current, ...chosen]);
                 }}
               />
-              <InputGroupAddon align="block-end" className="flex-col items-stretch gap-2" onClick={() => {}}>
+              <InputGroupAddon align="block-end" className="flex-col items-stretch gap-2">
                 {(pending.length > 0 || uploaded.length > 0) && (
                   <div className="flex max-h-48 shrink-0 flex-col gap-2 overflow-y-auto pb-2" aria-label="Attachments to send">
                     {uploaded.map((attachment) => (

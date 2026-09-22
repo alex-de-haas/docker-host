@@ -55,6 +55,10 @@ The app-context popover retains search, paging, the 16-app limit and revision-co
 recovery. Selected chips retain unavailable-app labels and individual removal controls.
 Changes during a running turn apply to the next message. Saving context temporarily
 disables Send; context buttons do not submit the surrounding message form.
+Busy notifications retain the active save state across renders and clear on unmount.
+Clicking unused space in the action row focuses the message field, while interactive
+controls and portaled context content retain their own focus. Addon click handlers can
+cancel the default focus behavior.
 
 ## Attachments
 
@@ -103,7 +107,9 @@ not establish its outcome.
 - Action-card tests cover denial reasons, single/multiple/free-text answers, failure and
   retry, duplicate-submission prevention and resolved replay. Activity tests cover event
   boundaries and stable expansion as calls arrive. Context tests cover save state,
-  conflict refresh and avoiding accidental message submission.
+  conflict refresh, listener changes/unmount and avoiding accidental message submission.
+  Input Group tests cover textarea focus with hidden file inputs, custom click handlers,
+  cancellation and portaled content.
 - Run `npm run ai-gateway:lint` and `npm run ai-gateway:build-web`.
 - Check live streaming follow/pause/jump and switching sessions; code streaming must also
   respect manual transcript scrolling. Verify tool JSON, command copy, wrapping and expansion.

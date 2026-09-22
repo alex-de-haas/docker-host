@@ -27,11 +27,13 @@ export function AppContextPicker({ session, busy, running, onChange, onBusyChang
   const [rosterError, setRosterError] = useState<string | null>(null);
   const generation = useRef(0);
   const trigger = useRef<HTMLButtonElement>(null);
+  const busyListener = useRef(onBusyChange);
   const ids = session.appIds ?? [];
   useEffect(() => {
+    busyListener.current = onBusyChange;
     onBusyChange?.(saving);
-    return () => onBusyChange?.(false);
   }, [saving, onBusyChange]);
+  useEffect(() => () => busyListener.current?.(false), []);
   useEffect(() => {
     const current = ++generation.current;
     let cancelled = false;

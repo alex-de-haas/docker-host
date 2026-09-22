@@ -40,6 +40,7 @@ it("removes context without submitting the surrounding composer and reports pend
   expect(setSessionApps).toHaveBeenCalledWith("s", [], 2);
   expect(remove.disabled).toBe(true);
   expect(onBusyChange).toHaveBeenLastCalledWith(true);
+  expect(onBusyChange.mock.calls.map(([busy]) => busy)).toEqual([false, true]);
   const updated = { ...session, appIds: [], appContextRevision: 3 };
   await act(async () => resolve(updated));
   expect(onChange).toHaveBeenCalledWith(updated);
@@ -56,4 +57,20 @@ it("refreshes a conflicting context revision and leaves failure feedback visible
   expect(onChange).toHaveBeenCalledWith(updated);
   expect(container.querySelector('[role="alert"]')?.textContent).toContain("Context changed in another window");
   expect(container.querySelector<HTMLButtonElement>('[aria-label="Select app context"]')!.disabled).toBe(false);
+});
+
+it("keeps a pending save busy across listener changes and clears the latest listener on unmount", async () => {
+  vi.mocked(setSessionApps).mockReturnValue(new Promise(() => {}));
+  const first = vi.fn();
+  const latest = vi.fn();
+  const render = async (onBusyChange: (busy: boolean) => void) => act(async () => root.render(
+    <AppContextPicker session={session} busy={false} running={false} onChange={vi.fn()} onBusyChange={onBusyChange} />,
+  ));
+  await render(first);
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Remove Media Server from context"]')!.click());
+  await render(latest);
+  expect(first.mock.calls.map(([busy]) => busy)).toEqual([false, true]);
+  expect(latest.mock.calls.map(([busy]) => busy)).toEqual([true]);
+  await act(async () => root.render(null));
+  expect(latest.mock.calls.map(([busy]) => busy)).toEqual([true, false]);
 });
