@@ -117,12 +117,15 @@ describe("per-app auto-allow", () => {
       .live.get(sessionId)!.autoAllowed;
   }
 
-  async function run(text: string): Promise<string[]> {
+  async function run(text: string, expectedEvent: "approval_request" | "assistant_text"): Promise<string[]> {
     const record = await manager.createSession({ createdBy: "user_admin" });
     await manager.postMessage(record.id, text, "seed-credential");
-    // The fake harness answers on a microtask; let it settle.
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    return (await store.readEvents(record.id)).map((event) => event.type);
+    // Harness callbacks also persist asynchronously; a fixed delay races filesystem I/O in CI.
+    return vi.waitFor(async () => {
+      const events = (await store.readEvents(record.id)).map((event) => event.type);
+      expect(events).toContain(expectedEvent);
+      return events;
+    });
   }
 
   it("asks when the operator has not vouched for the app", async () => {
@@ -130,13 +133,13 @@ describe("per-app auto-allow", () => {
     // about read-only counts. Enabling and trusting are two decisions, not one.
     await settings.update({ mcpProviders: { [APP]: true } });
 
-    expect(await run("apptool please")).toContain("approval_request");
+    expect(await run("apptool please", "approval_request")).toContain("approval_request");
   });
 
   it("runs a read-only tool unprompted once the operator has", async () => {
     await settings.update({ mcpProviders: { [APP]: true }, mcpAutoAllow: { [APP]: true } });
 
-    const events = await run("apptool please");
+    const events = await run("apptool please", "assistant_text");
 
     // The pair: the same call, the same tool, the only difference being the operator's decision.
     expect(events).not.toContain("approval_request");
@@ -195,7 +198,7 @@ describe("per-app auto-allow", () => {
         : new Response("stopped", { status: 503 }),
     );
 
-    expect(await run("apptool please")).toContain("approval_request");
+    expect(await run("apptool please", "approval_request")).toContain("approval_request");
   });
 });
 
