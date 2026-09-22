@@ -30,6 +30,7 @@ export function useCoreDevelopment(coreOrigin: string, enabled: boolean) {
   const [phase, setPhase] = useState<string | null>(null);
   const operation = useRef<string | null>(null);
   const submitting = useRef(false);
+  const pollNow = useRef<(() => Promise<void>) | null>(null);
   const key = `hosty:core-operation:${coreOrigin}`;
   const refresh = useCallback(async (signal?: AbortSignal) => {
     const response = await fetch(`${coreOrigin}/api/core/development`, { credentials: "include", cache: "no-store", signal });
@@ -45,7 +46,11 @@ export function useCoreDevelopment(coreOrigin: string, enabled: boolean) {
     setBusy(!!operation.current);
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
+    let polling = false;
     const poll = async () => {
+      if (controller.signal.aborted || polling || document.visibilityState === "hidden") return;
+      clearTimeout(timer);
+      polling = true;
       try {
         await refresh(controller.signal);
         if (operation.current && !submitting.current) {
@@ -70,10 +75,19 @@ export function useCoreDevelopment(coreOrigin: string, enabled: boolean) {
           }
         }
       } catch { if (operation.current && !controller.signal.aborted) setPhase("Reconnecting"); }
-      if (!controller.signal.aborted) timer = setTimeout(() => void poll(), 3000);
+      polling = false;
+      // Match app source polling while idle; only an active restart needs rapid reconciliation.
+      if (!controller.signal.aborted) timer = setTimeout(() => void poll(), operation.current ? 3000 : 15000);
     };
+    const visible = () => { if (document.visibilityState === "visible") void poll(); };
+    pollNow.current = poll;
+    document.addEventListener("visibilitychange", visible);
     void poll();
-    return () => { controller.abort(); clearTimeout(timer); };
+    return () => {
+      controller.abort(); clearTimeout(timer);
+      document.removeEventListener("visibilitychange", visible);
+      if (pollNow.current === poll) pollNow.current = null;
+    };
   }, [coreOrigin, enabled, key, refresh]);
 
   const restart = async (mode?: "release" | "dev") => {
@@ -89,7 +103,7 @@ export function useCoreDevelopment(coreOrigin: string, enabled: boolean) {
     } catch (error) {
       // Keep the id for reconciliation if the transport disappeared after the helper was started.
       toast.error("Core restart could not be confirmed", { description: error instanceof Error ? error.message : "Checking operation status…" });
-    } finally { submitting.current = false; }
+    } finally { submitting.current = false; void pollNow.current?.(); }
   };
   const save = async (overridePath: string | null) => {
     if (!state) return;

@@ -36,7 +36,13 @@ internal sealed partial class AppSourceService
             if (!HasGitAncestor(scope)) return Empty("no-git");
 
             var root = (await WorktreeGitAsync(scope, ["rev-parse", "--show-toplevel"], cancellationToken)).StandardOutput.Trim();
-            if (entireRepository) scope = MountPathPolicy.ResolveRealPath(root);
+            if (entireRepository)
+            {
+                // Git can report an aliased checkout path. Build file paths from the same
+                // canonical root used by the scope checks, otherwise valid changes disappear.
+                root = MountPathPolicy.ResolveRealPath(root);
+                scope = root;
+            }
             var headResult = await WorktreeGitAsync(scope, ["rev-parse", "--verify", "--quiet", "HEAD"], cancellationToken, allowFailure: true);
             var head = headResult.ExitCode == 0 ? headResult.StandardOutput.Trim() : null;
             var branchResult = await WorktreeGitAsync(scope, ["symbolic-ref", "--quiet", "--short", "HEAD"], cancellationToken, allowFailure: true);

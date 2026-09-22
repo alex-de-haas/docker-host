@@ -61,6 +61,25 @@ public sealed class CoreSourceInspectionTests : IDisposable
         Assert.Equal("working\n", await File.ReadAllTextAsync(Path.Combine(original, "tracked.txt")));
     }
 
+    [Fact]
+    public async Task SymlinkedRepositoryAncestorKeepsChangedFilesAndDiffsInScope()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var checkout = await CheckoutAsync("running");
+        var alias = Path.Combine(root, "alias");
+        Directory.CreateSymbolicLink(alias, checkout);
+        await File.WriteAllTextAsync(Path.Combine(checkout, "tracked.txt"), "changed through alias\n");
+        await File.WriteAllTextAsync(Path.Combine(checkout, "new.txt"), "untracked\n");
+        var service = Service(alias);
+
+        var status = await service.GetSourceStatusAsync();
+        Assert.Equal(MountPathPolicy.ResolveRealPath(checkout), status.ScopePath);
+        Assert.Equal(new[] { "new.txt", "tracked.txt" }, status.Files.Select(file => file.Path));
+        Assert.Equal(new AppSourceLineStats(2, 1), status.LineStats);
+        Assert.Contains("+changed through alias", (await service.GetSourceDiffAsync(new("tracked.txt"))).Combined);
+        Assert.Equal("untracked\n", (await service.GetSourceDiffAsync(new("new.txt"))).Combined);
+    }
+
     [Theory]
     [InlineData("../selected/tracked.txt")]
     [InlineData("/etc/passwd")]

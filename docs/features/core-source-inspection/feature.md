@@ -12,6 +12,10 @@ It uses the same unified/split diff settings, staged-change view and image previ
 as runtime apps. Core inspection is read-only; it has no file-selection or discard
 controls. The Core branch label uses the same monospace size, line height and
 dotted underline as app source labels. Release-mode version presentation is unchanged.
+The Dashboard polls Core development state every 15 seconds while idle and every
+3 seconds during a pending restart. Polling pauses while the tab is hidden and
+resumes immediately on visibility; scheduled polls do not overlap. Restart submission
+wakes reconciliation without waiting for the idle interval.
 
 ## Scope and API
 
@@ -24,7 +28,8 @@ for discard, and there are no Core discard endpoints.
 
 In dev mode the scope is the repository root containing the factual running Core
 project. Pending Source settings do not redirect inspection to the selected checkout.
-A missing running source remains unavailable rather than falling back to another
+Repository roots and changed-file paths share the same canonical base, including
+checkouts reached through a symlinked ancestor. A missing running source remains unavailable rather than falling back to another
 checkout. Outside dev mode the API inspects the selected source checkout, while the
 Dashboard keeps its release version display.
 
@@ -52,7 +57,7 @@ for app inspection and discard behavior.
   navigation warnings; `npm run build --workspace @haas/hosty-shell -- --webpack`
   passed. The initial default Turbopack build could not bind its worker port in the sandbox.
 - `node scripts/check-versions.mjs`, `node scripts/docs-index.mjs --check` and
-  `git diff --check` passed. Platform is 0.105.2 and Shell is 0.79.2.
+  `git diff --check` passed. Platform is 0.106.0 and Shell is 0.80.0.
 - The Core-managed local Shell verified keyboard opening, file expansion, real diff
   content, split layout and absence of Core discard controls. A Media Server viewer
   retained file selection and its review button. No discard was executed.
@@ -60,6 +65,12 @@ for app inspection and discard behavior.
   `--keep-apps`. The first replacement exited after its command session; a detached
   source start restored the instance. The replacement has a new process identity,
   the same dev project and all 11 apps running in Dashboard.
+
+PR review verification reran the affected Core suite with the additional symlinked
+repository-ancestor case: 95 tests passed. The canonical-root fix, visibility-aware
+polling and minor release versions were rebuilt; all 162 Shell tests, lint and the
+production webpack build passed. CI on the initial PR revision also passed Core,
+CLI and Windows process-control checks.
 
 The full unrelated Core/CLI suites, Native AOT publication and Windows/Linux UI
 runs were not repeated for this change; verification targeted the shared source
