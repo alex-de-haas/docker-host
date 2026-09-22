@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, FolderGit2, GitBranch, LoaderCircle, Lock, Radio } from "lucide-react";
 import { toast } from "sonner";
+import { CoreSourceChangesDialog } from "./source/source-changes";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -18,7 +19,7 @@ export type CoreDevelopment = {
   launch: CoreLaunch; instance: string; manageable: boolean;
   source: { overridePath: string | null; revision: string }; managedPath: string; sourcePath: string; selectedProjectPath: string;
   restartRequired: boolean; branch: string | null; commit: string | null;
-  changedFiles: number | null; additions: number | null; deletions: number | null; gitError: string | null;
+  changedFiles: number | null; additions: number | null; deletions: number | null; gitError: string | null; gitTruncated?: boolean;
 };
 type Operation = { id: string; status: string; error?: string; logPath?: string };
 
@@ -29,6 +30,7 @@ export function useCoreDevelopment(coreOrigin: string, enabled: boolean) {
   const [phase, setPhase] = useState<string | null>(null);
   const operation = useRef<string | null>(null);
   const submitting = useRef(false);
+  const pollNow = useRef<(() => Promise<void>) | null>(null);
   const key = `hosty:core-operation:${coreOrigin}`;
   const refresh = useCallback(async (signal?: AbortSignal) => {
     const response = await fetch(`${coreOrigin}/api/core/development`, { credentials: "include", cache: "no-store", signal });
@@ -44,7 +46,11 @@ export function useCoreDevelopment(coreOrigin: string, enabled: boolean) {
     setBusy(!!operation.current);
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
+    let polling = false;
     const poll = async () => {
+      if (controller.signal.aborted || polling || document.visibilityState === "hidden") return;
+      clearTimeout(timer);
+      polling = true;
       try {
         await refresh(controller.signal);
         if (operation.current && !submitting.current) {
@@ -69,10 +75,19 @@ export function useCoreDevelopment(coreOrigin: string, enabled: boolean) {
           }
         }
       } catch { if (operation.current && !controller.signal.aborted) setPhase("Reconnecting"); }
-      if (!controller.signal.aborted) timer = setTimeout(() => void poll(), 3000);
+      polling = false;
+      // Match app source polling while idle; only an active restart needs rapid reconciliation.
+      if (!controller.signal.aborted) timer = setTimeout(() => void poll(), operation.current ? 3000 : 15000);
     };
+    const visible = () => { if (document.visibilityState === "visible") void poll(); };
+    pollNow.current = poll;
+    document.addEventListener("visibilitychange", visible);
     void poll();
-    return () => { controller.abort(); clearTimeout(timer); };
+    return () => {
+      controller.abort(); clearTimeout(timer);
+      document.removeEventListener("visibilitychange", visible);
+      if (pollNow.current === poll) pollNow.current = null;
+    };
   }, [coreOrigin, enabled, key, refresh]);
 
   const restart = async (mode?: "release" | "dev") => {
@@ -88,7 +103,7 @@ export function useCoreDevelopment(coreOrigin: string, enabled: boolean) {
     } catch (error) {
       // Keep the id for reconciliation if the transport disappeared after the helper was started.
       toast.error("Core restart could not be confirmed", { description: error instanceof Error ? error.message : "Checking operation status…" });
-    } finally { submitting.current = false; }
+    } finally { submitting.current = false; void pollNow.current?.(); }
   };
   const save = async (overridePath: string | null) => {
     if (!state) return;
@@ -169,10 +184,22 @@ export function CoreModeControl({ state, disabled, onChange }: { state: CoreDeve
 }
 
 export function CoreGitCell({ state }: { state: CoreDevelopment | null }) {
-  return <div className="min-w-0 text-xs" title={state?.gitError ?? `${state?.launch.projectPath ?? ""}\n${state?.commit ?? ""}`}>
-    <div className="flex items-center gap-1"><GitBranch className="size-3.5 shrink-0" /><span className="truncate border-b border-dotted font-mono">{state?.branch ?? state?.commit?.slice(0, 10) ?? "Source unavailable"}</span></div>
-    <div className="text-muted-foreground">{state?.changedFiles == null ? "Git status unavailable" : state.changedFiles === 0 ? "No changes" : <>{state.changedFiles} files <span className="text-green-700">+{state.additions}</span> <span className="text-red-600">−{state.deletions}</span></>}</div>
-  </div>;
+  const [open, setOpen] = useState(false);
+  return <>
+    <div className="min-w-0 text-xs" title={state?.gitError ?? `${state?.launch.projectPath ?? ""}\n${state?.commit ?? ""}`}>
+      <div className="flex min-w-0 cursor-help items-center gap-1 font-mono text-sm"><GitBranch className="size-3.5 shrink-0" /><span className="truncate underline decoration-dotted decoration-muted-foreground/70 underline-offset-4">{state?.branch ?? state?.commit?.slice(0, 10) ?? "Source unavailable"}</span></div>
+      <button type="button" className="flex max-w-full flex-wrap items-center gap-x-2 text-left text-xs text-muted-foreground hover:underline" aria-label="Source changes for Hosty Core" onClick={() => setOpen(true)}>
+        {state?.changedFiles == null ? "Inspect source" : state.changedFiles === 0 && !state.gitTruncated ? "No changes" : <>
+          <span>{state.changedFiles}{state.gitTruncated ? "+" : ""} {state.changedFiles === 1 && !state.gitTruncated ? "file" : "files"}</span>
+          {state.additions != null && state.deletions != null && <>
+            <span className="text-green-700 dark:text-green-400">+{state.additions}</span>
+            <span className="text-red-700 dark:text-red-400">−{state.deletions}</span>
+          </>}
+        </>}
+      </button>
+    </div>
+    {open && <CoreSourceChangesDialog onClose={() => setOpen(false)} />}
+  </>;
 }
 
 export function CoreSourceDialog({ open, onOpenChange, state, disabled, onSave }: { open: boolean; onOpenChange: (open: boolean) => void; state: CoreDevelopment | null; disabled: boolean; onSave: (path: string | null) => Promise<void> }) {

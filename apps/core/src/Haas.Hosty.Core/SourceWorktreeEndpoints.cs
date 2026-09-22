@@ -4,6 +4,26 @@ internal static class SourceWorktreeEndpoints
 {
     public static void Map(WebApplication app)
     {
+        app.MapGet("/api/core/source/status", async (
+            HttpRequest request, HttpResponse response, UserDirectoryStore users, IClock clock,
+            CoreDevelopmentService development, CancellationToken cancellationToken) =>
+        {
+            response.Headers.CacheControl = "no-store";
+            return await CoreSessionAuthorization.RequireAdminSessionAsync(request, users, clock,
+                async () => await Handle(() => development.GetSourceStatusAsync(cancellationToken)),
+                requireCsrf: false, cancellationToken: cancellationToken);
+        });
+
+        app.MapPost("/api/core/source/diff", async (
+            HttpRequest request, HttpResponse response, UserDirectoryStore users, IClock clock,
+            CoreDevelopmentService development, AppSourceDiffRequest input, CancellationToken cancellationToken) =>
+        {
+            response.Headers.CacheControl = "no-store";
+            return await CoreSessionAuthorization.RequireAdminSessionAsync(request, users, clock,
+                async () => await Handle(() => development.GetSourceDiffAsync(input, cancellationToken)),
+                requireCsrf: true, cancellationToken: cancellationToken);
+        });
+
         app.MapGet("/api/apps/{appId}/source/summary", async (
             string appId, HttpRequest request, HttpResponse response,
             UserDirectoryStore users, IClock clock, AppSourceService sources,

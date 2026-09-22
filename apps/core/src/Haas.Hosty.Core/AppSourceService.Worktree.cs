@@ -18,20 +18,36 @@ internal sealed partial class AppSourceService
     private async Task<AppSourceStatus> ReadWorktreeStatusAsync(string appId, CancellationToken cancellationToken = default)
     {
         var app = await RequireAppAsync(appId, cancellationToken);
+        return await ReadScopeStatusAsync(appId, () => ResolveInspectionScope(app),
+            app.SourceState?.InspectionPaths, clock.UtcNow, cancellationToken);
+    }
+
+    internal static async Task<AppSourceStatus> ReadScopeStatusAsync(string sourceId, Func<string?> resolveScope,
+        IReadOnlyList<string>? inspectionPaths, DateTimeOffset observedAt, CancellationToken cancellationToken,
+        bool entireRepository = false)
+    {
         string? scope = null;
+        AppSourceStatus Empty(string state) => new(sourceId, state, scope, null, null, [], false, observedAt);
         try
         {
-            scope = ResolveInspectionScope(app);
-            if (scope is null) return EmptyStatus(appId, "none", null);
-            if (!Directory.Exists(scope)) return EmptyStatus(appId, "missing", scope);
-            if (!HasGitAncestor(scope)) return EmptyStatus(appId, "no-git", scope);
+            scope = resolveScope();
+            if (scope is null) return Empty("none");
+            if (!Directory.Exists(scope)) return Empty("missing");
+            if (!HasGitAncestor(scope)) return Empty("no-git");
 
             var root = (await WorktreeGitAsync(scope, ["rev-parse", "--show-toplevel"], cancellationToken)).StandardOutput.Trim();
+            if (entireRepository)
+            {
+                // Git can report an aliased checkout path. Build file paths from the same
+                // canonical root used by the scope checks, otherwise valid changes disappear.
+                root = MountPathPolicy.ResolveRealPath(root);
+                scope = root;
+            }
             var headResult = await WorktreeGitAsync(scope, ["rev-parse", "--verify", "--quiet", "HEAD"], cancellationToken, allowFailure: true);
             var head = headResult.ExitCode == 0 ? headResult.StandardOutput.Trim() : null;
             var branchResult = await WorktreeGitAsync(scope, ["symbolic-ref", "--quiet", "--short", "HEAD"], cancellationToken, allowFailure: true);
             var branch = branchResult.ExitCode == 0 ? branchResult.StandardOutput.Trim() : null;
-            var result = await WorktreeGitAsync(scope, ["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all", "--", .. app.SourceState?.InspectionPaths is { Count: > 0 } selectedPaths ? selectedPaths : ["."]], cancellationToken, limit: MaxStatusOutput);
+            var result = await WorktreeGitAsync(scope, ["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all", "--", .. inspectionPaths is { Count: > 0 } selectedPaths ? selectedPaths : ["."]], cancellationToken, limit: MaxStatusOutput);
             var truncated = result.StandardOutput.Length > MaxStatusOutput;
             var records = result.StandardOutput.Split('\0');
             var files = new List<AppSourceFile>();
@@ -43,7 +59,7 @@ internal sealed partial class AppSourceService
                 var fullPath = Path.GetFullPath(Path.Combine(root, entry[3..]));
                 if (!IsWithinScope(scope, fullPath)) continue;
                 var relative = Path.GetRelativePath(scope, fullPath).Replace(Path.DirectorySeparatorChar, '/');
-                if (app.SourceState?.InspectionPaths is { Count: > 0 } allowed && !allowed.Any(path => relative == path || relative.StartsWith(path.TrimEnd('/') + "/", StringComparison.Ordinal))) continue;
+                if (inspectionPaths is { Count: > 0 } allowed && !allowed.Any(path => relative == path || relative.StartsWith(path.TrimEnd('/') + "/", StringComparison.Ordinal))) continue;
                 // `git rm --cached` can list the same path as both deleted and untracked. Restore
                 // that tracked path once, rather than presenting it again as a new-file deletion.
                 if (!seen.Add(relative)) continue;
@@ -53,18 +69,24 @@ internal sealed partial class AppSourceService
                     && (!File.Exists(fullPath) || new FileInfo(fullPath).Length <= MaxDiscardFileBytes);
                 files.Add(new(relative, status, status is "??" || status.Contains('A'), canDiscard));
             }
-            return new(appId, files.Count > 0 || truncated ? "changes" : "clean", scope, branch, head,
-                files.OrderBy(file => file.Path, StringComparer.Ordinal).ToArray(), truncated, clock.UtcNow);
+            return new(sourceId, files.Count > 0 || truncated ? "changes" : "clean", scope, branch, head,
+                files.OrderBy(file => file.Path, StringComparer.Ordinal).ToArray(), truncated, observedAt);
         }
         catch (Exception ex) when (ex is AppLifecycleException or IOException or UnauthorizedAccessException)
         {
-            return EmptyStatus(appId, "unavailable", scope) with { Error = "Source status could not be inspected. Check the source path, Git installation and permissions." };
+            return Empty("unavailable") with { Error = "Source status could not be inspected. Check the source path, Git installation and permissions." };
         }
     }
 
     public async Task<AppSourceDiff> GetWorktreeDiffAsync(string appId, AppSourceDiffRequest request, CancellationToken cancellationToken = default)
     {
         var status = await ReadWorktreeStatusAsync(appId, cancellationToken);
+        return await ReadScopeDiffAsync(status, request, cancellationToken);
+    }
+
+    internal static async Task<AppSourceDiff> ReadScopeDiffAsync(AppSourceStatus status, AppSourceDiffRequest request,
+        CancellationToken cancellationToken)
+    {
         var file = RequireChangedFile(status, request.Path);
         var scope = status.ScopePath!;
         var fullPath = Path.Combine(scope, file.Path);
@@ -231,9 +253,6 @@ internal sealed partial class AppSourceService
         var full = Path.GetFullPath(Path.Combine(scope, path));
         return IsWithinScope(scope, full) && !Directory.Exists(full) && !CoreDataPaths.ContainsSymbolicLink(scope, full);
     }
-
-    private AppSourceStatus EmptyStatus(string appId, string state, string? scope)
-        => new(appId, state, scope, null, null, [], false, clock.UtcNow);
 
     private static AppLifecycleException SourceError(string code, string message) => new(code, message);
 
