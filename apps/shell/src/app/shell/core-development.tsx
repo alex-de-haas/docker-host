@@ -126,11 +126,18 @@ export function CoreModeControl({ state, disabled, onChange }: { state: CoreDeve
         {mode === "dev" && (
           <Tooltip>
             <TooltipTrigger asChild>
-              <span tabIndex={0} role="img" aria-label="Development runtime" className="inline-flex shrink-0 cursor-help text-emerald-600 dark:text-emerald-400">
+              <span
+                tabIndex={0}
+                role="img"
+                aria-label={state?.gitError ? `Development runtime — Git warning: ${state.gitError}` : "Development runtime"}
+                className={cn("inline-flex shrink-0 cursor-help", state?.gitError ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400")}
+              >
                 <Radio aria-hidden="true" className="size-3.5" />
               </span>
             </TooltipTrigger>
-            <TooltipContent className="max-w-sm">Core runs a build from source. Restart to rebuild and apply changes; there is no hot reload.</TooltipContent>
+            <TooltipContent className="max-w-sm">
+              {state?.gitError ? `Git warning: ${state.gitError}` : "Core runs a build from source. Restart to rebuild and apply changes; there is no hot reload."}
+            </TooltipContent>
           </Tooltip>
         )}
         {state?.manageable && (
@@ -206,7 +213,7 @@ export function CoreSourceDialog({ open, onOpenChange, state, disabled, onSave }
             }
           }}>
             <DialogBody className="space-y-4">
-              {error && <InlineError message={error} />}
+              {error && <div role="alert"><InlineError message={error} /></div>}
               <div className="space-y-2">
                 <div className="text-sm font-medium">Development profiles</div>
                 <p className="text-sm text-muted-foreground">Select dev from the dashboard runtime menu to develop Core.</p>
