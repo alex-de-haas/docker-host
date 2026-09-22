@@ -10,6 +10,11 @@ internal sealed partial class AppSourceService
     public async Task<AppSourceStatus> GetWorktreeStatusAsync(string appId, CancellationToken cancellationToken = default)
     {
         var status = await ReadWorktreeStatusAsync(appId, cancellationToken);
+        return await AddLineStatisticsAsync(status, cancellationToken);
+    }
+
+    internal static async Task<AppSourceStatus> AddLineStatisticsAsync(AppSourceStatus status, CancellationToken cancellationToken)
+    {
         if (status.State is not ("clean" or "changes")) return status;
         var files = status.Files.ToArray();
         var tracked = new Dictionary<string, (AppSourceLineStats? Stats, bool Binary)>(StringComparer.Ordinal);

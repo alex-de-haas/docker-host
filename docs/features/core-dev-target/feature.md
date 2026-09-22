@@ -52,7 +52,9 @@ repository directory containing `apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.c
 does not rewrite or clean the repository.
 
 Git presentation describes the running project in dev mode, including branch (or detached commit),
-changed files and tracked additions/deletions. The Source dialog separately shows the selected
+changed files and available additions/deletions, including untracked files. The changed-file
+summary opens the shared read-only [Core source viewer](../core-source-inspection/feature.md).
+The Source dialog separately shows the selected
 checkout and running project. Missing Git or unavailable source is a visible diagnostic.
 
 Source saves use a revision check. A dev Source change creates a pending change bound to the

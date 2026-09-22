@@ -7,7 +7,7 @@ internal sealed record CoreSourceRequest(string? OverridePath, string Revision);
 internal sealed record CoreRestartRequest(string RequestId, string Instance, string? Mode = null, string? SourceRevision = null);
 internal sealed record CoreDevelopmentState(CoreLaunchIdentity Launch, string Instance, bool Manageable,
     CoreSourceSettings Source, string ManagedPath, string SourcePath, string SelectedProjectPath, bool RestartRequired,
-    string? Branch, string? Commit, int? ChangedFiles, long? Additions, long? Deletions, string? GitError);
+    string? Branch, string? Commit, int? ChangedFiles, long? Additions, long? Deletions, string? GitError, bool GitTruncated = false);
 
 internal sealed class CoreDevelopmentService(HostyCoreRuntimeConfig config, CoreLaunchIdentity? identity = null)
 {
@@ -24,35 +24,30 @@ internal sealed class CoreDevelopmentService(HostyCoreRuntimeConfig config, Core
     {
         var settings = Settings;
         var sourceRoot = SelectedRoot(settings);
-        var inspect = launch.Mode == "dev" && launch.ProjectPath is { } project
-            ? Path.GetDirectoryName(project)! : sourceRoot;
-        string? branch = null, commit = null, error = null;
-        int? changed = null;
-        long? additions = null, deletions = null;
-        if (Directory.Exists(inspect))
-        {
-            try
-            {
-                var branchResult = await GitAsync(inspect, ["symbolic-ref", "--quiet", "--short", "HEAD"], cancellationToken, true);
-                branch = string.IsNullOrWhiteSpace(branchResult) ? null : branchResult.Trim();
-                commit = (await GitAsync(inspect, ["rev-parse", "HEAD"], cancellationToken)).Trim();
-                var root = (await GitAsync(inspect, ["rev-parse", "--show-toplevel"], cancellationToken)).Trim();
-                changed = (await GitAsync(root, ["status", "--porcelain=v1", "-z", "--no-renames"], cancellationToken)).Split('\0', StringSplitOptions.RemoveEmptyEntries).Length;
-                additions = deletions = 0;
-                foreach (var line in (await GitAsync(root, ["diff", "--numstat", "HEAD", "--"], cancellationToken)).Split('\n'))
-                {
-                    var columns = line.Split('\t');
-                    if (columns.Length >= 2 && long.TryParse(columns[0], out var a) && long.TryParse(columns[1], out var d))
-                    { additions += a; deletions += d; }
-                }
-            }
-            catch (Exception ex) when (ex is IOException or InvalidOperationException or System.ComponentModel.Win32Exception) { error = ex.Message; }
-        }
-        else error = "Source checkout is not prepared.";
+        var status = await GetSourceStatusAsync(cancellationToken);
+        var available = status.State is "clean" or "changes";
         return new(launch, Instance, (launch.Mode is "dev" or "release") && CoreCliLauncher.ResolveCliPath() is not null,
             settings, ManagedPath, sourceRoot, Project(sourceRoot), launch.Mode == "dev" && settings.PendingForInstance == Instance,
-            branch, commit, changed, additions, deletions, error);
+            status.Branch, status.Head, available ? status.FileCount : null,
+            status.LineStats?.Additions, status.LineStats?.Deletions,
+            available ? null : status.Error ?? "Source checkout is unavailable.", status.Truncated);
     }
+
+    private Task<AppSourceStatus> ReadSourceStatusAsync(CancellationToken cancellationToken)
+        => AppSourceService.ReadScopeStatusAsync("hosty-core",
+            () => launch.Mode == "dev"
+                ? launch.ProjectPath is { } project ? Path.GetDirectoryName(project) : null
+                : SelectedRoot(Settings),
+            null, DateTimeOffset.UtcNow, cancellationToken, entireRepository: true);
+
+    public async Task<AppSourceStatus> GetSourceStatusAsync(CancellationToken cancellationToken = default)
+    {
+        var status = await AppSourceService.AddLineStatisticsAsync(await ReadSourceStatusAsync(cancellationToken), cancellationToken);
+        return status with { Files = status.Files.Select(file => file with { CanDiscard = false }).ToArray() };
+    }
+
+    public async Task<AppSourceDiff> GetSourceDiffAsync(AppSourceDiffRequest request, CancellationToken cancellationToken = default)
+        => await AppSourceService.ReadScopeDiffAsync(await ReadSourceStatusAsync(cancellationToken), request, cancellationToken);
 
     public async Task<CoreSourceSettings> SaveAsync(CoreSourceRequest request, CancellationToken cancellationToken)
     {
