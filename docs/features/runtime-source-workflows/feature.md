@@ -55,6 +55,8 @@ files outside the app's source-inspection scope. Start repeats the check immedia
 to protect edits made after the preflight. Restart uses the same source preparation as Start, after
 stopping the old process; it cannot bypass the reviewed pin or the dirty-checkout guard. Its preflight
 also refuses existing changes before stopping a running app.
+Preflight and pinned startup both accept a `.git` directory or file (linked worktrees), and treat
+empty or whitespace-only stored checkout paths as the default managed path.
 Switching to Docker leaves source intact. Returning to a reviewed source profile can therefore fail
 with a source-change error; a running runtime switch then restores the previous selection and leaves
 the app stopped. Source history and explicit discard belong to Git; data backups are not source backups.
@@ -259,6 +261,8 @@ Shell also exposes Hosty Shell runtime switching in the Installed Apps System Ap
 - Restart prepares the reviewed pin after stopping the old process, including a pin left ahead of HEAD
   by a failed update. Existing changes refuse restart without stopping the app; edits during stop still
   refuse the replacement launch. Development profiles continue to allow local edits.
+- Linked managed worktrees and legacy blank checkout paths use the same source root for preflight,
+  pin materialization and execution; clean updates/restarts succeed and dirty ones preserve the app.
 - On Windows, stopping a `localCommand` service terminates descendants held by its Job Object even when an intermediate command process has already exited; an immediate start can reuse the assigned port.
 - Source status covers clean, staged, unstaged/untracked, unborn, detached, linked-worktree, no-Git,
   missing and truncated states; monorepo observations exclude sibling apps and shared root files.

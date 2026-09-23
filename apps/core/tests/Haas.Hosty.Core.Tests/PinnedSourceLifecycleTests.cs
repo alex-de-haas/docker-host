@@ -9,6 +9,83 @@ public sealed partial class CoreLifecycleServiceTests
     private const string PinnedAppId = "com.example.remote-local";
 
     [Theory]
+    [InlineData("worktree", false, false)]
+    [InlineData("worktree", false, true)]
+    [InlineData("worktree", true, false)]
+    [InlineData("worktree", true, true)]
+    [InlineData("", false, false)]
+    [InlineData("", false, true)]
+    [InlineData("", true, false)]
+    [InlineData("", true, true)]
+    [InlineData("  ", false, false)]
+    [InlineData("  ", false, true)]
+    [InlineData("  ", true, false)]
+    [InlineData("  ", true, true)]
+    public async Task PinnedSourceLifecycle_AlternateCheckoutLayout_UsesSameRootForPreflightAndLaunch(
+        string layout, bool dirty, bool update)
+    {
+        var version = "1.0.0";
+        var (fixture, adapter, repository, checkout, originalCommit) = await CreatePinnedLocalFixtureAsync(() => version);
+        var storedPath = layout;
+        if (layout == "worktree")
+        {
+            checkout = Path.Combine(fixture.Root, "linked-checkout");
+            await RunGitAsync(repository, ["worktree", "add", "--detach", checkout, originalCommit]);
+            Assert.True(File.Exists(Path.Combine(checkout, ".git")));
+            storedPath = checkout;
+        }
+
+        var nextCommit = await AdvancePinnedRepositoryAsync(repository);
+        version = "1.1.0";
+        await fixture.Apps.UpdateAppAsync(PinnedAppId, app => app with
+        {
+            SourceState = app.SourceState! with
+            {
+                ManagedCheckoutPath = storedPath,
+                // Restart must prepare a reviewed pin ahead of HEAD; Update advances it itself.
+                Commit = update ? originalCommit : nextCommit,
+            },
+        });
+        if (dirty) await File.WriteAllTextAsync(Path.Combine(checkout, "package-lock.json"), "local work");
+        var before = (await fixture.Apps.GetAppAsync(PinnedAppId))!;
+        var manifestBefore = await File.ReadAllTextAsync(before.ManifestPath!);
+        var plan = update ? await fixture.Service.CreateUpdatePlanAsync(PinnedAppId, new AppUpdatePlanRequest()) : null;
+        adapter.StopProbe = async () => Assert.Equal(originalCommit, await RunGitAsync(checkout, ["rev-parse", "HEAD"]));
+        adapter.StartContextProbe = async (context, _) =>
+        {
+            Assert.Equal(checkout, context.SourceRoot);
+            Assert.Equal(checkout, context.App.SourceState!.ManagedCheckoutPath);
+            Assert.Equal(nextCommit, await RunGitAsync(checkout, ["rev-parse", "HEAD"]));
+        };
+        Task<AppLifecycleResponse> Act() => update
+            ? fixture.Service.ApplyUpdateAsync(PinnedAppId, new AppUpdateApplyRequest(plan!.PlanDigest))
+            : fixture.Service.RestartAsync(PinnedAppId);
+
+        if (dirty)
+        {
+            var error = await Assert.ThrowsAsync<AppLifecycleException>(Act);
+            Assert.Equal("source_changes_present", error.Code);
+            Assert.Contains(checkout, error.Message);
+            Assert.Equal(0, adapter.StopCount);
+            Assert.Equal(1, adapter.StartCount);
+            var after = (await fixture.Apps.GetAppAsync(PinnedAppId))!;
+            Assert.Equal("running", after.RuntimeState);
+            Assert.Equal(before.Version, after.Version);
+            Assert.Equal(before.SourceState!.Commit, after.SourceState!.Commit);
+            Assert.Equal(manifestBefore, await File.ReadAllTextAsync(after.ManifestPath!));
+            Assert.Equal(originalCommit, await RunGitAsync(checkout, ["rev-parse", "HEAD"]));
+            Assert.Equal("local work", await File.ReadAllTextAsync(Path.Combine(checkout, "package-lock.json")));
+        }
+        else
+        {
+            await Act();
+            Assert.Equal(1, adapter.StopCount);
+            Assert.Equal(2, adapter.StartCount);
+            Assert.Equal("running", (await fixture.Apps.GetAppAsync(PinnedAppId))!.RuntimeState);
+        }
+    }
+
+    [Theory]
     [InlineData("unstaged", true)]
     [InlineData("staged", true)]
     [InlineData("untracked", true)]

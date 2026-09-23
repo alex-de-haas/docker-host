@@ -32,7 +32,7 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
         }
 
         ValidateManagedRepository(source.Repository);
-        var checkoutPath = source.ManagedCheckoutPath ?? paths.ResolveManagedCheckoutPath(appId);
+        var checkoutPath = ResolveManagedCheckoutPath(app);
         await EnsureCheckoutAsync(source.Repository, checkoutPath, cancellationToken);
         if (request.Fetch)
         {
@@ -67,7 +67,7 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
         }
 
         ValidateManagedRepository(source.Repository);
-        var checkoutPath = source.ManagedCheckoutPath ?? paths.ResolveManagedCheckoutPath(appId);
+        var checkoutPath = ResolveManagedCheckoutPath(app);
         await EnsureCheckoutAsync(source.Repository, checkoutPath, cancellationToken);
 
         // The reviewed commit to pin to: the recorded one, and only a re-resolve of the reviewed ref when
@@ -136,8 +136,8 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
     // repeats this guard after stop, because external tools can still edit the checkout in between.
     public async Task ValidatePinnedCheckoutAsync(AppRecord app, CancellationToken cancellationToken = default)
     {
-        var checkoutPath = app.SourceState?.ManagedCheckoutPath ?? paths.ResolveManagedCheckoutPath(app.Id);
-        if (Directory.Exists(Path.Combine(checkoutPath, ".git")))
+        var checkoutPath = ResolveManagedCheckoutPath(app);
+        if (HasGitMetadata(checkoutPath))
         {
             await EnsureCleanCheckoutAsync(checkoutPath, cancellationToken);
         }
@@ -146,6 +146,15 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
             throw new AppLifecycleException("source_checkout_not_empty", $"Managed source checkout path is not empty: {checkoutPath}");
         }
     }
+
+    internal string ResolveManagedCheckoutPath(AppRecord app)
+        => !string.IsNullOrWhiteSpace(app.SourceState?.ManagedCheckoutPath)
+            ? app.SourceState.ManagedCheckoutPath
+            : paths.ResolveManagedCheckoutPath(app.Id);
+
+    // Linked worktrees and repositories with a separate git directory use a .git file.
+    internal static bool HasGitMetadata(string checkoutPath)
+        => Directory.Exists(Path.Combine(checkoutPath, ".git")) || File.Exists(Path.Combine(checkoutPath, ".git"));
 
     private static async Task EnsureCleanCheckoutAsync(string checkoutPath, CancellationToken cancellationToken)
     {
@@ -351,7 +360,7 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
 
     private static async Task EnsureCheckoutAsync(string repository, string checkoutPath, CancellationToken cancellationToken)
     {
-        if (Directory.Exists(Path.Combine(checkoutPath, ".git")))
+        if (HasGitMetadata(checkoutPath))
         {
             return;
         }
