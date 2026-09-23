@@ -1,7 +1,7 @@
 # AI Gateway
 
 Created: 2026-08-09
-Updated: 2026-09-22
+Updated: 2026-09-23
 
 The Hosty assistant: an optional, removable system app (`hosty.ai-gateway`) hosting admin-only
 operator chat sessions on a host-resident agent harness, plus the Shell surface that renders them.
@@ -116,8 +116,11 @@ are documented in [Assistant App Context](../assistant-app-context/feature.md).
   chrome rule. MCP control rows wrap at narrow widths. Switching tabs preserves unsaved prompt
   text and ongoing provider-login polling.
 - **The build runs at every start, from a clean cache.** The app is `localCommand`, so its manifest
-  `setup` step installs both workspaces and runs `build:web` before the service command. A `prebuild`
-  script deletes `web/.next` first, because Turbopack's persistent cache there survives a failed
+  `setup` step installs both workspaces and runs `build:web` before the service command. The reviewed
+  `local` profile uses `npm ci` to install the committed dependency lock without rewriting it; a
+  mismatched lock fails setup instead of silently changing dependencies. The editable `dev` profile
+  retains `npm install`. A `prebuild` script deletes `web/.next` first, because Turbopack's persistent
+  cache there survives a failed
   build and keeps replaying its resolution failures: once a build failed for genuinely missing
   packages, installing them did not fix it, and the app stayed broken through every restart. `.next`
   holds only intermediate state for this app — the served bytes are in `out-build` — so discarding
@@ -552,3 +555,5 @@ direct Core connection. See [Core development mode](../core-dev-target/feature.m
 - Runtime profiles: Core validates both `local` and `dev`; `local` stays the default, only `dev`
   declares development, and both bind the same data/cache environment targets. Backend watch does
   not imply hot reload for the statically exported settings UI.
+- Repeating the reviewed `local` setup installs the committed lock and builds the UI without changing
+  tracked source files, including the root `package-lock.json`.
