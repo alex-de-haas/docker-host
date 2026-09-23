@@ -1280,10 +1280,12 @@ internal sealed partial class CoreLifecycleService(
         IAppRuntimeAdapter? adapter = null;
         RuntimeLifecycleContext? context = null;
         var runtimeStarted = false;
+        var stopAttempted = false;
         try
         {
             var load = await LoadSelectionWithStatusAsync(app, cancellationToken);
             var selection = load.Selection;
+            await ValidatePinnedSourceCheckoutAsync(app, selection, cancellationToken);
             // Stop must target the contract the running process was started with — the last-good
             // baseline when a live edit is being adopted — so a mid-edit service rename/removal (or
             // runtime-type change) still stops the old process instead of orphaning it; the adopted
@@ -1313,12 +1315,19 @@ internal sealed partial class CoreLifecycleService(
             {
                 RuntimeState = AppRuntimeStates.Stopping,
             }, cancellationToken);
+            stopAttempted = true;
             _ = await stopAdapter.StopAsync(stopContext, cancellationToken);
             _ = await apps.UpdateAppAsync(appId, current => current with
             {
                 RuntimeState = AppRuntimeStates.Starting,
                 Health = new AppHealthSummary("starting", [], clock.UtcNow),
             }, cancellationToken);
+            // Restart must materialize the reviewed pin just like Start. In particular, a previous
+            // failed update may have saved a new pin while the checkout still contains the old code.
+            app = await EnsureLocalCommandSourceReadyAsync(app, selection, cancellationToken);
+            context = await CreateRuntimeContextAsync(app, selection, cancellationToken);
+            context = EnsureMountsReadyForStart(context);
+            appliedConfigurationHash = AppConfigurationFingerprint.Compute(context.App, context.Mounts);
             // Re-run capability provisioning on restart too, so a config-template change ships forward
             // and the app comes back with fresh Core-owned files (see PlatformCapabilities). Ordered
             // after the stop so it never races the old container still holding the provisioned files
@@ -1366,7 +1375,10 @@ internal sealed partial class CoreLifecycleService(
                 await TryStopRuntimeAsync(adapter, context);
             }
 
-            await RecordForegroundLifecycleFailureAsync(appId, "restart", AppRuntimeStates.Stopped, ex.Message, cancellationToken);
+            if (stopAttempted)
+                await RecordForegroundLifecycleFailureAsync(appId, "restart", AppRuntimeStates.Stopped, ex.Message, cancellationToken);
+            else
+                await RecordBackgroundLifecycleFailureAsync(appId, "restart", ex.Message, cancellationToken);
             throw;
         }
     }
@@ -2060,6 +2072,11 @@ internal sealed partial class CoreLifecycleService(
 
         await SetUpdateProgressAsync(appId, "preparing", null, cancellationToken);
         var selection = confirmed.Selection;
+
+        // Check the target's managed checkout before any stop, backup, manifest replacement or pin
+        // advancement. Checking only inside Start strands a running app and advertises the new version
+        // even though its source never advanced. The start-time check still protects concurrent edits.
+        await ValidatePinnedSourceCheckoutAsync(app with { SourceState = BuildSourceState(selection, app) }, selection, cancellationToken);
 
         // The ghost-version fix (digest pinning phase 2b): a reviewed update of a source app must move
         // the source pin along with the manifest — BuildSourceState keeps the existing Commit whenever
@@ -4248,12 +4265,10 @@ internal sealed partial class CoreLifecycleService(
 
         // Fall back to the default managed-checkout path for legacy records that never persisted it,
         // matching EnsurePinnedCommitAsync so the resolved root and the pinned checkout stay consistent.
-        var checkout = app.SourceState?.ManagedCheckoutPath is { Length: > 0 } stored
-            ? stored
-            : paths.ResolveManagedCheckoutPath(app.Id);
+        var checkout = sources.ResolveManagedCheckoutPath(app);
         return !string.IsNullOrWhiteSpace(app.ManifestUrl)
             && !string.IsNullOrWhiteSpace(app.SourceState?.Repository)
-            && Directory.Exists(Path.Combine(checkout, ".git"))
+            && AppSourceService.HasGitMetadata(checkout)
             ? checkout
             : null;
     }
@@ -4322,6 +4337,17 @@ internal sealed partial class CoreLifecycleService(
         return context with { Mounts = canonicalized };
     }
 
+    private static bool UsesPinnedSourceCheckout(AppRecord app, RuntimeAppManifestSelection selection)
+        => selection.Services.Any(service => service.Artifact is "source" or "prebuilt")
+            && !selection.RuntimeProfile.Development
+            && !string.IsNullOrWhiteSpace(app.ManifestUrl)
+            && !string.IsNullOrWhiteSpace(app.SourceState?.Repository);
+
+    private Task ValidatePinnedSourceCheckoutAsync(AppRecord app, RuntimeAppManifestSelection selection, CancellationToken cancellationToken)
+        => UsesPinnedSourceCheckout(app, selection)
+            ? sources.ValidatePinnedCheckoutAsync(app, cancellationToken)
+            : Task.CompletedTask;
+
     private async Task<AppRecord> EnsureLocalCommandSourceReadyAsync(
         AppRecord app,
         RuntimeAppManifestSelection selection,
@@ -4339,14 +4365,9 @@ internal sealed partial class CoreLifecycleService(
         // honest lock: only a reviewed source-resolve/update advances the commit. A folder install has no
         // separate reviewed source to pin (the operator's own folder is the source), so it falls through
         // to the live path below.
-        var profiles = await ResolveRuntimeProfilesAsync(app, cancellationToken);
-        var selectedProfile = profiles.FirstOrDefault(profile => string.Equals(profile.Key, app.SelectedRuntime, StringComparison.Ordinal));
-        var development = selectedProfile is not null && selectedProfile.Development;
-        if (!development
-            && !string.IsNullOrWhiteSpace(app.ManifestUrl)
-            && !string.IsNullOrWhiteSpace(source?.Repository))
+        if (UsesPinnedSourceCheckout(app, selection))
         {
-            if (IsRelativeSourceRepository(source.Repository))
+            if (IsRelativeSourceRepository(source!.Repository!))
             {
                 throw new AppLifecycleException(
                     "source_repository_relative_remote_unsupported",

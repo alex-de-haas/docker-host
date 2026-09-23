@@ -32,7 +32,7 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
         }
 
         ValidateManagedRepository(source.Repository);
-        var checkoutPath = source.ManagedCheckoutPath ?? paths.ResolveManagedCheckoutPath(appId);
+        var checkoutPath = ResolveManagedCheckoutPath(app);
         await EnsureCheckoutAsync(source.Repository, checkoutPath, cancellationToken);
         if (request.Fetch)
         {
@@ -67,7 +67,7 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
         }
 
         ValidateManagedRepository(source.Repository);
-        var checkoutPath = source.ManagedCheckoutPath ?? paths.ResolveManagedCheckoutPath(appId);
+        var checkoutPath = ResolveManagedCheckoutPath(app);
         await EnsureCheckoutAsync(source.Repository, checkoutPath, cancellationToken);
 
         // The reviewed commit to pin to: the recorded one, and only a re-resolve of the reviewed ref when
@@ -109,12 +109,7 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
 
         // Pinning is not a discard operation. Protect staged, unstaged and untracked work before
         // changing HEAD; even a clean checkout uses non-forcing checkout to respect concurrent edits.
-        var status = await RunGitAsync(checkoutPath, ["status", "--porcelain=v1", "--untracked-files=all"], cancellationToken);
-        if (!string.IsNullOrWhiteSpace(status))
-        {
-            throw new AppLifecycleException("source_changes_present",
-                "The source checkout has local changes. Commit or explicitly discard them before starting a pinned runtime, or select a development runtime. No source files were removed.");
-        }
+        await EnsureCleanCheckoutAsync(checkoutPath, cancellationToken);
         _ = await RunGitAsync(checkoutPath, ["checkout", "--detach", "--no-overwrite-ignore", pinnedCommit], cancellationToken);
 
         // Build the new state from the current record inside the update lambda so a concurrent change to
@@ -135,6 +130,46 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
                 };
         }, cancellationToken);
         return new AppSourceResponse(appId, document.App.SourceState);
+    }
+
+    // Read-only preflight: do not switch HEAD underneath a running source process. The actual start
+    // repeats this guard after stop, because external tools can still edit the checkout in between.
+    public async Task ValidatePinnedCheckoutAsync(AppRecord app, CancellationToken cancellationToken = default)
+    {
+        var checkoutPath = ResolveManagedCheckoutPath(app);
+        if (HasGitMetadata(checkoutPath))
+        {
+            await EnsureCleanCheckoutAsync(checkoutPath, cancellationToken);
+        }
+        else if (Directory.Exists(checkoutPath) && Directory.EnumerateFileSystemEntries(checkoutPath).Any())
+        {
+            throw new AppLifecycleException("source_checkout_not_empty", $"Managed source checkout path is not empty: {checkoutPath}");
+        }
+    }
+
+    internal string ResolveManagedCheckoutPath(AppRecord app)
+        => !string.IsNullOrWhiteSpace(app.SourceState?.ManagedCheckoutPath)
+            ? app.SourceState.ManagedCheckoutPath
+            : paths.ResolveManagedCheckoutPath(app.Id);
+
+    // Linked worktrees and repositories with a separate git directory use a .git file.
+    internal static bool HasGitMetadata(string checkoutPath)
+        => Directory.Exists(Path.Combine(checkoutPath, ".git")) || File.Exists(Path.Combine(checkoutPath, ".git"));
+
+    private static async Task EnsureCleanCheckoutAsync(string checkoutPath, CancellationToken cancellationToken)
+    {
+        var status = await RunGitAsync(checkoutPath, ["status", "--porcelain=v1", "--untracked-files=all"], cancellationToken);
+        if (string.IsNullOrWhiteSpace(status)) return;
+
+        // Git quotes unusual filenames. Show paths, never file contents, and bound the diagnostic so a
+        // large untracked tree cannot flood the app record. Inspection may cover only a monorepo subdir.
+        var entries = status.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        var sample = string.Join("; ", entries.Take(10));
+        if (sample.Length > 2000) sample = sample[..2000] + "…";
+        if (entries.Length > 10) sample += $"; … ({entries.Length} entries total)";
+        throw new AppLifecycleException("source_changes_present",
+            $"The source checkout has local changes at '{checkoutPath}': {sample}. " +
+            "Commit or explicitly discard them before starting a pinned runtime, or select a development runtime. No source files were removed.");
     }
 
     // Resolves the commit the manifest-declared source ref points at right now (digest pinning phase
@@ -325,7 +360,7 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
 
     private static async Task EnsureCheckoutAsync(string repository, string checkoutPath, CancellationToken cancellationToken)
     {
-        if (Directory.Exists(Path.Combine(checkoutPath, ".git")))
+        if (HasGitMetadata(checkoutPath))
         {
             return;
         }

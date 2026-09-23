@@ -1,7 +1,7 @@
 # Runtime Source Workflows
 
 Created: 2026-06-03
-Updated: 2026-09-17
+Updated: 2026-09-23
 
 Runtime source workflows let administrators and local operators inspect and update the source state stored for an installed Hosty runtime app. Manifests declare source metadata, Core stores managed checkout and local override state, local command runtimes run from those folders, and Shell exposes Git inspection and reviewed file discard.
 
@@ -48,6 +48,15 @@ profile's development flag and require review, including when accompanied by a v
 
 A pinned start never discards edits or cleans new files. It refuses a dirty managed checkout and
 instructs the operator to commit or explicitly discard work, or select a development profile.
+Reviewed source updates check the whole managed checkout before stopping the app or replacing its
+installed manifest, version and source pin. A dirty checkout leaves the previous installation and
+running process intact. The error names the checkout and a bounded sample of changed paths, including
+files outside the app's source-inspection scope. Start repeats the check immediately before checkout
+to protect edits made after the preflight. Restart uses the same source preparation as Start, after
+stopping the old process; it cannot bypass the reviewed pin or the dirty-checkout guard. Its preflight
+also refuses existing changes before stopping a running app.
+Preflight and pinned startup both accept a `.git` directory or file (linked worktrees), and treat
+empty or whitespace-only stored checkout paths as the default managed path.
 Switching to Docker leaves source intact. Returning to a reviewed source profile can therefore fail
 with a source-change error; a running runtime switch then restores the previous selection and leaves
 the app stopped. Source history and explicit discard belong to Git; data backups are not source backups.
@@ -246,6 +255,14 @@ Shell also exposes Hosty Shell runtime switching in the Installed Apps System Ap
 - A pinned start (reviewed source profile) checks out the recorded pin — including one a reviewed update has just advanced to — with an override configured, and fetches when the checkout does not have that commit yet.
 - A pinned start whose recorded commit is unreachable even after a fetch falls back to the reviewed ref instead of failing.
 - A pinned start refuses a dirty checkout with `source_changes_present`, preserving staged, unstaged and untracked work. Non-forcing checkout also protects ignored files that would be overwritten.
+- A reviewed update refuses a dirty managed checkout before stopping the app or changing its installed
+  manifest, version or pin; this includes root lockfiles outside the app's inspection scope. Its reviewed
+  plan remains available for retry, and the error identifies the checkout and changed paths.
+- Restart prepares the reviewed pin after stopping the old process, including a pin left ahead of HEAD
+  by a failed update. Existing changes refuse restart without stopping the app; edits during stop still
+  refuse the replacement launch. Development profiles continue to allow local edits.
+- Linked managed worktrees and legacy blank checkout paths use the same source root for preflight,
+  pin materialization and execution; clean updates/restarts succeed and dirty ones preserve the app.
 - On Windows, stopping a `localCommand` service terminates descendants held by its Job Object even when an intermediate command process has already exited; an immediate start can reuse the assigned port.
 - Source status covers clean, staged, unstaged/untracked, unborn, detached, linked-worktree, no-Git,
   missing and truncated states; monorepo observations exclude sibling apps and shared root files.

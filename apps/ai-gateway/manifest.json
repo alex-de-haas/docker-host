@@ -3,7 +3,7 @@
   "id": "hosty.ai-gateway",
   "name": "Hosty AI Gateway",
   "description": "Host-resident operator assistant with managed Claude and Codex connections, chat and settings UI.",
-  "version": "0.32.0",
+  "version": "0.32.1",
   "role": "system",
   "source": {
     "type": "git",
@@ -30,7 +30,7 @@
         "local": {
           "type": "localCommand",
           "workingDirectory": "apps/ai-gateway",
-          "setup": "npm install --workspace @haas/hosty-ai-gateway --workspace @haas/hosty-ai-gateway-web && npm run build:web",
+          "setup": "npm ci --workspace @haas/hosty-ai-gateway --workspace @haas/hosty-ai-gateway-web && npm run build:web",
           "command": "npm run start",
           "ports": [
             {
