@@ -469,7 +469,7 @@ internal sealed class HostyCoreTools
                 // the second would have an agent announce an app is up to date on the strength of a
                 // question that was never asked.
                 plan.SourceConfigured,
-                null));
+                plan.Error));
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {

@@ -39,10 +39,7 @@ internal sealed class LocalCommandRuntimeAdapter(
         // Content-hash locks for prebuilt services, keyed by service (mirrors the docker image-digest
         // locks). Returned to the lifecycle service to persist onto AppRecord.ArtifactLocks.
         var resolvedLocks = new Dictionary<string, ArtifactLock>(StringComparer.Ordinal);
-        foreach (var service in context.Manifest.Services)
-        {
-            await StopServiceAsync(context.App.Id, service.Key, context.AppRoot, cancellationToken);
-        }
+        await StopServicesAsync(context, context.Manifest.Services.Select(service => service.Key), cancellationToken);
 
         EnsureExplicitPortsAvailable(context);
 
@@ -186,11 +183,7 @@ internal sealed class LocalCommandRuntimeAdapter(
         }
         catch
         {
-            foreach (var serviceKey in startedServices.AsEnumerable().Reverse())
-            {
-                await StopServiceAsync(context.App.Id, serviceKey, context.AppRoot, CancellationToken.None);
-            }
-
+            await StopServicesAsync(context, startedServices.AsEnumerable().Reverse(), CancellationToken.None, rollback: true);
             throw;
         }
 
@@ -319,10 +312,7 @@ internal sealed class LocalCommandRuntimeAdapter(
 
     public async Task<AppRuntimeOperationResult> StopAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
     {
-        foreach (var service in context.Manifest.Services)
-        {
-            await StopServiceAsync(context.App.Id, service.Key, context.AppRoot, cancellationToken);
-        }
+        await StopServicesAsync(context, context.Manifest.Services.Select(service => service.Key), cancellationToken);
 
         // Explicit recovery may discard stale ownership records without touching foreign processes.
         // Keep the startup guard if any record remains: reclaim is best-effort and may have failed.
@@ -855,9 +845,47 @@ internal sealed class LocalCommandRuntimeAdapter(
             cancellationToken);
     }
 
+    private async Task StopServicesAsync(RuntimeLifecycleContext context, IEnumerable<string> serviceKeys,
+        CancellationToken cancellationToken, bool rollback = false)
+    {
+        var failures = new List<Exception>();
+        foreach (var serviceKey in serviceKeys)
+        {
+            try
+            {
+                await StopServiceAsync(context.App.Id, serviceKey, context.AppRoot, cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // A lingering port must not leave sibling services alive or mask the start failure.
+                failures.Add(ex);
+                logger?.LogWarning(ex, "Failed to stop localCommand service {AppId}/{Service}.", context.App.Id, serviceKey);
+            }
+        }
+        if (rollback) return;
+        if (failures.Count == 1) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures.Count > 1) throw new AggregateException("Failed to stop localCommand services.", failures);
+    }
+
     private async Task StopServiceAsync(string appId, string serviceKey, string appRoot, CancellationToken cancellationToken)
     {
         var running = registry.Remove(appId, serviceKey);
+        var ports = running?.Ports.Values.Distinct().ToArray() ?? [];
+        if (running is null)
+        {
+            // Reclaim deletes the pidfile. Preserve its ports first when adoption could not recover
+            // the root (for example, an exited POSIX leader with surviving group members).
+            try
+            {
+                var saved = await JsonStorage.ReadAsync<LocalCommandPidFile>(LocalCommandProcessReclaim.PidFilePath(appRoot, serviceKey), cancellationToken);
+                if (saved is { Pid: > 1 } && saved.AppId == appId && saved.ServiceKey == serviceKey)
+                    ports = saved.Ports?.Values.Distinct().ToArray() ?? [];
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+            {
+                logger?.LogWarning(ex, "Could not read recorded ports for {AppId}/{Service}.", appId, serviceKey);
+            }
+        }
         if (running is not null)
         {
             try
@@ -902,20 +930,6 @@ internal sealed class LocalCommandRuntimeAdapter(
                         appId,
                         serviceKey);
                 }
-
-                if (OperatingSystem.IsWindows())
-                {
-                    // Windows can briefly retain a bound TCP endpoint after process exit is signaled.
-                    // Stop's contract includes immediate restart on the same Core-assigned ports.
-                    var ports = running.Ports.Values.Distinct().ToArray();
-                    var release = System.Diagnostics.Stopwatch.StartNew();
-                    while (ports.Any(port => !RuntimePortHelper.IsLoopbackTcpPortAvailable(port)))
-                    {
-                        if (release.Elapsed >= LogDrainTimeout)
-                            throw new IOException($"Ports for {appId}/{serviceKey} remain unavailable after process termination.");
-                        await Task.Delay(50, cancellationToken);
-                    }
-                }
             }
             catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
             {
@@ -938,6 +952,21 @@ internal sealed class LocalCommandRuntimeAdapter(
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             logger?.LogWarning(ex, "Failed to reclaim orphaned localCommand process for {AppId}/{Service}.", appId, serviceKey);
+        }
+
+        if (ports.Length > 0)
+        {
+            // Root exit is not a socket-release barrier: on POSIX, killed descendants may still be
+            // exiting; Windows can retain a bound endpoint after exit is signaled. Reclaim above
+            // must run first so an already-exited root's remaining process group is also stopped.
+            // Only wait on this service's recorded ports; never kill a port's new holder.
+            var release = System.Diagnostics.Stopwatch.StartNew();
+            while (ports.Any(port => !RuntimePortHelper.IsLoopbackTcpPortAvailable(port)))
+            {
+                if (release.Elapsed >= LogDrainTimeout)
+                    throw new IOException($"Ports for {appId}/{serviceKey} remain unavailable after process termination.");
+                await Task.Delay(50, cancellationToken);
+            }
         }
     }
 

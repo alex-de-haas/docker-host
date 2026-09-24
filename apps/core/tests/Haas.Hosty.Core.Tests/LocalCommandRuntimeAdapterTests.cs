@@ -6,6 +6,142 @@ namespace Haas.Hosty.Core.Tests;
 
 public sealed class LocalCommandRuntimeAdapterTests
 {
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task StopAsync_PosixPortReleaseLagsRootExit_WaitsUntilPortCanBeRebound(bool rootAlreadyExited, bool pidFileOnly)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var workRoot = CreateTempDirectory();
+        var (adapter, registry, context) = CreateSetupScenario(workRoot, null, "sleep 30");
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        Task release = Task.CompletedTask;
+        System.Diagnostics.Process? unregisteredProcess = null;
+        try
+        {
+            await adapter.StartAsync(context);
+            var running = registry.Get(context.App.Id, "app")!;
+            listener.Start();
+            var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            // Control socket release independently of the process exit, reproducing the window in
+            // which an exited runner's service port has not yet become bindable.
+            registry.Set(context.App.Id, "app", running with { Ports = new Dictionary<string, int> { ["http"] = port } });
+            if (pidFileOnly)
+            {
+                var saved = (await JsonStorage.ReadAsync<LocalCommandPidFile>(LocalCommandProcessReclaim.PidFilePath(workRoot, "app")))!;
+                await LocalCommandProcessReclaim.WriteAsync(workRoot, saved with { Ports = new Dictionary<string, int> { ["http"] = port } });
+                registry.Remove(context.App.Id, "app");
+                unregisteredProcess = running.Process;
+            }
+            if (rootAlreadyExited)
+            {
+                running.Process.Kill(entireProcessTree: true);
+                await running.Process.WaitForExitAsync();
+            }
+            var stop = adapter.StopAsync(context);
+            release = Task.Run(async () =>
+            {
+                await Task.Delay(500);
+                listener.Stop();
+            });
+            await stop;
+
+            // No retry or awaiting release: immediate restart must be possible when Stop returns.
+            using var rebound = new TcpListener(IPAddress.Loopback, port);
+            rebound.Start();
+        }
+        finally
+        {
+            await release;
+            listener.Stop();
+            await adapter.StopAsync(context);
+            unregisteredProcess?.Dispose();
+            TryDeleteDirectory(workRoot);
+        }
+    }
+
+    [Fact]
+    public async Task StopAsync_PosixPortRemainsHeld_StopsSiblingsWithoutKillingListener()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var workRoot = CreateTempDirectory();
+        var (adapter, registry, context) = CreateSetupScenario(workRoot, null, "sleep 30");
+        var service = context.Manifest.Services.Single();
+        context = context with { Manifest = context.Manifest with { Services = [service, service with { Key = "sibling" }] } };
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        try
+        {
+            await adapter.StartAsync(context);
+            var running = registry.Get(context.App.Id, "app")!;
+            using var sibling = System.Diagnostics.Process.GetProcessById(registry.Get(context.App.Id, "sibling")!.Process.Id);
+            listener.Start();
+            var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            registry.Set(context.App.Id, "app", running with { Ports = new Dictionary<string, int> { ["http"] = port } });
+            var error = await Assert.ThrowsAsync<IOException>(() => adapter.StopAsync(context).WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.Contains("remain unavailable", error.Message);
+            Assert.False(RuntimePortHelper.IsLoopbackTcpPortAvailable(port));
+            Assert.Null(registry.Get(context.App.Id, "sibling"));
+            Assert.True(sibling.HasExited);
+        }
+        finally
+        {
+            listener.Stop();
+            await adapter.StopAsync(context);
+            TryDeleteDirectory(workRoot);
+        }
+    }
+
+    [Fact]
+    public async Task StartAsync_RollbackPortWaitFails_PreservesStartErrorAndStopsSiblings()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var workRoot = CreateTempDirectory();
+        var (adapter, registry, context) = CreateSetupScenario(workRoot, null, "sleep 30");
+        var service = context.Manifest.Services.Single();
+        context = context with { Manifest = context.Manifest with { Services = [
+            service,
+            service with { Key = "second", DependsOn = [new("app", null)] },
+            service with { Key = "failing", DependsOn = [new("second", null)], Runtime = service.Runtime with
+            {
+                Setup = "touch setup-entered; while [ ! -f setup-release ]; do sleep 0.05; done; exit 42",
+            } },
+        ] } };
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        var start = adapter.StartAsync(context);
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            while (!File.Exists(Path.Combine(workRoot, "setup-entered")))
+                await Task.Delay(20, timeout.Token);
+            using var first = System.Diagnostics.Process.GetProcessById(registry.Get(context.App.Id, "app")!.Process.Id);
+            using var second = System.Diagnostics.Process.GetProcessById(registry.Get(context.App.Id, "second")!.Process.Id);
+            listener.Start();
+            var running = registry.Get(context.App.Id, "second")!;
+            registry.Set(context.App.Id, "second", running with
+            {
+                Ports = new Dictionary<string, int> { ["http"] = ((IPEndPoint)listener.LocalEndpoint).Port },
+            });
+            await File.WriteAllTextAsync(Path.Combine(workRoot, "setup-release"), "release");
+            var error = await Assert.ThrowsAsync<AppLifecycleException>(() => start.WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.Equal("local_command_setup_failed", error.Code);
+            Assert.Contains("42", error.Message);
+            Assert.Null(registry.Get(context.App.Id, "app"));
+            Assert.Null(registry.Get(context.App.Id, "second"));
+            Assert.True(first.HasExited);
+            Assert.True(second.HasExited);
+        }
+        finally
+        {
+            listener.Stop();
+            await File.WriteAllTextAsync(Path.Combine(workRoot, "setup-release"), "release");
+            try { await start; } catch (AppLifecycleException) { }
+            await adapter.StopAsync(context);
+            TryDeleteDirectory(workRoot);
+        }
+    }
+
     [Fact]
     public void MixedDiscovery_InjectsLoopbackEvenWithPublicLanHost()
     {
