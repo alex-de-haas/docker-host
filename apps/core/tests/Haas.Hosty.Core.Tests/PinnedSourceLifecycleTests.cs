@@ -8,6 +8,56 @@ public sealed partial class CoreLifecycleServiceTests
 {
     private const string PinnedAppId = "com.example.remote-local";
 
+    [Fact]
+    public async Task UpdateCheck_StopDuringManifestProbe_DoesNotReportCheckoutDrift()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var block = false;
+        var (fixture, _, repository, _, _) = await CreatePinnedLocalFixtureAsync(() => "1.0.0", manifestProbe: async () =>
+        {
+            if (!block) return;
+            entered.TrySetResult();
+            await release.Task;
+        });
+        var nextCommit = await AdvancePinnedRepositoryAsync(repository);
+        await fixture.Apps.UpdateAppAsync(PinnedAppId, app => app with
+        {
+            SourceState = app.SourceState! with { Commit = nextCommit },
+            Endpoints = [],
+        });
+        block = true;
+        var check = fixture.Service.CreateUpdatePlanAsync(PinnedAppId, new AppUpdatePlanRequest());
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await fixture.Service.StopAsync(PinnedAppId);
+        }
+        finally { release.TrySetResult(); }
+        var plan = await check;
+        Assert.Null(plan.Error);
+        var app = Assert.Single(await fixture.Service.ListAppsAsync());
+        Assert.Equal("stopped", app.RuntimeState);
+        Assert.Null(app.UpdateCheck!.Error);
+    }
+
+    [Fact]
+    public async Task PinnedCheckoutError_StatusFails_PreservesConfirmedDrift()
+    {
+        var (fixture, _, repository, checkout, originalCommit) = await CreatePinnedLocalFixtureAsync(() => "1.0.0");
+        var nextCommit = await AdvancePinnedRepositoryAsync(repository);
+        var app = (await fixture.Apps.GetAppAsync(PinnedAppId))!;
+        app = app with { SourceState = app.SourceState! with { Commit = nextCommit } };
+        // A corrupt index breaks git status while rev-parse HEAD still succeeds.
+        await File.WriteAllTextAsync(Path.Combine(checkout, ".git", "index"), "invalid index");
+        var error = await fixture.Sources.GetPinnedCheckoutErrorAsync(app);
+        Assert.Contains("Source update is incomplete", error);
+        Assert.Contains(originalCommit, error);
+        Assert.Contains(nextCommit, error);
+        Assert.Contains("Restart", error);
+        Assert.Contains("Could not check restart blockers", error);
+    }
+
     [Theory]
     [InlineData(true, true)]
     [InlineData(true, false)]
@@ -306,13 +356,17 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     private static async Task<(LifecycleFixture Fixture, RecordingRuntimeAdapter Adapter, string Repository, string Checkout, string Commit)>
-        CreatePinnedLocalFixtureAsync(Func<string> version, bool development = false)
+        CreatePinnedLocalFixtureAsync(Func<string> version, bool development = false, Func<Task>? manifestProbe = null)
     {
         string? repository = null;
-        var manifests = new AppManifestService(new HttpClient(new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        var manifests = new AppManifestService(new HttpClient(new PinnedManifestHandler(async () =>
         {
-            Content = new StringContent(CreateRemoteLocalCommandManifestJson(repository!, version())
-                .Replace("\"default\": true", $"\"default\": true, \"development\": {development.ToString().ToLowerInvariant()}", StringComparison.Ordinal), Encoding.UTF8, "application/json"),
+            if (manifestProbe is not null) await manifestProbe();
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(CreateRemoteLocalCommandManifestJson(repository!, version())
+                    .Replace("\"default\": true", $"\"default\": true, \"development\": {development.ToString().ToLowerInvariant()}", StringComparison.Ordinal), Encoding.UTF8, "application/json"),
+            };
         })));
         var adapter = new RecordingRuntimeAdapter("localCommand");
         var fixture = await LifecycleFixture.CreateAsync(manifests, localRuntimeAdapter: adapter);
@@ -325,6 +379,12 @@ public sealed partial class CoreLifecycleServiceTests
         await fixture.Service.StartAsync(PinnedAppId);
         var checkout = (await fixture.Apps.GetAppAsync(PinnedAppId))!.SourceState!.ManagedCheckoutPath!;
         return (fixture, adapter, repository, checkout, commit);
+    }
+
+    private sealed class PinnedManifestHandler(Func<Task<HttpResponseMessage>> handler) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => handler();
     }
 
     private static async Task<string> AdvancePinnedRepositoryAsync(string repository)

@@ -170,6 +170,10 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
             {
                 error += $" Restart is blocked: {ex.Message}";
             }
+            catch (AppLifecycleException ex)
+            {
+                error += $" Could not check restart blockers: {ex.Message}";
+            }
             return error;
         }
         catch (AppLifecycleException ex)

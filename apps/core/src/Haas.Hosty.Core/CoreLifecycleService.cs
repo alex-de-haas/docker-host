@@ -1680,9 +1680,19 @@ internal sealed partial class CoreLifecycleService(
         // A failed older apply can leave the record at the new pin while the running app's checkout
         // is still old. Comparing two recorded pins alone would call that installation up to date.
         // Stopped apps materialize on Start; available updates keep their normal recovery path.
-        if (verdict.Error is null && !verdict.UpdateAvailable && AppRuntimeStates.IsUp(app.RuntimeState)
+        if (verdict.Error is null && !verdict.UpdateAvailable
             && UsesPinnedSourceCheckout(app, currentSelection))
-            verdict = verdict with { Error = await sources.GetPinnedCheckoutErrorAsync(app, cancellationToken) };
+        {
+            // Manifest/registry/source probes can overlap Stop; runtime state is not in updateBase.
+            var current = await apps.GetAppAsync(appId, cancellationToken);
+            if (current is not null && AppRuntimeStates.IsUp(current.RuntimeState))
+            {
+                var checkoutError = await sources.GetPinnedCheckoutErrorAsync(current, cancellationToken);
+                current = await apps.GetAppAsync(appId, cancellationToken);
+                if (current is not null && AppRuntimeStates.IsUp(current.RuntimeState))
+                    verdict = verdict with { Error = checkoutError };
+            }
+        }
         cached = cached with { Plan = plan with { Error = verdict.Error } };
         await updateSnapshots.ChangeAsync(appId, previous => new AppUpdateSnapshot(1,
             updateBase, cached, verdict.Error is null ? verdict

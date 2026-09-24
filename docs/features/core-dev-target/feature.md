@@ -109,8 +109,10 @@ created before named-job support retain the legacy best-effort stop path until t
 On POSIX, the port wait follows process-group reclaim: a runner exiting does not imply that its
 descendants have already released their listening sockets. Immediate Restart therefore waits for
 the previous service's ports instead of failing the new command's port preflight. The wait is bounded
-and cancellation-aware, applies to registered and adopted services, and does not add a delay when
+and cancellation-aware, applies to registered, adopted, and pidfile-only recovered services, and does not add a delay when
 the ports are already free.
+Stop attempts every service before reporting teardown failures. Start rollback also attempts every
+started service and preserves the original start error while logging cleanup failures.
 Runners append console logs and rotate at 10 MiB with two previous files;
 Core reads these files after handover. OTLP telemetry is independent.
 
@@ -205,6 +207,8 @@ shell exits while its detached descendant remains alive.
   by awaiting the descendant or retrying the bind before this assertion.
   On POSIX, cover delayed socket release after the registered root exits, including an already-exited
   root, and a port that remains held: Stop must fail within its deadline and leave unrelated listeners alive.
+  Include pidfile-only recovery, stopping siblings after a port timeout, and start rollback preserving
+  the original failure while stopping all previously started services.
 - Shell: live mode and Git/version cells, Source dialog, one Restart action for pending and normal
   use, compiler diagnostics, operation reconciliation after connection loss, and hidden dev updates.
   Runtime controls match app selector styling; external launches explain their unavailable controls

@@ -1,7 +1,7 @@
 # Runtime App Update
 
 Created: 2026-06-04
-Updated: 2026-09-23
+Updated: 2026-09-24
 
 Update plans also display `corePermissions` additions/removals. New permissions require
 [Core-owned confirmation](../app-installation-sdk/feature.md); the queued HTTP/MCP apply path
@@ -42,6 +42,9 @@ Checks do not fetch, check out files, or stop the app. Stopped apps are excluded
 start materializes the pin. Matching HEAD verifies the checkout only, not the code loaded in memory.
 The plan's additive `error` field and MCP `plan_app_update.error` carry the same diagnostic as the
 dashboard verdict, so an empty change list with an error does not mean the app is up to date.
+Runtime state is re-read after remote probes and checkout inspection so a concurrent Stop does not
+receive a running-checkout diagnostic. If Git cannot inspect restart blockers after confirming a pin
+mismatch, the error retains both revisions and recovery guidance with a cleanliness-check caveat.
 
 `planDigest` is the SHA-256 of the reviewed update plan seed: app id, current and target versions, current and target runtimes, current and target manifest digests, the target manifest path, the resolved feed identity (feeds URL, feed id, and feed document digest), whether a pre-update backup will be created, and the reported changes.
 
@@ -235,6 +238,7 @@ Failed updates leave enough state for diagnosis and retry. Runtime state and app
 - An otherwise up-to-date running source app with an unmaterialized installed pin reports an error
   with both revisions and checkout-wide restart blockers; checking preserves files and processes,
   a successful restart clears the error on recheck, and stopped apps remain eligible for normal start.
+  Cover Stop during a delayed manifest probe and a failing Git status after a confirmed HEAD mismatch.
 
 - **Plan and classification** — change detection per contract category, `requiresReview` routine/review split (including `role: system` escalation and a cross-repository `image` move), `updateAvailable` treating `->unknown` as "cannot tell", and plan-digest stability across a rebuild.
 - **Apply** — digest mismatch, expiry, and stale-base rejection; verbatim consumption of the cached plan; `update_in_progress`; the interrupted-apply boot sweep.
