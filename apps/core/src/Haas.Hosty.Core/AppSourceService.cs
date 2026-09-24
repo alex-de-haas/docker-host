@@ -147,6 +147,37 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
         }
     }
 
+    /// <summary>Reports a checkout that has not materialized the installed pin, without changing source files.</summary>
+    public async Task<string?> GetPinnedCheckoutErrorAsync(AppRecord app, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(app.SourceState?.Commit)) return null;
+        var checkoutPath = ResolveManagedCheckoutPath(app);
+        try
+        {
+            if (!HasGitMetadata(checkoutPath))
+                return $"Cannot verify the installed source revision: checkout '{checkoutPath}' is unavailable. Restart the app to materialize its reviewed source.";
+
+            var head = await RunGitAsync(checkoutPath, ["rev-parse", "HEAD"], cancellationToken);
+            // Explicit manifest pins may be abbreviated; Git validates them when materializing.
+            if (head.StartsWith(app.SourceState.Commit, StringComparison.OrdinalIgnoreCase)) return null;
+
+            var error = $"Source update is incomplete: checkout '{checkoutPath}' is at {head}, but the installed source pin is {app.SourceState.Commit}. Restart the app to apply the installed source revision.";
+            try
+            {
+                await EnsureCleanCheckoutAsync(checkoutPath, cancellationToken);
+            }
+            catch (AppLifecycleException ex) when (ex.Code == "source_changes_present")
+            {
+                error += $" Restart is blocked: {ex.Message}";
+            }
+            return error;
+        }
+        catch (AppLifecycleException ex)
+        {
+            return $"Cannot verify the installed source revision at '{checkoutPath}': {ex.Message}";
+        }
+    }
+
     internal string ResolveManagedCheckoutPath(AppRecord app)
         => !string.IsNullOrWhiteSpace(app.SourceState?.ManagedCheckoutPath)
             ? app.SourceState.ManagedCheckoutPath

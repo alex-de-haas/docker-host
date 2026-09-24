@@ -1677,6 +1677,13 @@ internal sealed partial class CoreLifecycleService(
             verdict = verdict with { Error = MissingUpdateSourceError(appId) };
         if (verdict.Error is null && artifactProbes.Any(probe => string.IsNullOrEmpty(probe.CandidateDigest)))
             verdict = verdict with { Error = "Could not resolve one or more image revisions. Check the registry connection and retry." };
+        // A failed older apply can leave the record at the new pin while the running app's checkout
+        // is still old. Comparing two recorded pins alone would call that installation up to date.
+        // Stopped apps materialize on Start; available updates keep their normal recovery path.
+        if (verdict.Error is null && !verdict.UpdateAvailable && AppRuntimeStates.IsUp(app.RuntimeState)
+            && UsesPinnedSourceCheckout(app, currentSelection))
+            verdict = verdict with { Error = await sources.GetPinnedCheckoutErrorAsync(app, cancellationToken) };
+        cached = cached with { Plan = plan with { Error = verdict.Error } };
         await updateSnapshots.ChangeAsync(appId, previous => new AppUpdateSnapshot(1,
             updateBase, cached, verdict.Error is null ? verdict
                 : AppUpdateAvailability.Failed((previous?.Base == updateBase ? previous.Verdict : null) ?? (verdict with { LastSuccessfulCheckAt = null }), clock.UtcNow, verdict.Error)
@@ -6497,6 +6504,9 @@ internal sealed record AppUpdatePlan(
     // covers — excluded from the digest seed. Defaulted so older payloads stay compatible.
     bool RequiresReview = false)
 {
+    // Advisory from this check, excluded from the reviewed target digest. An empty change list
+    // with an error is not evidence that the app is up to date.
+    public string? Error { get; init; }
     public IReadOnlyList<string> CurrentCorePermissions { get; init; } = [];
     public IReadOnlyList<string> TargetCorePermissions { get; init; } = [];
 }

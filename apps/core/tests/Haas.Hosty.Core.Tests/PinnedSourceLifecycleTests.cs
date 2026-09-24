@@ -9,6 +9,58 @@ public sealed partial class CoreLifecycleServiceTests
     private const string PinnedAppId = "com.example.remote-local";
 
     [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task UpdateCheck_RecordedPinAheadOfRunningCheckout_ReportsIncompleteSourceUpdate(bool running, bool dirty)
+    {
+        var (fixture, adapter, repository, checkout, originalCommit) = await CreatePinnedLocalFixtureAsync(() => "1.0.0");
+        var nextCommit = await AdvancePinnedRepositoryAsync(repository);
+        if (!running) await fixture.Service.StopAsync(PinnedAppId);
+        // A failed older update persisted the new pin, then Restart launched the old checkout.
+        await fixture.Apps.UpdateAppAsync(PinnedAppId, app => app with
+        {
+            SourceState = app.SourceState! with { Commit = nextCommit },
+            // The generic recording adapter returns an endpoint this portless fixture never declares.
+            Endpoints = [],
+        });
+        if (dirty) await File.WriteAllTextAsync(Path.Combine(checkout, "package-lock.json"), "setup changed the lock");
+        var starts = adapter.StartCount;
+        var stops = adapter.StopCount;
+
+        var plan = await fixture.Service.CreateUpdatePlanAsync(PinnedAppId, new AppUpdatePlanRequest());
+        Assert.Empty(plan.Changes);
+        var verdict = Assert.Single(await fixture.Service.ListAppsAsync()).UpdateCheck!;
+        Assert.Equal(verdict.Error, plan.Error);
+        Assert.Equal(plan.Error, (await fixture.Service.GetPendingUpdatePlanAsync(PinnedAppId)).Plan!.Error);
+        if (running)
+        {
+            Assert.Contains(originalCommit, verdict.Error);
+            Assert.Contains(nextCommit, verdict.Error);
+            Assert.Contains(checkout, verdict.Error);
+            Assert.Contains("Restart", verdict.Error);
+            if (dirty) Assert.Contains("package-lock.json", verdict.Error);
+            Assert.Null(verdict.PlanDigest);
+            Assert.Null(verdict.LastSuccessfulCheckAt);
+        }
+        else Assert.Null(verdict.Error); // A stopped app materializes its pin on next start.
+        Assert.Equal(originalCommit, await RunGitAsync(checkout, ["rev-parse", "HEAD"]));
+        Assert.Equal(starts, adapter.StartCount);
+        Assert.Equal(stops, adapter.StopCount);
+
+        if (running && !dirty)
+        {
+            await fixture.Service.RestartAsync(PinnedAppId);
+            await fixture.Apps.UpdateAppAsync(PinnedAppId, app => app with { Endpoints = [] });
+            await fixture.Service.CreateUpdatePlanAsync(PinnedAppId, new AppUpdatePlanRequest());
+            var recovered = Assert.Single(await fixture.Service.ListAppsAsync()).UpdateCheck!;
+            Assert.Null(recovered.Error);
+            Assert.False(recovered.UpdateAvailable);
+            Assert.Equal(nextCommit, await RunGitAsync(checkout, ["rev-parse", "HEAD"]));
+        }
+    }
+
+    [Theory]
     [InlineData("worktree", false, false)]
     [InlineData("worktree", false, true)]
     [InlineData("worktree", true, false)]

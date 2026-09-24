@@ -6,6 +6,77 @@ namespace Haas.Hosty.Core.Tests;
 
 public sealed class LocalCommandRuntimeAdapterTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task StopAsync_PosixPortReleaseLagsRootExit_WaitsUntilPortCanBeRebound(bool rootAlreadyExited)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var workRoot = CreateTempDirectory();
+        var (adapter, registry, context) = CreateSetupScenario(workRoot, null, "sleep 30");
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        Task release = Task.CompletedTask;
+        try
+        {
+            await adapter.StartAsync(context);
+            var running = registry.Get(context.App.Id, "app")!;
+            listener.Start();
+            var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            // Control socket release independently of the process exit, reproducing the window in
+            // which an exited runner's service port has not yet become bindable.
+            registry.Set(context.App.Id, "app", running with { Ports = new Dictionary<string, int> { ["http"] = port } });
+            if (rootAlreadyExited)
+            {
+                running.Process.Kill(entireProcessTree: true);
+                await running.Process.WaitForExitAsync();
+            }
+            var stop = adapter.StopAsync(context);
+            release = Task.Run(async () =>
+            {
+                await Task.Delay(500);
+                listener.Stop();
+            });
+            await stop;
+
+            // No retry or awaiting release: immediate restart must be possible when Stop returns.
+            using var rebound = new TcpListener(IPAddress.Loopback, port);
+            rebound.Start();
+        }
+        finally
+        {
+            await release;
+            listener.Stop();
+            await adapter.StopAsync(context);
+            TryDeleteDirectory(workRoot);
+        }
+    }
+
+    [Fact]
+    public async Task StopAsync_PosixPortRemainsHeld_FailsWithoutKillingListener()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var workRoot = CreateTempDirectory();
+        var (adapter, registry, context) = CreateSetupScenario(workRoot, null, "sleep 30");
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        try
+        {
+            await adapter.StartAsync(context);
+            var running = registry.Get(context.App.Id, "app")!;
+            listener.Start();
+            var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            registry.Set(context.App.Id, "app", running with { Ports = new Dictionary<string, int> { ["http"] = port } });
+            var error = await Assert.ThrowsAsync<IOException>(() => adapter.StopAsync(context).WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.Contains("remain unavailable", error.Message);
+            Assert.False(RuntimePortHelper.IsLoopbackTcpPortAvailable(port));
+        }
+        finally
+        {
+            listener.Stop();
+            await adapter.StopAsync(context);
+            TryDeleteDirectory(workRoot);
+        }
+    }
+
     [Fact]
     public void MixedDiscovery_InjectsLoopbackEvenWithPublicLanHost()
     {

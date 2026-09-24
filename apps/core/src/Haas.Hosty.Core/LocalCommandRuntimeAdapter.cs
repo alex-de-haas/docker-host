@@ -903,19 +903,6 @@ internal sealed class LocalCommandRuntimeAdapter(
                         serviceKey);
                 }
 
-                if (OperatingSystem.IsWindows())
-                {
-                    // Windows can briefly retain a bound TCP endpoint after process exit is signaled.
-                    // Stop's contract includes immediate restart on the same Core-assigned ports.
-                    var ports = running.Ports.Values.Distinct().ToArray();
-                    var release = System.Diagnostics.Stopwatch.StartNew();
-                    while (ports.Any(port => !RuntimePortHelper.IsLoopbackTcpPortAvailable(port)))
-                    {
-                        if (release.Elapsed >= LogDrainTimeout)
-                            throw new IOException($"Ports for {appId}/{serviceKey} remain unavailable after process termination.");
-                        await Task.Delay(50, cancellationToken);
-                    }
-                }
             }
             catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
             {
@@ -938,6 +925,22 @@ internal sealed class LocalCommandRuntimeAdapter(
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             logger?.LogWarning(ex, "Failed to reclaim orphaned localCommand process for {AppId}/{Service}.", appId, serviceKey);
+        }
+
+        if (running is not null)
+        {
+            // Root exit is not a socket-release barrier: on POSIX, killed descendants may still be
+            // exiting; Windows can retain a bound endpoint after exit is signaled. Reclaim above
+            // must run first so an already-exited root's remaining process group is also stopped.
+            // Only wait on this registered/adopted service's ports; never kill a port's new holder.
+            var ports = running.Ports.Values.Distinct().ToArray();
+            var release = System.Diagnostics.Stopwatch.StartNew();
+            while (ports.Any(port => !RuntimePortHelper.IsLoopbackTcpPortAvailable(port)))
+            {
+                if (release.Elapsed >= LogDrainTimeout)
+                    throw new IOException($"Ports for {appId}/{serviceKey} remain unavailable after process termination.");
+                await Task.Delay(50, cancellationToken);
+            }
         }
     }
 
