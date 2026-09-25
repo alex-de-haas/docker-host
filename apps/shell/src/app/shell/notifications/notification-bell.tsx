@@ -9,7 +9,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { toast } from "sonner";
+import { toast } from "@/components/reui/operation-toast";
 import { cn } from "@/lib/utils";
 import { isAuthRequiredRedirectError } from "../core-api";
 import { CoreEventNames, subscribeToCoreEvents } from "../events/core-event-stream";

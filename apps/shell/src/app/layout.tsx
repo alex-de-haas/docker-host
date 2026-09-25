@@ -3,7 +3,6 @@ import { cookies } from "next/headers";
 import { Suspense } from "react";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
-import { Toaster } from "@/components/ui/sonner";
 import { ShellClient } from "./shell-client";
 import { getCoreOrigin, getShellAppId } from "./shell/server-env";
 import { RIGHT_PANEL_OPEN_PREF_KEY, SIDEBAR_COMPACT_PREF_KEY } from "./shell/shell-routes";
@@ -50,7 +49,6 @@ export default async function RootLayout({
               {children}
             </ShellClient>
           </Suspense>
-          <Toaster />
         </ThemeProvider>
       </body>
     </html>

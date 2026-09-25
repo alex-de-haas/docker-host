@@ -106,8 +106,10 @@ function formatMetricValue(unit: MetricUnit, value: number): string {
 
 function metricTitle(name: string): string {
   switch (name) {
+    case "process.cpu.percent":
     case "container.cpu.percent":
       return "CPU";
+    case "process.memory.bytes":
     case "container.memory.bytes":
       return "Memory";
     case "container.memory.percent":
@@ -140,7 +142,7 @@ export const INFRASTRUCTURE_GROUP = "Infrastructure";
 // Docker-stats CPU/memory series (name prefix `container.`). Kept out of the selectable set and
 // pinned to the top of the Metrics view.
 export function isInfrastructureMetric(name: string): boolean {
-  return name.startsWith("container.");
+  return name.startsWith("container.") || name === "process.cpu.percent" || name === "process.memory.bytes";
 }
 
 // Which "meter" (instrumentation scope) a series belongs to, for the selector tree. Infra series are

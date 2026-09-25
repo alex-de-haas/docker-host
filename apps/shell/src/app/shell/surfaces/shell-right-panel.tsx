@@ -1,8 +1,11 @@
 "use client";
 
-import { useState } from "react";
-import { LoaderCircle, Play } from "lucide-react";
+import { useId, useRef, useState } from "react";
+import { LoaderCircle, PanelsTopLeft, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { AppIcon } from "../app-icon";
+import { panelFocusIndex } from "./panel-rail-state";
 import { cn } from "@/lib/utils";
 import type { HostyResolvedTheme, HostyThemePreference } from "../types";
 import { EmbeddedAppFrame } from "../embedding/embedded-app-frame";
@@ -10,18 +13,9 @@ import type { DelegatedTokenGrant } from "../workspace/delegated-token-intent";
 import type { AppSurfaceTab } from "./app-surface-tabs";
 import { useAppSurfaceSrc } from "./use-app-surface-src";
 
-// Shell's right rail: tools that stay at hand while the workspace keeps the screen.
-//
-// The property that motivated it is **docking**. An overlay pinned to the right edge has to be
-// closed to read the page underneath, which is the root cause of the lost-draft report in
-// agent-background-sessions: the operator closed the assistant to copy the error they were asking
-// about. Docked, the error and the tool are legible at once.
-//
-// Shell owns the rail and nothing inside it. Each tab is an iframe from its app's own origin, so an
-// app ships an always-at-hand tool without Shell learning that tool's UI.
-
 export function ShellRightPanel({
   tabs,
+  expanded,
   activeTab,
   theme,
   themePreference,
@@ -37,6 +31,7 @@ export function ShellRightPanel({
   onAttention,
 }: {
   tabs: AppSurfaceTab[];
+  expanded: boolean;
   activeTab: AppSurfaceTab | null;
   theme: HostyResolvedTheme;
   themePreference: HostyThemePreference;
@@ -62,81 +57,39 @@ export function ShellRightPanel({
   attention?: Record<string, number>;
   onAttention?: (appId: string, count: number) => void;
 }) {
+  const bodyId = useId();
+  const buttons = useRef(new Map<string, HTMLButtonElement>());
+  const [focusedKey, setFocusedKey] = useState<string | null>(null);
+  const focusKey = tabs.some((tab) => tab.key === focusedKey) ? focusedKey : activeTab?.key ?? tabs[0]?.key;
+  // The rail alone must not launch an app. Once activated, retain only the selected body
+  // across collapse; switching still uses the existing single-frame lifecycle.
+  const [activatedKey, setActivatedKey] = useState<string | null>(null);
+  const bodyActivated = activeTab !== null && (expanded || activatedKey === activeTab.key);
+  if (expanded && activeTab && activatedKey !== activeTab.key) setActivatedKey(activeTab.key);
+  if (!expanded && activatedKey !== null && activatedKey !== activeTab?.key) setActivatedKey(null);
+
   // Readiness gates *opening* a tab, not the life of an open one. A key enters this set when its
   // service first reads ready — or when the operator opens it anyway — and stays: a frame already
   // on screen survives `healthy → degraded`, because a transient probe failure must not destroy what
   // the operator has typed. Only the lifecycle axis (embeddedUrl going null) unmounts it.
   const [openedKeys, setOpenedKeys] = useState<ReadonlySet<string>>(() => new Set());
-  const opened = activeTab !== null && (activeTab.readiness === "ready" || openedKeys.has(activeTab.key));
+  const opened = bodyActivated && activeTab !== null && (activeTab.readiness === "ready" || openedKeys.has(activeTab.key));
   // Adjust during render rather than in an effect (react.dev/learn/you-might-not-need-an-effect).
-  if (activeTab && activeTab.readiness === "ready" && !openedKeys.has(activeTab.key)) {
+  if (bodyActivated && activeTab && activeTab.readiness === "ready" && !openedKeys.has(activeTab.key)) {
     setOpenedKeys((current) => new Set(current).add(activeTab.key));
   }
 
   // No launch code is minted for a tab that is not open yet: `useAppSurfaceSrc` keys on the URL.
-  const embedTab = activeTab && !opened ? { ...activeTab, embeddedUrl: null } : activeTab;
+  const embedTab = !bodyActivated ? null : activeTab && !opened ? { ...activeTab, embeddedUrl: null } : activeTab;
   const { src, error } = useAppSurfaceSrc(embedTab, onOpenSurfaceFrame, "Could not open this panel.", reloadKey);
 
   return (
-    <aside className="flex h-full min-h-0 min-w-0 flex-col bg-sidebar text-sidebar-foreground">
-      <div className="flex items-center border-b px-2">
-        <div className="flex min-w-0 flex-1 items-center gap-3 overflow-x-auto overflow-y-hidden" role="tablist" aria-label="Panels">
-          {tabs.map((tab) => {
-            // Two separate questions. Whether the tab leads anywhere is answered by the URL alone —
-            // the surface rule has already folded the runtime state into it, and an app can also be
-            // running with no address resolved yet. Only the *wording* asks whether it is running,
-            // so a tab never dims for one reason and explains itself with another.
-            const unavailable = !tab.embeddedUrl;
-            const reason = tab.transitioning ? tab.runtimeState : tab.running ? "not reachable" : "not running";
-
-            return (
-            <button
-              key={tab.key}
-              type="button"
-              role="tab"
-              aria-selected={tab.key === activeTab?.key}
-              onClick={() => onSelectTab(tab.key)}
-              className={cn(
-                // The same underline treatment as the Settings page's tabs: one shape for "these are
-                // tabs" across Shell, rather than a second invention in the rail.
-                "shrink-0 border-b-2 py-2 text-xs transition-colors",
-                tab.key === activeTab?.key
-                  ? "border-foreground font-medium text-foreground"
-                  : "border-transparent text-muted-foreground hover:text-foreground",
-                // A stopped app keeps its tab rather than vanishing — dimmed, so the strip shows the
-                // tool exists and is merely not running.
-                unavailable && "opacity-60",
-              )}
-              title={unavailable ? `${tab.label} (${reason})` : tab.label}
-            >
-              {tab.label}
-              {/* Not a visible marker — the strip carries the state as dimming, and a glyph tried
-                  here read as decoration rather than as "stopped". Dimming reaches nobody using a
-                  screen reader, though, and `title` on a button that already has text is announced
-                  as its description at best, so the state is said outright for that reader alone. */}
-              {unavailable && <span className="sr-only">, {reason}</span>}
-              {(attention?.[tab.appId] ?? 0) > 0 && (
-                <>
-                  {/* On the tab, because the tab is on every page: a session that stops for a person
-                      is only findable if the trigger says so from wherever the operator happens to be.
-                      The dot is decoration; the words are what a screen reader reads, and an aria-label
-                      on a non-interactive span would not reach the button's accessible name. */}
-                  <span
-                    className="ml-1.5 inline-flex size-1.5 rounded-full bg-amber-500 align-middle"
-                    aria-hidden
-                  />
-                  <span className="sr-only">, {attention?.[tab.appId]} waiting for you</span>
-                </>
-              )}
-            </button>
-            );
-          })}
-        </div>
-      </div>
-
-      <div className="min-h-0 flex-1 bg-background">
+    <aside className="flex h-full min-h-0 min-w-0 text-foreground" aria-label="App panels">
+      <section id={bodyId} hidden={!expanded} inert={!expanded} aria-label={activeTab?.label}
+        className={cn("min-h-0 min-w-0 flex-1 flex-col bg-background", expanded ? "flex" : "hidden")}>
+        <div className="min-h-0 flex-1">
         <RightPanelBody
-          activeTab={activeTab}
+          activeTab={bodyActivated ? activeTab : null}
           opened={opened}
           onOpenAnyway={() => activeTab && setOpenedKeys((current) => new Set(current).add(activeTab.key))}
           src={src}
@@ -150,7 +103,46 @@ export function ShellRightPanel({
           onAttention={onAttention}
           onAskAssistant={onAskAssistant}
         />
-      </div>
+        </div>
+      </section>
+      <TooltipProvider delayDuration={350}>
+        <div role="toolbar" aria-label="Panels" aria-orientation="vertical"
+          className={cn("flex w-12 max-w-full shrink-0 flex-col items-center gap-1 overflow-y-auto overflow-x-hidden bg-background py-2", expanded && "border-l")}>
+          {tabs.map((tab, index) => {
+            const selected = expanded && tab.key === activeTab?.key;
+            const unavailable = !tab.embeddedUrl;
+            const reason = tab.transitioning ? tab.runtimeState : tab.running ? "not reachable" : "not running";
+            const waiting = attention?.[tab.appId] ?? 0;
+            const description = `${tab.appLabel || tab.appId} · ${tab.label}${unavailable ? ` (${reason})` : ""}${waiting > 0 ? ` · ${waiting} waiting for you` : ""}`;
+            return (
+              <Tooltip key={tab.key}>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" size="icon" type="button"
+                    ref={(element) => { if (element) buttons.current.set(tab.key, element); else buttons.current.delete(tab.key); }}
+                    tabIndex={tab.key === focusKey ? 0 : -1}
+                    aria-label={`${selected ? "Hide" : "Open"} ${description}`}
+                    aria-pressed={selected} aria-controls={bodyId}
+                    onFocus={() => setFocusedKey(tab.key)}
+                    onKeyDown={(event) => {
+                      const next = panelFocusIndex(event.key, index, tabs.length);
+                      if (next === null) return;
+                      event.preventDefault();
+                      buttons.current.get(tabs[next].key)?.focus();
+                    }}
+                    onClick={() => onSelectTab(tab.key)}
+                    className={cn("relative size-9 shrink-0 rounded-lg text-muted-foreground hover:text-foreground",
+                      selected && "bg-muted text-foreground shadow-xs ring-1 ring-border",
+                      unavailable && "opacity-60")}>
+                    <AppIcon src={null} name={tab.icon} fallback={PanelsTopLeft} className="size-5" />
+                    {waiting > 0 && <span aria-hidden className="absolute right-1 top-1 size-1.5 rounded-full bg-amber-500" />}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="left" sideOffset={10}>{description}</TooltipContent>
+              </Tooltip>
+            );
+          })}
+        </div>
+      </TooltipProvider>
     </aside>
   );
 }

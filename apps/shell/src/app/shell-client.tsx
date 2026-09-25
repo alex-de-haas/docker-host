@@ -7,7 +7,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LoaderCircle } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
-import { toast } from "sonner";
+import { toast, AssistantFeedbackContext, errorReportText, type ErrorReport } from "@/components/reui/operation-toast";
+import { useConfirmation } from "@/components/reui/confirmation";
+import { Toaster } from "@/components/ui/sonner";
 import { cn } from "@/lib/utils";
 import { findAppPageLink, getAppPageLinks } from "./shell/app-helpers";
 import { CoreRequestError, isAuthRequiredRedirectError, readCoreError, readCoreErrorDetail, redirectToCoreLogin, redirectToCoreLoginIfAuthRequired } from "./shell/core-api";
@@ -21,9 +23,10 @@ import { reconcileAppList } from "./shell/app-list-snapshot";
 import { AppDetailsDialog } from "./shell/dialogs/app-details-dialog";
 import { InstallDialog } from "@hosty-sdk/app/install/react";
 import { createInstallationClient, openInstallationConfirmation, showInstallationConfirmation } from "@hosty-sdk/app/install";
-import { assistantSupportsContext, createAppSession, findAssistantGateway } from "./shell/assistant/assistant-client";
+import { assistantSupportsContext, createAppSession, createErrorSession, findAssistantGateway } from "./shell/assistant/assistant-client";
 import { ShellSidebar } from "./shell/sidebar/shell-sidebar";
 import { ShellTopStrip } from "./shell/chrome/shell-top-strip";
+import { activatePanel } from "./shell/surfaces/panel-rail-state";
 import { ShellRightPanel } from "./shell/surfaces/shell-right-panel";
 import { ShellWorkspaceSplit } from "./shell/chrome/shell-workspace-split";
 import { getAppPanelTabs, getAppSettingsTabs, resolveSettingsSurface, resolveActiveSurfaceTab } from "./shell/surfaces/app-surface-tabs";
@@ -170,6 +173,22 @@ export function ShellClient({
     session: null,
     updatedAt: null,
   });
+  const { confirm, dialog: confirmationDialog } = useConfirmation(pathname ?? "");
+  const lastGlobalError = useRef<string | null>(null);
+  const lastWarnings = useRef(new Set<string>());
+  useEffect(() => {
+    if (state.error && state.error !== lastGlobalError.current) {
+      toast.error("Shell could not complete the request", { description: state.error, id: "shell-request-error" });
+    }
+    lastGlobalError.current = state.error;
+  }, [state.error]);
+  useEffect(() => {
+    const warnings = new Set(state.status?.warnings ?? []);
+    for (const warning of warnings) {
+      if (!lastWarnings.current.has(warning)) toast.warning("Host needs attention", { description: warning, duration: 12_000 });
+    }
+    lastWarnings.current = warnings;
+  }, [state.status?.warnings]);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [activePanel, setActivePanel] = useState<ActivePanel | null>(null);
   const [detailPanel, setDetailPanel] = useState<DetailPanelState>(emptyDetailPanelState);
@@ -536,7 +555,7 @@ export function ShellClient({
       return;
     }
 
-    if (!window.confirm("Update Core now? Core restarts on the new version; running apps keep running.")) {
+    if (!await confirm({ title: "Update Core?", description: "Core restarts on the new version; running apps keep running.", action: "Update Core" })) {
       return;
     }
 
@@ -599,7 +618,7 @@ export function ShellClient({
       setCoreUpdating(false);
       setPhase(undefined);
     }
-  }, [coreOrigin, coreUpdating, state.status?.version, sendCsrfJson]);
+  }, [confirm, coreOrigin, coreUpdating, state.status?.version, sendCsrfJson]);
 
   const appEndpoint = useCallback(
     (app: CoreApp, suffix: string) => `${coreOrigin}/api/apps/${encodeURIComponent(app.id)}${suffix}`,
@@ -707,7 +726,6 @@ export function ShellClient({
         const message = error instanceof Error ? error.message : "Unable to create app launch link.";
         setWorkspace(null);
         setState((current) => ({ ...current, error: message }));
-        toast.error("App launch failed", { description: message });
       } finally {
         if (pendingWorkspaceRoute.current === routeKey) {
           pendingWorkspaceRoute.current = null;
@@ -794,11 +812,13 @@ export function ShellClient({
       // page keeps working against Core either way (its Start button included), but new page loads
       // fail while the Shell is down — name the blast radius and get an explicit go-ahead first.
       if (app.id === shellAppId && (action === "stop" || action === "restart")) {
-        const confirmed = window.confirm(
-          action === "stop"
+        const confirmed = await confirm({
+          title: action === "stop" ? "Stop the Shell?" : "Restart the Shell?",
+          action: action === "stop" ? "Stop Shell" : "Restart Shell", destructive: action === "stop",
+          description: action === "stop"
             ? "Stop the Shell? Loading this UI in a new tab or reload will fail until it is started again — from this already-open page, `hosty apps start`, or a Core restart."
             : "Restart the Shell? This page reloads once the Shell answers again.",
-        );
+        });
         if (!confirmed) {
           return;
         }
@@ -835,13 +855,13 @@ export function ShellClient({
         }
 
         const message = error instanceof Error ? error.message : "Core lifecycle action failed.";
-        setState((current) => ({ ...current, error: message }));
-        toast.error("App action failed", { description: message });
+        toast.error("App action failed", { description: message, appId: app.id });
+        void refreshApps();
       } finally {
         setBusyAction((current) => (current === actionKey ? null : current));
       }
     },
-    [appEndpoint, refresh, sendCsrfJson, shellAppId],
+    [confirm, appEndpoint, refresh, refreshApps, sendCsrfJson, shellAppId],
   );
 
   const switchAppRuntime = useCallback(
@@ -873,13 +893,13 @@ export function ShellClient({
         }
 
         const message = error instanceof Error ? error.message : "Runtime switch failed.";
-        setState((current) => ({ ...current, error: message }));
-        toast.error("Runtime switch failed", { description: message });
+        toast.error("Runtime switch failed", { description: message, appId: app.id });
+        void refreshApps();
       } finally {
         setBusyAction((current) => (current === actionKey ? null : current));
       }
     },
-    [appEndpoint, invalidateUpdateStatus, refresh, sendCsrfJson],
+    [appEndpoint, invalidateUpdateStatus, refresh, refreshApps, sendCsrfJson],
   );
 
   const loadAppBackups = useCallback(
@@ -1023,7 +1043,7 @@ export function ShellClient({
         if (activePanel?.appId === app.id && activePanel.view === "backups") {
           setDetailPanel((current) => ({ ...current, loading: false, error: message }));
         }
-        toast.error("Backup failed", { description: message });
+        toast.error("Backup failed", { description: message, appId: app.id });
       } finally {
         setBusyAction((current) => (current === actionKey ? null : current));
       }
@@ -1033,7 +1053,7 @@ export function ShellClient({
 
   const restoreBackup = useCallback(
     async (app: CoreApp, backup: CoreBackup) => {
-      if (!window.confirm(`Restore backup ${backup.backupId}?`)) {
+      if (!await confirm({ title: "Restore backup?", description: `${app.displayName} · ${backup.backupId}. Restore this backup, creating a pre-restore backup first.`, action: "Restore backup", destructive: true })) {
         return;
       }
 
@@ -1058,12 +1078,12 @@ export function ShellClient({
         setBusyAction((current) => (current === actionKey ? null : current));
       }
     },
-    [appEndpoint, loadAppBackups, refresh, sendCsrfJson],
+    [confirm, appEndpoint, loadAppBackups, refresh, sendCsrfJson],
   );
 
   const deleteBackup = useCallback(
     async (app: CoreApp, backup: CoreBackup) => {
-      if (!window.confirm(`Delete backup ${backup.backupId}?`)) {
+      if (!await confirm({ title: "Delete backup?", description: `${app.displayName} · ${backup.backupId}. This backup will be permanently deleted.`, action: "Delete backup", destructive: true })) {
         return;
       }
 
@@ -1087,7 +1107,7 @@ export function ShellClient({
         setBusyAction((current) => (current === actionKey ? null : current));
       }
     },
-    [appEndpoint, loadAppBackups, sendCsrfJson],
+    [confirm, appEndpoint, loadAppBackups, sendCsrfJson],
   );
 
   const previewBackupCleanup = useCallback(
@@ -1127,7 +1147,7 @@ export function ShellClient({
 
   const applyBackupCleanup = useCallback(
     async (app: CoreApp, plan: CoreBackupCleanupPlan) => {
-      if (!window.confirm(`Delete ${plan.candidates.length} backup cleanup candidates?`)) {
+      if (!await confirm({ title: "Delete backup cleanup candidates?", description: `${app.displayName}: permanently delete ${plan.candidates.length} backups from the reviewed cleanup plan.`, action: "Delete backups", destructive: true })) {
         return;
       }
 
@@ -1161,7 +1181,7 @@ export function ShellClient({
         setBusyAction((current) => (current === actionKey ? null : current));
       }
     },
-    [appEndpoint, loadAppBackups, sendCsrfJson],
+    [confirm, appEndpoint, loadAppBackups, sendCsrfJson],
   );
 
   const revealAppSetting = useCallback(
@@ -1401,7 +1421,7 @@ export function ShellClient({
             expectRestart: isAppUp(app.runtimeState),
           });
           if (outcome.kind === "failed") {
-            toast.error("Shell update failed", { description: outcome.message });
+            toast.error("Shell update failed", { description: outcome.message, appId: app.id });
             void refresh();
             return;
           }
@@ -1434,6 +1454,7 @@ export function ShellClient({
         }
 
         toast.error("Update not started", {
+          appId: app.id,
           description: error instanceof Error ? error.message : "The update could not be started.",
         });
         // The verdict or pending plan may have moved — refresh so the row renders current reality.
@@ -1766,7 +1787,6 @@ export function ShellClient({
         const message = error instanceof Error ? error.message : "Unable to create app launch link.";
         setWorkspace(null);
         setState((current) => ({ ...current, error: message }));
-        toast.error("App launch failed", { description: message });
       } finally {
         if (!cancelled) {
           pendingWorkspaceRoute.current = null;
@@ -1984,6 +2004,19 @@ export function ShellClient({
     finally { creatingAssistantSession.current = false; setAssistantSessionPending(false); }
   }, [canManageApps, assistantGateway, appPanelTabs, issueDelegatedToken]);
 
+  const askErrorAssistant = useCallback(async (report: ErrorReport, requestId: string) => {
+    if (!canManageApps || !assistantGateway?.running) throw new Error("AI Gateway is unavailable.");
+    const tab = appPanelTabs.find(item => item.appId === assistantGateway.appId);
+    if (!tab) throw new Error("The assistant panel is unavailable. Refresh Shell and retry.");
+    const session = await createErrorSession(assistantGateway, refresh => issueDelegatedToken(assistantGateway.appId, refresh), report.appId, requestId);
+    setPanelOpen(true);
+    setActivePanelKey(tab.key);
+    setAssistantAsk(current => ({ message: {
+      type: "hosty:open-assistant-session", sessionId: session.id,
+      draft: errorReportText(report), sourceAppId: report.appId ?? shellAppId,
+    }, nonce: (current?.nonce ?? 0) + 1 }));
+  }, [canManageApps, assistantGateway, appPanelTabs, issueDelegatedToken, shellAppId]);
+
   const askAssistant = useCallback((text: string, sourceAppId: string) => {
     if (!askLimiter.current.tryAcquire(sourceAppId)) {
       return;
@@ -2023,7 +2056,7 @@ export function ShellClient({
       event.preventDefault();
       // Already looking at it means "put it away"; anything else means "bring it here", including
       // an open rail showing somebody else's panel.
-      const showing = rightPanelOpen && activePanelKey === assistantTab.key;
+      const showing = rightPanelOpen && resolveActiveSurfaceTab(appPanelTabs, activePanelKey)?.key === assistantTab.key;
       setPanelOpen(!showing);
       if (!showing) {
         setActivePanelKey(assistantTab.key);
@@ -2041,7 +2074,6 @@ export function ShellClient({
   const appSettingsSurfaceActive =
     effectiveView === "settings" && Boolean(resolveSettingsSurface(appSettingsTabs, shellRoute.settingsTab));
 
-  const rightPanelVisible = appPanelTabs.length > 0 && rightPanelOpen;
   const activePanelTab = useMemo(
     () => resolveActiveSurfaceTab(appPanelTabs, activePanelKey),
     [appPanelTabs, activePanelKey],
@@ -2201,11 +2233,12 @@ export function ShellClient({
   return (
     <ShellActionsContext.Provider value={shellActionsContextValue}>
       <ShellStateContext.Provider value={shellStateContextValue}>
-      <div className="flex h-dvh flex-col bg-muted/30">
+      <div className="flex h-dvh flex-col bg-sidebar">
         <ShellTopStrip
           title={stripTitle}
           subtitle={stripSubtitle}
           leftRailExpanded={!effectiveSidebarCompact}
+          navigationWidth={narrowViewport || sidebarCompact ? 60 : 280}
           onToggleLeftRail={() => setCompact(!effectiveSidebarCompact)}
           // Null while no installed app declares a panel surface: there is no rail to toggle, and a
           // control for chrome that does not exist is worse than no control.
@@ -2237,8 +2270,8 @@ export function ShellClient({
             onClick={() => setMobileSidebarOpen(false)}
           />
         )}
-        <aside className={cn(
-          "z-30 h-full overflow-visible border-r bg-sidebar text-sidebar-foreground",
+        <aside id="shell-navigation" className={cn(
+          "relative z-30 h-full overflow-visible bg-sidebar text-sidebar-foreground",
           narrowViewport && mobileSidebarOpen && "absolute inset-y-0 left-0 w-[280px] max-w-[85vw] shadow-lg",
         )}>
           <ShellSidebar
@@ -2280,14 +2313,19 @@ export function ShellClient({
         </aside>
         {narrowViewport && mobileSidebarOpen && <div aria-hidden />}
 
-        <ShellWorkspaceSplit initialPanelWidth={initialRightPanelWidth} panel={
-          rightPanelVisible ? (
+        <ShellWorkspaceSplit initialPanelWidth={initialRightPanelWidth} expanded={rightPanelOpen} panel={
+          appPanelTabs.length > 0 ? (
             <ShellRightPanel
               tabs={appPanelTabs}
+              expanded={rightPanelOpen}
               activeTab={activePanelTab}
               theme={shellResolvedTheme}
               themePreference={shellThemePreference}
-              onSelectTab={setActivePanelKey}
+              onSelectTab={(key) => {
+                const next = activatePanel(key, activePanelTab?.key ?? null, rightPanelOpen);
+                setActivePanelKey(next.key);
+                setPanelOpen(next.expanded);
+              }}
               onAuthRequired={handleSurfaceAuthRequired}
               resolveDelegatedTokenRequest={requestDelegatedTokenFor}
               onOpenSurfaceFrame={openSurfaceFrame}
@@ -2313,7 +2351,7 @@ export function ShellClient({
               appSettingsSurfaceActive && "bg-background",
             )}
           >
-            <main className={cn("w-full", (workspaceSurfaceActive || appSettingsSurfaceActive) ? "h-full" : "mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8")}>
+            <main className={cn("w-full", (workspaceSurfaceActive || appSettingsSurfaceActive) ? "h-full" : effectiveView === "dashboard" ? "mx-auto max-w-7xl space-y-6 px-3 py-4 sm:px-4" : "mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8")}>
               {workspace ? (
                 <EmbeddedWorkspacePanel
                   workspace={workspace}
@@ -2330,20 +2368,6 @@ export function ShellClient({
                 />
               ) : (
                 <>
-                  {state.error && (
-                    <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                      {state.error}
-                    </div>
-                  )}
-
-                  {state.status?.warnings?.length ? (
-                    <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
-                      {state.status.warnings.map((warning) => (
-                        <p key={warning}>{warning}</p>
-                      ))}
-                    </div>
-                  ) : null}
-
                   {state.loading && !state.status ? (
                     <EmptyState icon={LoaderCircle} title="Loading Core state" description="Waiting for Core status and current session." iconClassName="animate-spin" />
                   ) : (
@@ -2403,6 +2427,15 @@ export function ShellClient({
 
 
       </div>
+      {confirmationDialog}
+      <AssistantFeedbackContext.Provider value={{
+        installed: !!assistantGateway,
+        unavailableReason: !canManageApps ? "Host administrator access is required."
+          : !assistantGateway?.running ? "Start AI Gateway to ask the assistant."
+          : !appPanelTabs.some(tab => tab.appId === assistantGateway.appId) ? "The assistant panel is unavailable."
+          : undefined,
+        ask: askErrorAssistant,
+      }}><Toaster /></AssistantFeedbackContext.Provider>
       </ShellStateContext.Provider>
     </ShellActionsContext.Provider>
   );

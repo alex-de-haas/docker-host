@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, FolderGit2, GitBranch, LoaderCircle, Lock, Radio } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/components/reui/operation-toast";
 import { CoreSourceChangesDialog } from "./source/source-changes";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -129,7 +129,7 @@ export function CoreModeControl({ state, disabled, onChange }: { state: CoreDeve
 
   return (
     <TooltipProvider delayDuration={150}>
-      <div className="flex min-w-0 flex-wrap items-center gap-x-1">
+      <div className="flex min-w-0 items-center gap-x-1">
         <Tooltip>
           <TooltipTrigger asChild>
             <span tabIndex={0} className="min-w-0 cursor-help truncate font-mono text-sm">

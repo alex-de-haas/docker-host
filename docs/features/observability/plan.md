@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-07-03
-Updated: 2026-09-06
+Updated: 2026-09-25
 
 ## Goal
 
@@ -108,18 +108,10 @@ kernel.
 - [ ] **UI live tail.** Structured logs and Traces consume the stream through the UI's server routes;
       reconnect and backfill on drop; Metrics stay on the existing poll (charts do not benefit).
 - [ ] **trace→log correlation links** in the telemetry UI, both directions.
-- [ ] **Fleet heat-map** on Shell's Dashboard, served by Core rather than out of the telemetry
-      store. Its home looked contested only while the data was assumed to live in the backend: then a
-      Dashboard heat-map meant either resurrecting the deleted Core read proxy or giving Shell a direct
-      backend read, and putting it in the telemetry UI meant taking it off the landing page where its
-      value is. But "health/CPU/memory at a glance" is **current state, not a time series**, and Core
-      owns both halves already — it tracks per-app health, and `DockerStatsExposition` runs
-      `docker stats` with the host-level access the backend deliberately lacks. So the heat-map reads
-      one Core summary endpoint, no telemetry data path is involved, and it keeps working on a host
-      with observability off — the same reason console logs stayed in Shell. It must **not** reuse the
-      exposition's cached snapshot, which idles empty unless the telemetry app is installed and
-      running; the Dashboard read samples on demand, so a host nobody is looking at pays nothing.
-      Trends and sparklines are a different feature and stay in the telemetry UI.
+- [x] **Fleet resource views.** Implemented in [Unified runtime resource usage](../runtime-resource-usage/feature.md).
+      The owner decision on 2026-09-25 replaces the earlier snapshot-only heat-map: Dashboard uses
+      the same Docker/localCommand sampler as telemetry, with a short bounded history in Core RAM.
+      Telemetry continues to persist its slower scrape independently.
 - [x] **Core log buffers + `GET /api/core/logs`.** Two fixed-capacity rings fed by one
       `ILoggerProvider` registered in `HostyCoreApplication.ConfigureServices`; every record carries
       timestamp, level, category, message, exception, and a monotonic sequence number, and the process

@@ -214,10 +214,8 @@ public sealed class DockerStatsExpositionTests
             AuthRoot: Path.Combine(root, "core", "auth"),
             AuditLogPath: Path.Combine(root, "core", "audit", "audit.ndjson"));
         return new DockerStatsExposition(
-            new AppRegistryStore(paths),
             runner,
-            clock ?? new FakeClock(DateTimeOffset.Parse("2026-08-28T10:00:00Z")),
-            Microsoft.Extensions.Logging.Abstractions.NullLogger<DockerStatsExposition>.Instance);
+            clock ?? new FakeClock(DateTimeOffset.Parse("2026-08-28T10:00:00Z")));
     }
 
     private sealed class RecordingDockerRunner : IDockerCommandRunner

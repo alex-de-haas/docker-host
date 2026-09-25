@@ -20,6 +20,28 @@ public sealed class AppRegistryStoreTests
         Assert.Equal(granted ? [CoreAppPermissions.Install, CoreAppPermissions.Update] : Array.Empty<string>(), summary.GrantedCorePermissions);
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("bot")]
+    [InlineData("contact-round")]
+    public async Task PanelIconsSurviveStorageAndSummaryProjectionIncludingLegacyNull(string? icon)
+    {
+        var paths = CreatePaths(await CreateTempRootAsync());
+        await new AppRegistryStore(paths).UpsertAppAsync(CreateApp("com.example.notes") with
+        {
+            Ui = AppUiContract.FromManifest(new RuntimeAppUiManifest
+            {
+                PortKey = "http",
+                Panels = [new RuntimeAppUiSurfaceManifest { Path = "/panel", Label = "Tool", Icon = icon is null ? null : $" {icon} " }],
+            }),
+        });
+        var summary = Assert.Single(await new AppRegistryStore(paths).ListAppsAsync());
+        var panel = Assert.Single(summary.PanelSurfaces);
+        Assert.Equal(icon, panel.Icon);
+        Assert.Equal("Tool", panel.Label);
+        Assert.Equal("/panel", panel.Path);
+    }
+
     [Fact]
     public async Task ListAppsAsync_ReadsAppNativeRecords()
     {

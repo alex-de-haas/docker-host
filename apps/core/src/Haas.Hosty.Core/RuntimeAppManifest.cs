@@ -55,7 +55,8 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
         string manifestPath,
         string? selectedRuntime = null,
         CancellationToken cancellationToken = default,
-        bool validateAllProfiles = false)
+        bool validateAllProfiles = false,
+        bool requirePanelIcons = false)
     {
         if (string.IsNullOrWhiteSpace(manifestPath))
         {
@@ -71,7 +72,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
             localManifestCache.TryGetValue(localPath, out var cached) &&
             cached.Stamp == stamp)
         {
-            return Select(cached.Manifest, localPath, cached.Digest, selectedRuntime, cached.Json, manifestUrl: null, validateAllProfiles: validateAllProfiles);
+            return Select(cached.Manifest, localPath, cached.Digest, selectedRuntime, cached.Json, manifestUrl: null, validateAllProfiles: validateAllProfiles, requirePanelIcons: requirePanelIcons);
         }
 
         var source = await ReadManifestSourceAsync(trimmed, cancellationToken);
@@ -96,7 +97,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
             localManifestCache[localPath] = new CachedLocalManifest(manifest, source.Json, digest, stamp);
         }
 
-        return Select(manifest, source.Reference, digest, selectedRuntime, source.Json, source.ManifestUrl, validateAllProfiles: validateAllProfiles);
+        return Select(manifest, source.Reference, digest, selectedRuntime, source.Json, source.ManifestUrl, validateAllProfiles: validateAllProfiles, requirePanelIcons: requirePanelIcons);
     }
 
     // Mirrors ReadManifestSourceAsync/ReadLocalManifestAsync resolution for the cache key: null for a
@@ -473,7 +474,8 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
         string? selectedRuntime = null,
         string? manifestJson = null,
         string? manifestUrl = null,
-        bool validateAllProfiles = true)
+        bool validateAllProfiles = true,
+        bool requirePanelIcons = false)
     {
         var errors = new List<AppManifestValidationError>();
         ValidateRequired(manifest.SchemaVersion, "$.schemaVersion", errors);
@@ -489,6 +491,16 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
         if (manifest.Role is not null && !string.Equals(manifest.Role, "system", StringComparison.Ordinal))
         {
             errors.Add(new("app_manifest_role_unsupported", "role must be omitted or the string 'system'.", "$.role"));
+        }
+
+        // New authoring requirements do not invalidate already installed manifests at startup.
+        if (requirePanelIcons && manifest.Ui is { } ui)
+        {
+            for (var index = 0; index < ui.Panels.Count; index++)
+            {
+                if (string.IsNullOrWhiteSpace(ui.Panels[index].Icon))
+                    errors.Add(new("app_manifest_ui_panel_icon_required", "Each panel requires a Lucide icon name.", $"$.ui.panels[{index}].icon"));
+            }
         }
 
         ValidateProvides(manifest.Provides, errors);
@@ -849,7 +861,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
         if (validateAllProfiles)
         {
             foreach (var other in manifest.RuntimeProfiles.Where(profile => profile.Key != selectedProfile!.Key))
-                Select(manifest, manifestPath, manifestDigest, other.Key, manifestJson, manifestUrl, validateAllProfiles: false);
+                Select(manifest, manifestPath, manifestDigest, other.Key, manifestJson, manifestUrl, validateAllProfiles: false, requirePanelIcons: requirePanelIcons);
         }
         _ = DockerRuntimeAdapter.OrderServices(selectedServices);
 
@@ -3719,6 +3731,8 @@ internal sealed class RuntimeAppUiManifest
 /// </remarks>
 internal sealed class RuntimeAppUiSurfaceManifest
 {
+    // Required for newly installed/updated panels; nullable for legacy records and settings.
+    public string? Icon { get; init; }
     public string? Endpoint { get; init; }
     public string? PortKey { get; init; }
     public string? Path { get; init; }

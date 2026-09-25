@@ -345,6 +345,9 @@ export class SessionManager {
   async postMessage(id: string, text: string, credential?: string, attachments: string[] = [], context: { expectedRevision?: unknown; withoutDetails?: boolean } = {}): Promise<void> {
     return this.serialize(id, async () => {
       const session = await this.requireLive(id);
+      if (["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) {
+        throw new SessionBusyError();
+      }
       let release: (() => void) | undefined;
       try {
         let selectedAdapter = this.adapter;
@@ -1180,6 +1183,12 @@ export class SessionManager {
 export class SessionNotFoundError extends Error {
   constructor(id: string) {
     super(`session not found: ${id}`);
+  }
+}
+
+export class SessionBusyError extends Error {
+  constructor() {
+    super("Wait for the current response to finish or stop it before sending another message.");
   }
 }
 

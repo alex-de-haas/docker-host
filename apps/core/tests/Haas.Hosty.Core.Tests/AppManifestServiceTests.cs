@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Haas.Hosty.Core;
 
 namespace Haas.Hosty.Core.Tests;
@@ -155,6 +156,50 @@ public sealed class AppManifestServiceTests
         var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
 
         Assert.Contains(error.Errors, candidate => candidate.Code == "app_manifest_system_ui_endpoint_unknown");
+    }
+
+    [Theory]
+    [InlineData(null, null)]
+    [InlineData(null, "")]
+    [InlineData(null, "   ")]
+    [InlineData("system", null)]
+    [InlineData("system", "")]
+    [InlineData("system", "   ")]
+    public async Task LoadAsync_PanelIconsAreRequiredForNewManifestsButNotLegacyReads(string? role, string? icon)
+    {
+        var manifestPath = await WriteSystemUiManifestAsync(role, $$"""
+            , "ui": {
+                "entrypoint": { "endpoint": "web", "path": "/" },
+                "settings": { "endpoint": "web", "path": "/settings" },
+                "panels": [{ "endpoint": "web", "path": "/panel", "label": "Assistant", "icon": {{JsonSerializer.Serialize(icon)}} }]
+              }
+            """);
+        var service = new AppManifestService();
+        // Normal reconciliation/start accepts old manifests, including before and after a strict
+        // read of the same parse-cache entry. Install and update opt into the authoring contract.
+        await service.LoadAsync(manifestPath);
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => service.LoadAsync(manifestPath, requirePanelIcons: true));
+        Assert.Contains(error.Errors, candidate => candidate.Code == "app_manifest_ui_panel_icon_required" && candidate.Path == "$.ui.panels[0].icon");
+        await service.LoadAsync(manifestPath);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("system")]
+    public async Task LoadAsync_PanelIconsAcceptDistinctToolsAndSettingsNeedNoIcon(string? role)
+    {
+        var manifestPath = await WriteSystemUiManifestAsync(role, """
+            , "ui": {
+                "entrypoint": { "endpoint": "web", "path": "/" },
+                "settings": { "endpoint": "web", "path": "/settings" },
+                "panels": [
+                    { "endpoint": "web", "path": "/panel", "label": "Assistant", "icon": "bot" },
+                    { "endpoint": "web", "path": "/session", "label": "Session", "icon": "contact-round" }
+                ]
+              }
+            """);
+        var selection = await new AppManifestService().LoadAsync(manifestPath, validateAllProfiles: true, requirePanelIcons: true);
+        Assert.Equal(new[] { "bot", "contact-round" }, selection.Manifest.Ui!.Panels.Select(panel => panel.Icon));
     }
 
     [Fact]
@@ -1165,6 +1210,17 @@ public sealed class AppManifestServiceTests
         var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
 
         Assert.Contains(error.Errors, candidate => candidate.Code == "app_runtime_artifact_unsupported");
+    }
+
+    [Theory]
+    [InlineData("ai-gateway", "bot")]
+    [InlineData("demo-app", "contact-round")]
+    public async Task LoadAsync_FirstPartyPanelsMeetTheAuthoringContract(string app, string expectedIcon)
+    {
+        var selection = await new AppManifestService().LoadAsync(
+            ResolveRepoFile(Path.Combine("apps", app, "manifest.json")),
+            validateAllProfiles: true, requirePanelIcons: true);
+        Assert.Equal(expectedIcon, Assert.Single(selection.Manifest.Ui!.Panels).Icon);
     }
 
     [Fact]

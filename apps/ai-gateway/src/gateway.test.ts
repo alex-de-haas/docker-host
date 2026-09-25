@@ -495,6 +495,23 @@ describe("gateway", () => {
     unsubscribe();
   });
 
+  it.each(["write a file", "ask a question"])("rejects a second message while waiting, then accepts it after Stop (%s)", async (text) => {
+    const record = await manager.createSession({ createdBy: "user_admin" });
+    const send = (text: string) => call(`/api/sessions/${record.id}/messages`, {
+      method: "POST", body: JSON.stringify({ text }),
+    });
+    expect((await send(text)).status).toBe(202);
+    await waitFor(async () => (await manager.getSession(record.id))?.status.startsWith("awaiting_"), "interactive request");
+    const refused = await send("next message");
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({ code: "session_busy" });
+    expect((await store.readEvents(record.id)).filter(event => event.type === "user_message")).toHaveLength(1);
+    expect((await call(`/api/sessions/${record.id}/cancel`, { method: "POST" })).status).toBe(200);
+    expect((await send("next message")).status).toBe(202);
+    await waitFor(async () => (await manager.getSession(record.id))?.status === "idle", "next response");
+    expect((await store.readEvents(record.id)).filter(event => event.type === "user_message").map(event => event.text)).toEqual([text, "next message"]);
+  });
+
   it("cancels a session and reports 404 for unknown ones", async () => {
     const record = (await (
       await call("/api/sessions", { method: "POST", body: "{}" })

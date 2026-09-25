@@ -1,11 +1,13 @@
 # AI Gateway Chat Components
 
 Created: 2026-09-22
-Updated: 2026-09-22
+Updated: 2026-09-25
 
 The [AI Gateway assistant](../ai-gateway/feature.md#shell-surface) uses Message Scroller,
 Code Block, Attachment, Input Group and collapsible activity in its existing Radix/shadcn
 interface. The app remains on its existing design tokens and Button implementation.
+
+Shell's [operation feedback](../shell-operation-feedback/feature.md) can open a newly created session with an error draft. The authenticated session lookup precedes draft insertion; existing drafts are preserved, source provenance is visible, oversized errors carry a truncation notice, and nothing is automatically sent.
 
 ## Component Sources
 
@@ -48,7 +50,14 @@ their existing diff presentation and limits.
 
 One Input Group contains the full-width text field, selected attachments and a bottom
 action row. Attachment selection and app-context chips sit on the left; Send sits on the
-right. Enter sends, Shift+Enter inserts a newline, and IME composition does not send.
+right. While the agent is running or waiting for approval/an answer, the same button
+shows Stop and cancels the active run through the existing session cancellation API.
+The separate header Stop button is absent. History is retained, and the next message
+can continue the conversation after cancellation. The composer remains editable during
+a response, but neither Enter nor form submission sends another message until the run
+finishes or stops. Drafts are not queued or sent automatically. The messages API rejects
+busy sessions with HTTP 409 (`session_busy`) before recording another user message.
+When idle, Enter sends, Shift+Enter inserts a newline, and IME composition does not send.
 This layout does not change provider locking or add model selection or starter prompts.
 
 The app-context popover retains search, paging, the 16-app limit and revision-conflict
@@ -99,6 +108,11 @@ order. Group labels do not assert execution success, because a recorded call alo
 not establish its outcome.
 
 ## Testing Expectations
+
+Composer tests cover running/waiting states, Enter and submit guards, draft retention,
+stop failure/retry, send failure, and completion before or after the HTTP response.
+Gateway API tests verify that busy sends are rejected without transcript changes and
+that sending resumes after cancellation.
 
 - Run `npm run ai-gateway:test`, including chat-rendering tests for unfinished code fences,
   inline code and URL policy, attachment errors, and transcript association after replay.

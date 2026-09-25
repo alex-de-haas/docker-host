@@ -16,6 +16,7 @@
 // app-facing subscriptions ship, so migrating is a move rather than a redesign.
 
 export const CoreEventNames = {
+  resourcesChanged: "resources.changed",
   appChanged: "app.changed",
   appRemoved: "app.removed",
   appUpdateCheckChanged: "app.update-check.changed",

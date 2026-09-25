@@ -1,7 +1,7 @@
 # AI Gateway Provider Connections
 
 Created: 2026-09-17
-Updated: 2026-09-18
+Updated: 2026-09-23
 
 ## Behavior
 
@@ -43,7 +43,13 @@ and changed app instructions. Switching tabs preserves unsaved form state. The e
 `/settings/providers`, `/settings/prompt`, and `/settings/access` URLs open this same tabbed page
 with the corresponding initial selection. The full-workspace iframe keeps modal overlays over all
 Gateway settings content, including its tabs.
-MCP rows vertically center their approval dropdown and enable switch alongside the provider details.
+MCP access uses a searchable application list and a detail panel for the selected application.
+Hosty Core appears first. Each entry shows its confirmed access state and marks instruction updates
+that need review. The detail panel groups the access switch and approval dropdown into labelled
+rows; changes save immediately and failed saves retain the confirmed values. Approval semantics
+remain provider-specific. Changed instructions appear in the selected application's panel with the
+full text and its existing approval action. Pending instructions remain reachable even when app
+discovery cannot return their provider. On narrow screens the list sits above the detail panel.
 
 ## Chats and capabilities
 
@@ -145,6 +151,11 @@ and the default connection and persisted provider override in an empty chat.
 Gateway version: **0.29.0 → 0.30.0**; Core and SDK contracts are unchanged.
 
 ## Testing Expectations
+
+- MCP access selection and search do not mutate permissions. Switching applications during a save
+  keeps the original target, failed saves retain confirmed values, and harness-specific disabled
+  controls remain disabled. Pending instruction reviews remain reachable during discovery failure
+  and approve the complete displayed text. Check desktop, narrow layouts, and empty search results.
 
 - Windows storage setup succeeds without symlink privileges for both providers; removing cache
   preserves durable history, and recognized storage errors contain no paths or credentials.

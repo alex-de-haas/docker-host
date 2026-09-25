@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Globe, LoaderCircle } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/components/reui/operation-toast";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";

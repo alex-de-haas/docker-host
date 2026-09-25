@@ -4,6 +4,7 @@ import { SourceChangesButton } from "../source/source-changes";
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Archive, Database, FileText, FolderGit2, HardDrive, Info, LoaderCircle, Lock, Plus, Radio, RefreshCw, Rss, Settings, Sparkles, Trash2, TriangleAlert, Upload } from "lucide-react";
+import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -108,20 +109,25 @@ export function AppDetailsDialog({
   const canConfigureApp = canManageApps;
   const canUpdateApp = canManageApps;
 
+  const SurfaceDialog = view === "remove" ? AlertDialog : Dialog;
+  const SurfaceDialogContent = view === "remove" ? AlertDialogContent : DialogContent;
+  const SurfaceDialogHeader = view === "remove" ? AlertDialogHeader : DialogHeader;
+  const SurfaceDialogTitle = view === "remove" ? AlertDialogTitle : DialogTitle;
+  const SurfaceDialogDescription = view === "remove" ? AlertDialogDescription : DialogDescription;
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className={view === "logs" ? "w-[calc(100%-2rem)] sm:max-w-7xl" : "sm:max-w-3xl"}>
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
+    <SurfaceDialog open onOpenChange={(open) => { if (!open && busyAction !== `${app.id}:remove`) onClose(); }}>
+      <SurfaceDialogContent className={view === "logs" ? "w-[calc(100%-2rem)] sm:max-w-7xl" : "sm:max-w-3xl"}>
+        <SurfaceDialogHeader>
+          <SurfaceDialogTitle className="flex items-center gap-2">
             <span className="min-w-0 truncate">{detailTitle(view)} · {app.displayName}</span>
             {onAskAssistant && (
               <Button type="button" variant="outline" size="sm" className="mr-6 ml-auto" onClick={onAskAssistant}>
                 <Sparkles /> Ask assistant
               </Button>
             )}
-          </DialogTitle>
-          <DialogDescription>{app.id}</DialogDescription>
-        </DialogHeader>
+          </SurfaceDialogTitle>
+          <SurfaceDialogDescription>{app.id}</SurfaceDialogDescription>
+        </SurfaceDialogHeader>
         {detail.error && <InlineError message={detail.error} />}
         {view === "backups" && (canManageApps ? (
           <BackupsPanel
@@ -170,8 +176,8 @@ export function AppDetailsDialog({
           />
         )}
         {view === "logs" && <ConsoleLogsPanel app={app} coreOrigin={coreOrigin} />}
-      </DialogContent>
-    </Dialog>
+      </SurfaceDialogContent>
+    </SurfaceDialog>
   );
 }
 
@@ -1288,12 +1294,13 @@ function RemovePanel({
           <CheckboxRow label="Ignore runtime errors" checked={options.ignoreRuntimeErrors} disabled={!canRemove} onChange={(checked) => setOptions((current) => ({ ...current, ignoreRuntimeErrors: checked }))} />
         </div>
       </DialogBody>
-      <DialogFooter>
+      <AlertDialogFooter>
+        <AlertDialogCancel disabled={busyAction === `${app.id}:remove`}>Cancel</AlertDialogCancel>
         <Button variant="destructive" onClick={() => onRemove(app, options)} disabled={!canRemove || busyAction === `${app.id}:remove`}>
           {busyAction === `${app.id}:remove` ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
           Remove app
         </Button>
-      </DialogFooter>
+      </AlertDialogFooter>
     </div>
   );
 }

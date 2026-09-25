@@ -83,7 +83,7 @@ export function ShellSidebar({
   return (
     <div className="flex h-full min-h-0 flex-col">
 
-      <nav className={cn("min-h-0 flex-1 overflow-y-auto py-4 pl-3", compact ? "pr-[11px]" : "pr-3")} aria-label="Host navigation">
+      <nav className="min-h-0 flex-1 overflow-y-auto px-3 py-4" aria-label="Host navigation">
         <div className={cn(compact ? "space-y-4" : "space-y-6")}>
           <NavigationSection title="Host" compact={compact}>
             {canManageApps && <SidebarButton compact={compact} active={activeView === "dashboard" && !workspace} icon={Gauge} label="Dashboard" onClick={() => onNavigate("dashboard")} />}
@@ -132,7 +132,7 @@ export function ShellSidebar({
         </div>
       </nav>
 
-      <div className={cn("shrink-0 border-t p-3", compact ? "space-y-2" : "space-y-3")}>
+      <div className={cn("shrink-0 p-3", compact ? "space-y-2" : "space-y-3")}>
         <SidebarFooterAccount compact={compact} coreOrigin={coreOrigin} activeUser={activeUser} />
       </div>
     </div>

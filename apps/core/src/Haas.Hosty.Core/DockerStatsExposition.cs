@@ -3,31 +3,20 @@ using System.Text;
 
 namespace Haas.Hosty.Core;
 
-// Observability Phase 2 (Core producer): collects container infra metrics with `docker stats` — which
-// need the host-level Docker access the telemetry backend deliberately lacks — and re-exposes them as a
-// Prometheus text snapshot the backend scrapes as a second target (alongside the collector). Each
-// series is attributed to its app via the `hosty_app_id` label the backend already keys on, so the
-// backend stores docker stats uniformly with app OTLP metrics. This replaces the docker-stats half of
-// the old TelemetryScrapeService; Core no longer keeps a metric store of its own. Gated on the
-// telemetry app being installed — the flag that used to control this folded into the bootstrap
-// catalog (removable-system-apps), so installing it starts stats flowing without a Core restart —
-// and best-effort: a docker-less host simply exposes nothing.
-// See docs/features/observability/feature.md.
+// Container acquisition and legacy Prometheus formatting. RuntimeResourceSampler is the only
+// producer; Dashboard and Telemetry share its cached samples without duplicate docker processes.
 internal sealed class DockerStatsExposition(
-    AppRegistryStore apps,
     IDockerCommandRunner dockerRunner,
     IClock clock,
-    ILogger<DockerStatsExposition> logger,
     // Runtime config, for the instance id that keeps a secondary-root Core from attributing (and
     // double-reporting) the default root's containers. Optional only for unit fixtures, which then
     // scrape as the default instance; production DI always supplies it.
-    HostyCoreRuntimeConfig? runtimeConfig = null) : BackgroundService
+    HostyCoreRuntimeConfig? runtimeConfig = null)
 {
     // The root's instance identity; empty = the default instance, which also matches containers
     // that predate the hosty.instance label.
     private readonly string instanceId = runtimeConfig?.InstanceId ?? "";
 
-    private static readonly TimeSpan Interval = TimeSpan.FromSeconds(10);
 
     // Longest a cached owner map may be trusted. Container names are derived, and derivation is not
     // injective — BuildContainerName normalizes punctuation, so app `foo.bar` and app `foo-bar` with
@@ -48,9 +37,6 @@ internal sealed class DockerStatsExposition(
     internal const string ContainerMemoryBytesMetric = "container.memory.bytes";
     internal const string ContainerMemoryPercentMetric = "container.memory.percent";
 
-    // Latest rendered snapshot, swapped atomically each tick and served by the exposition endpoint.
-    private volatile string current = string.Empty;
-
     // Container → owning app, cached across ticks. `docker ps` answers a question that changes when an
     // app starts, stops or is installed — not every ten seconds — so re-reading it with a process spawn
     // per tick was pure repetition. Refreshed when the map is empty (nothing running yet, which is
@@ -64,41 +50,13 @@ internal sealed class DockerStatsExposition(
     private static readonly IReadOnlyDictionary<string, ContainerStatOwner> EmptyOwners =
         new Dictionary<string, ContainerStatOwner>(StringComparer.Ordinal);
 
-    public string CurrentPrometheusText => current;
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        await Task.Yield();
-        using var timer = new PeriodicTimer(Interval);
-        do
-        {
-            try
-            {
-                // Observability follows the telemetry app: unless it is installed AND running,
-                // nothing scrapes this producer (the scraping backend is one of its services), so
-                // the tick idles with an empty snapshot instead of running docker commands nobody
-                // consumes. Checked per tick so a live enable through the bootstrap endpoints or a
-                // plain app start takes effect without a Core restart.
-                var collector = await apps.GetAppAsync(CollectorBootstrap.AppId, stoppingToken);
-                current = AppRuntimeStates.IsUp(collector?.RuntimeState)
-                    ? await BuildSnapshotAsync(stoppingToken)
-                    : string.Empty;
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "Docker stats exposition tick failed.");
-            }
-        }
-        while (await timer.WaitForNextTickAsync(stoppingToken));
-    }
+    public IReadOnlyList<RuntimeResourceSample> Samples { get; private set; } = [];
 
     // Internal (not private) so the owner-map caching can be exercised without driving the timer.
     internal async Task<string> BuildSnapshotAsync(CancellationToken cancellationToken)
     {
+        Samples = [];
         if (owners.Count == 0)
         {
             owners = await LoadContainerOwnersAsync(cancellationToken);
@@ -138,6 +96,7 @@ internal sealed class DockerStatsExposition(
         }
 
         var builder = new StringBuilder();
+        var samples = new List<RuntimeResourceSample>();
         foreach (var stat in stats)
         {
             if (!owners.TryGetValue(stat.ContainerName, out var owner))
@@ -145,24 +104,29 @@ internal sealed class DockerStatsExposition(
                 continue;
             }
 
-            if (stat.CpuPercent is { } cpu)
+            samples.Add(new RuntimeResourceSample(owner.AppId, owner.Service, "docker", clock.UtcNow,
+                Sanitize(stat.CpuPercent), Sanitize(stat.MemoryBytes), Sanitize(stat.MemoryPercent)));
+            if (Sanitize(stat.CpuPercent) is { } cpu)
             {
                 AppendSample(builder, ContainerCpuPercentMetric, owner.AppId, owner.Service, cpu);
             }
 
-            if (stat.MemoryBytes is { } memoryBytes)
+            if (Sanitize(stat.MemoryBytes) is { } memoryBytes)
             {
                 AppendSample(builder, ContainerMemoryBytesMetric, owner.AppId, owner.Service, memoryBytes);
             }
 
-            if (stat.MemoryPercent is { } memoryPercent)
+            if (Sanitize(stat.MemoryPercent) is { } memoryPercent)
             {
                 AppendSample(builder, ContainerMemoryPercentMetric, owner.AppId, owner.Service, memoryPercent);
             }
         }
 
+        Samples = samples;
         return builder.ToString();
     }
+
+    private static double? Sanitize(double? value) => value is >= 0 && double.IsFinite(value.Value) ? value : null;
 
     private async Task<IReadOnlyDictionary<string, ContainerStatOwner>> LoadContainerOwnersAsync(CancellationToken cancellationToken)
     {
