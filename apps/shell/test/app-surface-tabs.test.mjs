@@ -233,3 +233,14 @@ test("settings use one app-named entry and accept previous page-specific bookmar
   assert.equal(resolveSettingsSurface(tabs, "com.example.app#http:%2Fsettings%2Fproviders"), tabs[0]);
   assert.equal(resolveSettingsSurface(tabs, "removed.app"), undefined);
 });
+
+test("panel icons keep each tool distinct and preserve legacy and unknown declarations", () => {
+  const tabs = getAppPanelTabs([app({ panelSurfaces: [
+    { path: "/a", label: "Assistant", icon: " bot " },
+    { path: "/b", label: "Session", icon: "contact-round" },
+    { path: "/c", label: "Legacy" },
+    { path: "/d", label: "New tool", icon: "future-icon" },
+  ] })]);
+  assert.deepEqual(tabs.map(tab => tab.icon), ["bot", "contact-round", null, "future-icon"]);
+  assert.equal(new Set(tabs.map(tab => tab.key)).size, 4);
+});

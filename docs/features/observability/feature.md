@@ -1,15 +1,15 @@
 # Feature: Observability (telemetry collection, storage, and UI)
 
 Created: 2026-06-28
-Updated: 2026-09-17
+Updated: 2026-09-25
 
 Runtime apps export OpenTelemetry to a collector; a Hosty-native **telemetry backend** stores the
 three signals in embedded SQLite and serves a query API; a **telemetry UI** system app renders
 Metrics / Structured logs / Traces. All three run as services of one installable system app,
 `hosty.telemetry`.
 
-Core is **not** on the telemetry read path. It contributes what needs host Docker access —
-`docker stats` infra metrics, re-exposed as a Prometheus endpoint the backend scrapes, and the
+Core is **not** on the persisted telemetry query path. It contributes host resource metrics —
+Docker and local process samples, re-exposed as a Prometheus endpoint the backend scrapes, and the
 on-demand `docker logs` console tail Shell shows per app — plus the lifecycle and wiring that hands
 every producer its endpoint. It also keeps **its own** log records in memory, serves them to Shell,
 and lets the telemetry backend pull them — the one stream nothing else can produce, because Core is
@@ -45,9 +45,10 @@ UI run from source. They share the same app data and use consumer-specific peer 
 runtime apps ──OTLP/HTTP────▶│ collector (otelcol)                                        │
   (opt-in telemetry)         │   ├─ Prometheus /metrics ─────────scrape────▶ backend      │
                              │   └─ file sinks: logs.jsonl, traces.jsonl ──tail──▶ backend│
-Core ──docker stats─────────▶│ backend: embedded SQLite + query API ──────────▶ ui        │
+Core ──runtime resources────▶│ backend: embedded SQLite + query API ──────────▶ ui        │
   /api/internal/telemetry/metrics (scraped by the backend)                                │
                              └────────────────────────────────────────────────────────────┘
+Core ──five-minute resource history + SSE─────────▶ Shell Dashboard
 Core ──docker logs (on demand)──────────────────────▶ Shell per-app Console logs dialog
 Core ──its own log records (in-memory rings)────────▶ Shell Core logs dialog
                              ▲ backend pulls the same rings (app service token) ─┘
@@ -96,9 +97,9 @@ hosty setup --with hosty.telemetry   # or the Shell platform panel's Extensions 
 ```
 
 From Shell, enabling installs and starts the app immediately; via `hosty setup` the choice applies on
-the next `hosty core start`. Core's own producer follows the app: the `docker stats` exposition runs
-whenever the telemetry app is installed and idles (serving empty text) otherwise, so a live enable
-needs no Core restart. `HOSTY_OBSERVABILITY_ENABLED` is not a supported setting — an ambient export
+the next `hosty core start`. The shared Core resource sampler runs while Telemetry is running or
+a visible Dashboard holds a viewing lease. With neither consumer it idles and serves empty text;
+a live enable needs no Core restart. `HOSTY_OBSERVABILITY_ENABLED` is not a supported setting — an ambient export
 is honored only as a legacy bootstrap override that enables the telemetry app.
 
 Autostart is the normal per-app setting: the first install defaults to autostart on, and the
@@ -146,13 +147,19 @@ scrapes its sibling by service name over the per-app docker network
 each series to its app via the
 promoted `hosty_app_id` label, which is then dropped since the row is already keyed by app.
 
-**Container infra metrics.** Core runs `docker stats` itself and renders a Prometheus snapshot every
-10 s (`DockerStatsExposition`), attributing each container to its app/service from the `hosty.app.id`
-/ `hosty.app.service` labels Core stamps at run, as `container.cpu.percent`,
-`container.memory.bytes`, and `container.memory.percent`. The backend scrapes it as a **second
-metrics target** at `GET /api/internal/telemetry/metrics`, so infra metrics land in the same store,
-keyed the same way, as app OTLP metrics. This is the universal baseline: it works for every running
-container regardless of instrumentation, and it keeps the telemetry containers unprivileged.
+**Runtime infra metrics.** The [shared resource sampler](../runtime-resource-usage/feature.md)
+collects Docker containers, Local Command process trees, and Core itself. Docker acquisition remains
+on a 10-second cadence; local samples use 3 seconds while Dashboard is viewed, otherwise 10 seconds
+for Telemetry. Core retains only five minutes in RAM. Dashboard reads those snapshots directly;
+Telemetry's existing backend scrapes `GET /api/internal/telemetry/metrics` as its second target and
+keeps its normal SQLite history. These samples do not pass through the OTLP collector.
+
+Docker metrics retain their names: `container.cpu.percent`, `container.memory.bytes`, and
+`container.memory.percent`. Local services and Core expose `process.cpu.percent` and
+`process.memory.bytes`. Both carry app/service attribution; Core uses the reserved `hosty.core` id.
+CPU is percent of one logical core and can exceed 100%; local memory sums process working sets.
+The Metrics UI pins both families and includes Core in its resource selector. No app instrumentation
+or privileged telemetry container is required.
 
 The `container → app` map is read from `docker ps` once and reused across ticks. It is re-read when it
 is empty (nothing running yet — the state a starting app changes), when a sample names a **Hosty**
@@ -361,8 +368,9 @@ lack of auth. Closing that gap is [plan.md](plan.md)'s first deliverable.
 - `apps/telemetry/manifest.json` — the three-service system-app manifest, endpoints, and `ui` block.
 - `apps/core/src/Haas.Hosty.Core/CollectorBootstrap.cs` — app id, container paths, the owned collector
   config, and the capability provisioner.
-- `apps/core/src/Haas.Hosty.Core/DockerStatsExposition.cs` — the `docker stats` producer loop and its
-  Prometheus snapshot; `DockerStatsParser.cs` parses the CLI output.
+- `apps/core/src/Haas.Hosty.Core/RuntimeResourceSampler.cs` — shared acquisition, RAM history and
+  Prometheus snapshot. `DockerStatsExposition.cs` / `DockerStatsParser.cs` acquire Docker samples;
+  `LocalResourceReader.cs` measures owned process trees.
 - `apps/core/src/Haas.Hosty.Core/LifecycleEndpoints.cs` — `GET /api/internal/telemetry/metrics` (app
   service token required) and `GET /api/apps/{id}/logs` (console tail).
 - `apps/core/src/Haas.Hosty.Core/CoreLogBuffer.cs` — the two rings, their capacity and
@@ -398,8 +406,7 @@ lack of auth. Closing that gap is [plan.md](plan.md)'s first deliverable.
   (`host.docker.internal`) and localCommand (loopback) endpoint forms; an app that has not opted in,
   or a host with no resolvable collector endpoint, produces none.
 - **Core's own logs.** The rings keep order, drop oldest-first at capacity, and fold a repeat of the
-  newest record into a count with first/last-seen stamps rather than spending a slot per repeat — the
-  `DockerStatsExposition` tick warns every 10 s, so an outage would otherwise cost 360 slots an hour.
+  newest record into a count with first/last-seen stamps rather than spending a slot per repeat — repeated producer failures must not consume a new slot on every tick.
   Framework categories reach the framework ring and never Core's own. `GET /api/core/logs` refuses a
   non-admin session, honours `ring` / `tail` / `level`, and rejects a malformed filter with its own
   error code. The shipped logging defaults quiet `Microsoft`/`System` while sitting beneath every
@@ -413,8 +420,11 @@ lack of auth. Closing that gap is [plan.md](plan.md)'s first deliverable.
 - **The reserved id.** `hosty.core` is selectable in the UI's resource filters, is excluded from the
   app count the fleet responses report, and makes Core's MCP `tail_app_logs` explain the category
   error instead of reporting a missing app.
-- **Core producer.** `DockerStatsExposition` renders the three `container.*` series with app/service
-  attribution, idles as empty text when the telemetry app is absent, and survives a docker-less host.
+- **Core producer.** The shared sampler preserves the three `container.*` series, adds the two
+  `process.*` series with app/service attribution, and survives a Docker-less host. It idles only
+  when neither a Dashboard lease nor a running Telemetry app needs samples. Resource history,
+  lifecycle-state and process-identity coverage is specified in
+  [runtime resource usage](../runtime-resource-usage/feature.md).
   The owner map is read once across ticks, re-read when a sample names a *Hosty* container it does not
   know, re-read once it reaches its age cap (the guard for a container name taken over by a colliding
   app id), left alone for foreign containers, dropped when a tick finds nothing to sample, and never

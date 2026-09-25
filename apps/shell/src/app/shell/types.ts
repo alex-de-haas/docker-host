@@ -220,6 +220,7 @@ export type CoreReassignResult = {
 
 /** A settings or panel surface as Core resolved it: what to call the tab, and what to embed. */
 export type CoreAppSurface = {
+  icon?: string | null;
   label?: string | null;
   path: string;
   // The service that serves this surface — the one whose health decides whether it can be opened.

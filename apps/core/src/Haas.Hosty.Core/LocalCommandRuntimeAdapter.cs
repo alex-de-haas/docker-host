@@ -1043,6 +1043,8 @@ internal sealed class LocalCommandProcessRegistry
     public void Set(string appId, string serviceKey, LocalCommandProcess process)
         => processes[$"{appId}/{serviceKey}"] = process;
 
+    internal KeyValuePair<string, LocalCommandProcess>[] Snapshot() => processes.ToArray();
+
     public LocalCommandProcess? Get(string appId, string serviceKey)
         => processes.TryGetValue($"{appId}/{serviceKey}", out var process) ? process : null;
 

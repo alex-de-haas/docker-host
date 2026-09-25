@@ -16,9 +16,8 @@ export function appHasMissingRequiredSettings(app: CoreApp) {
 // both render from this one call, so what the row warns about and what the panel explains can never drift
 // apart — before this they were computed independently in two places.
 //
-// Deliberately excludes anything that needs a probe: health failures, digest drift, and an unreachable
-// registry are unknown until a row is expanded, so they cannot honestly drive a collapsed-row icon. Those
-// stay next to the data they describe, rendered with the same Alert for a consistent look.
+// Probe-only health and digest details stay beside the services. Persisted update-check failures are
+// already known from the app summary and must explain the Dashboard's attention count.
 export function collectAppProblems(app: CoreApp): AppProblem[] {
   const problems: AppProblem[] = [];
 
@@ -61,9 +60,13 @@ export function collectAppProblems(app: CoreApp): AppProblem[] {
 
   problems.push(...collectDependencyProblems(app.dependencies));
 
-  // A failed update check is deliberately absent: it already has its own marker beside the row's update
-  // affordance, gated on the app actually supporting reviewed updates. Repeating it here would report the
-  // same problem twice, and would report it for live-source apps that have no update path at all.
+  if (app.updateCheck?.error) {
+    problems.push({
+      severity: "warning",
+      title: "Update check failed",
+      detail: app.updateCheck.error,
+    });
+  }
 
   return problems;
 }

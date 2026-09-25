@@ -113,7 +113,8 @@ are documented in [Assistant App Context](../assistant-app-context/feature.md).
 - Settings use the app's shadcn/ui components for tabs, provider menus and dialogs, labelled
   fields, inputs, selects, switches, alerts and empty states. Layout uses Tailwind utilities and
   semantic theme tokens; the root stylesheet holds theme definitions and the SDK launch-mode
-  chrome rule. MCP control rows wrap at narrow widths. Switching tabs preserves unsaved prompt
+  chrome rule. MCP access has a searchable application list and a selected-application detail panel. The list
+  moves above the panel at narrow widths; access changes save immediately. Switching tabs preserves unsaved prompt
   text and ongoing provider-login polling.
 - **The build runs at every start, from a clean cache.** The app is `localCommand`, so its manifest
   `setup` step installs both workspaces and runs `build:web` before the service command. The reviewed

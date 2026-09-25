@@ -3,7 +3,8 @@
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useState } from "react";
 import { Check, CheckCircle2, LoaderCircle, MoreHorizontal, Trash2, UserCog, UserPlus, UserX } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/components/reui/operation-toast";
+import { useConfirmation } from "@/components/reui/confirmation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -26,6 +27,7 @@ export function UserManagementPanel({
   activeUser: SessionResponse["user"] | null;
   sendCsrfJson: (endpoint: string, body?: unknown, method?: string) => Promise<Response>;
 }) {
+  const { confirm, dialog: confirmationDialog } = useConfirmation();
   const [users, setUsers] = useState<HostUserSummary[]>([]);
   const [invitations, setInvitations] = useState<UserInvitationSummary[]>([]);
   const [apps, setApps] = useState<AssignableAppSummary[]>([]);
@@ -148,13 +150,13 @@ export function UserManagementPanel({
     });
   }
 
-  function disableUser(user: HostUserSummary) {
+  async function disableUser(user: HostUserSummary) {
     if (user.id === activeUser?.id) {
       setError("Administrators cannot disable their own account.");
       return;
     }
 
-    if (!window.confirm(`Disable ${user.displayName || user.email || user.id}?`)) {
+    if (!await confirm({ title: "Disable user?", description: `Disable ${user.displayName || user.email || user.id}?`, action: "Disable user", destructive: true })) {
       return;
     }
 
@@ -163,8 +165,8 @@ export function UserManagementPanel({
     });
   }
 
-  function purgeUser(user: HostUserSummary) {
-    if (!window.confirm(`Permanently delete ${user.displayName || user.email || user.id}? This removes the account and its sign-in credential for good and cannot be undone. The email becomes available to invite again.`)) {
+  async function purgeUser(user: HostUserSummary) {
+    if (!await confirm({ title: "Permanently delete user?", description: `${user.displayName || user.email || user.id}. This removes the account and its sign-in credential for good and cannot be undone. The email becomes available to invite again.`, action: "Delete user", destructive: true })) {
       return;
     }
 
@@ -208,6 +210,7 @@ export function UserManagementPanel({
 
   return (
     <div className="space-y-6">
+      {confirmationDialog}
       <h2 className="sr-only">User Management</h2>
 
       {error && <InlineError message={error} />}

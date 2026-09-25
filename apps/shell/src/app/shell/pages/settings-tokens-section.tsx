@@ -3,6 +3,7 @@
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Copy, KeyRound, LoaderCircle, Pencil, Plus, ShieldAlert, ShieldCheck, Trash2 } from "lucide-react";
+import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
@@ -425,11 +426,11 @@ export function SettingsTokensSection({
           })}>Save label</Button></DialogFooter>
         </DialogContent>
       </Dialog>
-      <Dialog open={confirmation !== null} onOpenChange={(open) => { if (!open && !busy) setConfirmation(null); }}>
-        <DialogContent><DialogHeader><DialogTitle>{confirmation?.title}</DialogTitle>
-          <DialogDescription className="break-words">{confirmation?.description}</DialogDescription></DialogHeader>
+      <AlertDialog open={confirmation !== null} onOpenChange={(open) => { if (!open && !busy) setConfirmation(null); }}>
+        <AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{confirmation?.title}</AlertDialogTitle>
+          <AlertDialogDescription className="break-words">{confirmation?.description}</AlertDialogDescription></AlertDialogHeader>
           {error ? <InlineError message={error} /> : null}
-          <DialogFooter><Button variant="outline" disabled={busy} onClick={() => setConfirmation(null)}>Cancel</Button>
+          <AlertDialogFooter><AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
             <Button variant="destructive" disabled={busy} onClick={() => void run(async () => {
               const response = await sendCsrfJson(confirmation!.url, undefined, "DELETE");
               if (!response.ok) {
@@ -437,9 +438,9 @@ export function SettingsTokensSection({
                 throw new Error(body?.message ?? "Could not finish revocation. Retry.");
               }
               setConfirmation(null);
-            })}>Confirm</Button></DialogFooter>
-        </DialogContent>
-      </Dialog>
+            })}>Confirm</Button></AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

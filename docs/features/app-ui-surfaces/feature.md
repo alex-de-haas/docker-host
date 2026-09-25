@@ -1,7 +1,7 @@
 # App UI Surfaces
 
 Created: 2026-08-19
-Updated: 2026-09-22
+Updated: 2026-09-24
 
 An app declares **where** its pages belong, and Shell places them. Before this, an app had exactly
 one placement — the sidebar — so operator configuration, domain work, and always-at-hand tools all
@@ -15,7 +15,7 @@ Chosen by **who the page is for and what it changes**, not by whether it looks l
 | --- | --- | --- | --- |
 | `ui.navigation` | any | users | the shell's sidebar |
 | `ui.settings` | at most one | administrators | one app-named entry under Settings |
-| `ui.panels` | any | users | tabs on Shell's right panel |
+| `ui.panels` | any | users | icons on Shell's right panel |
 
 Litmus tests: *would a `host.user` ever legitimately open it?* → sidebar or panel. *Does it change
 behaviour rather than produce and consume content?* → settings.
@@ -25,15 +25,24 @@ contract format, not additions to it. Core resolves each surface to a URL exactl
 navigation entry, so Shell discovers placements without reading manifests.
 
 **`ui.settings` is singular and `ui.panels` is a list, deliberately.** One app has one place its
-operator configuration lives; the same app may ship several distinct tools, and a strip of tabs is
+operator configuration lives; the same app may ship several distinct tools, and the right icon rail is
 where they belong. The fields stay per-kind rather than collapsing into one `ui.surface`, leaving
 room beside them for kinds not built yet.
 
-**Strict validation is a system-app rule.** For `role: system` the endpoint must exist and be
+**Endpoint, path and label validation is stricter for system apps.** For `role: system` the endpoint must exist and be
 explicit, paths absolute, every panel labelled and labels unique within the app — its pages render as
 administrator Shell surfaces, so it must not lean on the permissive fallbacks ordinary `app.0.1`
 manifests keep for compatibility. An ordinary app keeps those fallbacks, so Shell supplies a label
 for a panel that declared none.
+
+New installs and updates require a non-empty `ui.panels[].icon` Lucide name in both
+ordinary and system apps. Settings surfaces do not require one. Core carries the icon
+through its persisted surface contract and API projection. Existing installed manifests
+remain readable/startable without icons; Shell renders a visible fallback for missing,
+unknown or loading icons, with the full app and panel label in the tooltip.
+Update checks accept a candidate whose digest exactly matches the reviewed installed
+manifest, so unchanged legacy panels do not create update warnings. Changed candidates
+and new installations still require icons.
 
 ## Settings Navigation
 
@@ -47,8 +56,8 @@ reload and back/forward retain the page. App entries use the app id as their key
 Old page-specific bookmarks resolve to the same app entry. Removed or unknown apps fall back to
 the host's normal default.
 
-An app settings iframe fills the full workspace beside the sidebar and beneath the header, with no
-Shell padding or height subtraction for tabs. The app owns content padding; its modal overlay covers
+An app settings iframe fills the workspace surface beside the sidebar and beneath the header, with no
+Shell padding inside that surface or height subtraction for tabs. The app owns content padding; its modal overlay covers
 the full iframe without covering Shell navigation or an independently docked panel. Built-in host
 settings remain native Shell pages and retain their own layout.
 
@@ -101,14 +110,35 @@ only for the Shell assistant panel, which is a genuinely different client rather
 
 Two rails and a strip, so content stays visible beside its tools rather than under them.
 
-**The right panel** holds `ui.panels` tabs. It is absent entirely while no installed app declares
-one — chrome for a capability nobody has is worse than no chrome — and collapsible when they do, with
-the choice remembered like the sidebar's. The property that motivated it is **docking**: panel
-content sits beside the workspace, so an operator reads an app's error and works with a tool about it
-at the same time. The tab strip scrolls horizontally when labels exceed the available width;
-tab underlines stay within its height and do not create a vertical scrollbar.
-A [resizable divider](../shell-panel-resize/feature.md) separates the panel from the
-workspace, with a remembered width, keyboard controls, and a double-click reset.
+The navigation and 48 px top strip share the Shell's background without an enclosing border.
+The left navigation toggle and page title sit together above the workspace, aligned to its
+left edge. The brand occupies the navigation width and shows only its mark in compact mode.
+Notifications, theme selection and the right panel toggle stay at the right edge.
+The workspace and optional right panel are separate rounded, bordered surfaces, with 12 px
+outer spacing beside navigation, at the right edge, and along the bottom. The right tool
+surface contains the selected body on its left and a 48 px icon rail at its right edge. Both
+share the rounded border and frame background, including in dark mode. The selected
+icon has a muted fill. Shell adds no title header; the app owns the full body height,
+while tooltips and accessible labels identify each panel. Compact left
+navigation retains its own icon rail. Embedded content is clipped at rounded corners.
+
+**The right panel** holds `ui.panels` tools, in declared order. With no declaring apps,
+the whole surface is absent. Otherwise its icon rail remains visible when the body is
+collapsed. Clicking any icon while collapsed opens its panel; clicking the selected
+icon while expanded collapses the body; clicking another selects and opens that tool.
+The top-strip toggle retains the selection, and Assistant shortcuts, deep links and
+Ask actions select/open Assistant as before. Body visibility uses the existing cookie.
+
+The rail scrolls vertically. Tooltips name the app and panel, buttons expose their
+open/hidden state, and app-level attention remains visible beside the icon. Up/Down
+and Home/End move focus without activating a tool; Enter/Space activates it. Hidden
+content is inert and cannot receive keyboard focus. A collapsed rail does not mint
+launch codes or mount an unopened iframe. Once opened, the selected iframe stays
+mounted across collapse/expand, retaining unsent input; switching still uses only one
+selected iframe. Runtime disappearance and authentication recovery still apply while hidden.
+
+A [resizable gap](../shell-panel-resize/feature.md) separates the surfaces when the
+body is expanded, with a remembered body width, keyboard controls and double-click reset.
 
 Tabs are keyed rather than indexed, because stopping or removing an app reorders the strip and an
 index would then point at somebody else's tool. A stopped app **keeps** its tab, dimmed and saying
@@ -148,19 +178,24 @@ unmounted only when its own service stops running or a lifecycle verb takes the 
 service, so a dead sibling leaves the living service's tab open while the app reads `unknown`. No
 launch code is minted for a tab that has not opened.
 
-**The top strip** owns what belongs to neither rail: a toggle at each end, and between them the name
+**The top strip** owns what belongs to neither rail: a toggle for each rail, and the name
 of whatever fills the content area — an app's page, or the Shell page — plus the notification bell
 and the theme control, both relocated here from the sidebar footer. The right-rail toggle is absent
 while the rail does not exist. Apps contribute nothing to the strip; an app that could write there
 would be writing outside its frame.
 
+Navigation collapses and expands through its top-strip toggle, retaining the persisted
+desktop preference and mobile drawer state. There is no button on the sidebar's edge.
+The right panel keeps its top-strip toggle and a resize gap, without an edge button or
+grip icon.
+
 ## Current Placements
 
-- **The gateway** declares `ui.settings` and no sidebar entry: its whole page is operator
+- **The gateway** declares an Assistant panel with the `bot` icon, plus `ui.settings` and no sidebar entry: its whole page is operator
   configuration. It still declares `ui.entrypoint`, because a system app's `ui` block requires one —
   but an entrypoint no longer buys a place in the sidebar (below).
 - **Telemetry** keeps Metrics/Traces/Logs in the sidebar — routine use, possibly by non-admins.
-- **Demo App** declares a `Session` panel, which is the platform's worked example of the contract:
+- **Demo App** declares a `Session` panel with the `contact-round` icon, which is the platform's worked example of the contract:
   narrow, chrome-free, and showing the session itself, since a panel reporting no session is exactly
   what a broken embedding looks like.
 - Core-injected manifest `settings` stay native in Shell — platform-owned state, uniform by
@@ -196,12 +231,35 @@ Gateway's internal settings tabs are included in its **0.30.0** provider-connect
 Shell sends the initial theme only after the embedded app document loads. The initial blank frame
 inherits Shell's origin and receives no messages intended for the app's different origin.
 
+The icon rail ships in Shell **0.82.0**, with the icon authoring/projection contract in
+Core/CLI **0.107.0**. Gateway **0.32.2** declares `bot`; Demo App **0.11.2** declares
+`contact-round`. The manifest format remains `app.0.1`.
+
 ## Testing Expectations
+
+- Shell: `npm test --workspace apps/shell` includes both pure rules and the jsdom rail
+  tests (40 tools, missing/unknown icons, readiness, hidden auth recovery and iframe identity).
+  Run `npm run lint --workspace apps/shell` and a production build as well.
+- Core: run `AppManifestServiceTests`, `AppUiSurfaceContractTests`, `AppRegistryStoreTests`
+  and the install/update lifecycle tests, including `PanelIconAuthoringIsEnforcedAtInstallAndUpdateBoundaries`.
+
+- New install/update validation requires a non-blank panel icon in both app roles;
+  settings remain exempt. Legacy startup/read paths accept missing icon metadata. Update checks
+  also accept a byte-identical reviewed legacy manifest; changed candidates still require icons.
+- Verify icons survive manifest normalization, storage and summary projection; several
+  panels from one app keep distinct icons, labels and keys. Missing/unknown icons render
+  a visible fallback with a tooltip.
+- Verify persistent collapsed rail, icon activation, keyboard focus navigation, top toggle,
+  selection fallback and no-panel state. Collapsing preserves an unsent draft and the same
+  iframe; fresh collapsed loads must not open a frame. Hidden content is inert.
 
 - Each declaring app contributes exactly one app-named Settings entry in compact and expanded
   navigation. Old page-specific links resolve to that entry, including for stopped apps.
 - App settings fill the workspace; internal tabs and modal overlays belong to the app. Host
   sections retain administrator gating and the viewer's own Access tokens section.
+- Check rounded workspace/panel surfaces in light and dark themes, expanded and compact
+  navigation, and narrow windows. The top strip stays on the shared background, and outer
+  spacing must not introduce viewport scrolling or clip navigation flyouts.
 - **Tab derivation as a pair**: a declaring app and a non-declaring one in the same fleet, since
   either assertion alone is satisfied by a rule that always answers the same way. Independence of the
   two surfaces is asserted the same way.
@@ -224,6 +282,8 @@ inherits Shell's origin and receives no messages intended for the app's differen
     API that answers 401 without a credential, so a page that merely painted would not show it.
   - The strip renders on every page, its toggle collapses the sidebar, the theme control works from
     its new home, and the right-rail toggle is absent until an app declares a panel.
+  - The top-strip sidebar toggle preserves keyboard focus and works in expanded, compact,
+    and mobile drawer layouts without changing the right panel.
   - The gateway is gone from the sidebar, and — the pair that matters, since the page-link rule is
     shared — an ordinary app page still embeds in the workspace, its frame carrying the launch code,
     `hosty_launch=embedded` and the theme parameters.

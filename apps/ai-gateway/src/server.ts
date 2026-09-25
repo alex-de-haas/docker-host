@@ -13,7 +13,7 @@ import { serveStaticSite } from "./settings/static-site.js";
 // Upper bound for an event stream opened with an app session rather than a delegated token: the
 // cookie is re-validated per request, but a stream is one request, so it gets an explicit ceiling.
 const APP_SESSION_STREAM_SECONDS = 3600;
-import { SessionNotFoundError, type SessionManager } from "./sessions/manager.js";
+import { SessionBusyError, SessionNotFoundError, type SessionManager } from "./sessions/manager.js";
 import type { HarnessAdapter } from "./harness/adapter.js";
 import { MAX_SYSTEM_PROMPT_CHARS, type AssistantSettings, type SettingsStore } from "./settings/store.js";
 import { partitionSkills, skillDigest, type AppSkill, type PendingSkill } from "./mcp/skills.js";
@@ -47,6 +47,10 @@ export function createGatewayServer(
 ): Server {
   return createServer((request, response) => {
     void route(request, response, manager, adapter, settings, providers, proxy, facade, connections).catch((error) => {
+      if (error instanceof SessionBusyError) {
+        sendJson(response, 409, { code: "session_busy", message: error.message });
+        return;
+      }
       if (error instanceof AppContextError || error instanceof ConnectionError) {
         sendJson(response, error.status, { code: error.code, message: error.message });
         return;

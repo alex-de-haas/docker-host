@@ -130,7 +130,7 @@ internal sealed partial class CoreLifecycleService(
 
     public async Task<AppInstallPlan> CreateInstallPlanAsync(AppInstallPlanRequest request, CancellationToken cancellationToken = default)
     {
-        var selection = await manifests.LoadAsync(request.ManifestPath, request.SelectedRuntime, cancellationToken, validateAllProfiles: true);
+        var selection = await manifests.LoadAsync(request.ManifestPath, request.SelectedRuntime, cancellationToken, validateAllProfiles: true, requirePanelIcons: true);
         // Resolve each image service's tag to its current remote digest at plan time: what the plan
         // shows is what the bound apply pins (C-CR1 Fix B). An unresolvable candidate (offline
         // registry, local-only image) stays null — that service surfaces without a digest and
@@ -320,7 +320,7 @@ internal sealed partial class CoreLifecycleService(
         CancellationToken cancellationToken)
     {
         var resolution = await RequireFeedService().ResolveAsync(request.FeedsUrl, request.FeedId, cancellationToken);
-        var selection = await manifests.LoadAsync(resolution.Feed.ManifestRef, request.SelectedRuntime, cancellationToken, validateAllProfiles: true);
+        var selection = await manifests.LoadAsync(resolution.Feed.ManifestRef, request.SelectedRuntime, cancellationToken, validateAllProfiles: true, requirePanelIcons: true);
         if (!string.Equals(selection.Manifest.Id, resolution.AppId, StringComparison.Ordinal))
         {
             throw new AppLifecycleException(
@@ -417,7 +417,7 @@ internal sealed partial class CoreLifecycleService(
         // Unbound path: in-process callers only (the boot bootstrap installs from trusted local
         // distribution manifests). The HTTP endpoints require a plan id, so no network caller can
         // reach an apply-time fetch.
-        var selection = await manifests.LoadAsync(request.ManifestPath, request.SelectedRuntime, cancellationToken, validateAllProfiles: true);
+        var selection = await manifests.LoadAsync(request.ManifestPath, request.SelectedRuntime, cancellationToken, validateAllProfiles: true, requirePanelIcons: true);
         return await WithAppLockAsync(selection.Manifest.Id!, () => InstallCoreAsync(request, selection, cancellationToken), cancellationToken);
     }
 
@@ -1567,7 +1567,10 @@ internal sealed partial class CoreLifecycleService(
 
         var updateBase = await UpdateBaseAsync(app, cancellationToken);
         var currentSelection = await LoadSelectionForAppAsync(app, cancellationToken);
-        var selection = await manifests.LoadAsync(manifestPath, request.SelectedRuntime ?? app.SelectedRuntime, cancellationToken, validateAllProfiles: true);
+        // Rechecking the exact installed legacy manifest is not new authoring. Any changed
+        // candidate still has to satisfy the panel-icon contract before it can be reviewed/applied.
+        var selection = await manifests.LoadAsync(manifestPath, request.SelectedRuntime ?? app.SelectedRuntime, cancellationToken,
+            validateAllProfiles: true, requirePanelIcons: true, legacyManifestDigest: currentSelection.ManifestDigest);
         if (!string.Equals(selection.Manifest.Id, app.Id, StringComparison.Ordinal))
         {
             throw new AppLifecycleException("manifest_app_mismatch", $"Update manifest app id '{selection.Manifest.Id}' does not match installed app '{app.Id}'.");
@@ -2723,7 +2726,7 @@ internal sealed partial class CoreLifecycleService(
             {
                 var feed = await RequireFeedService().ResolveAsync(app.FeedsUrl, app.FollowedFeedId, cancellationToken);
                 RequireFeedAppMatch(app, feed.AppId);
-                candidateSelection = await manifests.LoadAsync(feed.Feed.ManifestRef, app.SelectedRuntime, cancellationToken, validateAllProfiles: true);
+                candidateSelection = await manifests.LoadAsync(feed.Feed.ManifestRef, app.SelectedRuntime, cancellationToken, validateAllProfiles: true, requirePanelIcons: true);
                 if (!string.Equals(candidateSelection.Manifest.Id, app.Id, StringComparison.Ordinal))
                 {
                     throw new AppLifecycleException(
@@ -2751,7 +2754,7 @@ internal sealed partial class CoreLifecycleService(
             // copy's old tags and report "up to date" forever.
             try
             {
-                var candidate = await manifests.LoadAsync(app.ManifestUrl, app.SelectedRuntime, cancellationToken, validateAllProfiles: true);
+                var candidate = await manifests.LoadAsync(app.ManifestUrl, app.SelectedRuntime, cancellationToken, validateAllProfiles: true, requirePanelIcons: true);
                 if (!string.Equals(candidate.Manifest.Id, app.Id, StringComparison.Ordinal))
                 {
                     throw new AppLifecycleException(

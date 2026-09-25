@@ -3,7 +3,7 @@
   "id": "hosty.ai-gateway",
   "name": "Hosty AI Gateway",
   "description": "Host-resident operator assistant with managed Claude and Codex connections, chat and settings UI.",
-  "version": "0.32.1",
+  "version": "0.32.2",
   "role": "system",
   "source": {
     "type": "git",
@@ -129,7 +129,7 @@
       "default": "claude",
       "required": false,
       "label": "Legacy agent harness",
-      "description": "Import-only compatibility setting for older installations. Configure provider connections and the default in Settings → Hosty AI Gateway. After the first successful import, this field no longer changes Gateway connections."
+      "description": "Import-only compatibility setting for older installations. Configure provider connections and the default in Settings \u2192 Hosty AI Gateway. After the first successful import, this field no longer changes Gateway connections."
     },
     {
       "key": "ANTHROPIC_API_KEY",
@@ -137,7 +137,7 @@
       "secret": true,
       "required": false,
       "label": "Legacy anthropic API key",
-      "description": "Import-only compatibility setting for older installations. Configure provider connections and the default in Settings → Hosty AI Gateway. After the first successful import, this field no longer changes Gateway connections."
+      "description": "Import-only compatibility setting for older installations. Configure provider connections and the default in Settings \u2192 Hosty AI Gateway. After the first successful import, this field no longer changes Gateway connections."
     },
     {
       "key": "CLAUDE_CODE_OAUTH_TOKEN",
@@ -145,7 +145,7 @@
       "secret": true,
       "required": false,
       "label": "Legacy claude Code OAuth token",
-      "description": "Import-only compatibility setting for older installations. Configure provider connections and the default in Settings → Hosty AI Gateway. After the first successful import, this field no longer changes Gateway connections."
+      "description": "Import-only compatibility setting for older installations. Configure provider connections and the default in Settings \u2192 Hosty AI Gateway. After the first successful import, this field no longer changes Gateway connections."
     },
     {
       "key": "CODEX_API_KEY",
@@ -153,14 +153,14 @@
       "secret": true,
       "required": false,
       "label": "Legacy codex API key",
-      "description": "Import-only compatibility setting for older installations. Configure provider connections and the default in Settings → Hosty AI Gateway. After the first successful import, this field no longer changes Gateway connections."
+      "description": "Import-only compatibility setting for older installations. Configure provider connections and the default in Settings \u2192 Hosty AI Gateway. After the first successful import, this field no longer changes Gateway connections."
     },
     {
       "key": "CODEX_HOME",
       "type": "string",
       "required": false,
       "label": "Legacy codex home directory",
-      "description": "Import-only compatibility setting for older installations. Configure provider connections and the default in Settings → Hosty AI Gateway. After the first successful import, this field no longer changes Gateway connections."
+      "description": "Import-only compatibility setting for older installations. Configure provider connections and the default in Settings \u2192 Hosty AI Gateway. After the first successful import, this field no longer changes Gateway connections."
     }
   ],
   "capabilities": [
@@ -183,7 +183,8 @@
       {
         "label": "Assistant",
         "endpoint": "http",
-        "path": "/assistant"
+        "path": "/assistant",
+        "icon": "bot"
       }
     ]
   }

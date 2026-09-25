@@ -7,8 +7,8 @@ import { BrandMark } from "./brand-mark";
 import { NotificationBell } from "../notifications/notification-bell";
 import { ThemeMenuButton } from "./theme-menu-button";
 
-// The strip that caps the two rails, and owns what belongs to neither: the rail toggles at its ends,
-// and between them what is true of the whole window — whose page is on screen, notifications, theme.
+// The strip aligns navigation and the page title with the workspace. Notifications, theme and
+// the right-panel toggle stay at the opposite edge.
 //
 // Shell chrome, entirely. Apps contribute nothing to it: an app that could write here would be
 // writing outside its frame, which is the one thing the embedding contract exists to prevent.
@@ -16,6 +16,7 @@ export function ShellTopStrip({
   title,
   subtitle,
   leftRailExpanded,
+  navigationWidth,
   onToggleLeftRail,
   rightRailExpanded,
   onToggleRightRail,
@@ -25,6 +26,7 @@ export function ShellTopStrip({
   title: string;
   subtitle?: string | null;
   leftRailExpanded: boolean;
+  navigationWidth: 60 | 280;
   onToggleLeftRail: () => void;
   /** Null when no installed app declares a panel surface — then the rail does not exist to toggle. */
   rightRailExpanded: boolean | null;
@@ -34,32 +36,20 @@ export function ShellTopStrip({
   onBrandClick: () => void;
 }) {
   return (
-    <header className="relative flex h-10 shrink-0 items-center gap-2 border-b bg-sidebar pl-5 pr-2 text-sidebar-foreground">
-      <button
-        type="button"
-        onClick={onBrandClick}
-        title="Hosty"
-        aria-label="Hosty"
-        className="flex shrink-0 items-center gap-2 rounded-md outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-      >
-        <BrandMark />
-        <span className="hidden text-sm font-semibold uppercase sm:inline">Hosty</span>
-      </button>
-
-      <div className="hidden flex-1 sm:block" />
-
-      {/* Centred against the window rather than inside the space left over: the brand and the
-          control group are different widths, so centring between them would sit visibly off. Capped
-          and truncating so a long app name cannot run under either of them, and click-through so the
-          label never swallows a press meant for what is behind it. */}
-      <div className="pointer-events-none flex min-w-0 flex-1 items-baseline gap-2 sm:absolute sm:left-1/2 sm:max-w-[45%] sm:-translate-x-1/2">
-        <span className="truncate text-sm font-medium">{title}</span>
-        {subtitle && <span className="hidden truncate text-xs text-muted-foreground sm:inline">{subtitle}</span>}
+    <header className="flex h-12 shrink-0 items-center pr-3 text-sidebar-foreground">
+      <div className="shrink-0 pl-5" style={{ width: navigationWidth }}>
+        <button
+          type="button"
+          onClick={onBrandClick}
+          title="Hosty"
+          aria-label="Hosty"
+          className="flex shrink-0 items-center gap-2 rounded-md outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        >
+          <BrandMark />
+          {navigationWidth === 280 && <span className="text-sm font-semibold uppercase">Hosty</span>}
+        </button>
       </div>
-
-      <div className="flex items-center gap-1">
-        {showNotifications && <NotificationBell />}
-        <ThemeMenuButton />
+      <div className="flex min-w-0 flex-1 items-center gap-2 pr-2">
         <Button
           type="button"
           variant="ghost"
@@ -68,12 +58,20 @@ export function ShellTopStrip({
           title={leftRailExpanded ? "Collapse the sidebar" : "Expand the sidebar"}
           aria-label={leftRailExpanded ? "Collapse the sidebar" : "Expand the sidebar"}
           aria-pressed={leftRailExpanded}
-          // Both rail toggles show their on-state the same way: sitting side by side, one that lit
-          // up and one that did not would read as a bug rather than as two different rails.
           className={cn(leftRailExpanded && "bg-background text-foreground")}
         >
           <PanelLeft className="h-4 w-4" />
         </Button>
+
+        <div className="flex min-w-0 items-baseline gap-2">
+          <span className="truncate text-sm font-medium">{title}</span>
+          {subtitle && <span className="hidden truncate text-xs text-muted-foreground sm:inline">{subtitle}</span>}
+        </div>
+      </div>
+
+      <div className="flex shrink-0 items-center gap-1">
+        {showNotifications && <NotificationBell />}
+        <ThemeMenuButton />
 
         {rightRailExpanded !== null && (
           <Button

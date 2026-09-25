@@ -86,7 +86,7 @@ internal static class TelemetryMcpEndpoint
             "Summarises one app's stored metrics: CPU, memory, and whatever meters the app itself "
             + "exports. Use this when the question is about load or resource use rather than events "
             + "\u2014 `container.cpu.percent`, `container.memory.bytes` and `container.memory.percent` "
-            + "come from docker stats. Repeated identical values are dropped on ingest and re-recorded "
+            + "come from docker stats; process.cpu.percent and process.memory.bytes come from Core and local service process trees. Repeated identical values are dropped on ingest and re-recorded "
             + "only once a minute, so a flat series has far fewer points than scrapes: a low point "
             + "count means the value was steady, never that collection is broken.",
             new JsonObject
@@ -217,7 +217,7 @@ internal static class TelemetryMcpEndpoint
     private const string ContainerAbsenceNote =
         "Docker stats \u2014 container.cpu.percent, container.memory.bytes, container.memory.percent "
         + "\u2014 are absent when the app runs without a container (a localCommand runtime produces "
-        + "none), or when docker stats were unavailable; never because CPU or memory use was zero.";
+        + "no container metrics; use process.cpu.percent and process.memory.bytes instead), or when docker stats were unavailable; never because CPU or memory use was zero.";
 
     /// <summary>
     /// Summarises one app's stored series over the window, rather than returning raw points.

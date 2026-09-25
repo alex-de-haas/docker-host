@@ -250,7 +250,7 @@ it looks like settings:
   "settings": { "endpoint": "http", "path": "/settings" },
 
   // Any number. Tabs on Shell's right panel, docked beside the content.
-  "panels": [ { "label": "Session", "endpoint": "http", "path": "/panel" } ]
+  "panels": [ { "label": "Session", "icon": "contact-round", "endpoint": "http", "path": "/panel" } ]
 }
 ```
 
@@ -258,7 +258,7 @@ it looks like settings:
 | --- | --- | --- | --- |
 | `ui.navigation` | any | users | the shell's sidebar |
 | `ui.settings` | at most one | administrators | one app-named entry under Settings |
-| `ui.panels` | any | users | tabs on Shell's right panel |
+| `ui.panels` | any | users | icons on Shell's right panel |
 
 Litmus tests: *would a `host.user` ever legitimately open it?* → `navigation` or `panels`. *Does it
 change the app's behaviour rather than produce or consume content?* → `settings`.
@@ -272,6 +272,15 @@ Both fields are additive under `app.0.1` and need no `schemaVersion` bump. `endp
 defaults to the entrypoint's; `path` is absolute on that origin. A panel's `label` names its tab —
 several apps' tools share one strip, so the app's own name is a poor label, and a system app must
 declare one. Two panels of one app may not share a label.
+
+Every panel in a new install or update must declare a non-empty `icon`: a Lucide icon
+name describing that tool (for example `bot` or `contact-round`), following the `ui.icon`
+naming convention. This applies to ordinary and system apps; settings need no icon.
+Shell shows the label and app name in tooltips and uses a visible fallback for unknown
+icons or legacy installed records. An old installed manifest can still be read and
+started without this field, but publishing an update requires adding it.
+The icon rail remains visible when its body is collapsed. Activating the selected icon
+collapses its body; activating another icon opens that panel.
 
 Each app contributes one Settings entry. Organize larger settings inside that app-owned page using
 internal tabs or navigation. Apps own padding and modal overlays inside the full-workspace iframe.

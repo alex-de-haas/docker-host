@@ -472,10 +472,8 @@ internal static class LifecycleEndpoints
                 async () => await HandleLifecycleError(() => lifecycle.GetHealthAsync(appId, cancellationToken)),
                 cancellationToken: cancellationToken));
 
-        // Phase 2 producer endpoint: host-collected `docker stats` infra metrics as Prometheus text for
-        // the telemetry backend to scrape (its second metrics target). Always mapped: the exposition
-        // itself idles (empty text) unless the telemetry app is installed, so a non-observability
-        // install exposes nothing here and a live enable needs no Core restart.
+        // Docker and local process metrics from the shared sampler. Always mapped; acquisition
+        // runs while Telemetry is running or Dashboard holds a live viewing lease.
         //
         // Requires an app service token like every other app->Core endpoint. It used to be
         // unauthenticated on the theory that scrape traffic stays on a trusted internal network — but
@@ -490,7 +488,7 @@ internal static class LifecycleEndpoints
             HttpRequest request,
             AppServiceTokenService serviceTokens,
             AppRegistryStore apps,
-            DockerStatsExposition exposition,
+            RuntimeResourceSampler exposition,
             CancellationToken cancellationToken) =>
         {
             var token = CoreSessionAuthorization.ReadBearerToken(request);

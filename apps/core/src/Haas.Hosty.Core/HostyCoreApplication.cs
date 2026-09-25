@@ -144,13 +144,12 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<IAppRuntimeAdapter, DockerRuntimeAdapter>();
         builder.Services.AddSingleton<IAppRuntimeAdapter, LocalCommandRuntimeAdapter>();
         builder.Services.AddSingleton<IClock, SystemClock>();
-        // Observability Phase 2: the telemetry store, query API, and observability UI all live in the
-        // telemetry system app. Core keeps only the producer role it cannot shed — re-exposing
-        // host-collected `docker stats` as Prometheus for the backend to scrape. The telemetry read path
-        // no longer runs through Core; the telemetry UI reads its backend directly. Registered as a
-        // singleton the exposition endpoint reads and run as a hosted service.
+        // One host sampler supplies Dashboard's bounded RAM history and Telemetry's Prometheus
+        // scrape. Long-term storage and telemetry queries remain in the telemetry system app.
         builder.Services.AddSingleton<DockerStatsExposition>();
-        builder.Services.AddHostedService(sp => sp.GetRequiredService<DockerStatsExposition>());
+        builder.Services.AddSingleton<LocalResourceReader>();
+        builder.Services.AddSingleton<RuntimeResourceSampler>();
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<RuntimeResourceSampler>());
         // One controller: it reads the live ingress provider from CoreSettingsService and no-ops for every
         // provider that is not "cloudflared", so switching providers is a settings edit, not a restart.
         builder.Services.AddSingleton<CloudflaredIngressController>();
@@ -393,6 +392,7 @@ internal static class HostyCoreApplication
         CoreBootstrapEndpoints.Map(app);
         CoreSettingsEndpoints.Map(app);
         CoreLogEndpoints.Map(app);
+        RuntimeResourceEndpoints.Map(app);
         CoreRestartEndpoints.Map(app);
         CloudflareConnectionEndpoints.Map(app);
         CloudflarePublicationEndpoints.Map(app);

@@ -53,3 +53,16 @@ export async function createAppSession(gateway: AssistantGateway, issue: (refres
     return assistantRequest(gateway, issue, "/sessions", { method: "POST", body: JSON.stringify({ appIds: [appId], clientRequestId }) });
   }
 }
+
+/** A fresh error investigation. Context is explicit and never guessed from message text. */
+export async function createErrorSession(gateway: AssistantGateway, issue: (refresh: boolean) => Promise<{ token: string }>, appId: string | undefined, clientRequestId: string): Promise<{ id: string }> {
+  const health = await assistantRequest<{ harness?: { available?: boolean; capabilities?: { appContext?: boolean } } }>(gateway, issue, "/health");
+  if (!health.harness?.available) throw new Error("Assistant is unavailable. Check AI Gateway's provider and sign-in, then retry.");
+  const body = JSON.stringify({ clientRequestId, ...(appId && health.harness.capabilities?.appContext ? { appIds: [appId] } : {}) });
+  try {
+    return await assistantRequest(gateway, issue, "/sessions", { method: "POST", body });
+  } catch (error) {
+    if (!(error instanceof TypeError) && !(error instanceof DOMException)) throw error;
+    return assistantRequest(gateway, issue, "/sessions", { method: "POST", body });
+  }
+}

@@ -345,6 +345,9 @@ export class SessionManager {
   async postMessage(id: string, text: string, credential?: string, attachments: string[] = [], context: { expectedRevision?: unknown; withoutDetails?: boolean } = {}): Promise<void> {
     return this.serialize(id, async () => {
       const session = await this.requireLive(id);
+      if (["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) {
+        throw new SessionBusyError();
+      }
       let release: (() => void) | undefined;
       try {
         let selectedAdapter = this.adapter;
@@ -868,7 +871,13 @@ export class SessionManager {
     const lastReplayed = replay.length > 0 ? replay[replay.length - 1]!.seq : afterSeq;
     const tail = buffered.filter((event) => event.seq > lastReplayed);
     passthrough = true;
-    return { replay: [...replay, ...tail], unsubscribe: () => session.listeners.delete(wrapped) };
+    // Status transitions are live-only. Always finish replay with the authoritative state,
+    // even if the caller already has every persisted event (e.g. idle arrived during reconnect).
+    const status: StoredEvent = {
+      seq: session.record.lastEventSeq, ts: session.record.updatedAt,
+      type: "session_status", status: session.record.status,
+    };
+    return { replay: [...replay, ...tail, status], unsubscribe: () => session.listeners.delete(wrapped) };
   }
 
   async shutdown(): Promise<void> {
@@ -1180,6 +1189,12 @@ export class SessionManager {
 export class SessionNotFoundError extends Error {
   constructor(id: string) {
     super(`session not found: ${id}`);
+  }
+}
+
+export class SessionBusyError extends Error {
+  constructor() {
+    super("Wait for the current response to finish or stop it before sending another message.");
   }
 }
 
