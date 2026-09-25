@@ -12,12 +12,13 @@ import { ProviderRow } from "@/components/provider-row";
 import { CORE_PROVIDER_ID, type Settings, type SettingsResponse } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-export function McpAccess({ data, busy, error, status, onSave, onApprove }: {
+export function McpAccess({ data, busy, error, status, feedbackAppId, onSave, onApprove }: {
   data: SettingsResponse;
   busy: boolean;
   error: string | null;
   status: string | null;
-  onSave: (patch: Partial<Settings>) => Promise<void>;
+  feedbackAppId: string | null;
+  onSave: (patch: Partial<Settings>, appId: string) => Promise<void>;
   onApprove: (appId: string, markdown: string) => Promise<void>;
 }) {
   const [selectedId, setSelectedId] = useState(CORE_PROVIDER_ID);
@@ -117,8 +118,8 @@ export function McpAccess({ data, busy, error, status, onSave, onApprove }: {
                   harnessName={harnessName}
                   busy={busy}
                   multipleConnections={data.agentConnections === true}
-                  onToggle={next => void onSave({ mcpProviders: { ...settings.mcpProviders, [provider.appId]: next } })}
-                  onApprovalChange={next => void onSave({ mcpAutoAllow: { ...settings.mcpAutoAllow, [provider.appId]: next } })}
+                  onToggle={next => void onSave({ mcpProviders: { ...settings.mcpProviders, [provider.appId]: next } }, provider.appId)}
+                  onApprovalChange={next => void onSave({ mcpAutoAllow: { ...settings.mcpAutoAllow, [provider.appId]: next } }, provider.appId)}
                 />
               ) : (
                 <Alert><AlertDescription>Access controls are unavailable until this application is discovered again.</AlertDescription></Alert>
@@ -145,7 +146,7 @@ export function McpAccess({ data, busy, error, status, onSave, onApprove }: {
                   </CardFooter>
                 )}
               </Card>
-              <p role="status" className="text-sm text-muted-foreground">{busy ? "Saving…" : status ?? "Access changes save automatically."}</p>
+              <p role="status" className="text-sm text-muted-foreground">{feedbackAppId === selected.appId && busy ? "Saving…" : (feedbackAppId === selected.appId ? status : null) ?? "Access changes save automatically."}</p>
             </>
           ) : (
             <Empty><EmptyHeader>

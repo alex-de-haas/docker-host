@@ -56,7 +56,8 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
         string? selectedRuntime = null,
         CancellationToken cancellationToken = default,
         bool validateAllProfiles = false,
-        bool requirePanelIcons = false)
+        bool requirePanelIcons = false,
+        string? legacyManifestDigest = null)
     {
         if (string.IsNullOrWhiteSpace(manifestPath))
         {
@@ -72,7 +73,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
             localManifestCache.TryGetValue(localPath, out var cached) &&
             cached.Stamp == stamp)
         {
-            return Select(cached.Manifest, localPath, cached.Digest, selectedRuntime, cached.Json, manifestUrl: null, validateAllProfiles: validateAllProfiles, requirePanelIcons: requirePanelIcons);
+            return Select(cached.Manifest, localPath, cached.Digest, selectedRuntime, cached.Json, manifestUrl: null, validateAllProfiles: validateAllProfiles, requirePanelIcons: requirePanelIcons && cached.Digest != legacyManifestDigest);
         }
 
         var source = await ReadManifestSourceAsync(trimmed, cancellationToken);
@@ -97,7 +98,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
             localManifestCache[localPath] = new CachedLocalManifest(manifest, source.Json, digest, stamp);
         }
 
-        return Select(manifest, source.Reference, digest, selectedRuntime, source.Json, source.ManifestUrl, validateAllProfiles: validateAllProfiles, requirePanelIcons: requirePanelIcons);
+        return Select(manifest, source.Reference, digest, selectedRuntime, source.Json, source.ManifestUrl, validateAllProfiles: validateAllProfiles, requirePanelIcons: requirePanelIcons && digest != legacyManifestDigest);
     }
 
     // Mirrors ReadManifestSourceAsync/ReadLocalManifestAsync resolution for the cache key: null for a

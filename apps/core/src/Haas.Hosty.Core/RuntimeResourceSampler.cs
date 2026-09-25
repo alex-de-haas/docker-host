@@ -11,7 +11,7 @@ internal sealed record ResourceUsageResponse(string RunId, DateTimeOffset Now, i
 // RAM only. A single producer serves both the live Dashboard and the slower telemetry scrape.
 internal sealed class RuntimeResourceSampler(
     AppRegistryStore apps, DockerStatsExposition docker, LocalResourceReader local,
-    CoreEventHub events, IClock clock, ILogger<RuntimeResourceSampler> logger) : BackgroundService
+    CoreEventHub events, IClock clock, ILogger<RuntimeResourceSampler> logger, AppManifestService manifests) : BackgroundService
 {
     private readonly object gate = new();
     private readonly Queue<ResourceUsageFrame> history = new();
@@ -67,6 +67,27 @@ internal sealed class RuntimeResourceSampler(
                 samples.Add(new(appId, service, "unknown", at, stopped ? 0 : null, stopped ? 0 : null));
     }
 
+    internal async Task ReconcileAppAsync(List<RuntimeResourceSample> samples, AppRecord app,
+        DateTimeOffset at, CancellationToken cancellationToken)
+    {
+        IReadOnlyList<string> services = app.Health?.Services.Select(s => s.Service).ToArray() ?? [];
+        if (!string.IsNullOrWhiteSpace(app.ManifestPath))
+        {
+            try
+            {
+                // Health is cleared by Stop. The reviewed manifest retains the complete roster,
+                // including workers without endpoints; AppManifestService caches local file reads.
+                var selection = await manifests.LoadAsync(app.ManifestPath, app.SelectedRuntime, cancellationToken);
+                services = selection.Services.Select(s => s.Key).ToArray();
+            }
+            catch (Exception ex) when (ex is AppManifestException or IOException or UnauthorizedAccessException)
+            {
+                logger.LogDebug(ex, "Resource service roster unavailable for {AppId}.", app.Id);
+            }
+        }
+        ReconcileApp(samples, app.Id, app.RuntimeState, services, at);
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
@@ -107,12 +128,11 @@ internal sealed class RuntimeResourceSampler(
                 samples = samples.GroupBy(s => (s.AppId, s.Service))
                     .Select(g => g.MaxBy(s => s.Timestamp)!).ToList();
                 var at = clock.UtcNow;
-                var roster = await apps.ListAppsAsync(stoppingToken);
+                var roster = await apps.ListAppRecordsAsync(stoppingToken);
                 var installed = roster.Select(a => a.Id).ToHashSet(StringComparer.Ordinal);
                 samples.RemoveAll(s => s.AppId != "hosty.core" && !installed.Contains(s.AppId));
                 foreach (var app in roster)
-                    ReconcileApp(samples, app.Id, app.RuntimeState,
-                        app.Health?.Services.Select(s => s.Service).ToArray() ?? [], at);
+                    await ReconcileAppAsync(samples, app, at, stoppingToken);
                 Record(new(at, samples));
                 var builder = new StringBuilder();
                 foreach (var sample in samples.Where(s => s.Runtime != "unknown"))

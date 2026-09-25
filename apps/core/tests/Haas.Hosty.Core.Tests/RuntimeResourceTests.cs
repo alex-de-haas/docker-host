@@ -53,7 +53,7 @@ public sealed class RuntimeResourceTests
     {
         var clock = new FakeClock(DateTimeOffset.UtcNow);
         var sampler = new RuntimeResourceSampler(null!, null!, null!, new CoreEventHub(), clock,
-            NullLogger<RuntimeResourceSampler>.Instance);
+            NullLogger<RuntimeResourceSampler>.Instance, new AppManifestService());
         for (var i = 0; i < 200; i++) sampler.Record(new(clock.UtcNow.AddMilliseconds(i - 200), []));
         var first = sampler.Read();
         Assert.Equal(RuntimeResourceSampler.MaxFrames, first.History.Count);

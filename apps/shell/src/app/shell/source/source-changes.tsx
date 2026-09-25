@@ -214,7 +214,7 @@ function SourceInspectionDialog({ endpointPath, displayName, version, sourceKey,
   const partlySelected = selectedCount > 0 && !allSelected;
   const endpoint = `${coreOrigin}${endpointPath}`;
   const review = async () => {
-    if (readOnly || !selectedCount || selectedCount > 32 || statusError || status?.truncated || !status?.head) return;
+    if (readOnly || busy || plan || !selectedCount || selectedCount > 32 || statusError || status?.truncated || !status?.head) return;
     setBusy(true); setError(null); setMessage(null);
     try {
       const response = await sendCsrfJson(`${endpoint}/discard/plan`, { paths: selectedPaths });
@@ -291,7 +291,7 @@ function SourceInspectionDialog({ endpointPath, displayName, version, sourceKey,
       </DialogBody>
       <DialogFooter>
         <Button type="button" variant="outline" disabled={busy} onClick={onClose}>Close</Button>
-        {!readOnly && <Button type="button" variant={plan ? "destructive" : "default"} disabled={busy || (!plan && (selectedCount === 0 || !!statusError || status?.truncated || !status?.head))} onClick={() => void review()}>
+        {!readOnly && <Button type="button" variant="default" disabled={busy || !!plan || selectedCount === 0 || !!statusError || status?.truncated || !status?.head} onClick={() => void review()}>
           {busy && <LoaderCircle className="size-4 animate-spin" />}{`Review discard (${selectedCount})`}
         </Button>}
       </DialogFooter>

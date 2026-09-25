@@ -30,6 +30,7 @@ export function GatewaySettings({
   const [data, setData] = useState<SettingsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
+  const [feedbackAppId, setFeedbackAppId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [prompt, setPrompt] = useState("");
 
@@ -50,6 +51,7 @@ export function GatewaySettings({
   }, []);
 
   const approve = useCallback(async (appId: string, markdown: string) => {
+    setFeedbackAppId(appId);
     setBusy(true);
     setError(null);
     setStatus(null);
@@ -66,7 +68,8 @@ export function GatewaySettings({
     }
   }, []);
 
-  const save = useCallback(async (patch: Partial<Settings>) => {
+  const save = useCallback(async (patch: Partial<Settings>, appId: string | null = null) => {
+    setFeedbackAppId(appId);
     setBusy(true);
     setError(null);
     setStatus(null);
@@ -185,6 +188,7 @@ export function GatewaySettings({
             busy={busy}
             error={error}
             status={status}
+            feedbackAppId={feedbackAppId}
             onSave={save}
             onApprove={approve}
           />

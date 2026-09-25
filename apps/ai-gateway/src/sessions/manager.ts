@@ -871,7 +871,13 @@ export class SessionManager {
     const lastReplayed = replay.length > 0 ? replay[replay.length - 1]!.seq : afterSeq;
     const tail = buffered.filter((event) => event.seq > lastReplayed);
     passthrough = true;
-    return { replay: [...replay, ...tail], unsubscribe: () => session.listeners.delete(wrapped) };
+    // Status transitions are live-only. Always finish replay with the authoritative state,
+    // even if the caller already has every persisted event (e.g. idle arrived during reconnect).
+    const status: StoredEvent = {
+      seq: session.record.lastEventSeq, ts: session.record.updatedAt,
+      type: "session_status", status: session.record.status,
+    };
+    return { replay: [...replay, ...tail, status], unsubscribe: () => session.listeners.delete(wrapped) };
   }
 
   async shutdown(): Promise<void> {

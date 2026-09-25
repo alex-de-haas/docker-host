@@ -1567,7 +1567,10 @@ internal sealed partial class CoreLifecycleService(
 
         var updateBase = await UpdateBaseAsync(app, cancellationToken);
         var currentSelection = await LoadSelectionForAppAsync(app, cancellationToken);
-        var selection = await manifests.LoadAsync(manifestPath, request.SelectedRuntime ?? app.SelectedRuntime, cancellationToken, validateAllProfiles: true, requirePanelIcons: true);
+        // Rechecking the exact installed legacy manifest is not new authoring. Any changed
+        // candidate still has to satisfy the panel-icon contract before it can be reviewed/applied.
+        var selection = await manifests.LoadAsync(manifestPath, request.SelectedRuntime ?? app.SelectedRuntime, cancellationToken,
+            validateAllProfiles: true, requirePanelIcons: true, legacyManifestDigest: currentSelection.ManifestDigest);
         if (!string.Equals(selection.Manifest.Id, app.Id, StringComparison.Ordinal))
         {
             throw new AppLifecycleException("manifest_app_mismatch", $"Update manifest app id '{selection.Manifest.Id}' does not match installed app '{app.Id}'.");

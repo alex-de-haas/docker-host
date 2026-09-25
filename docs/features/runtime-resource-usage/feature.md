@@ -33,7 +33,8 @@ indicators, not CPU accounting or resource enforcement.
 Docker ownership still uses Hosty instance/app/service labels and the existing bounded owner-map
 cache. The existing Docker CPU and memory semantics are preserved. During runtime switches the
 freshest observation wins per app/service. Removed apps disappear; confirmed stopped apps have
-zero readings. Starting, stopping and partially unavailable apps retain measured services, with
+zero readings for each service declared by the selected reviewed manifest, even after health
+state is cleared by Stop. Starting, stopping and partially unavailable apps retain measured services, with
 unknown placeholders for expected services without samples. Unknown data is never presented as
 zero or silently omitted from a total.
 
@@ -72,7 +73,8 @@ wrapper has no border and matches Frame's corner radius, retaining an opaque bac
 CPU graphs share a scale of at least 100%, rounded up to the next 100% from retained fleet/Core
 peaks. RAM is numeric in rows and charted in the popover. A subtle activity dot requires at least
 ten baseline points and three consecutive readings above twice that baseline, at least ten percent
-CPU, and at least five percentage points above baseline. It is an activity hint, not an error.
+CPU, and at least five percentage points above baseline. The resource button includes this hint
+in its accessible name; the visual dot is decorative. It is an activity hint, not an error.
 Responsive rows retain values and actions without horizontal scrolling.
 
 ## Testing Expectations

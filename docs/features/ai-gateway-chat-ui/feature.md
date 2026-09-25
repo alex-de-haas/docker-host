@@ -52,6 +52,8 @@ One Input Group contains the full-width text field, selected attachments and a b
 action row. Attachment selection and app-context chips sit on the left; Send sits on the
 right. While the agent is running or waiting for approval/an answer, the same button
 shows Stop and cancels the active run through the existing session cancellation API.
+Every SSE subscription finishes its persisted replay with the current session status, including
+when no new persisted events exist, so reconnecting cannot leave Stop stuck after a completed turn.
 The separate header Stop button is absent. History is retained, and the next message
 can continue the conversation after cancellation. The composer remains editable during
 a response, but neither Enter nor form submission sends another message until the run

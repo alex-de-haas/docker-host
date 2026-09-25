@@ -46,7 +46,8 @@ Gateway settings content, including its tabs.
 MCP access uses a searchable application list and a detail panel for the selected application.
 Hosty Core appears first. Each entry shows its confirmed access state and marks instruction updates
 that need review. The detail panel groups the access switch and approval dropdown into labelled
-rows; changes save immediately and failed saves retain the confirmed values. Approval semantics
+rows; changes save immediately and failed saves retain the confirmed values. Save/approval feedback
+is scoped to the originating application, including when selection or search changes during a request. Approval semantics
 remain provider-specific. Changed instructions appear in the selected application's panel with the
 full text and its existing approval action. Pending instructions remain reachable even when app
 discovery cannot return their provider. On narrow screens the list sits above the detail panel.

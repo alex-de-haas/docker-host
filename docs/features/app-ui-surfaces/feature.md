@@ -40,6 +40,9 @@ ordinary and system apps. Settings surfaces do not require one. Core carries the
 through its persisted surface contract and API projection. Existing installed manifests
 remain readable/startable without icons; Shell renders a visible fallback for missing,
 unknown or loading icons, with the full app and panel label in the tooltip.
+Update checks accept a candidate whose digest exactly matches the reviewed installed
+manifest, so unchanged legacy panels do not create update warnings. Changed candidates
+and new installations still require icons.
 
 ## Settings Navigation
 
@@ -241,7 +244,8 @@ Core/CLI **0.107.0**. Gateway **0.32.2** declares `bot`; Demo App **0.11.2** dec
   and the install/update lifecycle tests, including `PanelIconAuthoringIsEnforcedAtInstallAndUpdateBoundaries`.
 
 - New install/update validation requires a non-blank panel icon in both app roles;
-  settings remain exempt. Legacy startup/read paths accept missing icon metadata.
+  settings remain exempt. Legacy startup/read paths accept missing icon metadata. Update checks
+  also accept a byte-identical reviewed legacy manifest; changed candidates still require icons.
 - Verify icons survive manifest normalization, storage and summary projection; several
   panels from one app keep distinct icons, labels and keys. Missing/unknown icons render
   a visible fallback with a tooltip.

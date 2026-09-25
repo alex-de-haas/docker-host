@@ -144,3 +144,19 @@ describe("session app context", () => {
     expect(() => parseAppIds([...ids, "extra"])).toThrow(); expect(() => parseAppIds(["../source"])).toThrow();
   });
 });
+
+it("resynchronizes a missed live-only idle transition even when the replay cursor is current", async () => {
+  const record = await manager.createSession({ createdBy: "admin" });
+  await manager.postMessage(record.id, "inspect");
+  expect((await manager.getSession(record.id))?.status).toBe("running");
+  await finishTurn(record.id);
+  const current = (await manager.getSession(record.id))!;
+  const subscription = await manager.subscribe(record.id, current.lastEventSeq, () => {});
+  expect(subscription.replay).toEqual([expect.objectContaining({ type: "session_status", status: "idle", seq: current.lastEventSeq })]);
+  subscription.unsubscribe();
+  await manager.postMessage(record.id, "next turn");
+  const active = (await manager.getSession(record.id))!;
+  const reconnect = await manager.subscribe(record.id, active.lastEventSeq, () => {});
+  expect(reconnect.replay.at(-1)).toMatchObject({ type: "session_status", status: "running" });
+  reconnect.unsubscribe();
+});

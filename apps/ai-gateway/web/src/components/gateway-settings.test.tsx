@@ -84,6 +84,7 @@ it("keeps the saved target when selection changes during a pending save", async 
   data.settings.mcpProviders.projects = false;
   await act(async () => resolve(structuredClone(data)));
   expect(details().querySelector("h2")?.textContent).toBe("Media Server");
+  expect(details().textContent).not.toContain("Applied to running sessions.");
   expect(details().querySelector('[role="switch"]')?.getAttribute("aria-checked")).toBe("false");
   await select("Project Manager");
   expect(details().querySelector('[role="switch"]')?.getAttribute("aria-checked")).toBe("false");
@@ -120,4 +121,18 @@ it("retains harness-specific disabled approvals even for enabled applications", 
   await render();
   expect(details().querySelector<HTMLButtonElement>('[role="combobox"]')!.disabled).toBe(true);
   expect(details().textContent).toContain("Codex harness decides which calls pause");
+});
+
+it("keeps completed save feedback scoped to its app across selection and search", async () => {
+  vi.mocked(saveSettings).mockImplementation(async () => structuredClone(data));
+  await render();
+  await select("Project Manager");
+  await act(async () => details().querySelector<HTMLButtonElement>('[role="switch"]')!.click());
+  expect(details().textContent).toContain("Applied to running sessions.");
+  await select("Media Server");
+  expect(details().textContent).not.toContain("Applied to running sessions.");
+  await search("projects");
+  expect(details().textContent).toContain("Applied to running sessions.");
+  await search("core");
+  expect(details().textContent).not.toContain("Applied to running sessions.");
 });

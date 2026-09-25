@@ -69,10 +69,10 @@ export function ResourceUsage({ appId, service, label }: { appId?: string; servi
   return <Popover open={open} onOpenChange={setOpen}>
     <PopoverTrigger asChild>
       <Button variant="ghost" size="sm" className="h-auto w-full min-w-0 justify-start gap-1 px-1.5 py-1 text-xs tabular-nums"
-        aria-label={`${label} resources: CPU ${formatCpu(cpu)}, RAM ${formatMemory(memory)}`}>
+        aria-label={`${label} resources: CPU ${formatCpu(cpu)}, RAM ${formatMemory(memory)}${elevated ? ", above recent CPU baseline" : ""}`}>
         <span className="flex shrink-0 flex-col gap-0.5">
           <span className="flex items-center gap-1"><Cpu aria-hidden="true" /><span>{formatCpu(cpu)}</span>
-            {elevated && <span aria-label="Above recent CPU baseline" className="size-1.5 rounded-full bg-primary" />}
+            {elevated && <span aria-hidden="true" className="size-1.5 rounded-full bg-primary" />}
           </span>
           <span className="flex items-center gap-1 text-muted-foreground"><MemoryStick aria-hidden="true" />{formatMemory(memory)}</span>
         </span>
