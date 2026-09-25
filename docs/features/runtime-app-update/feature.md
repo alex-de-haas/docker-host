@@ -1,7 +1,7 @@
 # Runtime App Update
 
 Created: 2026-06-04
-Updated: 2026-09-18
+Updated: 2026-09-24
 
 Update plans also display `corePermissions` additions/removals. New permissions require
 [Core-owned confirmation](../app-installation-sdk/feature.md); the queued HTTP/MCP apply path
@@ -32,6 +32,19 @@ The browser surface runs step 4 in the background (see [Background Apply](#backg
 If an update request does not provide a manifest reference and the app has both `FeedsUrl` and `FollowedFeedId`, Core re-fetches `feeds.json`, validates `app-feeds.0.1`, resolves the followed feed, and loads its current `manifestRef`. Otherwise Core resolves the source in this order: the stored manifest URL for remote direct installs; the original local manifest path or directory captured at install (so edits to the source folder are picked up on recheck); and finally the installed manifest copy under the app's Core state directory when that original source is no longer present.
 
 That last fallback compares the app with itself, so it can never find a newer version. The plan reports it as `sourceConfigured: false` — a followed feed, an explicit manifest reference, a stored manifest URL, or a still-present install folder all count as configured — and the check's verdict carries an `error` naming the way out (`hosty apps update-plan <app-id> --manifest <url-or-path>`) rather than reading as "no updates". A record can be left without a source when it predates its feed binding or its install folder is moved. Applying an update planned from a URL stores that URL, so later checks resolve it on their own.
+
+Before reporting a running reviewed source runtime as up to date, checks compare the managed checkout's HEAD with the
+installed source pin. A mismatch reports an incomplete source update instead of an up-to-date
+verdict, even when the manifest and recorded pin already match upstream. The diagnostic names both
+commits, the checkout, and Restart as the recovery action; local changes blocking that restart are
+reported across the whole checkout, including monorepo root files outside source inspection scope.
+Checks do not fetch, check out files, or stop the app. Stopped apps are excluded because their next
+start materializes the pin. Matching HEAD verifies the checkout only, not the code loaded in memory.
+The plan's additive `error` field and MCP `plan_app_update.error` carry the same diagnostic as the
+dashboard verdict, so an empty change list with an error does not mean the app is up to date.
+Runtime state is re-read after remote probes and checkout inspection so a concurrent Stop does not
+receive a running-checkout diagnostic. If Git cannot inspect restart blockers after confirming a pin
+mismatch, the error retains both revisions and recovery guidance with a cleanliness-check caveat.
 
 `planDigest` is the SHA-256 of the reviewed update plan seed: app id, current and target versions, current and target runtimes, current and target manifest digests, the target manifest path, the resolved feed identity (feeds URL, feed id, and feed document digest), whether a pre-update backup will be created, and the reported changes.
 
@@ -221,6 +234,11 @@ hosty apps update <app-id> --plan-digest <digest> --manifest apps/demo-app
 Failed updates leave enough state for diagnosis and retry. Runtime state and app data are not deleted automatically. Restore uses normal app backup restore behavior.
 
 ## Testing Expectations
+
+- An otherwise up-to-date running source app with an unmaterialized installed pin reports an error
+  with both revisions and checkout-wide restart blockers; checking preserves files and processes,
+  a successful restart clears the error on recheck, and stopped apps remain eligible for normal start.
+  Cover Stop during a delayed manifest probe and a failing Git status after a confirmed HEAD mismatch.
 
 - **Plan and classification** — change detection per contract category, `requiresReview` routine/review split (including `role: system` escalation and a cross-repository `image` move), `updateAvailable` treating `->unknown` as "cannot tell", and plan-digest stability across a rebuild.
 - **Apply** — digest mismatch, expiry, and stale-base rejection; verbatim consumption of the cached plan; `update_in_progress`; the interrupted-apply boot sweep.
