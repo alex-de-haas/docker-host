@@ -136,6 +136,12 @@ app that uses selected MCP tools needs a target-scoped permission (the operator 
 target apps), audit and revocation. The [core extension model](../core-extension-model/plan.md) owns
 replacing that gate; this plan leaves it unchanged.
 
+The consequence is a stated limitation of this slice: an assistant without `role: system` that holds
+the confirmed role and `apps.skills.read` gets its Shell tab and reads skills, but the exchange refuses
+it, so it cannot call other apps' MCP tools. Assistants are therefore not fully interchangeable until
+the delegation permission ships; a separate small plan for that permission is written when a real
+third-party assistant needs it.
+
 ## Deliverables
 
 - [ ] Add the confirmed fan-out `assistant` slot and the `apps.skills.read` permission to Core with
@@ -168,4 +174,6 @@ future in the MCP facade plan.
   role makes Shell ask again instead of falling back; a stopped assistant is shown as unavailable.
 - Removing the permission or role through a reviewed update revokes the corresponding access on the
   next check.
+- An assistant without `role: system` that holds the role and permission gets its tab and skill
+  reads, and its delegated-token exchange to call another app is refused.
 - Harness works end to end: its assistant tab and skill injection into sessions.

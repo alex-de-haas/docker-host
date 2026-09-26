@@ -221,8 +221,8 @@ Decisions 1–5: 2026-08-19.
     [core extension model](features/core-extension-model/plan.md) owns the general model;
     [assistant provider permissions](features/assistant-provider-permissions/plan.md) is its first slice.
 
-15. **Core is the MCP directory, not a proxy (2026-09-26).** Agents run on the host, and clients
-    reach them through AHP. Core owns which apps' MCP servers agents may use and publishes that
+15. **Core is the MCP directory, not a proxy (2026-09-26).** Agents run on the host; how clients
+    reach them is decision 13's AHP spike, and the directory does not depend on it. Core owns which apps' MCP servers agents may use and publishes that
     configuration without credentials; agents configure themselves from it and call each app
     directly, so tool traffic never passes through Core and the agent-bridge boundary stands. A
     single-entry facade for full external clients such as Claude Code or Codex becomes a separate

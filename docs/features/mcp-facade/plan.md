@@ -8,10 +8,10 @@ The facade ships on the `hosty.ai-gateway` system app ([feature.md](feature.md))
 full external clients with their own agents — Claude Code, Codex, VS Code — could reach the whole host
 through one configuration entry.
 
-Owner decision, 2026-09-26: agents run on the host and clients reach them through
-[AHP](../assistant-ahp/plan.md), so the facade is no longer on the main path. Core is the directory of
-MCP servers and agents configure themselves from it ([agent MCP directory](../agent-mcp-directory/plan.md));
-Core never proxies tool traffic. The single-entry facade for full external clients becomes a separate
+Owner decision, 2026-09-26: agents run on the host, so the facade is no longer on the main path;
+how clients reach them is a separate decision, with [AHP](../assistant-ahp/plan.md) the candidate
+pending its spike. Core is the directory of MCP servers and agents configure themselves from it
+([agent MCP directory](../agent-mcp-directory/plan.md)); Core never proxies tool traffic. The single-entry facade for full external clients becomes a separate
 app later, one more consumer of that directory. There is no current need, so this plan is parked.
 Until it resumes, the gateway facade keeps working and follows the Core policy through the directory.
 

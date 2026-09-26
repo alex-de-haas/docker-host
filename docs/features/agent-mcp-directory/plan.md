@@ -1,20 +1,23 @@
 # Agent MCP Directory — Core Lists What Agents May Use
 
-Status: Ready
+Status: Draft
 Created: 2026-09-26
 Updated: 2026-09-26
 
 Part of [shared assistant development sessions](../assistant-development-sessions/plan.md).
 The umbrella's common invariants apply; this feature has independent scope and requires its own Ready approval.
 
+Returned to Draft on 2026-09-26 after review found that `tools/list_changed` cannot add or remove a
+server; this revision defines refresh, enforcement and adapter behavior and awaits owner approval.
+
 ## Goal And Owner Direction
 
 Owner direction, 2026-09-26: Core is the directory of the host's MCP servers and owns the decision
-which of them agents may use. Agents run on the host — the direction set by
-[AHP as a client interface](../assistant-ahp/plan.md) — and configure their MCP servers themselves
-from that directory, calling each app directly. Core never carries tool traffic, so the
+which of them agents may use. Agents run on the host and configure their MCP servers themselves from
+that directory, calling each app directly. Core never carries tool traffic, so the
 [ai-agent-bridge](../ai-agent-bridge/feature.md) boundary "normal agent traffic does not pass through
-it" stands.
+it" stands. How clients reach host-side agents is a separate question: [AHP](../assistant-ahp/plan.md)
+is the candidate client interface, pending its spike, and this directory does not depend on it.
 
 The single-entry facade for full external clients such as Claude Code or Codex is a separate app for
 later, parked in the [MCP facade plan](../mcp-facade/plan.md). Accepting this directory is expected to
@@ -23,57 +26,98 @@ be part of the future `agent` provider contract in the
 
 ## Current Behavior
 
-- Which apps' tools may reach agents (`mcpProviders`) and which skill texts the operator approved are
-  stored in the gateway's own settings (`apps/ai-gateway/src/settings/store.ts`) and edited on its
-  settings page. With several assistants, each would keep its own copy.
-- Assistant sessions discover providers at session start from Core's app directory
-  (`GET /api/internal/apps/{appId}/app-directory`, service token), filter them with those settings,
-  obtain one delegated token per app and call each app directly through the gateway's forwarding
-  proxy. The gateway facade applies the same settings.
+- Which apps' tools may reach agents (`mcpProviders`), which skill texts the operator approved
+  (`mcpSkillDigests`) and which providers run without an approval card (`mcpAutoAllow`) are stored in
+  the gateway's settings (`apps/ai-gateway/src/settings/store.ts`) and edited on its settings page.
+- Core itself is treated differently per surface: assistant sessions list `hosty:core` as a provider
+  with the same switch and approval mode as apps (auto-allow on by default), while the gateway facade
+  always offers Core, independent of that switch.
+- Assistant sessions discover providers from Core's app directory
+  (`GET /api/internal/apps/{appId}/app-directory`, service token) and pass the harness one MCP server
+  per provider, each a loopback URL on the gateway's forwarding proxy (`apps/ai-gateway/src/mcp/proxy.ts`).
+  The proxy obtains a delegated token for the acting user at the moment each request goes out.
+- Changing a running session's server set depends on the adapter: the Claude adapter reconfigures a
+  live session (`setMcpServers`, `liveReconfigure: true`); the Codex adapter has no equivalent, and a
+  change takes effect at the next session. `tools/list_changed` only reports a changed tool list of a
+  server the client is already connected to; it cannot add or remove a server.
+- The gateway facade builds its catalog from the same settings with a 30-second per-user cache that is
+  dropped on a policy change; it refuses the streamable-HTTP GET stream, so it sends no notifications.
 - `hosty mcp` takes every running app that declares `mcp` and ignores those settings.
 
 ## Target Behavior
 
 ### Policy In Core
 
-- A Core-owned host setting records, per app, whether its MCP tools are offered to agents (default
-  off, as the vision requires) and which skill-text digest the operator approved. Administrators edit
-  it in Shell's platform settings; every change is audited.
+- A Core-owned host setting records, per target, whether its MCP tools are offered to agents and,
+  per app, the skill-text digest the operator approved. Administrators edit it in Shell's platform
+  settings; every change is audited.
+- Targets are the installed apps with an `mcp` interface, default off as the vision requires, and
+  Core itself (`hosty:core`), default on. Core's MCP is read-only and administrator-only, and every
+  surface applies the same switch to it.
+- Uninstalling an app removes its entry, so a reinstalled app with the same id starts disabled. A
+  changed skill digest stops delivery of that skill until the operator approves the new text; the
+  app's tools stay offered.
+- The policy decides what is **offered** to agents through Hosty consumers. It does not revoke a
+  user's own access to an app and does not bind software outside Hosty.
+- Approval rules stay with the assistant: `mcpAutoAllow` remains in Harness, owned by
+  [assistant approval rules](../assistant-approval-rules/plan.md). Offering a tool and running it
+  without a card are separate decisions.
 - The gateway's `mcpProviders` and skill approvals are not imported. The operator enables providers and
-  approves skills once in Core; the gateway's own MCP-access settings page is removed.
+  approves skills once in Core; the gateway's settings page loses only its offer switches.
 
 ### Directory Configuration
 
-- The existing app directory carries, per app, whether it is offered to agents, its `mcp` interface
+- The existing app directory carries, per target, whether it is offered, its `mcp` interface
   declarations with resolved URLs and per-service readiness, and the approved skill digest, plus a
   directory revision that changes whenever the policy or the fleet changes.
 - The configuration holds no credentials. An agent obtains a short-lived delegated token for the
-  acting user and each target app when it needs one, as sessions do today, so every call stays bounded
-  by what that user may reach and authorized by the app itself.
-- Until app-readable Core events exist, consumers re-read the directory at session start and before
-  each turn, sending the revision so an unchanged directory costs one cheap request. When a running
-  session's set changes, its agent receives `notifications/tools/list_changed`. Event subscriptions
-  from the core extension model can replace polling later.
+  acting user and each target when it needs one, so every call stays bounded by what that user may
+  reach and authorized by the app itself.
 
-### Consumers
+### Refresh And Enforcement Per Consumer
 
-- Assistant sessions (Harness today) and the gateway facade use the Core policy instead of their own
-  settings.
-- `hosty mcp` offers only enabled apps. Its skill delivery keeps the rule documented in
-  [hosty-mcp-connector](../hosty-mcp-connector/feature.md).
-- Consumers enforce the offer policy and their own approval rules; Core remains the authority on who
-  may reach an app. A consumer that ignored the policy could still reach only what the acting user
-  can reach.
+| Consumer | Reads the directory | Enforces |
+| --- | --- | --- |
+| Harness sessions | at session start and before each turn, sending the revision | per call in the forwarding proxy |
+| Gateway facade | when building a catalog; the cache is dropped when the revision changes | on list and on call |
+| `hosty mcp` | when building its listing | on list and before each call |
+
+- **Disabling** refuses new calls to that target from the consumer's next directory read; a call
+  already in flight completes. For Harness this happens at the latest before the next turn, and the
+  forwarding proxy refuses calls to a disabled target even when the harness still lists its tools.
+- **Core unavailable**: consumers keep the last applied set for listing but never add targets from an
+  unreadable directory, and every call still needs a fresh token from Core, so no call reaches an app
+  while Core is down.
+- **External clients of the facade** see changes on their next `tools/list` or reconnect; live
+  notifications stay with the parked [MCP facade plan](../mcp-facade/plan.md).
+
+### Changing A Running Harness Session
+
+| Change | Claude adapter | Codex adapter |
+| --- | --- | --- |
+| Target enabled (server added) | `setMcpServers` before the next turn | restart the app-server between turns and resume the thread; fallback: next session with a visible notice |
+| Target disabled (server removed) | `setMcpServers`; the proxy refuses calls immediately | the proxy refuses calls immediately; the tool leaves the list on restart or next session |
+| URL or readiness changed | `setMcpServers` | as for an added server; the proxy resolves the current URL per call meanwhile |
+| Tools of a connected app changed | the app's own `tools/list_changed` through the transparent proxy — verified below | the same — verified below |
+
+The Codex restart path uses the adapter's existing `thread/resume` and is adopted only after the
+verification deliverable below; until then the fallback applies.
 
 ## Deliverables
 
-- [ ] Add the Core offer policy (per-app enablement, approved skill digests) with its admin API,
-      Shell platform settings UI and audit.
+- [ ] Add the Core offer policy with its `hosty:core` entry and defaults, uninstall cleanup, approved
+      skill digests, admin API, Shell platform settings UI and audit.
 - [ ] Extend the app directory with offer state, `mcp` declarations, readiness, approved skill digests
       and a directory revision.
-- [ ] Switch assistant sessions and the gateway facade to the Core policy, refresh running sessions
-      with `list_changed`, and remove the gateway's own MCP-access settings.
-- [ ] Make `hosty mcp` offer only enabled apps.
+- [ ] Switch Harness sessions to the Core policy: per-turn refresh, per-call enforcement in the
+      forwarding proxy, and server-set updates per adapter as tabled above. Keep `mcpAutoAllow` and
+      remove only the gateway's offer switches.
+- [ ] Verify the Codex path — restart with `thread/resume` between turns keeps the conversation and
+      picks up the new servers — and whether a connected app's `tools/list_changed` passes the
+      forwarding proxy and reaches each harness. Record the results and use the fallbacks where they
+      fail.
+- [ ] Switch the gateway facade to the directory with a revision-aware catalog cache.
+- [ ] Make `hosty mcp` offer only enabled targets and check the policy before each call.
 - [ ] Update `feature.md` for this feature, [ai-gateway](../ai-gateway/feature.md),
       [mcp-facade](../mcp-facade/feature.md) and [hosty-mcp-connector](../hosty-mcp-connector/feature.md);
       remove this plan and regenerate the index.
@@ -83,16 +127,22 @@ settings UI, and the gateway/Harness for consuming the policy.
 
 ## Open Questions
 
-None.
+None. The Codex restart path and `tools/list_changed` delivery have defined fallbacks and are settled
+by the verification deliverable.
 
 ## Verification
 
-- A newly installed app with an `mcp` interface is offered to no agent until the operator enables it;
-  enabling it adds its tools to a running session on the next turn through `list_changed`, and
-  disabling removes them.
-- Harness sessions, the gateway facade and `hosty mcp` show the same set of apps for the same user.
-- A second user sees only apps they may reach; a disabled app's tools are neither listed nor callable
-  through any consumer.
-- The directory contains no credentials, and an unchanged revision is answered without a full
-  payload.
-- Uninstalling an app removes it from the directory and from running sessions on the next turn.
+- A newly installed app with an `mcp` interface is offered to no agent until the operator enables it.
+  Enabling it adds its tools to a running Claude session before the next turn, and to a Codex session
+  by restart-and-resume or, failing that, at the next session with a notice.
+- Disabling an app during a long turn lets the in-flight call finish and refuses its next call in the
+  proxy, although a Codex harness may still list the tool until restart.
+- With Core stopped, no consumer adds a target and no call reaches an app; after Core returns, the
+  next read applies the current policy.
+- Uninstalling and reinstalling an app with the same id leaves it disabled.
+- Changing an app's skill text stops its delivery until re-approved while its tools stay offered.
+- `hosty:core` is on by default and follows the same switch in sessions, the facade and `hosty mcp`.
+- After a refresh, Harness sessions, the facade and `hosty mcp` offer the same set for the same user;
+  a second user sees only targets they may reach.
+- Auto-allow settings survive the switch and still apply only to offered tools.
+- The directory contains no credentials, and an unchanged revision is answered without a full payload.

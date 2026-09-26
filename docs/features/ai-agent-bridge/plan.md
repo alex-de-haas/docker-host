@@ -170,8 +170,8 @@ Topologies — the connector runs where the agent client runs:
    SSH, zero new code.
 4. No CLI at all (web or mobile clients): needs a remote HTTP MCP endpoint with OAuth, a future
    `mcp-hub` system app. Explicitly deferred; Core never hosts it. Since 2026-09-26 agents run on
-   the host behind AHP, and a single-entry facade for external clients is a future separate app
-   ([mcp-facade](../mcp-facade/plan.md), On Hold).
+   the host (AHP is the candidate client interface), and a single-entry facade for external clients
+   is a future separate app ([mcp-facade](../mcp-facade/plan.md), On Hold).
 
 Multi-environment maps one MCP server entry per CLI context (`hosty-local`, `hosty-prod`) rather than
 one connector taking an environment argument, so the environment is explicit in every tool name,
