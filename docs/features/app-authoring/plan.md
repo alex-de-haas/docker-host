@@ -118,8 +118,12 @@ converter or an approval to implement the Draft.
    persistent data, configuration, dependencies and supported OS/architectures against the actual
    host capabilities. Resolve image architecture/platform explicitly: an amd64-only image on an
    arm64 host needs a supported, explicitly selected emulation path or an incompatibility result.
-   Preserve resolved image/platform identity through Core's existing `ArtifactLocks` contract rather
-   than inventing a second locking store. Reading upstream instructions does not authorize executing their commands.
+   Core's current `ArtifactLock` stores a digest but not the selected OS/architecture/variant or
+   emulation choice. Explicit cross-platform adaptation depends on the reviewed platform-lock
+   extension owned by [runtime artifacts](../runtime-artifact-model/plan.md), including enforcement
+   on subsequent starts. Reuse that extended lock rather than a second store; until it is available,
+   report unsupported platform selection instead of claiming a digest preserves it. Reading
+   upstream instructions does not authorize executing their commands.
    Report supported, supported with adaptation, or unsupported with concrete blockers. Do not
    assume a container has a web UI or that a Windows-only desktop app can run on the selected host.
 2. **Choose the smallest useful adaptation.** For an existing image, normally create a separate

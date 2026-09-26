@@ -2,7 +2,7 @@
 
 Status: Draft
 Created: 2026-07-02
-Updated: 2026-09-17
+Updated: 2026-09-26
 
 ## Goal
 
@@ -18,6 +18,12 @@ loop to new delivery mechanisms. This plan retains the unbuilt work from the leg
 - [ ] Expose update availability per runtime rather than conflating the active profile and alternatives.
 - [ ] Decide whether a demonstrated multi-source use case warrants per-runtime source bindings and a
       unified artifact-state record; preserve app-level source and existing paths until then.
+- [ ] Extend reviewed image artifact locks with selected OS/architecture/variant and the execution
+      mode or emulation policy needed by [app adaptation](../app-authoring/plan.md). Persist that
+      selection with the resolved image identity, distinguish an image-index digest from its chosen
+      platform image, and enforce it during install/start/restart/update. Define behavior for legacy
+      locks with missing platform information; never silently substitute the new host's default
+      platform or enable emulation when the reviewed selection cannot run.
 - [ ] Verify the selected extensions, update feature.md and retire this plan when its work is complete.
 
 ## Open Questions
@@ -32,3 +38,8 @@ branch switching, or migration to per-runtime source directories is authorized b
 
 Test artifact integrity, archive containment, offline locked starts, stale update reviews, platform
 compatibility, failed materialization cleanup and preservation of existing source/data directories.
+
+Platform-lock acceptance covers a multi-platform image and an amd64-only image on an arm64 host,
+explicit native/emulated execution, restart after host changes, unavailable emulation and legacy
+locks. The same reviewed platform must be used or startup must fail with an actionable incompatibility;
+a matching index digest alone is insufficient evidence of the selected execution platform.

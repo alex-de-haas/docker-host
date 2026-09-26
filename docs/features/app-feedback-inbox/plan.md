@@ -100,8 +100,8 @@ destination session under the shared-history visibility policy.
 
 The feature name `app-feedback-inbox` is distinct from `shell-operation-feedback`, which describes
 lifecycle operation UI. This inbox collects evidence and hands it to development sessions; it is
-not project-manager's general task/project domain. A future project-manager integration may consume
-reviewed reports without duplicating their storage or granting regular users free-form agent access.
+not project-manager's general task/project domain. Project-manager integration is outside this
+plan's scope; this feature hands reviewed evidence to assistant sessions only.
 
 ## Deliverables
 
@@ -109,6 +109,23 @@ reviewed reports without duplicating their storage or granting regular users fre
 - [ ] Validate and implement supported screenshot/element capture paths with text/context fallback.
 - [ ] Implement administrator triage, reviewed batch and direct-send paths with idempotent session delivery.
 - [ ] Implement per-item outcomes, authorized reporter notifications and evidence retention/access.
+
+## Implementation Phases
+
+After this plan is approved as Ready, implement these phases on one feature branch and in one PR:
+
+1. **Intake and storage foundation.** Select Core or a separate app as owner; implement authenticated
+   text/context submission, durable evidence records, access checks and retention. Verify that ordinary
+   submission starts no agent and cannot read another user's reports.
+2. **Capture integration.** Spike the candidate capture paths, then implement supported screenshot
+   and element capture with preview/removal and text fallback. Persist evidence through phase 1's
+   authorization and storage contract, including cross-origin and broken-page cases.
+3. **Triage and session delivery.** Build administrator selection, reviewed batches and direct-send
+   using the intake records and shared-session input contract. Verify destination access, provenance,
+   partial batch selection and idempotent retries before enabling agent dispatch.
+4. **Outcomes and acceptance.** Add per-item result tracking and authorized reporter notifications;
+   verify partial outcomes, retained evidence after session deletion and the complete user-to-admin
+   journey. Update shipped documentation and remove this plan only after all deliverables pass.
 
 ## Open Questions
 
