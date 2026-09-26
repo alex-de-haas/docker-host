@@ -1,14 +1,15 @@
 # Agent MCP Directory — Core Lists What Agents May Use
 
-Status: Draft
+Status: Ready
 Created: 2026-09-26
 Updated: 2026-09-26
 
 Part of [shared assistant development sessions](../assistant-development-sessions/plan.md).
 The umbrella's common invariants apply; this feature has independent scope and requires its own Ready approval.
 
-Returned to Draft on 2026-09-26 after review found that `tools/list_changed` cannot add or remove a
-server; this revision defines refresh, enforcement and adapter behavior and awaits owner approval.
+Revised on 2026-09-26 after review found that `tools/list_changed` cannot add or remove a server;
+this revision defines refresh, enforcement and adapter behavior and was re-approved by the owner the
+same day.
 
 ## Goal And Owner Direction
 
@@ -49,8 +50,12 @@ be part of the future `agent` provider contract in the
 ### Policy In Core
 
 - A Core-owned host setting records, per target, whether its MCP tools are offered to agents and,
-  per app, the skill-text digest the operator approved. Administrators edit it in Shell's platform
-  settings; every change is audited.
+  per app, the skill-text digest the operator approved. Approvals are keyed by app and skill, so a
+  later manifest with several skills per app is an additive change. Every change is audited.
+- Administrators edit it in a new host tab of Shell's settings, **Agents**, beside Access tokens and
+  Shared mounts. It lists Hosty Core and every app with an `mcp` interface, each with its offer
+  switch, readiness and skill status (approved, or changed with the new text to review and approve).
+  A newly installed app appears there disabled.
 - Targets are the installed apps with an `mcp` interface, default off as the vision requires, and
   Core itself (`hosty:core`), default on. Core's MCP is read-only and administrator-only, and every
   surface applies the same switch to it.
@@ -63,7 +68,11 @@ be part of the future `agent` provider contract in the
   [assistant approval rules](../assistant-approval-rules/plan.md). Offering a tool and running it
   without a card are separate decisions.
 - The gateway's `mcpProviders` and skill approvals are not imported. The operator enables providers and
-  approves skills once in Core; the gateway's settings page loses only its offer switches.
+  approves skills once in Core. The gateway's settings page keeps its auto-allow switches and shows
+  each target's offer state with a link to the Agents tab.
+- Different targets for different assistants are outside this plan. They arrive with the
+  target-scoped delegation permission of the [core extension model](../core-extension-model/plan.md),
+  which Core enforces when issuing tokens and which narrows this host policy rather than replacing it.
 
 ### Directory Configuration
 
@@ -106,12 +115,12 @@ verification deliverable below; until then the fallback applies.
 ## Deliverables
 
 - [ ] Add the Core offer policy with its `hosty:core` entry and defaults, uninstall cleanup, approved
-      skill digests, admin API, Shell platform settings UI and audit.
+      skill digests keyed by app and skill, admin API, the Shell **Agents** settings tab and audit.
 - [ ] Extend the app directory with offer state, `mcp` declarations, readiness, approved skill digests
       and a directory revision.
 - [ ] Switch Harness sessions to the Core policy: per-turn refresh, per-call enforcement in the
-      forwarding proxy, and server-set updates per adapter as tabled above. Keep `mcpAutoAllow` and
-      remove only the gateway's offer switches.
+      forwarding proxy, and server-set updates per adapter as tabled above. Keep `mcpAutoAllow`, and
+      replace the gateway's offer switches with the offer state and a link to the Agents tab.
 - [ ] Verify the Codex path — restart with `thread/resume` between turns keeps the conversation and
       picks up the new servers — and whether a connected app's `tools/list_changed` passes the
       forwarding proxy and reaches each harness. Record the results and use the fallbacks where they
@@ -132,7 +141,8 @@ by the verification deliverable.
 
 ## Verification
 
-- A newly installed app with an `mcp` interface is offered to no agent until the operator enables it.
+- A newly installed app with an `mcp` interface appears disabled in the Agents tab and is offered to no
+  agent until the operator enables it there.
   Enabling it adds its tools to a running Claude session before the next turn, and to a Codex session
   by restart-and-resume or, failing that, at the next session with a notice.
 - Disabling an app during a long turn lets the in-flight call finish and refuses its next call in the
@@ -140,7 +150,8 @@ by the verification deliverable.
 - With Core stopped, no consumer adds a target and no call reaches an app; after Core returns, the
   next read applies the current policy.
 - Uninstalling and reinstalling an app with the same id leaves it disabled.
-- Changing an app's skill text stops its delivery until re-approved while its tools stay offered.
+- Changing an app's skill text marks it changed in the Agents tab and stops its delivery until
+  re-approved there, while its tools stay offered.
 - `hosty:core` is on by default and follows the same switch in sessions, the facade and `hosty mcp`.
 - After a refresh, Harness sessions, the facade and `hosty mcp` offer the same set for the same user;
   a second user sees only targets they may reach.

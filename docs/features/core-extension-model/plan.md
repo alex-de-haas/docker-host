@@ -247,20 +247,25 @@ UI client's own features use is that client's setting, not a Core default.
   audited. The app reads its granted set and degrades when an optional permission is missing. An
   update that adds an optional permission offers it without granting it; moving one to required
   re-enters review.
-- **`role: system` stops being a privilege.** Each current use gets its own replacement: acting as
-  the user toward other apps (the delegated-token exchange and on-behalf-of tokens) becomes a
-  permission, scoped to target apps where needed; administrator-only access becomes the intersection of the app's
-  grants and the user's own rights plus the existing assignment policy; system-specific session
-  lifetimes become a setting or follow the grants; ownership stays as Core-side bootstrap state shown
-  as a badge. This is an app-grant change, compatible with vision decisions 1 and 9, not a redesign
-  of user roles.
+- **`role: system` stops being a privilege.** Each current use gets its own replacement: acting as the
+  user toward other apps (the delegated-token exchange and on-behalf-of tokens) becomes a permission,
+  scoped to target apps where needed — which is also how different assistants get different MCP
+  targets, enforced by Core when it issues tokens and narrowing the host policy of the [agent MCP
+  directory](../agent-mcp-directory/plan.md); administrator-only access becomes the intersection of
+  the app's grants and the user's own rights plus the existing assignment policy; system-specific
+  session lifetimes become a setting or follow the grants; ownership stays as Core-side bootstrap
+  state shown as a badge. This is an app-grant change, compatible with vision decisions 1 and 9, not a
+  redesign of user roles.
 - **Agent providers are a candidate role.** An assistant is an app with a full assistant UI that
   manages agents. A separate `agent` role would let an app supply agents — another AI provider, for
   example — that assistants and other apps use through one contract Hosty defines. Agents run on the
   host and configure their MCP servers from Core's [agent MCP
-  directory](../agent-mcp-directory/plan.md); accepting that directory belongs in the contract. It is
-  also the likely shape of the app-mediated AI calls in the vision's first open question. Not part of
-  the first slice; see Open Questions.
+  directory](../agent-mcp-directory/plan.md); accepting that directory belongs in the contract. An
+  agent provider owns its own configuration — accounts, models, sandbox modes — and exposes it through
+  its `ui.settings` page; Core lists providers and does not model their settings. Until such apps
+  exist, Harness provides the agents and their settings. The role is also the likely shape of the
+  app-mediated AI calls in the vision's first open question. Not part of the first slice; see Open
+  Questions.
 - **Permissions are not a sandbox for host processes.** They limit what an app does through Core's
   API. A `localCommand` app runs as the operator's OS user and can read Core's data directly, so for
   it the grants are an honest label rather than an enforced boundary; review surfaces say so.
