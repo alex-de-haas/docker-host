@@ -38,7 +38,7 @@ try{
  const first=await run.request('thread/start',{cwd:home,sandbox:'read-only',approvalPolicy:'never'});const id=first.thread.id;
  await run.request('turn/start',{threadId:id,input:[{type:'text',text:'Remember marker HOSTY_DIRECTORY_SPIKE_42'}]});
  const until=Date.now()+20000;while(!run.events.some((e:any)=>e.method==='turn/completed')&&Date.now()<until)await new Promise(r=>setTimeout(r,50));
- console.log('Codex initial MCP tools', (await run.request('mcpServerStatus/list',{})).data.map((x:any)=>({name:x.name,tools:Object.keys(x.tools)}))); 
+ console.log('Codex initial MCP tools', (await run.request('mcpServerStatus/list',{})).data.map((x:any)=>({name:x.name,tools:Object.keys(x.tools)})));
  const before=calls.filter(m=>m==='tools/list').length;toolsVersion=2;for(const s of streams)s.write('event: message\ndata: {"jsonrpc":"2.0","method":"notifications/tools/list_changed"}\n\n');await new Promise(r=>setTimeout(r,1500));
  console.log('codex_notification',{streams:streams.length,listsBefore:before,listsAfter:calls.filter(m=>m==='tools/list').length,status:(await run.request('mcpServerStatus/list',{})).data.map((x:any)=>({name:x.name,tools:Object.keys(x.tools)}))});
  await run.stop();run=boot('second');await run.request('initialize',{clientInfo:{name:'hosty-spike',version:'1'}});run.notify('initialized');

@@ -149,25 +149,15 @@ are documented in [Assistant App Context](../assistant-app-context/feature.md).
   characters. It applies to the **next session**, not the running one: the prompt is a session's
   instruction set, and swapping it mid-conversation would leave a transcript whose halves ran under
   different instructions.
-- **MCP providers.** Installed apps declaring an `mcp` interface, read from Core's app-directory
-  roster (see [app-mcp](../app-mcp/feature.md)) and refreshed on every settings read, each with a
-  toggle. An unreachable Core is reported as such rather than as an empty list — the two are
-  different facts, and conflating them would tell the operator their apps had vanished. **New apps
-  default to off.** Tool names and descriptions are third-party text landing in the context of a
-  model that holds host shell, so reaching an app is a decision, not a side effect of installing it.
-  Toggles for uninstalled apps are pruned, so an uninstall/reinstall cycle cannot resurrect one.
-- **Hosty Core is the first row.** Core's own MCP endpoint is offered to the assistant's sessions as
-  a provider under the id `hosty:core` — the audience Core mints delegated tokens for its surface
-  under, and the name the facade already lists it by — with the same switch and approval select as
-  an app. It rides on the gateway's configured Core origin rather than on the app-directory read, so
-  the row is there while discovery reports the apps unavailable, and it is never pruned: Core is not
-  in the roster pruning runs against, and dropping an explicit "off" would have the default put it
-  back on. **Core defaults to on, with its read-only tools unprompted** — the one exception to the
-  opt-in rule, because that rule guards against third-party prose and an app's own word about its
-  annotations, and neither applies to the platform's own tools, whose read-only annotations its own
-  test suite asserts. Absent means on, so a settings file from before the row existed gains it
-  without being rewritten and an explicit off survives every read. The row governs the panel only:
-  the facade keeps offering Core to external clients on its own terms.
+- **MCP offers and skills** come from the [Core Agent MCP Directory](../agent-mcp-directory/feature.md).
+  The Gateway page shows the offer state and links to Shell Settings → Agents. New apps default off;
+  Core defaults on, and the same switch governs sessions, the facade and `hosty mcp`. Gateway's legacy
+  offer/skill settings do not grant access. Auto-allow remains a Gateway setting, independent of offers.
+- Sessions refresh the directory before every turn. The forwarding proxy checks policy and resolves
+  the current target URL before each request, then obtains a fresh token. Core outages retain the
+  previous listing but cannot forward calls using an older token. Claude applies server updates through
+  SDK reconfiguration and explicitly disables omitted startup servers. Codex prepares a resumed
+  app-server between turns; failure preserves the old process and produces a visible notice.
 - What Core contributes to a session is **the read-only half of its surface** — `list_apps`,
   `get_app`, `get_host_status`, `tail_app_logs`, `search_audit` — under the reserved server name
   `hosty-core` (an app id that spells the same string is given a digest suffix instead, since the

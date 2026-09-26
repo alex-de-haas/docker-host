@@ -252,7 +252,7 @@ UI client's own features use is that client's setting, not a Core default.
   user toward other apps (the delegated-token exchange and on-behalf-of tokens) becomes a permission,
   scoped to target apps where needed — which is also how different assistants get different MCP
   targets, enforced by Core when it issues tokens and narrowing the host policy of the [agent MCP
-  directory](../agent-mcp-directory/plan.md); administrator-only access becomes the intersection of
+  directory](../agent-mcp-directory/feature.md); administrator-only access becomes the intersection of
   the app's grants and the user's own rights plus the existing assignment policy; system-specific
   session lifetimes become a setting or follow the grants; ownership stays as Core-side bootstrap
   state shown as a badge. This is an app-grant change, compatible with vision decisions 1 and 9, not a
@@ -261,7 +261,7 @@ UI client's own features use is that client's setting, not a Core default.
   manages agents. A separate `agent` role would let an app supply agents — another AI provider, for
   example — that assistants and other apps use through one contract Hosty defines. Agents run on the
   host and configure their MCP servers from Core's [agent MCP
-  directory](../agent-mcp-directory/plan.md); accepting that directory belongs in the contract. An
+  directory](../agent-mcp-directory/feature.md); accepting that directory belongs in the contract. An
   agent provider owns its own configuration — accounts, models, sandbox modes — and exposes it through
   its `ui.settings` page; Core lists providers and does not model their settings. Until such apps
   exist, Harness provides the agents and their settings. The role is also the likely shape of the
