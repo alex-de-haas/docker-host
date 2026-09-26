@@ -10,14 +10,24 @@ The umbrella's common invariants apply; this feature has independent scope and r
 ## Goal And Owner Direction
 
 Owner direction, 2026-09-26: the authority an app currently obtains by declaring the `ai-gateway`
-interface becomes explicit Core permissions that the app requests and the operator approves, in the
-same way as `apps.install` and `apps.update`. The interface remains discovery metadata only. Several
-apps may hold assistant authority; an operator setting selects which one is the default assistant.
+interface comes instead from declarations the operator confirms at installation, in the same way as
+`apps.install` and `apps.update`. The interface remains discovery metadata only.
 
-Split the authority along the enforcement points that exist today rather than as one bundle. Hosty
-Harness requests all of them, but a later app may need only part — for example, using selected
-MCP tools without being a full assistant. Splitting after grants exist would force every installed
-assistant through a reviewed update, so the split happens before the first grant is issued.
+Follow-ups the same day:
+
+- Authority has two axes. What an app **provides** is a role other components route work to; what an
+  app **may do** is a permission. The `role: system` label is not a privilege for either axis, so this
+  plan adds no system restriction. The general model — few permissions, required and optional
+  permissions, retiring `system` as a privilege — belongs to
+  [core extension model](../core-extension-model/plan.md); this plan is its first slice and declares
+  everything Harness needs as required.
+- An **assistant** is an app with a full assistant UI that manages agents; Hosty Harness is one.
+  Several assistants may be installed at once. An **agent** provider — an app that supplies agents
+  for assistants and other apps — is a separate future role recorded in the core extension model,
+  not part of this plan.
+- Which assistant a UI client's own features use is that client's setting, not a Core setting. Hosty
+  Shell shows every assistant as its own panel tab and keeps the choice for features such as "Ask
+  assistant" in its settings; another UI client may have no such features at all.
 
 ## Current Behavior
 
@@ -27,119 +37,143 @@ Core shape-validates `interfaces` and never shows them on installation or update
 declaring `interfaces["ai-gateway"]` acts as authority in three places:
 
 - Shell's `findAssistantGateway` (`apps/shell/src/app/shell/assistant/assistant-client.ts`) treats
-  the first app declaring the interface as the assistant. It receives the operator's prompts,
+  the first app declaring the interface as the only assistant. It receives the operator's prompts,
   `ask-assistant` drafts with other apps' context, and session creation; Shell's delegated-token
   handshake (`appMayReceiveDelegatedToken`) answers only that app's frame. The handshake token's
   audience is the app itself, so the handshake is not an escalation on its own.
 - `GET /api/internal/apps/{appId}/agent-skills/{targetAppId}` (`DomainEndpoints.cs`) lets a declaring
   app read any other app's agent skill.
 - `OAuthEndpoints.ResolveResourceAsync` recognizes the declaring app's origin plus `/mcp` as the
-  host-wide MCP facade resource, so external agents complete OAuth against it.
+  host-wide MCP facade resource. The same method already recognizes any app's declared `mcp`
+  interface URL; both yield a token whose audience is that app.
 
 The manifest reference (`skills/hosty-app-skill/references/app-manifest.md`) states that declaring an
 interface grants nothing; for `ai-gateway` the code contradicts it. Separately, the delegated-token
-exchange that lets an app call other apps on the user's behalf is gated by `role: system`, not by
-the interface (`AuthEndpoints.cs`).
+exchange and on-behalf-of tokens that let an app act toward other apps as the user are gated by
+`role: system`, not by the interface (`AuthEndpoints.cs`, `OnBehalfOfTokenEndpoints.cs`).
 
-`corePermissions` is a closed vocabulary (`CoreAppPermissions` in `InstallationApprovalStore.cs`:
-`apps.install`, `apps.update`). Unknown entries fail manifest validation. Core records the approved
-set as `GrantedCorePermissions` at installation and reviewed update; queued updates that add
-permissions require confirmation, and editing a source manifest grants nothing. Shell already derives
-iframe sandbox policy from persisted grants. Core's confirmation page describes each permission; the
-SDK `InstallDialog` that Shell uses lists requested permissions by raw id.
+`provides` holds slot tokens that Core reacts to only when its `PlatformCapabilities` registry knows
+them (today only `otlp-collector`); slots pass through no operator confirmation. `corePermissions` is
+a closed vocabulary (`CoreAppPermissions` in `InstallationApprovalStore.cs`: `apps.install`,
+`apps.update`); unknown entries fail manifest validation. Core records the approved set as
+`GrantedCorePermissions` at installation and reviewed update; queued updates that add permissions
+require confirmation, and editing a source manifest grants nothing. Core's confirmation page shows
+permission descriptions; the SDK `InstallDialog` that Shell uses lists requested permissions by raw id.
 
 ## Target Behavior
 
-### Permissions
+### Assistant Role
 
-Working names; final names and wording are an open question.
+- A manifest declares `provides: ["assistant"]` and keeps the `ai-gateway` interface to locate its
+  API. Core adds the slot to its registry as a role that requires operator confirmation. Its
+  cardinality is fan-out: every confirmed assistant is available, and none is a Core-level default.
+- The role is inert until confirmed. Installation and reviewed-update review show it with a
+  description; Core records the confirmed role on the app record next to `GrantedCorePermissions`
+  and exposes confirmed roles through the apps API. An update that adds the role re-enters
+  confirmation; editing a source manifest confirms nothing.
+- Other slots keep their current behavior. Confirmation for existing slots such as `otlp-collector`
+  is part of the core extension model, not this plan.
 
-| Permission | Authority | Replaces the check in |
-| --- | --- | --- |
-| `assistant.provider` | Eligible to be the host assistant: receives assistant requests and app drafts with their context, creates sessions, receives Shell's delegated-token handshake | Shell assistant selection and handshake |
-| `agents.skills.read` | Reads other apps' agent skills | Core agent-skill endpoint |
-| `mcp.facade` | Publishes a host-wide MCP connector for external agents, recognized as an OAuth resource | `OAuthEndpoints.ResolveResourceAsync` |
+### Permission
 
-- Checks read persisted `GrantedCorePermissions`. The interface only locates the API:
-  `assistant.provider` requires the grant and the interface declaration; the other two require the grant.
-- No grant is inferred from app id, interface or system role, consistent with the installation
-  feature's rule against silent ID-based grants.
-- Core's confirmation page, the install dialog Shell uses and update plans show a human-readable
-  description of each permission and mark additions.
-- Proposal: accept these permissions only in `role: system` manifests initially. Assistant sessions
-  are administrator-only, and the delegated-token exchange needed to use other apps' MCP tools is
-  system-only; relaxing either belongs to the delegated MCP design below.
-- An older Core rejects a manifest that requests an unknown permission, so Core ships the vocabulary
-  before any Harness manifest requests it.
+- One new permission, `apps.skills.read`: read the agent skills of installed apps. The agent-skill
+  endpoint checks `GrantedCorePermissions` instead of the interface.
+- It is a required permission of the Harness manifest. When the core extension model ships optional
+  permissions, Harness may move it to the optional set.
 
-### Default Assistant
+### MCP Facade
 
-- A Core-owned host setting in the existing Core settings store (`CoreSettings.cs`), editable by an
-  administrator, audited and exposed through the apps/platform API. Shell, Swift Shell, the
-  [Harness Swift client](../hosty-harness-swift/plan.md) and app entry points resolve the same assistant.
-- An app is eligible when it is installed, holds `assistant.provider` and declares the interface.
-  With exactly one eligible app and no explicit choice, that app is the effective default. With
-  several, the operator chooses; the first match is never selected silently.
-- When the chosen app becomes ineligible (uninstalled, permission removed by a reviewed update,
-  interface dropped), there is no effective assistant and clients ask the operator to choose.
-  Prompts are never rerouted to an app the operator did not select. A stopped default stays
-  selected and is shown as unavailable.
-- The assistant panel, `ask-assistant` routing and the delegated-token handshake follow the effective
-  default only, not every holder of the permission.
+- An `mcp` interface declares an app's own tools. The facade is different: it republishes the tools of
+  every app and of Core to external agents. It is declared through its own interface, `mcp-facade`,
+  and Core recognizes that declaration as an OAuth resource instead of "the `ai-gateway` app's origin
+  plus `/mcp`".
+- The separate name keeps aggregators that read `interfaces.mcp` — Harness itself and the CLI
+  `hosty mcp` tool catalog — from listing the facade as one more provider, which would duplicate
+  every tool and make Harness aggregate itself.
+- Recognizing the facade as an OAuth resource is not a privilege: the token's audience is that app,
+  exactly as for a declared `mcp` interface today. The facade's ability to call other apps' tools
+  comes from delegation, which stays gated by `role: system` until the core extension model replaces
+  that gate with a permission.
+
+### Common Rules
+
+- No role or permission is inferred from app id, interface or system role, consistent with the
+  installation feature's rule against silent ID-based grants.
+- Review surfaces list the role and permission with plain descriptions: the operator installs with all
+  of them or declines. Core's confirmation page, the install dialog Shell uses and update plans mark
+  additions.
+- An older Core rejects a manifest that requests an unknown permission (it ignores an unknown slot),
+  so Core ships before any manifest requests `apps.skills.read`.
+
+### Assistants In Hosty Shell
+
+- An app is an eligible assistant when it holds the confirmed assistant role and declares the
+  interface. Shell shows one assistant panel tab per eligible app; the operator talks to whichever
+  assistant's tab they write in. The delegated-token handshake answers each eligible assistant's own
+  frame, with a token whose audience is that assistant.
+- Shell's own features that hand work to an assistant — `ask-assistant` drafts from apps, "ask the
+  assistant" on operation errors and similar entry points — use the assistant selected in Shell's
+  settings, stored with Shell's existing preferences. With one eligible assistant it is used without
+  a setting. With several and no selection, Shell asks the operator to choose.
+- When the selected assistant becomes ineligible (uninstalled, role removed by a reviewed update,
+  interface dropped), those features ask the operator again; drafts are never rerouted to an
+  assistant the operator did not select. A stopped assistant keeps its tab and is shown as unavailable.
+- Other UI clients decide for themselves whether and how they use assistants; the
+  [Harness Swift client](../hosty-harness-swift/plan.md) talks to Harness directly.
 
 ### Release And Transition
 
-No migration code. Either ship with the [Harness rename](../hosty-harness-rename/plan.md), where the
-fresh `hosty.harness` installation requests the permissions and the operator approves them, or ship
-earlier and let the existing Gateway request them through a reviewed update that the operator
-confirms. In both cases a Gateway without the grants stops acting as the assistant on the new Core;
-that is the intended, visible result, not something to auto-grant. Shipping with the rename is preferred.
+No migration code. This plan ships before the [Harness rename](../hosty-harness-rename/plan.md), in
+one PR that changes Core, Shell, the SDK install dialog and the existing Gateway manifest. Hosts
+update Core first; the operator then confirms the Gateway update that adds the role and permission.
+Until then the Gateway does not appear as an assistant on the new Core — the intended, visible
+result, not something to auto-grant. The renamed `hosty.harness` later declares the same on its fresh
+installation.
 
-Version outcome when implemented: platform minor (manifest vocabulary, Core checks and setting),
-Shell for selection and the no-assistant state, the Harness/Gateway manifest, and `@hosty-sdk/app`
-if its install dialog gains permission descriptions.
+Version outcome when implemented: platform minor (slot registry, permission vocabulary, confirmed
+roles in the apps API and the new checks), Shell minor for assistant tabs and the setting,
+`@hosty-sdk/app` for permission descriptions in its install dialog, and the Gateway manifest.
 
 ## Not In This Scope: Delegated MCP Use By Other Apps
 
-A fourth power is calling other apps' MCP tools on the user's behalf through the delegated-token
-exchange, which today requires `role: system`. Code comments record the domain-app trust story as
-undesigned. A non-assistant app that uses selected MCP tools needs a target-scoped permission (the
-operator approves the listed target apps), audit and revocation. This plan does not change the
-exchange gate; that design gets its own plan when a concrete consumer exists.
+Calling other apps' MCP tools on the user's behalf through the delegated-token exchange requires
+`role: system` today. Code comments record the domain-app trust story as undesigned. A non-assistant
+app that uses selected MCP tools needs a target-scoped permission (the operator approves the listed
+target apps), audit and revocation. The [core extension model](../core-extension-model/plan.md) owns
+replacing that gate; this plan leaves it unchanged.
 
 ## Deliverables
 
-- [ ] Finalize permission names, descriptions and the system-role restriction; add them to Core's
-  closed vocabulary and manifest validation.
-- [ ] Replace interface-based authority in Core (agent-skill reads, facade resource resolution) with
-  grant checks; keep interface declarations for discovery.
-- [ ] Add the default-assistant setting with eligibility rules, audit and API exposure.
-- [ ] Resolve the assistant in Shell through the effective default (panel, `ask-assistant`,
-  delegated-token handshake); add the chooser and the no-assistant state.
-- [ ] Show permission descriptions and additions in every install/update review surface, including
-  the SDK install dialog used by Shell.
-- [ ] Request the permissions in the Harness/Gateway manifest in the chosen release order.
+- [ ] Add the confirmed fan-out `assistant` slot and the `apps.skills.read` permission to Core with
+  descriptions, confirmation recording, manifest validation and confirmed roles in the apps API.
+- [ ] Replace interface-based authority in Core: agent-skill reads check the permission, and the facade
+  OAuth resource comes from its `mcp-facade` interface declaration.
+- [ ] Show every eligible assistant as its own Shell panel tab with the delegated-token handshake per
+  assistant, and add Shell's assistant setting for its own entry points with the no-selection state.
+- [ ] Show role and permission descriptions and additions in every install/update review surface,
+  including the SDK install dialog used by Shell.
+- [ ] Declare the role, permission and `mcp-facade` interface in the Gateway manifest.
 - [ ] Update the manifest reference in `hosty-app-skill` and the installation feature's permission
   vocabulary, publish `feature.md`, remove this plan and regenerate the index.
 
 ## Open Questions
 
-- Final permission names and granularity: are `assistant.provider` and `mcp.facade` separate rights,
-  and what wording does the operator see?
-- Restrict the permissions to `role: system` manifests initially, as proposed?
-- Keep the facade as "origin plus `/mcp`" or declare its path explicitly through an interface entry?
-- Per-user default assistant, or one host-wide default only?
-- Which plan owns target-scoped delegated MCP use once a non-assistant consumer appears?
+None. Names and assistant selection were settled with the owner on 2026-09-26; the agent provider
+role and the general permission model are tracked in the core extension model.
 
 ## Verification
 
-- An app that declares `ai-gateway` without the grants is not offered as an assistant, receives 403 on
-  agent-skill reads and is not recognized as a facade OAuth resource.
-- Install and update review show the requested permissions with descriptions; adding one by update
-  requires confirmation; editing a source manifest grants nothing; an older Core rejects the manifest.
-- With two eligible assistants, the operator chooses; the panel, `ask-assistant` drafts and the
-  delegated-token handshake reach only the default. Uninstalling or revoking the default leaves no
-  assistant and does not fall back to the other app; a stopped default is shown as unavailable.
-- Removing a permission through a reviewed update revokes the corresponding access on the next check.
-- Hosty Harness with all three permissions works end to end: assistant panel, skill injection into
-  sessions and OAuth for external MCP clients.
+- An app that declares `ai-gateway` without a confirmed assistant role gets no Shell tab; without
+  `apps.skills.read` it receives 403 on agent-skill reads.
+- An app without an `mcp-facade` declaration is not recognized as a facade resource; the facade does
+  not appear as a provider in Harness or `hosty mcp` catalogs.
+- Install and update review show the role and permission with descriptions; adding either by update
+  requires confirmation; editing a source manifest grants nothing; an older Core rejects the manifest
+  that requests the new permission.
+- With two eligible assistants, Shell shows two tabs and each answers in its own tab. Shell's entry
+  points ask for a selection, then reach only the selected assistant. Uninstalling it or removing its
+  role makes Shell ask again instead of falling back; a stopped assistant is shown as unavailable.
+- Removing the permission or role through a reviewed update revokes the corresponding access on the
+  next check.
+- Harness works end to end: its assistant tab, skill injection into sessions and OAuth for external
+  MCP clients through the facade.

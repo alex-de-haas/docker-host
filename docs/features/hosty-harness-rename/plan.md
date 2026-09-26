@@ -38,11 +38,12 @@ not a legacy app-ID alias. Renaming that key instead requires a coordinated Core
 contract release and must be selected explicitly before Ready.
 
 Owner direction, 2026-09-26: [assistant provider permissions](../assistant-provider-permissions/plan.md)
-moves the authority out of that interface into approved Core permissions and adds a default-assistant
-setting. The key then only locates the API, so keeping `ai-gateway` carries no authority. The new
-`hosty.harness` manifest requests those permissions and the operator approves them at the fresh
-installation, so no grant migration is needed. An older Core rejects unknown permissions: ship the
-permission vocabulary in Core before or together with the renamed manifest.
+moves the authority out of that interface into a confirmed assistant role, an approved skill-read
+permission and an explicit facade interface; Shell shows every confirmed assistant as its own tab.
+The key then only locates the API, so keeping `ai-gateway` carries no authority. That plan ships first and the existing
+Gateway receives the role and permission through a confirmed update; the new `hosty.harness`
+manifest declares the same and the operator confirms them at the fresh installation, so no grant
+migration is needed.
 
 The old Core distribution descriptor and app feeds reference raw `main/apps/ai-gateway` files.
 Do not remove those paths without a retirement policy. Proposal: release Core with the new
@@ -94,5 +95,5 @@ can ship independently of AHP and the session-workspace implementation.
   flow. Configure providers anew and check Shell/client discovery, permissions, new sessions and
   subsequent updates under the new identity. No old sessions/settings/credentials are imported and
   no old-app dependency or legacy-id alias is needed.
-- The fresh installation shows the requested assistant permissions for approval, and Harness acts as
-  the assistant only after they are granted and it is the effective default.
+- The fresh installation shows the assistant role and requested permission for confirmation, and
+  Harness appears as an assistant only after they are confirmed.
