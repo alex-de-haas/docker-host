@@ -85,6 +85,35 @@ public sealed class DelegatedTokenHttpTests
     }
 
     [Fact]
+    public async Task AssignedUserReceivesOnlyTheNonSystemAssistantsOwnToken()
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        const string appId = "example.assistant";
+        await harness.Services.GetRequiredService<AppRegistryStore>().UpsertAppAsync(
+            CreateApp(appId, system: false) with { ConfirmedRoles = [PlatformCapabilities.Assistant] });
+        var credential = await SeedSessionAsync(harness, "host.user");
+        var users = harness.Services.GetRequiredService<UserDirectoryStore>();
+        var state = await users.ReadAsync();
+        var now = harness.Services.GetRequiredService<IClock>().UtcNow;
+        await users.WriteAsync(state with { Assignments = [new AppAssignmentRecord(appId, "user_1", now)] });
+        using var client = harness.CreateClient();
+
+        using var allowed = await SendAsync(client, HttpMethod.Post, $"/api/apps/{appId}/delegated-token", credential);
+        Assert.Equal(HttpStatusCode.OK, allowed.StatusCode);
+        var token = (await ReadJsonAsync(allowed)).GetProperty("token").GetString()!;
+        var tokens = harness.Services.GetRequiredService<DelegatedTokenService>();
+        var claims = tokens.ValidateToken(token, appId);
+        Assert.NotNull(claims);
+        Assert.Equal("user_1", claims.Sub);
+        Assert.Equal("host.user", claims.Role);
+        Assert.Null(tokens.ValidateToken(token, "another.assistant"));
+
+        await users.WriteAsync(state with { Assignments = [] });
+        using var denied = await SendAsync(client, HttpMethod.Post, $"/api/apps/{appId}/delegated-token", credential);
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+    }
+
+    [Fact]
     public async Task DeniesAnUnknownApp()
     {
         await using var harness = await CoreHttpHarness.StartAsync();

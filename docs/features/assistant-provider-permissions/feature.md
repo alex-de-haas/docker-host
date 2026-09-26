@@ -36,6 +36,8 @@ chooser sends nothing. Pending choices are cancelled when the acting user change
 
 Embedded workspace, settings and panel frames of eligible assistants receive only their own
 audience-bound delegated tokens through the existing source-window/origin-validated handshake.
+Assigned non-administrator users can authenticate non-system assistant frames; Core enforces app
+assignment and system-app access when minting tokens. Shell-owned shortcuts remain admin-only.
 Outbound drafts and session handoffs retain the selected app and acting user, so changing the
 preference cannot send an existing draft to another assistant or another signed-in user.
 Gateway notification links include `assistantApp` as well as `assistantSession`; Shell resolves the
@@ -44,7 +46,7 @@ owner independently of the preference. An older ownerless link resolves only on 
 ## Transition And Boundaries
 
 Core/CLI 0.108.0 introduces the role and permission. Shell 0.83.0 consumes confirmed roles;
-SDK 0.15.0 renders their descriptions; Gateway 0.32.3 requests the role and skill permission.
+SDK 0.15.0 renders their descriptions; Gateway 0.33.0 requests the role and skill permission.
 Update Core first, then confirm the Gateway update. Until confirmation, the older installation has
 no assistant tab and no cross-app skill access. No app-ID-based grants or grant migration run.
 An older Core rejects the new unknown permission. The Harness rename uses the same declarations.

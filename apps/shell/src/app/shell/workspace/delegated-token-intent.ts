@@ -93,3 +93,13 @@ export function createDelegatedTokenCache(
 export function appMayReceiveDelegatedToken(appId: string | undefined, assistantAppIds: readonly string[]): boolean {
   return Boolean(appId) && assistantAppIds.includes(appId!);
 }
+
+/** Core filters visible apps and enforces assignment when minting; frame access is not admin-only. */
+export function assistantTokenResponder(
+  appId: string | undefined,
+  assistantAppIds: readonly string[],
+  issue: (appId: string, refresh: boolean) => Promise<DelegatedTokenGrant>,
+): ((refresh: boolean) => Promise<DelegatedTokenGrant>) | undefined {
+  if (!appId || !appMayReceiveDelegatedToken(appId, assistantAppIds)) return undefined;
+  return refresh => issue(appId, refresh);
+}

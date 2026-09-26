@@ -92,7 +92,7 @@ export function SettingsPage({
         <p className="text-sm text-muted-foreground">Choose which assistant receives Ask assistant drafts and error investigations. Each assistant also has its own panel tab.</p>
         <label className="block text-sm" htmlFor="shell-assistant">Assistant</label>
         <select id="shell-assistant" className="w-full rounded-md border bg-background p-2" value={assistantSelection ?? ""} onChange={event => onSelectAssistant(event.target.value)}>
-          <option value="" disabled>{assistants.length === 1 ? "Use the only available assistant" : "Choose an assistant"}</option>
+          <option value="" disabled>{assistants.length === 1 ? "Use the only eligible assistant" : "Choose an assistant"}</option>
           {assistantSelection && !assistants.some(app => app.appId === assistantSelection) && <option value={assistantSelection} disabled>Previous assistant unavailable — choose again</option>}
           {assistants.map(assistant => <option key={assistant.appId} value={assistant.appId}>{apps.find(app => app.id === assistant.appId)?.displayName || assistant.appId}{!assistant.running ? " — unavailable" : ""}</option>)}
         </select>

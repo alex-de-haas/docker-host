@@ -212,7 +212,7 @@ as a separate tab and owns its choice for Ask assistant. The role does not repla
 `role: system` restriction on delegated-token exchange. See
 `docs/features/assistant-provider-permissions/feature.md`.
 
-## MCP Interface
+### MCP Interface
 
 An app that declares `interfaces.mcp` serves MCP over Streamable HTTP at that path: JSON-RPC in a
 `POST` body. `apps/demo-app/src/app/api/mcp/route.ts` is the reference; `docs/features/app-mcp/feature.md`

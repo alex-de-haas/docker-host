@@ -55,7 +55,7 @@ import { EmptyState } from "./shell/ui";
 import { EmbeddedWorkspacePanel } from "./shell/workspace/embedded-workspace-panel";
 import { EmbeddedWorkspacePendingPanel } from "./shell/workspace/embedded-workspace-pending-panel";
 import {
-  appMayReceiveDelegatedToken,
+  assistantTokenResponder,
   createDelegatedTokenCache,
   type DelegatedTokenCache,
   type DelegatedTokenGrant,
@@ -1920,14 +1920,10 @@ export function ShellClient({
   // pages, and nothing else. Shell already mints tokens for that app whenever the chat panel is
   // open, so its settings page gains no reach it did not have — whereas answering every frame would
   // hand a user-scoped credential to whatever the operator happened to install.
-  const handleDelegatedTokenRequest = useMemo(() => {
-    const gatewayAppId = workspace?.appId;
-    if (!canManageApps || !gatewayAppId || !appMayReceiveDelegatedToken(gatewayAppId, assistantIds)) {
-      return undefined;
-    }
-
-    return (refresh: boolean) => issueDelegatedToken(gatewayAppId, refresh);
-  }, [assistantIds, canManageApps, workspace?.appId, issueDelegatedToken]);
+  const handleDelegatedTokenRequest = useMemo(
+    () => assistantTokenResponder(workspace?.appId, assistantIds, issueDelegatedToken),
+    [assistantIds, workspace?.appId, issueDelegatedToken],
+  );
 
   const closeInstallDialog = useCallback(() => {
     setInstallOpen(false);
@@ -2108,11 +2104,8 @@ export function ShellClient({
   // Passes through the existing rule rather than restating it: only an app that already qualifies is
   // answered, in this context as in the workspace.
   const requestDelegatedTokenFor = useCallback(
-    (appId: string) =>
-      canManageApps && appMayReceiveDelegatedToken(appId, assistantIds)
-        ? (refresh: boolean) => issueDelegatedToken(appId, refresh)
-        : undefined,
-    [assistantIds, canManageApps, issueDelegatedToken],
+    (appId: string) => assistantTokenResponder(appId, assistantIds, issueDelegatedToken),
+    [assistantIds, issueDelegatedToken],
   );
 
   // Mints a launch code for a placed surface and returns the URL to embed, so the frame lands with a
