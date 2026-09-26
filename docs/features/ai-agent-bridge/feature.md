@@ -98,7 +98,7 @@ no second rubric. Restricting the assistant to administrators does not move this
 inside the admin's own session.
 
 Containment — a docker runtime profile by default with `localCommand` as an explicit opt-in — is the
-fix. It is designed in [assistant-runtime-containment](../assistant-runtime-containment/plan.md)
+fix. It is designed in [assistant runtime containment](../assistant-runtime-containment/plan.md)
 and deliberately deferred: an accepted risk, not an absent one.
 
 ## Manifest Interfaces And Registry

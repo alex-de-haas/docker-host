@@ -52,8 +52,9 @@ input — and the approval gate is then the one boundary left, human attention o
 than its consequence, with the `hosty` CLI's unconditional host-operator power behind any approved
 `Bash` call.
 
-Restricting the assistant to administrators — already true, enforced in `src/auth.ts` on every route
-and in Shell's surface gating — does not reduce this. The risk lives inside an admin's own session,
+Restricting the assistant to administrators — already true, enforced in
+[`apps/ai-gateway/src/auth.ts`](../../../apps/ai-gateway/src/auth.ts) on every route and in Shell's
+surface gating — does not reduce this. The risk lives inside an admin's own session,
 and injected instructions execute with that admin's privileges. Containment is the fix; until it
 ships the risk is accepted, not absent.
 
