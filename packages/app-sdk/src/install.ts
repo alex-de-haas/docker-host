@@ -8,7 +8,8 @@ export interface InstallPlan {
   appId: string; displayName: string; description?: string | null; action: string;
   planId?: string | null; targetVersion: string; targetRuntime: string; targetRuntimeType: string;
   targetManifestDigest: string; manifestPath: string; defaultAutostart?: boolean;
-  system?: boolean; corePermissions?: string[];
+  system?: boolean; corePermissions?: string[]; requestedRoles?: string[];
+  permissionDescriptions?: Record<string, string>; roleDescriptions?: Record<string, string>;
   runtimeProfiles?: { key: string; type: string; default: boolean; development?: boolean }[];
   settings: InstallSetting[];
 }

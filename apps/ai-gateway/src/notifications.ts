@@ -64,7 +64,7 @@ export class WaitingNotifier {
         // Carries the session, so a banner or an inbox row lands on the conversation that is waiting
         // rather than on the assistant in general. Shell reads the parameter, reveals the rail and
         // forwards the id into the panel.
-        link: `/?assistantSession=${encodeURIComponent(sessionId)}`,
+        link: `/?assistantSession=${encodeURIComponent(sessionId)}&assistantApp=${encodeURIComponent(this.appId)}`,
         dedupeKey: dedupeKeyFor(sessionId),
       }),
       signal: AbortSignal.timeout(1_500),

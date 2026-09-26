@@ -219,7 +219,7 @@ Decisions 1–5: 2026-08-19.
     stops conferring privilege and remains an ownership fact. This extends decision 9 with app
     grants and leaves decision 1's admin/user model intact. The
     [core extension model](features/core-extension-model/plan.md) owns the general model;
-    [assistant provider permissions](features/assistant-provider-permissions/plan.md) is its first slice.
+    [assistant provider permissions](features/assistant-provider-permissions/feature.md) is its first slice.
 
 15. **Core is the MCP directory, not a proxy (2026-09-26).** Agents run on the host; how clients
     reach them is decision 13's AHP spike, and the directory does not depend on it. Core owns which apps' MCP servers agents may use and publishes that
@@ -292,7 +292,7 @@ the manifest contract. Two standing consequences:
 [assistant-development-sessions](features/assistant-development-sessions/plan.md) ·
 [app-authoring](features/app-authoring/plan.md) ·
 [core-extension-model](features/core-extension-model/plan.md) ·
-[assistant-provider-permissions](features/assistant-provider-permissions/plan.md) ·
+[assistant-provider-permissions](features/assistant-provider-permissions/feature.md) ·
 [agent-mcp-directory](features/agent-mcp-directory/plan.md) ·
 [ai-agent-bridge](features/ai-agent-bridge/plan.md) ·
 [app-ui-surfaces](features/app-ui-surfaces/feature.md) ·

@@ -228,7 +228,7 @@ Consequences for the operator surface:
 ### Permission Model (Owner Direction, 2026-09-26)
 
 The owner confirmed the two-axis reading above and settled how permissions are presented and granted.
-[Assistant provider permissions](../assistant-provider-permissions/plan.md) is the first slice: a
+[Assistant provider permissions](../assistant-provider-permissions/feature.md) is the first slice: a
 confirmed fan-out assistant role, one permission, and no system-role restriction. Which assistant a
 UI client's own features use is that client's setting, not a Core default.
 

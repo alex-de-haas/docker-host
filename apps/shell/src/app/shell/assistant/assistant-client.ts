@@ -11,16 +11,31 @@ export type AssistantGateway = {
   running: boolean;
 };
 
-/** Finds the installed ai-gateway provider among the apps Core reports. Hidden ⇒ no assistant UI. */
-export function findAssistantGateway(apps: CoreApp[]): AssistantGateway | null {
-  for (const app of apps) {
+/** Confirmed assistants remain discoverable while stopped, even without a resolved URL. */
+export function findAssistantGateways(apps: readonly CoreApp[]): AssistantGateway[] {
+  return apps.flatMap(app => {
     const declarations = app.interfaces?.[AI_GATEWAY_INTERFACE];
-    const url = declarations?.find((declaration) => declaration.url)?.url;
-    if (url) {
-      return { appId: app.id, baseUrl: url.replace(/\/$/, ""), running: app.runtimeState === "running" };
-    }
-  }
-  return null;
+    if (!app.confirmedRoles?.includes("assistant") || !declarations?.length) return [];
+    const url = declarations.find(declaration => declaration.url)?.url;
+    return [{ appId: app.id, baseUrl: url?.replace(/\/$/, "") ?? "", running: app.runtimeState === "running" && !!url }];
+  });
+}
+
+/** A stale explicit choice never falls back to another assistant. */
+export function selectAssistant(assistants: readonly AssistantGateway[], selectedId: string | null): AssistantGateway | null {
+  return selectedId !== null ? assistants.find(app => app.appId === selectedId) ?? null
+    : assistants.length === 1 ? assistants[0] : null;
+}
+
+/** Pending handoffs stay with the chosen app and actor across tab/preference changes. */
+export function assistantMessageFor<T extends { userId: string | null; appId: string }>(
+  message: T | null,
+  userId: string | null,
+  activeAppId: string | undefined,
+  eligibleAppIds: readonly string[],
+): T | null {
+  return message && message.userId === userId && message.appId === activeAppId
+    && eligibleAppIds.includes(message.appId) ? message : null;
 }
 
 /** Minimal operator client: Shell creates a session, while the gateway owns its conversation. */

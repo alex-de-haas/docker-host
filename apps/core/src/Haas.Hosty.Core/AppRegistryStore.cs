@@ -382,7 +382,8 @@ internal sealed record AppRecord(
     AppUpdateProgress? UpdateProgress = null,
     // Private start-time settings/mount digest; retained across Core restarts, never sent in summaries.
     string? AppliedConfigurationHash = null,
-    IReadOnlyList<string>? GrantedCorePermissions = null);
+    IReadOnlyList<string>? GrantedCorePermissions = null,
+    IReadOnlyList<string>? ConfirmedRoles = null);
 
 // Last observed update stage, retained through completion for reconnecting clients.
 internal sealed record AppUpdateProgress(string Stage, DateTimeOffset ChangedAt, string? Service = null);
@@ -997,7 +998,8 @@ internal sealed record AppSummary(
     AppUpdateProgress? UpdateProgress = null,
     bool RestartRequired = false,
     // Persisted administrator grants, never inferred from the current source manifest.
-    IReadOnlyList<string>? GrantedCorePermissions = null)
+    IReadOnlyList<string>? GrantedCorePermissions = null,
+    IReadOnlyList<string>? ConfirmedRoles = null)
 {
     public static AppSummary From(
         AppRecord app,
@@ -1094,7 +1096,8 @@ internal sealed record AppSummary(
             Interfaces: BuildInterfaceSummaries(app.Interfaces, endpoints),
             Health: app.Health,
             Icon: app.Ui?.Icon,
-            GrantedCorePermissions: app.GrantedCorePermissions ?? []);
+            GrantedCorePermissions: app.GrantedCorePermissions ?? [],
+            ConfirmedRoles: app.ConfirmedRoles ?? []);
     }
 
     private static IReadOnlyDictionary<string, IReadOnlyList<AppInterfaceSummary>>? BuildInterfaceSummaries(

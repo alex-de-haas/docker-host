@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   appMayReceiveDelegatedToken,
+  assistantTokenResponder,
   createDelegatedTokenCache,
 } from "../src/app/shell/workspace/delegated-token-intent.ts";
+
+import { findAssistantGateways } from "../src/app/shell/assistant/assistant-client.ts";
 
 // A mint stand-in: hands out token-1, token-2, … and records how often Core would have been called.
 function stubMint(expiresInMs = 300_000, now = () => Date.now()) {
@@ -33,15 +36,13 @@ function stubMint(expiresInMs = 300_000, now = () => Date.now()) {
 
 // The verified parser is the SDK's (covered by its own suite); what Shell owns, and what this
 // covers, is which frame gets answered at all.
-test("appMayReceiveDelegatedToken admits the installed assistant gateway and nothing else", () => {
-  assert.equal(appMayReceiveDelegatedToken("hosty.ai-gateway", "hosty.ai-gateway"), true);
-  // The grant follows the ai-gateway interface, not an id, so a replacement assistant inherits it.
-  assert.equal(appMayReceiveDelegatedToken("com.example.assistant", "com.example.assistant"), true);
-  assert.equal(appMayReceiveDelegatedToken("hosty.marketplace", "hosty.ai-gateway"), false);
-  assert.equal(appMayReceiveDelegatedToken("com.example.app", "hosty.ai-gateway"), false);
-  // No gateway installed: no app is the assistant, so no frame is answered.
-  assert.equal(appMayReceiveDelegatedToken("hosty.ai-gateway", undefined), false);
-  assert.equal(appMayReceiveDelegatedToken(undefined, undefined), false);
+test("delegated token recipients are exactly the confirmed assistants", () => {
+  const assistants = ["first", "second"];
+  assert.equal(appMayReceiveDelegatedToken("first", assistants), true);
+  assert.equal(appMayReceiveDelegatedToken("second", assistants), true);
+  assert.equal(appMayReceiveDelegatedToken("other", assistants), false);
+  assert.equal(appMayReceiveDelegatedToken("first", []), false);
+  assert.equal(appMayReceiveDelegatedToken(undefined, assistants), false);
 });
 
 test("the cache reuses a live grant and mints again once it is nearly spent", async () => {
@@ -93,4 +94,20 @@ test("a mint that outlives its session is discarded, not cached", async () => {
   // And nothing from the old session survives in the cache for the new one to pick up.
   const after = await cache.issue("app");
   assert.equal(after.token, "token-2");
+});
+
+
+test("an assigned non-system assistant frame can obtain its own token without admin shortcuts", async () => {
+  // This is the Core-filtered /api/apps projection for an assigned host.user.
+  const visibleApps = [{ id: "assigned.assistant", system: false, confirmedRoles: ["assistant"],
+    runtimeState: "running", interfaces: { "ai-gateway": [{ url: "http://assistant/api" }] } }];
+  const assistants = findAssistantGateways(visibleApps).map(app => app.appId);
+  const core = stubMint();
+  const responder = assistantTokenResponder("assigned.assistant", assistants, core.mint);
+  assert.equal(typeof responder, "function");
+  assert.equal((await responder(false)).token, "token-1");
+  assert.deepEqual(core.calls, ["assigned.assistant"]);
+  assert.equal(assistantTokenResponder("unassigned.assistant", assistants, core.mint), undefined);
+  assert.equal(assistantTokenResponder("assigned.assistant", [], core.mint), undefined);
+  assert.equal(assistantTokenResponder(undefined, assistants, core.mint), undefined);
 });
