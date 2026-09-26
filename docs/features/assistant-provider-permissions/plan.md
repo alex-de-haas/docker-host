@@ -83,11 +83,11 @@ permission descriptions; the SDK `InstallDialog` that Shell uses lists requested
 
 ### MCP Facade
 
-Owner decision, 2026-09-26: the facade moves out of the assistant into Core, which also owns the
-policy for which apps' tools reach agents — see the [MCP facade plan](../mcp-facade/plan.md). This
-plan therefore leaves the facade unchanged. Until the move ships, `ResolveResourceAsync` keeps its
-current special case for the `ai-gateway` app's origin plus `/mcp`. It grants no authority: the
-token's audience is that app, exactly as for a declared `mcp` interface.
+Owner decision, 2026-09-26: Core becomes the directory of MCP servers agents may use
+([agent MCP directory](../agent-mcp-directory/plan.md)), and the single-entry facade becomes a
+separate app later ([MCP facade](../mcp-facade/plan.md), On Hold). This plan leaves the gateway facade
+unchanged: `ResolveResourceAsync` keeps its special case for the `ai-gateway` app's origin plus `/mcp`.
+It grants no authority — the token's audience is that app, exactly as for a declared `mcp` interface.
 
 ### Common Rules
 
@@ -153,8 +153,8 @@ replacing that gate; this plan leaves it unchanged.
 ## Open Questions
 
 None. Names and assistant selection were settled with the owner on 2026-09-26; the agent provider
-role and the general permission model are tracked in the core extension model, and the facade's move
-in the MCP facade plan.
+role and the general permission model are tracked in the core extension model, and the facade's
+future in the MCP facade plan.
 
 ## Verification
 

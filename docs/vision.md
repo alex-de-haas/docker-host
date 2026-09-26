@@ -221,12 +221,13 @@ Decisions 1–5: 2026-08-19.
     [core extension model](features/core-extension-model/plan.md) owns the general model;
     [assistant provider permissions](features/assistant-provider-permissions/plan.md) is its first slice.
 
-15. **Core serves the host-wide MCP facade (2026-09-26).** Core already decides which calls are
-    allowed; it now also owns which apps' tools are offered to agents and serves the one remote MCP
-    endpoint for the whole host, replacing the facade inside the assistant app. The CLI connector
-    shares its implementation and policy. This reverses the agent-bridge rule that agent traffic
-    never passes through Core, for MCP tool traffic only. The [MCP facade plan](features/mcp-facade/plan.md)
-    owns the move and is Draft.
+15. **Core is the MCP directory, not a proxy (2026-09-26).** Agents run on the host, and clients
+    reach them through AHP. Core owns which apps' MCP servers agents may use and publishes that
+    configuration without credentials; agents configure themselves from it and call each app
+    directly, so tool traffic never passes through Core and the agent-bridge boundary stands. A
+    single-entry facade for full external clients such as Claude Code or Codex becomes a separate
+    app later. [Agent MCP directory](features/agent-mcp-directory/plan.md) owns the directory;
+    [MCP facade](features/mcp-facade/plan.md) is On Hold.
 
 ## Expectations And Later Directions
 
@@ -292,6 +293,7 @@ the manifest contract. Two standing consequences:
 [app-authoring](features/app-authoring/plan.md) ·
 [core-extension-model](features/core-extension-model/plan.md) ·
 [assistant-provider-permissions](features/assistant-provider-permissions/plan.md) ·
+[agent-mcp-directory](features/agent-mcp-directory/plan.md) ·
 [ai-agent-bridge](features/ai-agent-bridge/plan.md) ·
 [app-ui-surfaces](features/app-ui-surfaces/feature.md) ·
 [assistant-entry-points](features/assistant-entry-points/plan.md) ·

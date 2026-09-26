@@ -173,10 +173,10 @@ Cross-cutting rules:
   An app that only serves its own read-only API declares neither. Both stay distinct from the lifecycle
   `capabilities` field, which is unrelated.
 - **Trust.** `provides`/`corePermissions` declarations are inert until the operator explicitly
-  confirms them at install review, and an update that **changes** these declarations re-enters review — a harmless app
-  must not grow into a login method through a minor version bump. Catalog signing can strengthen this
-  later. Consent dialogs for sensitive contracts must be alarming by design: a media app requesting the
-  login-method role should look anomalous.
+  confirms them at install review, and an update that **changes** these declarations re-enters review
+  — a harmless app must not grow into a login method through a minor version bump. Catalog signing can
+  strengthen this later. Consent dialogs for sensitive contracts must be alarming by design: a media
+  app requesting the login-method role should look anomalous.
 - **Cardinality.** Every contract explicitly declares whether it is **single-active** (one confirmed
   provider selected by the operator, like a default app) or **fan-out** (all confirmed providers are
   called, or all receive the stream). Login methods, notification channels, and telemetry sinks are
@@ -248,18 +248,19 @@ UI client's own features use is that client's setting, not a Core default.
   update that adds an optional permission offers it without granting it; moving one to required
   re-enters review.
 - **`role: system` stops being a privilege.** Each current use gets its own replacement: acting as
-  the user toward other apps (the delegated-token exchange) becomes a permission, scoped to target
-  apps where needed, and on-behalf-of tokens disappear when the [MCP facade](../mcp-facade/plan.md)
-  moves into Core; administrator-only access becomes the intersection of the app's
+  the user toward other apps (the delegated-token exchange and on-behalf-of tokens) becomes a
+  permission, scoped to target apps where needed; administrator-only access becomes the intersection of the app's
   grants and the user's own rights plus the existing assignment policy; system-specific session
   lifetimes become a setting or follow the grants; ownership stays as Core-side bootstrap state shown
   as a badge. This is an app-grant change, compatible with vision decisions 1 and 9, not a redesign
   of user roles.
 - **Agent providers are a candidate role.** An assistant is an app with a full assistant UI that
   manages agents. A separate `agent` role would let an app supply agents — another AI provider, for
-  example — that assistants and other apps use through one contract Hosty defines. It is also the
-  likely shape of the app-mediated AI calls in the vision's first open question. Not part of the
-  first slice; see Open Questions.
+  example — that assistants and other apps use through one contract Hosty defines. Agents run on the
+  host and configure their MCP servers from Core's [agent MCP
+  directory](../agent-mcp-directory/plan.md); accepting that directory belongs in the contract. It is
+  also the likely shape of the app-mediated AI calls in the vision's first open question. Not part of
+  the first slice; see Open Questions.
 - **Permissions are not a sandbox for host processes.** They limit what an app does through Core's
   API. A `localCommand` app runs as the operator's OS user and can read Core's data directly, so for
   it the grants are an honest label rather than an enforced boundary; review surfaces say so.
@@ -361,7 +362,7 @@ plan is Draft.
       2–3; keep the identity token broker explicitly deferred. The authenticating-proxy pattern remains
       available meanwhile for perimeter SSO.
 - [ ] 5. Replace every `role: system` privilege check with the permission model above: a delegation
-      permission for the exchange, grant-and-user intersection for access, a
+      permission for the exchange and on-behalf-of tokens, grant-and-user intersection for access, a
       lifetime setting, and Core-side ownership state; align permission names with access-token scopes.
 - [ ] 6. Implement optional permissions: `optionalCorePermissions`, unchecked install-time offers,
       administrator changes in app settings, app-initiated requests through Core confirmation, the
