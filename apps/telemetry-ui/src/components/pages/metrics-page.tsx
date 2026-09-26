@@ -318,7 +318,7 @@ export function ObservabilityMetricsPage({ apps }: { apps: TelemetryApp[] }) {
               <EmptyState
                 icon={ListChecks}
                 title="Select metrics"
-                description="Tick metrics in the list to chart them. CPU and memory appear automatically for containerized apps."
+                description="Tick metrics in the list to chart them. CPU and memory appear automatically for Docker and local services."
               />
             ) : (
               <div className="space-y-6">

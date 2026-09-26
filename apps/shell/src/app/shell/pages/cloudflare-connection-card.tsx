@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { ExternalLink, LoaderCircle } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/components/reui/operation-toast";
+import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { coreErrorBody, isAuthRequiredRedirectError } from "../core-api";
@@ -152,27 +153,19 @@ export function CloudflareConnectionCard() {
               Disconnect
             </Button>
           </div>
-          {confirmingDisconnect && (
-            <div className="space-y-1.5 rounded-md border p-2">
-              <p>
-                Hosty cannot revoke this token — delete it in the Cloudflare dashboard afterwards. What should happen
-                to the addresses Hosty published?
-              </p>
-              <div className="flex flex-wrap gap-2">
-                <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void disconnect(false)}>
-                  {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
-                  Keep them
-                </Button>
-                <Button type="button" size="sm" variant="destructive" disabled={busy} onClick={() => void disconnect(true)}>
-                  {busy && <LoaderCircle className="mr-1 h-4 w-4 animate-spin" />}
-                  Remove them
-                </Button>
-                <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => setConfirmingDisconnect(false)}>
-                  Cancel
-                </Button>
-              </div>
-            </div>
-          )}
+          <AlertDialog open={confirmingDisconnect} onOpenChange={open => { if (!busy) setConfirmingDisconnect(open); }}>
+            <AlertDialogContent>
+              <AlertDialogHeader><AlertDialogTitle>Disconnect Cloudflare?</AlertDialogTitle>
+                <AlertDialogDescription>Hosty cannot revoke this token — delete it in the Cloudflare dashboard afterwards. Choose whether to keep or remove the addresses Hosty published.</AlertDialogDescription>
+              </AlertDialogHeader>
+              {error && <InlineError message={error} />}
+              <AlertDialogFooter>
+                <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+                <Button variant="outline" disabled={busy} onClick={() => void disconnect(false)}>Keep addresses</Button>
+                <Button variant="destructive" disabled={busy} onClick={() => void disconnect(true)}>Remove addresses</Button>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
           {/* A definition list needs dt/dd pairs; the div-per-line shape it had was invalid markup that
               read as one undifferentiated run of text to a screen reader. */}
           <dl className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-muted-foreground sm:grid-cols-[auto_1fr_auto_1fr] sm:gap-x-4">

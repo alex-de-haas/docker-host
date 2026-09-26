@@ -24,6 +24,7 @@ export type SurfaceReadiness = "ready" | "starting" | "degraded";
 
 /** One placed surface, as Shell's chrome consumes it. */
 export type AppSurfaceTab = {
+  icon?: string | null;
   appId: string;
   grantedCorePermissions?: readonly string[] | null;
   appLabel?: string;
@@ -141,6 +142,7 @@ function tabFor(app: CoreApp, surface: CoreAppSurface, key: string, label: strin
     appLabel: app.displayName,
     key,
     label,
+    icon: surface.icon?.trim() || null,
     embeddedUrl: embeddableUrl(app, surface),
     running: app.runtimeState === "running",
     transitioning: isBusy(app.runtimeState),

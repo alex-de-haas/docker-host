@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SessionProvider } from "@/components/session-provider";
 import { AppContextPicker } from "@/components/app-context-picker";
-import { ArrowLeft, History, Loader2, MessageSquarePlus, Paperclip, Send, Sparkles } from "lucide-react";
+import { ArrowLeft, History, Loader2, MessageSquarePlus, Paperclip, Send, Sparkles, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, InlineError, StatusBadge } from "@/components/status";
 import { Markdown } from "@/components/markdown";
@@ -61,6 +61,7 @@ export default function AssistantPage() {
   // Hold an embedder's session request until authentication finishes. Resolve it directly through
   // the API: a session Shell just created may not appear in this tab's initial list.
   const requestedSessionRef = useRef<string | null>(null);
+  const requestedDraftRef = useRef<{ sessionId: string; text: string; sourceAppId: string } | null>(null);
   const [requestedSessionId, setRequestedSessionId] = useState<string | null>(null);
   const [session, setSession] = useState<AssistantSession | null>(null);
   const [status, setStatus] = useState("idle");
@@ -69,6 +70,11 @@ export default function AssistantPage() {
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [stoppingSession, setStoppingSession] = useState<string | null>(null);
+  const sendingRef = useRef(false);
+  const stoppingRef = useRef<string | null>(null);
+  const running = ["running", "awaiting_approval", "awaiting_question"].includes(status);
+  const stopping = session?.id === stoppingSession;
   const [contextSaving, setContextSaving] = useState(false);
   const [contextUnavailable, setContextUnavailable] = useState(false);
   const [withoutAppDetails, setWithoutAppDetails] = useState(false);
@@ -287,16 +293,20 @@ export default function AssistantPage() {
         return;
       }
       const data = event.data as
-        | { type?: unknown; text?: unknown; sourceAppId?: unknown; sessionId?: unknown }
+        | { type?: unknown; text?: unknown; sourceAppId?: unknown; sessionId?: unknown; draft?: unknown }
         | null;
       if (!data) {
         return;
       }
 
       if (data.type === "hosty:open-assistant-session" && typeof data.sessionId === "string") {
-        // A notification arriving at the rail: open the session it was about. Only the id crosses —
-        // the panel decides whether that session still exists and what to show, which is the same
-        // division as everywhere else here.
+        // Shell can also hand off an error to a fresh session. Resolve the session through the
+        // authenticated API before filling its draft; never submit this untrusted text.
+        requestedDraftRef.current = typeof data.draft === "string" ? {
+          sessionId: data.sessionId,
+          text: data.draft.length > MAX_ASK_CHARS ? `${data.draft.slice(0, MAX_ASK_CHARS)}\n[Error truncated; use Copy in Shell for the full text.]` : data.draft,
+          sourceAppId: typeof data.sourceAppId === "string" ? data.sourceAppId : "",
+        } : null;
         requestedSessionRef.current = data.sessionId;
         setRequestedSessionId(data.sessionId);
         return;
@@ -332,10 +342,18 @@ export default function AssistantPage() {
   useEffect(() => {
     if (!requestedSessionId || !ready) return;
     let cancelled = false;
+    const draft = requestedDraftRef.current;
     void getSession(requestedSessionId).then(record => {
       if (cancelled) return;
       setSessions(current => [record, ...current.filter(item => item.id !== record.id)]);
       attach(record);
+      // A repeated delivery/reload must not append the same error or replace an operator's draft.
+      if (draft?.sessionId === record.id && !readDraft(record.id)) {
+        const text = composeAskDraft("", draft.text, draft.sourceAppId);
+        writeDraft(record.id, text);
+        setInput(text);
+      }
+      requestedDraftRef.current = null;
       setHistoryOpen(false);
       requestedSessionRef.current = null;
       setRequestedSessionId(null);
@@ -390,9 +408,10 @@ export default function AssistantPage() {
 
   const send = useCallback(async () => {
     const trimmed = input.trim();
-    if (!hasMessageContent(trimmed, pending.length, uploaded.length) || !session || sending || contextSaving || !health?.available) {
+    if (!hasMessageContent(trimmed, pending.length, uploaded.length) || !session || sendingRef.current || stoppingRef.current === session.id || running || contextSaving || !health?.available) {
       return;
     }
+    sendingRef.current = true;
     setSending(true);
     setError(null);
     setFailedUpload(null);
@@ -416,6 +435,8 @@ export default function AssistantPage() {
         }
       }
       if (activeSessionId.current === session.id) setUploadingFile(null);
+      // Lock the composer before the HTTP response: SSE may confirm (or finish) the turn first.
+      if (activeSessionId.current === session.id) setStatus("running");
       await postMessage(session.id, trimmed, stored.map((attachment) => attachment.name), session.appContextRevision ?? 0, withoutAppDetails);
       // Clear only after acceptance, and never overwrite another session opened during the request.
       clearDraft(session.id);
@@ -444,11 +465,30 @@ export default function AssistantPage() {
         if (current) setSession(previous => previous?.id === current.id && (previous.appContextRevision ?? 0) <= (current.appContextRevision ?? 0) ? current : previous);
       }
       setError(cause instanceof Error ? cause.message : String(cause));
+      const current = await getSession(session.id).catch(() => null);
+      if (activeSessionId.current === session.id) setStatus(current?.status ?? status);
     } finally {
       if (activeSessionId.current === session.id) setUploadingFile(null);
+      sendingRef.current = false;
       setSending(false);
     }
-  }, [input, pending, sending, contextSaving, session, uploaded, withoutAppDetails, health?.available]);
+  }, [input, pending, running, status, contextSaving, session, uploaded, withoutAppDetails, health?.available]);
+
+  const stop = useCallback(async () => {
+    if (!session || !running || sendingRef.current || stoppingRef.current) return;
+    const id = session.id;
+    stoppingRef.current = id;
+    setStoppingSession(id);
+    setError(null);
+    try {
+      await stopSession(id);
+    } catch (cause) {
+      if (activeSessionId.current === id) setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      stoppingRef.current = null;
+      setStoppingSession(null);
+    }
+  }, [session, running]);
 
   // Deletion clears the active conversation without creating or selecting another one.
   const detachDeleted = useCallback((sessionId: string) => {
@@ -579,7 +619,6 @@ export default function AssistantPage() {
             <span className="hosty-shell-chrome text-sm font-medium">Assistant</span>
             <StatusBadge value={status} />
             <div className="ml-auto flex items-center gap-1">
-              {session && status !== "cancelled" && <Button size="sm" variant="ghost" disabled={sending} onClick={() => void stopSession(session.id).catch(cause => setError(cause.message))}>Stop</Button>}
               <Button variant="ghost" size="icon-sm" title="Session history" aria-label="Session history" disabled={!ready} onClick={() => {
                 setHistoryOpen(true);
                 void listSessions().then(setSessions).catch(cause => setError(cause instanceof Error ? cause.message : String(cause)));
@@ -738,13 +777,19 @@ export default function AssistantPage() {
                       <Paperclip />
                     </Button>
                     {session && (
-                      <AppContextPicker key={session.id} session={session} busy={sending} onBusyChange={setContextSaving} running={["running", "awaiting_approval", "awaiting_question"].includes(status)}
+                      <AppContextPicker key={session.id} session={session} busy={sending} onBusyChange={setContextSaving} running={running}
                         onChange={record => setSession(current => current?.id === record.id && (record.appContextRevision ?? 0) >= (current.appContextRevision ?? 0) ? record : current)} />
                     )}
                   </div>
-                  <Button type="submit" size="icon" className="shrink-0" disabled={!session || sending || contextSaving || !health?.available || !hasMessageContent(input, pending.length, uploaded.length)} aria-label="Send">
-                    {sending ? <Loader2 className="animate-spin" /> : <Send />}
-                  </Button>
+                  {running || stopping ? (
+                    <Button type="button" size="icon" className="shrink-0" disabled={sending || stopping} onClick={() => void stop()} aria-label="Stop" title="Stop response">
+                      {sending || stopping ? <Loader2 className="animate-spin" /> : <Square className="fill-current" />}
+                    </Button>
+                  ) : (
+                    <Button type="submit" size="icon" className="shrink-0" disabled={!session || sending || contextSaving || !health?.available || !hasMessageContent(input, pending.length, uploaded.length)} aria-label="Send">
+                      {sending ? <Loader2 className="animate-spin" /> : <Send />}
+                    </Button>
+                  )}
                 </div>
               </InputGroupAddon>
             </InputGroup>

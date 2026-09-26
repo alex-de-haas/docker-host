@@ -11,15 +11,15 @@ test("stored widths reject invalid cookies but retain constrained mobile prefere
 });
 
 test("desktop panel bounds leave room for the workspace and separator", () => {
-  assert.deepEqual(panelWidthBounds(750), { workspaceMin: 224.7, panelMin: 280, panelMax: 524.3 });
-  assert.deepEqual(panelWidthBounds(1600), { workspaceMin: 240, panelMin: 280, panelMax: 800 });
+  assert.deepEqual(panelWidthBounds(750), { workspaceMin: 207, panelMin: 328, panelMax: 531 });
+  assert.deepEqual(panelWidthBounds(1600), { workspaceMin: 240, panelMin: 328, panelMax: 848 });
 });
 
 test("narrow and unmeasured groups never have conflicting constraints", () => {
-  for (const width of [0, 1, 240, 300, 420, 600]) {
+  for (const width of [0, 1, 11, 12, 13, 240, 300, 420, 600]) {
     const bounds = panelWidthBounds(width);
     assert.ok(bounds.panelMin >= 0);
     assert.ok(bounds.panelMax >= bounds.panelMin);
-    assert.ok(bounds.workspaceMin + bounds.panelMax <= Math.max(0, width - 1));
+    assert.ok(bounds.workspaceMin + bounds.panelMax <= Math.max(0, width - 12));
   }
 });

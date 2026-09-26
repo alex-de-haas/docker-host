@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useId, useState } from "react";
 import dynamic from "next/dynamic";
 import { ChevronRight, FileDiff, GitBranch, LoaderCircle, RefreshCw } from "lucide-react";
+import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -213,7 +214,7 @@ function SourceInspectionDialog({ endpointPath, displayName, version, sourceKey,
   const partlySelected = selectedCount > 0 && !allSelected;
   const endpoint = `${coreOrigin}${endpointPath}`;
   const review = async () => {
-    if (readOnly || !selectedCount || selectedCount > 32 || statusError || status?.truncated || !status?.head) return;
+    if (readOnly || busy || plan || !selectedCount || selectedCount > 32 || statusError || status?.truncated || !status?.head) return;
     setBusy(true); setError(null); setMessage(null);
     try {
       const response = await sendCsrfJson(`${endpoint}/discard/plan`, { paths: selectedPaths });
@@ -253,12 +254,20 @@ function SourceInspectionDialog({ endpointPath, displayName, version, sourceKey,
         {status?.state === "no-git" && <p className="text-sm">This folder has no Git history. Hosty cannot restore earlier file contents.</p>}
         {status && ["clean", "changes"].includes(status.state) && !status.head && <p className="text-sm">No HEAD commit yet. Files can be inspected.{!readOnly && " Discard requires an existing commit."}</p>}
         {status?.truncated && <p className="text-sm">This list is incomplete. Use Git directly to inspect this larger change.</p>}
-        {plan ? <div className="space-y-3 rounded-md border border-destructive/40 p-4">
-          <p className="font-medium">Discard these changes against {plan.head.slice(0, 12)}?</p>
+        {plan && <AlertDialog open onOpenChange={open => { if (!open && !busy) setPlan(null); }}>
+          <AlertDialogContent>
+          <AlertDialogHeader><AlertDialogTitle>Discard selected changes?</AlertDialogTitle><AlertDialogDescription>Against commit {plan.head.slice(0, 12)}. Hosty keeps no copy of discarded content.</AlertDialogDescription></AlertDialogHeader>
           <p className="text-sm">Tracked files and their staging state will be restored to this commit. New files listed below will be deleted. Other changes are preserved. Hosty keeps no copy of discarded content.</p>
           <ul className="max-h-56 overflow-auto text-sm">{plan.files.map((file) => <li key={file.path} className="break-all py-1"><strong>{file.newFile ? "Delete" : "Restore"}</strong> · {file.path}</li>)}</ul>
           <p className="text-xs text-muted-foreground">The review expires at {new Date(plan.expiresAt).toLocaleTimeString()}. Changed files require a new review.</p>
-        </div> : <>
+
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={busy}>Back</AlertDialogCancel>
+              <Button variant="destructive" disabled={busy} onClick={() => void discard()}>{busy && <LoaderCircle className="animate-spin" />}Discard selected changes</Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>}
+        <>
           {!!status?.files.length && <SourceDiffToolbar settings={diffSettings} onChange={setDiffSettings} />}
           <div className="space-y-3">
             {!readOnly && !!status?.files.length && <div className="space-y-1 px-3 py-1">
@@ -278,12 +287,12 @@ function SourceInspectionDialog({ endpointPath, displayName, version, sourceKey,
               onSelect={(checked) => setSelected((current) => checked ? [...current, file.path] : current.filter((path) => path !== file.path))} />)}
             {status?.state === "clean" && <p className="p-3 text-sm text-muted-foreground">No changes in this source scope.</p>}
           </div>
-        </>}
+        </>
       </DialogBody>
       <DialogFooter>
-        <Button type="button" variant="outline" disabled={busy} onClick={() => plan ? setPlan(null) : onClose()}>{plan ? "Back" : "Close"}</Button>
-        {!readOnly && <Button type="button" variant={plan ? "destructive" : "default"} disabled={busy || (!plan && (selectedCount === 0 || !!statusError || status?.truncated || !status?.head))} onClick={() => void (plan ? discard() : review())}>
-          {busy && <LoaderCircle className="size-4 animate-spin" />}{plan ? "Discard selected changes" : `Review discard (${selectedCount})`}
+        <Button type="button" variant="outline" disabled={busy} onClick={onClose}>Close</Button>
+        {!readOnly && <Button type="button" variant="default" disabled={busy || !!plan || selectedCount === 0 || !!statusError || status?.truncated || !status?.head} onClick={() => void review()}>
+          {busy && <LoaderCircle className="size-4 animate-spin" />}{`Review discard (${selectedCount})`}
         </Button>}
       </DialogFooter>
     </DialogContent>

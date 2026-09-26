@@ -1,7 +1,7 @@
 # Shell Navigation
 
 Created: 2026-07-30
-Updated: 2026-09-18
+Updated: 2026-09-25
 
 The browser Shell has three top-level destinations: **Dashboard**, the host you manage; **Settings**,
 the host you configure; and **Apps**, the apps you use. This document owns the route table and the
@@ -75,6 +75,10 @@ navigation controls fit together.
 The top-bar brand and sidebar rows share a 20px icon slot starting 20px from the left edge,
 with labels starting at 48px. Compact navigation retains the same horizontal padding, including
 app flyout triggers, so collapsing or expanding the rail does not move its icons sideways.
+Navigation has symmetric 12px inner padding and no extra workspace gutter on its right
+in either mode. The frame and top-strip controls begin directly after the 60px compact
+rail or 280px expanded sidebar, keeping their left edges aligned.
+
 The compact rail is 60px wide, centering these icons and the 28px account avatar on the
 same axis. The account trigger retains a 36px click target.
 
@@ -132,15 +136,56 @@ version and carries the update button, and Settings is a row in the Host group a
 App and Core console log dialogs use a wide layout, up to 1280px while retaining the dialog's
 viewport margins on smaller screens, to fit longer log lines.
 
-The toolbar places app search and clickable app counts beside Refresh, Check updates, Update all (when available),
-and Install App. The groups wrap on narrow screens. The visible page title stays in the Shell top
+Dashboard sits in a rounded workspace frame with compact page padding: 16px vertically and
+12px horizontally, increasing to 16px horizontally on larger screens. Core appears first
+in a headerless [ReUI Frame](https://reui.io/docs/components/radix/frame), with a separate card-colored
+FramePanel. Core and installed apps use the default Frame variant, providing a thin muted surround.
+The installed-apps Frame header aligns the all-app CPU/RAM total with the resource column and
+icon-only actions with the actions column. Check updates uses a circled arrow, Update all (when
+available) uses a download arrow with the update count in its tooltip, and Install App uses a plus.
+All three actions have accessible names and tooltips. Search and clickable app counts occupy the remaining space. The app list and its loading/empty states sit in the nested FramePanel. The groups wrap on narrow screens. The visible page title stays in the Shell top
 bar; the content keeps a screen-reader heading without repeating the title or introductory description.
+
+Core has no Platform badge. System apps carry a small cog icon, and the active Shell app carries
+a panels icon. Hovering or focusing either icon opens a tooltip explaining its role; app descriptions
+are not displayed in Dashboard rows.
+
+Core and app rows share a container-based responsive layout: the available Dashboard width,
+including space taken by either sidebar, determines the arrangement. Identity and version/source
+share the flexible space, while runtime, status, resources, and actions have compact widths. Below 1240px,
+action shortcuts are hidden; each row retains its complete actions menu. Runtime remains beside
+version/source until the Dashboard is narrower than 960px, when it moves above version/source.
+Runtime labels, development indicators, and switch arrows stay on one line; long profile keys
+truncate with their full value available on hover, keeping the switch arrow visible.
+Below 760px, app identity occupies its own line; below 400px, status and resources get their own row.
+Long names and branches truncate, badges and source change counts wrap, and both lists fit without
+horizontal scrolling. Expanded endpoint details also respond to the Dashboard width. App details
+sit directly on the expanded row background, without an additional bordered, padded outer card,
+matching Core's expanded section.
+
+Resource cells show CPU with a small shared-scale sparkline and RAM beside status. Core is separate
+from the all-app total in the installed-apps header; expanded services expose their own readings.
+Clicking any resource cell opens a ReUI-framed popover with five-minute CPU/RAM charts. The Shell
+uses the ReUI registry's recommended shadcn Chart and Popover primitives. The data comes from Core's
+bounded RAM history through the administrator API and shared SSE, independently of Telemetry;
+see [Runtime resource usage](../runtime-resource-usage/feature.md).
+
+Core's actions menu offers Restart, Console logs, Source settings, and Update when available.
+It uses the same administrator, busy, and manageable-state guards as the existing shortcuts.
+
+Failed update checks appear as a warning beside the app name and as an alert in its expanded
+details, even when its services are healthy and action shortcuts are hidden. Fleet-check error
+toasts name the affected apps and include the stored error; a single-app failure also supplies
+that app's context to the toast's assistant action.
 
 Search matches app names and IDs without case sensitivity and ignores leading/trailing whitespace.
 It combines with the selected state filter; the empty-result action clears both. Core remains visible
 as host context. Search and filters affect the app list; fleet update actions still apply to the host.
 
 Counts describe all installed apps, including system apps, independently of the selected filter:
+
+Counter buttons show only their icon and number. Their full descriptions remain available as
+hover tooltips and accessible names, keeping the toolbar compact without losing the filter labels.
 
 - **Running** selects apps whose runtime state is `running`.
 - **In progress** selects `starting` and `stopping` apps.
@@ -168,7 +213,7 @@ Below the toolbar, in order:
    affordances, the expandable per-service panel, and the install and details dialogs.
 
 Both tables use the same column widths and visually hidden column headers, retaining native table
-semantics for assistive technology. Narrow viewports can scroll each table horizontally.
+semantics for assistive technology. Rows reflow within narrow workspaces without horizontal scrolling.
 
 The Core update action lives here and nowhere else: this is where an administrator is already reading
 the host's version, and a fact that cannot be acted on beside itself is an odd place to stop.
@@ -265,6 +310,12 @@ stay on their Access tokens page, while host and app administration sections red
 The check also runs when only the settings query parameter changes.
 
 ## Testing Expectations
+
+- Check both lists with a wide workspace, an expanded right panel, and narrow content widths.
+  Runtime/version stacking and shortcut visibility follow container width, not viewport width.
+  Names, statuses, menus and expanded details remain reachable without horizontal scrolling.
+- Verify Core and app menus retain their actions and permission/busy guards in compact mode.
+
 
 - Route parsing covers each destination, the legacy paths, an unrecognized path, and a missing or
   unrecognized settings tab.

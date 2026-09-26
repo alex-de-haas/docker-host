@@ -10,26 +10,11 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyTitle,
-} from "@/components/ui/empty";
 import { Button } from "@/components/ui/button";
 import { AgentProviders } from "@/components/agent-providers";
-import { ProviderRow } from "@/components/provider-row";
+import { McpAccess } from "@/components/mcp-access";
 import {
   approveSkill,
-  CORE_PROVIDER_ID,
   establishSession,
   loadSettings,
   saveSettings,
@@ -45,6 +30,7 @@ export function GatewaySettings({
   const [data, setData] = useState<SettingsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
+  const [feedbackAppId, setFeedbackAppId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [prompt, setPrompt] = useState("");
 
@@ -65,8 +51,10 @@ export function GatewaySettings({
   }, []);
 
   const approve = useCallback(async (appId: string, markdown: string) => {
+    setFeedbackAppId(appId);
     setBusy(true);
     setError(null);
+    setStatus(null);
     try {
       await approveSkill(appId, markdown);
       // Re-read rather than dropping the row locally: the server decides what is still pending, and a
@@ -80,9 +68,11 @@ export function GatewaySettings({
     }
   }, []);
 
-  const save = useCallback(async (patch: Partial<Settings>) => {
+  const save = useCallback(async (patch: Partial<Settings>, appId: string | null = null) => {
+    setFeedbackAppId(appId);
     setBusy(true);
     setError(null);
+    setStatus(null);
     try {
       const saved = await saveSettings(patch);
       setData(saved);
@@ -121,19 +111,12 @@ export function GatewaySettings({
     );
   }
 
-  const { settings, providers, discovery } = data;
-  // Absent on an older gateway means "assume it works": the flag exists to say when it does not.
-  const autoAllowSupported = data.harness?.capabilities?.autoAllow !== false;
-  const harnessName = data.harness?.name ?? "harness";
-  const apps = providers.filter(
-    (provider) => provider.appId !== CORE_PROVIDER_ID,
-  );
-
   return (
-    <main className="mx-auto w-full max-w-7xl p-4 sm:p-6">
+    <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 p-4 sm:p-6 lg:p-8">
+      <h1 className="text-2xl font-semibold tracking-tight">AI Gateway</h1>
       <Tabs defaultValue={section} className="gap-6">
         <div className="-m-1 overflow-x-auto overflow-y-hidden p-1">
-          <TabsList aria-label="Gateway settings">
+          <TabsList variant="line" aria-label="Gateway settings">
             {(
               [
                 ["providers", "Providers"],
@@ -200,146 +183,15 @@ export function GatewaySettings({
           forceMount
           className="grid gap-7 data-[state=inactive]:hidden"
         >
-          {error && (
-            <Alert variant="destructive">
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          )}
-          {status && (
-            <p role="status" className="text-sm text-muted-foreground">
-              {status}
-            </p>
-          )}
-          {(data.pendingSkills ?? []).length > 0 && (
-            <section>
-              <h2 className="text-base font-semibold">
-                Changed app instructions
-              </h2>
-              <p className="mb-3 text-sm text-muted-foreground">
-                These apps rewrote the documentation they give the assistant.
-                Enabling an app accepted the text it had then, so the new text
-                is being withheld until you have read it — an update cannot put
-                fresh instructions in front of the model on the strength of an
-                older decision.
-              </p>
-              <div className="grid gap-3">
-                {(data.pendingSkills ?? []).map((skill) => (
-                  <Card key={skill.appId}>
-                    <CardHeader>
-                      <CardTitle className="min-w-0 truncate">
-                        {skill.displayName}
-                      </CardTitle>
-                      <CardDescription className="min-w-0 truncate">
-                        {skill.appId}
-                      </CardDescription>
-                      <CardAction>
-                        <Button
-                          size="sm"
-                          disabled={busy}
-                          onClick={() =>
-                            void approve(skill.appId, skill.markdown)
-                          }
-                        >
-                          Approve
-                        </Button>
-                      </CardAction>
-                    </CardHeader>
-                    <CardContent>
-                      {/* The text itself, not a summary of it: approving prose you cannot read is not
-                    approval, and a diff would still hide what the whole now says. */}
-                      <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-md bg-background p-3 text-xs">
-                        {skill.markdown}
-                      </pre>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            </section>
-          )}
-
-          <section>
-            <h2 className="text-base font-semibold">MCP access</h2>
-            <p className="mb-3 text-sm text-muted-foreground">
-              Hosty Core and the installed apps that expose an MCP interface.
-              Core starts on, with its read-only tools running unprompted,
-              because its tools and their annotations are the platform&apos;s
-              own. New apps arrive switched off on purpose: tool names and
-              descriptions are text written by the app and land in the context
-              of a model that has shell access on this host, so reaching one is
-              a decision rather than a side effect of installing it.
-            </p>
-            {data.agentConnections && (
-              <Alert role="note" className="mb-3">
-                <AlertDescription>
-                  Approval behavior depends on the provider selected for each
-                  chat. Claude supports the read-only mode below; Codex uses its
-                  own approval rules. Live tool changes apply where the selected
-                  provider supports them.
-                </AlertDescription>
-              </Alert>
-            )}
-            {!autoAllowSupported && (
-              <Alert role="note" className="mb-3">
-                <AlertDescription>
-                  The {harnessName} harness decides on its own which calls
-                  pause, so the approval mode below has no effect on it — every
-                  provider asks by that harness&apos;s rules.
-                </AlertDescription>
-              </Alert>
-            )}
-
-            {discovery !== "ok" && (
-              <Alert className="mb-2">
-                <AlertDescription>
-                  Could not reach Core, so the app list could not be loaded.
-                  Providers you have already enabled are unchanged and still in
-                  effect.
-                </AlertDescription>
-              </Alert>
-            )}
-            {providers.length > 0 && (
-              <div className="grid gap-2">
-                {providers.map((provider) => (
-                  <ProviderRow
-                    key={provider.appId}
-                    provider={provider}
-                    enabled={settings.mcpProviders[provider.appId] === true}
-                    autoAllow={settings.mcpAutoAllow[provider.appId] === true}
-                    autoAllowSupported={autoAllowSupported}
-                    harnessName={harnessName}
-                    busy={busy}
-                    onToggle={(next) =>
-                      void save({
-                        mcpProviders: {
-                          ...settings.mcpProviders,
-                          [provider.appId]: next,
-                        },
-                      })
-                    }
-                    onApprovalChange={(autoAllow) =>
-                      void save({
-                        mcpAutoAllow: {
-                          ...settings.mcpAutoAllow,
-                          [provider.appId]: autoAllow,
-                        },
-                      })
-                    }
-                  />
-                ))}
-              </div>
-            )}
-            {discovery === "ok" && apps.length === 0 && (
-              <Empty>
-                <EmptyHeader>
-                  <EmptyTitle>No app tools yet</EmptyTitle>
-                  <EmptyDescription>
-                    No installed app declares an MCP interface yet. Apps appear
-                    here once they do, switched off.
-                  </EmptyDescription>
-                </EmptyHeader>
-              </Empty>
-            )}
-          </section>
+          <McpAccess
+            data={data}
+            busy={busy}
+            error={error}
+            status={status}
+            feedbackAppId={feedbackAppId}
+            onSave={save}
+            onApprove={approve}
+          />
         </TabsContent>
       </Tabs>
     </main>

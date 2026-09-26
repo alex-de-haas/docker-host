@@ -82,10 +82,12 @@ test("a rejected live manifest warns and keeps the reason", () => {
   assert.match(problems[0].detail, /unknown field 'runtimes'/);
 });
 
-test("a failed update check is left to the row's own update marker", () => {
-  // Including it here would report the same problem twice, and would report it for live-source apps
-  // that have no reviewed-update path at all.
-  assert.deepEqual(collectAppProblems(app({ updateCheck: { updateAvailable: false, requiresReview: false, checkedAt: "now", error: "registry unreachable" } })), []);
+test("a healthy running app still explains a failed fleet update check", () => {
+  const record = app({ runtimeState: "running", updateCheck: { updateAvailable: false, requiresReview: false, checkedAt: "now", error: "registry unreachable" } });
+  assert.deepEqual(collectAppProblems(record), [{
+    severity: "warning", title: "Update check failed", detail: "registry unreachable",
+  }]);
+  assert.deepEqual(collectAppProblems({ ...record, updateCheck: { ...record.updateCheck, error: null } }), []);
 });
 
 function dependency(overrides = {}) {

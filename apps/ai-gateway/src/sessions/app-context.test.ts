@@ -18,6 +18,10 @@ const adapter: HarnessAdapter = {
   probe: async () => ({ available: true }),
   start: options => { starts.push(options); return { send: text => sent.push(text), stop: async () => {}, interrupt: async () => {}, setMcpServers: async () => false, resolveApproval: () => false, resolveQuestion: () => false }; },
 };
+const finishTurn = async (id: string) => {
+  starts.at(-1)!.onEvent({ type: "result", status: "success" });
+  await vi.waitFor(async () => expect((await manager.getSession(id))?.status).toBe("idle"));
+};
 const build = () => new SessionManager(store, adapter, new AuditReporter(null, null, "gateway"), dir, null, directory);
 beforeEach(async () => {
   dir = await mkdtemp(path.join(os.tmpdir(), "hosty-context-")); store = new SessionStore(dir, path.join(dir, "cache"));
@@ -53,16 +57,30 @@ describe("session app context", () => {
     expect(results.map(r => r.status)).toEqual(["fulfilled", "rejected"]);
     expect(events).toContainEqual(expect.objectContaining({ type: "app_context_changed", appContextRevision: 1 }));
     expect(sent).toEqual([first]);
+    await finishTurn(record.id);
     await expect(manager.postMessage(record.id, "stale", undefined, [], { expectedRevision: 0 })).rejects.toMatchObject({ status: 409 });
     await manager.postMessage(record.id, "inspect again", undefined, [], { expectedRevision: 1 });
     expect(sent[1]).toContain('"id":"media"'); expect(sent[1]).not.toContain('"id":"notes"');
     expect(starts).toHaveLength(1); expect(starts[0]?.cwd).toContain(`/sessions/${record.id}/workspace`); expect(starts[0]?.mcpServers).toBeUndefined();
     await manager.setAppContext(record.id, [], 1, "admin");
+    await finishTurn(record.id);
     await manager.postMessage(record.id, "general", undefined, [], { expectedRevision: 2 });
     expect(sent[2]).toContain('"apps":[]');
     const messages = (await store.readEvents(record.id)).filter(e => e.type === "user_message");
     expect(messages).toHaveLength(3); expect(messages[0]?.text).toBe("inspect");
     expect(messages[0]?.appContext).toMatchObject({ revision: 0, apps: [{ id: "notes" }] });
+  });
+  it("rejects concurrent sends while running and accepts a new message after completion", async () => {
+    const record = await manager.createSession({ createdBy: "admin" });
+    const results = await Promise.allSettled([
+      manager.postMessage(record.id, "first"), manager.postMessage(record.id, "second"),
+    ]);
+    expect(results.map(result => result.status)).toEqual(["fulfilled", "rejected"]);
+    expect(sent).toEqual(["first"]);
+    expect((await store.readEvents(record.id)).filter(event => event.type === "user_message")).toHaveLength(1);
+    await finishTurn(record.id);
+    await manager.postMessage(record.id, "second");
+    expect(sent).toEqual(["first", "second"]);
   });
   it("serializes snapshot capture with selection changes", async () => {
     const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
@@ -80,6 +98,7 @@ describe("session app context", () => {
     await manager.postMessage(record.id, "inspect"); expect(sent[0]).toContain('"available":false');
     await expect(manager.setAppContext(record.id, ["missing"], 0, "admin")).rejects.toMatchObject({ status: 422 });
     entries = null;
+    await finishTurn(record.id);
     await expect(manager.postMessage(record.id, "retry")).rejects.toMatchObject({ status: 503 }); expect(sent).toHaveLength(1);
     await manager.postMessage(record.id, "without details", undefined, [], { withoutDetails: true });
     expect(sent[1]).toContain('"resolution":"unavailable"');
@@ -124,4 +143,20 @@ describe("session app context", () => {
     expect(Buffer.byteLength(withAppContext("", snapshot))).toBeLessThanOrEqual(MAX_CONTEXT_BYTES);
     expect(() => parseAppIds([...ids, "extra"])).toThrow(); expect(() => parseAppIds(["../source"])).toThrow();
   });
+});
+
+it("resynchronizes a missed live-only idle transition even when the replay cursor is current", async () => {
+  const record = await manager.createSession({ createdBy: "admin" });
+  await manager.postMessage(record.id, "inspect");
+  expect((await manager.getSession(record.id))?.status).toBe("running");
+  await finishTurn(record.id);
+  const current = (await manager.getSession(record.id))!;
+  const subscription = await manager.subscribe(record.id, current.lastEventSeq, () => {});
+  expect(subscription.replay).toEqual([expect.objectContaining({ type: "session_status", status: "idle", seq: current.lastEventSeq })]);
+  subscription.unsubscribe();
+  await manager.postMessage(record.id, "next turn");
+  const active = (await manager.getSession(record.id))!;
+  const reconnect = await manager.subscribe(record.id, active.lastEventSeq, () => {});
+  expect(reconnect.replay.at(-1)).toMatchObject({ type: "session_status", status: "running" });
+  reconnect.unsubscribe();
 });

@@ -3,6 +3,7 @@
 import type { FormEvent } from "react";
 import { Fragment, useState } from "react";
 import { ChevronRight, HardDrive, LoaderCircle, Lock, Pencil, Plus, Trash2, TriangleAlert } from "lucide-react";
+import { useConfirmation } from "@/components/reui/confirmation";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -62,6 +63,7 @@ export function SettingsMountsSection({
   const [listError, setListError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // Names whose delete was blocked because they are still referenced; a second click forces it.
+  const { confirm, dialog: confirmationDialog } = useConfirmation();
   const [confirmForce, setConfirmForce] = useState<string | null>(null);
 
   // Opening either dialog also disarms a pending force delete: leaving it armed across an edit
@@ -115,6 +117,8 @@ export function SettingsMountsSection({
   };
 
   const remove = async (mount: CoreGlobalMount, force: boolean) => {
+    if (!await confirm({ title: force ? "Force delete shared mount?" : "Delete shared mount?", action: "Delete mount", destructive: true,
+      description: force ? `${mount.name}: existing app bindings become inert. The directory and its data remain on disk.` : `Remove ${mount.name} from the shared mount library? The directory and its data remain on disk.` })) return;
     setListError(null);
     setBusy(true);
     try {
@@ -134,6 +138,7 @@ export function SettingsMountsSection({
 
   return (
     <div className="space-y-5">
+      {confirmationDialog}
       <h3 className="sr-only">Shared mounts</h3>
       <div className="flex justify-end">
         <Button onClick={openAdd} disabled={!canManageApps || busy}>
