@@ -33,15 +33,13 @@ function stubMint(expiresInMs = 300_000, now = () => Date.now()) {
 
 // The verified parser is the SDK's (covered by its own suite); what Shell owns, and what this
 // covers, is which frame gets answered at all.
-test("appMayReceiveDelegatedToken admits the installed assistant gateway and nothing else", () => {
-  assert.equal(appMayReceiveDelegatedToken("hosty.ai-gateway", "hosty.ai-gateway"), true);
-  // The grant follows the ai-gateway interface, not an id, so a replacement assistant inherits it.
-  assert.equal(appMayReceiveDelegatedToken("com.example.assistant", "com.example.assistant"), true);
-  assert.equal(appMayReceiveDelegatedToken("hosty.marketplace", "hosty.ai-gateway"), false);
-  assert.equal(appMayReceiveDelegatedToken("com.example.app", "hosty.ai-gateway"), false);
-  // No gateway installed: no app is the assistant, so no frame is answered.
-  assert.equal(appMayReceiveDelegatedToken("hosty.ai-gateway", undefined), false);
-  assert.equal(appMayReceiveDelegatedToken(undefined, undefined), false);
+test("delegated token recipients are exactly the confirmed assistants", () => {
+  const assistants = ["first", "second"];
+  assert.equal(appMayReceiveDelegatedToken("first", assistants), true);
+  assert.equal(appMayReceiveDelegatedToken("second", assistants), true);
+  assert.equal(appMayReceiveDelegatedToken("other", assistants), false);
+  assert.equal(appMayReceiveDelegatedToken("first", []), false);
+  assert.equal(appMayReceiveDelegatedToken(undefined, assistants), false);
 });
 
 test("the cache reuses a live grant and mints again once it is nearly spent", async () => {

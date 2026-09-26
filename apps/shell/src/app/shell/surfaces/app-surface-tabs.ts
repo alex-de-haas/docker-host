@@ -172,7 +172,12 @@ export function getAppSettingsTabs(apps: readonly CoreApp[]): AppSurfaceTab[] {
  */
 export function getAppPanelTabs(apps: readonly CoreApp[]): AppSurfaceTab[] {
   return apps.flatMap((app) => {
-    const surfaces = app.panelSurfaces ?? [];
+    const assistant = Boolean(app.interfaces?.["ai-gateway"]?.length);
+    const confirmed = app.confirmedRoles?.includes("assistant");
+    if ((assistant || confirmed) && !(assistant && confirmed)) return [];
+    const surfaces: CoreAppSurface[] = assistant
+      ? [app.panelSurfaces?.[0] ?? { path: app.entryPath ?? "/", embeddedUrl: app.embeddedUrl, icon: "bot" }]
+      : app.panelSurfaces ?? [];
     return surfaces.map((surface, index) =>
       tabFor(app, surface, `${app.id}#${index}`, labelFor(app, surface, surfaces.length > 1 ? index : null)),
     );

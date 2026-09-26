@@ -154,7 +154,7 @@ public sealed class InstallationApprovalHttpTests
         var manifestPath = Path.Combine(paths.DataRoot, "fixture.json");
         const string manifest = """
             {"schemaVersion":"app.0.1","id":"example.fixture","name":"Fixture","version":"1.0.0",
-             "corePermissions":["apps.install"],
+             "provides":[],"corePermissions":["apps.install"],
              "runtimeProfiles":[{"key":"dev","type":"localCommand","default":true}],"defaultRuntime":"dev",
              "services":[{"key":"app","runtimes":{"dev":{"type":"localCommand","command":"echo unused","workingDirectory":"."}}}]}
             """;
@@ -168,13 +168,14 @@ public sealed class InstallationApprovalHttpTests
         using var submitted = await api.PostAsJsonAsync($"/api/installations/{id}/submit", new { autostart = false });
         Assert.True(submitted.IsSuccessStatusCode, await submitted.Content.ReadAsStringAsync());
         // The publisher changes its source while the user reads the plan. This cannot add rights.
-        await File.WriteAllTextAsync(manifestPath, manifest.Replace("[\"apps.install\"]", "[\"apps.install\",\"apps.update\"]"));
+        await File.WriteAllTextAsync(manifestPath, manifest.Replace("[\"apps.install\"]", "[\"apps.install\",\"apps.update\"]").Replace("\"provides\":[]", "\"provides\":[\"assistant\"]"));
         using var browser = harness.CreateClient();
         browser.DefaultRequestHeaders.Add("Cookie", $"hosty_session={session}");
         var path = $"/install/confirm/{id}";
         using var page = await browser.GetAsync(path);
         var html = await page.Content.ReadAsStringAsync();
         Assert.DoesNotContain("Request updates", html);
+        Assert.DoesNotContain("Provide an assistant", html);
         var nonce = Regex.Match(html, "name=nonce value=\"([^\"]+)\"").Groups[1].Value;
         Assert.NotEmpty(nonce);
         using var decision = new HttpRequestMessage(HttpMethod.Post, path)
@@ -193,6 +194,7 @@ public sealed class InstallationApprovalHttpTests
         var installed = await harness.Services.GetRequiredService<AppRegistryStore>().GetAppAsync("example.fixture");
         Assert.NotNull(installed);
         Assert.Equal([CoreAppPermissions.Install], installed.GrantedCorePermissions);
+        Assert.Empty(installed.ConfirmedRoles!);
         Assert.False(installed.Autostart);
         using var status = await api.GetAsync($"/api/installations/{id}");
         Assert.Contains("succeeded", await status.Content.ReadAsStringAsync());
@@ -200,6 +202,7 @@ public sealed class InstallationApprovalHttpTests
         var lifecycle = harness.Services.GetRequiredService<CoreLifecycleService>();
         var update = await lifecycle.CreateUpdatePlanAsync("example.fixture", new(manifestPath));
         Assert.Contains(CoreAppPermissions.Update, update.TargetCorePermissions);
+        Assert.Equal([PlatformCapabilities.Assistant], update.TargetRoles);
         var refused = await Assert.ThrowsAsync<AppLifecycleException>(() =>
             lifecycle.EnqueueUpdateAsync("example.fixture", new(update.PlanDigest)));
         Assert.Equal("approval_required", refused.Code);

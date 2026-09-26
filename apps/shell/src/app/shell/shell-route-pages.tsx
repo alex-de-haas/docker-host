@@ -65,6 +65,8 @@ export function ShellSettingsRoute() {
   if (!shell.canManageApps && shell.settingsTab !== "tokens") return <ShellAvailableAppsRoute />;
   return (
       <SettingsPage
+        assistantSelection={shell.assistantSelection}
+        onSelectAssistant={shellActions.selectAssistant}
         activeTab={shell.settingsTab}
         appTabs={shell.appSettingsTabs}
         appTabProps={{

@@ -245,6 +245,7 @@ export type CoreNavigationItem = {
 export type CoreApp = {
   id: string;
   grantedCorePermissions?: string[] | null;
+  confirmedRoles?: string[] | null;
   displayName: string;
   description?: string | null;
   version: string;
@@ -634,6 +635,8 @@ export type UpdateStatusState = {
 export type CoreUpdatePlan = {
   currentCorePermissions?: string[];
   targetCorePermissions?: string[];
+  currentConfirmedRoles?: string[];
+  targetRoles?: string[];
   appId: string;
   currentVersion: string;
   targetVersion: string;
@@ -719,7 +722,7 @@ export type ShellView =
 
 // Host-level configuration surfaces, addressable as /settings?tab=<value>. Distinct from the per-app
 // `SettingsTab` above, which describes one app rather than the host.
-export type HostSettingsTab = "users" | "tokens" | "core" | "mounts" | "ingress";
+export type HostSettingsTab = "shell" | "users" | "tokens" | "core" | "mounts" | "ingress";
 
 // A device waiting for someone to approve the code it is showing. Held in memory by Core and gone ten
 // minutes later, so this is never a durable record of anything.

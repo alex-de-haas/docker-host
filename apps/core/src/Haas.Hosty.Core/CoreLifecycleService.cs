@@ -281,7 +281,8 @@ internal sealed partial class CoreLifecycleService(
                 .Where(setting => !PublicOriginSettings.IsSettingKey(setting.Key))
                 .Select(setting => new AppInstallSetting(setting.Key, setting.Type, setting.Secret ? null : setting.Default, setting.Secret, setting.Required, setting.Label, setting.Description))
                 .ToArray(),
-            CorePermissions: selection.Manifest.CorePermissions.ToArray());
+            CorePermissions: selection.Manifest.CorePermissions.ToArray(),
+            RequestedRoles: PlatformCapabilities.RequestedRoles(selection.Manifest.Provides));
     }
 
     internal async Task<AppUpdatePlan> GetReviewedUpdatePlanAsync(string appId, string digest)
@@ -292,6 +293,8 @@ internal sealed partial class CoreLifecycleService(
         {
             CurrentCorePermissions = app.GrantedCorePermissions ?? [],
             TargetCorePermissions = reviewed.Selection.Manifest.CorePermissions.ToArray(),
+            CurrentConfirmedRoles = app.ConfirmedRoles ?? [],
+            TargetRoles = PlatformCapabilities.RequestedRoles(reviewed.Selection.Manifest.Provides),
         };
     }
 
@@ -468,6 +471,7 @@ internal sealed partial class CoreLifecycleService(
             RuntimeState = "stopped",
             LastOperation = "install",
             GrantedCorePermissions = selection.Manifest.CorePermissions.ToArray(),
+            ConfirmedRoles = PlatformCapabilities.RequestedRoles(selection.Manifest.Provides),
             Autostart = request.Autostart ?? true,
             FeedsUrl = string.IsNullOrWhiteSpace(request.FeedsUrl) ? null : request.FeedsUrl.Trim(),
             FollowedFeedId = string.IsNullOrWhiteSpace(request.FeedId) ? null : request.FeedId.Trim(),
@@ -1581,9 +1585,13 @@ internal sealed partial class CoreLifecycleService(
         var sourceConfigured = feedResolution is not null || HasExternalUpdateSource(app, request.ManifestPath);
         var changes = BuildUpdateChanges(app, currentSelection, selection).ToList();
         foreach (var permission in selection.Manifest.CorePermissions.Except(app.GrantedCorePermissions ?? [], StringComparer.Ordinal))
-            changes.Add($"Core permission added: {permission}");
+            changes.Add($"Core permission added: {permission} — {CoreAppPermissions.Describe(permission)}");
         foreach (var permission in (app.GrantedCorePermissions ?? []).Except(selection.Manifest.CorePermissions, StringComparer.Ordinal))
-            changes.Add($"Core permission removed: {permission}");
+            changes.Add($"Core permission removed: {permission} — {CoreAppPermissions.Describe(permission)}");
+        foreach (var role in PlatformCapabilities.RequestedRoles(selection.Manifest.Provides).Except(app.ConfirmedRoles ?? [], StringComparer.Ordinal))
+            changes.Add($"Provider role added: {role} — {PlatformCapabilities.DescribeRole(role)}");
+        foreach (var role in (app.ConfirmedRoles ?? []).Except(PlatformCapabilities.RequestedRoles(selection.Manifest.Provides), StringComparer.Ordinal))
+            changes.Add($"Provider role removed: {role} — {PlatformCapabilities.DescribeRole(role)}");
         // Surface a compiled-artifact change even when the manifest JSON is byte-identical (a
         // re-pushed tag): resolve the target tag's digest with a light remote lookup and compare it
         // to the current lock. This closes the invisible-update gap and folds the artifact delta into
@@ -1640,6 +1648,8 @@ internal sealed partial class CoreLifecycleService(
         {
             CurrentCorePermissions = app.GrantedCorePermissions ?? [],
             TargetCorePermissions = selection.Manifest.CorePermissions.ToArray(),
+            CurrentConfirmedRoles = app.ConfirmedRoles ?? [],
+            TargetRoles = PlatformCapabilities.RequestedRoles(selection.Manifest.Provides),
         };
 
         // Retain the fully-resolved plan so apply can use exactly what the operator confirmed instead of
@@ -1737,8 +1747,9 @@ internal sealed partial class CoreLifecycleService(
         // moved since it was reviewed.
         var confirmed = await ResolveConfirmedUpdatePlan(appId, request.PlanDigest);
         var app = await RequireAppAsync(appId, cancellationToken);
-        if (confirmed.Selection.Manifest.CorePermissions.Except(app.GrantedCorePermissions ?? [], StringComparer.Ordinal).Any())
-            throw new AppLifecycleException("approval_required", "New Core permissions require confirmation on the Core approval page.");
+        if (confirmed.Selection.Manifest.CorePermissions.Except(app.GrantedCorePermissions ?? [], StringComparer.Ordinal).Any()
+            || PlatformCapabilities.RequestedRoles(confirmed.Selection.Manifest.Provides).Except(app.ConfirmedRoles ?? [], StringComparer.Ordinal).Any())
+            throw new AppLifecycleException("approval_required", "New Core permissions or provider roles require confirmation on the Core approval page.");
         var currentSelection = await LoadSelectionForAppAsync(app, cancellationToken);
         if (!string.Equals(app.Version, confirmed.Plan.CurrentVersion, StringComparison.Ordinal) ||
             !string.Equals(app.SelectedRuntime, confirmed.Plan.CurrentRuntime, StringComparison.Ordinal) ||
@@ -2144,6 +2155,7 @@ internal sealed partial class CoreLifecycleService(
             RuntimeState = "stopped",
             LastOperation = "update",
             GrantedCorePermissions = selection.Manifest.CorePermissions.ToArray(),
+            ConfirmedRoles = PlatformCapabilities.RequestedRoles(selection.Manifest.Provides),
             LastError = null,
         };
         if (sourcePinCommit is not null && next.SourceState is not null)
@@ -3482,7 +3494,8 @@ internal sealed partial class CoreLifecycleService(
             // resolves or projects it) and is reconciled when install-time allocation is wired into the
             // update/switch apply path.
             PortAssignments: existing?.PortAssignments,
-            GrantedCorePermissions: existing?.GrantedCorePermissions);
+            GrantedCorePermissions: existing?.GrantedCorePermissions,
+            ConfirmedRoles: existing?.ConfirmedRoles);
 
         return ApplyManifestProjections(record, manifest);
     }
@@ -6471,7 +6484,12 @@ internal sealed record AppInstallPlan(
     // bound apply pins as the run-lock; null when unresolvable (offline / local-only image), in
     // which case that service TOFU-backfills at first start. Absent on the feed-embedded plan.
     IReadOnlyList<AppServiceArtifactProbe>? ArtifactDigests = null,
-    IReadOnlyList<string>? CorePermissions = null);
+    IReadOnlyList<string>? CorePermissions = null,
+    IReadOnlyList<string>? RequestedRoles = null)
+{
+    public IReadOnlyDictionary<string, string> PermissionDescriptions => (CorePermissions ?? []).ToDictionary(value => value, CoreAppPermissions.Describe, StringComparer.Ordinal);
+    public IReadOnlyDictionary<string, string> RoleDescriptions => (RequestedRoles ?? []).ToDictionary(value => value, PlatformCapabilities.DescribeRole, StringComparer.Ordinal);
+}
 
 internal sealed record AppFeedInstallPlan(
     AppInstallPlan Install,
@@ -6522,6 +6540,8 @@ internal sealed record AppUpdatePlan(
     public string? Error { get; init; }
     public IReadOnlyList<string> CurrentCorePermissions { get; init; } = [];
     public IReadOnlyList<string> TargetCorePermissions { get; init; } = [];
+    public IReadOnlyList<string> CurrentConfirmedRoles { get; init; } = [];
+    public IReadOnlyList<string> TargetRoles { get; init; } = [];
 }
 
 // Pending reviewed-update plan read (see GetPendingUpdatePlanAsync). A null plan means nothing is

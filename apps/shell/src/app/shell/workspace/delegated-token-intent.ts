@@ -89,20 +89,7 @@ export function createDelegatedTokenCache(
   };
 }
 
-/**
- * Whether the app shown in the workspace may be answered with a delegated token. The assistant
- * gateway alone qualifies: Shell already mints these tokens for it to run the chat panel, so
- * answering its settings page gives that app nothing it did not already hold. Every other frame
- * gets no handler at all — the workspace surface is generic, and answering whatever the operator
- * installed would widen the delegated-token trust story by accident rather than by decision.
- *
- * The gateway is identified by the app that declares the `ai-gateway` interface rather than by a
- * hard-coded id, because the assistant is meant to be replaceable: a second implementation inherits
- * the grant, and a host with no gateway installed grants nothing.
- */
-export function appMayReceiveDelegatedToken(
-  appId: string | undefined,
-  assistantGatewayAppId: string | undefined,
-): boolean {
-  return Boolean(appId) && appId === assistantGatewayAppId;
+/** Only confirmed assistants may receive their own audience-bound delegated token. */
+export function appMayReceiveDelegatedToken(appId: string | undefined, assistantAppIds: readonly string[]): boolean {
+  return Boolean(appId) && assistantAppIds.includes(appId!);
 }

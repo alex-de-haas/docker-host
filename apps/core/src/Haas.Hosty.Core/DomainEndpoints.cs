@@ -148,12 +148,12 @@ internal static class DomainEndpoints
                     statusCode: StatusCodes.Status404NotFound);
             }
 
-            if (caller.Interfaces is null || !caller.Interfaces.ContainsKey("ai-gateway"))
+            if (caller.GrantedCorePermissions?.Contains(CoreAppPermissions.ReadSkills, StringComparer.Ordinal) != true)
             {
                 return CoreJson.Json(
                     new ErrorResponse(
                         "agent_skill_forbidden",
-                        "Only an app declaring the ai-gateway interface may read another app's agent skill."),
+                        "The apps.skills.read permission is required to read another app's agent skill."),
                     statusCode: StatusCodes.Status403Forbidden);
             }
 

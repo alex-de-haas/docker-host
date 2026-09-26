@@ -90,7 +90,7 @@ Uncommitted changes in the operator's main checkout are not part of this baselin
 | Feature | Scope and dependencies |
 | --- | --- |
 | [Harness rename](../hosty-harness-rename/plan.md) | Product/app identity, distribution retirement and fresh-install policy; independent of AHP |
-| [Assistant provider permissions](../assistant-provider-permissions/plan.md) | Confirmed assistant role and approved permission instead of interface-derived authority; every assistant as its own Shell tab; ships before the rename |
+| [Assistant provider permissions](../assistant-provider-permissions/feature.md) | Confirmed assistant role and approved permission instead of interface-derived authority; every assistant as its own Shell tab; ships before the rename |
 | [Agent MCP directory](../agent-mcp-directory/plan.md) | Core-owned policy for which apps' MCP servers agents use, published without credentials; agents call apps directly and Core never proxies |
 | [AHP client interface](../assistant-ahp/plan.md) | Bounded client/ingress spike and replaceable projection over Hosty sessions; existing web REST/SSE remains |
 | [Shared history and switching](../assistant-shared-history/plan.md) | Hosty session journal/adapters, provider context reconciliation and session sharing |

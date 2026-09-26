@@ -1,5 +1,6 @@
 "use client";
 
+import { findAssistantGateways } from "../assistant/assistant-client";
 import { CoreRequestError } from "../core-api";
 import {
   DEFAULT_HOST_SETTINGS_TAB,
@@ -29,6 +30,7 @@ import { UserManagementPanel } from "./user-management-page";
 // top-level surface survives a refresh and a copied link, and a tab that lives in a component would
 // not.
 export function SettingsPage({
+  assistantSelection, onSelectAssistant,
   activeTab,
   appTabs,
   appTabProps,
@@ -45,6 +47,8 @@ export function SettingsPage({
   onSaveMount,
   onDeleteMount,
 }: {
+  assistantSelection: string | null;
+  onSelectAssistant: (id: string) => void;
   // A host tab id, or the id of an installed app whose settings page fills the tab.
   activeTab: string;
   // Apps declaring `ui.settings`, in install order. Empty for a non-admin: their tab list is their
@@ -66,6 +70,7 @@ export function SettingsPage({
 }) {
   // An ordinary user reaches this page for exactly one tab — their own access tokens — so the rest,
   // which administer the host, are not offered to them.
+  const assistants = findAssistantGateways(apps);
   const visibleTabs = canManageApps ? HOST_SETTINGS_SECTIONS : HOST_SETTINGS_SECTIONS.filter((tab) => isNonAdminHostSettingsTab(tab.id));
   // Each app has one sidebar entry; this component resolves its settings surface.
   const visibleAppTabs = canManageApps ? appTabs : [];
@@ -81,6 +86,18 @@ export function SettingsPage({
   return (
     <div className="space-y-6">
       <h1 className="sr-only">Settings</h1>
+
+      {canManageApps && resolvedTab === "shell" && <section className="space-y-3 max-w-xl">
+        <h2 className="text-lg font-medium">Assistant for Shell</h2>
+        <p className="text-sm text-muted-foreground">Choose which assistant receives Ask assistant drafts and error investigations. Each assistant also has its own panel tab.</p>
+        <label className="block text-sm" htmlFor="shell-assistant">Assistant</label>
+        <select id="shell-assistant" className="w-full rounded-md border bg-background p-2" value={assistantSelection ?? ""} onChange={event => onSelectAssistant(event.target.value)}>
+          <option value="" disabled>{assistants.length === 1 ? "Use the only available assistant" : "Choose an assistant"}</option>
+          {assistantSelection && !assistants.some(app => app.appId === assistantSelection) && <option value={assistantSelection} disabled>Previous assistant unavailable — choose again</option>}
+          {assistants.map(assistant => <option key={assistant.appId} value={assistant.appId}>{apps.find(app => app.id === assistant.appId)?.displayName || assistant.appId}{!assistant.running ? " — unavailable" : ""}</option>)}
+        </select>
+        {!assistants.length && <p className="text-sm text-muted-foreground">Install and confirm an assistant to use these features.</p>}
+      </section>}
 
       {resolvedTab === "tokens" && (
         <SettingsTokensSection coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} />

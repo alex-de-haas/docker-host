@@ -23,7 +23,8 @@ import { reconcileAppList } from "./shell/app-list-snapshot";
 import { AppDetailsDialog } from "./shell/dialogs/app-details-dialog";
 import { InstallDialog } from "@hosty-sdk/app/install/react";
 import { createInstallationClient, openInstallationConfirmation, showInstallationConfirmation } from "@hosty-sdk/app/install";
-import { assistantSupportsContext, createAppSession, createErrorSession, findAssistantGateway } from "./shell/assistant/assistant-client";
+import { useAssistantSelection } from "./shell/assistant/use-assistant-selection";
+import { assistantMessageFor, assistantSupportsContext, createAppSession, createErrorSession } from "./shell/assistant/assistant-client";
 import { ShellSidebar } from "./shell/sidebar/shell-sidebar";
 import { ShellTopStrip } from "./shell/chrome/shell-top-strip";
 import { activatePanel } from "./shell/surfaces/panel-rail-state";
@@ -252,7 +253,7 @@ export function ShellClient({
   const [panelAttention, setPanelAttention] = useState<Record<string, number>>({});
   // What Shell last asked the assistant panel, as a message for its frame. The nonce is the ask:
   // the same text twice is two asks, and the panel must see both.
-  const [assistantAsk, setAssistantAsk] = useState<{ message: unknown; nonce: number } | null>(null);
+  const [assistantAsk, setAssistantAsk] = useState<{ userId: string | null; appId: string; message: unknown; nonce: number } | null>(null);
   const activeWorkspaceRoute = shellRoute.workspace ?? optimisticWorkspaceRoute;
   const workspaceRouteKey = getWorkspaceRouteKey(activeWorkspaceRoute);
   const pendingWorkspaceRoute = useRef<string | null>(null);
@@ -273,10 +274,11 @@ export function ShellClient({
   const shellResolvedTheme = resolveShellTheme(resolvedTheme);
   const activeUser = state.session?.authenticated ? state.session.user : null;
   const canManageApps = activeUser?.role === "host.admin";
-  // The assistant surface exists only for admins and only when an installed app declares the
-  // ai-gateway interface (docs/features/ai-gateway/plan.md): no provider ⇒ no launcher, no panel.
-  const assistantGateway = useMemo(() => findAssistantGateway(state.apps), [state.apps]);
-  const assistantAvailable = Boolean(canManageApps && assistantGateway);
+  // Shell entry points use the client preference; confirmed roles gate discovery and token handshakes.
+  const { assistants, selected: assistantGateway, selectedId: assistantSelection, select: selectAssistant, choose: chooseAssistant, picker: assistantPicker } =
+    useAssistantSelection(state.apps, activeUser ? `${coreOrigin}:${activeUser.id}` : null);
+  const assistantIds = useMemo(() => assistants.map(app => app.appId), [assistants]);
+  const assistantAvailable = Boolean(canManageApps && assistants.length);
 
   // Migration only: with a cookie present the server already rendered the stored state and this
   // does nothing. Without one (pre-cookie builds), the legacy localStorage value is adopted and
@@ -1379,14 +1381,14 @@ export function ShellClient({
       setBusyAction(actionKey);
       try {
         const reviewedPlan = detailPanel.updatePlan;
-        if (reviewedPlan?.planDigest === planDigest && reviewedPlan.targetCorePermissions?.some(permission =>
-          !reviewedPlan.currentCorePermissions?.includes(permission))) {
+        if (reviewedPlan?.planDigest === planDigest && (reviewedPlan.targetCorePermissions?.some(permission =>
+          !reviewedPlan.currentCorePermissions?.includes(permission)) || reviewedPlan.targetRoles?.some(role => !reviewedPlan.currentConfirmedRoles?.includes(role)))) {
           const popup = openInstallationConfirmation();
           try {
             const draft = await installationClient.prepare({ updateAppId: app.id, planDigest });
             const pending = await installationClient.submit(draft.id, {}, true);
             showInstallationConfirmation(popup, pending);
-            toast.info("Confirm new permissions in Hosty Core", {
+            toast.info("Confirm new permissions and roles in Hosty Core", {
               duration: 60_000,
               action: { label: "Open confirmation", onClick: () => window.open(pending.approvalUrl, "_blank", "noopener,noreferrer") },
             });
@@ -1919,13 +1921,13 @@ export function ShellClient({
   // open, so its settings page gains no reach it did not have — whereas answering every frame would
   // hand a user-scoped credential to whatever the operator happened to install.
   const handleDelegatedTokenRequest = useMemo(() => {
-    const gatewayAppId = assistantGateway?.appId;
-    if (!gatewayAppId || !appMayReceiveDelegatedToken(workspace?.appId, gatewayAppId)) {
+    const gatewayAppId = workspace?.appId;
+    if (!canManageApps || !gatewayAppId || !appMayReceiveDelegatedToken(gatewayAppId, assistantIds)) {
       return undefined;
     }
 
     return (refresh: boolean) => issueDelegatedToken(gatewayAppId, refresh);
-  }, [assistantGateway?.appId, workspace?.appId, issueDelegatedToken]);
+  }, [assistantIds, canManageApps, workspace?.appId, issueDelegatedToken]);
 
   const closeInstallDialog = useCallback(() => {
     setInstallOpen(false);
@@ -1947,6 +1949,7 @@ export function ShellClient({
   // reuses the channel built for asks — the panel owns which session is shown, and Shell only carries
   // the request, which is the same division as everywhere else in the rail.
   const assistantSessionParam = readAssistantSessionParam(searchParams.get("assistantSession"));
+  const sessionAssistantId = searchParams.get("assistantApp") ?? (assistants.length === 1 ? assistants[0].appId : null);
   useEffect(() => {
     if (!assistantSessionParam) {
       return;
@@ -1955,7 +1958,7 @@ export function ShellClient({
     // The tab has to be selected as well as the rail revealed: the outbound message is handed only to
     // the *active* tab's frame, so a link arriving while another app's panel was open reached nobody
     // and then stripped its own parameter on the way out.
-    const assistantTab = appPanelTabs.find((tab) => tab.appId === assistantGateway?.appId);
+    const assistantTab = appPanelTabs.find((tab) => tab.appId === sessionAssistantId);
     if (!assistantTab) {
       return;
     }
@@ -1963,6 +1966,7 @@ export function ShellClient({
     setPanelOpen(true);
     setActivePanelKey(assistantTab.key);
     setAssistantAsk((current) => ({
+      userId: activeUserId, appId: assistantTab.appId,
       message: { type: "hosty:open-assistant-session", sessionId: assistantSessionParam },
       nonce: (current?.nonce ?? 0) + 1,
     }));
@@ -1970,8 +1974,9 @@ export function ShellClient({
     // a link that keeps reasserting itself is one they cannot navigate away from.
     const next = new URLSearchParams(searchParams.toString());
     next.delete("assistantSession");
+    next.delete("assistantApp");
     router.replace(`${pathname}${next.toString() ? `?${next}` : ""}`);
-  }, [appPanelTabs, assistantGateway?.appId, assistantSessionParam, pathname, router, searchParams]);
+  }, [appPanelTabs, sessionAssistantId, assistantSessionParam, pathname, router, searchParams, activeUserId]);
 
   const [assistantContextReady, setAssistantContextReady] = useState(false);
   const [assistantSessionPending, setAssistantSessionPending] = useState(false);
@@ -1990,51 +1995,64 @@ export function ShellClient({
   }, [assistantGateway, canManageApps, issueDelegatedToken, activeUserId]);
 
   const newAppAssistantSession = useCallback(async (appId: string) => {
-    if (!canManageApps || !assistantGateway?.running || creatingAssistantSession.current) return;
-    const tab = appPanelTabs.find(item => item.appId === assistantGateway.appId);
+    if (!canManageApps || creatingAssistantSession.current) return;
+    const gateway = await chooseAssistant();
+    if (!gateway) return;
+    if (!gateway.running) { toast.error("Start the selected assistant to continue."); return; }
+    const tab = appPanelTabs.find(item => item.appId === gateway.appId);
     if (!tab) { toast.error("The assistant panel is unavailable. Refresh Shell and retry."); return; }
     creatingAssistantSession.current = true;
     setAssistantSessionPending(true);
     try {
-      const session = await createAppSession(assistantGateway, refresh => issueDelegatedToken(assistantGateway.appId, refresh), appId, crypto.randomUUID());
+      const session = await createAppSession(gateway, refresh => issueDelegatedToken(gateway.appId, refresh), appId, crypto.randomUUID());
       setPanelOpen(true);
       setActivePanelKey(tab.key);
-      setAssistantAsk(current => ({ message: { type: "hosty:open-assistant-session", sessionId: session.id }, nonce: (current?.nonce ?? 0) + 1 }));
+      setAssistantAsk(current => ({ userId: activeUserId, appId: gateway.appId, message: { type: "hosty:open-assistant-session", sessionId: session.id }, nonce: (current?.nonce ?? 0) + 1 }));
     } catch (cause) { toast.error(cause instanceof Error ? cause.message : String(cause)); }
     finally { creatingAssistantSession.current = false; setAssistantSessionPending(false); }
-  }, [canManageApps, assistantGateway, appPanelTabs, issueDelegatedToken]);
+  }, [canManageApps, chooseAssistant, appPanelTabs, issueDelegatedToken, activeUserId]);
 
   const askErrorAssistant = useCallback(async (report: ErrorReport, requestId: string) => {
-    if (!canManageApps || !assistantGateway?.running) throw new Error("AI Gateway is unavailable.");
-    const tab = appPanelTabs.find(item => item.appId === assistantGateway.appId);
+    if (!canManageApps) return false;
+    const gateway = await chooseAssistant();
+    if (!gateway) return false;
+    if (!gateway.running) throw new Error("Start the selected assistant to continue.");
+    const tab = appPanelTabs.find(item => item.appId === gateway.appId);
     if (!tab) throw new Error("The assistant panel is unavailable. Refresh Shell and retry.");
-    const session = await createErrorSession(assistantGateway, refresh => issueDelegatedToken(assistantGateway.appId, refresh), report.appId, requestId);
+    const session = await createErrorSession(gateway, refresh => issueDelegatedToken(gateway.appId, refresh), report.appId, requestId);
     setPanelOpen(true);
     setActivePanelKey(tab.key);
-    setAssistantAsk(current => ({ message: {
+    setAssistantAsk(current => ({ userId: activeUserId, appId: gateway.appId, message: {
       type: "hosty:open-assistant-session", sessionId: session.id,
       draft: errorReportText(report), sourceAppId: report.appId ?? shellAppId,
     }, nonce: (current?.nonce ?? 0) + 1 }));
-  }, [canManageApps, assistantGateway, appPanelTabs, issueDelegatedToken, shellAppId]);
+  }, [canManageApps, chooseAssistant, appPanelTabs, issueDelegatedToken, shellAppId, activeUserId]);
 
   const askAssistant = useCallback((text: string, sourceAppId: string) => {
-    if (!askLimiter.current.tryAcquire(sourceAppId)) {
-      return;
-    }
+    void (async () => {
+      if (!askLimiter.current.tryAcquire(sourceAppId)) {
+        return;
+      }
 
-    setPanelOpen(true);
-    // Selecting the tab is part of the ask, not a nicety: the message is handed only to the
-    // assistant's own frame, so revealing the rail while another app's panel stayed selected would
-    // deliver the draft nowhere and look like the button did nothing.
-    const assistantTab = appPanelTabs.find((tab) => tab.appId === assistantGateway?.appId);
-    if (assistantTab) {
-      setActivePanelKey(assistantTab.key);
-    }
-    setAssistantAsk((current) => ({
-      message: { type: "hosty:ask-assistant", text, sourceAppId },
-      nonce: (current?.nonce ?? 0) + 1,
-    }));
-  }, [appPanelTabs, assistantGateway?.appId]);
+      const gateway = await chooseAssistant();
+      if (!gateway) return;
+      if (!gateway.running) { toast.error("Start the selected assistant to continue."); return; }
+      setPanelOpen(true);
+      // Selecting the tab is part of the ask, not a nicety: the message is handed only to the
+      // assistant's own frame, so revealing the rail while another app's panel stayed selected would
+      // deliver the draft nowhere and look like the button did nothing.
+      const assistantTab = appPanelTabs.find((tab) => tab.appId === gateway.appId);
+      if (assistantTab) {
+        setActivePanelKey(assistantTab.key);
+      }
+      setAssistantAsk((current) => ({
+        userId: activeUserId, appId: gateway.appId,
+        message: { type: "hosty:ask-assistant", text, sourceAppId },
+        nonce: (current?.nonce ?? 0) + 1,
+      }));
+    })();
+  }, [appPanelTabs, chooseAssistant, activeUserId]);
+
 
   // The assistant is meant to be at hand, so it gets a key. Toggles rather than only opening: a
   // shortcut that could not put the panel away would make the rail a trap on a small screen.
@@ -2048,24 +2066,24 @@ export function ShellClient({
         return;
       }
 
-      const assistantTab = appPanelTabs.find((tab) => tab.appId === assistantGateway?.appId);
-      if (!assistantTab) {
-        return;
-      }
-
       event.preventDefault();
-      // Already looking at it means "put it away"; anything else means "bring it here", including
-      // an open rail showing somebody else's panel.
-      const showing = rightPanelOpen && resolveActiveSurfaceTab(appPanelTabs, activePanelKey)?.key === assistantTab.key;
-      setPanelOpen(!showing);
-      if (!showing) {
-        setActivePanelKey(assistantTab.key);
-      }
+      void (async () => {
+        const gateway = await chooseAssistant();
+        const assistantTab = appPanelTabs.find((tab) => tab.appId === gateway?.appId);
+        if (!assistantTab) return;
+        // Already looking at it means "put it away"; anything else means "bring it here", including
+        // an open rail showing somebody else's panel.
+        const showing = rightPanelOpen && resolveActiveSurfaceTab(appPanelTabs, activePanelKey)?.key === assistantTab.key;
+        setPanelOpen(!showing);
+        if (!showing) {
+          setActivePanelKey(assistantTab.key);
+        }
+      })();
     };
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activePanelKey, appPanelTabs, assistantAvailable, assistantGateway?.appId, rightPanelOpen]);
+  }, [activePanelKey, appPanelTabs, assistantAvailable, chooseAssistant, rightPanelOpen]);
 
   // The rail exists only while something declares a panel; opening it is then the operator's choice.
   // An app's settings page fills the content column the way a workspace app does, so the column
@@ -2091,10 +2109,10 @@ export function ShellClient({
   // answered, in this context as in the workspace.
   const requestDelegatedTokenFor = useCallback(
     (appId: string) =>
-      appMayReceiveDelegatedToken(appId, assistantGateway?.appId)
+      canManageApps && appMayReceiveDelegatedToken(appId, assistantIds)
         ? (refresh: boolean) => issueDelegatedToken(appId, refresh)
         : undefined,
-    [assistantGateway?.appId, issueDelegatedToken],
+    [assistantIds, canManageApps, issueDelegatedToken],
   );
 
   // Mints a launch code for a placed surface and returns the URL to embed, so the frame lands with a
@@ -2140,6 +2158,7 @@ export function ShellClient({
       updateStatusInvalidations,
       settingsTab: shellRoute.settingsTab,
       appSettingsTabs,
+      assistantSelection,
       shellTheme: shellResolvedTheme,
       shellThemePreference,
       coreSettings,
@@ -2150,6 +2169,7 @@ export function ShellClient({
     }),
     [
       activeUser,
+      assistantSelection,
       appSettingsTabs,
       busyAction,
       canManageApps,
@@ -2169,6 +2189,7 @@ export function ShellClient({
 
   const shellActionsContextValue = useMemo(
     () => ({
+      selectAssistant,
       coreOrigin,
       shellAppId,
       refresh,
@@ -2176,7 +2197,7 @@ export function ShellClient({
       onEmbeddedAuthRequired: handleSurfaceAuthRequired,
       surfaceAuthNonce,
       askAssistant: assistantAvailable ? askAssistant : undefined,
-      newAppAssistantSession: assistantContextReady && canManageApps && assistantGateway?.running ? newAppAssistantSession : undefined,
+      newAppAssistantSession: assistantAvailable && (!assistantGateway || assistantContextReady && assistantGateway.running) ? newAppAssistantSession : undefined,
       assistantSessionPending,
       requestDelegatedTokenFor,
       openSurfaceFrame,
@@ -2197,13 +2218,13 @@ export function ShellClient({
       updateCore,
     }),
     [
+      selectAssistant,
       handleSurfaceAuthRequired,
       surfaceAuthNonce,
       askAssistant,
       assistantAvailable,
       assistantContextReady,
-      canManageApps,
-      assistantGateway?.running,
+      assistantGateway,
       newAppAssistantSession,
       assistantSessionPending,
       requestDelegatedTokenFor,
@@ -2340,7 +2361,7 @@ export function ShellClient({
               reloadKey={surfaceAuthNonce}
               // Only the assistant's own tab is handed Shell's ask; another app's panel must not
               // receive a message addressed to the gateway.
-              outbound={activePanelTab?.appId === assistantGateway?.appId ? assistantAsk : null}
+              outbound={assistantMessageFor(assistantAsk, activeUserId, activePanelTab?.appId, assistantIds)}
             />
           ) : null
         }>
@@ -2427,12 +2448,13 @@ export function ShellClient({
 
 
       </div>
+      {assistantPicker}
       {confirmationDialog}
       <AssistantFeedbackContext.Provider value={{
-        installed: !!assistantGateway,
+        installed: assistantAvailable,
         unavailableReason: !canManageApps ? "Host administrator access is required."
-          : !assistantGateway?.running ? "Start AI Gateway to ask the assistant."
-          : !appPanelTabs.some(tab => tab.appId === assistantGateway.appId) ? "The assistant panel is unavailable."
+          : assistantGateway && !assistantGateway.running ? "Start the selected assistant to continue."
+          : assistantGateway && !appPanelTabs.some(tab => tab.appId === assistantGateway.appId) ? "The assistant panel is unavailable."
           : undefined,
         ask: askErrorAssistant,
       }}><Toaster /></AssistantFeedbackContext.Provider>

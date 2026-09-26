@@ -14,6 +14,26 @@ namespace Haas.Hosty.Core.Tests.Http;
 public sealed class AgentSkillHttpTests
 {
     [Fact]
+    public async Task SkillPermissionIsIndependentOfRoleAndInterface_AndRevokedOnNextRequest()
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        var apps = harness.Services.GetRequiredService<AppRegistryStore>();
+        var paths = harness.Services.GetRequiredService<CoreDataPaths>();
+        var caller = CreateApp("example.reader") with { GrantedCorePermissions = [CoreAppPermissions.ReadSkills] };
+        await apps.UpsertAppAsync(caller);
+        await apps.UpsertAppAsync(CreateApp("example.target") with { AgentSkillFile = "agent.md" });
+        WriteSkill(paths, "example.target", "agent.md", "# Target skill");
+        using var client = harness.CreateClient();
+        var token = IssueServiceToken(harness, caller.Id);
+        using var allowed = await SendAsync(client, "/api/internal/apps/example.reader/agent-skills/example.target", token);
+        Assert.Equal(HttpStatusCode.OK, allowed.StatusCode);
+        await apps.UpsertAppAsync(caller with { System = true, GrantedCorePermissions = [], ConfirmedRoles = [PlatformCapabilities.Assistant],
+            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["ai-gateway"] = [new("default", null, "/api")] } });
+        using var denied = await SendAsync(client, "/api/internal/apps/example.reader/agent-skills/example.target", token);
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+    }
+
+    [Fact]
     public async Task AnAssistantReadsADeclaredSkill_AndAnOrdinaryAppCannot()
     {
         // The pair. Either half alone is satisfied by a route that answers everyone, or by one that
@@ -24,6 +44,7 @@ public sealed class AgentSkillHttpTests
 
         await apps.UpsertAppAsync(CreateApp("hosty.ai-gateway", system: true) with
         {
+            GrantedCorePermissions = [CoreAppPermissions.ReadSkills],
             Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>>
             {
                 ["ai-gateway"] = [new AppInterfaceContract("default", null, "/api")],
@@ -62,6 +83,7 @@ public sealed class AgentSkillHttpTests
         var apps = harness.Services.GetRequiredService<AppRegistryStore>();
         await apps.UpsertAppAsync(CreateApp("hosty.ai-gateway", system: true) with
         {
+            GrantedCorePermissions = [CoreAppPermissions.ReadSkills],
             Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>>
             {
                 ["ai-gateway"] = [new AppInterfaceContract("default", null, "/api")],
@@ -91,6 +113,7 @@ public sealed class AgentSkillHttpTests
         var apps = harness.Services.GetRequiredService<AppRegistryStore>();
         await apps.UpsertAppAsync(CreateApp("hosty.ai-gateway", system: true) with
         {
+            GrantedCorePermissions = [CoreAppPermissions.ReadSkills],
             Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>>
             {
                 ["ai-gateway"] = [new AppInterfaceContract("default", null, "/api")],

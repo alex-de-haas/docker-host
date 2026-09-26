@@ -36,6 +36,7 @@ export type ShellContextValue = {
   settingsTab: string;
   // Installed apps declaring `ui.settings`, already resolved to an embeddable URL by Core.
   appSettingsTabs: AppSurfaceTab[];
+  assistantSelection: string | null;
   shellTheme: HostyResolvedTheme;
   shellThemePreference: HostyThemePreference;
   coreSettings: CoreSettingsState | null;
@@ -47,6 +48,7 @@ export type ShellContextValue = {
 };
 
 export type ShellActionsContextValue = {
+  selectAssistant: (appId: string) => void;
   newAppAssistantSession?: (appId: string) => Promise<void>;
   assistantSessionPending?: boolean;
   coreOrigin: string;
