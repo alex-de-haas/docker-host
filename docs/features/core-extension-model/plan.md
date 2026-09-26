@@ -47,8 +47,9 @@ authentication.
   `apps/telemetry` is its only declarant. Because the trigger is the slot rather than an app id, a
   third-party app declaring it gets the same treatment, which is the piece of this model that already
   works.
-- **What `provides` is not.** It selects Core-side behavior; it never routes a call *to* the app,
-  carries no version, declares no cardinality, and passes through no operator consent of its own.
+- **What `provides` is not, today.** It selects Core-side behavior; it never routes a call *to* the
+  app, carries no version, declares no cardinality, and is honoured without operator confirmation.
+  The Permission Model below keeps a declared role inert until the operator confirms it.
   The `requires` counterpart shipped as `corePermissions` on 2026-09-18
   ([app installation](../app-installation-sdk/feature.md)): a closed vocabulary (`apps.install`,
   `apps.update`) that administrator review grants as a whole. This plan uses that field rather than

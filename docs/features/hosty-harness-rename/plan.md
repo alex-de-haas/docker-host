@@ -37,13 +37,14 @@ the interface key `ai-gateway` while changing app ID/display identity. It is a p
 not a legacy app-ID alias. Renaming that key instead requires a coordinated Core/Shell/Harness
 contract release and must be selected explicitly before Ready.
 
-Owner direction, 2026-09-26: [assistant provider permissions](../assistant-provider-permissions/plan.md)
-moves the authority out of that interface into a confirmed assistant role and an approved skill-read
-permission; Shell shows every confirmed assistant as its own tab. The key then only locates the API,
-so keeping `ai-gateway` carries no authority. That plan ships first and the existing Gateway receives
-the role and permission through a confirmed update; the new `hosty.harness` manifest declares the
-same and the operator confirms them at the fresh installation, so no grant migration is needed. The
-MCP facade stays in Harness until it becomes a separate app ([MCP facade](../mcp-facade/plan.md), On Hold).
+Owner direction, 2026-09-26:
+[assistant provider permissions](../assistant-provider-permissions/plan.md) moves the authority out
+of that interface into a confirmed assistant role and an approved skill-read permission; Shell shows
+every confirmed assistant as its own tab. The key then only locates the API, so keeping `ai-gateway`
+carries no authority. That plan ships first and the existing Gateway receives the role and permission
+through a confirmed update; the new `hosty.harness` manifest declares the same and the operator
+confirms them at the fresh installation, so no grant migration is needed. The MCP facade stays in
+Harness until it becomes a separate app ([MCP facade](../mcp-facade/plan.md), On Hold).
 
 The old Core distribution descriptor and app feeds reference raw `main/apps/ai-gateway` files.
 Do not remove those paths without a retirement policy. Proposal: release Core with the new

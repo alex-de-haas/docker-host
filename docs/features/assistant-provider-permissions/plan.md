@@ -107,11 +107,13 @@ It grants no authority — the token's audience is that app, exactly as for a de
   frame, with a token whose audience is that assistant.
 - Shell's own features that hand work to an assistant — `ask-assistant` drafts from apps, "ask the
   assistant" on operation errors and similar entry points — use the assistant selected in Shell's
-  settings, stored with Shell's existing preferences. With one eligible assistant it is used without
-  a setting. With several and no selection, Shell asks the operator to choose.
+  settings, stored with Shell's existing preferences. Only while the operator has never made a
+  selection does a single eligible assistant get used without one; with several, Shell asks the
+  operator to choose.
 - When the selected assistant becomes ineligible (uninstalled, role removed by a reviewed update,
-  interface dropped), those features ask the operator again; drafts are never rerouted to an
-  assistant the operator did not select. A stopped assistant keeps its tab and is shown as unavailable.
+  interface dropped), the stale selection suppresses that shortcut: those features ask the operator
+  again even if only one eligible assistant remains, and drafts are never rerouted to an assistant
+  the operator did not select. A stopped assistant keeps its tab and is shown as unavailable.
 - Other UI clients decide for themselves whether and how they use assistants; the
   [Harness Swift client](../hosty-harness-swift/plan.md) talks to Harness directly.
 
@@ -171,7 +173,8 @@ future in the MCP facade plan.
   that requests the new permission.
 - With two eligible assistants, Shell shows two tabs and each answers in its own tab. Shell's entry
   points ask for a selection, then reach only the selected assistant. Uninstalling it or removing its
-  role makes Shell ask again instead of falling back; a stopped assistant is shown as unavailable.
+  role makes Shell ask again instead of falling back, even though only one assistant remains; a
+  stopped assistant is shown as unavailable.
 - Removing the permission or role through a reviewed update revokes the corresponding access on the
   next check.
 - An assistant without `role: system` that holds the role and permission gets its tab and skill
