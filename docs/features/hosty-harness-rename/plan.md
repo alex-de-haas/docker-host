@@ -38,10 +38,10 @@ not a legacy app-ID alias. Renaming that key instead requires a coordinated Core
 contract release and must be selected explicitly before Ready.
 
 Owner direction, 2026-09-26:
-[assistant provider permissions](../assistant-provider-permissions/plan.md) moves the authority out
+[assistant provider permissions](../assistant-provider-permissions/feature.md) moves the authority out
 of that interface into a confirmed assistant role and an approved skill-read permission; Shell shows
 every confirmed assistant as its own tab. The key then only locates the API, so keeping `ai-gateway`
-carries no authority. That plan ships first and the existing Gateway receives the role and permission
+carries no authority. That feature ships first and the existing Gateway receives the role and permission
 through a confirmed update; the new `hosty.harness` manifest declares the same and the operator
 confirms them at the fresh installation, so no grant migration is needed. The MCP facade stays in
 Harness until it becomes a separate app ([MCP facade](../mcp-facade/plan.md), On Hold).

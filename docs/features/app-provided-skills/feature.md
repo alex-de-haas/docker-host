@@ -1,7 +1,7 @@
 # App-Provided Skills
 
 Created: 2026-08-21
-Updated: 2026-08-31
+Updated: 2026-09-26
 
 An app ships the prose an agent needs to use it well, the way it already ships its icon and its long
 description. MCP tells an agent *what calls exist*; a skill tells it how this app is meant to be
@@ -65,7 +65,7 @@ nowhere else, on the one surface where people actually work.
 **The app-to-app route had to earn its authorization.** Every other `/api/internal/apps/{appId}/…`
 route answers about the caller itself — the service token is validated against the id in the path,
 which is what stops an app asking Core about its neighbours. Reading a skill crosses that line, so
-only an app declaring the `ai-gateway` interface may cross: nothing else has a reason to read a
+only an app holding the confirmed `apps.skills.read` permission may cross: nothing else has a reason to read a
 neighbour's instructions, and "cheap to allow" is how a torrent client ends up reading the media
 server's. The narrower-looking alternative — folding skills into the fleet listing every app already
 reads — would have granted this to all of them silently.
@@ -139,7 +139,7 @@ asymmetry rather than smoothed over: it is a gap on that surface, not a reason t
 
 - **Manifest validation as pairs**: every escaping shape refused beside a legitimate path accepted,
   non-markdown refused, and a manifest declaring no `agent` block unaffected.
-- **The cross-app gate as a pair**: an app declaring `ai-gateway` allowed beside an ordinary app
+- **The cross-app gate as a pair**: an app granted `apps.skills.read` allowed beside an ungranted app
   refused — a route that answers nobody satisfies the negative alone while being broken. Verified that
   the interface check is what refuses, by removing it and watching the pair fail.
 - **Anonymous and foreign-token callers refused**, since the caller is who the token says and never

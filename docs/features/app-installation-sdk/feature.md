@@ -1,7 +1,7 @@
 # App Installation SDK And Core Confirmation
 
 Created: 2026-09-18
-Updated: 2026-09-18
+Updated: 2026-09-26
 
 ## Installation Ownership
 
@@ -30,10 +30,11 @@ legacy management transport is unchanged. Custom app clients use the SDK server 
 
 ## Manifest Permissions
 
-`corePermissions` is an optional array in `app.0.1`. The initial vocabulary is:
+`corePermissions` is an optional array in `app.0.1`. The vocabulary is:
 
 | Permission | App-delegated authority |
 | --- | --- |
+| `apps.skills.read` | Read agent skills published by installed apps |
 | `apps.install` | Prepare installation requests and submit them for Core confirmation |
 | `apps.update` | Submit an existing reviewed update plan for Core confirmation |
 
@@ -51,12 +52,18 @@ Live-source apps can review an explicit manifest path to approve permission chan
 survive list reads and fleet checks without becoming automatic update offers. A source change
 between review and apply invalidates the plan.
 
+Confirmed `provides: ["assistant"]` roles are persisted separately as `ConfirmedRoles` and exposed
+through app summaries. Install plans include `requestedRoles`, `permissionDescriptions` and
+`roleDescriptions`; update plans include `currentConfirmedRoles` and `targetRoles`. Additions require
+confirmation exactly like permission additions. Source projection never confirms a role.
+See [assistant provider permissions](../assistant-provider-permissions/feature.md).
+
 ## Trusted Confirmation
 
 A request starts as `draft`. Submit freezes settings and autostart, then changes it to `pending`.
 The SDK opens `/install/confirm/{id}` in a top-level window; a visible link is available when a
-popup is blocked. The page displays the target, version, source, requester and Core permissions.
-Permission additions are marked on updates. Direct host-command installs carry a warning.
+popup is blocked. The page displays the target, version, source, requester, provider roles and Core permissions.
+Role and permission additions and removals are marked on updates. Direct host-command installs carry a warning.
 
 Shell allows confirmation popups to escape the iframe sandbox only when Core's app summary
 reports persisted `apps.install` or `apps.update` grants. Workspace, settings and panel surfaces

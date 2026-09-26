@@ -13,7 +13,7 @@ export type ErrorReport = { title: string; description?: string; appId?: string 
 type AssistantFeedback = {
   installed: boolean;
   unavailableReason?: string;
-  ask: (report: ErrorReport, requestId: string) => Promise<void>;
+  ask: (report: ErrorReport, requestId: string) => Promise<void | boolean>;
 };
 export const AssistantFeedbackContext = createContext<AssistantFeedback>({ installed: false, ask: async () => {} });
 
@@ -49,7 +49,7 @@ export function OperationErrorToast({ id, report }: { id: string | number; repor
           if (pending.current) return;
           pending.current = true; setBusy(true); setActionError(null);
           requestId.current ??= crypto.randomUUID();
-          try { await assistant.ask(report, requestId.current); sonner.dismiss(id); }
+          try { if (await assistant.ask(report, requestId.current) !== false) sonner.dismiss(id); }
           catch (error) { setActionError(error instanceof Error ? error.message : "Could not open the assistant. Retry."); }
           finally { pending.current = false; setBusy(false); }
         }}>{busy ? <LoaderCircle className="animate-spin" /> : <MessageSquarePlus />}Ask assistant</Button>

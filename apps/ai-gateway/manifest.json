@@ -3,7 +3,7 @@
   "id": "hosty.ai-gateway",
   "name": "Hosty AI Gateway",
   "description": "Host-resident operator assistant with managed Claude and Codex connections, chat and settings UI.",
-  "version": "0.32.2",
+  "version": "0.32.3",
   "role": "system",
   "source": {
     "type": "git",
@@ -187,5 +187,11 @@
         "icon": "bot"
       }
     ]
-  }
+  },
+  "provides": [
+    "assistant"
+  ],
+  "corePermissions": [
+    "apps.skills.read"
+  ]
 }

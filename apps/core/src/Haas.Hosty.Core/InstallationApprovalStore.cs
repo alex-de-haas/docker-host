@@ -6,10 +6,12 @@ internal static class CoreAppPermissions
 {
     public const string Install = "apps.install";
     public const string Update = "apps.update";
-    public static readonly string[] Known = [Install, Update];
+    public const string ReadSkills = "apps.skills.read";
+    public static readonly string[] Known = [Install, Update, ReadSkills];
 
     public static string Describe(string permission) => permission switch
     {
+        ReadSkills => "Read agent skills published by installed apps",
         Install => "Request installation of other apps (Core confirmation required)",
         Update => "Request updates to installed apps (Core confirmation required)",
         _ => permission,

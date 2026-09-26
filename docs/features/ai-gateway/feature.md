@@ -36,7 +36,7 @@ are documented in [Assistant App Context](../assistant-app-context/feature.md).
   ready-to-call URL from the app's endpoints.
 - Shell renders the assistant surface — the sidebar launcher (Host section), the chat panel, and
   "Ask assistant" in the app details dialog — only for a `host.admin` viewer and only when an
-  installed app declares `ai-gateway` with a resolved URL. No provider or a non-admin viewer means
+  installed app holds the confirmed `assistant` role and declares `ai-gateway`. No provider or a non-admin viewer means
   the feature leaves no trace in the UI.
 - A record built by a Core that predates the extension lacks the section, which is what the
   2026-08-09 rollout hit when the app was installed before the Core update. Since Core 0.74.1 the
@@ -454,6 +454,11 @@ seconds; an unavailable on-demand mint returns 503 before forwarding the tool ca
 not replayed automatically. Actual authorization refusal still expires the delegation. This does
 not broaden delegated Core MCP authority: restart uses an authorized host CLI or explicitly granted
 direct Core connection. See [Core development mode](../core-dev-target/feature.md).
+
+The manifest requests `provides: ["assistant"]` and `corePermissions: ["apps.skills.read"]`.
+Existing installations need a confirmed update on Core 0.108.0 or later. Shell presents each confirmed
+assistant independently and selects its own entry-point target in Settings → Shell. Notification
+session links include the owning app. See [assistant provider permissions](../assistant-provider-permissions/feature.md).
 
 ## Testing Expectations
 

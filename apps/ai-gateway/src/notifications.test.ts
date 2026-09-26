@@ -31,6 +31,7 @@ describe("waiting notifications", () => {
     // Not broadcast: another administrator being told that someone else's agent is waiting is noise
     // they cannot act on.
     expect(body.target).toBe("user_admin");
+    expect(body.link).toBe("/?assistantSession=s1&assistantApp=hosty.ai-gateway");
     expect(body.dedupeKey).toBe(dedupeKeyFor("s1"));
     // No transcript content — what was proposed lives in the session, and an inbox row is not the
     // place to repeat text nobody has approved.

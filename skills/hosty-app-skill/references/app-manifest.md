@@ -196,9 +196,23 @@ Declare platform interfaces the app exposes for other components to discover wit
 }
 ```
 
-Core validates shape only (names and keys are kebab tokens, keys unique per interface, paths absolute) and surfaces the declarations on the apps API with each declaration resolved to a ready-to-call URL, so clients can gate features on an installed provider — e.g. Shell shows its assistant UI only when an installed app declares `ai-gateway`. Declaring an interface does not grant the app anything; it is discovery metadata. See `docs/features/ai-agent-bridge/feature.md` ("Manifest Interfaces And Registry").
+Core validates shape only (names and keys are kebab tokens, keys unique per interface, paths absolute) and surfaces the declarations on the apps API with each declaration resolved to a ready-to-call URL, so clients can gate features on an installed provider — e.g. Shell identifies assistants by the confirmed `assistant` role plus the `ai-gateway` interface. Declaring an interface does not grant the app anything; it is discovery metadata. See `docs/features/ai-agent-bridge/feature.md` ("Manifest Interfaces And Registry").
 
-### MCP Interface
+### Assistant Role And Core Permissions
+
+An assistant declares `"provides": ["assistant"]`, an `ai-gateway` interface and its UI entrypoint
+or panel. The role is inert until administrator confirmation at installation or reviewed update.
+`"corePermissions": ["apps.skills.read"]` requests permission to read installed apps' agent skills;
+other supported permissions are `apps.install` and `apps.update`. Each required declaration is
+shown with a description; the operator accepts the complete set or declines. An older Core rejects
+unknown permissions. Install Core 0.108.0 or newer before requesting `apps.skills.read`.
+
+Changing a source manifest grants no roles or permissions. Shell shows each confirmed assistant
+as a separate tab and owns its choice for Ask assistant. The role does not replace the existing
+`role: system` restriction on delegated-token exchange. See
+`docs/features/assistant-provider-permissions/feature.md`.
+
+## MCP Interface
 
 An app that declares `interfaces.mcp` serves MCP over Streamable HTTP at that path: JSON-RPC in a
 `POST` body. `apps/demo-app/src/app/api/mcp/route.ts` is the reference; `docs/features/app-mcp/feature.md`

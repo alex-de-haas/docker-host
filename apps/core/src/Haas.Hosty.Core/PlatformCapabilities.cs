@@ -19,11 +19,24 @@ internal sealed record PlatformCapability(
 
 internal static class PlatformCapabilities
 {
+    public const string Assistant = "assistant";
+
+    // Only recognized consent-bearing roles participate; legacy provisioning slots stay unchanged.
+    public static IReadOnlyList<string> RequestedRoles(IReadOnlyList<string> provides)
+        => provides.Where(slot => slot == Assistant).Distinct(StringComparer.Ordinal).ToArray();
+
+    public static string DescribeRole(string role) => role switch
+    {
+        Assistant => "Provide an assistant that receives conversations and app context chosen in Shell",
+        _ => role,
+    };
+
     public const string OtlpCollector = "otlp-collector";
 
     private static readonly IReadOnlyDictionary<string, PlatformCapability> Registry =
         new Dictionary<string, PlatformCapability>(StringComparer.Ordinal)
         {
+            [Assistant] = new(Assistant, StartPriority: 0, ProvisionAsync: null),
             [OtlpCollector] = new(
                 OtlpCollector,
                 StartPriority: 100,

@@ -19,6 +19,21 @@ public sealed class DelegatedTokenExchangeHttpTests
     private const string TargetApp = "com.example.notes";
 
     [Fact]
+    public async Task ConfirmedNonSystemAssistantStillCannotDelegateToOtherApps()
+    {
+        await using var harness = await StartAsync();
+        var apps = harness.Services.GetRequiredService<AppRegistryStore>();
+        await apps.UpdateAppAsync(TargetApp, app => app with
+        {
+            ConfirmedRoles = [PlatformCapabilities.Assistant], GrantedCorePermissions = [CoreAppPermissions.ReadSkills],
+        });
+        using var client = harness.CreateClient();
+        using var refused = await ExchangeAsync(client, "com.example.other", Mint(harness, TargetApp));
+        Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
+        Assert.Equal("exchange_forbidden", (await ReadJsonAsync(refused)).GetProperty("code").GetString());
+    }
+
+    [Fact]
     public async Task SystemCallerExchangesForAnotherApp_WhileANonSystemCallerCannot()
     {
         await using var harness = await StartAsync();
