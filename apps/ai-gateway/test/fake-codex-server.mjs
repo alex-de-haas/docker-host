@@ -146,6 +146,7 @@ function handle(msg) {
   }
 
   if (msg.method === "thread/resume") {
+    if (process.env.HOSTY_FAKE_CODEX_REJECT_RESUME === "1") { send({ id: msg.id, error: { code: -32000, message: "fixture resume refused" } }); return; }
     send({ jsonrpc: "2.0", id: msg.id, result: { thread: { id: msg.params?.threadId ?? "thread-fake-1" } } });
     return;
   }

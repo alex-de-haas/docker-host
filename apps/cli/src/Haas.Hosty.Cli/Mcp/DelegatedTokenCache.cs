@@ -29,7 +29,8 @@ using Haas.Hosty.Cli.Commands;
 internal sealed class DelegatedTokenCache(
     Func<string, CancellationToken, Task<IssuedToken?>> issue,
     TimeProvider time,
-    Action<string>? warn = null)
+    Action<string>? warn = null,
+    bool reuse = true)
 {
     /// <summary>Replaced once this close to expiry, so no call departs on a token about to die.</summary>
     private static readonly TimeSpan ReuseMargin = TimeSpan.FromSeconds(60);
@@ -64,7 +65,7 @@ internal sealed class DelegatedTokenCache(
 
     private async Task<string?> IssueAsync(string appId, CancellationToken cancellationToken)
     {
-        if (cache.TryGetValue(appId, out var cached) && cached.ExpiresAt - ReuseMargin > time.GetUtcNow())
+        if (reuse && cache.TryGetValue(appId, out var cached) && cached.ExpiresAt - ReuseMargin > time.GetUtcNow())
         {
             return cached.Token;
         }

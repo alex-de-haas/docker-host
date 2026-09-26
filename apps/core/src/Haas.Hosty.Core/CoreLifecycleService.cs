@@ -61,7 +61,8 @@ internal sealed partial class CoreLifecycleService(
     // Optional only for unit fixtures, which then preview the default instance's unscoped names;
     // production DI always supplies it.
     HostyCoreRuntimeConfig? runtimeConfig = null,
-    LocalCommandProcessRegistry? localProcesses = null)
+    LocalCommandProcessRegistry? localProcesses = null,
+    AgentPolicyStore? agentPolicies = null)
 {
     private static readonly Regex BackupReasonPattern = new("^[a-z0-9][a-z0-9-]{0,30}$", RegexOptions.Compiled);
     private static readonly Regex MountLabelPattern = new("^[a-z0-9][a-z0-9._-]{0,62}$", RegexOptions.Compiled);
@@ -2469,6 +2470,8 @@ internal sealed partial class CoreLifecycleService(
             TryDelete(GetRetainedConfigPath(appId));
         }
 
+        // Removal revokes agent offers even when the operator retains runtime state.
+        await (agentPolicies ?? new AgentPolicyStore(paths)).ChangeAsync(appId, null, cancellationToken);
         if (request.DeleteRuntimeState)
         {
             TryDelete(Path.Combine(GetAppRoot(appId), "state.json"));

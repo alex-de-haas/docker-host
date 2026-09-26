@@ -226,7 +226,7 @@ Decisions 1–5: 2026-08-19.
     configuration without credentials; agents configure themselves from it and call each app
     directly, so tool traffic never passes through Core and the agent-bridge boundary stands. A
     single-entry facade for full external clients such as Claude Code or Codex becomes a separate
-    app later. [Agent MCP directory](features/agent-mcp-directory/plan.md) owns the directory;
+    app later. [Agent MCP directory](features/agent-mcp-directory/feature.md) owns the directory;
     [MCP facade](features/mcp-facade/plan.md) is On Hold.
 
 ## Expectations And Later Directions
@@ -293,7 +293,7 @@ the manifest contract. Two standing consequences:
 [app-authoring](features/app-authoring/plan.md) ·
 [core-extension-model](features/core-extension-model/plan.md) ·
 [assistant-provider-permissions](features/assistant-provider-permissions/feature.md) ·
-[agent-mcp-directory](features/agent-mcp-directory/plan.md) ·
+[agent-mcp-directory](features/agent-mcp-directory/feature.md) ·
 [ai-agent-bridge](features/ai-agent-bridge/plan.md) ·
 [app-ui-surfaces](features/app-ui-surfaces/feature.md) ·
 [assistant-entry-points](features/assistant-entry-points/plan.md) ·

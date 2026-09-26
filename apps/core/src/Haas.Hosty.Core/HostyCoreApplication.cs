@@ -78,6 +78,8 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<UserDirectoryStore>();
         builder.Services.AddSingleton<AuthBootstrapTokenStore>();
         builder.Services.AddSingleton<AuditStore>();
+        builder.Services.AddSingleton<AgentPolicyStore>();
+        builder.Services.AddSingleton<AgentMcpDirectory>();
         builder.Services.AddSingleton<AppAuthCodeStore>();
         builder.Services.AddSingleton<DeviceAuthorizationStore>();
         builder.Services.AddSingleton<OAuthStore>();
@@ -383,6 +385,7 @@ internal static class HostyCoreApplication
             await shellOrigins.ResolveAsync(cancellationToken)), "text/html"));
 
         DomainEndpoints.Map(app);
+        AgentMcpEndpoints.Map(app);
         AuthEndpoints.Map(app);
         AccessTokenEndpoints.Map(app);
         AuthBootstrapEndpoints.Map(app);

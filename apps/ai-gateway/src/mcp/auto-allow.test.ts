@@ -23,10 +23,15 @@ const TOOL = `mcp__${APP}__list_people`;
 const CORE_URL = "http://core.test/api/mcp";
 const CORE_TOOL = "mcp__hosty-core__list_apps";
 
+let offered = true;
+let directoryRevision = "one";
+let providerUrl = `http://${APP}/api/mcp`;
+
 // Shared by both suites below: the directory stubs and the network stub they run against.
 const providers = {
+  get revision() { return directoryRevision; },
   read: async () => ({
-    providers: [{ appId: APP, displayName: "Notes", url: `http://${APP}/api/mcp`, running: true }],
+    providers: [{ appId: APP, displayName: "Notes", url: providerUrl, running: true, offered }],
     installedAppIds: [APP],
   }),
   // No Core row here: these tests are about an app the operator has to vouch for, and Core's
@@ -35,6 +40,7 @@ const providers = {
   // Declares no skill: these tests are about the approval gate, and a skill would only add prose to
   // a system prompt none of them read.
   readSkill: async () => null,
+  approvedSkills: () => ({}),
 } as unknown as ProviderDirectory;
 
 /** The same directory with Core offered beside the app, for the default-grant suite below. */
@@ -44,7 +50,7 @@ const providersWithCore = {
     appId: "hosty:core",
     displayName: "Hosty Core",
     url: CORE_URL,
-    running: true,
+    running: true, offered: true,
     interfaces: [{ key: "default", url: CORE_URL }],
   }),
 } as unknown as ProviderDirectory;
@@ -85,6 +91,9 @@ describe("per-app auto-allow", () => {
   let manager: SessionManager;
 
   beforeEach(async () => {
+    offered = true;
+    directoryRevision = "one";
+    providerUrl = `http://${APP}/api/mcp`;
     dataDir = mkdtempSync(path.join(os.tmpdir(), "hosty-auto-allow-"));
     store = new SessionStore(dataDir);
     settings = new SettingsStore(dataDir);
@@ -127,6 +136,24 @@ describe("per-app auto-allow", () => {
       return events;
     });
   }
+
+  it("ignores unrelated fleet revisions but reconfigures a changed upstream behind the stable proxy", async () => {
+    const record = await manager.createSession({ createdBy: "user_admin" });
+    await manager.postMessage(record.id, "hello", "seed-credential");
+    await vi.waitFor(async () => expect((await store.readEvents(record.id)).some(event => event.type === "result")).toBe(true));
+    const live = (manager as unknown as { live: Map<string, { run: { setMcpServers: () => Promise<boolean> } }> }).live.get(record.id)!;
+    const reconfigure = vi.spyOn(live.run, "setMcpServers").mockResolvedValue(false);
+    directoryRevision = "unrelated-app-stopped";
+    await manager.postMessage(record.id, "next turn", "seed-credential");
+    expect(reconfigure).not.toHaveBeenCalled();
+    expect((await store.readEvents(record.id)).filter(event => event.type === "notice")).toHaveLength(0);
+
+    providerUrl = `http://${APP}:9999/api/mcp`;
+    directoryRevision = "target-url-changed";
+    await manager.postMessage(record.id, "another turn", "seed-credential");
+    expect(reconfigure).toHaveBeenCalledTimes(1);
+    expect((await store.readEvents(record.id)).filter(event => event.type === "notice")).toHaveLength(1);
+  });
 
   it("asks when the operator has not vouched for the app", async () => {
     // The provider is enabled — the app may reach the assistant — but nobody has said its own word
@@ -180,7 +207,7 @@ describe("per-app auto-allow", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(granted(record.id).size).toBe(1);
 
-    await settings.update({ mcpProviders: { [APP]: false } });
+    offered = false;
     await manager.applyProviderPolicy();
 
     expect(granted(record.id).size).toBe(0);
@@ -212,6 +239,9 @@ describe("Core's default grant", () => {
   let manager: SessionManager;
 
   beforeEach(async () => {
+    offered = true;
+    directoryRevision = "one";
+    providerUrl = `http://${APP}/api/mcp`;
     dataDir = mkdtempSync(path.join(os.tmpdir(), "hosty-auto-allow-core-"));
     store = new SessionStore(dataDir);
     settings = new SettingsStore(dataDir);

@@ -23,8 +23,8 @@ export interface HarnessCapabilities {
   appMcp: boolean;
   /**
    * Configuration changes can be applied to a running session. The Claude SDK exposes
-   * setMcpServers/toggleMcpServer/reconnectMcpServer; Codex shows no equivalent, so there a toggle
-   * takes effect at the next session and the settings UI must say so rather than imply immediacy.
+   * setMcpServers/toggleMcpServer/reconnectMcpServer. Codex has no mid-turn equivalent;
+   * its adapter can instead prepare a resumed process between turns.
    */
   liveReconfigure: boolean;
   /**
@@ -125,7 +125,7 @@ export interface HarnessRun {
   resolveQuestion(questionId: string, answers: Record<string, string>): boolean;
   /**
    * Replaces the MCP servers of a running session. Returns false when the harness cannot be
-   * reconfigured live (`capabilities.liveReconfigure`), in which case the change waits for the next
+   * reconfigured at this point, in which case the manager reports a fallback to the next
    * session rather than silently doing nothing.
    */
   setMcpServers(servers: Record<string, unknown>): Promise<boolean>;

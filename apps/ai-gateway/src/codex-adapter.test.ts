@@ -41,6 +41,7 @@ describe("codex harness adapter", () => {
     await run?.stop();
     run = null;
     delete process.env.HOSTY_AI_GATEWAY_CODEX_COMMAND;
+    delete process.env.HOSTY_FAKE_CODEX_REJECT_RESUME;
   });
 
   function start(resumeHarnessSessionId?: string): HarnessRun {
@@ -61,6 +62,29 @@ describe("codex harness adapter", () => {
       "harness_session",
     );
     expect(event).toMatchObject({ harnessSessionId: "thread-fake-1" });
+  });
+
+  it("reconfigures an idle run by resuming the same thread and can send its next turn", async () => {
+    const active = start();
+    await waitFor(() => events.find(event => event.type === "harness_session"), "initial thread");
+    expect(await active.setMcpServers({ notes: { type: "http", url: "http://localhost/mcp", headers: { authorization: "Bearer fixture" } } })).toBe(true);
+    expect(events.filter(event => event.type === "harness_session")).toEqual([
+      { type: "harness_session", harnessSessionId: "thread-fake-1" },
+      { type: "harness_session", harnessSessionId: "thread-fake-1" },
+    ]);
+    active.send("hello");
+    await waitFor(() => events.find(event => event.type === "result"), "resumed turn");
+    expect(events.some(event => event.type === "error")).toBe(false);
+  });
+
+  it("keeps the original run usable when replacement resume fails", async () => {
+    const active = start();
+    await waitFor(() => events.find(event => event.type === "harness_session"), "initial thread");
+    process.env.HOSTY_FAKE_CODEX_REJECT_RESUME = "1";
+    expect(await active.setMcpServers({})).toBe(false);
+    active.send("hello");
+    await waitFor(() => events.find(event => event.type === "result"), "original run still usable");
+    expect(events.some(event => event.type === "error")).toBe(false);
   });
 
   it("resumes an existing thread instead of starting a new one", async () => {
@@ -215,7 +239,7 @@ describe("codex harness adapter", () => {
     const active = start();
     await waitFor(() => events.find((candidate) => candidate.type === "harness_session"), "handshake");
     // Kill the scripted server the way a crashing harness would go away.
-    (active as unknown as { child: { kill: (signal: string) => void } }).child.kill("SIGKILL");
+    (active as unknown as { active: { child: { kill: (signal: string) => void } } }).active.child.kill("SIGKILL");
 
     const error = await waitFor(() => events.find((candidate) => candidate.type === "error"), "error event");
     expect(error).toMatchObject({ type: "error" });
@@ -243,6 +267,7 @@ describe("harness selection", () => {
 describe("codex binary resolution", () => {
   afterEach(() => {
     delete process.env.HOSTY_AI_GATEWAY_CODEX_COMMAND;
+    delete process.env.HOSTY_FAKE_CODEX_REJECT_RESUME;
   });
 
   it("prefers the operator override over the pinned dependency", async () => {
@@ -271,6 +296,7 @@ describe("codex auth modes", () => {
 
   afterEach(() => {
     delete process.env.HOSTY_AI_GATEWAY_CODEX_COMMAND;
+    delete process.env.HOSTY_FAKE_CODEX_REJECT_RESUME;
     rmSync(dir, { recursive: true, force: true });
   });
 

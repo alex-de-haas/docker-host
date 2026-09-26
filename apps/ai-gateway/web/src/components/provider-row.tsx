@@ -13,7 +13,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 
 // Both controls say what they DO, not what they are. A button labelled "Disabled" reads equally as
 // "this is off" and "click to disable", and the operator cannot tell which without clicking — which
@@ -27,7 +26,6 @@ export function ProviderRow({
   harnessName,
   busy,
   multipleConnections = false,
-  onToggle,
   onApprovalChange,
 }: {
   provider: Provider;
@@ -38,7 +36,6 @@ export function ProviderRow({
   harnessName: string;
   busy: boolean;
   multipleConnections?: boolean;
-  onToggle: (next: boolean) => void;
   onApprovalChange: (autoAllow: boolean) => void;
 }) {
   const id = useId();
@@ -62,19 +59,12 @@ export function ProviderRow({
         <FieldGroup className="gap-0">
           <Field orientation="horizontal" className="p-5">
             <FieldContent>
-              <FieldLabel htmlFor={`${id}-access`}>Allow access</FieldLabel>
+              <FieldLabel htmlFor={`${id}-access`}>Agent offer</FieldLabel>
               <FieldDescription id={`${id}-access-description`}>
-                Make this application&apos;s tools available to the assistant.
+                Managed in Hosty Shell Settings → Agents.
               </FieldDescription>
             </FieldContent>
-            <Switch
-              id={`${id}-access`}
-              checked={enabled}
-              disabled={busy}
-              aria-label={`Let the assistant use ${name}'s tools`}
-              aria-describedby={`${id}-access-description`}
-              onCheckedChange={onToggle}
-            />
+            <span className="text-sm">{enabled ? "Offered by Core" : "Not offered by Core"}</span>
           </Field>
           <Separator />
           <Field orientation="responsive" className="p-5" data-disabled={!enabled || busy || !autoAllowSupported}>

@@ -1,7 +1,7 @@
 # MCP Facade — One Remote Endpoint For The Whole Fleet
 
 Created: 2026-08-24
-Updated: 2026-08-25
+Updated: 2026-09-26
 
 `POST /mcp` on the `hosty.ai-gateway` app is an MCP server that is the whole host: one entry in an
 external agent client's configuration yields Core's control-plane tools, every enabled app's tools,
@@ -62,8 +62,8 @@ a host without it must not lose agent access to Core; the facade is convenience,
 ## The Catalog
 
 Assembled per acting user, in parallel across sources, from the providers the operator enabled — the
-same `mcpProviders` policy the assistant's own sessions use, because the question "may this app's
-tools enter an agent's context" is one question, not two.
+same [Core directory policy](../agent-mcp-directory/feature.md) used by sessions and `hosty mcp`,
+including the `hosty:core` switch.
 
 - **Read-only, fail-closed.** Only a tool declaring `annotations.readOnlyHint: true` is exported.
   Anything else — `false`, absent, a string, the hint at the wrong nesting — means "we do not know
@@ -89,16 +89,15 @@ tools enter an agent's context" is one question, not two.
 - **A failed source costs that source.** An app that cannot be reached, or a page that cannot be
   read, leaves the rest of the catalog intact — the opposite policy from
   [readonly.ts](../../../apps/ai-gateway/src/mcp/readonly.ts), which produces a permission answer and
-  refuses on any doubt. Both are correct for what they produce. A failure of *discovery itself* is
-  bounded the same way: it costs the apps, never Core, whose endpoint is configured independently.
+  refuses on any doubt. Both are correct for what they produce. A discovery failure retains the previous catalog and adds no targets. Core is subject to the
+  same directory policy as every app.
 
 ### The cache, and why it cannot grant anything
 
-An assembled catalog is reused for one user for 30 seconds, and dropped at once when the operator
-changes provider policy. This caches a **listing**, never an authorization: every call still
-introspects the credential and still mints a fresh delegated token, so a stale catalog can offer a
-name whose call then fails at Core, and can never make a refused call succeed. That exact hazard is
-asserted rather than argued.
+Each catalog access revalidates the Core directory revision. A per-user catalog is reused for up to
+30 seconds only while its revision is unchanged. Each call checks the exact currently offered
+interface, introspects the client credential and obtains a fresh delegated token. An outage retains
+the cache but cannot authorize a call or bypass external credential introspection.
 
 ## Skills
 
@@ -106,9 +105,8 @@ Delivered through `initialize`'s `instructions`, as the connector does — only 
 this client actually received, because instructions for tools a client does not have read as a
 capability rather than as an absence.
 
-Unlike the connector, the facade **honours the operator's skill approvals**. That difference is the
-caller: `hosty mcp` runs on the host's control channel, where a gate would refuse someone who could
-simply uninstall the app, while a facade caller is a remote user who is not that person.
+The facade and connector both honor Core's app/skill digest approvals, reviewed in Shell Settings →
+Agents. A changed digest withholds instructions without disabling the app's tools.
 
 The host's own text comes first and unwrapped, and app text is fenced and attributed by the shared
 `composeSystemPrompt` — an app must not be able to appear above the text that describes the surface.

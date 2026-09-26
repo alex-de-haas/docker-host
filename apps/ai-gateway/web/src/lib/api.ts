@@ -21,6 +21,7 @@ export type PendingSkill = {
 };
 
 export type SettingsResponse = {
+  agentsSettingsUrl?: string | null;
   settings: Settings;
   agentConnections?: boolean;
   providers: Provider[];

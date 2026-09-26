@@ -104,11 +104,15 @@ class ClaudeRun implements HarnessRun {
   private query: {
     interrupt(): Promise<unknown>;
     close(): void;
-    setMcpServers?(servers: Record<string, unknown>): Promise<unknown>;
+    setMcpServers?(servers: Record<string, unknown>): Promise<{ errors?: Record<string, string> }>;
+    toggleMcpServer?(name: string, enabled: boolean): Promise<void>;
   } | null = null;
   private stopped = false;
+  private serverNames: Set<string>;
+  private readonly disabledServers = new Set<string>();
 
   constructor(private readonly options: HarnessStartOptions, private readonly environment: NodeJS.ProcessEnv) {
+    this.serverNames = new Set(Object.keys(options.mcpServers ?? {}));
     void this.runLoop();
   }
 
@@ -156,7 +160,25 @@ class ClaudeRun implements HarnessRun {
       return false;
     }
     try {
-      await query.setMcpServers(servers);
+      // Startup HTTP servers are retained by SDK setMcpServers. Disable omitted Hosty servers
+      // explicitly; never touch servers supplied by operator settings or plugins.
+      for (const name of this.serverNames) {
+        if (!(name in servers)) {
+          if (!query.toggleMcpServer) return false;
+          await query.toggleMcpServer(name, false);
+          this.disabledServers.add(name);
+        }
+      }
+      const result = await query.setMcpServers(servers);
+      if (Object.keys(result?.errors ?? {}).length > 0) return false;
+      for (const name of Object.keys(servers)) {
+        if (this.disabledServers.has(name)) {
+          if (!query.toggleMcpServer) return false;
+          await query.toggleMcpServer(name, true);
+          this.disabledServers.delete(name);
+        }
+      }
+      this.serverNames = new Set(Object.keys(servers));
       return true;
     } catch {
       return false;

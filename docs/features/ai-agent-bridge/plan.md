@@ -17,7 +17,7 @@ and [agent-background-sessions](../agent-background-sessions/feature.md) — bot
 question 3 and the step-6 plaintext-admin-token cost), [mcp-facade](../mcp-facade/plan.md) (step-7
 topology 4's deferred "mcp-hub", placed on the existing gateway system app; on 2026-09-26 the owner
 parked it as a future separate app, with Core serving only the
-[agent MCP directory](../agent-mcp-directory/plan.md)),
+[agent MCP directory](../agent-mcp-directory/feature.md)),
 [mcp-oauth](../mcp-oauth/feature.md), and [core-mcp](../core-mcp/feature.md) mutations.
 
 ## Deliverables

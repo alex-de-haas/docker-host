@@ -11,7 +11,7 @@ through one configuration entry.
 Owner decision, 2026-09-26: agents run on the host, so the facade is no longer on the main path;
 how clients reach them is a separate decision, with [AHP](../assistant-ahp/plan.md) the candidate
 pending its spike. Core is the directory of MCP servers and agents configure themselves from it
-([agent MCP directory](../agent-mcp-directory/plan.md)); Core never proxies tool traffic. The single-entry facade for full external clients becomes a separate
+([agent MCP directory](../agent-mcp-directory/feature.md)); Core never proxies tool traffic. The single-entry facade for full external clients becomes a separate
 app later, one more consumer of that directory. There is no current need, so this plan is parked.
 Until it resumes, the gateway facade keeps working and follows the Core policy through the directory.
 
@@ -47,7 +47,7 @@ Until it resumes, the gateway facade keeps working and follows the Core policy t
 1. **On-behalf-of for Core MCP**: Core gained an on-behalf-of route and `hosty:core` as a delegation
    target, recorded in [feature.md](feature.md).
 2. **`hosty mcp` stays** the answer for hosts reached locally or over SSH; the
-   [agent MCP directory](../agent-mcp-directory/plan.md) makes it follow the same Core policy.
+   [agent MCP directory](../agent-mcp-directory/feature.md) makes it follow the same Core policy.
 3. **Generic-surface degradation is deferred** until a real fleet approaches the connector's
    ~60–80-tool threshold; the facade ships namespaced export only.
 4. **Sessions are ephemeral**: a restart drops them and clients re-initialize.

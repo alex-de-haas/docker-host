@@ -16,6 +16,28 @@ public sealed class ControlDelegatedTokenHttpTests
     private const string ControlSecretHeader = "X-Hosty-Control-Secret";
 
     [Fact]
+    public async Task CoreTargetIssuesOnlyForEnabledAdministratorsAndRetainsItsAudience()
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        await SeedUsersAsync(harness);
+        using var client = harness.CreateClient();
+        using var allowed = await PostAsync(harness, client, "hosty:core", "admin@example.test");
+        Assert.Equal(HttpStatusCode.OK, allowed.StatusCode);
+        var claims = harness.Services.GetRequiredService<DelegatedTokenService>()
+            .ValidateToken((await ReadJsonAsync(allowed)).GetProperty("token").GetString()!, "hosty:core");
+        Assert.Equal("user_admin", claims?.Sub);
+        using var member = await PostAsync(harness, client, "hosty:core", "member@example.test");
+        Assert.Equal(HttpStatusCode.Forbidden, member.StatusCode);
+        var users = harness.Services.GetRequiredService<UserDirectoryStore>();
+        var state = await users.ReadAsync();
+        await users.WriteAsync(state with { Users = state.Users.Select(u => u.Id == "user_admin" ? u with { Disabled = true } : u).ToArray() });
+        using var disabled = await PostAsync(harness, client, "hosty:core", "admin@example.test");
+        Assert.Equal(HttpStatusCode.Forbidden, disabled.StatusCode);
+        var audit = await harness.Services.GetRequiredService<AuditStore>().ReadRecentAsync(50, default);
+        Assert.Equal(3, audit.Count(row => row.Action == "auth.delegated-token.control"));
+    }
+
+    [Fact]
     public async Task IssuesATokenForTheNamedUserThatTheAppCanValidate()
     {
         await using var harness = await CoreHttpHarness.StartAsync();

@@ -1,7 +1,7 @@
 # Hosty MCP Connector
 
 Created: 2026-08-15
-Updated: 2026-09-09
+Updated: 2026-09-26
 
 `hosty mcp` is a stdio MCP server inside the CLI, spawned by an agent client on the operator's own
 machine, presenting every app on one Hosty host as a single server. It is step 7 of the
@@ -47,14 +47,13 @@ a token for it through the control secret. Every attempt is audited, refusals in
 `auth.delegated-token.control`; this is a path to a data-plane credential, and a refusal is the more
 interesting half of that record.
 
-The connector caches each token until a minute before expiry. Nothing expiring is ever written into a
-client config — the cache lives in the connector process and dies with it.
+The connector obtains a fresh token for each request. Nothing expiring is written into client
+configuration, and a Core outage cannot fall back to a previously issued token.
 
 ## Discovery
 
-`GET /control/v1/apps` already resolves declared interfaces to callable URLs, so no new discovery
-route was needed. The connector keeps the apps that are running and declare an `mcp` interface with a
-resolved URL — and, since [App Readiness](../app-readiness/feature.md), only the interfaces whose
+`GET /control/v1/agents/directory` supplies Core offers, readiness and resolved interface URLs.
+The connector keeps enabled targets with a ready MCP URL — and, since [App Readiness](../app-readiness/feature.md), only the interfaces whose
 serving service answers per Core's last health reading, so an interface still inside its readiness
 budget is left out rather than asked and a sibling service's outage does not take a working one
 with it (a Core that reports no reading falls back to the state alone) — then asks each one's own
@@ -94,6 +93,15 @@ notices going stale.
 
 An app that is stopped, times out, refuses the actor, or answers with an unexpected shape is omitted
 with a line on stderr — never fatal, and never confused with an empty fleet.
+
+## Core Agent Policy
+
+The connector reads `/control/v1/agents/directory` and offers only enabled, ready targets, including
+`hosty:core`. Before every call it reads the current policy and resolves the current interface URL.
+User access remains bounded by fresh token issuance. An unreadable directory retains the previous
+listing but permits no new target or call. Skills require a matching Core-approved `agent` digest;
+the operator reviews their full text in Shell Settings → Agents. See the
+[shared directory contract](../agent-mcp-directory/feature.md).
 
 ## Tool Names
 

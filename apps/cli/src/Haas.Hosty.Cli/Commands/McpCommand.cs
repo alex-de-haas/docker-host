@@ -21,7 +21,7 @@ internal sealed partial class McpCommand(CommandContext context)
         Usage: hosty mcp --user <email-or-id> [--max-tool-name <n>]
 
           Runs a Model Context Protocol server on stdin/stdout, exporting the read-only tools of
-          every running app on this host that declares an mcp interface.
+          targets enabled in Hosty Shell Settings → Agents.
 
           --user            Host user the connector acts as. Required: the local control channel
                             identifies no user, and an app's access check needs a concrete one.
@@ -70,7 +70,7 @@ internal sealed partial class McpCommand(CommandContext context)
                 return issued is null ? null : new IssuedToken(issued.Token, issued.ExpiresAt);
             },
             TimeProvider.System,
-            message => diagnostics.WriteLine($"[hosty mcp] {message}"));
+            message => diagnostics.WriteLine($"[hosty mcp] {message}"), reuse: false);
         var client = new AppMcpClient(http, tokens.TryGetAsync);
 
         using var lifetime = new CancellationTokenSource();
@@ -186,23 +186,28 @@ internal sealed partial class McpCommand(CommandContext context)
         // The skills of the apps that actually contributed tools, refreshed with them. A skill for an
         // app whose tools did not make it would describe a surface the client cannot see.
         private IReadOnlyList<AppSkill> skills = [];
-        private bool loaded;
+        private AgentDirectoryResponse? directory;
 
         public event Action? Changed;
 
         public async Task<IReadOnlyList<ExportedTool>> GetAsync(CancellationToken cancellationToken)
         {
-            if (loaded)
-            {
-                return current;
-            }
-
             await RefreshAsync(cancellationToken);
             return current;
         }
 
-        public Task<AppMcpResult> CallAsync(ExportedTool tool, JsonElement? arguments, CancellationToken cancellationToken)
-            => client.SendAsync(
+        public async Task<AppMcpResult> CallAsync(ExportedTool tool, JsonElement? arguments, CancellationToken cancellationToken)
+        {
+            AgentDirectoryResponse? snapshot;
+            try { snapshot = await control.GetAsync<AgentDirectoryResponse>("agents/directory", cancellationToken); }
+            catch (Exception ex) when (ex is CoreControlException or CoreControlTimeoutException)
+            { return AppMcpResult.Unavailable("core_unavailable", "Core is unavailable; no call was forwarded."); }
+            var target = snapshot?.Targets.FirstOrDefault(target => target.Id == tool.Target.AppId && target.Offered);
+            var surface = target?.Interfaces.FirstOrDefault(item => item.Key == tool.Target.InterfaceKey && item.Readiness == "ready");
+            if (surface?.Url is not { Length: > 0 } url)
+                return AppMcpResult.Unavailable("agent_target_disabled", "This target is no longer offered to agents.");
+            tool = tool with { Target = tool.Target with { Url = url } };
+            return await client.SendAsync(
                 tool.Target,
                 "tools/call",
                 writer =>
@@ -226,6 +231,8 @@ internal sealed partial class McpCommand(CommandContext context)
                 },
                 CallTimeout,
                 cancellationToken);
+
+        }
 
         /// <summary>
         /// Re-reads the fleet on a timer and tells the client when what it can call has changed. This
@@ -269,7 +276,7 @@ internal sealed partial class McpCommand(CommandContext context)
             IReadOnlyList<ExportedTool> tools,
             CancellationToken cancellationToken)
         {
-            var appIds = tools.Select(tool => tool.Target.AppId).Distinct(StringComparer.Ordinal).ToArray();
+            var appIds = tools.Select(tool => tool.Target.AppId).Where(id => id != "hosty:core").Distinct(StringComparer.Ordinal).ToArray();
             var found = new List<AppSkill>();
             foreach (var appId in appIds)
             {
@@ -278,7 +285,9 @@ internal sealed partial class McpCommand(CommandContext context)
                     var skill = await control.GetAsync<AppSkill>(
                         $"apps/{Uri.EscapeDataString(appId)}/agent-skill",
                         cancellationToken);
-                    if (skill is not null && !string.IsNullOrWhiteSpace(skill.Markdown))
+                    if (skill is not null && !string.IsNullOrWhiteSpace(skill.Markdown)
+                        && directory?.Targets.FirstOrDefault(target => target.Id == appId)?.Skills.Any(approval =>
+                            approval.Key == "agent" && approval.ApprovedDigest == SkillDigest(skill.Markdown)) == true)
                     {
                         found.Add(skill);
                     }
@@ -311,8 +320,8 @@ internal sealed partial class McpCommand(CommandContext context)
             await gate.WaitAsync(cancellationToken);
             try
             {
-                var apps = await control.GetAsync<McpAppsResponse>("apps", cancellationToken);
-                if (apps is null)
+                var snapshot = await control.GetAsync<AgentDirectoryResponse>("agents/directory", cancellationToken);
+                if (snapshot is null)
                 {
                     // An unreachable Core is not an empty fleet, and reporting one as the other would
                     // tell the model every app vanished. The previous catalog stands until Core answers.
@@ -320,10 +329,12 @@ internal sealed partial class McpCommand(CommandContext context)
                     return;
                 }
 
-                var targets = ToolCatalog.SelectTargets(apps.Apps);
+                directory = snapshot;
+                var targets = snapshot.Targets.Where(target => target.Offered)
+                    .SelectMany(target => target.Interfaces.Where(surface => surface.Readiness == "ready" && !string.IsNullOrWhiteSpace(surface.Url))
+                        .Select(surface => new AppMcpTarget(target.Id, target.DisplayName, surface.Key, surface.Url!))).ToArray();
                 current = await catalog.BuildAsync(targets, cancellationToken);
                 skills = await ReadSkillsAsync(current, cancellationToken);
-                loaded = true;
             }
             catch (Exception ex) when (ex is CoreControlException or CoreControlTimeoutException)
             {
@@ -357,12 +368,20 @@ internal sealed partial class McpCommand(CommandContext context)
     [JsonSourceGenerationOptions(
         PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true)]
+    [JsonSerializable(typeof(AppSkill))]
+    [JsonSerializable(typeof(AgentDirectoryResponse))]
     [JsonSerializable(typeof(McpAppsResponse))]
     [JsonSerializable(typeof(AppHealthSummary))]
     [JsonSerializable(typeof(AppServiceHealthSummary))]
     [JsonSerializable(typeof(DelegatedTokenRequest))]
     [JsonSerializable(typeof(DelegatedTokenResponse))]
     internal partial class McpJsonContext : JsonSerializerContext;
+
+    private static string SkillDigest(string text) => Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(text.Trim())))[..32];
+    internal sealed record AgentDirectoryResponse(string Revision, IReadOnlyList<AgentTarget> Targets);
+    internal sealed record AgentTarget(string Id, string DisplayName, bool Offered, IReadOnlyList<AgentInterface> Interfaces, IReadOnlyList<AgentSkill> Skills);
+    internal sealed record AgentInterface(string Key, string? Url, string Readiness);
+    internal sealed record AgentSkill(string Key, string? Digest, string? ApprovedDigest);
 
     internal sealed record McpAppsResponse(IReadOnlyList<McpAppSummary> Apps);
 
