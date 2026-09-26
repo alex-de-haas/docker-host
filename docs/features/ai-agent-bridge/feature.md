@@ -1,7 +1,7 @@
 # AI Agent Bridge
 
 Created: 2026-08-14
-Updated: 2026-08-31
+Updated: 2026-09-26
 
 The umbrella for Hosty's AI integration: how an authenticated user works with runtime apps and app
 source through an agent, without the model ever holding credentials, unrestricted application access,
@@ -98,8 +98,8 @@ no second rubric. Restricting the assistant to administrators does not move this
 inside the admin's own session.
 
 Containment — a docker runtime profile by default with `localCommand` as an explicit opt-in — is the
-fix. It is designed in [ai-gateway/plan.md](../ai-gateway/plan.md) and deliberately deferred: an
-accepted risk, not an absent one.
+fix. It is designed in [assistant runtime containment](../assistant-runtime-containment/plan.md)
+and deliberately deferred: an accepted risk, not an absent one.
 
 ## Manifest Interfaces And Registry
 
