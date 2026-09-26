@@ -46,7 +46,7 @@ exposure, bound retained output and keep access aligned with the underlying sess
 retention and detail limits before implementation. Summaries cannot authorize calls or replace merge,
 test and Complete gates that use actual evidence.
 
-The [AHP foundation](../assistant-ahp/plan.md) owns normalized invocation IDs,
+The [shared-history feature](../assistant-shared-history/plan.md) owns normalized invocation IDs,
 terminal states and durable event ingestion. This feature owns their aggregation and presentation;
 it does not build a second adapter event pipeline. Timeline analysis requires independent approval in
 [its own plan](../assistant-timeline-analysis/plan.md) and does not gate this feature.

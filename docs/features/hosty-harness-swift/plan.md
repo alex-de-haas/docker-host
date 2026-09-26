@@ -76,16 +76,18 @@ in native design/verification rather than copying the web Shell layout pixel for
 
 ## Protocol And State Contract
 
-Use AHP as the primary conversation/state transport: session discovery, subscriptions/snapshots,
-history, streamed responses, tool calls, approvals/questions and changesets. An official Swift
+Target AHP as this native client's conversation/state transport, subject to the spike: session discovery, subscriptions/snapshots,
+history, streamed responses, tool calls and approvals/questions. Add optional changesets only
+when the host advertises the separately verified projection. An official Swift
 package exists in the inspected [upstream snapshot](https://github.com/microsoft/agent-host-protocol/blob/296b25e7b698a4a84a0ee5a28d9573e70048a0bf/Package.swift),
 with AgentHostProtocol and AgentHostProtocolClient products. Pin and test its transport, channel,
 authentication and deployment-target compatibility; package existence is not end-to-end verification.
 
-Owner decision, 2026-09-26: build the native client on the official Swift AHP SDK after the
-AHP foundation is verified. REST/SSE is not a selected native delivery path. Internal-agent
-switching and optional workspace/PR views arrive through their separately advertised server
-capabilities; they do not require the native client to invent another session transport.
+Owner revision, 2026-09-26: target the official Swift AHP SDK through Hosty's external client
+adapter, subject to the iOS/auth/ingress/reconnect spike. Hosty's existing session model remains
+authoritative, and the web client keeps REST/SSE. A native REST/SSE implementation is not selected;
+if the AHP spike fails, reconsider native delivery with the owner before choosing another route.
+Internal-agent switching and optional workspace/PR views use advertised Hosty capabilities.
 
 Hosty-specific actions such as source selection and PR completion consume the server's advertised
 extension/API contract. The spike must choose their native mapping and authorization route; do not
@@ -124,7 +126,7 @@ release boundary before Ready.
 - [ ] Decide first Apple platforms, deployment target, bundle/source identity, independent version
       source and release/distribution route; review a phone navigation proposal before Ready.
 - [ ] Reuse HostyKit through the selected shared-package boundary and validate app-specific credentials/storage.
-- [ ] Verify the pinned official AHP Swift client against the AHP foundation contracts, including host
+- [ ] Verify the pinned official AHP Swift client against the AHP client-adapter contracts, including host
       selection, sign-in, reconnection and unsupported-version handling.
 - [ ] Implement session notification routing, web fallback and dual-client banner deduplication;
       define the notification release boundary and integrate device registration if push is selected.

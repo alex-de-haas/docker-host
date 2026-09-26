@@ -111,6 +111,13 @@ invalidate affected review/test evidence. The PR lifecycle consumes this state.
 - [Git worktrees](https://git-scm.com/docs/git-worktree): shared repository metadata.
 - [Git clone](https://git-scm.com/docs/git-clone): reference/alternates and borrowed-object lifetime.
 
+## Optional AHP Changeset Projection
+
+Keep Hosty's source/diff model authoritative. After the basic AHP client interface is validated,
+evaluate an optional changeset projection over these same diffs, pinned to a compatible protocol
+revision. Release-candidate changeset support is a later integration and does not gate existing
+web diffs, source selection or workspace ownership. Define adoption scope before approving it.
+
 ## Deliverables
 
 - [ ] Select and verify the Git metadata isolation backend with assistant approval rules; implement scoped
@@ -119,6 +126,8 @@ invalidate affected review/test evidence. The PR lifecycle consumes this state.
   bindings.
 - [ ] Implement session-wide and uncommitted diff views, source selection and actual runtime revision reporting.
 - [ ] Implement explicit target-update/conflict handling and durable source/test provenance.
+- [ ] Assess an optional AHP changeset mapping over existing diffs and record an adopt/defer decision;
+  any implementation needs its own approved scope and does not gate workspace delivery.
 - [ ] Implement owned-workspace cleanup and active-consumer protection independently of transcript retention.
 - [ ] Demonstrate override-workflow parity and prepare a separately approved removal/migration before
   disabling overrides.

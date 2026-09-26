@@ -1,121 +1,138 @@
-# AHP Session Protocol Foundation
+# AHP Client Interface For Hosty Sessions
 
 Status: Draft
 Created: 2026-09-26
 Updated: 2026-09-26
 
-## Goal And Priority
+## Goal And Owner Direction
 
-Owner decision, 2026-09-26: adopt Agent Host Protocol first, then build the broader session
-infrastructure around its verified contracts. This is the first implementation priority within
-the [session roadmap](../assistant-development-sessions/plan.md). First prove the fit with the
-existing Codex/Claude adapters; then make AHP the primary session/client protocol. Prioritization
-does not mark this Draft Ready or authorize implementation before the remaining design is approved.
+Owner revision, 2026-09-26: preserve Hosty's existing session implementation as the foundation and
+evaluate AHP as a replaceable external client interface. This supersedes the earlier AHP-first
+internal-foundation/web-cutover direction. Run a bounded integration spike before committing to
+protocol adoption; other Hosty session features do not depend on adopting AHP.
 
-Own the canonical session/chat event foundation, invocation normalization, AHP server contract and
-web-client cutover. [Provider switching](../assistant-shared-history/plan.md) builds on it with
-multi-executor context reconciliation. Workspaces, PR lifecycle, summaries, feedback and native UI
-consume the same session identities/state, rather than creating another custom conversation protocol.
+Hosty's SessionManager and SessionStore remain responsible for sessions, execution and persistence.
+The existing `record.json` and append-only `events.ndjson` are the starting point, extended for
+product requirements rather than replaced with upstream protocol state. The
+[shared-history feature](../assistant-shared-history/plan.md) owns required event improvements and
+provider switching. This plan owns only the AHP projection, inbound command adapter, connection
+authorization and external-client interoperability. It remains Draft pending scope approval.
 
-The official AHP Swift client is the selected dependency for
-[Harness Swift](../hosty-harness-swift/plan.md). No separate REST/SSE native MVP is planned.
-Existing HTTP APIs remain appropriate for Core lifecycle and Hosty-specific operations; AHP-first
-does not mean reimplementing every app/Core API as a protocol method.
+## Architecture And Ownership
 
-## Protocol Contract
+Both client paths call the same Hosty application services:
 
-Use AHP for discovery, shared session/chat state, history access, changesets, turn control and
-confirmation/reconnection where the pinned capabilities support them. Hosty still implements Git,
-permissions, runtime selection and completion semantics. AHP authentication does not implicitly
-authorize workspace, publication or Core mutation operations.
+```text
+Existing web/Shell -- REST/SSE -----------+
+                                         +-- Hosty session services -- native agent adapters
+Swift / other clients -- AHP adapter ----+            |
+                                               Hosty session store
+```
 
-AHP session state has one required `provider` identity (the creation request may omit it).
-For Hosty's same-session executor switching, use a stable Hosty orchestration provider as the
-proposed server mapping. This follows our chosen session semantics, not a protocol mandate that
-every host use this architecture. Provider/account execution IDs remain internal and separate.
-The spike verifies how custom-agent selection maps to the executor and whether generic client
-pickers render it. `Message.origin` identifies the initiating/steering actor; `Message.agent`
-selects a custom agent, not arbitrary native-provider migration. Preserve assistant response
-attribution through turn/execution metadata as necessary and test its actual client presentation.
+AHP is client-to-host communication; clients do not exchange authoritative state peer to peer.
+Keep one source of truth in Hosty. The AHP module derives snapshots/actions from Hosty records and
+events and maps inbound requests to existing permission-checked commands. It may retain protocol
+cursors/replay caches or durable mapping metadata, but not an independently editable transcript.
+Hosty storage, provider execution and PR/workspace models must not depend on upstream SDK DTOs or
+reducers. A pinned protocol upgrade should change the boundary module and its tests, not force a
+rewrite of the product state. Do not promise current persistence already supplies every required
+recovery guarantee; close observed gaps in Hosty once, for both client paths.
 
-The inspected session/chat channels are Stable; changeset is Release candidate. Changesets expose
-file views plus server-defined invokable operations (including create-pr examples). Hosty owns
-Git/PR semantics even when those operations are surfaced through the standard mechanism. Pin
-protocol/SDK versions and tolerate unsupported optional channels.
+Preserve the existing REST/SSE web interface. Both transports reflect the same updates and observe
+the same action identities, access checks and pending decisions. Moving the web client to AHP is
+an optional later decision based on demonstrated benefit, with no retirement milestone in this
+scope. AHP failure/disablement must leave normal web session operations usable.
 
-Choose SDK/protocol versions, map Gateway events to stable turn/tool identities, snapshots and
-sequence cursors, and verify disconnect/replay behavior. A reconnect must not duplicate messages or
-mutations; in-progress state must be reconstructible or honestly marked interrupted. Keep existing
-REST/SSE behavior during a reviewed transition; do not assume a transport replacement is sufficient.
+## First Supported Surface And Extensions
 
-Web and the planned [dedicated Swift client](../hosty-harness-swift/plan.md) operate the same
-server-resident agents and workspaces. The native plan owns phone navigation, app delivery and its
-client acceptance; this plan owns the server contract and interoperability. No generic Swift Shell
-side-panel implementation is required by this direction. Client
-disconnect should not cancel server work; approvals can remain pending and be answered after
-reconnection. Server crash recovery is a separate contract, not an automatic AHP guarantee. Scope
-session ids and credentials to an environment so local and remote hosts cannot be confused.
+Start with the pinned stable session discovery/chat/tool-confirmation/reconnect surface. Inventory
+required root commands and their version-specific guarantees instead of assuming every root API
+is stable. The spike proves session reads, message streaming, questions/approvals, cancellation
+and multi-client consistency with both existing native providers.
 
+AHP session state carries one provider identity. Propose a stable Hosty provider on the wire;
+Codex/Claude execution and account identity remain Hosty facts. Test custom-agent selection and
+attribution as a mapping, not native-provider context migration. `Message.origin` describes the
+initiating actor and `Message.agent` selects a custom agent; neither alone establishes attribution
+for every assistant response. Unsupported generic-client controls should be reported explicitly.
 
-## Invocation And Persistence Foundation
+Changesets are release-candidate in the inspected reference. Defer their projection to the
+[workspace feature](../assistant-session-workspaces/plan.md), preserving existing Hosty diffs in
+the meantime. The channel supports server-defined operations as well as file views, but
+[PR lifecycle](../assistant-pr-lifecycle/plan.md) still owns what Publish/Merge/Complete mean.
+Expose later Hosty capabilities through supported metadata/operations or scoped Hosty APIs;
+do not promise generic clients understand them or invent protocol commands without a contract.
 
-Implement correlated invocation IDs and observed terminal states once in the native adapters and
-durable shared event contract. AHP projection and the separate action-summary feature consume this
-same stream. Gateway's current `HarnessEvent.tool_use` lacks a per-call ID/completion pair; a turn
-result is insufficient. Sequence the adapter foundation with the AHP spike before either client
-summaries or timeline analytics. Missing native evidence remains explicitly incomplete.
+## Authentication, Versions And Recovery
 
+Authenticate access to the Hosty connection/session separately from AHP's protected-resource token
+exchange for agents. Specify Hosty credential audience, scopes, per-session authorization, expiry
+and revocation, including the WebSocket upgrade and subsequent reads/actions. A scoped token at
+upgrade is a candidate to validate, not an existing accepted grant. Verify the configured ingress
+(including Cloudflare where used) preserves the required connection/auth behavior. Bearer tokens
+must not leak into URL logs, snapshots or transcript content.
 
-Use one durable canonical event/state mapping and an AHP projection/reducer boundary; define
-persistence and schema upgrades explicitly, because adopting a wire protocol does not itself
-provide durable execution. Exercise each existing provider independently before adding switching.
-Choose the stable Hosty provider identity now to avoid remapping public session IDs later.
+Pin protocol and SDK versions and maintain fixtures/conformance checks against the selected
+TypeScript SDK reducers/schemas. These validate the projection, not define Hosty's persisted model.
+Keep Hosty event revisions distinct from AHP sequence/cursor semantics; specify deterministic
+mapping, reconnect windows, unavailable replay and snapshot rebuild after adapter/host restart.
+Pending or completed actions survive transport changes without duplicate execution. A protocol
+resume operation does not prove the native process is still running or recoverable.
 
-## Transition And Completion Gate
+## Spike And Decision Criteria
 
-Inventory the current web/Shell and external session API consumers. During cutover, REST/SSE may
-temporarily adapt the same canonical state; do not add an independent transcript or permanent
-second implementation of conversation features. Verify session/history, attachments, streaming,
-questions/approvals, cancellation, authentication, disconnect/replay and restart recovery before
-retiring each replaced route. Define consumer/version compatibility and the removal milestone.
-Existing sessions need only follow the separately approved fresh-install/rename retention policy;
-do not invent a migration requirement for old Gateway state the owner chose to discard.
+1. Connect a minimal official Swift SDK client on iOS to Hosty through the configured ingress using
+   Hosty authentication; verify transport support for the required custom headers/auth flow.
+2. Interrupt connectivity (including airplane mode), reconnect and recover messages/current state
+   without duplicate sends or side effects. Repeat across AHP-adapter restart.
+3. Resolve a pending approval from the phone and observe it in the REST/SSE web UI; race the same
+   decision from both clients and execute the action at most once.
+4. Exercise both native providers; when Hosty switching is available, assess its presentation in a
+   generic client such as ahpc. Switching itself remains owned by the Hosty shared-history plan.
+5. Determine whether VS Code Agents can connect to a third-party AHP host by URL with Hosty auth.
+   Record supported versions and observed limitations; documentation about VS Code's own agent host
+   is not evidence that this arbitrary-host client scenario works.
+
+Proceed with the client adapter when the selected Swift path meets auth, reconnect and approval
+criteria with maintainable mapping. Lack of a usable generic client reduces optional integration
+value but does not alone invalidate the native client. If critical SDK/transport constraints fail,
+record the blocker and reconsider delivery with the owner while the current Hosty UI continues;
+do not automatically replace the internal model or design another new protocol.
+
+Evaluate hosting an upstream agent host as an alternative to native Hosty adapters before Ready.
+Record how either approach preserves Hosty identity/MCP grants, authoritative session history,
+provider switching, workspace ownership and restart behavior. Current proposal keeps the existing
+Hosty executor integration; upstream-host examples are references, not an assumed drop-in runtime.
 
 ## Deliverables
 
-- [ ] Inventory current session consumers and validate a pinned AHP/official SDK spike for both
-  providers, authentication, attribution, snapshots/replay and pending user input.
-- [ ] Implement the canonical durable session/event mapping and correlated tool IDs/terminal states
-  used by AHP and action summaries, with explicit partial native trace coverage.
-- [ ] Implement the AHP server, Hosty provider mapping and permission-checked session operations;
-  verify optional channel support and Hosty action exposure without widening existing grants.
-- [ ] Move web/Shell session interaction to AHP and implement only the transitional compatibility
-  routes required by the selected consumer policy; retire replaced routes at the verified cutover.
-- [ ] Validate a minimal official Swift SDK client against the host contract, including reconnect
-  and approvals, so the native product can build on proven protocol primitives.
-- [ ] Verify full current-session capability parity and recovery, document shipped behavior and
-  the supported protocol/SDK revisions, and hand stable contracts to the dependent features.
+- [ ] Complete the pinned Swift/ingress/reconnect/approval spike and document generic-client and
+  upstream-host alternatives with evidence and a scoped adoption decision.
+- [ ] Define the Hosty-to-AHP mapping and required internal event fields with the shared-history
+  owner, keeping transport-specific types out of Hosty persistence/execution.
+- [ ] Implement the authenticated AHP projection and inbound command adapter for the selected first
+  surface over existing session services, with common permission and operation-identity checks.
+- [ ] Implement protocol version negotiation, projection fixtures, replay/snapshot recovery and
+  explicit missing/unsupported behavior while maintaining REST/SSE operation.
+- [ ] Verify web/AHP coexistence and official Swift interoperability, then document the shipped
+  capability matrix and supported SDK/protocol revisions.
 
-## Sequence And Open Questions
+## Open Questions
 
-One feature PR after Ready: capability spike, shared event/adapters, server/client transition,
-then parity and interoperability acceptance. Provider switching, source workspaces, PR lifecycle,
-timeline and synthetic evaluation retain separate plans and do not gate this foundation.
-
-- Which protocol and official TypeScript/Swift SDK revisions meet the required capability matrix?
-- Which session state/persistence mapping and auth/discovery route fit existing Hosty credentials?
-- Which generic-client custom-agent controls can expose Hosty's executors without misattribution?
-- Which existing consumers need a compatibility window, and what verifies safe route retirement?
-- Which changeset operations are usable now versus optional, given their release-candidate status?
+- Which pinned protocol/SDK revisions meet the concrete client capability and transport requirements?
+- Which Hosty event additions are required for correct projection, and how are old records handled?
+- What connection token and ingress behavior enforce audience, expiry and session access?
+- What replay retention/cursor mapping survives adapter restart without a second transcript?
+- What observed benefit justifies adopting AHP, and can a reusable upstream host preserve Hosty semantics?
 
 ## Verification
 
-For both native providers, create/list/read a session, stream a turn, attach supported content,
-answer questions, approve/deny tools and cancel. Disconnect and reconnect with pending input;
-verify complete history, current state, no duplicate mutations and revoked-access denial. Restart
-the host and either reconstruct in-progress work or report interruption accurately. Verify stable
-call IDs, per-call terminal evidence and explicit unknown completion. Compare current web behavior
-with the AHP client and run the minimal official Swift client against the same server.
+Run the spike scenarios, authorization/revocation tests and cross-transport races. Feed recorded
+Hosty events through the adapter and pinned SDK reducers; compare reconstructed visible state and
+pending calls without asserting SDK state as the internal data model. Verify incomplete native tool
+evidence stays incomplete, unknown outcomes are not success, adapter disablement preserves web use,
+and no duplicate transcript or independent workflow engine appears. No SDK execution or ingress
+test has been performed for this documentation change.
 
 ## Sources
 
@@ -128,3 +145,5 @@ Reference pages rechecked 2026-09-26; pin the selected implementation versions b
 
 - [Inspected upstream
   snapshot](https://github.com/microsoft/agent-host-protocol/tree/296b25e7b698a4a84a0ee5a28d9573e70048a0bf)
+- [AHP protected-resource authentication](https://microsoft.github.io/agent-host-protocol/specification/authentication.html)
+- [VS Code agent-host architecture](https://code.visualstudio.com/docs/agents/concepts/agent-host)

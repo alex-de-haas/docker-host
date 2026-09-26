@@ -90,11 +90,11 @@ Uncommitted changes in the operator's main checkout are not part of this baselin
 | Feature | Scope and dependencies |
 | --- | --- |
 | [Harness rename](../hosty-harness-rename/plan.md) | Product/app identity, distribution retirement and fresh-install policy; independent of AHP |
-| [AHP foundation](../assistant-ahp/plan.md) | First priority: protocol fit, canonical events/adapters, AHP server and web-client cutover |
-| [Shared history and switching](../assistant-shared-history/plan.md) | Provider context reconciliation and session sharing on the AHP foundation |
+| [AHP client interface](../assistant-ahp/plan.md) | Bounded client/ingress spike and replaceable projection over Hosty sessions; existing web REST/SSE remains |
+| [Shared history and switching](../assistant-shared-history/plan.md) | Hosty session journal/adapters, provider context reconciliation and session sharing |
 | [Session workspaces](../assistant-session-workspaces/plan.md) | Registered source, Git metadata boundary, diffs/source selection and cleanup; consumes approval enforcement |
 | [PR lifecycle](../assistant-pr-lifecycle/plan.md) | Publish/review/Merge/Complete, credentials, CI, ordered dependencies and corrective PRs |
-| [Action summary](../assistant-action-summary/plan.md) | Evidence-linked aggregation/UI over the AHP foundation invocation events |
+| [Action summary](../assistant-action-summary/plan.md) | Evidence-linked aggregation/UI over Hosty invocation events |
 | [Timeline analysis](../assistant-timeline-analysis/plan.md) | Later analysis over the event foundation; does not gate basic shared sessions or summary |
 | [Feedback inbox](../app-feedback-inbox/plan.md) | Independent ordinary-user intake and admin triage/batch delivery outside the privileged Harness process |
 | [External context exchange](../assistant-external-session-context/plan.md) | Later explicit local-agent read/prepare/report workflow |
@@ -109,12 +109,12 @@ Existing owners retain their deliverables: [approval rules](../assistant-approva
 [entry points](../assistant-entry-points/plan.md) and [attachments](../assistant-attachments/feature.md).
 App publication owns installable releases/feeds/catalog work; PR publication is source review.
 
-Owner priority, 2026-09-26: first prove and adopt AHP as the main session protocol; build provider
-switching, workspaces, PRs and other features on that foundation. Use the official Swift SDK for
-the native client. Existing REST/SSE is a temporary cutover mechanism, not a separate native MVP.
-Rename can ship independently; analytics, external context and synthetic evaluation stay separate.
-Protocol adoption covers session interaction; Core lifecycle and Hosty-specific APIs retain their
-own semantics. Every feature still needs its own Ready approval.
+Owner revision, 2026-09-26: retain the existing Hosty session implementation and evolve its
+internal journal/commands for the requested functionality. Evaluate AHP early as a client-facing
+adapter through a bounded spike; adoption does not gate provider switching, workspaces or PRs.
+Keep the current web REST/SSE contract. The Swift client targets the official AHP SDK if the
+client/auth/reconnect spike succeeds. A future web migration is optional, not part of this plan.
+Rename, feedback, analytics, external context and synthetic evaluation retain separate approvals.
 
 ## Deliverables Owned By This Umbrella
 

@@ -204,11 +204,12 @@ Decisions 1–5: 2026-08-19.
     [Hosty Harness Swift plan](features/hosty-harness-swift/plan.md) owns native delivery, depends on
     the shared session server contract and remains Draft pending platform/UX/protocol decisions.
 
-13. **AHP first (2026-09-26).** Validate and adopt AHP as the primary assistant session protocol
-    before expanding the development infrastructure around it. The dedicated Swift client uses
-    the official AHP Swift SDK. REST/SSE may bridge the transition but is not a separate native MVP.
-    The [AHP foundation](features/assistant-ahp/plan.md) is the first implementation priority;
-    choosing priority does not approve its remaining design decisions or change its Draft status.
+13. **AHP as a client interface (2026-09-26, revised after review).** Keep Hosty's existing
+    session implementation and journal authoritative. Evaluate AHP as a replaceable external client
+    adapter, with a bounded Swift/auth/reconnect spike. Existing web REST/SSE remains; provider
+    switching and other internal features do not depend on AHP adoption. Swift targets the official
+    SDK subject to the spike. This supersedes the earlier same-day AHP-first foundation/web-cutover
+    decision; [client integration](features/assistant-ahp/plan.md) remains Draft.
 
 ## Expectations And Later Directions
 
