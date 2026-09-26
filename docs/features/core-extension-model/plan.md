@@ -2,7 +2,7 @@
 
 Status: Draft
 Created: 2026-07-10
-Updated: 2026-08-19
+Updated: 2026-09-26
 
 Exploratory. This plan authorizes no implementation and changes no current system-app behavior; it
 formalizes a pattern the platform already uses ad hoc so the next capability does not invent a second
@@ -47,9 +47,13 @@ authentication.
   `apps/telemetry` is its only declarant. Because the trigger is the slot rather than an app id, a
   third-party app declaring it gets the same treatment, which is the piece of this model that already
   works.
-- **What `provides` is not.** It selects Core-side behavior; it never routes a call *to* the app,
-  carries no version, declares no cardinality, and passes through no operator consent of its own.
-  There is no `requires` counterpart for scope requests. The manifest `capabilities` field remains a
+- **What `provides` is not, today.** It selects Core-side behavior; it never routes a call *to* the
+  app, carries no version, declares no cardinality, and is honoured without operator confirmation.
+  The Permission Model below keeps a declared role inert until the operator confirms it.
+  The `requires` counterpart shipped as `corePermissions` on 2026-09-18
+  ([app installation](../app-installation-sdk/feature.md)): a closed vocabulary (`apps.install`,
+  `apps.update`) that administrator review grants as a whole. This plan uses that field rather than
+  adding a second `requires` list. The manifest `capabilities` field remains a
   lifecycle-affordance list (`open`, `update`, `restart`, …), and `interfaces` (a draft `app.0.1`
   extension) is discovery metadata other components resolve, not a contract Core invokes.
 - Marketplace runs as a read-only system app with **zero Core scopes**, using only generic app-token
@@ -155,7 +159,7 @@ flowchart LR
 
 ```mermaid
 flowchart TB
-  A["Install app whose manifest declares provides/requires"] --> B["Validate: does Core support the contract and version?"]
+  A["Install app whose manifest declares provides/corePermissions"] --> B["Validate: does Core support the contract and version?"]
   B --> C["Operator explicitly confirms the provider/scope grant"]
   C --> D["Register in capability registry; mint scoped token into env"]
   D --> E["Operate: Core resolves endpoint and calls the contract"]
@@ -166,14 +170,14 @@ Cross-cutting rules:
 
 - **Manifest.** `provides` gains structure — a contract identifier, a version, and the endpoint key
   Core resolves to call it — while today's bare slot tokens keep working, since Core already ignores
-  slots it does not know. `requires` is new: the control-plane scopes an app asks for. An app that
-  only serves its own read-only API declares neither. Both stay distinct from the lifecycle
+  slots it does not know. `corePermissions` carries the control-plane permissions an app asks for.
+  An app that only serves its own read-only API declares neither. Both stay distinct from the lifecycle
   `capabilities` field, which is unrelated.
-- **Trust.** `provides`/`requires` declarations are inert until the operator explicitly confirms them at
-  install review, and an update that **changes** these declarations re-enters review — a harmless app
-  must not grow into a login method through a minor version bump. Catalog signing can strengthen this
-  later. Consent dialogs for sensitive contracts must be alarming by design: a media app requesting the
-  login-method role should look anomalous.
+- **Trust.** `provides`/`corePermissions` declarations are inert until the operator explicitly
+  confirms them at install review, and an update that **changes** these declarations re-enters review
+  — a harmless app must not grow into a login method through a minor version bump. Catalog signing can
+  strengthen this later. Consent dialogs for sensitive contracts must be alarming by design: a media
+  app requesting the login-method role should look anomalous.
 - **Cardinality.** Every contract explicitly declares whether it is **single-active** (one confirmed
   provider selected by the operator, like a default app) or **fan-out** (all confirmed providers are
   called, or all receive the stream). Login methods, notification channels, and telemetry sinks are
@@ -197,8 +201,8 @@ Cross-cutting rules:
 
 The label "system" conflates two independent axes, and this model splits them:
 
-- **Privilege is not a sort of app.** Any installed app may declare `provides`/`requires`; the right to
-  act on them comes from per-declaration operator consent (plus, later, signing) — never from being
+- **Privilege is not a sort of app.** Any installed app may declare `provides`/`corePermissions`; the
+  right to act on them comes from per-declaration operator consent (plus, later, signing) — never from being
   "system". A small domain app living in the Google ecosystem is a legitimate login-method provider.
 - **Ownership remains a real property.** Some apps are bundled with the platform, bootstrapped and
   supervised by Core (Shell, telemetry, Marketplace). That is a distribution/ownership fact — who
@@ -220,6 +224,52 @@ Consequences for the operator surface:
   a missing bundled app at startup. A deliberately scary confirmation is enough; a hard "mandatory app"
   block would contradict both the warn-don't-block precedent and the rule that Shell is only one of
   several possible UI clients.
+
+### Permission Model (Owner Direction, 2026-09-26)
+
+The owner confirmed the two-axis reading above and settled how permissions are presented and granted.
+[Assistant provider permissions](../assistant-provider-permissions/plan.md) is the first slice: a
+confirmed fan-out assistant role, one permission, and no system-role restriction. Which assistant a
+UI client's own features use is that client's setting, not a Core default.
+
+- **Roles and permissions are separate.** What an app provides (assistant, UI client, login method,
+  telemetry sink) is a `provides` role that Core or clients route work to; badges come from confirmed
+  roles. What an app may do is a permission in `corePermissions`.
+- **Few, concrete permissions.** Each permission has a real enforcement point in Core and a
+  plain-language description, and shares its name with the matching external access-token scope, so
+  an app grant and a token scope for the same operation are one vocabulary. Candidates beyond the
+  shipped set include reading the installed-app list and managing app lifecycle.
+- **Required permissions are all-or-nothing.** Review lists required roles and permissions with
+  descriptions; the operator installs with all of them or declines. There are no per-item toggles
+  for required declarations, because a partial grant can leave the app unable to work.
+- **Optional permissions.** An additive `optionalCorePermissions` list names permissions the app can
+  work without. Review offers them unchecked; an administrator can grant or revoke them later in the
+  app's settings, and the app can request one through the same Core confirmation page. Changes are
+  audited. The app reads its granted set and degrades when an optional permission is missing. An
+  update that adds an optional permission offers it without granting it; moving one to required
+  re-enters review.
+- **`role: system` stops being a privilege.** Each current use gets its own replacement: acting as the
+  user toward other apps (the delegated-token exchange and on-behalf-of tokens) becomes a permission,
+  scoped to target apps where needed — which is also how different assistants get different MCP
+  targets, enforced by Core when it issues tokens and narrowing the host policy of the [agent MCP
+  directory](../agent-mcp-directory/plan.md); administrator-only access becomes the intersection of
+  the app's grants and the user's own rights plus the existing assignment policy; system-specific
+  session lifetimes become a setting or follow the grants; ownership stays as Core-side bootstrap
+  state shown as a badge. This is an app-grant change, compatible with vision decisions 1 and 9, not a
+  redesign of user roles.
+- **Agent providers are a candidate role.** An assistant is an app with a full assistant UI that
+  manages agents. A separate `agent` role would let an app supply agents — another AI provider, for
+  example — that assistants and other apps use through one contract Hosty defines. Agents run on the
+  host and configure their MCP servers from Core's [agent MCP
+  directory](../agent-mcp-directory/plan.md); accepting that directory belongs in the contract. An
+  agent provider owns its own configuration — accounts, models, sandbox modes — and exposes it through
+  its `ui.settings` page; Core lists providers and does not model their settings. Until such apps
+  exist, Harness provides the agents and their settings. The role is also the likely shape of the
+  app-mediated AI calls in the vision's first open question. Not part of the first slice; see Open
+  Questions.
+- **Permissions are not a sandbox for host processes.** They limit what an app does through Core's
+  API. A `localCommand` app runs as the operator's OS user and can read Core's data directly, so for
+  it the grants are an honest label rather than an enforced boundary; review surfaces say so.
 
 ### Worked Example: Additional Login Methods
 
@@ -317,8 +367,14 @@ plan is Draft.
 - [ ] 4. Design `hosty.auth.method@1` (link-first login methods) after the mechanism has survived steps
       2–3; keep the identity token broker explicitly deferred. The authenticating-proxy pattern remains
       available meanwhile for perimeter SSO.
-- [ ] 5. Docs: a `feature.md` here once a contract ships, plus the manifest and Shell documents the
-      `provides`/`requires` sections touch.
+- [ ] 5. Replace every `role: system` privilege check with the permission model above: a delegation
+      permission for the exchange and on-behalf-of tokens, grant-and-user intersection for access, a
+      lifetime setting, and Core-side ownership state; align permission names with access-token scopes.
+- [ ] 6. Implement optional permissions: `optionalCorePermissions`, unchecked install-time offers,
+      administrator changes in app settings, app-initiated requests through Core confirmation, the
+      granted set exposed to apps through the SDK, and the update rules above.
+- [ ] 7. Docs: a `feature.md` here once a contract ships, plus the manifest and Shell documents the
+      `provides`/`corePermissions` sections touch.
 
 ## Conflicts With Existing Features
 
@@ -332,7 +388,7 @@ plan is Draft.
   read nor write. The durable, cursor-addressable log in step 3 is a different mechanism and must not be
   mistaken for an extension of it.
 - The manifest `capabilities` field name collides conceptually with capability contracts; the new
-  sections need distinct names (`provides`/`requires`) and documentation.
+  sections need distinct names (`provides`/`corePermissions`) and documentation.
 - [auth-provider-extensions](../../ideas/auth-provider-extensions.md) lists OIDC and provisioning
   directions; the login-methods contract supplies a delivery mechanism for the OIDC half while keeping
   its boundaries. Full replacement of Core authentication by an external provider is not pursued.
@@ -364,7 +420,7 @@ plan is Draft.
   Recommendation: since the label means ownership rather than privilege, prefer Core-side state (Core
   knows what it bootstrapped) surfaced as a badge, with a manifest field only if third-party "suites"
   later need it.
-- Question: Where are `requires` scopes enforced — at token mint, per request, or both?
+- Question: Where are `corePermissions` enforced — at token mint, per request, or both?
   Recommendation: both; mint restricts the ceiling, per-request checks catch stale grants after an
   update changes declarations.
 - Question: How is the event log persisted (in-memory ring vs SQLite in Core) and how are event schemas
@@ -379,6 +435,15 @@ plan is Draft.
   Recommendation: the telemetry sink (`hosty.telemetry.sink@1`) — it names an integration that already
   runs in production, proves registry/token/degradation with zero new product surface, and closes the
   deferred ingest-auth item.
+- Question: Which notation do shared permission and scope names use? App permissions are dotted
+  (`apps.install`), access-token scopes use a colon (`mcp:read`).
+  Recommendation: pick one when step 5 aligns the vocabularies, keeping the shipped names as accepted
+  spellings.
+- Question: Which delegation targets and user-visible wording does the step-5 delegation permission
+  use, and what is the first non-assistant consumer?
+- Question: Does agent execution become an `agent` provider role, with which contract, cardinality
+  and authorization for apps that call agents, and does the Agent Host Protocol fit that contract?
+  Decide when a second agent provider or the first app-mediated AI feature needs it.
 - Question: What is the token-broker consent and storage model?
   Deferred with the broker itself; revisit once login methods exist and a concrete app needs
   provider-API access.

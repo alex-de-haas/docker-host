@@ -211,6 +211,24 @@ Decisions 1–5: 2026-08-19.
     SDK subject to the spike. This supersedes the earlier same-day AHP-first foundation/web-cutover
     decision; [client integration](features/assistant-ahp/plan.md) remains Draft.
 
+14. **Authority comes from confirmed declarations, not the system label (2026-09-26).** What an app
+    provides is a confirmed role in `provides`; what it may do is a permission in `corePermissions`.
+    Keep permissions few, each tied to a real Core check and described in plain language. Required
+    roles and permissions are accepted together or the installation is declined; optional
+    permissions are offered unchecked and changeable later in the app's settings. `role: system`
+    stops conferring privilege and remains an ownership fact. This extends decision 9 with app
+    grants and leaves decision 1's admin/user model intact. The
+    [core extension model](features/core-extension-model/plan.md) owns the general model;
+    [assistant provider permissions](features/assistant-provider-permissions/plan.md) is its first slice.
+
+15. **Core is the MCP directory, not a proxy (2026-09-26).** Agents run on the host; how clients
+    reach them is decision 13's AHP spike, and the directory does not depend on it. Core owns which apps' MCP servers agents may use and publishes that
+    configuration without credentials; agents configure themselves from it and call each app
+    directly, so tool traffic never passes through Core and the agent-bridge boundary stands. A
+    single-entry facade for full external clients such as Claude Code or Codex becomes a separate
+    app later. [Agent MCP directory](features/agent-mcp-directory/plan.md) owns the directory;
+    [MCP facade](features/mcp-facade/plan.md) is On Hold.
+
 ## Expectations And Later Directions
 
 - **Apps ship with source.** The default is open source; a company's internal apps are closed by
@@ -274,6 +292,8 @@ the manifest contract. Two standing consequences:
 [assistant-development-sessions](features/assistant-development-sessions/plan.md) ·
 [app-authoring](features/app-authoring/plan.md) ·
 [core-extension-model](features/core-extension-model/plan.md) ·
+[assistant-provider-permissions](features/assistant-provider-permissions/plan.md) ·
+[agent-mcp-directory](features/agent-mcp-directory/plan.md) ·
 [ai-agent-bridge](features/ai-agent-bridge/plan.md) ·
 [app-ui-surfaces](features/app-ui-surfaces/feature.md) ·
 [assistant-entry-points](features/assistant-entry-points/plan.md) ·

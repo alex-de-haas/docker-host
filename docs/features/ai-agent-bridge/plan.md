@@ -15,7 +15,9 @@ and [agent-background-sessions](../agent-background-sessions/feature.md) — bot
 2026-08-24 four more were drafted against the gaps this document records:
 [scoped-access-tokens](../scoped-access-tokens/feature.md) (the token scopes and audit callback of open
 question 3 and the step-6 plaintext-admin-token cost), [mcp-facade](../mcp-facade/plan.md) (step-7
-topology 4's deferred "mcp-hub", placed on the existing gateway system app),
+topology 4's deferred "mcp-hub", placed on the existing gateway system app; on 2026-09-26 the owner
+parked it as a future separate app, with Core serving only the
+[agent MCP directory](../agent-mcp-directory/plan.md)),
 [mcp-oauth](../mcp-oauth/feature.md), and [core-mcp](../core-mcp/feature.md) mutations.
 
 ## Deliverables
@@ -167,7 +169,9 @@ Topologies — the connector runs where the agent client runs:
 3. CLI only on the server: `"command": "ssh", "args": ["user@server", "hosty", "mcp"]` — stdio over
    SSH, zero new code.
 4. No CLI at all (web or mobile clients): needs a remote HTTP MCP endpoint with OAuth, a future
-   `mcp-hub` system app. Explicitly deferred; Core never hosts it.
+   `mcp-hub` system app. Explicitly deferred; Core never hosts it. Since 2026-09-26 agents run on
+   the host (AHP is the candidate client interface), and a single-entry facade for external clients
+   is a future separate app ([mcp-facade](../mcp-facade/plan.md), On Hold).
 
 Multi-environment maps one MCP server entry per CLI context (`hosty-local`, `hosty-prod`) rather than
 one connector taking an environment argument, so the environment is explicit in every tool name,
