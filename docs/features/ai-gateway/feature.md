@@ -1,7 +1,7 @@
 # AI Gateway
 
 Created: 2026-08-09
-Updated: 2026-09-23
+Updated: 2026-09-26
 
 The Hosty assistant: an optional, removable system app (`hosty.ai-gateway`) hosting admin-only
 operator chat sessions on a host-resident agent harness, plus the Shell surface that renders them.
@@ -64,7 +64,9 @@ are documented in [Assistant App Context](../assistant-app-context/feature.md).
   harness turns can be interrupted by that restart. Both profiles use the same data/cache directories,
   assigned port and healthcheck. The settings UI remains a static export built by setup at startup;
   its source edits need a rebuild/restart rather than backend watch alone. The gateway spawns harness
-  processes on the host, so it never runs in a container. Distributed
+  processes on the host, so it never runs in a container. That leaves a session's approved commands
+  with the host user's authority — an accepted, deferred risk that
+  [assistant runtime containment](../assistant-runtime-containment/plan.md) addresses. Distributed
   with `defaultEnabled: false`: the assistant is opt-in and removable. Port comes from
   `HOSTY_PORT_HTTP`, data lives in `HOSTY_APP_DATA_DIR`, and each harness session starts in a
   workspace of its own under `HOSTY_APP_CACHE_DIR` — see
