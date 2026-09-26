@@ -2,7 +2,11 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { SettingsAgentsSection } from "../src/app/shell/pages/settings-agents-section";
-vi.mock("../src/app/shell/core-api", () => ({ redirectToCoreLoginIfAuthRequired: vi.fn() }));
+import { AuthRequiredRedirectError, redirectToCoreLoginIfAuthRequired } from "../src/app/shell/core-api";
+vi.mock("../src/app/shell/core-api", async importOriginal => ({
+  ...await importOriginal<typeof import("../src/app/shell/core-api")>(),
+  redirectToCoreLoginIfAuthRequired: vi.fn(),
+}));
 let root: Root; let container: HTMLDivElement;
 const directory = { revision: "revision-reviewed", targets: [{ id: "notes", displayName: "Notes", offered: false, runtimeState: "running",
   interfaces: [{ key: "default", readiness: "ready" }], skills: [{ key: "agent", digest: "new", approvedDigest: "old", markdown: "Entire reviewed text" }] }] };
@@ -33,4 +37,20 @@ it("keeps confirmed state and reloads after a stale approval", async () => {
   expect(container.querySelector('[role="alert"]')?.textContent).toContain("Review the current state");
   expect(container.querySelector<HTMLInputElement>("input")?.checked).toBe(false);
   expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+it("does not show login redirect errors on initial load or refresh", async () => {
+  vi.mocked(redirectToCoreLoginIfAuthRequired).mockImplementation(() => { throw new AuthRequiredRedirectError(); });
+  await render();
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+  await act(async () => [...container.querySelectorAll("button")].find(b => b.textContent === "Refresh")!.click());
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+  expect(redirectToCoreLoginIfAuthRequired).toHaveBeenCalledTimes(2);
+});
+it("does not show login redirect errors while saving", async () => {
+  await render();
+  send.mockRejectedValue(new AuthRequiredRedirectError());
+  await act(async () => container.querySelector<HTMLInputElement>('input')!.click());
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+  expect(fetch).toHaveBeenCalledTimes(1);
 });

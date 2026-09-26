@@ -10,7 +10,7 @@ Core owns the host policy for MCP targets offered through Hosty assistants, the 
 ## Policy And Skill Review
 
 `core/agent-policy.json` stores each target's offer and an approved digest per skill key. App entries
-are bound to their installation timestamp. Uninstall clears the entry even when app data is retained;
+are bound to their installation timestamp. Removal clears the entry even when app data or runtime state is retained;
 a later installation of the same id starts disabled. Legacy Gateway `mcpProviders` and
 `mcpSkillDigests` are not imported or accepted as writes. Administrators enable targets and approve
 instructions once in Core.
@@ -18,7 +18,7 @@ instructions once in Core.
 The Agents tab shows every installed MCP target, interface readiness and complete packaged skill
 text. Enabling tools does not approve instructions. Approval submits the displayed digest and directory
 revision; stale submissions receive 409. The current single skill uses key `agent` and the first 32
-lowercase hex characters of SHA-256 over trimmed UTF-8 text. A changed or unreadable skill is withheld
+lowercase hex characters of SHA-256 over trimmed UTF-8 text. A changed or unreadable skill (including permission-denied files) is withheld
 until reviewed; tools keep their offer state. Already delivered conversation text cannot be retracted.
 Sessions receive approved instructions at session start; facade and CLI deliver them at initialize.
 
@@ -52,9 +52,13 @@ three surfaces. Facade and CLI retain their read-only tool filter. Gateway setti
 state and link to Shell; they retain provider authentication, prompt and auto-allow controls.
 
 Disabling refuses subsequent calls even from a stale harness tool list; an in-flight request completes.
-On a directory outage consumers retain their last catalog/configuration and add nothing. Calls fail
+On a directory outage consumers retain their last catalog/configuration and add nothing. The facade
+retains its last listing beyond the normal catalog TTL until discovery recovers. Calls fail
 closed; a still-live token is never an offline fallback. The facade also requires online credential
 introspection before answering external requests. No tool traffic is relayed through Core.
+
+Harness reconfiguration tracks the selected servers and their upstream URLs; unrelated fleet metadata
+changes do not restart a session or emit a server-change notice.
 
 Claude reconfigures servers through the SDK between turns. Omitted startup servers require an explicit
 `toggleMcpServer(false)` because the pinned SDK retains them across `setMcpServers`; only Hosty-owned

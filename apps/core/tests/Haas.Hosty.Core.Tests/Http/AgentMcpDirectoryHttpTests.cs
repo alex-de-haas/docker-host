@@ -60,6 +60,57 @@ public sealed class AgentMcpDirectoryHttpTests
         Assert.Null(reinstalled.Skills[0].ApprovedDigest);
     }
 
+    [Fact]
+    public async Task RemoveWithRetainedRuntimeState_ClearsAgentPolicy()
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        var app = CreateApp("example.retained") with { ManifestPath = "" };
+        await host.Services.GetRequiredService<AppRegistryStore>().UpsertAppAsync(app);
+        var policies = host.Services.GetRequiredService<AgentPolicyStore>();
+        await policies.ChangeAsync(app.Id, new(app.InstalledAt, true, new Dictionary<string, string> { ["agent"] = "approved" }));
+
+        await host.Services.GetRequiredService<CoreLifecycleService>().RemoveAsync(app.Id,
+            new AppRemoveRequest(DeleteRuntimeState: false, DeleteData: false));
+
+        Assert.NotNull(await host.Services.GetRequiredService<AppRegistryStore>().GetAppAsync(app.Id));
+        Assert.DoesNotContain(app.Id, (await policies.ReadAsync()).Targets.Keys);
+    }
+
+    [Fact]
+    public async Task PermissionDeniedSkill_WithholdsTextWithoutBreakingDirectory()
+    {
+        // Unix mode bits exercise the real permission failure; Windows uses ACLs instead.
+        if (OperatingSystem.IsWindows()) return;
+        await using var host = await CoreHttpHarness.StartAsync();
+        var app = CreateApp("example.unreadable") with {
+            AgentSkillFile = "agent.md",
+            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["mcp"] = [new("default", null, "/api/mcp")] }
+        };
+        await host.Services.GetRequiredService<AppRegistryStore>().UpsertAppAsync(app);
+        var path = Path.Combine(host.Services.GetRequiredService<CoreDataPaths>().AppsRoot, app.Id, "agent.md");
+        await File.WriteAllTextAsync(path, "Private instructions");
+        File.SetUnixFileMode(path, UnixFileMode.None);
+        try
+        {
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() => File.ReadAllTextAsync(path));
+            await SignInAsync(host, "host.admin");
+            using var client = host.CreateClient();
+            client.DefaultRequestHeaders.Add("Cookie", "hosty_session=agent-session");
+            using var admin = await client.GetAsync("/api/core/agents");
+            Assert.Equal(HttpStatusCode.OK, admin.StatusCode);
+            var snapshot = await host.Services.GetRequiredService<AgentMcpDirectory>().ReadAsync(true);
+            var skill = Assert.Single(snapshot.Targets.Single(target => target.Id == app.Id).Skills);
+            Assert.Null(skill.Digest);
+            Assert.Null(skill.Markdown);
+            Assert.True(snapshot.Targets.Single(target => target.Id == "hosty:core").Offered);
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer",
+                host.Services.GetRequiredService<AppServiceTokenService>().CreateToken(app.Id));
+            using var service = await client.GetAsync($"/api/internal/apps/{app.Id}/app-directory");
+            Assert.Equal(HttpStatusCode.OK, service.StatusCode);
+        }
+        finally { File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite); }
+    }
+
     [Theory]
     [InlineData("host.admin", false, 403)]
     [InlineData("host.user", true, 403)]

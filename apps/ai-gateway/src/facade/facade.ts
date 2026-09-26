@@ -327,7 +327,9 @@ export class McpFacade {
   private async catalogFor(userId: string, presented: string): Promise<CachedCatalog> {
     const discovered = await this.providers.read();
     const cached = this.catalogs.get(userId);
-    if (cached && (!discovered || cached.revision === discovered.revision && cached.expiresAtMs > Date.now())) {
+    // The TTL bounds normal catalog reuse. During discovery outages the approved contract retains
+    // the last listing; invoke still requires current policy and a fresh token before forwarding.
+    if (cached && (!discovered || (cached.revision === discovered.revision && cached.expiresAtMs > Date.now()))) {
       return cached;
     }
 

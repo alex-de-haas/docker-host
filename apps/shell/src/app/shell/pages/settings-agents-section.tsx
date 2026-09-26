@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { redirectToCoreLoginIfAuthRequired } from "../core-api";
+import { isAuthRequiredRedirectError, redirectToCoreLoginIfAuthRequired } from "../core-api";
 
 type Skill = { key: string; digest: string | null; approvedDigest: string | null; markdown: string | null };
 type Target = { id: string; displayName: string; offered: boolean; runtimeState: string;
@@ -23,7 +23,10 @@ export function SettingsAgentsSection({ coreOrigin, sendCsrfJson }: {
     if (!response.ok) throw new Error("Could not load the agent directory.");
     setDirectory(await response.json() as Directory);
   }, [url, coreOrigin]);
-  useEffect(() => { void load().catch(reason => setError(String(reason))); }, [load]);
+  const showLoadError = (reason: unknown) => {
+    if (!isAuthRequiredRedirectError(reason)) setError(String(reason));
+  };
+  useEffect(() => { void load().catch(showLoadError); }, [load]);
   const change = async (target: Target, offered: boolean, skill?: Skill) => {
     if (!directory) return;
     setBusy(true); setError(null);
@@ -35,6 +38,7 @@ export function SettingsAgentsSection({ coreOrigin, sendCsrfJson }: {
       if (!response.ok) throw new Error("The directory changed or the update was refused. Review the current state and retry.");
       setDirectory(await response.json() as Directory);
     } catch (reason) {
+      if (isAuthRequiredRedirectError(reason)) return;
       setError(reason instanceof Error ? reason.message : String(reason));
       await load().catch(() => undefined);
     } finally { setBusy(false); }
@@ -43,7 +47,7 @@ export function SettingsAgentsSection({ coreOrigin, sendCsrfJson }: {
     <div className="flex items-start justify-between gap-4">
       <div><h2 className="text-lg font-medium">Agents</h2>
         <p className="text-sm text-muted-foreground">Choose which tools Hosty offers to agents. Approval rules stay with each assistant.</p></div>
-      <Button variant="outline" disabled={busy} onClick={() => void load().catch(reason => setError(String(reason)))}>Refresh</Button>
+      <Button variant="outline" disabled={busy} onClick={() => void load().catch(showLoadError)}>Refresh</Button>
     </div>
     {error && <p role="alert" className="text-destructive">{error}</p>}
     {!directory && !error && <p>Loading agent directory…</p>}

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -34,6 +34,7 @@ describe("MCP facade", () => {
   /** The interface key the fake Core reports for the app's `mcp` declaration. */
   let interfaceKey: string;
   let offered: boolean;
+  let directoryAvailable: boolean;
 
   let app: Server;
   let appUrl: string;
@@ -83,6 +84,7 @@ describe("MCP facade", () => {
     mintAllowed = true;
     interfaceKey = "default";
     offered = true;
+    directoryAvailable = true;
 
     core = createServer((request, response) => {
       void (async () => {
@@ -108,6 +110,7 @@ describe("MCP facade", () => {
           return;
         }
         if (path.endsWith("/app-directory")) {
+          if (!directoryAvailable) { json(response, 503, {}); return; }
           json(response, 200, {
             agents: { revision: `${interfaceKey}:${offered}`, targets: [{ id: APP, displayName: "Notes", offered, runtimeState: "running", skills: [], interfaces: [{ key: interfaceKey, url: `${appUrl}/api/mcp`, readiness: "ready" }] }] },
             apps: [
@@ -187,10 +190,31 @@ describe("MCP facade", () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     for (const server of [core, app, facadeServer]) {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
     await rm(dataDir, { recursive: true, force: true });
+  });
+
+  it("retains the last listing beyond TTL during discovery failure but refuses calls and applies recovery", async () => {
+    type Listing = { result: { tools: Array<{ name: string }> } };
+    const first = await (await rpc("tools/list")).json() as Listing;
+    expect(first.result.tools).toHaveLength(1);
+    const toolName = first.result.tools[0]!.name;
+    directoryAvailable = false;
+    offered = false;
+    const now = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(now + 60_000);
+    const stale = await (await rpc("tools/list")).json() as Listing;
+    expect(stale.result.tools).toEqual(first.result.tools);
+    const callsBefore = appCalls.length;
+    const refused = await (await rpc("tools/call", { name: toolName, arguments: {} })).json() as { error: { message: string } };
+    expect(refused.error.message).toContain("Core is unavailable");
+    expect(appCalls).toHaveLength(callsBefore);
+    directoryAvailable = true;
+    const recovered = await (await rpc("tools/list")).json() as Listing;
+    expect(recovered.result.tools).toEqual([]);
   });
 
   it("offers only the tools an app declares read-only, named as the connector names them", async () => {

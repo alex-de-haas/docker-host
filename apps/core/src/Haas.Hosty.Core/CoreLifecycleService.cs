@@ -2470,9 +2470,10 @@ internal sealed partial class CoreLifecycleService(
             TryDelete(GetRetainedConfigPath(appId));
         }
 
+        // Removal revokes agent offers even when the operator retains runtime state.
+        await (agentPolicies ?? new AgentPolicyStore(paths)).ChangeAsync(appId, null, cancellationToken);
         if (request.DeleteRuntimeState)
         {
-            await (agentPolicies ?? new AgentPolicyStore(paths)).ChangeAsync(appId, null, cancellationToken);
             TryDelete(Path.Combine(GetAppRoot(appId), "state.json"));
             TryDelete(Path.Combine(GetAppRoot(appId), "manifest.json"));
         }

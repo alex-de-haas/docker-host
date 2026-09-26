@@ -128,7 +128,7 @@ internal sealed class AgentMcpDirectory(
         var relative = CoreDataPaths.NormalizeRelativeAssetPath("", file);
         if (relative is null || !AppAssetEndpoints.TryResolveAsset(paths.AppsRoot, id, relative, out var absolute, out _)) return null;
         try { return await File.ReadAllTextAsync(absolute, cancellationToken); }
-        catch (IOException) { return null; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
     }
 
     public static string Digest(string text) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text.Trim())))[..32];

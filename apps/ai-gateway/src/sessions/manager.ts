@@ -34,6 +34,7 @@ export interface SessionListener {
 
 interface LiveSession {
   mcpSignature?: string;
+  mcpTargetSignature?: string;
   mcpNoticeSignature?: string;
   record: SessionRecord;
   run: HarnessRun | null;
@@ -417,7 +418,7 @@ export class SessionManager {
           // edit takes effect in the next session, which the settings UI states plainly.
           const operatorPrompt = (await this.settings?.read())?.systemPrompt?.trim() || undefined;
           const mcpServers = await this.buildMcpServers(session);
-          session.mcpSignature = JSON.stringify([mcpServers ?? {}, this.providers?.revision]);
+          session.mcpSignature = JSON.stringify([mcpServers ?? {}, session.mcpTargetSignature]);
           // After the servers, deliberately: the set of enabled providers is what decides whose skill is
           // read, and buildMcpServers is where that set is resolved. Asking first would use a stale one.
           // Host preamble first, operator text second — the platform states identity and ground rules,
@@ -471,6 +472,7 @@ export class SessionManager {
    * use: a provider whose exchange is refused stays absent. The proxy mints again per call.
    */
   private async buildMcpServers(session: LiveSession, knownCandidates?: McpProvider[]): Promise<Record<string, unknown> | undefined> {
+    session.mcpTargetSignature = "[]";
     if (
       !this.providers ||
       !this.exchange?.available ||
@@ -508,6 +510,9 @@ export class SessionManager {
       session.record.id,
       servers.map((server) => ({ appId: server.appId, url: server.url })),
     );
+    // Proxy URLs are stable, so retain the selected upstream URLs in the reconfiguration signature.
+    // Unrelated fleet metadata and skill approvals do not change a running harness server set.
+    session.mcpTargetSignature = JSON.stringify(servers.map(server => [server.appId, server.url]));
     session.mcpAppIds = servers.map((server) => server.appId);
     return toMcpServerConfig(servers, {
       baseUrl: this.proxyBaseUrl,
@@ -645,7 +650,7 @@ export class SessionManager {
 
     session.credential = renewed.token;
     const servers = await this.buildMcpServers(session, candidates);
-    const signature = JSON.stringify([servers ?? {}, this.providers?.revision]);
+    const signature = JSON.stringify([servers ?? {}, session.mcpTargetSignature]);
     if (session.mcpSignature === signature) return true;
     const applied = await session.run.setMcpServers(servers ?? {}).catch(() => false);
     if (!applied && session.mcpNoticeSignature !== signature) {
