@@ -58,6 +58,7 @@ const RATE_MAX_ADDRESSES = 4_096;
 const CATALOG_TTL_MS = 30_000;
 
 interface CachedCatalog {
+  revision?: string;
   catalog: Catalog;
   instructions: string | undefined;
   expiresAtMs: number;
@@ -280,6 +281,17 @@ export class McpFacade {
       return;
     }
 
+    try {
+      const current = await this.providers.resolveOffered(entry.appId, entry.url);
+      if (!current) {
+        send(response, 200, { jsonrpc: "2.0", id, error: { code: -32000, message: "This target is no longer offered. Refresh the tool list." } });
+        return;
+      }
+    } catch {
+      send(response, 200, { jsonrpc: "2.0", id, error: { code: -32000, message: "Core is unavailable. No call was forwarded." } });
+      return;
+    }
+
     const token = await mintOnBehalfOf(
       this.config.coreOrigin!,
       this.config.serviceToken!,
@@ -313,21 +325,17 @@ export class McpFacade {
   }
 
   private async catalogFor(userId: string, presented: string): Promise<CachedCatalog> {
+    const discovered = await this.providers.read();
     const cached = this.catalogs.get(userId);
-    if (cached && cached.expiresAtMs > Date.now()) {
+    if (cached && (!discovered || cached.revision === discovered.revision && cached.expiresAtMs > Date.now())) {
       return cached;
     }
 
-    const [discovered, policy] = await Promise.all([this.providers.read(), this.settings.read()]);
-    // `discovered` is null when the app-directory read failed, and that costs the *apps* — never
-    // Core, whose URL is configured independently and whose tools stay reachable while a transient
-    // discovery failure lasts. Collapsing both would have emptied the catalog over one timeout.
+    const core = this.providers.core();
     const sources = sourcesFor(
       discovered?.providers ?? [],
-      policy.mcpProviders,
-      this.config.coreMcpUrl
-        ? { appId: CORE_TARGET, displayName: "Hosty Core", url: this.config.coreMcpUrl }
-        : null,
+      Object.fromEntries((discovered?.providers ?? []).map(provider => [provider.appId, provider.offered === true])),
+      discovered && core?.offered && core.url ? { appId: CORE_TARGET, displayName: "Hosty Core", url: core.url } : null,
     );
 
     const catalog = await buildCatalog(sources, (appId) =>
@@ -338,7 +346,8 @@ export class McpFacade {
 
     const assembled: CachedCatalog = {
       catalog,
-      instructions: await this.instructionsFor(catalog, policy.mcpSkillDigests ?? {}),
+      instructions: await this.instructionsFor(catalog, this.providers.approvedSkills()),
+      revision: discovered?.revision,
       expiresAtMs: Date.now() + CATALOG_TTL_MS,
     };
     this.catalogs.set(userId, assembled);
@@ -349,10 +358,7 @@ export class McpFacade {
    * The facade's own text first and unwrapped, then the skills of apps whose tools this client
    * actually received — and only those the operator has approved.
    *
-   * The approval gate is right here and not in the connector because the callers differ: `hosty mcp`
-   * runs on the host's control channel, where the caller already holds operator power and a gate
-   * would refuse someone who could simply uninstall the app. A facade caller is a remote user who is
-   * not that person.
+   * Skills use the same Core approval digest as sessions and the CLI connector.
    */
   private async instructionsFor(catalog: Catalog, approved: Record<string, string>): Promise<string | undefined> {
     const own =

@@ -47,7 +47,7 @@ const exchange = new TokenExchange(config.coreOrigin, config.appId);
 // credential, and the manager registers routes on the proxy. Declared first with a late-bound
 // minter, which is the smaller of the two knots.
 // Both annotated: without them the two inferred types reference each other and TypeScript gives up.
-const proxy: McpProxy = new McpProxy((sessionId, appId) => manager.mintAppToken(sessionId, appId));
+const proxy: McpProxy = new McpProxy((sessionId, appId) => manager.mintAppToken(sessionId, appId), undefined, appId => providers.resolveOffered(appId));
 // Literal IPv4 on purpose: the harness is a child process on this host, and a `localhost` that
 // resolves to ::1 first has cost this project a hang before (docs/features/observability).
 const proxyBaseUrl = `http://127.0.0.1:${config.port}`;

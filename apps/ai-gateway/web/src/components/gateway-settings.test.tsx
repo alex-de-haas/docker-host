@@ -58,7 +58,7 @@ it("selects and searches applications without changing access or showing another
   await render();
   expect(details().querySelector("h2")?.textContent).toBe("Hosty Core");
   await select("Project Manager");
-  expect(details().textContent).toContain("Complete updated instructions");
+  expect(details().textContent).toContain("Review and approve application instructions in Hosty Shell");
   await select("Media Server");
   expect(details().textContent).not.toContain("Complete updated instructions");
   expect(details().querySelector<HTMLButtonElement>('[role="combobox"]')!.disabled).toBe(true);
@@ -72,48 +72,24 @@ it("selects and searches applications without changing access or showing another
   expect(approveSkill).not.toHaveBeenCalled();
 });
 
-it("keeps the saved target when selection changes during a pending save", async () => {
-  let resolve!: (value: SettingsResponse) => void;
-  vi.mocked(saveSettings).mockReturnValue(new Promise(done => { resolve = done; }));
+it("shows Core offers and a Shell link without local policy mutation controls", async () => {
+  data.agentsSettingsUrl = "https://shell.test/settings?tab=agents";
   await render();
   await select("Project Manager");
-  await act(async () => details().querySelector<HTMLButtonElement>('[role="switch"]')!.click());
-  expect(saveSettings).toHaveBeenCalledWith({ mcpProviders: { "hosty:core": true, projects: false, media: false } });
-  await select("Media Server");
-  expect(details().querySelector<HTMLButtonElement>('[role="switch"]')!.disabled).toBe(true);
-  data.settings.mcpProviders.projects = false;
-  await act(async () => resolve(structuredClone(data)));
-  expect(details().querySelector("h2")?.textContent).toBe("Media Server");
-  expect(details().textContent).not.toContain("Applied to running sessions.");
-  expect(details().querySelector('[role="switch"]')?.getAttribute("aria-checked")).toBe("false");
-  await select("Project Manager");
-  expect(details().querySelector('[role="switch"]')?.getAttribute("aria-checked")).toBe("false");
-});
-
-it("restores the confirmed policy and shows failures after a rejected access save", async () => {
-  vi.mocked(saveSettings).mockRejectedValue(new Error("Save refused"));
-  await render();
-  await select("Project Manager");
-  await act(async () => details().querySelector<HTMLButtonElement>('[role="switch"]')!.click());
-  expect(details().querySelector('[role="switch"]')?.getAttribute("aria-checked")).toBe("true");
-  expect(container.querySelector('[role="alert"]')?.textContent).toContain("Save refused");
-  expect(details().querySelector<HTMLButtonElement>('[role="switch"]')!.disabled).toBe(false);
-});
-
-it("keeps pending instructions reviewable during discovery failure and approves the displayed text only", async () => {
-  data.providers = data.providers.slice(0, 1);
-  data.discovery = "unavailable";
-  vi.mocked(approveSkill).mockResolvedValue();
-  await render();
-  await select("Project Manager");
-  expect(container.textContent).toContain("Could not reach Core");
+  expect(details().textContent).toContain("Offered by Core");
   expect(details().querySelector('[role="switch"]')).toBeNull();
-  expect(details().querySelector("pre")?.textContent).toBe("Complete updated instructions");
-  data.pendingSkills = [];
-  await act(async () => [...details().querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Approve instructions")!.click());
-  expect(approveSkill).toHaveBeenCalledWith("projects", "Complete updated instructions");
-  expect(details().querySelector("h2")?.textContent).toBe("Hosty Core");
-  expect(details().textContent).not.toContain("Complete updated instructions");
+  expect(details().querySelector("pre")).toBeNull();
+  expect(container.querySelector<HTMLAnchorElement>('a[target="_top"]')?.href).toBe(data.agentsSettingsUrl);
+  expect(approveSkill).not.toHaveBeenCalled();
+  expect(saveSettings).not.toHaveBeenCalled();
+});
+
+it("reports discovery failure without exposing legacy skill approvals", async () => {
+  data.discovery = "unavailable";
+  await render();
+  expect(container.textContent).toContain("Could not reach Core");
+  expect(container.textContent).not.toContain("Complete updated instructions");
+  expect(container.textContent).not.toContain("Approve instructions");
 });
 
 it("retains harness-specific disabled approvals even for enabled applications", async () => {
@@ -121,18 +97,4 @@ it("retains harness-specific disabled approvals even for enabled applications", 
   await render();
   expect(details().querySelector<HTMLButtonElement>('[role="combobox"]')!.disabled).toBe(true);
   expect(details().textContent).toContain("Codex harness decides which calls pause");
-});
-
-it("keeps completed save feedback scoped to its app across selection and search", async () => {
-  vi.mocked(saveSettings).mockImplementation(async () => structuredClone(data));
-  await render();
-  await select("Project Manager");
-  await act(async () => details().querySelector<HTMLButtonElement>('[role="switch"]')!.click());
-  expect(details().textContent).toContain("Applied to running sessions.");
-  await select("Media Server");
-  expect(details().textContent).not.toContain("Applied to running sessions.");
-  await search("projects");
-  expect(details().textContent).toContain("Applied to running sessions.");
-  await search("core");
-  expect(details().textContent).not.toContain("Applied to running sessions.");
 });

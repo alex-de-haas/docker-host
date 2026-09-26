@@ -13,6 +13,27 @@ public class DelegatedTokenCacheTests
     private static readonly DateTimeOffset Now = new(2026, 8, 15, 12, 0, 0, TimeSpan.Zero);
 
     [Fact]
+    public async Task SkillDirectoryPayloadHasAotMetadata()
+    {
+        using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes("""{"appId":"notes","displayName":"Notes","markdown":"Reviewed skill"}"""));
+        var skill = await CliJson.DeserializeAsync<AppSkill>(stream);
+        Assert.Equal("Reviewed skill", skill?.Markdown);
+    }
+
+    [Fact]
+    public async Task FreshModeNeverReusesAnAliveTokenDuringCoreOutage()
+    {
+        var online = true;
+        var cache = new DelegatedTokenCache((_, _) => online
+            ? Task.FromResult<IssuedToken?>(new("alive", Now.AddHours(1)))
+            : Task.FromException<IssuedToken?>(new CoreControlTimeoutException("POST", "token", TimeSpan.FromSeconds(1))),
+            new TestClock(Now), reuse: false);
+        Assert.Equal("alive", await cache.TryGetAsync("notes", default));
+        online = false;
+        Assert.Null(await cache.TryGetAsync("notes", default));
+    }
+
+    [Fact]
     public async Task ATokenWithPlentyOfLifeIsReusedRatherThanReminted()
     {
         // Core is a round trip; spending one per tool call would put it back in the data path this

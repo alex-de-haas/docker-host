@@ -23,19 +23,23 @@ describe("app skills in a session", () => {
   let settings: SettingsStore;
   let manager: SessionManager;
   let adapter: FakeHarnessAdapter;
+  let offered = true;
+  let approved: Record<string, string> = {};
 
   const providers = {
     read: async () => ({
-      providers: [{ appId: APP, displayName: "Notes", url: `http://${APP}/api/mcp`, running: true }],
+      providers: [{ appId: APP, displayName: "Notes", url: `http://${APP}/api/mcp`, running: true, offered }],
       installedAppIds: [APP],
     }),
     // No Core row: these tests are about app skills, and Core declares none.
     core: () => null,
+    approvedSkills: () => approved,
     readSkill: async (appId: string) =>
       appId === APP ? { appId: APP, displayName: "Notes", markdown: "Call list_people first." } : null,
   } as unknown as ProviderDirectory;
 
   beforeEach(() => {
+    offered = true; approved = {};
     dataDir = mkdtempSync(path.join(os.tmpdir(), "hosty-session-skills-"));
     settings = new SettingsStore(dataDir);
     adapter = new FakeHarnessAdapter();
@@ -90,6 +94,7 @@ describe("app skills in a session", () => {
       mcpSkillDigests: { [APP]: skillDigest("Call list_people first.") },
     });
 
+    approved[APP] = skillDigest("Call list_people first.");
     const prompt = await startSession();
 
     expect(prompt!.startsWith("# Hosty host assistant")).toBe(true);
@@ -115,7 +120,8 @@ describe("app skills in a session", () => {
   it("carries no skill when the provider is off", async () => {
     // The half that matters. Without it, a manager that always folded in every declared skill would
     // pass the test above while ignoring the only decision the operator makes here.
-    await settings.update({ systemPrompt: "Be brief.", mcpProviders: { [APP]: false } });
+    offered = false;
+    await settings.update({ systemPrompt: "Be brief.", mcpProviders: { [APP]: true }, mcpSkillDigests: { [APP]: skillDigest("Call list_people first.") } });
 
     const prompt = await startSession();
 

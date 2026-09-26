@@ -18,6 +18,7 @@ import { resolveSettingsSurface, type AppSurfaceTab } from "../surfaces/app-surf
 import { SettingsCoreSection } from "./settings-core-section";
 import { SettingsIngressSection } from "./settings-ingress-section";
 import { SettingsMountsSection } from "./settings-mounts-section";
+import { SettingsAgentsSection } from "./settings-agents-section";
 import { SettingsTokensSection } from "./settings-tokens-section";
 import { UserManagementPanel } from "./user-management-page";
 
@@ -98,6 +99,8 @@ export function SettingsPage({
         </select>
         {!assistants.length && <p className="text-sm text-muted-foreground">Install and confirm an assistant to use these features.</p>}
       </section>}
+
+      {canManageApps && resolvedTab === "agents" && <SettingsAgentsSection coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} />}
 
       {resolvedTab === "tokens" && (
         <SettingsTokensSection coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} />

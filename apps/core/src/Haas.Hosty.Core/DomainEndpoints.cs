@@ -192,6 +192,7 @@ internal static class DomainEndpoints
             AppServiceTokenService serviceTokens,
             AppRegistryStore apps,
             CoreLifecycleService lifecycle,
+            AgentMcpDirectory agents,
             CancellationToken cancellationToken) =>
         {
             var token = CoreSessionAuthorization.ReadBearerToken(request);
@@ -210,6 +211,8 @@ internal static class DomainEndpoints
             }
 
             var installed = await lifecycle.ListAppsAsync(cancellationToken);
+            var directory = await agents.ReadAsync(false, cancellationToken);
+            if (request.Query["revision"] == directory.Revision) return Results.StatusCode(304);
             return CoreJson.Json(new AppDirectoryResponse(
                 installed
                     .Select(summary => new AppDirectoryEntry(
@@ -226,7 +229,7 @@ internal static class DomainEndpoints
                             .SelectMany(pair => pair.Value.Select(declaration =>
                                 new AppDirectoryInterface(pair.Key, declaration.Key, declaration.Url)))
                             .ToArray()))
-                    .ToArray()));
+                    .ToArray(), directory));
         });
 
         // App-reported audit events (docs/features/ai-gateway/plan.md): the AI gateway reports
@@ -419,7 +422,7 @@ internal sealed record InstalledAppsResponse(IReadOnlyList<string> AppIds);
 /// confusion this feature is careful about elsewhere.
 internal sealed record AgentSkillResponse(string AppId, string DisplayName, string Markdown);
 
-internal sealed record AppDirectoryResponse(IReadOnlyList<AppDirectoryEntry> Apps);
+internal sealed record AppDirectoryResponse(IReadOnlyList<AppDirectoryEntry> Apps, AgentDirectoryResponse? Agents = null);
 
 internal sealed record AppDirectoryEntry(
     string Id,

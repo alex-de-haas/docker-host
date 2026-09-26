@@ -14,7 +14,6 @@ import { Button } from "@/components/ui/button";
 import { AgentProviders } from "@/components/agent-providers";
 import { McpAccess } from "@/components/mcp-access";
 import {
-  approveSkill,
   establishSession,
   loadSettings,
   saveSettings,
@@ -50,24 +49,6 @@ export function GatewaySettings({
       );
   }, []);
 
-  const approve = useCallback(async (appId: string, markdown: string) => {
-    setFeedbackAppId(appId);
-    setBusy(true);
-    setError(null);
-    setStatus(null);
-    try {
-      await approveSkill(appId, markdown);
-      // Re-read rather than dropping the row locally: the server decides what is still pending, and a
-      // second change landing between the read and the click must reappear rather than vanish.
-      setData(await loadSettings());
-      setStatus("Approved — applies to the next session.");
-    } catch (reason: unknown) {
-      setError(reason instanceof Error ? reason.message : "Could not approve.");
-    } finally {
-      setBusy(false);
-    }
-  }, []);
-
   const save = useCallback(async (patch: Partial<Settings>, appId: string | null = null) => {
     setFeedbackAppId(appId);
     setBusy(true);
@@ -77,7 +58,7 @@ export function GatewaySettings({
       const saved = await saveSettings(patch);
       setData(saved);
       const live = saved.harness?.capabilities?.liveReconfigure;
-      const immediate = patch.mcpProviders || patch.mcpAutoAllow;
+      const immediate = patch.mcpAutoAllow;
       setStatus(
         immediate && live
           ? "Applied to running sessions."
@@ -190,7 +171,6 @@ export function GatewaySettings({
             status={status}
             feedbackAppId={feedbackAppId}
             onSave={save}
-            onApprove={approve}
           />
         </TabsContent>
       </Tabs>

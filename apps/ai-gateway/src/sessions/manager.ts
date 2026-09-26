@@ -33,6 +33,8 @@ export interface SessionListener {
 }
 
 interface LiveSession {
+  mcpSignature?: string;
+  mcpNoticeSignature?: string;
   record: SessionRecord;
   run: HarnessRun | null;
   listeners: Set<SessionListener>;
@@ -383,12 +385,9 @@ export class SessionManager {
           // A fresh credential is also the documented recovery from a lapsed chain, so an existing run
           // gets its servers rebuilt here rather than waiting for the next timer tick — otherwise
           // "the operator saying anything at all" restores nothing for up to three minutes.
-          const recovering = session.credential === null && session.run !== null;
           session.credential = credential;
-          if (recovering) {
-            await this.refreshMcpServers(session);
-          }
         }
+        if (session.run) await this.refreshMcpServers(session);
         // Named from the first message that says anything, not from every message: the opening ask is
         // what the operator will recognise the session by later, and re-deriving on each turn would
         // rename a session out from under someone mid-conversation.
@@ -418,6 +417,7 @@ export class SessionManager {
           // edit takes effect in the next session, which the settings UI states plainly.
           const operatorPrompt = (await this.settings?.read())?.systemPrompt?.trim() || undefined;
           const mcpServers = await this.buildMcpServers(session);
+          session.mcpSignature = JSON.stringify([mcpServers ?? {}, this.providers?.revision]);
           // After the servers, deliberately: the set of enabled providers is what decides whose skill is
           // read, and buildMcpServers is where that set is resolved. Asking first would use a stale one.
           // Host preamble first, operator text second — the platform states identity and ground rules,
@@ -468,10 +468,9 @@ export class SessionManager {
    * harness without providers is started exactly as before rather than with an empty map.
    *
    * The per-provider exchange here is an availability probe, not the credential the harness will
-   * use: a provider whose exchange is refused stays absent, and the tokens it did produce seed the
-   * proxy's cache so the first call does not repeat the round trip.
+   * use: a provider whose exchange is refused stays absent. The proxy mints again per call.
    */
-  private async buildMcpServers(session: LiveSession): Promise<Record<string, unknown> | undefined> {
+  private async buildMcpServers(session: LiveSession, knownCandidates?: McpProvider[]): Promise<Record<string, unknown> | undefined> {
     if (
       !this.providers ||
       !this.exchange?.available ||
@@ -488,14 +487,14 @@ export class SessionManager {
       return undefined;
     }
 
-    const [candidates, policy] = await Promise.all([this.discoverProviders(), this.settings.read()]);
+    const [candidates, policy] = await Promise.all([knownCandidates ?? this.discoverProviders(), this.settings.read()]);
     if (!candidates) {
       session.autoAllowed.clear();
       session.mcpAppIds = [];
       return undefined;
     }
 
-    const servers = await this.exchange.buildServers(session.credential, candidates, policy.mcpProviders);
+    const servers = await this.exchange.buildServers(session.credential, candidates, Object.fromEntries(candidates.map(provider => [provider.appId, provider.offered === true])));
     if (servers.length === 0) {
       session.autoAllowed.clear();
       session.mcpAppIds = [];
@@ -508,7 +507,6 @@ export class SessionManager {
     const key = this.proxy.register(
       session.record.id,
       servers.map((server) => ({ appId: server.appId, url: server.url })),
-      new Map(servers.map((server) => [server.appId, { token: server.token, expiresAtMs: server.expiresAtMs }])),
     );
     session.mcpAppIds = servers.map((server) => server.appId);
     return toMcpServerConfig(servers, {
@@ -521,17 +519,15 @@ export class SessionManager {
   /**
    * What a session may be offered: Core first, then the apps Core lists.
    *
-   * Null only when there is nothing to offer at all. Core rides on the gateway's configured origin
-   * rather than on the app-directory read, so a failed read costs the apps and leaves Core — the
-   * surface an operator needs most while the fleet is misbehaving.
+   * Null when Core's current policy cannot be read; a configured Core URL never bypasses it.
    */
   private async discoverProviders(): Promise<McpProvider[] | null> {
     if (!this.providers) {
       return null;
     }
-    const core = this.providers.core();
     const discovered = await this.providers.read();
-    if (!discovered && !core) {
+    const core = this.providers.core();
+    if (!discovered) {
       return null;
     }
     return [...(core ? [core] : []), ...(discovered?.providers ?? [])];
@@ -559,10 +555,7 @@ export class SessionManager {
   /**
    * The skills this session may be given: only those matching a digest the operator approved.
    *
-   * This path no longer writes settings. Recording a baseline here was how text that arrived *after*
-   * the operator's decision could approve itself, and it also had two concurrent sessions writing the
-   * same file. The baseline now belongs to the act of enabling a provider, which is where the
-   * decision is actually made.
+   * Core stores approvals for the text reviewed in Shell Settings → Agents.
    */
   private async readDeliverableSkills(session: LiveSession): Promise<AppSkill[]> {
     const skills = await this.readEnabledSkills(session);
@@ -570,8 +563,7 @@ export class SessionManager {
       return skills;
     }
 
-    const current = await this.settings.read();
-    return partitionSkills(skills, current.mcpSkillDigests).deliver;
+    return partitionSkills(skills, this.providers?.approvedSkills() ?? {}).deliver;
   }
 
   /** Re-reads the fleet and the policy, then rebuilds this session's grants from both. */
@@ -599,7 +591,7 @@ export class SessionManager {
       return;
     }
 
-    const servers = await this.exchange.buildServers(session.credential, candidates, policy.mcpProviders);
+    const servers = await this.exchange.buildServers(session.credential, candidates, Object.fromEntries(candidates.map(provider => [provider.appId, provider.offered === true])));
     await this.refreshAutoAllowed(session, servers, policy.mcpAutoAllow);
   }
 
@@ -644,15 +636,24 @@ export class SessionManager {
       return false;
     }
 
+    const candidates = await this.discoverProviders();
+    if (!candidates) return false;
     const renewed = await this.exchange.refreshSelf(session.credential);
     if (!renewed) {
       return this.dropAppMcp(session);
     }
 
     session.credential = renewed.token;
-    const servers = await this.buildMcpServers(session);
-    await session.run.setMcpServers(servers ?? {}).catch(() => false);
-    return true;
+    const servers = await this.buildMcpServers(session, candidates);
+    const signature = JSON.stringify([servers ?? {}, this.providers?.revision]);
+    if (session.mcpSignature === signature) return true;
+    const applied = await session.run.setMcpServers(servers ?? {}).catch(() => false);
+    if (!applied && session.mcpNoticeSignature !== signature) {
+      session.mcpNoticeSignature = signature;
+      await this.append(session.record.id, { type: "notice", message: "The offered MCP servers changed. This provider applies the new server list in the next session; disabled targets are already blocked." });
+    }
+    if (applied) session.mcpSignature = signature;
+    return applied;
   }
 
   /**

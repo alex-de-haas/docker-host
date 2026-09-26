@@ -46,6 +46,7 @@ export const SHELL_VIEW_LABELS: Record<ShellView, string> = {
 const ADMIN_SHELL_VIEWS = new Set<ShellView>(["dashboard", "settings"]);
 
 export const HOST_SETTINGS_SECTIONS: { id: HostSettingsTab; label: string }[] = [
+  { id: "agents", label: "Agents" },
   { id: "shell", label: "Shell" }, { id: "users", label: "Users" }, { id: "tokens", label: "Access tokens" },
   { id: "core", label: "Core" }, { id: "ingress", label: "Ingress" }, { id: "mounts", label: "Shared mounts" },
 ];

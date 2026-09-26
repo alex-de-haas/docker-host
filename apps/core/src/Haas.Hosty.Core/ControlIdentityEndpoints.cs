@@ -80,6 +80,14 @@ internal static class ControlIdentityEndpoints
                 {
                     var user = await ResolveUserAsync(users, input.User, cancellationToken);
                     actorId = user.Id;
+                    if (appId == AccessTokenScopes.CoreAudience)
+                    {
+                        if (user.Disabled || !AppAccessPolicy.IsAdmin(user))
+                            throw new AppIdentityException("admin_required", "Core MCP requires an enabled Host administrator.");
+                        var coreToken = delegatedTokens.CreateToken(AccessTokenScopes.CoreAudience, user.Id, user.Role);
+                        await AppendControlTokenAuditAsync(audit, appId, user.Id, input.User, "succeeded", clock, cancellationToken);
+                        return CoreJson.Json(coreToken);
+                    }
                     var (actor, target) = await identity.RequireAccessibleUserAsync(appId, user.Id, cancellationToken);
                     var issued = delegatedTokens.CreateToken(target.Id, actor.Id, actor.Role);
                     await AppendControlTokenAuditAsync(audit, appId, actor.Id, input.User, "succeeded", clock, cancellationToken);

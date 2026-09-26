@@ -112,6 +112,35 @@ describe("per-session MCP proxy", () => {
     expect(calls[0]?.authorization).toBe("Bearer recovered");
   });
 
+  it("rechecks offers for every request, resolves changed URLs, and refuses Core outages", async () => {
+    let current: string | null = `${upstreamUrl}/new/mcp`;
+    let available = true;
+    let reached = "";
+    respond = (request, response, body) => { reached = request.url!; response.end(body); };
+    proxy = new McpProxy(async () => ({ token: "fresh", expiresAtMs: Date.now() + 300000 }), undefined,
+      async () => { if (!available) throw new Error("Core unavailable"); return current; });
+    register();
+    const path = `/internal/mcp/${SESSION}/${APP}`;
+    expect((await call(path)).status).toBe(200);
+    expect(reached).toBe("/new/mcp");
+    current = null;
+    expect((await call(path)).status).toBe(403);
+    available = false;
+    expect((await call(path)).status).toBe(503);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("passes tools/list_changed through the connected SSE channel verbatim", async () => {
+    register();
+    const notification = 'event: message\ndata: {"jsonrpc":"2.0","method":"notifications/tools/list_changed"}\n\n';
+    respond = (_request, response) => {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.end(notification);
+    };
+    const result = await call(`/internal/mcp/${SESSION}/${APP}`, { method: "GET", body: undefined });
+    expect(await result.text()).toBe(notification);
+  });
+
   it("mints at request time, so a call released long after it was prepared still carries a live token", async () => {
     // The defect this feature exists for: a call paused on an approval is bound to the connection it
     // was prepared on, so re-minting into the harness config reaches the next call and never that
@@ -126,13 +155,6 @@ describe("per-session MCP proxy", () => {
     ];
 
     await call(`/internal/mcp/${SESSION}/${APP}`);
-    // Age the cached token past the reuse margin without waiting: re-register with a seed that is
-    // about to expire, which is what a real five-minute token looks like by release time.
-    proxy.register(
-      SESSION,
-      [{ appId: APP, url: `${upstreamUrl}/api/mcp` }],
-      new Map([[APP, { token: "token-at-connect", expiresAtMs: Date.now() + 1_000 }]]),
-    );
     await call(`/internal/mcp/${SESSION}/${APP}`);
 
     expect(calls.map((entry) => entry.authorization)).toEqual([
@@ -141,14 +163,12 @@ describe("per-session MCP proxy", () => {
     ]);
   });
 
-  it("reuses a token that is still comfortably alive", async () => {
-    // The mint is a Core round trip; doing it per request when the cached token has minutes left
-    // would put Core back in the data path this design keeps it out of.
+  it("requires fresh authority even while the previous token is alive", async () => {
     register();
     await call(`/internal/mcp/${SESSION}/${APP}`);
     await call(`/internal/mcp/${SESSION}/${APP}`);
 
-    expect(mintCalls).toHaveLength(1);
+    expect(mintCalls).toHaveLength(2);
     expect(calls).toHaveLength(2);
   });
 

@@ -667,7 +667,7 @@ describe("gateway", () => {
     });
   });
 
-  it("defaults every MCP provider to off and round-trips settings", async () => {
+  it("offers nothing without Core and preserves local prompt and auto-allow settings", async () => {
     const initial = (await (await call("/api/settings")).json()) as {
       settings: { systemPrompt: string; mcpProviders: Record<string, boolean> };
       harness: { capabilities: { questions: boolean } };
@@ -676,7 +676,7 @@ describe("gateway", () => {
     // Off by default is the security-relevant part: an app that appears in the fleet must not gain a
     // channel into the model's context by being installed. Core is the one exception — its tools are
     // the platform's own — and it is the only key a fresh store answers with.
-    expect(initial.settings.mcpProviders).toEqual({ "hosty:core": true });
+    expect(initial.settings.mcpProviders).toEqual({});
     expect(initial.settings.systemPrompt).toBe("");
     expect(initial.harness.capabilities.questions).toBe(true);
 
@@ -684,7 +684,7 @@ describe("gateway", () => {
       method: "PUT",
       body: JSON.stringify({
         systemPrompt: "Prefer the hosty CLI.",
-        mcpProviders: { "com.example.notes": true },
+        mcpAutoAllow: { "com.example.notes": true },
       }),
     });
     expect(saved.status).toBe(200);
@@ -692,7 +692,7 @@ describe("gateway", () => {
     // Survives a restart: a fresh store over the same directory reads what was written.
     const reread = await new SettingsStore(dataDir).read();
     expect(reread.systemPrompt).toBe("Prefer the hosty CLI.");
-    expect(reread.mcpProviders).toEqual({ "hosty:core": true, "com.example.notes": true });
+    expect(reread.mcpAutoAllow).toEqual({ "hosty:core": true, "com.example.notes": true });
     expect(initial.limits.systemPromptChars).toBeGreaterThan(0);
   });
 
@@ -707,7 +707,7 @@ describe("gateway", () => {
       method: "PUT",
       body: JSON.stringify({ mcpProviders: { "com.example.notes": "yes" } }),
     });
-    expect(badProviders.status).toBe(400);
+    expect(badProviders.status).toBe(409);
 
     const oversize = await call("/api/settings", {
       method: "PUT",
@@ -928,6 +928,7 @@ describe("gateway", () => {
       response.writeHead(200, { "content-type": "application/json" });
       response.end(
         JSON.stringify({
+          agents: { revision: "one", targets: [{ id: "com.haas.demo-app", displayName: "Demo App", offered: false, runtimeState: "running", skills: [], interfaces: [{ key: "default", url: "http://127.0.0.1:3101/api/mcp", readiness: "ready" }] }] },
           apps: [
             {
               id: "com.haas.demo-app",
@@ -973,14 +974,14 @@ describe("gateway", () => {
           appId: "com.haas.demo-app",
           displayName: "Demo App",
           url: "http://127.0.0.1:3101/api/mcp",
-          running: true,
+          running: true, offered: false,
           // Every declaration with the key Core resolved it under. Dropping the key renamed the
           // tools of any non-default interface, which is exactly what the facade's naming must not
           // do — it has to match the CLI connector's.
           interfaces: [{ key: "default", url: "http://127.0.0.1:3101/api/mcp" }],
         },
       ]);
-      expect(body.settings.mcpProviders).toEqual({ "hosty:core": true });
+      expect(body.settings.mcpProviders).toEqual({ "com.haas.demo-app": false });
     } finally {
       await new Promise((resolve) => withProviders.close(resolve));
       await new Promise((resolve) => core.close(resolve));
@@ -991,9 +992,10 @@ describe("gateway", () => {
     // Core is not an app: it is not in the roster Core lists, so it has to be added by the surface
     // that wants it and kept out of the pruning that roster drives. Both halves are asserted — the
     // row being present, and an explicit "off" surviving the read that prunes.
+    let offered = true;
     const core = createServer((_request, response) => {
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ apps: [] }));
+      response.end(JSON.stringify({ apps: [], agents: { revision: String(offered), targets: [{ id: "hosty:core", displayName: "Hosty Core", offered, runtimeState: "running", skills: [], interfaces: [{ key: "default", url: "http://core/api/mcp", readiness: "ready" }] }] } }));
     });
     await new Promise<void>((resolve) => core.listen(0, resolve));
     const coreOrigin = `http://127.0.0.1:${(core.address() as AddressInfo).port}`;
@@ -1014,14 +1016,15 @@ describe("gateway", () => {
           appId: "hosty:core",
           displayName: "Hosty Core",
           url: `${coreOrigin}/api/mcp`,
-          running: true,
+          running: true, offered: true,
           interfaces: [{ key: "default", url: `${coreOrigin}/api/mcp` }],
         },
       ]);
       expect(initial.settings.mcpProviders).toEqual({ "hosty:core": true });
       expect(initial.settings.mcpAutoAllow).toEqual({ "hosty:core": true });
 
-      // Switched off, then read again — the read prunes against a roster Core is never in.
+      offered = false;
+      // Only Core changes the offer; legacy writes are rejected.
       await fetch(`${coreGateway}/api/settings`, {
         method: "PUT",
         headers: { ...headers, "content-type": "application/json" },
@@ -1082,7 +1085,8 @@ describe("gateway", () => {
         settings: { mcpProviders: Record<string, boolean> };
       };
       expect(body.discovery).toBe("unavailable");
-      expect(body.settings.mcpProviders).toEqual({ "hosty:core": true, "com.example.notes": true });
+      expect(body.settings.mcpProviders).toEqual({});
+      expect((await settings.read()).mcpProviders["com.example.notes"]).toBe(true);
     } finally {
       await new Promise((resolve) => server3.close(resolve));
       await new Promise((resolve) => core.close(resolve));

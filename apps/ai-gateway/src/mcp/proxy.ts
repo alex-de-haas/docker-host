@@ -27,13 +27,6 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 const MAX_BODY_BYTES = 64 * 1024;
 
 /**
- * How close to expiry a cached token may be and still be reused. Distinct from the exchange's own
- * refresh margin despite the equal value: this one asks "could the call this token is about to carry
- * outlive it", which is a question about one request rather than about a session's chain.
- */
-const TOKEN_REUSE_MARGIN_MS = 60_000;
-
-/**
  * Bounds only *getting a response* out of the app — connect plus time-to-headers. Generous, because
  * a tool call may legitimately do real work before it answers.
  *
@@ -77,7 +70,6 @@ export type TokenMinter = (sessionId: string, appId: string) => Promise<MintedTo
 interface Registration {
   key: string;
   targets: Map<string, ProxyTarget>;
-  tokens: Map<string, MintedToken>;
 }
 
 export class McpProxy {
@@ -87,6 +79,7 @@ export class McpProxy {
     private readonly mint: TokenMinter,
     /** Overridden only by tests, which cannot wait two minutes to prove the timer stops. */
     private readonly responseTimeoutMs: number = UPSTREAM_RESPONSE_TIMEOUT_MS,
+    private readonly resolveOffered?: (appId: string) => Promise<string | null>,
   ) {}
 
   /**
@@ -94,34 +87,21 @@ export class McpProxy {
    *
    * The key is stable for the life of the session: a provider toggle rewrites the target list, and
    * re-keying there would break every MCP connection the harness already holds for providers that
-   * were not touched. Tokens already minted for targets that survive are kept for the same reason —
-   * they are still valid, and discarding them would spend a Core round trip to learn that.
+   * were not touched. Each request still needs a fresh Core token.
    */
-  register(sessionId: string, targets: readonly ProxyTarget[], seed?: ReadonlyMap<string, MintedToken>): string {
+  register(sessionId: string, targets: readonly ProxyTarget[]): string {
     const existing = this.sessions.get(sessionId);
     const registration: Registration = existing ?? {
       key: randomBytes(32).toString("base64url"),
       targets: new Map(),
-      tokens: new Map(),
     };
 
     registration.targets = new Map(targets.map((target) => [target.appId, target]));
-    for (const appId of [...registration.tokens.keys()]) {
-      if (!registration.targets.has(appId)) {
-        registration.tokens.delete(appId);
-      }
-    }
-    for (const [appId, token] of seed ?? []) {
-      if (registration.targets.has(appId)) {
-        registration.tokens.set(appId, token);
-      }
-    }
-
     this.sessions.set(sessionId, registration);
     return registration.key;
   }
 
-  /** Drops the session's routes and every token cached for it. */
+  /** Drops the session's routes. */
   unregister(sessionId: string): void {
     this.sessions.delete(sessionId);
   }
@@ -162,7 +142,7 @@ export class McpProxy {
 
     const [sessionId, appId] = decoded;
     const registration = this.sessions.get(sessionId);
-    const target = registration?.targets.get(appId);
+    let target = registration?.targets.get(appId);
 
     // One answer for an unknown session, an unknown app, and a wrong key. They are distinguishable
     // to an attacker only if the gateway distinguishes them, and the caller can act on none of them.
@@ -181,7 +161,17 @@ export class McpProxy {
     }
 
     let token: MintedToken | null;
-    try { token = await this.tokenFor(sessionId, registration, appId); }
+    try {
+      if (this.resolveOffered) {
+        const url = await this.resolveOffered(appId);
+        if (!url) {
+          sendJson(response, 403, { code: "agent_target_disabled", message: "This target is not offered to agents." });
+          return true;
+        }
+        target = { appId, url };
+      }
+      token = await this.mint(sessionId, appId);
+    }
     catch {
       sendJson(response, 503, { code: "core_unavailable", message: "Core is temporarily unavailable. Retry after reconnecting; this request was not forwarded." });
       return true;
@@ -193,29 +183,6 @@ export class McpProxy {
 
     await this.forward(request, response, target, token.token, body);
     return true;
-  }
-
-  /** Cached until it is close enough to expiry that a call could outlive it; re-minted otherwise. */
-  private async tokenFor(
-    sessionId: string,
-    registration: Registration,
-    appId: string,
-  ): Promise<MintedToken | null> {
-    const cached = registration.tokens.get(appId);
-    if (cached && cached.expiresAtMs - TOKEN_REUSE_MARGIN_MS > Date.now()) {
-      return cached;
-    }
-
-    const minted = await this.mint(sessionId, appId);
-    if (!minted) {
-      // Keep nothing: a refused mint means the chain lapsed, and a stale token would only turn a
-      // clear "the delegation expired" into an authorization error from the app.
-      registration.tokens.delete(appId);
-      return null;
-    }
-
-    registration.tokens.set(appId, minted);
-    return minted;
   }
 
   private async forward(

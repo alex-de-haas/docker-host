@@ -42,8 +42,7 @@ export class CodexHarnessAdapter implements HarnessAdapter {
   readonly name = "codex-app-server";
   // No questions: the mechanism exists but is experimental, off by default, and its shape is only
   // inferable from binary symbols — see REQUEST_USER_INPUT_METHOD in codex-protocol.ts. No live
-  // reconfiguration either: the protocol has no setMcpServers equivalent, so a settings change here
-  // takes effect at the next session and the UI must say so.
+  // mid-turn reconfiguration either: the wrapper prepares a resumed process between turns.
   // autoAllow is false because nothing here consults the gateway's predicate: Codex raises approvals
   // by its own sandbox rules (below), and an app tool call never passes through this adapter's hands.
   // denyReason is false because the current `item/*` approval reply is a bare "decline" — only the
@@ -96,7 +95,42 @@ export class CodexHarnessAdapter implements HarnessAdapter {
   }
 
   start(options: HarnessStartOptions): HarnessRun {
-    return new CodexRun(options, this.auth);
+    return new ReconfigurableCodexRun(options, this.auth);
+  }
+}
+
+/** Prepare a resumed process before replacing the idle one. A failed resume leaves the old run alive. */
+class ReconfigurableCodexRun implements HarnessRun {
+  private active: CodexRun;
+  private stopped = false;
+  private replacing = false;
+  constructor(private readonly options: HarnessStartOptions, private readonly auth: CodexAuthConfig) {
+    this.active = new CodexRun(options, auth);
+  }
+  send(text: string): void { this.active.send(text); }
+  resolveApproval(id: string, decision: "allow" | "deny", message?: string): boolean { return this.active.resolveApproval(id, decision, message); }
+  resolveQuestion(): boolean { return false; }
+  interrupt(): Promise<void> { return this.active.interrupt(); }
+  async stop(): Promise<void> { this.stopped = true; await this.active.stop(); }
+  async setMcpServers(servers: Record<string, unknown>): Promise<boolean> {
+    if (this.stopped || this.replacing || !this.active.resumableThread) return false;
+    this.replacing = true;
+    const buffered: HarnessEvent[] = [];
+    let committed = false;
+    const candidate = new CodexRun({ ...this.options, systemPrompt: undefined,
+      resumeHarnessSessionId: this.active.resumableThread, mcpServers: servers,
+      onEvent: event => { if (committed) this.options.onEvent(event); else buffered.push(event); },
+    }, this.auth, true);
+    try {
+      await candidate.waitUntilReady();
+      if (this.stopped || !this.active.resumableThread || !candidate.resumableThread) return false;
+      await this.active.stop();
+      this.active = candidate;
+      committed = true;
+      for (const event of buffered) this.options.onEvent(event);
+      return true;
+    } catch { return false; }
+    finally { if (!committed) await candidate.stop(); this.replacing = false; }
   }
 }
 
@@ -122,12 +156,14 @@ class CodexRun implements HarnessRun {
   private ready: Promise<void>;
   private turnActive = false;
   private stopped = false;
+  private failed = false;
   /** The operator prompt rides on the first message only; later turns must not repeat it. */
   private systemPromptSent = false;
 
   constructor(
     private readonly options: HarnessStartOptions,
     private readonly auth: CodexAuthConfig,
+    private readonly strictResume = false,
   ) {
     // Resolved synchronously from the mode: the login itself already happened during probe, and a
     // session must not wait on it. In interactive mode this is the operator's own home.
@@ -149,6 +185,7 @@ class CodexRun implements HarnessRun {
     });
     this.child.stdin.on("error", () => {});
     this.child.on("error", () => {
+      this.failed = true;
       for (const pending of this.pendingRequests.values()) pending.reject(new Error("Codex process could not start."));
       this.pendingRequests.clear();
       if (!this.stopped) this.emit({ type: "error", message: "Codex process could not start." });
@@ -163,6 +200,7 @@ class CodexRun implements HarnessRun {
       }
     });
     this.child.on("exit", (code) => {
+      this.failed = true;
       if (!this.stopped) {
         this.emit({ type: "error", message: `The Codex app-server exited unexpectedly (code ${code ?? "unknown"}).` });
       }
@@ -174,6 +212,16 @@ class CodexRun implements HarnessRun {
     this.ready = this.handshake();
     // Stop can race initialization before send() attaches its own failure handler.
     void this.ready.catch(() => {});
+  }
+
+  get resumableThread(): string | null { return !this.turnActive && !this.stopped && !this.failed ? this.threadId : null; }
+  async waitUntilReady(): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([this.ready, new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("Codex resume timed out")), 15_000);
+      })]);
+    } finally { clearTimeout(timer); }
   }
 
   send(text: string): void {
@@ -218,10 +266,10 @@ class CodexRun implements HarnessRun {
     return false;
   }
 
-  // Providers reach a Codex session at spawn time, not while it runs: Codex takes its MCP servers
+  // The wrapper replaces idle processes and resumes their threads. A single process still takes
+  // providers at spawn time: Codex takes its MCP servers
   // from configuration read at startup and exposes no method to change them afterwards. So this
-  // returns false and `capabilities.liveReconfigure` stays false — a toggle takes effect in the next
-  // session, and the settings UI says so rather than implying immediacy.
+  // returns false here; the wrapper handles configuration changes by preparing a resumed process.
   async setMcpServers(): Promise<boolean> {
     return false;
   }
@@ -255,7 +303,9 @@ class CodexRun implements HarnessRun {
     if (this.options.resumeHarnessSessionId) {
       const resumed = (await this.request(CODEX_METHODS.threadResume, {
         threadId: this.options.resumeHarnessSessionId,
-      }).catch((error) => { if (this.auth.isolated) throw new Error("The native session could not be resumed. Start a new chat; existing history is preserved."); return null; })) as { thread?: { id?: string } } | null;
+      }).catch((error) => { if (this.auth.isolated || this.strictResume) throw new Error("The native session could not be resumed. Start a new chat; existing history is preserved."); return null; })) as { thread?: { id?: string } } | null;
+      if (this.strictResume && resumed?.thread?.id !== this.options.resumeHarnessSessionId)
+        throw new Error("Codex did not resume the requested thread.");
       if (resumed) {
         this.threadId = resumed.thread?.id ?? this.options.resumeHarnessSessionId;
       }

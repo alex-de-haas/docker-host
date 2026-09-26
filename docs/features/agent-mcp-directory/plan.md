@@ -1,6 +1,6 @@
 # Agent MCP Directory — Core Lists What Agents May Use
 
-Status: Ready
+Status: In Progress
 Created: 2026-09-26
 Updated: 2026-09-26
 
@@ -114,19 +114,19 @@ verification deliverable below; until then the fallback applies.
 
 ## Deliverables
 
-- [ ] Add the Core offer policy with its `hosty:core` entry and defaults, uninstall cleanup, approved
+- [x] Add the Core offer policy with its `hosty:core` entry and defaults, uninstall cleanup, approved
       skill digests keyed by app and skill, admin API, the Shell **Agents** settings tab and audit.
-- [ ] Extend the app directory with offer state, `mcp` declarations, readiness, approved skill digests
+- [x] Extend the app directory with offer state, `mcp` declarations, readiness, approved skill digests
       and a directory revision.
-- [ ] Switch Harness sessions to the Core policy: per-turn refresh, per-call enforcement in the
+- [x] Switch Harness sessions to the Core policy: per-turn refresh, per-call enforcement in the
       forwarding proxy, and server-set updates per adapter as tabled above. Keep `mcpAutoAllow`, and
       replace the gateway's offer switches with the offer state and a link to the Agents tab.
-- [ ] Verify the Codex path — restart with `thread/resume` between turns keeps the conversation and
+- [x] Verify the Codex path — restart with `thread/resume` between turns keeps the conversation and
       picks up the new servers — and whether a connected app's `tools/list_changed` passes the
       forwarding proxy and reaches each harness. Record the results and use the fallbacks where they
       fail.
-- [ ] Switch the gateway facade to the directory with a revision-aware catalog cache.
-- [ ] Make `hosty mcp` offer only enabled targets and check the policy before each call.
+- [x] Switch the gateway facade to the directory with a revision-aware catalog cache.
+- [x] Make `hosty mcp` offer only enabled targets and check the policy before each call.
 - [ ] Update `feature.md` for this feature, [ai-gateway](../ai-gateway/feature.md),
       [mcp-facade](../mcp-facade/feature.md) and [hosty-mcp-connector](../hosty-mcp-connector/feature.md);
       remove this plan and regenerate the index.

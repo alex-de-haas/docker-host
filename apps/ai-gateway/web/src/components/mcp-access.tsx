@@ -3,39 +3,32 @@
 import { useState } from "react";
 import { Box, Search, Server } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { ProviderRow } from "@/components/provider-row";
 import { CORE_PROVIDER_ID, type Settings, type SettingsResponse } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-export function McpAccess({ data, busy, error, status, feedbackAppId, onSave, onApprove }: {
+export function McpAccess({ data, busy, error, status, feedbackAppId, onSave }: {
   data: SettingsResponse;
   busy: boolean;
   error: string | null;
   status: string | null;
   feedbackAppId: string | null;
   onSave: (patch: Partial<Settings>, appId: string) => Promise<void>;
-  onApprove: (appId: string, markdown: string) => Promise<void>;
 }) {
   const [selectedId, setSelectedId] = useState(CORE_PROVIDER_ID);
   const [search, setSearch] = useState("");
-  const { settings, providers, discovery, pendingSkills = [] } = data;
-  // Discovery failure must not hide instruction updates that were already available for review.
-  const entries = [
-    ...providers,
-    ...pendingSkills.filter(skill => !providers.some(provider => provider.appId === skill.appId)),
-  ].sort((a, b) => a.appId === CORE_PROVIDER_ID ? -1 : b.appId === CORE_PROVIDER_ID ? 1 : 0);
+  const { settings, providers, discovery } = data;
+  const entries = [...providers].sort((a, b) => a.appId === CORE_PROVIDER_ID ? -1 : b.appId === CORE_PROVIDER_ID ? 1 : 0);
   const query = search.trim().toLocaleLowerCase();
   const visibleEntries = entries.filter(entry =>
     `${entry.displayName} ${entry.appId}`.toLocaleLowerCase().includes(query),
   );
   const selected = visibleEntries.find(entry => entry.appId === selectedId) ?? visibleEntries[0];
   const provider = providers.find(entry => entry.appId === selected?.appId);
-  const pendingSkill = pendingSkills.find(skill => skill.appId === selected?.appId);
   const autoAllowSupported = data.harness?.capabilities?.autoAllow !== false;
   const harnessName = data.harness?.name ?? "harness";
   const SelectedIcon = selected?.appId === CORE_PROVIDER_ID ? Server : Box;
@@ -52,7 +45,8 @@ export function McpAccess({ data, busy, error, status, feedbackAppId, onSave, on
         <aside aria-label="MCP applications" className="flex min-w-0 flex-col gap-4 md:border-r md:pr-6">
           <div className="flex flex-col gap-1">
             <h2 className="text-base font-semibold">Applications</h2>
-            <p className="text-sm text-muted-foreground">Manage assistant access.</p>
+            <p className="text-sm text-muted-foreground">Offers and instruction approvals are managed in Shell.</p>
+            {data.agentsSettingsUrl && <a className="text-sm underline" href={data.agentsSettingsUrl} target="_top">Open Settings → Agents</a>}
           </div>
           <InputGroup>
             <InputGroupInput
@@ -67,7 +61,6 @@ export function McpAccess({ data, busy, error, status, feedbackAppId, onSave, on
             {visibleEntries.map(entry => {
               const Icon = entry.appId === CORE_PROVIDER_ID ? Server : Box;
               const enabled = settings.mcpProviders[entry.appId] === true;
-              const pending = pendingSkills.some(skill => skill.appId === entry.appId);
               return (
                 <Button
                   key={entry.appId}
@@ -83,7 +76,6 @@ export function McpAccess({ data, busy, error, status, feedbackAppId, onSave, on
                     <span className="flex flex-wrap items-center gap-1.5 text-xs font-normal text-muted-foreground">
                       <span className={cn("size-1.5 shrink-0 rounded-full", enabled ? "bg-success" : "bg-muted-foreground")} aria-hidden="true" />
                       {enabled ? "Enabled" : "Disabled"}
-                      {pending && <span>· Review instructions</span>}
                     </span>
                   </span>
                 </Button>
@@ -118,7 +110,6 @@ export function McpAccess({ data, busy, error, status, feedbackAppId, onSave, on
                   harnessName={harnessName}
                   busy={busy}
                   multipleConnections={data.agentConnections === true}
-                  onToggle={next => void onSave({ mcpProviders: { ...settings.mcpProviders, [provider.appId]: next } }, provider.appId)}
                   onApprovalChange={next => void onSave({ mcpAutoAllow: { ...settings.mcpAutoAllow, [provider.appId]: next } }, provider.appId)}
                 />
               ) : (
@@ -128,23 +119,8 @@ export function McpAccess({ data, busy, error, status, feedbackAppId, onSave, on
               <Card className="gap-0 overflow-hidden py-0 shadow-none">
                 <CardHeader className="bg-muted/40 px-5 py-4">
                   <CardTitle>Application instructions</CardTitle>
-                  <CardDescription>{pendingSkill ? "Review the updated instructions before approving them for the assistant." : "Updates supplied by this application appear here for review."}</CardDescription>
+                  <CardDescription>Review and approve application instructions in Hosty Shell Settings → Agents.</CardDescription>
                 </CardHeader>
-                <CardContent className="min-w-0 border-t p-5">
-                  {pendingSkill ? (
-                    <div className="flex min-w-0 flex-col gap-4">
-                      <Badge variant="outline">Review required</Badge>
-                      <p className="text-sm text-muted-foreground">These instructions changed since approval. The new text is withheld until you approve it.</p>
-                      {/* Show the complete text the approval digest names, never a summary. */}
-                      <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted/40 p-4 text-xs leading-relaxed">{pendingSkill.markdown}</pre>
-                    </div>
-                  ) : <p className="text-sm text-muted-foreground">No instruction updates awaiting approval.</p>}
-                </CardContent>
-                {pendingSkill && (
-                  <CardFooter className="justify-end px-5 pb-5">
-                    <Button size="sm" disabled={busy} onClick={() => void onApprove(pendingSkill.appId, pendingSkill.markdown)}>Approve instructions</Button>
-                  </CardFooter>
-                )}
               </Card>
               <p role="status" className="text-sm text-muted-foreground">{feedbackAppId === selected.appId && busy ? "Saving…" : (feedbackAppId === selected.appId ? status : null) ?? "Access changes save automatically."}</p>
             </>

@@ -23,10 +23,12 @@ const TOOL = `mcp__${APP}__list_people`;
 const CORE_URL = "http://core.test/api/mcp";
 const CORE_TOOL = "mcp__hosty-core__list_apps";
 
+let offered = true;
+
 // Shared by both suites below: the directory stubs and the network stub they run against.
 const providers = {
   read: async () => ({
-    providers: [{ appId: APP, displayName: "Notes", url: `http://${APP}/api/mcp`, running: true }],
+    providers: [{ appId: APP, displayName: "Notes", url: `http://${APP}/api/mcp`, running: true, offered }],
     installedAppIds: [APP],
   }),
   // No Core row here: these tests are about an app the operator has to vouch for, and Core's
@@ -35,6 +37,7 @@ const providers = {
   // Declares no skill: these tests are about the approval gate, and a skill would only add prose to
   // a system prompt none of them read.
   readSkill: async () => null,
+  approvedSkills: () => ({}),
 } as unknown as ProviderDirectory;
 
 /** The same directory with Core offered beside the app, for the default-grant suite below. */
@@ -44,7 +47,7 @@ const providersWithCore = {
     appId: "hosty:core",
     displayName: "Hosty Core",
     url: CORE_URL,
-    running: true,
+    running: true, offered: true,
     interfaces: [{ key: "default", url: CORE_URL }],
   }),
 } as unknown as ProviderDirectory;
@@ -85,6 +88,7 @@ describe("per-app auto-allow", () => {
   let manager: SessionManager;
 
   beforeEach(async () => {
+    offered = true;
     dataDir = mkdtempSync(path.join(os.tmpdir(), "hosty-auto-allow-"));
     store = new SessionStore(dataDir);
     settings = new SettingsStore(dataDir);
@@ -180,7 +184,7 @@ describe("per-app auto-allow", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(granted(record.id).size).toBe(1);
 
-    await settings.update({ mcpProviders: { [APP]: false } });
+    offered = false;
     await manager.applyProviderPolicy();
 
     expect(granted(record.id).size).toBe(0);
@@ -212,6 +216,7 @@ describe("Core's default grant", () => {
   let manager: SessionManager;
 
   beforeEach(async () => {
+    offered = true;
     dataDir = mkdtempSync(path.join(os.tmpdir(), "hosty-auto-allow-core-"));
     store = new SessionStore(dataDir);
     settings = new SettingsStore(dataDir);

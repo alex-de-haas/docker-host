@@ -33,6 +33,7 @@ describe("MCP facade", () => {
   let mintAllowed: boolean;
   /** The interface key the fake Core reports for the app's `mcp` declaration. */
   let interfaceKey: string;
+  let offered: boolean;
 
   let app: Server;
   let appUrl: string;
@@ -81,6 +82,7 @@ describe("MCP facade", () => {
     credentialActive = true;
     mintAllowed = true;
     interfaceKey = "default";
+    offered = true;
 
     core = createServer((request, response) => {
       void (async () => {
@@ -107,6 +109,7 @@ describe("MCP facade", () => {
         }
         if (path.endsWith("/app-directory")) {
           json(response, 200, {
+            agents: { revision: `${interfaceKey}:${offered}`, targets: [{ id: APP, displayName: "Notes", offered, runtimeState: "running", skills: [], interfaces: [{ key: interfaceKey, url: `${appUrl}/api/mcp`, readiness: "ready" }] }] },
             apps: [
               {
                 id: APP,
@@ -285,7 +288,19 @@ describe("MCP facade", () => {
     expect(body.result.tools.map((tool) => tool.name)).toEqual(["com_dexample_dnotes__admin__list_people"]);
   });
 
-  it("keeps Core's tools when app discovery fails", async () => {
+  it("invalidates a fresh catalog when Core disables the target and refuses a stale call", async () => {
+    const initial = await (await rpc("tools/list")).json() as { result: { tools: unknown[] } };
+    expect(initial.result.tools.length).toBeGreaterThan(0);
+    offered = false;
+    const next = await (await rpc("tools/list")).json() as { result: { tools: unknown[] } };
+    expect(next.result.tools).toEqual([]);
+    const before = appCalls.length;
+    const called = await (await rpc("tools/call", { name: "com_dexample_dnotes__list_people" })).json() as { error: unknown };
+    expect(called.error).toBeTruthy();
+    expect(appCalls.length).toBe(before);
+  });
+
+  it("never invents a Core offer when discovery has not succeeded", async () => {
     // A transient app-directory failure costs the apps. Core's URL is configured independently and
     // its tools stay reachable — collapsing the two emptied the catalog over one timeout.
     const facade = new McpFacade(
@@ -305,7 +320,7 @@ describe("MCP facade", () => {
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
     });
     const body = (await response.json()) as { result: { tools: Array<{ name: string }> } };
-    expect(body.result.tools.length).toBeGreaterThan(0);
+    expect(body.result.tools).toEqual([]);
 
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
@@ -370,7 +385,8 @@ describe("MCP facade", () => {
   });
 
   it("offers nothing from a provider the operator has not enabled", async () => {
-    await settings.update({ mcpProviders: {} });
+    offered = false;
+    await settings.update({ mcpProviders: { [APP]: true } });
     // A fresh facade, because the catalog is cached per user for a few seconds by design.
     const facade = new McpFacade(
       { coreOrigin, serviceToken: SERVICE_TOKEN, appId: GATEWAY, coreMcpUrl: null },
