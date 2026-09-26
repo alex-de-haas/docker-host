@@ -37,6 +37,13 @@ the interface key `ai-gateway` while changing app ID/display identity. It is a p
 not a legacy app-ID alias. Renaming that key instead requires a coordinated Core/Shell/Harness
 contract release and must be selected explicitly before Ready.
 
+Owner direction, 2026-09-26: [assistant provider permissions](../assistant-provider-permissions/plan.md)
+moves the authority out of that interface into approved Core permissions and adds a default-assistant
+setting. The key then only locates the API, so keeping `ai-gateway` carries no authority. The new
+`hosty.harness` manifest requests those permissions and the operator approves them at the fresh
+installation, so no grant migration is needed. An older Core rejects unknown permissions: ship the
+permission vocabulary in Core before or together with the renamed manifest.
+
 The old Core distribution descriptor and app feeds reference raw `main/apps/ai-gateway` files.
 Do not remove those paths without a retirement policy. Proposal: release Core with the new
 installation descriptor first; keep the old manifest/feed URLs as frozen old-ID installation
@@ -87,3 +94,5 @@ can ship independently of AHP and the session-workspace implementation.
   flow. Configure providers anew and check Shell/client discovery, permissions, new sessions and
   subsequent updates under the new identity. No old sessions/settings/credentials are imported and
   no old-app dependency or legacy-id alias is needed.
+- The fresh installation shows the requested assistant permissions for approval, and Harness acts as
+  the assistant only after they are granted and it is the effective default.

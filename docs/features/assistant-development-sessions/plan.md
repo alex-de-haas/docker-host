@@ -90,6 +90,7 @@ Uncommitted changes in the operator's main checkout are not part of this baselin
 | Feature | Scope and dependencies |
 | --- | --- |
 | [Harness rename](../hosty-harness-rename/plan.md) | Product/app identity, distribution retirement and fresh-install policy; independent of AHP |
+| [Assistant provider permissions](../assistant-provider-permissions/plan.md) | Approved Core permissions instead of interface-derived authority, and the default-assistant setting; ships before or with the rename |
 | [AHP client interface](../assistant-ahp/plan.md) | Bounded client/ingress spike and replaceable projection over Hosty sessions; existing web REST/SSE remains |
 | [Shared history and switching](../assistant-shared-history/plan.md) | Hosty session journal/adapters, provider context reconciliation and session sharing |
 | [Session workspaces](../assistant-session-workspaces/plan.md) | Registered source, Git metadata boundary, diffs/source selection and cleanup; consumes approval enforcement |
