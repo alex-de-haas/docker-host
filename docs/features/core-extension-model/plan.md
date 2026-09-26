@@ -248,8 +248,9 @@ UI client's own features use is that client's setting, not a Core default.
   update that adds an optional permission offers it without granting it; moving one to required
   re-enters review.
 - **`role: system` stops being a privilege.** Each current use gets its own replacement: acting as
-  the user toward other apps (delegated-token exchange, on-behalf-of tokens) becomes a permission,
-  scoped to target apps where needed; administrator-only access becomes the intersection of the app's
+  the user toward other apps (the delegated-token exchange) becomes a permission, scoped to target
+  apps where needed, and on-behalf-of tokens disappear when the [MCP facade](../mcp-facade/plan.md)
+  moves into Core; administrator-only access becomes the intersection of the app's
   grants and the user's own rights plus the existing assignment policy; system-specific session
   lifetimes become a setting or follow the grants; ownership stays as Core-side bootstrap state shown
   as a badge. This is an app-grant change, compatible with vision decisions 1 and 9, not a redesign
@@ -360,7 +361,7 @@ plan is Draft.
       2–3; keep the identity token broker explicitly deferred. The authenticating-proxy pattern remains
       available meanwhile for perimeter SSO.
 - [ ] 5. Replace every `role: system` privilege check with the permission model above: a delegation
-      permission for exchange and on-behalf-of tokens, grant-and-user intersection for access, a
+      permission for the exchange, grant-and-user intersection for access, a
       lifetime setting, and Core-side ownership state; align permission names with access-token scopes.
 - [ ] 6. Implement optional permissions: `optionalCorePermissions`, unchecked install-time offers,
       administrator changes in app settings, app-initiated requests through Core confirmation, the

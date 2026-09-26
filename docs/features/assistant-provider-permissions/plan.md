@@ -83,17 +83,11 @@ permission descriptions; the SDK `InstallDialog` that Shell uses lists requested
 
 ### MCP Facade
 
-- An `mcp` interface declares an app's own tools. The facade is different: it republishes the tools of
-  every app and of Core to external agents. It is declared through its own interface, `mcp-facade`,
-  and Core recognizes that declaration as an OAuth resource instead of "the `ai-gateway` app's origin
-  plus `/mcp`".
-- The separate name keeps aggregators that read `interfaces.mcp` — Harness itself and the CLI
-  `hosty mcp` tool catalog — from listing the facade as one more provider, which would duplicate
-  every tool and make Harness aggregate itself.
-- Recognizing the facade as an OAuth resource is not a privilege: the token's audience is that app,
-  exactly as for a declared `mcp` interface today. The facade's ability to call other apps' tools
-  comes from delegation, which stays gated by `role: system` until the core extension model replaces
-  that gate with a permission.
+Owner decision, 2026-09-26: the facade moves out of the assistant into Core, which also owns the
+policy for which apps' tools reach agents — see the [MCP facade plan](../mcp-facade/plan.md). This
+plan therefore leaves the facade unchanged. Until the move ships, `ResolveResourceAsync` keeps its
+current special case for the `ai-gateway` app's origin plus `/mcp`. It grants no authority: the
+token's audience is that app, exactly as for a declared `mcp` interface.
 
 ### Common Rules
 
@@ -146,27 +140,26 @@ replacing that gate; this plan leaves it unchanged.
 
 - [ ] Add the confirmed fan-out `assistant` slot and the `apps.skills.read` permission to Core with
   descriptions, confirmation recording, manifest validation and confirmed roles in the apps API.
-- [ ] Replace interface-based authority in Core: agent-skill reads check the permission, and the facade
-  OAuth resource comes from its `mcp-facade` interface declaration.
+- [ ] Replace interface-based authority in Core: agent-skill reads check the permission instead of the
+  interface.
 - [ ] Show every eligible assistant as its own Shell panel tab with the delegated-token handshake per
   assistant, and add Shell's assistant setting for its own entry points with the no-selection state.
 - [ ] Show role and permission descriptions and additions in every install/update review surface,
   including the SDK install dialog used by Shell.
-- [ ] Declare the role, permission and `mcp-facade` interface in the Gateway manifest.
+- [ ] Declare the role and permission in the Gateway manifest.
 - [ ] Update the manifest reference in `hosty-app-skill` and the installation feature's permission
   vocabulary, publish `feature.md`, remove this plan and regenerate the index.
 
 ## Open Questions
 
 None. Names and assistant selection were settled with the owner on 2026-09-26; the agent provider
-role and the general permission model are tracked in the core extension model.
+role and the general permission model are tracked in the core extension model, and the facade's move
+in the MCP facade plan.
 
 ## Verification
 
 - An app that declares `ai-gateway` without a confirmed assistant role gets no Shell tab; without
   `apps.skills.read` it receives 403 on agent-skill reads.
-- An app without an `mcp-facade` declaration is not recognized as a facade resource; the facade does
-  not appear as a provider in Harness or `hosty mcp` catalogs.
 - Install and update review show the role and permission with descriptions; adding either by update
   requires confirmation; editing a source manifest grants nothing; an older Core rejects the manifest
   that requests the new permission.
@@ -175,5 +168,4 @@ role and the general permission model are tracked in the core extension model.
   role makes Shell ask again instead of falling back; a stopped assistant is shown as unavailable.
 - Removing the permission or role through a reviewed update revokes the corresponding access on the
   next check.
-- Harness works end to end: its assistant tab, skill injection into sessions and OAuth for external
-  MCP clients through the facade.
+- Harness works end to end: its assistant tab and skill injection into sessions.

@@ -38,12 +38,12 @@ not a legacy app-ID alias. Renaming that key instead requires a coordinated Core
 contract release and must be selected explicitly before Ready.
 
 Owner direction, 2026-09-26: [assistant provider permissions](../assistant-provider-permissions/plan.md)
-moves the authority out of that interface into a confirmed assistant role, an approved skill-read
-permission and an explicit facade interface; Shell shows every confirmed assistant as its own tab.
-The key then only locates the API, so keeping `ai-gateway` carries no authority. That plan ships first and the existing
-Gateway receives the role and permission through a confirmed update; the new `hosty.harness`
-manifest declares the same and the operator confirms them at the fresh installation, so no grant
-migration is needed.
+moves the authority out of that interface into a confirmed assistant role and an approved skill-read
+permission; Shell shows every confirmed assistant as its own tab. The key then only locates the API,
+so keeping `ai-gateway` carries no authority. That plan ships first and the existing Gateway receives
+the role and permission through a confirmed update; the new `hosty.harness` manifest declares the
+same and the operator confirms them at the fresh installation, so no grant migration is needed. The
+MCP facade moves into Core under the [MCP facade plan](../mcp-facade/plan.md).
 
 The old Core distribution descriptor and app feeds reference raw `main/apps/ai-gateway` files.
 Do not remove those paths without a retirement policy. Proposal: release Core with the new
@@ -54,8 +54,9 @@ would need a consumer contract, not an invented valid-looking manifest. Neither 
 nor release ordering migrates app state; the owner still uninstalls/reinstalls manually. Decide
 how older Core users are informed and when old URLs can be retired before removing them.
 
-Re-register external MCP clients and authenticate against the actual new Harness facade resource.
-The app origin/port may change with the new installation; query the assigned endpoint rather than
+Re-register external MCP clients and authenticate against the actual new Harness facade resource,
+unless the Core facade has shipped first — then clients already use Core's endpoint and the rename
+needs no facade re-registration. The app origin/port may change with the new installation; query the assigned endpoint rather than
 assuming the old one survives or that a particular new port is guaranteed. Cover Codex, Claude and
 the Hosty connector/plugin. Old credentials are not imported.
 

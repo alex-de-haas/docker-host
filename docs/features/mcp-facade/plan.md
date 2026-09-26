@@ -1,100 +1,133 @@
 # MCP Facade — One Remote Endpoint For The Whole Fleet
 
-Status: In Progress
+Status: Draft
 Created: 2026-08-24
-Updated: 2026-09-06
+Updated: 2026-09-26
 
-An aggregating streamable-HTTP MCP server on the `hosty.ai-gateway` system app: one config entry in
-an external client (Claude Code, VS Code, Cursor, a phone client) yields Core's control-plane tools,
-every app's MCP tools, and app skills — over HTTPS, with no CLI or SSH on the path. This resolves
-[ai-agent-bridge](../ai-agent-bridge/plan.md) step-7 topology 4, which recorded the need as "a
-remote HTTP MCP endpoint with OAuth, a future `mcp-hub` system app … Core never hosts it": the
-mcp-hub is the existing gateway system app, and Core still hosts nothing.
+The facade ships on the `hosty.ai-gateway` system app ([feature.md](feature.md)). Owner decision,
+2026-09-26: move it into Core, and let Core own the policy that decides which apps' tools reach
+agents. The plan returns to Draft because the move needs its own Ready approval. Its two remaining
+gateway deliverables — `notifications/tools/list_changed` and non-loopback live verification — are
+carried into the Core implementation instead of being finished on the gateway.
 
-**Depends on [scoped-access-tokens](../scoped-access-tokens/feature.md).** Without it the facade has no
-credential an external client could present, and building an ad-hoc gateway key would be discarded
-the day scoped tokens land.
+## Why Core
+
+Core already decides what is *allowed*: it introspects the client's credential, mints every
+delegated token and bounds it by what the acting user may reach. The facade adds what is *offered*
+and carries the traffic. Keeping that second half in an assistant app no longer fits:
+
+- **The aggregation exists twice.** The CLI connector (`apps/cli/.../Mcp/ToolCatalog.cs`) and the
+  gateway facade (`apps/ai-gateway/src/facade/`) each select providers, name tools, filter to
+  read-only and fan out, and the gateway keeps a hand port of the connector's naming (`tool-key.ts`)
+  so the two do not drift.
+- **The offer policy already diverges.** Which apps' tools may reach agents (`mcpProviders`) and which
+  skill texts are approved live in the gateway's settings. The facade and assistant sessions honour
+  them; `hosty mcp` takes every running app that declares `mcp`. The vision makes enabling an MCP
+  provider a host decision, not an app's.
+- **Several assistants may be installed** ([assistant provider permissions](../assistant-provider-permissions/plan.md)).
+  The host's remote MCP endpoint should not belong to one of them, and removing Harness should not
+  remove remote agent access to the fleet.
+- **A system-app privilege disappears.** The on-behalf-of route
+  (`/api/internal/apps/{appId}/delegated-token`) exists for the facade alone: it is the one place an
+  app acts as a user without that user's click. Core minting the tokens itself needs no such route.
+
+This reverses one boundary of [ai-agent-bridge](../ai-agent-bridge/feature.md) — "normal agent
+traffic does not pass through" Core — for MCP tool traffic only. Other domain actions still do not
+pass through Core. Tool calls are human-paced rather than a hot path, and the limits below keep a slow
+app from costing more than its own slot.
 
 ## Target Behavior
 
-- **A full MCP server, not a catalog route.** `initialize`, `tools/list`, `tools/call`, and
-  `notifications/tools/list_changed` on fleet changes — an installed app's tools appear in a
-  connected client without touching its config, which retires the static-config staleness problem
-  for good. A bare listing endpoint would be useless: a client could see the tools and still not
-  call them.
-- **Built from parts the gateway already has**: provider discovery
-  ([providers.ts](../../../apps/ai-gateway/src/settings/providers.ts)), the delegated-token exchange,
-  the transparent forwarder ([proxy.ts](../../../apps/ai-gateway/src/mcp/proxy.ts)), and the
-  fail-closed read-only filter ([readonly.ts](../../../apps/ai-gateway/src/mcp/readonly.ts)). New
-  work is the MCP server shell around them plus external authentication.
-- **Authentication**: a bearer scoped access token with the facade as its audience, introspected
-  against Core per request — the same contract every app uses, so the facade adds no second auth
-  mechanism.
-- **On-behalf-of, with attribution**: for each `tools/call` the gateway obtains a delegated token
-  for the *introspected user* and the target app, so the app authorizes the real actor and audit
-  lands on the user, never on the gateway.
-- **Core's tools are in the catalog** so one entry truly covers the host. The on-behalf-of
-  credential mirrors the app path: Core's existing delegated-token exchange gains Core MCP as a
-  target, so the gateway exchanges its service token plus the introspected user for a short-lived
-  Core MCP credential per call — same machinery, same audit, no new trust axis. Direct connection
-  to Core `/api/mcp` remains supported regardless: the gateway is a removable system app, and a
-  host without it must not lose agent access to Core. The facade is convenience, not a monopoly.
-- **Tool naming reuses the connector's scheme** (`<key>__<tool>`, reversible id escaping, length
-  hashing) for the same reasons it was designed that way — stable names an unrelated install cannot
-  shift, safe `__` boundaries — and so the two surfaces never teach clients two dialects.
-- **Visibility follows Core's policy**, exactly as in the connector: an app the acting user may not
-  reach drops out when Core refuses to mint its token — the facade re-implements no access rules.
-- **Read-only, fail-closed**, until mutation scopes exist ([core-mcp](../core-mcp/feature.md)): only
-  tools declaring `annotations.readOnlyHint: true` are exported, hidden from the list *and* refused
-  on call, enforced facade-side.
-- **Skills ride `initialize` `instructions`**, as the connector already does: only apps whose tools
-  the client actually received contribute; only operator-approved texts (the gateway's existing
-  digest-approval store) are delivered — appropriate here because facade callers are remote users,
-  not the operator the connector's ungated path assumes; the facade's own text comes first and
-  unwrapped (the attribution contract of
-  [app-provided-skills](../app-provided-skills/feature.md)). The protocol has no
-  instructions-changed notification, so an updated skill reaches a client on reconnect — accepted.
-- **Perimeter**: exposed through the app's public-origin machinery, rate-limited, and the facade
-  never logs a bearer.
+### Offer Policy In Core
+
+- A Core-owned host setting records, per app, whether its MCP tools may be offered to agents
+  (default off) and which skill-text digests the operator approved. Administrators edit it in Shell's
+  platform settings; changes are audited and drop cached catalogs at once.
+- Every aggregator reads it: the Core facade, `hosty mcp` and assistant sessions (Harness today).
+  Assistants keep their own approval rules for tools that are not read-only; the host setting only
+  decides which apps are offered.
+- The gateway's `mcpProviders` and skill approvals are not imported. After the move the operator
+  enables providers and approves skills once in Core.
+
+### The Endpoint
+
+- A streamable-HTTP MCP server on Core's origin: `initialize`, `tools/list`, `tools/call`, and
+  `notifications/tools/list_changed` driven by Core's own fleet events. It lists Core's tools and the
+  read-only tools of every enabled app the acting user may reach, with approved skills in
+  `instructions` (the host's text first and unwrapped, app text fenced and attributed).
+- Authentication is a scoped access token with Core's audience and `mcp:read`, the credential Core
+  MCP already accepts. For each app call Core mints a delegated token for the acting user in
+  process, bounded by `RequireAccessibleUserAsync` and audited as the on-behalf-of route is today.
+  Core's own tools run in process.
+- Behavior carried over from the gateway facade: connector-compatible tool names; read-only,
+  fail-closed filtering on list **and** call; one budget per source across handshake and pages; a
+  failed source costs only itself; a 30-second per-user listing cache that never grants anything;
+  the per-address rate limit ahead of introspection; the 64 KB body limit; and the distinct failure
+  answers.
+- Added limits: a per-call timeout, a response size cap and per-user concurrency, so a slow or chatty
+  app degrades its own tools rather than Core.
+- Direct connection to Core-only MCP tools stays supported.
+
+### One Implementation
+
+Selection, naming, readiness per service and the read-only filter move from the CLI into a shared
+.NET library used by Core and the CLI. The gateway's TypeScript facade, its catalog and naming port,
+Core's special case for the gateway facade in `OAuthEndpoints.ResolveResourceAsync` and the
+on-behalf-of route are removed when the Core endpoint ships.
+
+### Transition
+
+One PR: the Core endpoint, the policy and its Shell settings, the CLI change, and removal of the
+gateway facade. External clients re-register once against Core's endpoint. This is independent of the
+[Harness rename](../hosty-harness-rename/plan.md); if it ships first, the rename needs no facade
+re-registration.
+
+Version outcome when implemented: platform minor (Core endpoint, policy and CLI), Shell minor for the
+policy settings, and the gateway/Harness for removing the facade and reading the Core policy.
 
 ## Deliverables
 
-- [x] MCP endpoint on the gateway, authenticated by scoped-token introspection.
-- [x] Aggregated `tools/list` with connector-compatible naming.
-- [x] Per-call forwarding through per-user delegated tokens, read-only filter enforced.
-- [x] Core MCP tools in the catalog. The exchange could not serve this — it branches off a token
-      descended from a browser interaction — so Core gained an on-behalf-of route instead, and
-      `hosty:core` as a delegation target; recorded in [feature.md](feature.md).
-- [x] Skills delivered via `instructions`, approval-gated, attribution order asserted.
-- [x] The rate-limited perimeter this plan's Target Behavior called for. It was implemented without being listed here, which is how a stated obligation goes untracked — recorded now, and described in [feature.md](feature.md).
-- [ ] `notifications/tools/list_changed` on fleet changes. Needs the streamable-HTTP GET stream,
-      which the endpoint currently refuses rather than half-implements; until it exists, a client
-      sees a newly installed app's tools on its next connection.
-- [ ] Live verification from a stock Claude Code over a **non-loopback** origin. Core's own
-      `/api/mcp` was exercised that way on 2026-09-06, which closed ai-agent-bridge step 6's cell;
-      the facade needs the gateway's public origin and is still unproven there. The
-      loopback half was proven on 2026-08-25 (recorded in [feature.md](feature.md)): one config
-      entry, aggregated catalog, on-behalf-of forwarding, read-only filter and revocation all
-      exercised by a stock `claude -p` on the dev host — but that host runs no ingress, so external
-      origin, TLS and a proxy in the path remain unexercised **for this endpoint**.
-- [ ] On ship: ai-agent-bridge topology-4 note and decision log updated to name the facade.
+- [ ] Add the Core-owned offer policy (per-app enablement, approved skill digests) with its admin API,
+      Shell settings UI, audit and cache invalidation.
+- [ ] Extract the shared .NET catalog library from the CLI and use it from Core and the CLI.
+- [ ] Serve the Core facade endpoint: authentication, in-process delegated tokens, Core tools,
+      read-only fail-closed list and call, approved skills, carried-over and new limits, and
+      `notifications/tools/list_changed` from fleet events.
+- [ ] Make `hosty mcp` honour the Core policy in the shape chosen below.
+- [ ] Switch assistant sessions to the Core policy; remove the gateway facade, its catalog and naming
+      port, Core's gateway-facade OAuth special case and the on-behalf-of route.
+- [ ] Verify from a stock Claude Code over a non-loopback origin: one entry, Core and two apps'
+      tools, a read-only call per source, refusal of a non-read-only tool, `list_changed` on install,
+      approved skills, and a smaller catalog for a second user.
+- [ ] Update `feature.md` here, [core-mcp](../core-mcp/feature.md),
+      [hosty-mcp-connector](../hosty-mcp-connector/feature.md), the boundary and decision log in
+      [ai-agent-bridge](../ai-agent-bridge/feature.md) and plugin guidance; remove this plan and
+      regenerate the index.
 
-## Resolved Questions (2026-08-24, owner approval in chat)
+## Earlier Decisions
 
-1. **On-behalf-of for Core MCP**: the delegated-token exchange grows Core MCP as a target,
-   mirroring the app path — folded into the design and deliverables above.
-2. **`hosty mcp` is unchanged by this feature.** It stays the answer for hosts without the gateway
-   and for SSH-only setups; any convergence (thin client of the facade, exporting Core's tools) is
-   its own future plan.
-3. **Generic-surface degradation is deferred** until a real fleet approaches the connector's
-   ~60–80-tool threshold; the facade ships namespaced export only.
-4. **Sessions are ephemeral**: a gateway restart drops them and clients re-initialize; nothing about
-   facade MCP sessions persists the way harness sessions do.
+Still in force from 2026-08-24: generic-surface degradation waits until a real fleet approaches the
+connector's ~60–80-tool threshold, and facade MCP sessions are ephemeral — a Core restart drops them
+and clients re-initialize.
+
+Superseded on 2026-09-26: on-behalf-of for Core MCP through a new Core route (Core now mints in
+process), and "`hosty mcp` is unchanged by this feature" (the connector now shares the facade's
+implementation and policy).
+
+## Open Questions
+
+- Does the facade extend `/api/mcp` or live on a separate Core path? Recommendation: a separate path,
+  so clients already connected to Core-only `/api/mcp` keep their tool names and permission rules.
+- Does `hosty mcp` keep aggregating with the shared library, or become a stdio bridge to Core's
+  endpoint? Recommendation: a bridge, so the host has one catalog.
+- Should assistant sessions later call apps through the Core facade instead of their own per-app
+  path? Recommendation: not in this plan; they need non-read-only tools and approval integration.
+- Which timeout, size and concurrency limits fit real app tools?
 
 ## Verification
 
-A stock client with a single facade entry lists tools from Core and at least two apps, calls one
-read-only tool per source, sees a newly installed app's tools arrive via `list_changed`, is refused
-on a non-read-only tool, and receives approved skills in `instructions` with the facade's text
-first. A second user's token shows a smaller catalog matching their app access. All of it against a
-non-loopback origin.
+The deliverable above names the live acceptance run. In addition: two users with different app access
+see different catalogs; disabling an app in the Core policy removes its tools from the facade,
+`hosty mcp` and new assistant sessions; a slow app times out without delaying other sources; a
+non-read-only tool is refused on call even from a cached listing; the on-behalf-of route no longer
+exists; and a host without Harness still serves the full facade.

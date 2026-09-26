@@ -221,6 +221,13 @@ Decisions 1–5: 2026-08-19.
     [core extension model](features/core-extension-model/plan.md) owns the general model;
     [assistant provider permissions](features/assistant-provider-permissions/plan.md) is its first slice.
 
+15. **Core serves the host-wide MCP facade (2026-09-26).** Core already decides which calls are
+    allowed; it now also owns which apps' tools are offered to agents and serves the one remote MCP
+    endpoint for the whole host, replacing the facade inside the assistant app. The CLI connector
+    shares its implementation and policy. This reverses the agent-bridge rule that agent traffic
+    never passes through Core, for MCP tool traffic only. The [MCP facade plan](features/mcp-facade/plan.md)
+    owns the move and is Draft.
+
 ## Expectations And Later Directions
 
 - **Apps ship with source.** The default is open source; a company's internal apps are closed by
