@@ -2,7 +2,16 @@
 
 Status: Draft
 Created: 2026-09-16
-Updated: 2026-09-17
+Updated: 2026-09-24
+
+## Session Source Selection Dependency (2026-09-24)
+
+[Shared assistant development sessions](../assistant-development-sessions/plan.md) adds session
+worktree identity and an operator/agent choice of which session's source to run. This plan continues
+to own typed inspect/enter/run/leave operations, runtime verification and their authority integration.
+Consume the registered source selection in those operations; do not implement another workspace
+registry or encode the selection as a hidden rewrite of an operator source override. Runtime profile
+and source selection are separate inputs. The no-Git path remains valid. Both plans remain Draft.
 
 ## Goal
 

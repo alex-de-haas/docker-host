@@ -2,10 +2,20 @@
 
 Status: In Progress
 Created: 2026-08-18
-Updated: 2026-08-31
+Updated: 2026-09-25
 
 Make the assistant reachable from anywhere in Shell, and let an app hand it context — without letting
 an app *drive* it.
+
+## Feedback Intake Boundary (2026-09-25)
+
+[Shared assistant development sessions](../assistant-development-sessions/plan.md#app-feedback-inbox-and-batch-session-input)
+owns a proposed app feedback capture/inbox and administrator-reviewed batch dispatch. Ordinary users
+can submit observations there without seeing or invoking the assistant. Reuse verified app provenance
+and draft review where appropriate, but do not expand `hosty:ask-assistant` into an automatic send or
+give its admin-only panel to regular users. Structured screenshots/element context need a separately
+designed contract; they are not already supported by this plan's plain-text message. Capture, durable
+intake and batching deliverables stay in the new Draft rather than being duplicated here.
 
 ## Goal
 

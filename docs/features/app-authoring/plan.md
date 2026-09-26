@@ -2,13 +2,24 @@
 
 Status: Draft
 Created: 2026-09-16
-Updated: 2026-09-17
+Updated: 2026-09-25
+
+## Development Session Direction (2026-09-24)
+
+[Shared assistant development sessions](../assistant-development-sessions/plan.md) captures the
+new owner direction for Git-backed work: a session acquires registered worktrees, can switch
+internal agents with shared history, selects its source for testing and tracks code PRs through
+Merge and Complete. It owns that lifecycle; this umbrella retains app creation and integration.
+The earlier direct-source iteration below remains the no-Git prototype path. For Git-backed work,
+consume the session workspace rather than treating isolated branches as non-interactive-only.
+The new plan is Draft and does not approve either feature's implementation.
 
 ## Goal
 
 An administrator creates an app from a prompt inside Hosty, opens the running result, iterates with
 the assistant, integrates installed apps where useful, and optionally publishes a reusable release.
-The same interactive loop supports changing an existing source-capable app.
+The same interactive loop supports changing an existing source-capable app and adapting an existing
+upstream repository or container image into a Hosty app.
 
 Owner direction, 2026-09-16: Git is optional during creation and iteration; an app may begin as a
 durable local folder. Creation accepts an app id, display metadata and a prompt, opens a dedicated
@@ -94,6 +105,73 @@ Git-free edits have no Hosty recovery history; preserving them is the operator's
 "published" flag: source history, remote repository, installable release, catalog listing and public
 network exposure are different facts. Publishing never implicitly exposes the app to the internet.
 
+## Adapt An Existing App (Owner Idea, 2026-09-25)
+
+Add an agent-assisted entry to the same authoring journey: provide a repository URL (for example,
+GitHub) or an OCI image reference (for example, Docker Hub or GHCR), describe the intended use, and
+ask the assistant to prepare a Hosty app. This is a proposed extension, not a universal automatic
+converter or an approval to implement the Draft.
+
+1. **Inspect and assess compatibility.** Resolve the input to a recorded upstream revision or image
+   digest. Inspect available documentation, source/image metadata, startup requirements, ports,
+   persistent data, configuration, dependencies and supported OS/architectures against the actual
+   host capabilities. Reading upstream instructions does not authorize executing their commands.
+   Report supported, supported with adaptation, or unsupported with concrete blockers. Do not
+   assume a container has a web UI or that a Windows-only desktop app can run on the selected host.
+2. **Choose the smallest useful adaptation.** For an existing image, normally create a separate
+   wrapper repository/folder containing Hosty metadata and reference the upstream image; rebuilding
+   or modifying the upstream application is not inherently necessary. For source inputs, use a
+   wrapper, fork or registered session worktree as appropriate. Record the upstream relationship
+   and keep Hosty wrapper changes distinguishable from upstream code changes. Never assume write
+   access to the upstream repository or invent source availability for an image-only input.
+3. **Prepare Hosty support.** Generate a valid manifest, compatible runtime profiles, settings and
+   secret declarations, data/cache mappings, endpoints and dependency configuration. Add Shell UI
+   integration only where a UI exists and is compatible; a database such as MongoDB is a valid
+   service-only candidate with data and connection configuration, not a fabricated web application.
+   Generate source-development profiles only when usable source and a supported toolchain exist.
+   Distinguish basic lifecycle support from optional Hosty identity, roles, MCP and SDK integration;
+   a wrapper manifest alone does not make an upstream app understand Hosty authentication.
+4. **Validate and iterate.** Use Core-managed lifecycle and the
+   [sandbox runtime proposal](../app-sandbox-runtimes/plan.md) for disposable test data and scoped
+   execution once available. Check actual readiness and useful behavior, persistence/restart,
+   configuration and UI/auth or service connectivity as applicable. Until protected execution is
+   implemented, do not describe ordinary dev mode as isolated. Preserve diagnostics and unresolved
+   incompatibilities rather than reporting success merely because a manifest validates.
+5. **Publish when requested.** Hand the verified wrapper and its upstream references to
+   [app publication](../app-publication/plan.md) for a versioned release/feed and optional catalog PR.
+   Preserve attribution and record applicable upstream redistribution requirements for the chosen
+   delivery method. Keep upstream version/digest separate from the Hosty wrapper's version; updating
+   upstream needs revalidation. Local readiness, published release and Marketplace listing remain
+   distinct outcomes, with publication owned by the existing feature.
+
+Use reusable skills/recipes for common application shapes (web service, static frontend, database,
+multi-service stack), grounded in `hosty-app-skill` and the current Core contract. They guide the
+agent's analysis and file generation without restricting supported languages to fixed templates.
+Core retains deterministic manifest/capability validation and lifecycle enforcement. The agent
+handles application-specific interpretation and adaptations; recipes cannot grant missing host
+capabilities or permissions. Unsupported inputs receive an explanation before attempted deployment.
+
+## Discover Ready-Made Capabilities During App Design
+
+Owner clarification, 2026-09-25: during new-app design, feature additions and upstream adaptation,
+identify the capabilities the request needs and use
+[Marketplace MCP discovery](../runtime-app-marketplace/plan.md) to find reusable components.
+The user need not name a dependency: when asked to create a video editor, the agent can propose
+Transcode Engine for operations verified in its published contract, explaining what it supplies
+and what remains to build. Finding an existing MongoDB wrapper also prevents duplication, but is
+only one use of this broader capability-led discovery. Check Core for already installed providers.
+
+Compare documented operations, versions/interfaces, runtime support and configuration, not only
+names; explain partial matches and alternatives. The Marketplace plan introduces a Tools
+classification for reusable provider apps, separate from the system role of Shell/Marketplace
+and independent of whether the provider exposes MCP or an optional administration UI.
+
+A catalog match does not imply installation, a connection grant or suitability for production-data
+reuse. Sandbox testing still needs sandbox-scoped dependencies. Missing/unavailable discovery is
+an explicit unknown. Marketplace owns the discovery/classification implementation checklist;
+this umbrella consumes it throughout authoring. Existing publication and installation flows retain
+their authority.
+
 ## Ownership And Extension Points
 
 | Component | Responsibility |
@@ -102,7 +180,7 @@ network exposure are different facts. Publishing never implicitly exposes the ap
 | Harness/gateway | Authoring session orchestration, prompt, file edits, validation execution and progress |
 | Shell | Create/edit entry points, app preview, context handoff and provenance/status presentation |
 | Core source storage / Git | Existing app source folder and lifecycle retention; observed changes/loss warnings; Git owns source history |
-| Marketplace | Its catalog's submission instructions/schema and optional tools; no Core lifecycle authority |
+| Marketplace | Catalog MCP discovery for reuse, submission instructions/schema and separately scoped publication tools; no Core lifecycle authority |
 | App repository | Source history, release artifacts, manifests and feeds |
 
 Keep an internal authoring record separate from `manifest.json`: workspace id, app id, canonical
@@ -127,6 +205,7 @@ being a Hosty app. The disposable preview server does not constrain the generate
 | 1b | [App prototype workspaces](../app-prototype-workspaces/plan.md) | Create → open → edit using existing source/dev mode, loss warnings and assisted Git save/push |
 | 2 | [App development controls](../app-development-controls/plan.md) | Reliably edit an existing app and enter/leave development through typed controls |
 | 3 | Integration deliverables in this umbrella | A generated app uses an installed app through its real contract |
+| 3 extension | Existing-app adaptation in this umbrella | Turn a compatible repository or image into a verified Hosty wrapper |
 | 4 | [App publication](../app-publication/plan.md) | Hosted repository creation where needed, release/feed and catalog PR |
 
 Order 2 can precede 1b if editing existing apps becomes the priority; typed MCP mutations are not a
@@ -167,7 +246,7 @@ a discard, save or publish operation. Pinned starts refuse dirty checkouts.
   own prompt is a separate explicit submission. Do not turn `ask-assistant` into auto-send.
 - [Assistant app context](../assistant-app-context/feature.md) owns persistent multi-app associations
   and the picker/new-session entry points. An association is conversational context, independent
-  of provider grants and the single primary source workspace used for development.
+  of provider grants and the registered repository workspaces selected for development.
 - [Assistant approval rules](../assistant-approval-rules/plan.md) owns reusable approval policy.
   Per vision decision 6, it also owns general source bindings and explicit session grants for source
   writes/project commands across selected apps, plus scoped lifecycle authority. Authoring requires
@@ -192,6 +271,12 @@ a discard, save or publish operation. Pinned starts refuse dirty checkouts.
       exposing operator tokens to the generated app or treating app skills as general host authority.
 - [ ] Present unavailable capabilities with actionable reasons (missing source/profile/toolchain,
       disabled provider, unsupported authorization), and preserve usable local-only apps.
+- [ ] Add repository/image input and an evidence-backed compatibility assessment to app authoring,
+      including explicit unsupported-host and missing-source outcomes.
+- [ ] Deliver reusable adaptation guidance and wrapper generation for selected common app shapes;
+      record upstream provenance, runtime/configuration/storage needs and integration limitations.
+- [ ] Validate a source-based web app and an image-only service app through Core, then hand a
+      verified wrapper to the existing release/catalog flow without duplicating its implementation.
 - [ ] Verify the cross-feature journey across restart and session replacement, including local-only
       operation when no repository or catalog is configured; publish current behavior in `feature.md`
       only when it ships, then remove this plan when its own deliverables are complete.
@@ -199,8 +284,13 @@ a discard, save or publish operation. Pinned starts refuse dirty checkouts.
 ## Open Questions
 
 1. Which installed provider is the first integration example, and which identity should call it?
-2. When does the operator want isolated branch/PR work instead of live editing? Keep it an explicit
-   choice when that separate feature becomes available.
+2. How does a no-Git prototype enter the registered Git session workflow without losing local
+   work? Session worktrees can also supply the live development runtime; see the new session plan.
+
+3. Which source web app and image-only service form the first adaptation examples, and which
+   host OS/architectures must they support?
+4. How are adaptation skills delivered/versioned for internal and external agents, and what is the
+   default wrapper-versus-fork policy when upstream source changes are needed?
 
 ## Verification
 
@@ -208,6 +298,11 @@ Children own their component tests. Umbrella acceptance uses one Core-managed pr
 open through Shell, edit, restart Core/gateway, resume in a new session, connect a real provider and
 observe both a successful authorized call and a refused unauthorized one. Deleting/expiring a chat
 must not delete source. Publication acceptance lives in its own plan and must not gate local use.
+
+Adaptation acceptance additionally covers a service-only image without UI/source, a compatible web
+repository, an unsupported runtime/architecture, missing configuration and a failed startup. Verify
+actual behavior and persistence, correct attribution/version references, no invented Hosty auth
+integration and no upstream push or catalog publication implied by requesting an adaptation.
 
 Planning verification: check local links, run `node scripts/docs-index.mjs --check` and
 `git diff --check`. Documentation-only work has no artifact version bump.
