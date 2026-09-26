@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-06-09
-Updated: 2026-09-16
+Updated: 2026-09-26
 
 The shared model, the boundaries and the decision log live in [feature.md](feature.md) and are in
 force. This document holds only what is **not built**: the rollout checklist, and the design for the
@@ -243,6 +243,15 @@ role changes mid-flight, or when the action contract changes underneath it.
 
 ## Step 12 — Development Agent Bridge
 
+Owner clarification, 2026-09-24: [shared assistant development sessions](../assistant-development-sessions/plan.md)
+also uses isolated worktrees for interactive Git-backed editing and live testing. It owns session
+integration acceptance; its [shared-history](../assistant-shared-history/plan.md),
+[workspace](../assistant-session-workspaces/plan.md) and [PR](../assistant-pr-lifecycle/plan.md) children
+own those mechanisms, while this step retains non-interactive jobs and disposable validation. Reuse registered repository/workspace identities where applicable;
+do not build a competing registry. The older interactive-versus-isolated distinction below is a
+workflow distinction, not a prohibition on worktrees for interactive work. This does not authorize
+the new Draft or change the state of already implemented bridge work.
+
 The interactive create/edit/preview journey is tracked separately in
 [app authoring](../app-authoring/plan.md), following the owner's 2026-09-16 direction. It permits a
 durable local source folder without Git and uses the installed app's live development runtime.
@@ -262,7 +271,9 @@ worktree whose only output is a branch or draft PR, never a merge and never live
 3. It resolves source metadata and a safe checkout through Core source APIs or Core MCP.
 4. It produces changes on an isolated branch or PR.
 5. A validation service prepares a disposable environment without touching the installed app's feed or
-   lifecycle state.
+   lifecycle state. Runtime/data isolation and browser execution are owned by the
+   [sandbox runtimes Draft](../app-sandbox-runtimes/plan.md); this step owns job integration and
+   consumption of its validation results, not a second environment implementation.
 6. The user reviews results produced against synthetic, copied or otherwise isolated data.
 7. Promotion or merge stays a separate explicit step.
 

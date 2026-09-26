@@ -1,7 +1,7 @@
 # Hosty Platform Vision
 
 Created: 2026-08-19
-Updated: 2026-09-18
+Updated: 2026-09-26
 
 The umbrella document: where Hosty is going, so individual decisions have a criterion to be judged
 against. It authorizes no implementation and owns no deliverables — work it names is tracked in the
@@ -68,8 +68,8 @@ Those are separate milestones, not one publish flag, and none implies public net
 The [app-authoring epic](features/app-authoring/plan.md) gathers existing mechanisms and assigns the
 remaining work to prototype workspaces, development controls, integrations and publication. Its plans
 are Draft: this direction does not approve their implementation choices. Interactive live editing
-continues decision 2 below; isolated non-interactive branch/PR jobs remain the distinct Development
-Agent Bridge workflow.
+continues decision 2 below. Decision 10 adds session-owned worktrees for Git-backed interactive work;
+non-interactive jobs with disposable validation remain the distinct Development Agent Bridge workflow.
 
 ## The Security Consequence
 
@@ -178,6 +178,39 @@ Decisions 1–5: 2026-08-19.
    external OAuth scopes. [App installation](features/app-installation-sdk/feature.md) describes
    the implementation; its [plan](features/app-installation-sdk/plan.md) owns remaining verification.
 
+10. **Shared development sessions and clients (2026-09-24; clarified 2026-09-26).** A session owns
+    a shared conversation and optional registered source workspace. Switching connected agents
+    preserves visible context; clients control host-resident work. Keep source diffs and separate
+    Publish, Merge and Complete. Prefer managed source with a verified migration from overrides.
+    The [session umbrella](features/assistant-development-sessions/plan.md) coordinates independently
+    approved feature plans, including rare explicit local external-agent context exchange.
+
+11. **Feedback intake before agent work (2026-09-25).** Users can capture a region or UI element,
+    add a comment and submit an app/page-linked observation; screenshots and element context are
+    included where available. This covers bugs and improvements. Ordinary users submit without
+    agent access. An administrator reviews the inbox, groups related items and explicitly sends
+    the selected evidence and a combined request to a session. Administrators may also send their
+    own reviewed observation directly. Submission alone starts no agent and grants no source access;
+    feedback items are input to sessions, not a second development task model. The capture mechanism,
+    narrow user-facing authority, durable evidence and triage UX remain Draft work owned by
+    [app feedback inbox](features/app-feedback-inbox/plan.md).
+
+12. **Dedicated native Harness client (2026-09-25).** Build a separate Swift client focused on
+    Hosty Harness sessions over AHP, including remote conversation, permission/question requests,
+    changed files/diffs and supported session actions. Agents and workspaces remain on the host.
+    Phone usability is a primary requirement; compact navigation need not mimic desktop sidebars.
+    The existing full Swift Shell remains separate. Generic panels in Swift Shell were considered
+    but are not the selected scope, and this decision does not retire that client. The
+    [Hosty Harness Swift plan](features/hosty-harness-swift/plan.md) owns native delivery, depends on
+    the shared session server contract and remains Draft pending platform/UX/protocol decisions.
+
+13. **AHP as a client interface (2026-09-26, revised after review).** Keep Hosty's existing
+    session implementation and journal authoritative. Evaluate AHP as a replaceable external client
+    adapter, with a bounded Swift/auth/reconnect spike. Existing web REST/SSE remains; provider
+    switching and other internal features do not depend on AHP adoption. Swift targets the official
+    SDK subject to the spike. This supersedes the earlier same-day AHP-first foundation/web-cutover
+    decision; [client integration](features/assistant-ahp/plan.md) remains Draft.
+
 ## Expectations And Later Directions
 
 - **Apps ship with source.** The default is open source; a company's internal apps are closed by
@@ -190,12 +223,13 @@ Decisions 1–5: 2026-08-19.
   dialog is where the amber warnings live today. Advisory by definition: a model that misses a
   backdoor does not make the backdoor absent, so this sharpens the administrator's decision and
   never substitutes for the perimeter.
-- **The gateway's name.** "AI Gateway" undersells what the app became; **Hosty Harness** says it
-  right, and the code already agrees — `HarnessAdapter` and `HarnessRun` are its own interface
-  names, and the app's job is precisely to host and broker harnesses. Recorded as an intent, not a
-  task: renaming a system app has a known trap (a persisted manifest URL keeps the old id pinned;
-  the telemetry rename needed three coordinated hardcoded-id changes plus a config fix on live
-  hosts), so it is its own small planned change with a migration note, never a drive-by.
+- **The gateway's name (owner follow-up, 2026-09-25).** Rename AI Gateway to **Hosty Harness**
+  within the broader [shared development session redesign](features/hosty-harness-rename/plan.md).
+  Owner clarification: change the app id too (`hosty.ai-gateway` -> planned `hosty.harness`). The
+  operator will uninstall the old app, install the new one and configure it afresh. No old-session,
+  settings or credential migration, in-place upgrade or legacy-id aliases are required. Update
+  discovery, install/feed references and authorization consistently for the new identity. This is
+  an unchecked Draft deliverable, not approval to implement or uninstall the current app now.
 
 ## Contribution Points, Named
 
@@ -236,6 +270,8 @@ the manifest contract. Two standing consequences:
 
 ## Spanned Features
 
+[hosty-harness-swift](features/hosty-harness-swift/plan.md) ·
+[assistant-development-sessions](features/assistant-development-sessions/plan.md) ·
 [app-authoring](features/app-authoring/plan.md) ·
 [core-extension-model](features/core-extension-model/plan.md) ·
 [ai-agent-bridge](features/ai-agent-bridge/plan.md) ·

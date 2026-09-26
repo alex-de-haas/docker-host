@@ -2,7 +2,16 @@
 
 Status: Draft
 Created: 2026-09-16
-Updated: 2026-09-16
+Updated: 2026-09-26
+
+## Code PR Publication Boundary (2026-09-24)
+
+[Assistant PR lifecycle](../assistant-pr-lifecycle/plan.md) owns Publish/review/
+Merge/Complete for code changes, including dependency-ordered merges, post-merge checks and corrective
+PRs. This plan continues to own repository provisioning, installable releases/feeds and catalog
+promotion. Reuse their recorded commits, PRs and artifact observations where the workflows meet;
+do not make the session's Publish button imply a release, catalog listing or installation update.
+The two plans retain separate deliverables and approval boundaries.
 
 ## Goal
 
@@ -34,6 +43,11 @@ new feed is a distinct reviewed operation, not a side effect of pushing source. 
 does not produce automatic Hosty updates. Public ingress/Cloudflare publication is unrelated.
 
 ## Boundaries And Extension Points
+
+Read-only catalog search and app-detail MCP tools are tracked in
+[Marketplace discovery](../runtime-app-marketplace/plan.md). Authoring uses them to recommend
+existing apps before creating duplicate wrappers; catalog-submission actions remain owned here
+and do not inherit permission from a discovery call.
 
 - Repository provider operations belong to the authoring workflow or a provider app/adapter, not
   Core's generic app lifecycle. Choose a first provider rather than building every provider at once.
