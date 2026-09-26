@@ -1,7 +1,7 @@
 # Hosty Platform Vision
 
 Created: 2026-08-19
-Updated: 2026-09-25
+Updated: 2026-09-26
 
 The umbrella document: where Hosty is going, so individual decisions have a criterion to be judged
 against. It authorizes no implementation and owns no deliverables — work it names is tracked in the
@@ -178,23 +178,12 @@ Decisions 1–5: 2026-08-19.
    external OAuth scopes. [App installation](features/app-installation-sdk/feature.md) describes
    the implementation; its [plan](features/app-installation-sdk/plan.md) owns remaining verification.
 
-10. **Shared development sessions and clients (2026-09-24).** A session is the visible unit of
-    conversation and, when editing begins, registered source changes; there is no separate user-facing
-    task. Git-backed work uses a managed worktree/branch per session and repository, shared by apps
-    from the same repository. Preserve diffs and allow selecting a session's source for live testing
-    from the UI. Prefer managed source over arbitrary overrides, but settle the installed-versus-latest
-    baseline and non-destructive migration before implementation. Durable no-Git prototypes remain valid.
-    Switching connected Codex/Claude agents in one shared conversation is a primary workflow: plan,
-    review/amend with another agent, then implement with the original agent seeing the intervening work.
-    Use AHP where its verified capabilities fit shared state/history and remote clients; protocol
-    support is not proof of native context portability. Separate Publish, Merge and Complete, preserve
-    editable development instructions, observe post-merge checks/artifacts, and allow corrective PRs
-    before finalization. External direct editing is a rare, explicit same-machine integration: read
-    a session, use its registered workspace, save an attributed report. No automatic external history
-    synchronization or mandatory handoff is required initially. Remote clients control host-resident
-    agents; unrestricted local agents cooperate through instructions rather than a claimed sandbox.
-    [Shared assistant development sessions](features/assistant-development-sessions/plan.md) owns the
-    new integration work and links existing owners. It is an early Draft, not implementation approval.
+10. **Shared development sessions and clients (2026-09-24; clarified 2026-09-26).** A session owns
+    a shared conversation and optional registered source workspace. Switching connected agents
+    preserves visible context; clients control host-resident work. Keep source diffs and separate
+    Publish, Merge and Complete. Prefer managed source with a verified migration from overrides.
+    The [session umbrella](features/assistant-development-sessions/plan.md) coordinates independently
+    approved feature plans, including rare explicit local external-agent context exchange.
 
 11. **Feedback intake before agent work (2026-09-25).** Users can capture a region or UI element,
     add a comment and submit an app/page-linked observation; screenshots and element context are
@@ -204,7 +193,7 @@ Decisions 1–5: 2026-08-19.
     own reviewed observation directly. Submission alone starts no agent and grants no source access;
     feedback items are input to sessions, not a second development task model. The capture mechanism,
     narrow user-facing authority, durable evidence and triage UX remain Draft work owned by
-    [shared assistant development sessions](features/assistant-development-sessions/plan.md).
+    [app feedback inbox](features/app-feedback-inbox/plan.md).
 
 12. **Dedicated native Harness client (2026-09-25).** Build a separate Swift client focused on
     Hosty Harness sessions over AHP, including remote conversation, permission/question requests,
@@ -214,6 +203,12 @@ Decisions 1–5: 2026-08-19.
     but are not the selected scope, and this decision does not retire that client. The
     [Hosty Harness Swift plan](features/hosty-harness-swift/plan.md) owns native delivery, depends on
     the shared session server contract and remains Draft pending platform/UX/protocol decisions.
+
+13. **AHP first (2026-09-26).** Validate and adopt AHP as the primary assistant session protocol
+    before expanding the development infrastructure around it. The dedicated Swift client uses
+    the official AHP Swift SDK. REST/SSE may bridge the transition but is not a separate native MVP.
+    The [AHP foundation](features/assistant-ahp/plan.md) is the first implementation priority;
+    choosing priority does not approve its remaining design decisions or change its Draft status.
 
 ## Expectations And Later Directions
 
@@ -228,7 +223,7 @@ Decisions 1–5: 2026-08-19.
   backdoor does not make the backdoor absent, so this sharpens the administrator's decision and
   never substitutes for the perimeter.
 - **The gateway's name (owner follow-up, 2026-09-25).** Rename AI Gateway to **Hosty Harness**
-  within the broader [shared development session redesign](features/assistant-development-sessions/plan.md#product-name-hosty-harness).
+  within the broader [shared development session redesign](features/hosty-harness-rename/plan.md).
   Owner clarification: change the app id too (`hosty.ai-gateway` -> planned `hosty.harness`). The
   operator will uninstall the old app, install the new one and configure it afresh. No old-session,
   settings or credential migration, in-place upgrade or legacy-id aliases are required. Update

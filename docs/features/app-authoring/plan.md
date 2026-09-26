@@ -2,14 +2,14 @@
 
 Status: Draft
 Created: 2026-09-16
-Updated: 2026-09-25
+Updated: 2026-09-26
 
 ## Development Session Direction (2026-09-24)
 
 [Shared assistant development sessions](../assistant-development-sessions/plan.md) captures the
-new owner direction for Git-backed work: a session acquires registered worktrees, can switch
-internal agents with shared history, selects its source for testing and tracks code PRs through
-Merge and Complete. It owns that lifecycle; this umbrella retains app creation and integration.
+new owner direction for Git-backed work and links independently scoped plans for shared history,
+session workspaces, source selection and PR lifecycle. It owns cross-feature session acceptance;
+those child features own implementation, while this umbrella retains app creation and integration.
 The earlier direct-source iteration below remains the no-Git prototype path. For Git-backed work,
 consume the session workspace rather than treating isolated branches as non-interactive-only.
 The new plan is Draft and does not approve either feature's implementation.
@@ -108,14 +108,18 @@ network exposure are different facts. Publishing never implicitly exposes the ap
 ## Adapt An Existing App (Owner Idea, 2026-09-25)
 
 Add an agent-assisted entry to the same authoring journey: provide a repository URL (for example,
-GitHub) or an OCI image reference (for example, Docker Hub or GHCR), describe the intended use, and
+GitHub), an OCI image reference (for example, Docker Hub or GHCR), or a Compose file/repository
+containing `compose.yaml` or `docker-compose.yml`; describe the intended use and
 ask the assistant to prepare a Hosty app. This is a proposed extension, not a universal automatic
 converter or an approval to implement the Draft.
 
 1. **Inspect and assess compatibility.** Resolve the input to a recorded upstream revision or image
    digest. Inspect available documentation, source/image metadata, startup requirements, ports,
    persistent data, configuration, dependencies and supported OS/architectures against the actual
-   host capabilities. Reading upstream instructions does not authorize executing their commands.
+   host capabilities. Resolve image architecture/platform explicitly: an amd64-only image on an
+   arm64 host needs a supported, explicitly selected emulation path or an incompatibility result.
+   Preserve resolved image/platform identity through Core's existing `ArtifactLocks` contract rather
+   than inventing a second locking store. Reading upstream instructions does not authorize executing their commands.
    Report supported, supported with adaptation, or unsupported with concrete blockers. Do not
    assume a container has a web UI or that a Windows-only desktop app can run on the selected host.
 2. **Choose the smallest useful adaptation.** For an existing image, normally create a separate
@@ -143,6 +147,12 @@ converter or an approval to implement the Draft.
    delivery method. Keep upstream version/digest separate from the Hosty wrapper's version; updating
    upstream needs revalidation. Local readiness, published release and Marketplace listing remain
    distinct outcomes, with publication owned by the existing feature.
+
+For Compose input, inspect the full service graph and translate only supported ports, volumes,
+settings/secrets, dependency/readiness behavior and image/build references into reviewed Hosty
+contracts. Report unsupported directives and host-specific mounts/network/privilege requirements
+explicitly. Do not execute `compose up` as a substitute for Hosty-managed integration, and do not
+copy production `.env` secrets into the wrapper. Define the supported Compose subset before Ready.
 
 Use reusable skills/recipes for common application shapes (web service, static frontend, database,
 multi-service stack), grounded in `hosty-app-skill` and the current Core contract. They guide the
@@ -271,11 +281,11 @@ a discard, save or publish operation. Pinned starts refuse dirty checkouts.
       exposing operator tokens to the generated app or treating app skills as general host authority.
 - [ ] Present unavailable capabilities with actionable reasons (missing source/profile/toolchain,
       disabled provider, unsupported authorization), and preserve usable local-only apps.
-- [ ] Add repository/image input and an evidence-backed compatibility assessment to app authoring,
+- [ ] Add repository/image/Compose input and an evidence-backed compatibility assessment to app authoring,
       including explicit unsupported-host and missing-source outcomes.
 - [ ] Deliver reusable adaptation guidance and wrapper generation for selected common app shapes;
       record upstream provenance, runtime/configuration/storage needs and integration limitations.
-- [ ] Validate a source-based web app and an image-only service app through Core, then hand a
+- [ ] Validate a source-based web app, an image-only service and a supported Compose stack through Core, then hand a
       verified wrapper to the existing release/catalog flow without duplicating its implementation.
 - [ ] Verify the cross-feature journey across restart and session replacement, including local-only
       operation when no repository or catalog is configured; publish current behavior in `feature.md`
@@ -289,7 +299,8 @@ a discard, save or publish operation. Pinned starts refuse dirty checkouts.
 
 3. Which source web app and image-only service form the first adaptation examples, and which
    host OS/architectures must they support?
-4. How are adaptation skills delivered/versioned for internal and external agents, and what is the
+4. Which Compose directives are supported, and which cross-architecture execution paths can Core verify?
+5. How are adaptation skills delivered/versioned for internal and external agents, and what is the
    default wrapper-versus-fork policy when upstream source changes are needed?
 
 ## Verification
@@ -300,7 +311,8 @@ observe both a successful authorized call and a refused unauthorized one. Deleti
 must not delete source. Publication acceptance lives in its own plan and must not gate local use.
 
 Adaptation acceptance additionally covers a service-only image without UI/source, a compatible web
-repository, an unsupported runtime/architecture, missing configuration and a failed startup. Verify
+repository, a multi-service Compose input with an unsupported directive, an amd64-only image on
+an arm64 host, missing configuration and a failed startup. Check Core artifact-lock provenance. Verify
 actual behavior and persistence, correct attribution/version references, no invented Hosty auth
 integration and no upstream push or catalog publication implied by requesting an adaptation.
 

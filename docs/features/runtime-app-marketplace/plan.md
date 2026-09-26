@@ -2,7 +2,7 @@
 
 Status: Draft
 Created: 2026-09-25
-Updated: 2026-09-25
+Updated: 2026-09-26
 
 ## Goal
 
@@ -45,7 +45,11 @@ Describe provided operations, interface/protocol and version, relevant constrain
 guidance with evidence from the provider contract. Reuse existing metadata where appropriate;
 the exact category/tag/structured-field representation remains an open design decision. Existing
 `provides` slots and `interfaces` may contribute evidence, but are not automatically a complete
-feature taxonomy. Do not overload manifest `role`, client action permissions or Docker Linux
+feature taxonomy. Prefer declared versioned interface/operation contracts as machine-matching
+evidence; free-text tags are candidate-discovery hints. Missing contract facts stay unknown.
+Keep the owner's Tools label for now; “Services” or “Building blocks” are possible UI naming
+alternatives for later owner review, not a silent rename to resolve MCP terminology overlap.
+Do not overload manifest `role`, client action permissions or Docker Linux
 `capabilities` to represent product functionality. Classification grants no additional authority.
 
 ## Authoring Workflow

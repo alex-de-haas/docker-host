@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-06-09
-Updated: 2026-09-25
+Updated: 2026-09-26
 
 The shared model, the boundaries and the decision log live in [feature.md](feature.md) and are in
 force. This document holds only what is **not built**: the rollout checklist, and the design for the
@@ -245,8 +245,9 @@ role changes mid-flight, or when the action contract changes underneath it.
 
 Owner clarification, 2026-09-24: [shared assistant development sessions](../assistant-development-sessions/plan.md)
 also uses isolated worktrees for interactive Git-backed editing and live testing. It owns session
-history/provider switching and interactive PR/Merge/Complete, while this step retains non-interactive
-jobs and disposable validation. Reuse registered repository/workspace identities where applicable;
+integration acceptance; its [shared-history](../assistant-shared-history/plan.md),
+[workspace](../assistant-session-workspaces/plan.md) and [PR](../assistant-pr-lifecycle/plan.md) children
+own those mechanisms, while this step retains non-interactive jobs and disposable validation. Reuse registered repository/workspace identities where applicable;
 do not build a competing registry. The older interactive-versus-isolated distinction below is a
 workflow distinction, not a prohibition on worktrees for interactive work. This does not authorize
 the new Draft or change the state of already implemented bridge work.

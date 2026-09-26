@@ -2,7 +2,7 @@
 
 Status: Draft
 Created: 2026-09-25
-Updated: 2026-09-25
+Updated: 2026-09-26
 
 ## Goal And Owner Direction
 
@@ -18,17 +18,20 @@ retire it or add generic app side panels to it. The web Shell remains available 
 
 ## Dependencies And Ownership
 
-[Shared assistant development sessions](../assistant-development-sessions/plan.md) owns server-side
-history, internal provider switching, worktrees, source selection, action summaries/timelines and
-Publish/Merge/Complete. That plan also owns the AHP server and its authorization/reconnect contract.
-This feature owns the native client and verifies that it can operate those capabilities remotely;
-it does not reimplement their policies, PR monitoring or Git operations on the device.
+[Shared assistant development sessions](../assistant-development-sessions/plan.md) is the umbrella.
+Its children own [AHP](../assistant-ahp/plan.md), [provider switching](../assistant-shared-history/plan.md),
+[workspaces](../assistant-session-workspaces/plan.md), [PR lifecycle](../assistant-pr-lifecycle/plan.md),
+[action summary](../assistant-action-summary/plan.md) and later
+[timeline analysis](../assistant-timeline-analysis/plan.md). This client consumes their advertised
+capabilities without implementing host-side policy or Git operations on the device.
 
-Reuse suitable transport, host selection, browser-based sign-in and Keychain patterns from Swift
-Shell where they fit. Do not assume its Core credential automatically has the right audience or
-permissions for Harness/AHP. Keep application identity/versioning and release ownership separate;
-choose bundle id, source directory and supported Apple platforms before Ready. Like Swift Shell,
-this client is installed on the operator's device, not as a Hosty runtime app with a manifest.
+`apps/shell-swift/HostyKit` already contains CoreClient, DeviceLogin, HostConnection, CoreEventStream
+and HostNotification. Prefer reusing a shared Swift package, possibly relocating it after dependency
+review, over an independently maintained copy. Decide the package/release boundary and app-specific
+storage before implementation. Existing Core credentials still need correct Harness/AHP audience
+and permission checks. Keep native app identity/versioning independent and choose bundle id, source
+directory and Apple platforms before Ready; this is an operator-installed client without a runtime
+app manifest.
 
 ## Target Experience
 
@@ -74,9 +77,15 @@ in native design/verification rather than copying the web Shell layout pixel for
 ## Protocol And State Contract
 
 Use AHP as the primary conversation/state transport: session discovery, subscriptions/snapshots,
-history, streamed responses, tool calls, approvals/questions and changesets. Pin a compatible Swift
-client implementation or define a bounded transport implementation after a capability spike. Do not
-assume every upstream SDK/client supports every channel or Hosty-specific action.
+history, streamed responses, tool calls, approvals/questions and changesets. An official Swift
+package exists in the inspected [upstream snapshot](https://github.com/microsoft/agent-host-protocol/blob/296b25e7b698a4a84a0ee5a28d9573e70048a0bf/Package.swift),
+with AgentHostProtocol and AgentHostProtocolClient products. Pin and test its transport, channel,
+authentication and deployment-target compatibility; package existence is not end-to-end verification.
+
+Owner decision, 2026-09-26: build the native client on the official Swift AHP SDK after the
+AHP foundation is verified. REST/SSE is not a selected native delivery path. Internal-agent
+switching and optional workspace/PR views arrive through their separately advertised server
+capabilities; they do not require the native client to invent another session transport.
 
 Hosty-specific actions such as source selection and PR completion consume the server's advertised
 extension/API contract. The spike must choose their native mapping and authorization route; do not
@@ -89,15 +98,36 @@ approval resolution without duplicate submissions. Authorization remains server-
 of a button's visibility. Store credentials per environment in Keychain and handle revocation.
 
 Do not rely on a continuously running mobile connection for background work or monitoring. The host
-owns execution; the client resynchronizes on return. Push notifications/background delivery are not
-part of the initial scope and must not be implied by a successful foreground connection.
+owns execution; the client resynchronizes on return. A foreground-only first version cannot notify
+a suspended iPhone that approval is needed; the operator must reopen it. Decide explicitly whether
+that is acceptable for the first release or whether remote notification delivery is a prerequisite.
+
+## Notifications And Session Links
+
+[Background sessions](../agent-background-sessions/feature.md) already emits waiting-session
+notifications with `?assistantSession=` links into Shell; Swift Shell can show macOS banners. Reuse
+their stable notification/session identity. Define web fallback and authenticated native routing
+when Harness is installed, including environment selection and revoked/deleted session handling.
+Choose an explicit receiving-app preference and deduplication ownership when both native clients
+are present, so one notification does not produce duplicate OS banners. Opening a link never
+answers an approval automatically.
+
+[Notifications](../notifications/plan.md) owns the proposed web/mobile push delivery channel;
+this plan owns client registration, native deep-link handling and foreground/background behavior
+when that channel exists. APNs/background alert delivery is a dependency or separately approved
+later slice, not provided by AHP reconnect or a foreground event stream. Select and document that
+release boundary before Ready.
+
 
 ## Deliverables
 
 - [ ] Decide first Apple platforms, deployment target, bundle/source identity, independent version
       source and release/distribution route; review a phone navigation proposal before Ready.
-- [ ] Verify the AHP Swift transport/SDK and Harness capability/authentication contract against the
-      parent plan, including host selection, sign-in, reconnection and unsupported-version handling.
+- [ ] Reuse HostyKit through the selected shared-package boundary and validate app-specific credentials/storage.
+- [ ] Verify the pinned official AHP Swift client against the AHP foundation contracts, including host
+      selection, sign-in, reconnection and unsupported-version handling.
+- [ ] Implement session notification routing, web fallback and dual-client banner deduplication;
+      define the notification release boundary and integrate device registration if push is selected.
 - [ ] Implement native session list/history/composer, streamed activity, supported attachments and
       internal-agent selection with preserved drafts and server-authoritative state.
 - [ ] Implement permission/question presentation and replies, cancellation, stale-request handling
@@ -118,7 +148,8 @@ approval and does not inherit implementation approval from the server's Draft.
 Open questions: iOS-first or broader Apple support; minimum OS; exact app/bundle/source naming;
 native AHP dependency and its supported channels; server action mapping; sign-in/discovery route;
 attachment limits/access; device-local history/cache retention; testing-app presentation; signing,
-distribution and component reuse boundaries with Swift Shell.
+distribution and component reuse boundaries with Swift Shell; foreground-only versus push-dependent
+first release, native-link ownership and coexistence with Swift Shell notifications.
 
 ## Verification
 
@@ -135,3 +166,7 @@ distribution and component reuse boundaries with Swift Shell.
   blockers. Read-only credentials or unsupported operations never gain write access through the UI.
 - Check compact-screen navigation, long diffs, keyboard/draft retention and accessibility on the
   approved platforms. No local agent, source checkout or changes to full Shell Swift are required.
+
+- Verify a waiting-session notification opens the correct environment/session, including a web
+  fallback, two installed clients and a revoked session. Verify banner deduplication. Background a
+  phone and demonstrate the selected delivery guarantee; foreground-only builds must not claim APNs.

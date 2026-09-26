@@ -2,7 +2,7 @@
 
 Status: Draft
 Created: 2026-09-02
-Updated: 2026-09-24
+Updated: 2026-09-26
 
 Operator-owned rules for which assistant tools are disabled, ask before execution, or run without
 an approval card, beyond the per-app read-only grant that ships today. This is the "second iteration
@@ -17,12 +17,13 @@ Core provider row, and the typed approval cards are the ground this builds on.
 
 ## Shared Session Development Dependency (2026-09-24)
 
-[Shared assistant development sessions](../assistant-development-sessions/plan.md) owns Git workspace
-registration and provider switching; this plan remains the owner of filesystem/command enforcement
+[Session workspaces](../assistant-session-workspaces/plan.md) owns Git workspace registration and
+the linked-worktree/brokered-Git versus isolated-clone decision;
+[shared history](../assistant-shared-history/plan.md) owns provider switching. This plan owns filesystem/command enforcement
 and scoped lifecycle authority. Grants must resolve registered worktree roots and be revalidated
 when the internal agent changes. Protect managed baseline source and shared Git metadata as well as
 ordinary files. This is a design input to the experiments below, not proof that native sandboxes
-already enforce it. The new plan's explicit local external-agent integration needs separately scoped
+already enforce it. The [external context plan](../assistant-external-session-context/plan.md)'s local integration needs separately scoped
 authority: it does not upgrade the read-only facade, and instructions cannot sandbox an external
 agent with unrestricted OS access. Its best-effort cooperation is distinct from internal enforcement.
 

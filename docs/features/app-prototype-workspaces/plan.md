@@ -2,13 +2,14 @@
 
 Status: Draft
 Created: 2026-09-16
-Updated: 2026-09-24
+Updated: 2026-09-26
 
 ## Development Session Boundary (2026-09-24)
 
-[Shared assistant development sessions](../assistant-development-sessions/plan.md) owns registered
-Git worktrees, cross-provider conversation continuity and session code-PR completion. This plan
-retains durable no-Git app creation, bootstrap/guide delivery and assisted initial Git setup. Once
+[Assistant session workspaces](../assistant-session-workspaces/plan.md) owns registered
+Git workspaces and source selection. [Shared history](../assistant-shared-history/plan.md) owns
+cross-provider continuity and [PR lifecycle](../assistant-pr-lifecycle/plan.md) owns completion.
+This plan retains durable no-Git app creation, bootstrap/guide delivery and assisted initial Git setup. Once
 Git-backed session development is selected, consume its registered workspace and lifecycle rather
 than creating another branch/PR owner. The shared-source continuation and writer coordination below
 apply to the no-Git prototype path; they do not require a manual ownership handoff for the rare

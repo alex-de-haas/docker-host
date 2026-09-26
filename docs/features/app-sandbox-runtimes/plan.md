@@ -2,7 +2,7 @@
 
 Status: Draft
 Created: 2026-09-25
-Updated: 2026-09-25
+Updated: 2026-09-26
 
 ## Goal And Scope
 
@@ -12,9 +12,10 @@ create synthetic data, exercise the real UI and retain evidence. Later, bounded 
 can submit observations through the shared feedback inbox and compare candidate implementations.
 This is a feasibility proposal, not an approved implementation plan or an existing isolation guarantee.
 
-This feature owns sandbox runtime instances, test data, browser execution and synthetic evaluations.
-[Assistant development sessions](../assistant-development-sessions/plan.md) owns worktrees,
-conversation, feedback intake, timeline and publication. [AI agent bridge](../ai-agent-bridge/plan.md)
+This feature owns sandbox runtime instances, test data and deterministic browser execution.
+[Assistant development sessions](../assistant-development-sessions/plan.md) owns the integration
+journey; its child plans own workspaces, feedback intake, timeline and publication.
+[AI agent bridge](../ai-agent-bridge/plan.md)
 owns non-interactive source jobs that may consume these environments. Existing
 [development controls](../app-development-controls/plan.md) continue to own installed-app lifecycle.
 [Assistant approval rules](../assistant-approval-rules/plan.md) owns agent tool authority; this feature
@@ -73,7 +74,12 @@ For the initial protected mode, investigate an all-container sandbox service gra
 execution, bounded resources, reviewed source input and writable scratch, no production mounts,
 Core auth folders, host networking or Docker socket, and controlled outbound connections. Merely
 using a separate Docker bridge does not deny traffic to production or the internet. Enforce network
-policy for app services, agent tools and browser execution, including access back to Core. Provide
+policy for app services, agent tools and browser execution, including access back to Core.
+For Docker Desktop on macOS/Windows, do not assume host Linux iptables. Prototype a Docker
+internal network plus an explicit egress proxy or equivalent backend policy; validate DNS, direct
+IP, host-gateway, extra-network and proxy-bypass paths. An internal network setting alone does not
+prove confinement from the host or a multiply connected service. Verify Linux/Desktop backends
+separately, including supported package/build downloads. Provide
 test sinks/mocks for email, payments and other outgoing effects. Keep builds/setup commands inside
 the reviewed execution boundary too; arbitrary build requests are not an unrestricted Docker API.
 
@@ -99,18 +105,9 @@ runs such as “create a library and play a sample item.” Retain failures and 
 just the agent's claim of success. Record source state including uncommitted changes; freeze input
 for reproducible runs or invalidate evidence if it changes. Fixtures must be resettable.
 
-Later, let several agents explore independently with specified goals, roles and budgets. Use separate
-seeded sandbox instances by default; share one deliberately only for multi-user/concurrency tests.
-Attach observations to the existing feedback inbox with synthetic-agent attribution, app/page,
-source revision, model/instructions, reproduction steps and evidence. Another agent may reproduce,
-deduplicate and assess observations; administrator triage remains authoritative and no automatic
-merge or instruction rewriting follows from an evaluator's opinion.
-
-Variant comparison uses equivalent fixtures/tasks, recorded models/tools/settings, repeated runs
-and balanced order without exposing previous judgments. Measure observable completion, errors,
-steps, latency and cost separately from subjective critiques. Similar agents can have correlated
-biases: report results as synthetic evaluations and hypotheses for human validation, not human
-preference, conversion or a substitute for real-user A/B testing.
+Exploratory multi-agent feedback and variant comparison are owned by
+[synthetic app evaluations](../agent-app-evaluations/plan.md). This plan supplies isolated execution,
+repeatable fixtures and browser evidence and does not wait for that later feature.
 
 ## Client And Tool Boundary
 
@@ -136,10 +133,6 @@ repeatable scenario before generalizing or scheduling multiple evaluators.
 - [ ] Phase 2: define optional sanitized snapshot import, consistency and retention before enabling it.
 - [ ] Phase 3: integrate a scoped browser runner, test identities, repeatable scenarios, evidence
   artifacts and truthful pass/fail/unknown outcomes in the session timeline.
-- [ ] Phase 4: implement bounded exploratory jobs and synthetic feedback submissions through the
-  existing inbox, with independent reproduction/triage and resource/cost limits.
-- [ ] Phase 4: implement controlled multi-agent and variant comparisons with provenance, repeated
-  measurements and explicit limits on interpreting synthetic feedback.
 - [ ] Verify the acceptance cases below, document shipped guarantees in `feature.md`, and reconcile
   dependent plans without broadening previously granted agent authority.
 
@@ -154,7 +147,6 @@ repeatable scenario before generalizing or scheduling multiple evaluators.
 - What seed format, disk/CPU/memory limits, artifact retention and abandoned-run policy are suitable?
 - Which tests cover the app alone versus Shell integration? Core/Harness self-testing requires a
   separate approved environment design and must not restart the active controller implicitly.
-- What human-validated tasks and rubric make synthetic variant comparisons useful enough to keep?
 
 ## Verification Before Shipping
 
@@ -166,7 +158,7 @@ denial at the execution boundary, not only an agent refusing in text.
 
 Verify browser scenarios through Core-managed identity, inspect resulting backend state and replay
 failure evidence. Bind results to exact source/fixture revisions, preserve unknown/interrupted states,
-and demonstrate independent seeded evaluation runs. This Draft records an inspection-based assessment;
+and demonstrate independent seeded browser runs. This Draft records an inspection-based assessment;
 no sandbox runtime, browser test or isolation test has been implemented or executed for this document.
 
 ## References
@@ -175,3 +167,5 @@ no sandbox runtime, browser test or isolation test has been implemented or execu
   and the authority exposed through daemon access and mounts.
 - [Playwright isolation](https://playwright.dev/docs/browser-contexts): separate browser contexts.
 - [Playwright traces](https://playwright.dev/docs/trace-viewer): browser execution evidence.
+
+- [Docker internal networks](https://docs.docker.com/reference/compose-file/networks/#internal)
