@@ -162,6 +162,23 @@ static web export after UI edits, and open through Core/Shell. Native Apple/Card
 no hard-coded Gateway discovery contract to migrate in this slice; external MCP registrations use
 the actual resolved facade resource. No live operator installation is replaced by development tests.
 
+## Verification At Delivery
+
+On 2026-09-27 a disposable Core instance built from this branch installed Harness with the `dev`
+runtime. Its projection exposed the confirmed assistant role, `apps.skills.read`, version 1 and
+`attachments`. A Core launch code established a real app session; prepare, raw-file upload,
+finalization and identical retries produced one persisted draft with its file. A reviewed local
+manifest update and app restart preserved that handoff and its draft. The fresh provider registry
+remained empty. The operator's existing installation was not replaced.
+
+Automated checks passed: Core 2,106 tests (four environment-dependent skips), affected Core HTTP and
+distribution tests, CLI 223, Harness 362, Shell 174 Node tests plus 21 component tests, and SDK 116.
+Core, CLI, both web apps and SDK built successfully; version/doc index checks passed. Existing Core
+and Shell warnings remain. Browser visual smoke was unavailable: the in-app browser rejected the
+loopback URL and no Chrome browser surface was available. Real account execution and external-client
+reauthorization were not attempted; adapter and auth tests cover those boundaries without using
+operator credentials. Deployment publication and Windows/Docker-specific lanes run in CI.
+
 ## Testing Expectations
 
 - Core: manifest validation, legacy/unknown version records, registry reload/update and HTTP directory
