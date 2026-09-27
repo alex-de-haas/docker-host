@@ -727,7 +727,7 @@ async function readJsonOrThrow(response: Response): Promise<unknown> {
 }
 
 // Delegated tokens live in their own entry ("./delegated") because that module must stay
-// importable from plain Node services (the ai-gateway system app) — this file's "server-only"
+// importable from plain Node services (the Harness system app) — this file's "server-only"
 // import would throw there. Re-exported here so Next apps keep one import surface.
 export {
   validateDelegatedToken,

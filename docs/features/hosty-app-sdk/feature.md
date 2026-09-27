@@ -1,7 +1,7 @@
 # Hosty App SDK
 
 Created: 2026-07-15
-Updated: 2026-09-18
+Updated: 2026-09-27
 
 Shared Host integration for runtime apps, in two published packages: **`@hosty-sdk/app`** on npmjs
 (TypeScript, 0.14.0) and **`HostySdk.App`** on NuGet (.NET, 0.6.0). They own the app half of the
@@ -200,7 +200,7 @@ render in it too.
 Shell consumes the sender half — `appendThemeLaunchParams` on every frame URL and
 `createShellThemeMessage` in its post — so the reference sender and the shipped one are the same
 code. Every embedded first-party page reads the protocol from this slice: no app implements it
-again, and `apps/ai-gateway/web` declares the SDK itself rather than relying on the gateway
+again, and `apps/harness/web` declares the SDK itself rather than relying on the gateway
 package's copy, because npm scopes a nested-workspace install to the workspace it is run from. The native client (`apps/shell-swift`) declares no theme; its web view reads the operating
 system, which is what a native app's chrome follows anyway.
 
@@ -243,7 +243,7 @@ delegated-token bounds:
   credential itself.
 - Answering is a per-app decision, not a reflex. The parser reports who asked; who is granted stays
   the embedder's policy, because a delegated token is user-scoped and a system app may branch it to
-  other apps. Hosty Shell answers for the app declaring `ai-gateway` and no other frame — it already
+  other apps. Hosty Shell answers for the app declaring `assistant` and no other frame — it already
   mints that app tokens to run the chat panel, so the handshake widens nothing.
 - Answering is **idempotent**, because asking is repeated. The app's request can be posted the moment
   its document runs, and nothing obliges an embedder to have a listener attached by then; an app that
@@ -312,6 +312,14 @@ signin, denied, unavailable or misconfigured state. Apps can gate their content 
 on `active`, using the same recovery lifecycle as the bridge. Omitting the callback keeps the
 existing default recovery UI. The initial state is recovering; an active identity probe permits
 content, while failed probes never expose an active state.
+
+## Assistant Handoff Client
+
+`@hosty-sdk/app/assistant` provides v1 contract checking, UUIDv7 request IDs, prepare/upload/finalize,
+status/cancel and UI-destination validation. `attachments` is optional; unsupported uploads are refused
+before sending. Delegated-token refresh retries once on 401. Callers preserve intent identity through
+transport failure. The receiving assistant applies its draft/immediate-start setting; embedded
+`askAssistant` reports only whether its message was posted. See [the contract](../hosty-harness-rename/feature.md).
 
 ## Testing Expectations
 

@@ -1,7 +1,7 @@
 # Assistant App Context
 
 Created: 2026-09-16
-Updated: 2026-09-17
+Updated: 2026-09-27
 
 Administrators associate up to 16 installed apps with an assistant session. The gateway persists
 an ordered, unique `appIds` selection and an `appContextRevision`; it resolves fresh metadata from
@@ -42,8 +42,8 @@ unavailable association remains possible during a directory outage.
 ## New Session From An App
 
 **New assistant session** appears in Dashboard app actions
-when the signed-in user is an administrator and a running gateway advertises the `appContext`
-capability with an available harness. The target app itself can be stopped. Shell checks gateway
+when the signed-in user is an administrator and a running assistant supports the mandatory version-1
+contract. The target app itself can be stopped. Shell checks gateway
 availability again on activation and reports an actionable failure without creating a fallback
 unbound chat.
 
@@ -53,8 +53,8 @@ and starts no model run. Pending activation is disabled across menus; a network 
 actor-scoped creation request id. A later deliberate activation creates another session.
 
 Shell owns the small authenticated creation client and panel routing; the gateway owns the
-conversation. App-originated `hosty:ask-assistant` remains draft-only and cannot change durable
-associations. Deleting a chat removes its associations with that chat only. Creating another chat
+conversation. App-originated `hosty:ask-assistant` creates a handoff with the mounted source app selected.
+Harness applies its draft/immediate-start setting at finalization. Deleting a chat removes its associations with that chat only. Creating another chat
 about the same app does not depend on the deleted conversation.
 
 ## Persistence And API

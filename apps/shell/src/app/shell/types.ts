@@ -220,6 +220,7 @@ export type CoreReassignResult = {
 
 /** A settings or panel surface as Core resolved it: what to call the tab, and what to embed. */
 export type CoreAppSurface = {
+  endpoint?: string | null;
   icon?: string | null;
   label?: string | null;
   path: string;
@@ -231,10 +232,12 @@ export type CoreAppSurface = {
 };
 
 export type CoreNavigationItem = {
+  endpoint?: string | null;
   label: string;
   path: string;
   // As on CoreAppSurface: which service's health gates opening this page.
   service?: string | null;
+  entryEndpoint?: string | null;
   entryPath?: string | null;
   embeddedUrl?: string | null;
   // Core-origin-relative URL for this page link's manifest-declared icon (manifest-level app assets),
@@ -275,6 +278,7 @@ export type CoreApp = {
   // Any number of panel surfaces — one app may ship several distinct tools — and not
   // administrator-only: a panel is a tool an ordinary user may hold.
   panelSurfaces?: CoreAppSurface[];
+  entryEndpoint?: string | null;
   entryPath?: string | null;
   embeddedUrl?: string | null;
   // Core-origin-relative URLs for the app's manifest-declared display assets (manifest-level app
@@ -328,13 +332,15 @@ export type CoreApp = {
   // The folder a live source app actually runs from (override folder, else the original folder
   // install); shown in the "Live" badge tooltip. Null when the app is not running live from source.
   sourceLivePath?: string | null;
-  // Platform interfaces the app exposes (manifest `interfaces`, e.g. "ai-gateway"), each declaration
+  // Platform interfaces the app exposes (manifest `interfaces`, e.g. "assistant"), each declaration
   // resolved to a ready-to-call URL where possible. Shell gates the assistant surface on a running
-  // app declaring "ai-gateway". Null/absent when none are declared or the Core build predates them.
+  // app declaring "assistant". Null/absent when none are declared or the Core build predates them.
   interfaces?: Record<string, CoreAppInterface[]> | null;
 };
 
 export type CoreAppInterface = {
+  version?: number | null;
+  capabilities?: string[] | null;
   key: string;
   path: string;
   url?: string | null;

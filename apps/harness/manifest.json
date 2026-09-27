@@ -1,0 +1,162 @@
+{
+  "schemaVersion": "app.0.1",
+  "id": "hosty.harness",
+  "name": "Hosty Harness",
+  "description": "Host-resident operator assistant with managed Claude and Codex connections, chat and settings UI.",
+  "version": "0.35.0",
+  "role": "system",
+  "source": {
+    "type": "git",
+    "repository": "https://github.com/alex-de-haas/docker-host.git",
+    "branch": "main"
+  },
+  "runtimeProfiles": [
+    {
+      "key": "local",
+      "type": "localCommand",
+      "default": true
+    },
+    {
+      "key": "dev",
+      "type": "localCommand",
+      "development": true
+    }
+  ],
+  "defaultRuntime": "local",
+  "services": [
+    {
+      "key": "api",
+      "runtimes": {
+        "local": {
+          "type": "localCommand",
+          "workingDirectory": "apps/harness",
+          "setup": "npm ci --workspace @haas/hosty-harness --workspace @haas/hosty-harness-web && npm run build:web",
+          "command": "npm run start",
+          "ports": [
+            {
+              "key": "http",
+              "containerPort": 3400,
+              "protocol": "http",
+              "public": true
+            }
+          ],
+          "healthcheck": {
+            "type": "http",
+            "port": 3400,
+            "path": "/healthz",
+            "timeoutSeconds": 5
+          }
+        },
+        "dev": {
+          "type": "localCommand",
+          "workingDirectory": "apps/harness",
+          "setup": "npm install --workspace @haas/hosty-harness --workspace @haas/hosty-harness-web && npm run build:web",
+          "command": "npm run dev",
+          "ports": [
+            {
+              "key": "http",
+              "containerPort": 3400,
+              "protocol": "http",
+              "public": true
+            }
+          ],
+          "healthcheck": {
+            "type": "http",
+            "port": 3400,
+            "path": "/healthz",
+            "timeoutSeconds": 5
+          }
+        }
+      }
+    }
+  ],
+  "data": {
+    "enabled": true,
+    "targets": [
+      {
+        "runtime": "local",
+        "environment": "HOSTY_APP_DATA_DIR"
+      },
+      {
+        "runtime": "dev",
+        "environment": "HOSTY_APP_DATA_DIR"
+      }
+    ]
+  },
+  "cache": {
+    "enabled": true,
+    "targets": [
+      {
+        "runtime": "local",
+        "environment": "HOSTY_APP_CACHE_DIR"
+      },
+      {
+        "runtime": "dev",
+        "environment": "HOSTY_APP_CACHE_DIR"
+      }
+    ]
+  },
+  "endpoints": [
+    {
+      "key": "http",
+      "service": "api",
+      "port": "http",
+      "protocol": "http",
+      "public": true
+    }
+  ],
+  "interfaces": {
+    "assistant": [
+      {
+        "key": "default",
+        "endpoint": "http",
+        "path": "/api/assistant/v1",
+        "version": 1,
+        "capabilities": [
+          "attachments"
+        ]
+      }
+    ]
+  },
+  "settings": [
+    {
+      "key": "HOSTY_HARNESS_RETENTION_DAYS",
+      "type": "string",
+      "default": "30",
+      "required": false,
+      "label": "Transcript retention (days)",
+      "description": "Sessions and transcripts older than this are deleted by the daily cleanup sweep."
+    }
+  ],
+  "capabilities": [
+    "logs"
+  ],
+  "catalogMetadata": {
+    "icon": "assets/icon.svg",
+    "summary": "Admin-only Hosty assistant: operator chat sessions on a host-resident agent harness."
+  },
+  "ui": {
+    "entrypoint": {
+      "endpoint": "http",
+      "path": "/settings"
+    },
+    "settings": {
+      "endpoint": "http",
+      "path": "/settings"
+    },
+    "panels": [
+      {
+        "label": "Assistant",
+        "endpoint": "http",
+        "path": "/assistant",
+        "icon": "bot"
+      }
+    ]
+  },
+  "provides": [
+    "assistant"
+  ],
+  "corePermissions": [
+    "apps.skills.read"
+  ]
+}

@@ -1,12 +1,12 @@
 # Manifest Projection Backfill
 
 Created: 2026-08-09
-Updated: 2026-08-09
+Updated: 2026-09-27
 
 A Core upgrade heals installed app records without operator action. Records only re-run
 manifest→record normalization at install, update, runtime switch, or a live-source start, so an app
 installed under an older Core permanently lacked any manifest section that build's parser did not
-know. The 2026-08-09 AI Gateway rollout hit exactly this: `hosty.ai-gateway` was installed while
+know. The 2026-08-09 Hosty Harness rollout hit exactly this: `hosty.harness` was installed while
 Core 0.73.1 ran, the new `interfaces` block was silently dropped from the record, and Shell's
 assistant discovery found nothing until a manual same-version reviewed update rebuilt it. Since Core
 0.74.1 that class of gap closes itself at the next boot.

@@ -116,13 +116,13 @@ public sealed class McpLifecycleHttpTests
         // mcp:lifecycle, per the audience binding asserted below — this rule is what holds if that
         // one ever loosens.)
         await using var harness = await CoreHttpHarness.StartAsync();
-        await SeedSystemAppAsync(harness, "hosty.ai-gateway");
+        await SeedSystemAppAsync(harness, "hosty.harness");
         var admin = await SeedSessionAsync(harness, "host.admin");
         using var client = harness.CreateClient();
 
         var facadeCredential = await CreateCredentialAsync(
-            client, admin, "claude code", ["mcp:read"], audience: "hosty.ai-gateway");
-        using var minted = await MintOnBehalfOfAsync(client, harness, "hosty.ai-gateway", facadeCredential, "hosty:core");
+            client, admin, "claude code", ["mcp:read"], audience: "hosty.harness");
+        using var minted = await MintOnBehalfOfAsync(client, harness, "hosty.harness", facadeCredential, "hosty:core");
         Assert.Equal(HttpStatusCode.OK, minted.StatusCode);
         var delegated = (await ReadJsonAsync(minted)).GetProperty("token").GetString()!;
 
@@ -195,13 +195,13 @@ public sealed class McpLifecycleHttpTests
         // silently-inert credential the issuance guards exist to refuse while the operator is still
         // looking at the form.
         await using var harness = await CoreHttpHarness.StartAsync();
-        await SeedSystemAppAsync(harness, "hosty.ai-gateway");
+        await SeedSystemAppAsync(harness, "hosty.harness");
         var admin = await SeedSessionAsync(harness, "host.admin");
         using var client = harness.CreateClient();
 
         using var refused = await SendAsync(
             client, HttpMethod.Post, "/api/auth/credentials", admin,
-            new { label = "a", audience = "hosty.ai-gateway", scopes = new[] { "mcp:lifecycle" } });
+            new { label = "a", audience = "hosty.harness", scopes = new[] { "mcp:lifecycle" } });
         Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
         Assert.Equal("scope_invalid_for_audience", (await ReadJsonAsync(refused)).GetProperty("code").GetString());
 

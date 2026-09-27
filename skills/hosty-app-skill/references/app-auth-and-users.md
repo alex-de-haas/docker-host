@@ -83,10 +83,9 @@ import { askAssistant } from "@hosty-sdk/app";
 askAssistant(`${appName} logged ERROR at ${when}:\n\n${message}`);
 ```
 
-**It fills the operator's draft. It does not send.** That is the contract, not a limitation of the
-current version: app-provided text entering a model that holds host shell is the same trust boundary
-that keeps MCP providers off by default, and an error message is exactly the shape a prompt injection
-arrives in. The operator reads it, sees which app it came from, and decides.
+The receiver decides whether to keep a draft or start immediately. Hosty Harness defaults to a draft;
+its explicit immediate-handoff setting applies equally to authorized app and user requests. No field
+claims to prove who authored the prompt. Authentication and tool permissions still apply.
 
 - **Plain text only.** No structured payload beyond the text: shape the operator cannot read at a
   glance is shape they cannot check.
@@ -98,5 +97,4 @@ arrives in. The operator reads it, sees which app it came from, and decides.
   a message that is not from the mounted app frame's own origin is dropped with a console warning.
   Do not pre-truncate; do not expect a message from another origin to arrive.
 
-Shell reveals the assistant panel, selects its tab, and forwards the text with the app id it mounted
-— never one the frame claims.
+Shell prepares and finalizes a version-1 handoff with the text and the app ID it mounted, then opens the returned UI destination. It does not trust an app ID claimed by the frame.

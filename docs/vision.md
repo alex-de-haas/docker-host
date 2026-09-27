@@ -235,7 +235,7 @@ Decisions 1–5: 2026-08-19.
     handoff may run without individual Send confirmation, including one submitted by an app.
     Do not claim to prove prompt authorship or exempt a self-reported "user" source. Authentication,
     caller access and execution/tool permissions still apply. The
-    [Harness/interface plan](features/hosty-harness-rename/plan.md) owns implementation.
+    [Harness/interface plan](features/hosty-harness-rename/feature.md) owns implementation.
 
 17. **Assistants choose development actions; Core executes and observes them (2026-09-27).**
     The assistant decides when to request a worktree, commit, push, draft/ready PR, merge and cleanup
@@ -265,7 +265,7 @@ Decisions 1–5: 2026-08-19.
     with a minor bump. Shell requires the base versioned `assistant` contract and treats `attachments`
     as optional, with unavailable file/screenshot actions explained. The owner delegates handoff
     route, retry and cleanup design to the agent; the
-    [Harness/interface plan](features/hosty-harness-rename/plan.md) records those details and owns
+    [Harness/interface plan](features/hosty-harness-rename/feature.md) records those details and owns
     implementation. This direction does not authorize live uninstallation.
 
 ## Expectations And Later Directions
@@ -281,7 +281,7 @@ Decisions 1–5: 2026-08-19.
   backdoor does not make the backdoor absent, so this sharpens the administrator's decision and
   never substitutes for the perimeter.
 - **The gateway's name (owner follow-up, 2026-09-25).** Rename AI Gateway to **Hosty Harness**
-  within the broader [shared development session redesign](features/hosty-harness-rename/plan.md).
+  within the broader [shared development session redesign](features/hosty-harness-rename/feature.md).
   Owner clarification: change the app id too (`hosty.ai-gateway` -> planned `hosty.harness`). The
   operator will uninstall the old app, install the new one and configure it afresh. No old-session,
   settings or credential migration, in-place upgrade or legacy-id aliases are required. Update

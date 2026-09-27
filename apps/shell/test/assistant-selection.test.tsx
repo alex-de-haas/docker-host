@@ -6,7 +6,7 @@ import type { CoreApp } from "../src/app/shell/types";
 
 const app = (id: string) => ({ id, displayName: id, runtimeState: "running", confirmedRoles: ["assistant"],
   version: "1.0.0", kind: "runtime", system: false, source: "test", operationStatus: "installed", capabilities: [],
-  interfaces: { "ai-gateway": [{ key: "default", path: "/api", url: `http://${id}/api` }] } }) as CoreApp;
+  interfaces: { "assistant": [{ version: 1, capabilities: ["attachments"], key: "default", path: "/api", url: `http://${id}/api` }] } }) as CoreApp;
 let host: HTMLDivElement, root: Root;
 let delivered: Array<string | null>;
 function Fixture({ apps, scope = "test-user" }: { apps: CoreApp[]; scope?: string }) {

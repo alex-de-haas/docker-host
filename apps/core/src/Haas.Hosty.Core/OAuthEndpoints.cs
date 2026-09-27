@@ -728,7 +728,7 @@ internal static class OAuthEndpoints
     /// <summary>
     /// Resolves an RFC 8707 resource URL to the single audience a token may carry. Three shapes
     /// exist on a host: Core's own MCP endpoint, an app's declared `mcp` interface, and the MCP
-    /// facade of an app declaring the `ai-gateway` interface (its origin + /mcp). Anything else is
+    /// facade of an app declaring the `assistant` interface (its origin + /mcp). Anything else is
     /// nothing — an unmatched resource must refuse, never default to something broad.
     /// </summary>
     internal static async Task<(string Audience, string DisplayName)?> ResolveResourceAsync(
@@ -768,9 +768,9 @@ internal static class OAuthEndpoints
             }
 
             // The facade: served at the gateway app's own origin under /mcp. Matched for the app
-            // that declares the ai-gateway interface rather than for every app, because "origin plus
+            // that declares the assistant interface rather than for every app, because "origin plus
             // a path that might exist" is not a claim any other app has made.
-            if ((app.Interfaces ?? new Dictionary<string, IReadOnlyList<AppInterfaceSummary>>()).ContainsKey("ai-gateway"))
+            if ((app.Interfaces ?? new Dictionary<string, IReadOnlyList<AppInterfaceSummary>>()).ContainsKey("assistant"))
             {
                 foreach (var endpoint in app.Endpoints)
                 {

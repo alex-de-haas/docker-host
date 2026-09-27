@@ -2,6 +2,7 @@
 
 // Adapted from ReUI c-sonner-14 and c-sonner-4 (radix-vega). See ./LICENSE.
 // Keep the rich error/details/actions composition; use Hosty's theme and real operation callbacks.
+import { createAssistantRequestId } from "@hosty-sdk/app/assistant";
 import { createContext, useContext, useRef, useState } from "react";
 import { Check, Copy, LoaderCircle, MessageSquarePlus, X } from "lucide-react";
 import { toast as sonner, type ExternalToast } from "sonner";
@@ -48,7 +49,7 @@ export function OperationErrorToast({ id, report }: { id: string | number; repor
         <Button size="sm" variant="outline" disabled={busy || !!assistant.unavailableReason} onClick={async () => {
           if (pending.current) return;
           pending.current = true; setBusy(true); setActionError(null);
-          requestId.current ??= crypto.randomUUID();
+          requestId.current ??= createAssistantRequestId();
           try { if (await assistant.ask(report, requestId.current) !== false) sonner.dismiss(id); }
           catch (error) { setActionError(error instanceof Error ? error.message : "Could not open the assistant. Retry."); }
           finally { pending.current = false; setBusy(false); }

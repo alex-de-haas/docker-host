@@ -79,6 +79,27 @@ public sealed class AppManifestServiceTests
         Assert.Contains(error.Errors, candidate => candidate.Code == expectedCode);
     }
 
+    [Theory]
+    [InlineData("{\"version\":1,\"capabilities\":[]}", true)]
+    [InlineData("{\"version\":1,\"capabilities\":[\"attachments\"]}", true)]
+    [InlineData("{\"version\":2,\"capabilities\":[\"future-feature\"]}", true)]
+    [InlineData("{}", false)]
+    [InlineData("{\"version\":0,\"capabilities\":[]}", false)]
+    [InlineData("{\"version\":1}", false)]
+    [InlineData("{\"version\":1,\"capabilities\":[\"attachments\",\"attachments\"]}", false)]
+    [InlineData("{\"version\":1,\"capabilities\":[\"\"]}", false)]
+    public async Task AssistantInterfaceRequiresVersionedCapabilities(string declaration, bool valid)
+    {
+        var manifestPath = await WriteManifestAsync("com.example.assistant", role: $$""", "interfaces": { "assistant": [{{declaration}}] } """);
+        if (!valid)
+        {
+            await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(manifestPath));
+            return;
+        }
+        var result = await new AppManifestService().LoadAsync(manifestPath);
+        Assert.NotNull(Assert.Single(result.Manifest.Interfaces["assistant"]).Capabilities);
+    }
+
     [Fact]
     public async Task LoadAsync_AcceptsInterfaces()
     {
@@ -1213,7 +1234,7 @@ public sealed class AppManifestServiceTests
     }
 
     [Theory]
-    [InlineData("ai-gateway", "bot")]
+    [InlineData("harness", "bot")]
     [InlineData("demo-app", "contact-round")]
     public async Task LoadAsync_FirstPartyPanelsMeetTheAuthoringContract(string app, string expectedIcon)
     {

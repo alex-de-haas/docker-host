@@ -1,7 +1,7 @@
 # Core's Own Public Origin
 
 Created: 2026-09-01
-Updated: 2026-09-17
+Updated: 2026-09-27
 
 The address Core tells the world it lives at is a live Core setting, editable where every other host
 setting is edited and publishable through the Cloudflare API provider the way an app endpoint is.
@@ -76,7 +76,7 @@ containers dialled Core by its public name â€” out through the tunnel and back â
 
 The public origin is therefore browser-only, and a wrong value's blast radius is links and OAuth
 metadata rather than every app's calls to Core. Nothing dials Core by its public name: every reader of
-`HOSTY_CORE_ORIGIN` (`apps/ai-gateway`, `apps/telemetry-backend`, `apps/marketplace`, `apps/demo-app`,
+`HOSTY_CORE_ORIGIN` (`apps/harness`, `apps/telemetry-backend`, `apps/marketplace`, `apps/demo-app`,
 `packages/app-sdk`) uses it purely as a server-to-server base URL, and both SDKs document that a browser
 must never be sent there.
 

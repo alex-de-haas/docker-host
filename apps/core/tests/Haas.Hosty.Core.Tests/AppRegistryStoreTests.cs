@@ -5,6 +5,30 @@ namespace Haas.Hosty.Core.Tests;
 
 public sealed class AppRegistryStoreTests
 {
+    [Fact]
+    public async Task AssistantContractSurvivesStorageUpdatesAndSummaryProjection()
+    {
+        var paths = CreatePaths(await CreateTempRootAsync());
+        var store = new AppRegistryStore(paths);
+        var app = CreateApp("hosty.harness") with
+        {
+            Interfaces = AppInterfaceContract.FromManifest(new Dictionary<string, IReadOnlyList<RuntimeAppInterfaceManifest>>
+            {
+                ["assistant"] = [new() { Version = 1, Capabilities = ["attachments"], Path = "/api/assistant/v1" }],
+            }),
+        };
+        await store.UpsertAppAsync(app);
+        var summary = Assert.Single(await new AppRegistryStore(paths).ListAppsAsync());
+        var declaration = Assert.Single(summary.Interfaces!["assistant"]);
+        Assert.Equal(1, declaration.Version);
+        Assert.Equal(["attachments"], declaration.Capabilities);
+        await store.UpsertAppAsync(app with { Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>>
+        { ["assistant"] = [new("default", null, "/v2", 2, [])] } });
+        declaration = Assert.Single(Assert.Single(await new AppRegistryStore(paths).ListAppsAsync()).Interfaces!["assistant"]);
+        Assert.Equal(2, declaration.Version);
+        Assert.Empty(declaration.Capabilities!);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

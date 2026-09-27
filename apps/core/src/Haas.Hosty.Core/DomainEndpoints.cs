@@ -118,7 +118,7 @@ internal static class DomainEndpoints
         // asking Core about its neighbours. This route deliberately crosses that line, so it carries
         // its own authorization rather than inheriting the pattern's.
         //
-        // Only an app that declares the `ai-gateway` interface may cross it. A skill is prose an app
+        // Only an app granted apps.skills.read may cross it. A skill is prose an app
         // wrote for an agent, and the apps that hand prose to agents are assistants; nothing else has
         // a reason to read a neighbour's instructions, and "cheap to allow" is how a torrent client
         // ends up reading the media server's. The narrower alternative — folding skills into the
@@ -227,7 +227,7 @@ internal static class DomainEndpoints
                         summary.IconUrl,
                         (summary.Interfaces ?? new Dictionary<string, IReadOnlyList<AppInterfaceSummary>>())
                             .SelectMany(pair => pair.Value.Select(declaration =>
-                                new AppDirectoryInterface(pair.Key, declaration.Key, declaration.Url)))
+                                new AppDirectoryInterface(pair.Key, declaration.Key, declaration.Url, declaration.Version, declaration.Capabilities)))
                             .ToArray()))
                     .ToArray(), directory));
         });
@@ -437,7 +437,7 @@ internal sealed record AppDirectoryEntry(
     IReadOnlyList<AppDirectoryInterface> Interfaces);
 
 /// One declared platform interface, resolved to a ready-to-call URL from the app's endpoints.
-internal sealed record AppDirectoryInterface(string Name, string Key, string? Url);
+internal sealed record AppDirectoryInterface(string Name, string Key, string? Url, int? Version = null, IReadOnlyList<string>? Capabilities = null);
 
 internal sealed record AppUpdateAvailabilityResponse(string AppId, bool Installed, bool UpdateAvailable);
 

@@ -1,5 +1,6 @@
 "use client";
 
+import { toast } from "sonner";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -27,7 +28,10 @@ export function useAssistantSelection(apps: CoreApp[], scope: string | null) {
   const selectedId = preference ?? null;
   const selected = ready ? selectAssistant(assistants, selectedId) : null;
   const select = useCallback((id: string) => {
-    if (!key || !assistants.some(app => app.appId === id)) return;
+    const assistant = assistants.find(app => app.appId === id);
+    if (!key || !assistant) return;
+    if (assistant.problem) { toast.error(assistant.problem); return; }
+    if (!assistant.capabilities?.includes("attachments")) toast.warning("This assistant cannot receive files or screenshots. Text and app context remain available.");
     document.cookie = `${key}=${encodeURIComponent(id)}; path=/; max-age=31536000; samesite=lax`;
     window.dispatchEvent(new Event("hosty:assistant-preference"));
   }, [key, assistants]);
@@ -42,9 +46,9 @@ export function useAssistantSelection(apps: CoreApp[], scope: string | null) {
   const picker = <Dialog open={key !== null && openKey === key} onOpenChange={value => { if (!value) close(); }}>
     <DialogContent><DialogHeader><DialogTitle>Choose an assistant</DialogTitle>
       <DialogDescription>Shell sends this request to the assistant you select. You can change the choice in Settings → Shell.</DialogDescription>
-    </DialogHeader><div className="flex flex-col gap-2">{assistants.map(assistant => <Button key={assistant.appId} variant="outline" disabled={!assistant.running} onClick={() => {
+    </DialogHeader><div className="flex flex-col gap-2">{assistants.map(assistant => <Button key={assistant.appId} variant="outline" disabled={!assistant.running || !!assistant.problem} onClick={() => {
       select(assistant.appId); pending.current?.(assistant); pending.current = null; setOpenKey(null);
-    }}>{apps.find(app => app.id === assistant.appId)?.displayName || assistant.appId}{!assistant.running ? " — unavailable" : ""}</Button>)}</div>
+    }}>{apps.find(app => app.id === assistant.appId)?.displayName || assistant.appId}{assistant.problem ? ` — ${assistant.problem}` : !assistant.running ? " — unavailable" : !assistant.capabilities?.includes("attachments") ? " — no files or screenshots" : ""}</Button>)}</div>
     </DialogContent>
   </Dialog>;
   return { assistants, selectedId, selected, select, choose, picker };

@@ -1,9 +1,9 @@
-# AI Gateway Chat Components
+# Hosty Harness Chat Components
 
 Created: 2026-09-22
-Updated: 2026-09-25
+Updated: 2026-09-27
 
-The [AI Gateway assistant](../ai-gateway/feature.md#shell-surface) uses Message Scroller,
+The [Hosty Harness assistant](../ai-gateway/feature.md#shell-surface) uses Message Scroller,
 Code Block, Attachment, Input Group and collapsible activity in its existing Radix/shadcn
 interface. The app remains on its existing design tokens and Button implementation.
 

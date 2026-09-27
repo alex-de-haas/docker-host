@@ -1,7 +1,7 @@
 # Feature: Automatic Runtime App Ports
 
 Created: 2026-06-05
-Updated: 2026-09-18
+Updated: 2026-09-27
 
 Runtime apps do not hard-code host ports. Core reserves an available host port for every declared
 service port at install and reconciles reservations on reviewed updates and runtime switches.
@@ -59,7 +59,7 @@ The band exists because a reservation is durable and an OS-allocated port is not
 automatic port was whatever a bind on port 0 returned — that is, a port out of the OS dynamic range
 (Linux 32768+, macOS and Windows 49152+), which is also the pool every outbound connection on the
 host draws from. Nothing tells the kernel to keep such a port aside, so the reservation was only ever
-on loan. A Windows host reserved 52306 for `hosty.ai-gateway` and then handed the port out again
+on loan. A Windows host reserved 52306 for `hosty.harness` and then handed the port out again
 during the app's own `npm install` setup step, between Core's start preflight and the app's listen;
 the app died with `EADDRINUSE` on every start. The band sits above the crowded development-port
 neighbourhood apps pin by hand and below the lowest dynamic-range floor of any supported platform, so

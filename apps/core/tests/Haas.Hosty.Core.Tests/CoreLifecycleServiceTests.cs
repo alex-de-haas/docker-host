@@ -3141,7 +3141,7 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Theory]
-    [InlineData("hosty.ai-gateway", false)]
+    [InlineData("hosty.harness", false)]
     [InlineData("org.example.assistant", false)]
     [InlineData("org.example.assistant", true)]
     public async Task StartAutostartAppsAsync_SlowSystemLocalCommandDoesNotBlockDockerApps(

@@ -1,6 +1,6 @@
 # Hosty Harness Rename
 
-Status: Ready
+Status: In Progress
 Created: 2026-09-26
 Updated: 2026-09-27
 
@@ -334,21 +334,21 @@ can ship independently of AHP and the session-workspace implementation.
 
 ## Deliverables
 
-- [ ] Inventory identity, interface, build, distribution and client references; implement the selected
+- [x] Inventory identity, interface, build, distribution and client references; implement the selected
   rename contract, coordinating `interfaces.assistant` across Core, Shell and Harness.
-- [ ] Define the versioned `assistant` interface: its mandatory part, the manifest `version` and
+- [x] Define the versioned `assistant` interface: its mandatory part, the manifest `version` and
   `capabilities` declaration, and the `attachments` capability with its guaranteed floor. Preserve
   metadata through Core parsing, persistence, update projection, discovery and client types.
-- [ ] Implement the assistant handoff for prompts and app context in Harness and its `attachments`
+- [x] Implement the assistant handoff for prompts and app context in Harness and its `attachments`
   capability, with authenticated retry-safe preparation/upload/finalization, pending-request recovery
   and cleanup, the uniform draft/immediate-start setting and caller-driven opening of provider-owned
   UI. Update Shell entry points and relevant SDK integration, and verify the contract.
-- [ ] Declare Shell's required and optional capabilities and validate the Assistant for Shell choice
+- [x] Declare Shell's required and optional capabilities and validate the Assistant for Shell choice
   against them: refuse a missing required capability, warn about missing optional ones, and show the
   affected features as unavailable with the reason.
-- [ ] Implement and document the old manifest/feed URL retirement and Core release order without app-state
+- [x] Implement and document the old manifest/feed URL retirement and Core release order without app-state
   migration.
-- [ ] Update native/external client discovery and reconnection guidance, documentation and skill references.
+- [x] Update native/external client discovery and reconnection guidance, documentation and skill references.
 - [ ] Apply the chosen artifact version policy, add its AGENTS.md entry, and verify fresh install/update
   behavior.
 

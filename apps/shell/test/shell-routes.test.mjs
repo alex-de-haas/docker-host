@@ -148,7 +148,7 @@ test("an ordinary user reaches Settings only for the access-tokens tab", () => {
 test("authorization redirects preserve personal tokens and react to settings tab changes", () => {
   const tokens = readShellRoute("/settings", params("tab=tokens"));
   assert.equal(getShellAuthorizationRedirect(tokens, true, false), null);
-  for (const tab of ["users", "core", "hosty.ai-gateway", "unknown"]) {
+  for (const tab of ["users", "core", "hosty.harness", "unknown"]) {
     const route = readShellRoute("/settings", params(`tab=${tab}`));
     assert.equal(getShellAuthorizationRedirect(route, true, false), "/apps");
     assert.equal(getShellAuthorizationRedirect(route, true, true), null);

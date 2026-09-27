@@ -4,7 +4,7 @@ import { assistantMessageFor, findAssistantGateways, selectAssistant } from "../
 import { getAppPanelTabs } from "../src/app/shell/surfaces/app-surface-tabs.ts";
 
 const app = (id, extra = {}) => ({ id, displayName: id, runtimeState: "running", confirmedRoles: ["assistant"],
-  interfaces: { "ai-gateway": [{ url: `http://${id}/api` }] },
+  interfaces: { "assistant": [{ version: 1, capabilities: ["attachments"], url: `http://${id}/api` }] },
   panelSurfaces: [{ path: "/chat", embeddedUrl: `http://${id}/chat` }], ...extra });
 test("interfaces and system labels do not grant assistant discovery or a panel", () => {
   const unconfirmed = app("fake", { confirmedRoles: [], system: true });
@@ -14,7 +14,7 @@ test("interfaces and system labels do not grant assistant discovery or a panel",
   assert.deepEqual(getAppPanelTabs([app("no-interface", { interfaces: {} })]), []);
 });
 test("two confirmed assistants keep separate panels, including a stopped assistant", () => {
-  const apps = [app("first"), app("second", { runtimeState: "stopped", interfaces: { "ai-gateway": [{ url: null }] } })];
+  const apps = [app("first"), app("second", { runtimeState: "stopped", interfaces: { "assistant": [{ version: 1, capabilities: ["attachments"], url: null }] } })];
   assert.deepEqual(getAppPanelTabs(apps).map(tab => [tab.appId, tab.embeddedUrl]), [["first", "http://first/chat"], ["second", null]]);
   assert.equal(findAssistantGateways(apps)[1].running, false);
 });

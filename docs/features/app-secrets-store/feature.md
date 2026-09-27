@@ -1,7 +1,7 @@
 # App Secrets Store
 
 Created: 2026-07-22
-Updated: 2026-09-17
+Updated: 2026-09-27
 
 ## Description
 
@@ -197,7 +197,7 @@ secret", so a broken Core or proxy cannot masquerade as a reconnect-required sta
 
 ## App-managed provider credentials
 
-AI Gateway's [provider connections](../ai-gateway-providers/feature.md) extend the original
+Hosty Harness's [provider connections](../ai-gateway-providers/feature.md) extend the original
 runtime-acquired-only boundary to credentials entered through an app-owned connection UI. The app
 stores only opaque references in backed-up metadata and writes values using its existing service
 identity. This scoped use includes provider API keys, manual Claude tokens and native ChatGPT auth

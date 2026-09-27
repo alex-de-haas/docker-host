@@ -198,3 +198,12 @@ npm run ci          # run the same aggregate checks as CI
 Hosty is licensed under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0-only).
 
 In short: you are free to use, self-host, modify, and redistribute Hosty — including for personal and internal commercial use. If you distribute a modified version, or run one that users interact with over a network — whether they are external customers or people inside your organization — you must offer those users its source code under the same license. For commercial licensing outside these terms, contact the author.
+
+### Hosty Harness replacement
+
+The former AI Gateway is now **Hosty Harness** (`hosty.harness`, `apps/harness`). Update in order:
+Core/CLI **0.110.0+**, Shell **0.85.0+**, then uninstall `hosty.ai-gateway` and install Harness
+**0.35.0+** fresh. Confirm its role/permissions, configure providers again and select it in Shell.
+The old `apps/ai-gateway` manifest/feed URLs are retired; no aliases, state migration or credential
+import are provided. Reconnect external MCP clients to the newly assigned Harness endpoint.
+See the [contract and replacement procedure](docs/features/hosty-harness-rename/feature.md).

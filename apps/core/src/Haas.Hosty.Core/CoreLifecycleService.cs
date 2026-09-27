@@ -3122,7 +3122,7 @@ internal sealed partial class CoreLifecycleService(
 
     // Records only re-run manifest→record normalization at install/update/switch/live-start, so an app
     // installed under an older Core permanently lacked any manifest section that build did not parse —
-    // e.g. `interfaces` was silently dropped for hosty.ai-gateway installed under Core 0.73.x, and Shell's
+    // e.g. `interfaces` was silently dropped for hosty.harness installed under Core 0.73.x, and Shell's
     // assistant discovery found nothing until a manual same-version reviewed update rebuilt the record.
     // This boot backfill heals such records without operator action: any runtime record whose
     // NormalizedBy stamp differs from the running build gets ApplyManifestProjections re-run from the
@@ -3228,7 +3228,7 @@ internal sealed partial class CoreLifecycleService(
         // ResolveTelemetryEndpointAsync). Tiers therefore run strictly in sequence.
         // Within each capability priority, queue system apps first so Shell gets an early start
         // opportunity, but do not wait for all system apps to finish before starting ordinary apps.
-        // A slow local-command setup (such as AI Gateway's build) must occupy only its own slot.
+        // A slow local-command setup (such as Hosty Harness's build) must occupy only its own slot.
         // Use the installed role rather than a first-party id.
         //
         // Within a tier the apps are independent — each start holds only its own app's operation lock,

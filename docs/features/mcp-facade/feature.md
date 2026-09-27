@@ -1,9 +1,9 @@
 # MCP Facade — One Remote Endpoint For The Whole Fleet
 
 Created: 2026-08-24
-Updated: 2026-09-26
+Updated: 2026-09-27
 
-`POST /mcp` on the `hosty.ai-gateway` app is an MCP server that is the whole host: one entry in an
+`POST /mcp` on the `hosty.harness` app is an MCP server that is the whole host: one entry in an
 external agent client's configuration yields Core's control-plane tools, every enabled app's tools,
 and those apps' skills, over HTTP with no CLI or SSH anywhere on the path.
 
@@ -69,7 +69,7 @@ including the `hosty:core` switch.
   Anything else — `false`, absent, a string, the hint at the wrong nesting — means "we do not know
   what this does". A filtered tool is hidden from the listing **and refused on call**: hiding alone
   would still let a client call from a list it cached.
-- **Names are the connector's** ([tool-key.ts](../../../apps/ai-gateway/src/facade/tool-key.ts)), a
+- **Names are the connector's** ([tool-key.ts](../../../apps/harness/src/facade/tool-key.ts)), a
   deliberate port rather than a second scheme. Client permission rules are written against these
   strings, so a divergence would mean a rule that works through `hosty mcp` and silently does not
   here. The tests assert the port against the connector's own worked examples.
@@ -88,7 +88,7 @@ including the `hosty:core` switch.
   therefore no tools. No access rule is re-implemented here.
 - **A failed source costs that source.** An app that cannot be reached, or a page that cannot be
   read, leaves the rest of the catalog intact — the opposite policy from
-  [readonly.ts](../../../apps/ai-gateway/src/mcp/readonly.ts), which produces a permission answer and
+  [readonly.ts](../../../apps/harness/src/mcp/readonly.ts), which produces a permission answer and
   refuses on any doubt. Both are correct for what they produce. A discovery failure retains the previous catalog and adds no targets. Core is subject to the
   same directory policy as every app.
 
@@ -141,7 +141,7 @@ An external client can act on these only if they differ, so they do:
 
 ## Verified Live (Loopback)
 
-2026-08-25, dev host, gateway 0.18.0. One `hosty.ai-gateway`-scoped token, one entry: the catalog
+2026-08-25, dev host, gateway 0.18.0. One `hosty.harness`-scoped token, one entry: the catalog
 aggregated Core's four tools beside Demo App's and Telemetry's (nine in all, every description
 naming its app, the host's own text first in `instructions`); `list_people` and `get_host_status`
 answered real data through per-user on-behalf-of tokens; `restart_app` by its facade name was

@@ -51,7 +51,7 @@ independent Draft and approval boundary. No separate user-facing development tas
 
 The owner wants reusable session/context behavior with replaceable agent execution and independently
 chosen assistant UI, without a broad architectural rewrite for the current rename. The immediate
-selected scope is the [`assistant` interface and assistant handoff](../hosty-harness-rename/plan.md).
+selected scope is the [`assistant` interface and assistant handoff](../hosty-harness-rename/feature.md).
 These decisions guide further design. They do not approve a new Core session subsystem.
 
 Three roles stay distinct:
@@ -150,7 +150,7 @@ Uncommitted changes in the operator's main checkout are not part of this baselin
 
 | Feature | Scope and dependencies |
 | --- | --- |
-| [Harness rename](../hosty-harness-rename/plan.md) | Product/app identity, versioned `assistant` interface with the assistant handoff, distribution retirement and fresh-install policy; independent of AHP |
+| [Harness rename](../hosty-harness-rename/feature.md) | Product/app identity, versioned `assistant` interface with the assistant handoff, distribution retirement and fresh-install policy; independent of AHP |
 | [Assistant provider permissions](../assistant-provider-permissions/feature.md) | Confirmed assistant role and approved permission instead of interface-derived authority; every assistant as its own Shell tab; ships before the rename |
 | [Agent MCP directory](../agent-mcp-directory/feature.md) | Core-owned policy for which apps' MCP servers agents use, published without credentials; agents call apps directly and Core never proxies |
 | [AHP client interface](../assistant-ahp/plan.md) | Bounded client/ingress spike and replaceable projection over Hosty sessions; existing web REST/SSE remains |

@@ -2,7 +2,7 @@
 
 Status: Draft
 Created: 2026-09-16
-Updated: 2026-09-26
+Updated: 2026-09-27
 
 ## Development Session Direction (2026-09-24)
 
@@ -76,7 +76,7 @@ Evidence entry points:
 - `CoreLifecycleService.ApplyRuntimeSwitchAsync` and the CLI use reviewed profile selection. The
   old development-mode endpoint and stored overrides are removed; no separate toggle is needed.
   `McpEndpoints.cs` still has no runtime-switch tool.
-- `apps/ai-gateway/src/sessions/manager.ts` supplies a per-session cwd;
+- `apps/harness/src/sessions/manager.ts` supplies a per-session cwd;
   `sessions/store.ts` deletes that workspace with the session. App context is not cwd binding.
 - [Gateway](../ai-gateway/feature.md), [Core MCP](../core-mcp/feature.md),
   [app skills](../app-provided-skills/feature.md),

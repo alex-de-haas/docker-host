@@ -2,7 +2,7 @@
 
 Status: On Hold
 Created: 2026-09-26
-Updated: 2026-09-26
+Updated: 2026-09-27
 
 Run the assistant's agent harness inside a container by default, so a session's approved commands
 act on what the container can reach rather than on the whole host. Extracted on 2026-09-26 from the
@@ -13,7 +13,7 @@ it to Draft and then Ready is the owner's call.
 
 ## Current Behavior
 
-- `apps/ai-gateway` has two `localCommand` profiles, `local` (default) and `dev`. The gateway spawns
+- `apps/harness` has two `localCommand` profiles, `local` (default) and `dev`. The gateway spawns
   the Claude and Codex harness processes on the host as the OS user running Core, so it never runs
   in a container ([feature.md](../ai-gateway/feature.md#gateway-app)).
 - A session's shell calls therefore run with that user's full authority. The host preamble points the
@@ -53,7 +53,7 @@ than its consequence, with the `hosty` CLI's unconditional host-operator power b
 `Bash` call.
 
 Restricting the assistant to administrators — already true, enforced in
-[`apps/ai-gateway/src/auth.ts`](../../../apps/ai-gateway/src/auth.ts) on every route and in Shell's
+[`apps/harness/src/auth.ts`](../../../apps/harness/src/auth.ts) on every route and in Shell's
 surface gating — does not reduce this. The risk lives inside an admin's own session,
 and injected instructions execute with that admin's privileges. Containment is the fix; until it
 ships the risk is accepted, not absent.
@@ -63,7 +63,7 @@ ships the risk is accepted, not absent.
 Checked against `origin/main` at `f2bae944` (2026-09-26). None of these implements or contradicts
 containment; each changes what it has to cover.
 
-- **[Hosty Harness rename](../hosty-harness-rename/plan.md)** (Draft) replaces `hosty.ai-gateway`
+- **[Hosty Harness rename](../hosty-harness-rename/feature.md)** (Draft) replaces `hosty.ai-gateway`
   with a freshly installed `hosty.harness` and explicitly migrates no state. Containment lands in
   whichever manifest is current when it ships. If it ships with or after the rename, the default
   profile changes on a clean install, so no data move between a host directory and a container

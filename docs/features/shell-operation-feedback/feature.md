@@ -1,5 +1,5 @@
 Created: 2026-09-25
-Updated: 2026-09-25
+Updated: 2026-09-27
 
 # Shell operation feedback
 
@@ -21,11 +21,11 @@ Error toasts include a scrollable full description, Copy, and a dismiss button. 
 
 ## Assistant handoff
 
-Ask assistant is absent when Shell cannot discover an installed `ai-gateway` interface. When installed, the action is disabled if the Gateway is stopped, the panel is missing, or the user lacks host-administrator access. Runtime/provider availability is rechecked when invoked.
+Ask assistant uses the selected, confirmed assistant's version-1 interface. It is unavailable when the assistant is stopped, incompatible, missing its UI, or the viewer lacks host-administrator access.
 
-An explicit click creates a new Gateway session through the existing authenticated delegated client. Known app IDs become session context when the selected harness supports app context; otherwise the diagnostic provenance still names the app. Session creation uses an actor-scoped idempotency key, reused after an uncertain response and for retries from the same toast. Concurrent clicks on that toast do not create multiple requests.
+An explicit click prepares and finalizes an authenticated handoff containing the diagnostic prompt and known app ID. The toast retains one UUIDv7 request identity for uncertain retries and prevents concurrent duplicate clicks. Long diagnostic text is bounded; Copy retains the full error.
 
-Shell selects the assistant panel and sends `hosty:open-assistant-session` with the session ID, optional draft and source app ID. Gateway accepts messages only from its parent window, loads the session through its authenticated API, and fills an empty draft with provenance. It preserves an existing draft, ignores stale session lookups, and never sends a message. Long diagnostic drafts are explicitly truncated to the handoff limit; Copy retains the full error. App context remains subject to Gateway's normal authorization and availability checks.
+Shell validates the returned endpoint/path against the selected assistant's declared UI, opens its panel and navigates to that conversation. Opening does not submit another prompt. Harness stores a draft by default; its immediate-handoff setting can accept execution instead. Finalization retries preserve the original outcome regardless of later settings changes. See [the handoff contract](../hosty-harness-rename/feature.md).
 
 ## Source provenance
 
@@ -40,5 +40,5 @@ Shell configures `@reui` as `https://reui.io/r/radix-vega/{name}.json`. The shar
 - Confirm cancellation, Escape, initial/restored focus, overlapping prompts, and unmount cancellation. Never trigger a real destructive action merely to smoke-test a dialog.
 - Verify copy includes full diagnostics; clipboard rejection leaves the error visible. Verify absent/stopped Gateway and concurrent/retried handoff behavior.
 - Verify app-context capability negotiation and identical idempotency keys across uncertain session-creation retries.
-- Gateway tests cover fresh-session draft delivery, preservation of old and edited drafts, rejection of messages from another frame, and no automatic send.
+- Harness tests cover durable drafts, authenticated preparation, complete uploads, unchanged retry outcomes and one execution identity.
 - Run Shell tests/lint/build and Gateway tests/web lint/build. Verify the toast position and confirmation cancellation through Core-managed Shell. Retain contextual diagnostics when removing global banners.

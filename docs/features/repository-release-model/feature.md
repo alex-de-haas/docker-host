@@ -1,7 +1,7 @@
 # Repository And Release Model
 
 Created: 2026-05-12
-Updated: 2026-09-08
+Updated: 2026-09-27
 
 This document records the current repository layout and release artifact boundaries after the Core/Shell split and retirement of the legacy combined Host package.
 
@@ -50,7 +50,7 @@ independently of the platform, browser Shell, and Apple client.
 
 ### The shared root lockfile
 
-Every Node artifact here - the four Next.js apps, `apps/ai-gateway`, and `packages/app-sdk` - resolves
+Every Node artifact here - the four Next.js apps, `apps/harness`, and `packages/app-sdk` - resolves
 through one root `package.json` / `package-lock.json` pair (npm workspaces). A component boundary in the
 diagram above is therefore not a dependency boundary: one lockfile decides what all of them install.
 

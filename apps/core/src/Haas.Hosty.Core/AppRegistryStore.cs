@@ -366,7 +366,7 @@ internal sealed record AppRecord(
     // AppStateDocument schema bump. See docs/features/automatic-runtime-app-ports/feature.md.
     IReadOnlyList<AppPortAssignment>? PortAssignments = null,
     // Platform interfaces this app exposes for discovery (top-level `interfaces`, keyed by interface
-    // name — e.g. "ai-gateway"), normalized from the manifest at install/update and re-read on each
+    // name — e.g. "assistant"), normalized from the manifest at install/update and re-read on each
     // start for a live source app. Additive/nullable, so no AppStateDocument schema bump. See
     // docs/features/ai-agent-bridge/feature.md, "Manifest Interfaces And Registry".
     IReadOnlyDictionary<string, IReadOnlyList<AppInterfaceContract>>? Interfaces = null,
@@ -724,10 +724,10 @@ internal sealed record AppSurfaceContract(string Path, string? EndpointKey, stri
 
 // Normalized platform-interface declarations (top-level `interfaces`), denormalized onto the app
 // record and projected onto the summary so clients discover interface providers from the registry
-// instead of re-reading manifests — e.g. Shell gates its assistant UI on an installed "ai-gateway"
+// instead of re-reading manifests — e.g. Shell gates its assistant UI on an installed "assistant"
 // provider. Names and declaration shapes are validated at manifest selection; normalization here
 // only applies defaults (key "default", path "/").
-internal sealed record AppInterfaceContract(string Key, string? EndpointKey, string Path)
+internal sealed record AppInterfaceContract(string Key, string? EndpointKey, string Path, int? Version = null, IReadOnlyList<string>? Capabilities = null)
 {
     public static IReadOnlyDictionary<string, IReadOnlyList<AppInterfaceContract>>? FromManifest(
         IReadOnlyDictionary<string, IReadOnlyList<RuntimeAppInterfaceManifest>> interfaces)
@@ -742,13 +742,14 @@ internal sealed record AppInterfaceContract(string Key, string? EndpointKey, str
         {
             // Null entries are dropped, not dereferenced: this normalization also runs on raw manifest
             // reads (the boot backfill), where the stored copy may carry an `interfaces` section that
-            // was written under a Core too old to shape-validate it — e.g. `"ai-gateway": [null]`.
+            // was written under a Core too old to shape-validate it — e.g. `"assistant": [null]`.
             var contracts = (declarations ?? [])
                 .Where(declaration => declaration is not null)
                 .Select(declaration => new AppInterfaceContract(
                     Key: string.IsNullOrWhiteSpace(declaration.Key) ? "default" : declaration.Key.Trim(),
                     EndpointKey: string.IsNullOrWhiteSpace(declaration.Endpoint) ? null : declaration.Endpoint.Trim(),
-                    Path: NormalizeInterfacePath(declaration.Path)))
+                    Path: NormalizeInterfacePath(declaration.Path),
+                    Version: declaration.Version, Capabilities: declaration.Capabilities?.ToArray()))
                 .ToArray();
             if (contracts.Length == 0)
             {
@@ -778,7 +779,7 @@ internal sealed record AppInterfaceContract(string Key, string? EndpointKey, str
 // yet, e.g. before its first start assigns ports).
 // `Service` names the service the interface's endpoint belongs to, so a client that is about to
 // call the interface (the MCP tool catalog) can gate on that service's health rather than on the app.
-internal sealed record AppInterfaceSummary(string Key, string Path, string? Url, string? Service = null);
+internal sealed record AppInterfaceSummary(string Key, string Path, string? Url, string? Service = null, int? Version = null, IReadOnlyList<string>? Capabilities = null);
 
 // Normalized marketplace/catalog display metadata, denormalized onto the app record and surfaced on
 // the summary (like AppUiContract). Normalization is best-effort and applied *after* the manifest
@@ -988,7 +989,7 @@ internal sealed record AppSummary(
     IReadOnlyList<AppDependencySummary>? Dependencies = null,
     // Platform interfaces the app exposes (top-level `interfaces`), each declaration resolved to a
     // ready-to-call URL where possible, so a client can gate a feature on an installed provider —
-    // e.g. Shell shows its assistant UI only when a running app declares "ai-gateway". Null when the
+    // e.g. Shell shows its assistant UI only when a running app declares "assistant". Null when the
     // manifest declares none. Additive/nullable.
     IReadOnlyDictionary<string, IReadOnlyList<AppInterfaceSummary>>? Interfaces = null,
     // The app's last-observed health (see AppHealthSummary); null until the first start or observation.
@@ -999,7 +1000,8 @@ internal sealed record AppSummary(
     bool RestartRequired = false,
     // Persisted administrator grants, never inferred from the current source manifest.
     IReadOnlyList<string>? GrantedCorePermissions = null,
-    IReadOnlyList<string>? ConfirmedRoles = null)
+    IReadOnlyList<string>? ConfirmedRoles = null,
+    string? EntryEndpoint = null)
 {
     public static AppSummary From(
         AppRecord app,
@@ -1029,7 +1031,8 @@ internal sealed record AppSummary(
                 EntryPath: item.Path,
                 EmbeddedUrl: BuildUiUrl(ResolveEndpointUrl(endpoints, item.EndpointKey ?? ui.EndpointKey), item.Path),
                 IconUrl: ResolveAssetUrl(item.IconAsset, app.Id, assetVersion),
-                Service: ResolveEndpoint(endpoints, item.EndpointKey ?? ui.EndpointKey)?.Service))
+                Service: ResolveEndpoint(endpoints, item.EndpointKey ?? ui.EndpointKey)?.Service,
+                Endpoint: ResolveEndpoint(endpoints, item.EndpointKey ?? ui.EndpointKey)?.Key))
             .ToArray() ?? [];
 
         // A surface with no reachable endpoint yields no URL, which is how a stopped app's tab knows
@@ -1042,7 +1045,7 @@ internal sealed record AppSummary(
                     Path: surface.Path,
                     EmbeddedUrl: BuildUiUrl(ResolveEndpointUrl(endpoints, surface.EndpointKey ?? ui!.EndpointKey), surface.Path),
                     Service: ResolveEndpoint(endpoints, surface.EndpointKey ?? ui!.EndpointKey)?.Service,
-                    Icon: surface.Icon);
+                    Icon: surface.Icon, Endpoint: ResolveEndpoint(endpoints, surface.EndpointKey ?? ui!.EndpointKey)?.Key);
 
         var settingsSurface = Surface(ui?.Settings, app.DisplayName);
         var panelSurfaces = (ui?.Panels ?? [])
@@ -1097,7 +1100,8 @@ internal sealed record AppSummary(
             Health: app.Health,
             Icon: app.Ui?.Icon,
             GrantedCorePermissions: app.GrantedCorePermissions ?? [],
-            ConfirmedRoles: app.ConfirmedRoles ?? []);
+            ConfirmedRoles: app.ConfirmedRoles ?? [],
+            EntryEndpoint: ui is null ? null : ResolveEndpoint(endpoints, ui.EndpointKey)?.Key);
     }
 
     private static IReadOnlyDictionary<string, IReadOnlyList<AppInterfaceSummary>>? BuildInterfaceSummaries(
@@ -1117,7 +1121,7 @@ internal sealed record AppSummary(
                     declaration.Key,
                     declaration.Path,
                     BuildUiUrl(ResolveEndpointUrl(endpoints, declaration.EndpointKey), declaration.Path),
-                    ResolveEndpoint(endpoints, declaration.EndpointKey)?.Service))
+                    ResolveEndpoint(endpoints, declaration.EndpointKey)?.Service, declaration.Version, declaration.Capabilities))
                 .ToArray();
         }
 
@@ -1321,11 +1325,11 @@ internal sealed record AppSettingSummary(string Key, string Type, string? Value,
 
 // `Service` names the service that serves this page — the one whose health decides whether the
 // page can be opened. Null when the endpoint the page resolves to names no service.
-internal sealed record AppNavigationSummary(string Label, string Path, string? EntryPath, string? EmbeddedUrl, string? IconUrl = null, string? Service = null);
+internal sealed record AppNavigationSummary(string Label, string Path, string? EntryPath, string? EmbeddedUrl, string? IconUrl = null, string? Service = null, string? Endpoint = null);
 
 /// <summary>A placed surface as a client consumes it: what to call the tab, and what to embed.</summary>
 // `Service` as on AppNavigationSummary: which service's health gates embedding this surface.
-internal sealed record AppSurfaceSummary(string? Label, string Path, string? EmbeddedUrl, string? Service = null, string? Icon = null);
+internal sealed record AppSurfaceSummary(string? Label, string Path, string? EmbeddedUrl, string? Service = null, string? Icon = null, string? Endpoint = null);
 
 internal sealed record AppMountSummary(
     string Key,
