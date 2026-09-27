@@ -2,7 +2,7 @@
 
 Status: Draft
 Created: 2026-07-10
-Updated: 2026-09-26
+Updated: 2026-09-27
 
 Exploratory. This plan authorizes no implementation and changes no current system-app behavior; it
 formalizes a pattern the platform already uses ad hoc so the next capability does not invent a second
@@ -444,6 +444,13 @@ plan is Draft.
 - Question: Does agent execution become an `agent` provider role, with which contract, cardinality
   and authorization for apps that call agents, and does the Agent Host Protocol fit that contract?
   Decide when a second agent provider or the first app-mediated AI feature needs it.
+  Owner direction, 2026-09-27, not scheduled: app-mediated calls, such as generating a checklist from
+  a project-manager task, go directly to an agent, not through an assistant. The app supplies
+  instructions describing the task, the call runs immediately, each app uses the agent selected as
+  its default, and the SDK provides the client. To resolve before design: because the app's
+  instructions run without an operator reviewing them, such a call gets no host tools or MCP authority
+  by default. This separate execution contract is not authorized by the assistant handoff's
+  receiver-side immediate-start setting (vision decision 16); define its own app grants and limits.
 - Question: What is the token-broker consent and storage model?
   Deferred with the broker itself; revisit once login methods exist and a concrete app needs
   provider-API access.

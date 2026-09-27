@@ -2,7 +2,7 @@
 
 Status: Draft
 Created: 2026-09-02
-Updated: 2026-09-26
+Updated: 2026-09-27
 
 Operator-owned rules for which assistant tools are disabled, ask before execution, or run without
 an approval card, beyond the per-app read-only grant that ships today. This is the "second iteration
@@ -196,6 +196,12 @@ locations; dedicated paths organize outputs without promising isolation within s
 Toolchains/system libraries have only the access needed to run. Network destinations and
 Git publication rights are separate permissions, visible in the grant summary. Source editing alone
 does not authorize push, host administration, global package installation or access to other apps.
+Owner clarification, 2026-09-27: native local commit permission, if supported by the selected
+[workspace backend](../assistant-session-workspaces/plan.md), is independent of push, PR creation
+and remote PR merge. Writable source files alone do not grant writable Git metadata or provider
+credentials. Core retains its managed operation API and independent observation; exclusive execution
+may be claimed only for a verified boundary that prevents bypass through agent processes, credentials
+or control APIs. Broad operator-equivalent external agents remain outside that guarantee.
 Explicit Git requests and any separately granted remote/branch authority use the same policy, not a
 second per-command approval loop after authorization has already been given.
 
