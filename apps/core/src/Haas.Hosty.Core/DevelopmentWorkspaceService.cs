@@ -431,23 +431,27 @@ internal sealed class DevelopmentWorkspaceService(CoreDataPaths paths, AppRegist
         if (string.IsNullOrWhiteSpace(repository)) throw Error("source_missing", "No source repository is declared.");
         repository = repository.Trim();
         AppSourceService.ValidateManagedRepository(repository);
-        if (!System.IO.Path.IsPathFullyQualified(repository) && !Uri.TryCreate(repository, UriKind.Absolute, out _))
+        if (!System.IO.Path.IsPathFullyQualified(repository))
         {
-            // Installation already resolves manifest-relative sources to a repository root.
-            // Never interpret the declaration relative to Core's current working directory.
-            if (string.IsNullOrWhiteSpace(localSourceRoot) || !System.IO.Path.IsPathFullyQualified(localSourceRoot))
-                throw Error("source_missing", "The relative source repository has no resolved local source root.");
-            repository = localSourceRoot;
+            if (Uri.TryCreate(repository, UriKind.Absolute, out var uri))
+            {
+                if (!string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment)) throw Error("repository_invalid", "Repository URLs cannot contain query strings or fragments.");
+                if (!uri.IsFile) return uri.GetLeftPart(UriPartial.Path).TrimEnd('/');
+                repository = uri.LocalPath;
+            }
+            else
+            {
+                // Installation already resolves manifest-relative sources to a repository root.
+                // Never interpret the declaration relative to Core's current working directory.
+                if (string.IsNullOrWhiteSpace(localSourceRoot) || !System.IO.Path.IsPathFullyQualified(localSourceRoot))
+                    throw Error("source_missing", "The relative source repository has no resolved local source root.");
+                repository = localSourceRoot;
+            }
         }
-        if (System.IO.Path.IsPathFullyQualified(repository))
-        {
-            var local = MountPathPolicy.ResolveRealPath(repository);
-            return (await Git(local, ["rev-parse", "--path-format=absolute", "--git-common-dir"], ct)).StandardOutput.Trim();
-        }
-        var uri = new Uri(repository);
-        if (!string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment)) throw Error("repository_invalid", "Repository URLs cannot contain query strings or fragments.");
-        return uri.GetLeftPart(UriPartial.Path).TrimEnd('/');
+        var local = MountPathPolicy.ResolveRealPath(repository);
+        return (await Git(local, ["rev-parse", "--path-format=absolute", "--git-common-dir"], ct)).StandardOutput.Trim();
     }
+
     private async Task<string> Fetch(string repo, string repository, string branch, CancellationToken ct)
     {
         var reference = "refs/hosty/targets/" + Hash(branch);

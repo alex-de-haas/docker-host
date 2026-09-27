@@ -57,6 +57,29 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Equal("source", await File.ReadAllTextAsync(Path.Combine(origin, "README.md")));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Workspace_FileUrlAndAbsolutePathShareRepositoryBinding(bool fileUrlFirst)
+    {
+        var f = await LifecycleFixture.CreateAsync();
+        var origin = await CreateGitRepositoryAsync(Path.Combine(f.Root, "source with spaces"));
+        var fileUrl = new Uri(origin).AbsoluteUri;
+        await f.Service.InstallAsync(new AppInstallRequest(await f.WriteManifestAsync("1.0.0", sourceRepository: fileUrlFirst ? fileUrl : origin)));
+        var app = (await f.Apps.GetAppAsync(SourceTestApp))!;
+        const string sibling = "com.example.sibling";
+        await f.Apps.UpsertAppAsync(app with { Id = sibling, SourceState = app.SourceState! with { Repository = fileUrlFirst ? origin : fileUrl } });
+        var service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
+        var owner = WorkspaceTestOwner(f);
+        var first = await service.PrepareAsync(owner, WorkspaceRequest(), default);
+        var second = await service.PrepareAsync(owner, WorkspaceRequest() with { AppId = sibling }, default);
+        Assert.Equal(first.Id, second.Id);
+        Assert.Equal(first.Path, second.Path);
+        Assert.Equal(2, second.Apps.Length);
+        Assert.Single((await service.ListAsync(owner, true, default)).Workspaces);
+        Assert.Equal("source", await File.ReadAllTextAsync(Path.Combine(first.Path, "README.md")));
+    }
+
     [Fact]
     public async Task Workspace_RelativeRepositoryWithoutResolvedRootFailsClosed()
     {
