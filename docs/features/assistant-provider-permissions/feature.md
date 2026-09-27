@@ -15,6 +15,10 @@ The assistant role supports multiple providers with no Core default.
 The endpoint checks the persisted `GrantedCorePermissions` on every request. Neither an assistant
 role nor an interface is a substitute for that permission. A grant can belong to a non-assistant app.
 
+`apps.workspaces.manage` permits session-owned source workspaces and local Git operations, with an
+app service token plus a current administrator credential addressed to that app. It is independently
+reviewed and checked on every request. See [session workspaces](../assistant-session-workspaces/feature.md).
+
 Install review shows the requested roles and permissions with Core-provided descriptions. Core's
 confirmation page also marks update additions and removals. Queued updates adding either require
 Core confirmation; trusted local control operations retain their existing operator authority.

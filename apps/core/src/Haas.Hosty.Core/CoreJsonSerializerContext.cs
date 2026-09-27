@@ -37,6 +37,12 @@ internal static class CoreJson
 // by each options object, so the same context serves both indented and compact callers.
 // One-click Cloudflare ingress (phase 1): API response envelopes, the at-rest credential, and its masked
 // summary projection.
+[JsonSerializable(typeof(WorkspaceOwner))]
+[JsonSerializable(typeof(WorkspacePrepare))]
+[JsonSerializable(typeof(WorkspaceCommand))]
+[JsonSerializable(typeof(WorkspaceDiffRequest))]
+[JsonSerializable(typeof(DevelopmentWorkspace))]
+[JsonSerializable(typeof(WorkspaceList))]
 [JsonSerializable(typeof(CloudflareErrorResponse))]
 [JsonSerializable(typeof(CloudflareAccountsResponse))]
 [JsonSerializable(typeof(CloudflareZonesResponse))]

@@ -3,7 +3,7 @@
   "id": "hosty.harness",
   "name": "Hosty Harness",
   "description": "Host-resident operator assistant with managed Claude and Codex connections, chat and settings UI.",
-  "version": "0.35.1",
+  "version": "0.36.0",
   "role": "system",
   "source": {
     "type": "git",
@@ -157,6 +157,7 @@
     "assistant"
   ],
   "corePermissions": [
-    "apps.skills.read"
+    "apps.skills.read",
+    "apps.workspaces.manage"
   ]
 }

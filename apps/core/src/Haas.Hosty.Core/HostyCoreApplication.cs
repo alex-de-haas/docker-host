@@ -102,6 +102,9 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<CoreEventHub>();
         builder.Services.AddSingleton<NotificationService>();
         builder.Services.AddSingleton<AppSourceService>();
+        builder.Services.AddSingleton<DevelopmentWorkspaceService>();
+        builder.Services.AddSingleton<WorkspaceAuthorization>();
+        builder.Services.AddHostedService<DevelopmentWorkspaceObserver>();
         // Shared flag the control-plane stop endpoint sets and the runtime-app supervisor reads at
         // shutdown to decide whether a stop leaves app containers running (keep-apps light restart).
         builder.Services.AddSingleton<CoreShutdownOptions>();
@@ -400,6 +403,7 @@ internal static class HostyCoreApplication
         CloudflareConnectionEndpoints.Map(app);
         CloudflarePublicationEndpoints.Map(app);
         SourceEndpoints.Map(app);
+        DevelopmentWorkspaceEndpoints.Map(app);
         ControlIdentityEndpoints.Map(app);
         AppDirectoryEndpoints.Map(app);
         AppAssetEndpoints.Map(app);

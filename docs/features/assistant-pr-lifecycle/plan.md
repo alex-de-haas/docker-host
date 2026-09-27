@@ -122,6 +122,11 @@ CLI authentication, helpers and host-control access with the approval/workspace 
 that an agent cannot bypass Core. Under broad operator-equivalent process access, the Core API is a
 managed convenience and observation path, not an exclusive authority. Selecting native local commit
 support does not implicitly grant remote credentials or bypass Core's managed-operation checks.
+Owner follow-up, 2026-09-27: the linked-worktree workflow initially relies on instructions to use the
+assigned worktrees and avoid original source. New filesystem isolation is deferred until practical
+problems justify revisiting it; exclusive Git execution is not a prerequisite.
+This does not relax Core API checks or authorize distributing publication
+credentials to agents; observe direct Git/provider actions without labeling them Core-authorized.
 
 Resolve commit author/committer explicitly and derive agent Co-Authored-By trailers from recorded
 contributions, not the currently selected model alone. Mixed Codex/Claude contributions may need

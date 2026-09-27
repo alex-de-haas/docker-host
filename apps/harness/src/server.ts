@@ -8,7 +8,7 @@ import { stat } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { isSameOriginRequest, resolveAdminActor } from "./auth.js";
-import { exchangeLaunchCode } from "./app-session.js";
+import { readIdentityCookie, exchangeLaunchCode } from "./app-session.js";
 import { serveStaticSite } from "./settings/static-site.js";
 
 // Upper bound for an event stream opened with an app session rather than a delegated token: the
@@ -117,6 +117,8 @@ async function route(
   // Before the operator gate, and deliberately outside /api: the per-session MCP proxy authenticates
   // with a session key held by the harness, not with an operator's delegated token, and it is bound
   // to loopback. Its own handler enforces both (mcp/proxy.ts).
+  if (await manager.developmentMcp.handle(request, response, url.pathname)) return;
+
   if (proxy && (await proxy.handle(request, response, url.pathname))) {
     return;
   }
@@ -416,6 +418,14 @@ async function route(
   }
 
   const sessionId = sessionMatch[1]!;
+  if (sessionMatch[2] === "/workspaces" && method === "POST") {
+    const body = await readJson(request);
+    const action = body.action;
+    if (typeof action !== "string") throw new AppContextError(400, "workspace_action_invalid", "Workspace action is required.");
+    sendJson(response, 200, await manager.workspaceAction(sessionId, action as import("./sessions/development.js").DevelopmentAction,
+      body, readBearer(request) ?? readIdentityCookie(request) ?? undefined, actor.userId)); return;
+  }
+
   const rest = sessionMatch[2] ?? "";
 
   if (rest === "/provider" && method === "PUT") {

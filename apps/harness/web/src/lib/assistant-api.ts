@@ -324,3 +324,14 @@ export async function retryHandoff(id: string): Promise<AssistantSession> {
   await call(`/assistant/v1/handoffs/${encodeURIComponent(id)}/finalize`, { method: "POST", body: JSON.stringify({ attachmentIds: record.attachments.map(a => a.attachmentId) }) });
   return getSession(id);
 }
+
+export type Workspace = {
+  id: string; path: string; repository: string; branch: string; state: string; originalBase: string;
+  targetBranch: string; leases: string[]; apps: { appId: string; subpath?: string | null }[];
+  pullRequests: string[]; operations: { id: string; state: string; error?: string }[];
+  observation?: { state: string; at: string; head?: string; ahead?: number; behind?: number; error?: string;
+    sessionFiles?: string[]; local?: { files: { path: string; status: string }[] } };
+};
+export async function workspaceAction<T>(sessionId: string, action: string, input: Record<string, unknown> = {}): Promise<T> {
+  return (await call(`/sessions/${encodeURIComponent(sessionId)}/workspaces`, { method: "POST", body: JSON.stringify({ ...input, action }) })).json();
+}

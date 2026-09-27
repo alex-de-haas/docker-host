@@ -18,14 +18,21 @@ Core provider row, and the typed approval cards are the ground this builds on.
 ## Shared Session Development Dependency (2026-09-24)
 
 [Session workspaces](../assistant-session-workspaces/plan.md) owns Git workspace registration and
-the linked-worktree/brokered-Git versus isolated-clone decision;
-[shared history](../assistant-shared-history/plan.md) owns provider switching. This plan owns filesystem/command enforcement
-and scoped lifecycle authority. Grants must resolve registered worktree roots and be revalidated
-when the internal agent changes. Protect managed baseline source and shared Git metadata as well as
-ordinary files. This is a design input to the experiments below, not proof that native sandboxes
-already enforce it. The [external context plan](../assistant-external-session-context/plan.md)'s local integration needs separately scoped
-authority: it does not upgrade the read-only facade, and instructions cannot sandbox an external
-agent with unrestricted OS access. Its best-effort cooperation is distinct from internal enforcement.
+uses linked worktrees; [shared history](../assistant-shared-history/plan.md) owns provider switching.
+Owner follow-up, 2026-09-27: workspace delivery uses instructions recommending work only in assigned
+worktrees and no access to original source checkouts. No new native sandbox configuration, OS
+permissions or container isolation is required. Original-source isolation is deferred until practical
+problems justify revisiting it; this decision supersedes stronger filesystem prerequisites for workspace
+delivery below. It does not require proof that direct Git operations cannot bypass Core. Core API authorization,
+workspace ownership and independent Git observation remain required.
+
+The stronger filesystem/command enforcement proposals and experiments below remain unchecked work
+owned by this approval feature, not prerequisites for that trust-based workspace delivery. Their
+unavailable-on-unverified-enforcement rules apply to a capability advertised as enforced, not to the
+accepted agent-trust workspace mode. Do not silently claim those guarantees for the latter or remove
+existing restrictions. This decision does not enable broad credentials or bypass MCP/API permission
+checks. The [external context plan](../assistant-external-session-context/plan.md)'s integration still
+needs separately scoped authority and does not upgrade the read-only facade.
 
 ## Goal
 
@@ -315,6 +322,9 @@ parity. A disposable spike establishes the contract; this Draft does not authori
 
 ## Deliverables
 
+- [ ] **Deferred — original-source isolation:** revisit technical protection of original checkouts and
+      shared Git metadata only if practical agent behavior warrants it and the owner approves that scope.
+      The instruction-based workspace feature does not wait for these enforcement experiments or changes.
 - [ ] Run and record H's current-policy baseline and candidate-boundary experiment on both adapters;
       resolve enforcement, audit and lifecycle-authority design before implementation approval.
 - [ ] **Deferred — immediate process revocation:** own and terminate model-tool commands or verify all

@@ -87,10 +87,12 @@ Three roles stay distinct:
   execution. These observed milestones do not prescribe the assistant's next action. A green CI
   result does not itself authorize merge, and creating a PR does not mean development is complete.
   Core reconciles actual Git/provider state, including changes made outside its API; assistant
-  notifications are refresh hints, not authoritative evidence. Exclusive execution requires a
-  verified process/filesystem/credential boundary, not merely a workspace path or instructions.
-  Permission for native local commits is independent of push, PR creation and remote merge rights;
-  the workspace backend and approval plans must settle that local capability before implementation.
+  notifications are refresh hints, not authoritative evidence. Owner follow-up, 2026-09-27 selects
+  linked Git worktrees and instruction-based cooperation: work in assigned worktrees and do not
+  access original source checkouts. New filesystem restrictions are deferred until practical problems
+  justify revisiting them; existing restrictions remain. Core-managed Git operations are the intended path, but preventing
+  direct Git/host access with a Hosty-owned sandbox is not a workspace prerequisite. Core retains
+  its API authorization and independent observation without claiming exclusive execution.
   Details belong to [PR lifecycle](../assistant-pr-lifecycle/plan.md).
 - **History after cleanup.** A completed merged worktree need not be retained for diff viewing.
   Preserve session-to-PR references in the assistant's session record; Core can query the provider
@@ -155,14 +157,14 @@ Uncommitted changes in the operator's main checkout are not part of this baselin
 | [Agent MCP directory](../agent-mcp-directory/feature.md) | Core-owned policy for which apps' MCP servers agents use, published without credentials; agents call apps directly and Core never proxies |
 | [AHP client interface](../assistant-ahp/plan.md) | Bounded client/ingress spike and replaceable projection over Hosty sessions; existing web REST/SSE remains |
 | [Shared history and switching](../assistant-shared-history/plan.md) | Hosty session journal/adapters, provider context reconciliation and session sharing |
-| [Session workspaces](../assistant-session-workspaces/plan.md) | Registered source, Git metadata boundary, diffs/source selection and cleanup; consumes approval enforcement |
+| [Session workspaces](../assistant-session-workspaces/plan.md) | Registered linked worktrees, agent instructions, diffs and cleanup; Core API authorization remains required, new filesystem isolation is deferred |
 | [PR lifecycle](../assistant-pr-lifecycle/plan.md) | Publish/review/Merge/Complete, credentials, CI, ordered dependencies and corrective PRs |
 | [Action summary](../assistant-action-summary/plan.md) | Evidence-linked aggregation/UI over Hosty invocation events |
 | [Timeline analysis](../assistant-timeline-analysis/plan.md) | Later analysis over the event foundation; does not gate basic shared sessions or summary |
 | [Feedback inbox](../app-feedback-inbox/plan.md) | Independent ordinary-user intake and admin triage/batch delivery outside the privileged Harness process |
 | [External context exchange](../assistant-external-session-context/plan.md) | Later explicit local-agent read/prepare/report workflow |
 | [Harness Swift](../hosty-harness-swift/plan.md) | Dedicated native client with independent delivery and notification decisions |
-| [Sandbox runtimes](../app-sandbox-runtimes/plan.md) | Runtime/data isolation and deterministic browser validation |
+| [Sandbox runtimes](../app-sandbox-runtimes/plan.md) | Worktree runtime selection, runtime/data isolation and deterministic browser validation |
 | [Synthetic app evaluations](../agent-app-evaluations/plan.md) | Later exploratory agents and controlled variant comparisons |
 
 Existing owners retain their deliverables: [approval rules](../assistant-approval-rules/plan.md),

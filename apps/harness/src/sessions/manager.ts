@@ -1,3 +1,4 @@
+import { DevelopmentClient, DevelopmentMcp, workspaceInstructions, type DevelopmentAction, type DevelopmentWorkspace } from "./development.js";
 import { AgentConnections, ConnectionError, type ConnectionBinding } from "../connections/registry.js";
 import { AppContextError, parseAppIds, validateSelection, captureContext, withAppContext } from "./app-context.js";
 import { mkdir, stat } from "node:fs/promises";
@@ -65,6 +66,12 @@ interface LiveSession {
 }
 
 export class SessionManager {
+  readonly developmentMcp = new DevelopmentMcp(async (id, action, input) => {
+    const session = this.live.get(id);
+    if (!session || !["running", "awaiting_approval", "awaiting_question"].includes(session.record.status))
+      throw new AppContextError(409, "workspace_turn_inactive", "Workspace agent tools require an active turn.");
+    return this.workspaceAction(id, action, input);
+  });
   private readonly live = new Map<string, LiveSession>();
   private readonly operations = new Map<string, Promise<unknown>>();
   private serialize<T>(key: string, action: () => Promise<T>): Promise<T> {
@@ -107,7 +114,55 @@ export class SessionManager {
     private readonly proxyBaseUrl: string | null = null,
     private readonly notifier: WaitingNotifier | null = null,
     private readonly connections: AgentConnections | null = null,
+    private readonly development: DevelopmentClient | null = null,
   ) {}
+
+  async workspaceAction(id: string, action: DevelopmentAction, input: Record<string, unknown>, credential?: string, userId?: string): Promise<unknown> {
+    return this.serialize(id, async () => {
+      const session = await this.requireLive(id);
+      if (userId && session.record.createdBy !== userId) throw new AppContextError(403, "workspace_forbidden", "This session belongs to another user.");
+      if (!this.development?.available) throw new AppContextError(503, "workspaces_unavailable", "Workspaces require a Core-managed assistant.");
+      const token = credential ?? session.credential;
+      if (!token) throw new AppContextError(401, "workspace_credentials_required", "Refresh the session's Hosty credentials before using workspaces.");
+      if (!["list", "prepare", "status", "diff", "commit", "refresh", "merge", "abort-merge", "cleanup", "references"].includes(action))
+        throw new AppContextError(400, "workspace_action_invalid", "Unknown workspace action.");
+      if (action === "cleanup" && ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) throw new SessionBusyError();
+      if (action === "prepare") {
+        if (!(session.record.appIds ?? []).includes(String(input.appId))) throw new AppContextError(409, "workspace_app_required", "Attach the source app to this session first.");
+        session.record.developmentLease ??= randomUUID();
+        await this.store.saveRecord(session.record);
+        input = { ...input, sessionPath: `/assistant?session=${encodeURIComponent(id)}`,
+          leaseId: ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status) ? session.record.developmentLease : undefined };
+      }
+      const result = await this.development.call(id, token, action, input);
+      if (action !== "diff") {
+        const workspaces = action === "list" ? (result as { workspaces: DevelopmentWorkspace[] }).workspaces : [result as DevelopmentWorkspace];
+        const known = new Map((session.record.developmentWorkspaces ?? []).map(w => [w.id, w]));
+        for (const w of workspaces) known.set(w.id, w);
+        session.record.developmentWorkspaces = [...known.values()];
+        await this.store.saveRecord(session.record);
+      }
+      return result;
+    });
+  }
+
+  private async leaseWorkspaces(session: LiveSession, acquire: boolean): Promise<void> {
+    if (!this.development || !session.record.developmentLease) return;
+    if (!session.credential) throw new AppContextError(401, "workspace_credentials_required", "Refresh Hosty credentials before continuing development.");
+    if (acquire) {
+      // A prepare response can be lost after Core allocated the tree. Recover associations before
+      // every subsequent turn, so a restart never resumes source work without its activity lease.
+      const result = await this.development.call(session.record.id, session.credential, "list", {}) as { workspaces: DevelopmentWorkspace[] };
+      session.record.developmentWorkspaces = result.workspaces;
+    }
+    const workspaces = session.record.developmentWorkspaces?.filter(w => w.state === "active") ?? [];
+    await this.store.saveRecord(session.record);
+    for (const workspace of workspaces) {
+      await this.development.call(session.record.id, session.credential, acquire ? "lease" : "release-lease", {
+        workspaceId: workspace.id, requestId: randomUUID(), leaseId: session.record.developmentLease,
+      });
+    }
+  }
 
   /**
    * Mints an app token for a live session. This is what the proxy calls per request, which is the
@@ -325,6 +380,7 @@ export class SessionManager {
         this.live.delete(id);
       }
       this.proxy?.unregister(id);
+      this.developmentMcp.unregister(id);
       await this.store.deleteSession(id);
       // Reported like every other lifecycle transition, and with the administrator who asked for it:
       // the transcript this removed is exactly what an audit trail cannot recover afterwards, so an
@@ -435,6 +491,7 @@ export class SessionManager {
           // "the operator saying anything at all" restores nothing for up to three minutes.
           session.credential = credential;
         }
+        await this.leaseWorkspaces(session, true);
         if (session.run) await this.refreshMcpServers(session);
         // Named from the first message that says anything, not from every message: the opening ask is
         // what the operator will recognise the session by later, and re-deriving on each turn would
@@ -512,7 +569,7 @@ export class SessionManager {
           });
         }
         this.scheduleMcpRefresh(id);
-        const prompt = withAttachedPaths(text, attached.map((file) => file.path));
+        const prompt = withAttachedPaths(text, attached.map((file) => file.path)) + (this.development?.available ? "\n\n" + workspaceInstructions(session.record.developmentWorkspaces ?? []) : "");
         session.run.send(snapshot.apps.length || snapshot.revision > 0 ? withAppContext(prompt, snapshot) : prompt);
         if (context.dispatchId && session.record.handoffDispatch) {
           if (session.record.handoffDispatch.state === "unknown") session.record.handoffDispatch.state = "running";
@@ -531,6 +588,12 @@ export class SessionManager {
    * use: a provider whose exchange is refused stays absent. The proxy mints again per call.
    */
   private async buildMcpServers(session: LiveSession, knownCandidates?: McpProvider[]): Promise<Record<string, unknown> | undefined> {
+    const appServers = await this.buildAppMcpServers(session, knownCandidates);
+    if (!this.development?.available || !this.proxyBaseUrl || !session.credential) return appServers;
+    return { ...appServers, ...this.developmentMcp.config(session.record.id, this.proxyBaseUrl) };
+  }
+
+  private async buildAppMcpServers(session: LiveSession, knownCandidates?: McpProvider[]): Promise<Record<string, unknown> | undefined> {
     session.mcpTargetSignature = "[]";
     if (
       !this.providers ||
@@ -731,6 +794,7 @@ export class SessionManager {
     session.credential = null;
     session.autoAllowed.clear();
     this.proxy?.unregister(session.record.id);
+    this.developmentMcp.unregister(session.record.id);
     await session.run?.setMcpServers({}).catch(() => false);
     this.clearRefresh(session);
     return false;
@@ -903,6 +967,7 @@ export class SessionManager {
     // The proxy routes die with the run that used them: a cancelled session must not leave a live
     // path that still mints app tokens.
     this.proxy?.unregister(id);
+    this.developmentMcp.unregister(id);
     // Persisted with the same type the live status fan-out uses, so a transcript replay and a
     // live subscriber see one status vocabulary.
     await this.append(id, { type: "session_status", status: "cancelled" });
@@ -954,6 +1019,7 @@ export class SessionManager {
       }
       this.clearRefresh(session);
       this.proxy?.unregister(session.record.id);
+      this.developmentMcp.unregister(session.record.id);
     }
 
     await this.drainHarnessEvents();
@@ -1094,6 +1160,7 @@ export class SessionManager {
         // Only the dead harness held this session's proxy key, so the route has no legitimate user
         // left; the next message rebuilds it along with the run.
         this.proxy?.unregister(id);
+        this.developmentMcp.unregister(id);
         if (failedRun) {
           void failedRun.stop().catch(() => undefined);
         }
@@ -1212,6 +1279,7 @@ export class SessionManager {
       session.pendingQuestions.clear();
       session.mcpAppIds = [];
       this.proxy?.unregister(id);
+      this.developmentMcp.unregister(id);
       if (run) {
         // Released before the status flips, so nothing can answer an approval into a run that is
         // already being torn down.
@@ -1234,6 +1302,9 @@ export class SessionManager {
 
     if (session.record.handoffDispatch?.state === "running" && status === "idle") session.record.handoffDispatch.state = "completed";
     if (session.record.handoffDispatch?.state === "running" && ["failed", "cancelled", "abandoned"].includes(status)) session.record.handoffDispatch.state = "failed";
+    if (status === "idle") {
+      await this.leaseWorkspaces(session, false).catch(error => console.warn("[workspaces] Lease retained; release through Core after verifying the agent stopped:", error));
+    }
     session.record.status = status;
     session.record.updatedAt = new Date().toISOString();
     await this.store.saveRecord(session.record);
