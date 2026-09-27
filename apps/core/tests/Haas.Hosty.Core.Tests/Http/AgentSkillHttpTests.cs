@@ -42,7 +42,7 @@ public sealed class AgentSkillHttpTests
         var apps = harness.Services.GetRequiredService<AppRegistryStore>();
         var paths = harness.Services.GetRequiredService<CoreDataPaths>();
 
-        await apps.UpsertAppAsync(CreateApp("hosty.ai-gateway", system: true) with
+        await apps.UpsertAppAsync(CreateApp("hosty.harness", system: true) with
         {
             GrantedCorePermissions = [CoreAppPermissions.ReadSkills],
             Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>>
@@ -58,8 +58,8 @@ public sealed class AgentSkillHttpTests
 
         using var allowed = await SendAsync(
             client,
-            "/api/internal/apps/hosty.ai-gateway/agent-skills/com.haas.demo-app",
-            IssueServiceToken(harness, "hosty.ai-gateway"));
+            "/api/internal/apps/hosty.harness/agent-skills/com.haas.demo-app",
+            IssueServiceToken(harness, "hosty.harness"));
         Assert.Equal(HttpStatusCode.OK, allowed.StatusCode);
         var payload = JsonDocument.Parse(await allowed.Content.ReadAsStringAsync()).RootElement;
         Assert.Equal("com.haas.demo-app", payload.GetProperty("appId").GetString());
@@ -81,7 +81,7 @@ public sealed class AgentSkillHttpTests
     {
         await using var harness = await CoreHttpHarness.StartAsync();
         var apps = harness.Services.GetRequiredService<AppRegistryStore>();
-        await apps.UpsertAppAsync(CreateApp("hosty.ai-gateway", system: true) with
+        await apps.UpsertAppAsync(CreateApp("hosty.harness", system: true) with
         {
             GrantedCorePermissions = [CoreAppPermissions.ReadSkills],
             Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>>
@@ -92,14 +92,14 @@ public sealed class AgentSkillHttpTests
         await apps.UpsertAppAsync(CreateApp("com.haas.demo-app") with { AgentSkillFile = "docs/agent.md" });
         using var client = harness.CreateClient();
 
-        using var anonymous = await client.GetAsync("/api/internal/apps/hosty.ai-gateway/agent-skills/com.haas.demo-app");
+        using var anonymous = await client.GetAsync("/api/internal/apps/hosty.harness/agent-skills/com.haas.demo-app");
         Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
 
         // Someone else's token, presented against the assistant's path: the caller is who the token
         // says, never who the URL says.
         using var foreign = await SendAsync(
             client,
-            "/api/internal/apps/hosty.ai-gateway/agent-skills/com.haas.demo-app",
+            "/api/internal/apps/hosty.harness/agent-skills/com.haas.demo-app",
             IssueServiceToken(harness, "com.haas.demo-app"));
         Assert.Equal(HttpStatusCode.Unauthorized, foreign.StatusCode);
     }
@@ -111,7 +111,7 @@ public sealed class AgentSkillHttpTests
         // business, and an operator should see "no skill" rather than a 500.
         await using var harness = await CoreHttpHarness.StartAsync();
         var apps = harness.Services.GetRequiredService<AppRegistryStore>();
-        await apps.UpsertAppAsync(CreateApp("hosty.ai-gateway", system: true) with
+        await apps.UpsertAppAsync(CreateApp("hosty.harness", system: true) with
         {
             GrantedCorePermissions = [CoreAppPermissions.ReadSkills],
             Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>>
@@ -124,8 +124,8 @@ public sealed class AgentSkillHttpTests
 
         using var response = await SendAsync(
             client,
-            "/api/internal/apps/hosty.ai-gateway/agent-skills/com.haas.demo-app",
-            IssueServiceToken(harness, "hosty.ai-gateway"));
+            "/api/internal/apps/hosty.harness/agent-skills/com.haas.demo-app",
+            IssueServiceToken(harness, "hosty.harness"));
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }

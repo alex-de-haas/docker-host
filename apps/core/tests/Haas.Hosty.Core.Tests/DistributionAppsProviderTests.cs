@@ -118,7 +118,7 @@ public sealed class DistributionAppsProviderTests : IDisposable
         Assert.All(result.Apps, entry => Assert.StartsWith("https://", entry.ManifestRef, StringComparison.Ordinal));
         Assert.False(result.Apps.Single(entry => entry.Id == "hosty.telemetry").DefaultEnabled);
         // The assistant stays optional: never auto-installed by the boot bootstrap.
-        Assert.False(result.Apps.Single(entry => entry.Id == "hosty.ai-gateway").DefaultEnabled);
+        Assert.False(result.Apps.Single(entry => entry.Id == "hosty.harness").DefaultEnabled);
     }
 
     [Fact]

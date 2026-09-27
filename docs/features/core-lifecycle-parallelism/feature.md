@@ -1,7 +1,7 @@
 # Core Lifecycle Parallelism
 
 Created: 2026-08-26
-Updated: 2026-09-21
+Updated: 2026-09-27
 
 Core does its per-app lifecycle work concurrently and asks docker in batches, so boot latency and
 steady-state process churn stop scaling with the number of installed apps. Implements findings H4 and
@@ -19,7 +19,7 @@ and does not override a disabled autostart setting. Already-adopted live local p
 excluded from autostart.
 
 System role is a queue preference, not a completion barrier. Shell gets an early start opportunity,
-but ordinary apps do not wait for every system app to become ready. In particular, AI Gateway's
+but ordinary apps do not wait for every system app to become ready. In particular, Hosty Harness's
 local-command setup (`npm install` and web build) occupies one slot while unrelated Docker apps
 use the others. Each completed or failed start immediately frees a slot for the next queued app;
 there is no wait for a fixed batch to finish. A single dispatcher admits the next ordered app

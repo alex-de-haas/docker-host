@@ -1,12 +1,12 @@
 # Assistant Provider Permissions
 
 Created: 2026-09-26
-Updated: 2026-09-26
+Updated: 2026-09-27
 
 ## Confirmed Roles And Permissions
 
 An app requests the assistant role with `provides: ["assistant"]` and locates its API with the
-`ai-gateway` interface. Core records administrator-confirmed roles in `ConfirmedRoles` and exposes
+`assistant` interface. Core records administrator-confirmed roles in `ConfirmedRoles` and exposes
 `confirmedRoles` in app summaries. Interface declarations, app IDs and `role: system` grant no
 assistant role. Other provisioning slots, including `otlp-collector`, retain their existing behavior.
 The assistant role supports multiple providers with no Core default.
@@ -24,7 +24,7 @@ corresponding role or skill access. Existing records with no confirmed roles rem
 
 ## Shell Selection And Routing
 
-Every confirmed app declaring `ai-gateway` has one assistant panel tab. Its first declared panel is
+Every confirmed app declaring `assistant` has one assistant panel tab. Its first declared panel is
 used, or its UI entrypoint when it has no panel. A stopped assistant retains an unavailable tab.
 Shell's administrator entry points use the **Settings → Shell → Assistant for Shell** preference,
 stored as a per-user, per-Core cookie in Shell. Direct conversation in a panel belongs to that app.

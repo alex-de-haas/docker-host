@@ -33,16 +33,10 @@ export function createAuthRequiredIntent(appId: string): AuthRequiredIntent {
  * one (Hosty Shell: the assistant gateway, which it already mints tokens for).
  */
 /**
- * An embedded app asking its embedder to put text in the assistant's draft.
- *
- * The embedder reveals its assistant surface and forwards the text there; the assistant fills the
- * **draft** and stops. Nothing is sent. That is the contract, not a UX choice: app-provided text
- * entering a model that holds host shell is the same trust boundary that keeps MCP providers off by
- * default, and an error message is exactly the shape a prompt injection arrives in. The operator
- * reads it, with its source shown, and decides.
- *
- * Plain text only, and no reply. A structured payload would invite apps to smuggle shape the
- * operator cannot read at a glance, and an answer would turn a hand-off into a channel.
+ * An embedded app handing text to the selected assistant through its embedder.
+ * The receiving assistant applies its own draft/immediate-start setting. Authentication
+ * and tool permissions still apply; the message does not prove prompt authorship.
+ * This small embedded channel carries plain text and has no execution-result reply.
  */
 export const ASK_ASSISTANT_TYPE = "hosty:ask-assistant";
 
@@ -64,7 +58,7 @@ export interface AskAssistantMessage {
 }
 
 /**
- * Asks the embedder to put `text` in the operator's assistant draft.
+ * Asks the embedder to hand `text` to the operator's selected assistant.
  *
  * Safe to call unconditionally: standalone there is no embedder to hear it, and an embedder that
  * does not offer an assistant simply ignores it. Returns whether the message could be posted at

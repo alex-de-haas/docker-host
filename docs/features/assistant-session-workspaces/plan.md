@@ -2,19 +2,43 @@
 
 Status: Draft
 Created: 2026-09-26
-Updated: 2026-09-26
+Updated: 2026-09-27
 
 Part of [shared assistant development sessions](../assistant-development-sessions/plan.md).
 The umbrella's common invariants apply; this feature has independent scope and requires its own Ready approval.
 
 ## Target Behavior
 
-The session has one stable id scoped to a Hosty environment. Store structured references, not facts
+A development binding has a stable Core identity linked to the assistant installation and that
+assistant's opaque session ID; another assistant or a fresh installation must not inherit it. Store structured references, not facts
 that only exist in a model's memory: app/install identity, canonical repository identity, base commit,
 target branch, workspace id/path, session branch, grant revision, observed source revision, test
 evidence, pushed commit and PR ids/URLs, dependency/release observations and active runtime consumers.
 Core is authoritative for workspace paths and lifecycle; Gateway holds durable associations to Core
 ids. Exact storage and cross-service recovery are open design questions.
+
+Owner decision, 2026-09-27: Core tracks development sessions, which are sessions that requested a
+worktree, across every assistant app. Sessions without a worktree are not tracked. On allocation,
+Core records the owning session:
+
+- the requesting assistant app, taken from that app's authenticated identity rather than from a
+  caller-supplied app id;
+- the assistant's own session id, which is opaque to Core;
+- a path that opens the session in that assistant's UI.
+
+Core also observes uncommitted and unpushed changes in the worktree it owns. With the PR facts
+recorded by the [PR lifecycle](../assistant-pr-lifecycle/plan.md), this gives administrators one list
+of unfinished development work across assistants, including work whose assistant is stopped.
+Tracking ends when the worktree is released. Core does not store conversations, and no
+Hosty-level archive state is defined.
+
+The assistant requests a workspace when user intent requires authorized source edits. Core validates
+that request, allocates/registers the workspace and returns its identity and resolved source path.
+The agent's development grant applies to that workspace, not the original baseline source; Core
+resolves later commit/push/PR requests against the registered identity rather than trusting an
+arbitrary caller-supplied path. Returning a path is not itself filesystem isolation: enforce this
+boundary through the [approval rules](../assistant-approval-rules/plan.md) and verified adapter
+restrictions before claiming that agents cannot reach protected source or Git metadata.
 
 Allocate a workspace lazily when editing is authorized. Repeated preparation returns the existing
 binding, including after a timeout/restart. Use one registered branch/workspace per session and repository, not
@@ -25,9 +49,12 @@ The existing source diff compares HEAD with working-tree changes. Add a session-
 view, including committed and uncommitted changes, while retaining that existing local-change view.
 Keep the complete session change view distinct from uncommitted changes: committing must not make
 the apparent session diff empty. Group files by app where possible, with an explicit repository-wide
-view for shared files and changes outside app subdirectories. Preserve provenance for final diff
-inspection after workspace cleanup; decide retained Git refs versus a final review artifact before
-implementation, without creating a general source snapshot/restore service.
+view for shared files and changes outside app subdirectories. Owner clarification, 2026-09-27:
+after completed merged work is cleaned up, use the associated pull requests to inspect delivered
+changes. The assistant retains repository/provider/PR identifiers and links for its session;
+Core can retrieve those PRs with current authorization. Do not retain a worktree, extra Git refs or
+a separate diff archive solely for this history. If a PR/repository becomes unavailable, report that
+history as unavailable rather than preserving every checkout to guarantee it.
 
 ### Managed Source And Override Transition
 
@@ -76,6 +103,9 @@ later self-development needs an independently verified sandbox/controller path a
 
 ## Cleanup
 
+The assistant or another authorized client requests cleanup, possibly as part of completion; Core
+checks and executes it. Merge observation alone does not delete a workspace. A completed merged
+worktree can be removed once no active consumer needs it; it is not retained for historical diff viewing.
 Cleanup is distinct from Complete. Remove only Hosty-owned worktrees/branches after checking dirty,
 untracked and unpublished work, active agents/builds/runtime consumers and retained PR/history
 references. Show why a workspace remains. Choose the return-to-baseline runtime behavior before
@@ -99,6 +129,24 @@ choosing the storage backend; the UI still presents a single session workspace:
   so borrowed objects cannot disappear; avoid writable shared objects/hardlinks. Ordinary full
   clones or dissociation are alternatives if pool lifecycle is too complex. Private metadata is
   not by itself protection against unsafe hooks, credential helpers or unrestricted host commands.
+  Core still provides managed Git/PR operations. Private metadata may support explicitly authorized
+  native local commits if verified isolation protects other workspaces and the baseline; choosing
+  this backend does not itself grant that permission or any remote publication authority.
+
+Owner clarification, 2026-09-27: retain Core's workspace lifecycle, managed operation API and
+independent observation regardless of backend. Distinguish writable working files, writable Git
+metadata and repository-provider credentials. A linked worktree's `.git` file points outside the
+working directory; access to that directory alone does not grant the metadata writes required for
+a normal commit in the managed repository. Conversely, writable common metadata can affect refs
+outside the session. Native local commits are an explicit capability decision, independent of push,
+PR creation and remote merge. The backend experiment must settle whether to support that capability;
+this clarification does not require a second execution mode.
+
+Core must reconcile actual workspace/Git changes, including authorized direct commits or manual
+operator edits. Assistant notifications can accelerate refresh but are not the source of truth.
+Remote publication and credential isolation belong to the [PR lifecycle](../assistant-pr-lifecycle/plan.md)
+and [approval rules](../assistant-approval-rules/plan.md). A cwd setting or workflow instruction does
+not prove exclusive Core authority; verify actual process, filesystem and credential boundaries.
 
 The workspace record must distinguish original session base, current integration base and observed
 target head. If the target moves or Publish finds a conflict, report it and run an explicitly
@@ -121,14 +169,16 @@ web diffs, source selection or workspace ownership. Define adoption scope before
 ## Deliverables
 
 - [ ] Select and verify the Git metadata isolation backend with assistant approval rules; implement scoped
-  Git operations where needed.
+  Git operations where needed and decide explicitly whether native local commits are supported,
+  independently of remote publication rights.
 - [ ] Implement durable repository/workspace registration, lazy idempotent preparation and monorepo app
   bindings.
 - [ ] Implement session-wide and uncommitted diff views, source selection and actual runtime revision reporting.
 - [ ] Implement explicit target-update/conflict handling and durable source/test provenance.
 - [ ] Assess an optional AHP changeset mapping over existing diffs and record an adopt/defer decision;
   any implementation needs its own approved scope and does not gate workspace delivery.
-- [ ] Implement owned-workspace cleanup and active-consumer protection independently of transcript retention.
+- [ ] Implement Core-driven owned-workspace cleanup and active-consumer protection independently of
+  transcript retention; retain session-to-PR links for historical inspection without retained worktrees.
 - [ ] Demonstrate override-workflow parity and prepare a separately approved removal/migration before
   disabling overrides.
 
@@ -143,7 +193,7 @@ web diffs, source selection or workspace ownership. Define adoption scope before
 - What happens to active test runtimes on Complete, and how are source-sensitive caches invalidated? What
   source identity and evidence make a test result stale?
 - Linked worktrees with brokered Git or private clones; what object-pool lifetime and credential boundary
-  are enforceable?
+  are enforceable? Does the selected backend permit native local commits, and under which grant?
 
 ## Verification
 
@@ -157,5 +207,9 @@ web diffs, source selection or workspace ownership. Define adoption scope before
 
 - Complete while a test runtime still uses the worktree: preserve source and report the cleanup
   blocker. Dirty/unpublished or operator-owned folders are never removed by session/cache retention.
+- Complete merged work with no active consumers: delete the worktree, retain all session-to-PR links,
+  and retrieve delivered diffs through the PR provider. An inaccessible PR is shown as unavailable.
 
 Test attempted writes to another session branch, main, shared hooks/config and pool objects. Verify base movement, merge conflicts, stale test evidence and refusal of active-controller source switching.
+Verify the selected local Git capability separately from file editing and remote publication. Reconcile
+authorized direct commits and manual file changes without requiring assistant notifications.

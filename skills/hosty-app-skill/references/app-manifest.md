@@ -182,25 +182,29 @@ Instrument with your language's OTel SDK and read these env vars (most SDKs read
 
 ## Interfaces
 
-Declare platform interfaces the app exposes for other components to discover with a top-level `interfaces` map (draft extension, additive under `app.0.1`; absent means the app exposes none). Keys are interface names (lowercase kebab, e.g. `ai-gateway`); unknown names are inert and forward-compatible, like `provides` slots. Each declaration names an HTTP surface on the app's own origin:
+Declare platform interfaces the app exposes for other components to discover with a top-level `interfaces` map (draft extension, additive under `app.0.1`; absent means the app exposes none). Keys are interface names (lowercase kebab, e.g. `assistant`); unknown names are inert and forward-compatible, like `provides` slots. Each declaration names an HTTP surface on the app's own origin:
 
 ```jsonc
 "interfaces": {
-  "ai-gateway": [
+  "assistant": [
     {
       "key": "default",     // optional, names the declaration within the interface (default "default")
       "endpoint": "web",    // optional endpoints[] key that serves the interface (same reference as ui.entrypoint.endpoint)
-      "path": "/api/ai"     // absolute path on that origin (default "/")
+      "path": "/api/assistant/v1", // absolute path on that origin
+      "version": 1,
+      "capabilities": ["attachments"] // optional features; [] is valid
     }
   ]
 }
 ```
 
-Core validates shape only (names and keys are kebab tokens, keys unique per interface, paths absolute) and surfaces the declarations on the apps API with each declaration resolved to a ready-to-call URL, so clients can gate features on an installed provider — e.g. Shell identifies assistants by the confirmed `assistant` role plus the `ai-gateway` interface. Declaring an interface does not grant the app anything; it is discovery metadata. See `docs/features/ai-agent-bridge/feature.md` ("Manifest Interfaces And Registry").
+Core validates names and keys as kebab tokens, unique keys per interface and absolute paths. An `assistant` declaration also requires a positive integer `version` and a list of unique capability names; clients support version 1 and refuse unsupported versions. Core preserves these fields through installation, persistence, update and discovery, and surfaces the declarations on the apps API with each declaration resolved to a ready-to-call URL, so clients can gate features on an installed provider — e.g. Shell identifies assistants by the confirmed `assistant` role plus the `assistant` interface. Declaring an interface does not grant the app anything; it is discovery metadata. See `docs/features/ai-agent-bridge/feature.md` ("Manifest Interfaces And Registry").
+
+The version-1 base contract accepts prompt text and app IDs through prepare/finalize, returning a conversation reference and provider-owned UI destination. `attachments` adds raw uploads of any type, with a guaranteed floor of ten files of 10,000,000 bytes each. Use `@hosty-sdk/app/assistant` and retain request/upload identities across retries. See `docs/features/hosty-harness-rename/feature.md` for routes, expiry and recovery. Interface metadata is separate from endpoint transport and UI navigation.
 
 ### Assistant Role And Core Permissions
 
-An assistant declares `"provides": ["assistant"]`, an `ai-gateway` interface and its UI entrypoint
+An assistant declares `"provides": ["assistant"]`, an `assistant` interface and its UI entrypoint
 or panel. The role is inert until administrator confirmation at installation or reviewed update.
 `"corePermissions": ["apps.skills.read"]` requests permission to read installed apps' agent skills;
 other supported permissions are `apps.install` and `apps.update`. Each required declaration is

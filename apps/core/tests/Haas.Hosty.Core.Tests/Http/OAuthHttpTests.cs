@@ -292,7 +292,7 @@ public sealed class OAuthHttpTests
             endpoints: [new AppEndpointContract("api", "http", "http://127.0.0.1:31000", Public: false)],
             interfaces: new Dictionary<string, IReadOnlyList<AppInterfaceContract>>
             {
-                [facade ? "ai-gateway" : "mcp"] = [new AppInterfaceContract("default", null, "/api/mcp")],
+                [facade ? "assistant" : "mcp"] = [new AppInterfaceContract("default", null, "/api/mcp")],
             });
         var admin = await SeedSessionAsync(harness, "host.admin");
         using var client = harness.CreateClient();

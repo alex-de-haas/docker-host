@@ -77,7 +77,7 @@ export function ShellSidebar({
    */
   onStartApp?: (appId: string) => void;
   getStandaloneHref: (app: CoreApp, page: AppPageLink) => string;
-  // Opens the assistant chat panel. Undefined when no running app declares the ai-gateway interface
+  // Opens the assistant chat panel. Undefined when no running app declares the assistant interface
   // or the viewer is not an admin — the launcher then simply does not exist.
 }) {
   return (

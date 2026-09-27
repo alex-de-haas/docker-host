@@ -23,7 +23,7 @@ internal static class RuntimePortHelper
     // life of the app. Allocating them with a port-0 bind — as this did until 0.76.0 — draws them from
     // exactly the range the OS hands out on its own, which is also the pool every outbound connection on
     // the host draws from. Such a reservation is only ever on loan. A Windows host reserved 52306 for
-    // hosty.ai-gateway and then took the port back during the app's own `npm install` setup step, between
+    // hosty.harness and then took the port back during the app's own `npm install` setup step, between
     // Core's start preflight and the app's listen, and the app died with EADDRINUSE on every start.
     //
     // This band is the pool instead: above the crowded development-port neighbourhood (3000/5173/8080…)

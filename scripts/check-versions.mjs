@@ -86,7 +86,7 @@ const lockfile = json("package-lock.json");
 for (const workspace of json("package.json").workspaces ?? []) {
   const manifest = json(`${workspace}/package.json`);
   // A private workspace that declares no version is deliberately unversioned — it ships inside
-  // another app's artifact rather than as one of its own (apps/ai-gateway/web is the settings page's
+  // another app's artifact rather than as one of its own (apps/harness/web is the settings page's
   // build, served by the gateway process). Asserting a version it never claims would fail forever
   // and say nothing; a versioned workspace is still checked, private or not.
   if (manifest.version === undefined && manifest.private === true) {
@@ -123,10 +123,11 @@ expectEqual("marketplace version", {
   marketplaceImageTag,
 });
 
-// ai-gateway: manifest ↔ package (localCommand-only app, no image tag to pin).
-expectEqual("ai-gateway version", {
-  manifest: json("apps/ai-gateway/manifest.json").version,
-  packageJson: json("apps/ai-gateway/package.json").version,
+// harness: manifest ↔ package (localCommand-only app, no image tag to pin).
+expectEqual("harness version", {
+  manifest: json("apps/harness/manifest.json").version,
+  packageJson: json("apps/harness/package.json").version,
+  webPackage: json("apps/harness/web/package.json").version,
 });
 
 // channels: the rolling channel (releaseTag cli-dev tracks main HEAD) must advertise the platform version.

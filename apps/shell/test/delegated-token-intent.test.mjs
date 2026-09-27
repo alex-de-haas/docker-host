@@ -50,16 +50,16 @@ test("the cache reuses a live grant and mints again once it is nearly spent", as
   const core = stubMint(300_000, () => clock);
   const cache = createDelegatedTokenCache(core.mint, { minRemainingMs: 30_000, now: () => clock });
 
-  assert.equal((await cache.issue("hosty.ai-gateway")).token, "token-1");
-  assert.equal((await cache.issue("hosty.ai-gateway")).token, "token-1");
-  assert.deepEqual(core.calls, ["hosty.ai-gateway"]);
+  assert.equal((await cache.issue("hosty.harness")).token, "token-1");
+  assert.equal((await cache.issue("hosty.harness")).token, "token-1");
+  assert.deepEqual(core.calls, ["hosty.harness"]);
 
   // A different app never shares a grant — the token names its audience.
   assert.equal((await cache.issue("com.example.other")).token, "token-2");
 
   // Inside the margin the grant is treated as spent, even though it has not formally expired.
   clock += 280_000;
-  assert.equal((await cache.issue("hosty.ai-gateway")).token, "token-3");
+  assert.equal((await cache.issue("hosty.harness")).token, "token-3");
 });
 
 test("a refused token is never replayed, and concurrent asks share one mint", async () => {
@@ -100,7 +100,7 @@ test("a mint that outlives its session is discarded, not cached", async () => {
 test("an assigned non-system assistant frame can obtain its own token without admin shortcuts", async () => {
   // This is the Core-filtered /api/apps projection for an assigned host.user.
   const visibleApps = [{ id: "assigned.assistant", system: false, confirmedRoles: ["assistant"],
-    runtimeState: "running", interfaces: { "ai-gateway": [{ url: "http://assistant/api" }] } }];
+    runtimeState: "running", interfaces: { "assistant": [{ version: 1, capabilities: ["attachments"], url: "http://assistant/api" }] } }];
   const assistants = findAssistantGateways(visibleApps).map(app => app.appId);
   const core = stubMint();
   const responder = assistantTokenResponder("assigned.assistant", assistants, core.mint);

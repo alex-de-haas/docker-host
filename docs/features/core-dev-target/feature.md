@@ -1,7 +1,7 @@
 # Core Development Mode
 
 Created: 2026-09-18
-Updated: 2026-09-24
+Updated: 2026-09-27
 
 Core remains a CLI-launched platform process. The Dashboard Core row exposes release/dev selection,
 Restart, console logs, and a Source-only settings dialog. Its state comes from the running Core;
@@ -130,7 +130,7 @@ old Core-owned pipes cannot be reattached. Full log and Windows lifetime continu
 once the service has been started with the independent runner. There is no forced migration
 restart of an active app.
 
-AI Gateway distinguishes transient Core/token-exchange failures from credential refusals.
+Hosty Harness distinguishes transient Core/token-exchange failures from credential refusals.
 A temporary outage preserves the active session, harness and MCP routes; background token
 refresh retries after 15 seconds. A failed mint returns a retryable unavailable response before
 forwarding a tool call. It neither marks the delegation expired nor replays the mutation.
@@ -162,7 +162,7 @@ Core or Shell was restarted. The local run verified:
 - An eligible Docker container retained its ID and start time across dev Core restart, deliberate
   post-build startup failure and explicit source recovery. A published CLI/Core artifact update
   in a disposable installation preserved the live dev Core identity and generation.
-- Actual Core-managed AI Gateway processes in local and dev profiles retained their active fake
+- Actual Core-managed Hosty Harness processes in local and dev profiles retained their active fake
   harness session across restart and completed the pending action once without a second message.
   Automated Gateway tests also covered transient credential refresh and proxy-token mint recovery.
 

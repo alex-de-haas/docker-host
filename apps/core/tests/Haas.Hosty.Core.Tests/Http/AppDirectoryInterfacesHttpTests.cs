@@ -19,17 +19,26 @@ public sealed class AppDirectoryInterfacesHttpTests
     {
         await using var harness = await CoreHttpHarness.StartAsync();
         var apps = harness.Services.GetRequiredService<AppRegistryStore>();
-        await apps.UpsertAppAsync(CreateApp("hosty.ai-gateway", system: true));
+        await apps.UpsertAppAsync(CreateApp("hosty.harness", system: true) with {
+            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> {
+                ["assistant"] = [new("default", null, "/api/assistant/v1", 1, ["attachments"])]
+            }
+        });
         await apps.UpsertAppAsync(CreateApp("com.haas.demo-app"));
-        var token = IssueServiceToken(harness, "hosty.ai-gateway");
+        var token = IssueServiceToken(harness, "hosty.harness");
         using var client = harness.CreateClient();
 
-        using var response = await SendAsync(client, "/api/internal/apps/hosty.ai-gateway/app-directory", token);
+        using var response = await SendAsync(client, "/api/internal/apps/hosty.harness/app-directory", token);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var payload = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
         var entries = payload.GetProperty("apps").EnumerateArray().ToArray();
         Assert.Equal(2, entries.Length);
+
+        var assistant = entries.Single(entry => entry.GetProperty("id").GetString() == "hosty.harness")
+            .GetProperty("interfaces").EnumerateArray().Single();
+        Assert.Equal(1, assistant.GetProperty("version").GetInt32());
+        Assert.Equal("attachments", assistant.GetProperty("capabilities")[0].GetString());
 
         foreach (var entry in entries)
         {
@@ -56,17 +65,17 @@ public sealed class AppDirectoryInterfacesHttpTests
     {
         await using var harness = await CoreHttpHarness.StartAsync();
         var apps = harness.Services.GetRequiredService<AppRegistryStore>();
-        await apps.UpsertAppAsync(CreateApp("hosty.ai-gateway", system: true));
+        await apps.UpsertAppAsync(CreateApp("hosty.harness", system: true));
         using var client = harness.CreateClient();
 
-        using var anonymous = await client.GetAsync("/api/internal/apps/hosty.ai-gateway/app-directory");
+        using var anonymous = await client.GetAsync("/api/internal/apps/hosty.harness/app-directory");
         Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
 
         // A present-but-forged bearer must fail the signature check, not merely the null check —
         // the half a missing-token probe cannot reach.
         using var forged = await SendAsync(
             client,
-            "/api/internal/apps/hosty.ai-gateway/app-directory",
+            "/api/internal/apps/hosty.harness/app-directory",
             "hosty_app_service.invalid");
         Assert.Equal(HttpStatusCode.Unauthorized, forged.StatusCode);
     }
@@ -78,14 +87,14 @@ public sealed class AppDirectoryInterfacesHttpTests
         // one app must not become a roster read performed in another app's name.
         await using var harness = await CoreHttpHarness.StartAsync();
         var apps = harness.Services.GetRequiredService<AppRegistryStore>();
-        await apps.UpsertAppAsync(CreateApp("hosty.ai-gateway", system: true));
+        await apps.UpsertAppAsync(CreateApp("hosty.harness", system: true));
         await apps.UpsertAppAsync(CreateApp("com.haas.demo-app"));
         var otherToken = IssueServiceToken(harness, "com.haas.demo-app");
         using var client = harness.CreateClient();
 
         using var response = await SendAsync(
             client,
-            "/api/internal/apps/hosty.ai-gateway/app-directory",
+            "/api/internal/apps/hosty.harness/app-directory",
             otherToken);
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);

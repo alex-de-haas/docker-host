@@ -1,11 +1,11 @@
-# AI Gateway Provider Connections
+# Hosty Harness Provider Connections
 
 Created: 2026-09-17
-Updated: 2026-09-23
+Updated: 2026-09-27
 
 ## Behavior
 
-The Gateway owns named agent connections in **Settings → Hosty AI Gateway**, in the **Providers** tab.
+The Gateway owns named agent connections in **Settings → Hosty Harness**, in the **Providers** tab.
 Administrators add, edit, test, remove and choose a default connection. Multiple connections can use
 the same provider. Configuration changes require no Gateway restart. Connections are shared by the
 host's administrators, consistent with the operator assistant; a connection name is not a user boundary.
@@ -100,19 +100,12 @@ A same-host restore uses surviving Core secrets; restoring elsewhere requires re
 an old registry cannot resurrect a deleted secret. Core secrets currently use owner-only plaintext
 files: this is backup separation, not encryption or protection against host compromise.
 
-## Legacy configuration
+## Fresh Harness installation
 
-At first startup with this feature, configured Claude and Codex environment credentials are imported
-into connections and Core secrets. The previous harness selects the initial default. Import markers
-make retries idempotent, including partial failure. Later environment changes do not override saved
-connections. Legacy manifest fields remain explicitly labeled import-only compatibility inputs,
-because removing them from an app update would discard Core's settings before migration can read them.
-After verifying the imported connection, operators can clear their old Dashboard credential fields.
-
-The former managed `<data>/codex-home` is retired after the replacement API-key login is usable:
-conversation directories are copied to durable provider storage, and the old home is moved out of
-backup scope into cache. Previous archives are not rewritten. Failed migration is reported at
-startup and retried on another startup; it does not activate a hidden environment fallback.
+`hosty.harness` has a separate app identity and data/secret namespace. Startup does not import the
+former Gateway's environment credentials, settings, grants or conversations. Configure connections
+anew in Harness settings. Explicitly selecting the host's native login remains an operator choice;
+it is not an automatic migration. See [replacement order](../hosty-harness-rename/feature.md#operator-transition).
 
 Old chat records contain no reliable adapter provenance. Their UI requires explicit confirmation of
 the original connection/account before binding and resuming. Claude adoption copies only the named

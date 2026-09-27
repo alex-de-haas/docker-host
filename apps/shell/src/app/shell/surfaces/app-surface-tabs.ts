@@ -172,7 +172,7 @@ export function getAppSettingsTabs(apps: readonly CoreApp[]): AppSurfaceTab[] {
  */
 export function getAppPanelTabs(apps: readonly CoreApp[]): AppSurfaceTab[] {
   return apps.flatMap((app) => {
-    const assistant = Boolean(app.interfaces?.["ai-gateway"]?.length);
+    const assistant = Boolean(app.interfaces?.["assistant"]?.length);
     const confirmed = app.confirmedRoles?.includes("assistant");
     if ((assistant || confirmed) && !(assistant && confirmed)) return [];
     const surfaces: CoreAppSurface[] = assistant

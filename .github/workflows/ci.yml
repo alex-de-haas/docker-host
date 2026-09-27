@@ -56,7 +56,7 @@ jobs:
       cli: ${{ steps.filter.outputs.cli }}
       telemetry_backend: ${{ steps.filter.outputs.telemetry_backend }}
       marketplace: ${{ steps.filter.outputs.marketplace }}
-      ai_gateway: ${{ steps.filter.outputs.ai_gateway }}
+      harness: ${{ steps.filter.outputs.harness }}
       telemetry_ui: ${{ steps.filter.outputs.telemetry_ui }}
       swift_shell: ${{ steps.filter.outputs.swift_shell }}
       cardputer_shell: ${{ steps.filter.outputs.cardputer_shell }}
@@ -124,10 +124,10 @@ jobs:
               - 'packages/app-sdk/**'
               - 'apps/marketplace/**'
 
-            ai_gateway:
+            harness:
               - *node_shared
               - 'packages/app-sdk/**'
-              - 'apps/ai-gateway/**'
+              - 'apps/harness/**'
 
             telemetry_ui:
               - *node_shared
@@ -367,7 +367,7 @@ jobs:
           dotnet-version: 10.0.x
 
       # The main Core gate runs on Linux. Keep this Windows lane narrow: it exists for the native
-      # handle/job-object behaviors that a Linux run necessarily skips, including the ai-gateway
+      # handle/job-object behaviors that a Linux run necessarily skips, including the harness
       # cmd -> npm -> tsx -> node shutdown regression.
       - name: Test Windows process control
         run: >-
@@ -447,11 +447,11 @@ jobs:
       - name: Build Marketplace
         run: npm run marketplace:build
 
-  ai-gateway:
-    name: AI Gateway
+  harness:
+    name: Hosty Harness
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.ai_gateway == 'true'
+    if: needs.changes.outputs.harness == 'true'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -465,16 +465,16 @@ jobs:
       - name: Install Node dependencies
         run: npm ci
 
-      - name: Lint AI Gateway
-        run: npm run ai-gateway:lint
+      - name: Lint Hosty Harness
+        run: npm run harness:lint
 
       # The settings page is a static export the gateway serves; its tests fetch it, so it must
       # exist before they run.
-      - name: Build AI Gateway settings page
-        run: npm run ai-gateway:build-web
+      - name: Build Hosty Harness settings page
+        run: npm run harness:build-web
 
-      - name: Test AI Gateway
-        run: npm run ai-gateway:test
+      - name: Test Hosty Harness
+        run: npm run harness:test
 
   telemetry-ui:
     name: Telemetry UI

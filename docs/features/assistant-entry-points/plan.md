@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-08-18
-Updated: 2026-09-26
+Updated: 2026-09-27
 
 Make the assistant reachable from anywhere in Shell, and let an app hand it context — without letting
 an app *drive* it.
@@ -88,7 +88,7 @@ Two asks from the owner (2026-08-18), one mechanism short of possible today:
       that. Needs either a component harness for Shell or live verification.
 - [x] Docs: `feature.md`, embedder-contract reference in hosty-app-skill, index.
 
-Version outcome: `apps/shell` minor, `apps/ai-gateway` minor, `packages/app-sdk` minor,
+Version outcome: `apps/shell` minor, `apps/harness` minor, `packages/app-sdk` minor,
 `apps/telemetry` minor. No platform change.
 
 (An earlier revision of this line said "no gateway change — the panel is Shell's", which contradicted

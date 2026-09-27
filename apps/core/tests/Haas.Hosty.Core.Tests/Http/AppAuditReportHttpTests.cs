@@ -9,7 +9,7 @@ namespace Haas.Hosty.Core.Tests.Http;
 // callers without a valid token, unknown apps, and malformed action names.
 public sealed class AppAuditReportHttpTests
 {
-    private const string AppId = "hosty.ai-gateway";
+    private const string AppId = "hosty.harness";
 
     [Fact]
     public async Task RecordsANamespacedAuditEventForAValidServiceToken()

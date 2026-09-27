@@ -180,3 +180,28 @@ an administrator browser login issued on a dedicated Core hostname, separate fro
 hosts. Existing sessions need a fresh login. Requests expire after 15 minutes and Core restart
 invalidates them. Closing your UI does not cancel a confirmed operation; status is the authority.
 Never automatically retry an execution after a lost response.
+
+## Assistant handoffs
+
+`@hosty-sdk/app/assistant` exposes the version-1 client. Discover the confirmed assistant's
+interface URL, version and capabilities through Core. Keep request and attachment identities
+until the operation is resolved; do not create a new ID after an uncertain response.
+
+```ts
+import { AssistantClient, createAssistantRequestId } from "@hosty-sdk/app/assistant";
+const client = new AssistantClient(interfaceUrl, { version: 1, capabilities: ["attachments"] }, issueToken);
+const requestId = createAssistantRequestId(); // persist with the intent before the first request
+const handoff = await client.prepare({ requestId, prompt: "Inspect this", appIds: [appId] });
+// Optional: client.upload(handoff.handoffId, stableAttachmentId, file, file.name, { signal })
+const finalized = await client.finalize(handoff.handoffId, []);
+// Validate result.open with resolveAssistantDestination against Core's declared UI surfaces.
+// Opening never submits the prompt again. client.status/cancel inspect or cancel preparations.
+```
+
+The receiver owns draft/immediate-start policy. `askAssistant(text)` remains the small embedded-app
+message helper; Shell turns that message into a handoff using its verified mounted app ID. Its boolean
+result reports message delivery to the embedder, not execution. Files use the separate `attachments`
+capability and raw upload API. See [the complete contract](../../docs/features/hosty-harness-rename/feature.md).
+
+Assistant control requests use a 60-second deadline. Uploads accept an optional caller-owned
+`AbortSignal` and have no SDK-imposed deadline, so slow valid transfers are not aborted after a minute.

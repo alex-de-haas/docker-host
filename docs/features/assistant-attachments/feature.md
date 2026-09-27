@@ -1,7 +1,7 @@
 # Assistant Attachments
 
 Created: 2026-09-03
-Updated: 2026-09-17
+Updated: 2026-09-27
 
 An operator hands the assistant a file from the composer. It lands in a working directory that
 belongs to the session, the transcript records that it did, and the harness is told where to find
@@ -34,7 +34,7 @@ to the file. A session restored from a backup comes back without its attachments
 backed up, the cache is not — and the transcript's `attachment_added` event is what explains the
 file it no longer has.
 
-An on-demand backup is reachable, but not from Shell. `apps/ai-gateway/manifest.json` declares
+An on-demand backup is reachable, but not from Shell. `apps/harness/manifest.json` declares
 `data.enabled: true` but `capabilities: ["logs"]`, and Shell shows the Backups entry — its only way
 into the create-and-restore panel — for an app whose capabilities include `backup`. The gateway's
 menu therefore offers Check for updates, Development mode, Console logs, Settings and Remove, and

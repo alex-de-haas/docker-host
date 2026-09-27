@@ -90,13 +90,15 @@ export function SettingsPage({
 
       {canManageApps && resolvedTab === "shell" && <section className="space-y-3 max-w-xl">
         <h2 className="text-lg font-medium">Assistant for Shell</h2>
-        <p className="text-sm text-muted-foreground">Choose which assistant receives Ask assistant drafts and error investigations. Each assistant also has its own panel tab.</p>
+        <p className="text-sm text-muted-foreground">Choose which assistant receives prompts and error investigations; its own setting decides whether to prepare a draft or start immediately. Each assistant also has its own panel tab.</p>
         <label className="block text-sm" htmlFor="shell-assistant">Assistant</label>
         <select id="shell-assistant" className="w-full rounded-md border bg-background p-2" value={assistantSelection ?? ""} onChange={event => onSelectAssistant(event.target.value)}>
           <option value="" disabled>{assistants.length === 1 ? "Use the only eligible assistant" : "Choose an assistant"}</option>
           {assistantSelection && !assistants.some(app => app.appId === assistantSelection) && <option value={assistantSelection} disabled>Previous assistant unavailable — choose again</option>}
-          {assistants.map(assistant => <option key={assistant.appId} value={assistant.appId}>{apps.find(app => app.id === assistant.appId)?.displayName || assistant.appId}{!assistant.running ? " — unavailable" : ""}</option>)}
+          {assistants.map(assistant => <option key={assistant.appId} value={assistant.appId} disabled={!!assistant.problem}>{apps.find(app => app.id === assistant.appId)?.displayName || assistant.appId}{assistant.problem ? " — requires assistant interface v1" : !assistant.running ? " — unavailable" : ""}</option>)}
         </select>
+        {assistants.filter(item => item.appId === assistantSelection || (!assistantSelection && assistants.length === 1)).map(item =>
+          <p key={item.appId} className="text-sm text-muted-foreground">{item.problem ?? (!item.capabilities?.includes("attachments") ? "File and screenshot handoffs are unavailable: this assistant does not declare attachments." : "Text, application context and attachments are supported.")}</p>)}
         {!assistants.length && <p className="text-sm text-muted-foreground">Install and confirm an assistant to use these features.</p>}
       </section>}
 

@@ -24,7 +24,7 @@ import { AppDetailsDialog } from "./shell/dialogs/app-details-dialog";
 import { InstallDialog } from "@hosty-sdk/app/install/react";
 import { createInstallationClient, openInstallationConfirmation, showInstallationConfirmation } from "@hosty-sdk/app/install";
 import { useAssistantSelection } from "./shell/assistant/use-assistant-selection";
-import { assistantMessageFor, assistantSupportsContext, createAppSession, createErrorSession } from "./shell/assistant/assistant-client";
+import { assistantMessageFor, assistantSupportsContext, createAppSession, createErrorSession, createHandoff, pendingAssistantIntent, assistantOpenUrl } from "./shell/assistant/assistant-client";
 import { ShellSidebar } from "./shell/sidebar/shell-sidebar";
 import { ShellTopStrip } from "./shell/chrome/shell-top-strip";
 import { activatePanel } from "./shell/surfaces/panel-rail-state";
@@ -1932,15 +1932,14 @@ export function ShellClient({
   // Apps that declared a settings surface, as Settings tabs. Core resolved the URL, so a stopped
   // app arrives with none — the tab still exists and says so.
   const appSettingsTabs = useMemo(() => getAppSettingsTabs(state.apps), [state.apps]);
-  const appPanelTabs = useMemo(() => getAppPanelTabs(state.apps), [state.apps]);
+  const [assistantDestination, setAssistantDestination] = useState<{ appId: string; userId: string | null; result: Parameters<typeof assistantOpenUrl>[1] } | null>(null);
+  const appPanelTabs = useMemo(() => getAppPanelTabs(state.apps).map(tab => {
+    if (assistantDestination?.appId !== tab.appId || assistantDestination.userId !== activeUserId || !tab.running) return tab;
+    const app = state.apps.find(app => app.id === tab.appId);
+    try { return app ? { ...tab, embeddedUrl: assistantOpenUrl(app, assistantDestination.result) } : tab; }
+    catch { return tab; } // An updated manifest can withdraw or move its UI surface.
+  }), [state.apps, assistantDestination, activeUserId]);
 
-  /**
-   * Reveals the assistant panel and hands it text to put in the operator's draft.
-   *
-   * Shell no longer renders the assistant — the gateway serves it — so this is a message into that
-   * page's frame rather than a call into a component. The panel fills the draft and stops there:
-   * only the operator sends, which is the rule the whole entry-point design rests on.
-   */
   // A notification links here with the session it is about. Revealing the rail and forwarding the id
   // reuses the channel built for asks — the panel owns which session is shown, and Shell only carries
   // the request, which is the same division as everywhere else in the rail.
@@ -2000,13 +1999,17 @@ export function ShellClient({
     creatingAssistantSession.current = true;
     setAssistantSessionPending(true);
     try {
-      const session = await createAppSession(gateway, refresh => issueDelegatedToken(gateway.appId, refresh), appId, crypto.randomUUID());
+      const intent = await pendingAssistantIntent(activeUserId, gateway.appId, "", [appId]);
+      const session = await createAppSession(gateway, refresh => issueDelegatedToken(gateway.appId, refresh), appId, intent.requestId);
+      const app = state.apps.find(app => app.id === gateway.appId)!;
+      assistantOpenUrl(app, session.result);
+      setAssistantDestination({ appId: gateway.appId, userId: activeUserId, result: session.result });
       setPanelOpen(true);
       setActivePanelKey(tab.key);
-      setAssistantAsk(current => ({ userId: activeUserId, appId: gateway.appId, message: { type: "hosty:open-assistant-session", sessionId: session.id }, nonce: (current?.nonce ?? 0) + 1 }));
+      intent.complete();
     } catch (cause) { toast.error(cause instanceof Error ? cause.message : String(cause)); }
     finally { creatingAssistantSession.current = false; setAssistantSessionPending(false); }
-  }, [canManageApps, chooseAssistant, appPanelTabs, issueDelegatedToken, activeUserId]);
+  }, [canManageApps, chooseAssistant, appPanelTabs, issueDelegatedToken, activeUserId, state.apps]);
 
   const askErrorAssistant = useCallback(async (report: ErrorReport, requestId: string) => {
     if (!canManageApps) return false;
@@ -2015,14 +2018,13 @@ export function ShellClient({
     if (!gateway.running) throw new Error("Start the selected assistant to continue.");
     const tab = appPanelTabs.find(item => item.appId === gateway.appId);
     if (!tab) throw new Error("The assistant panel is unavailable. Refresh Shell and retry.");
-    const session = await createErrorSession(gateway, refresh => issueDelegatedToken(gateway.appId, refresh), report.appId, requestId);
+    const session = await createErrorSession(gateway, refresh => issueDelegatedToken(gateway.appId, refresh), report.appId, requestId, errorReportText(report));
     setPanelOpen(true);
     setActivePanelKey(tab.key);
-    setAssistantAsk(current => ({ userId: activeUserId, appId: gateway.appId, message: {
-      type: "hosty:open-assistant-session", sessionId: session.id,
-      draft: errorReportText(report), sourceAppId: report.appId ?? shellAppId,
-    }, nonce: (current?.nonce ?? 0) + 1 }));
-  }, [canManageApps, chooseAssistant, appPanelTabs, issueDelegatedToken, shellAppId, activeUserId]);
+    const app = state.apps.find(app => app.id === gateway.appId)!;
+    assistantOpenUrl(app, session.result);
+      setAssistantDestination({ appId: gateway.appId, userId: activeUserId, result: session.result });
+  }, [canManageApps, chooseAssistant, appPanelTabs, issueDelegatedToken, activeUserId, state.apps]);
 
   const askAssistant = useCallback((text: string, sourceAppId: string) => {
     void (async () => {
@@ -2033,21 +2035,17 @@ export function ShellClient({
       const gateway = await chooseAssistant();
       if (!gateway) return;
       if (!gateway.running) { toast.error("Start the selected assistant to continue."); return; }
-      setPanelOpen(true);
-      // Selecting the tab is part of the ask, not a nicety: the message is handed only to the
-      // assistant's own frame, so revealing the rail while another app's panel stayed selected would
-      // deliver the draft nowhere and look like the button did nothing.
-      const assistantTab = appPanelTabs.find((tab) => tab.appId === gateway.appId);
-      if (assistantTab) {
-        setActivePanelKey(assistantTab.key);
-      }
-      setAssistantAsk((current) => ({
-        userId: activeUserId, appId: gateway.appId,
-        message: { type: "hosty:ask-assistant", text, sourceAppId },
-        nonce: (current?.nonce ?? 0) + 1,
-      }));
-    })();
-  }, [appPanelTabs, chooseAssistant, activeUserId]);
+      const assistantTab = appPanelTabs.find(tab => tab.appId === gateway.appId);
+      if (!assistantTab) throw new Error("The assistant panel is unavailable.");
+      const intent = await pendingAssistantIntent(activeUserId, gateway.appId, text, [sourceAppId]);
+      const session = await createHandoff(gateway, refresh => issueDelegatedToken(gateway.appId, refresh), text, [sourceAppId], intent.requestId);
+      const app = state.apps.find(app => app.id === gateway.appId)!;
+      assistantOpenUrl(app, session.result);
+      setAssistantDestination({ appId: gateway.appId, userId: activeUserId, result: session.result });
+      setPanelOpen(true); setActivePanelKey(assistantTab.key);
+      intent.complete();
+    })().catch(error => toast.error(error instanceof Error ? error.message : String(error)));
+  }, [appPanelTabs, chooseAssistant, activeUserId, issueDelegatedToken, state.apps]);
 
 
   // The assistant is meant to be at hand, so it gets a key. Toggles rather than only opening: a

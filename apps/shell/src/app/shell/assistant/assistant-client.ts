@@ -1,32 +1,27 @@
 import type { CoreApp } from "../types";
-
-// Shell discovers the gateway and creates app-bound sessions using Core-issued delegated tokens.
-// The gateway's embedded page owns chat, history and streaming; Shell only selects its panel.
-export const AI_GATEWAY_INTERFACE = "ai-gateway";
-
+import { AssistantClient, assistantContractError, createAssistantRequestId, resolveAssistantDestination, type AssistantHandoffResult } from "@hosty-sdk/app/assistant";
+export { createAssistantRequestId };
+export const ASSISTANT_INTERFACE = "assistant";
 export type AssistantGateway = {
-  appId: string;
-  /** Resolved interface URL, e.g. http://127.0.0.1:3400/api */
-  baseUrl: string;
-  running: boolean;
+  appId: string; baseUrl: string; running: boolean;
+  version?: number | null; capabilities?: readonly string[] | null; problem?: string | null;
 };
-
-/** Confirmed assistants remain discoverable while stopped, even without a resolved URL. */
 export function findAssistantGateways(apps: readonly CoreApp[]): AssistantGateway[] {
   return apps.flatMap(app => {
-    const declarations = app.interfaces?.[AI_GATEWAY_INTERFACE];
-    if (!app.confirmedRoles?.includes("assistant") || !declarations?.length) return [];
-    const url = declarations.find(declaration => declaration.url)?.url;
-    return [{ appId: app.id, baseUrl: url?.replace(/\/$/, "") ?? "", running: app.runtimeState === "running" && !!url }];
+    if (!app.confirmedRoles?.includes("assistant")) return [];
+    const declarations = app.interfaces?.assistant;
+    if (!declarations?.length) return [];
+    const declaration = declarations.find(item => item.key === "default") ?? declarations[0]!;
+    return [{ appId: app.id, baseUrl: declaration.url?.replace(/\/$/, "") ?? "",
+      running: app.runtimeState === "running" && !!declaration.url, version: declaration.version,
+      capabilities: declaration.capabilities, problem: assistantContractError(declaration) }];
   });
 }
-
-/** A stale explicit choice never falls back to another assistant. */
 export function selectAssistant(assistants: readonly AssistantGateway[], selectedId: string | null): AssistantGateway | null {
-  return selectedId !== null ? assistants.find(app => app.appId === selectedId) ?? null
+  const candidate = selectedId !== null ? assistants.find(app => app.appId === selectedId)
     : assistants.length === 1 ? assistants[0] : null;
+  return candidate && !candidate.problem ? candidate : null;
 }
-
 /** Pending handoffs stay with the chosen app and actor across tab/preference changes. */
 export function assistantMessageFor<T extends { userId: string | null; appId: string }>(
   message: T | null,
@@ -38,46 +33,44 @@ export function assistantMessageFor<T extends { userId: string | null; appId: st
     && eligibleAppIds.includes(message.appId) ? message : null;
 }
 
-/** Minimal operator client: Shell creates a session, while the gateway owns its conversation. */
-export async function assistantRequest<T>(gateway: AssistantGateway, issue: (refresh: boolean) => Promise<{ token: string }>, route: string, init: RequestInit = {}): Promise<T> {
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const grant = await issue(attempt > 0);
-    const response = await fetch(`${gateway.baseUrl}${route}`, { ...init,
-      headers: { "content-type": "application/json", authorization: `Bearer ${grant.token}` },
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (response.status === 401 && attempt === 0) continue;
-    const body = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(body?.message ?? `Assistant request failed (${response.status}).`);
-    return body as T;
-  }
-  throw new Error("Assistant authorization expired. Sign in again.");
+
+export function assistantSupportsContext(gateway: AssistantGateway, _issue?: (refresh: boolean) => Promise<{ token: string }>): Promise<boolean> {
+  void _issue;
+  return Promise.resolve(gateway.running && !assistantContractError(gateway));
 }
-export async function assistantSupportsContext(gateway: AssistantGateway, issue: (refresh: boolean) => Promise<{ token: string }>): Promise<boolean> {
-  const health = await assistantRequest<{ harness?: { available?: boolean; capabilities?: { appContext?: boolean } } }>(gateway, issue, "/health");
-  return health.harness?.available === true && health.harness?.capabilities?.appContext === true;
+export function assistantOpenUrl(app: CoreApp, result: AssistantHandoffResult): string {
+  return resolveAssistantDestination(result.open, [
+    ...(app.panelSurfaces ?? []).map(surface => ({ ...surface, url: surface.embeddedUrl })),
+    ...(app.navigation ?? []).map(surface => ({ ...surface, url: surface.embeddedUrl })),
+    { endpoint: app.entryEndpoint, path: app.entryPath, url: app.embeddedUrl },
+  ]);
 }
-export async function createAppSession(gateway: AssistantGateway, issue: (refresh: boolean) => Promise<{ token: string }>, appId: string, clientRequestId: string): Promise<{ id: string }> {
-  if (!await assistantSupportsContext(gateway, issue)) throw new Error("Assistant is unavailable. Check its runtime and sign-in, then retry.");
-  // An uncertain network response is retried with the same id; only a later deliberate action
-  // generates a new id. Server-side actor-scoped deduplication owns session identity.
-  try {
-    return await assistantRequest(gateway, issue, "/sessions", { method: "POST", body: JSON.stringify({ appIds: [appId], clientRequestId }) });
-  } catch (error) {
+export async function createHandoff(gateway: AssistantGateway, issue: (refresh: boolean) => Promise<{ token: string }>,
+  prompt: string, appIds: string[], requestId: string): Promise<{ id: string; result: AssistantHandoffResult }> {
+  const client = new AssistantClient(gateway.baseUrl, gateway, issue);
+  const run = async () => {
+    const prepared = await client.prepare({ requestId, prompt, appIds });
+    const finalized = await client.finalize(prepared.handoffId, []);
+    if (!finalized.result) throw new Error("The assistant did not return a finalized handoff.");
+    return { id: finalized.conversationId, result: finalized.result };
+  };
+  try { return await run(); } catch (error) {
     if (!(error instanceof TypeError) && !(error instanceof DOMException)) throw error;
-    return assistantRequest(gateway, issue, "/sessions", { method: "POST", body: JSON.stringify({ appIds: [appId], clientRequestId }) });
+    return run(); // Repeat the same identities after transport uncertainty.
   }
+}
+export function createAppSession(gateway: AssistantGateway, issue: (refresh: boolean) => Promise<{ token: string }>, appId: string, requestId: string) {
+  return createHandoff(gateway, issue, "", [appId], requestId);
+}
+export function createErrorSession(gateway: AssistantGateway, issue: (refresh: boolean) => Promise<{ token: string }>, appId: string | undefined, requestId: string, prompt = "") {
+  return createHandoff(gateway, issue, prompt, appId ? [appId] : [], requestId);
 }
 
-/** A fresh error investigation. Context is explicit and never guessed from message text. */
-export async function createErrorSession(gateway: AssistantGateway, issue: (refresh: boolean) => Promise<{ token: string }>, appId: string | undefined, clientRequestId: string): Promise<{ id: string }> {
-  const health = await assistantRequest<{ harness?: { available?: boolean; capabilities?: { appContext?: boolean } } }>(gateway, issue, "/health");
-  if (!health.harness?.available) throw new Error("Assistant is unavailable. Check AI Gateway's provider and sign-in, then retry.");
-  const body = JSON.stringify({ clientRequestId, ...(appId && health.harness.capabilities?.appContext ? { appIds: [appId] } : {}) });
-  try {
-    return await assistantRequest(gateway, issue, "/sessions", { method: "POST", body });
-  } catch (error) {
-    if (!(error instanceof TypeError) && !(error instanceof DOMException)) throw error;
-    return assistantRequest(gateway, issue, "/sessions", { method: "POST", body });
-  }
+/** Retain uncertain intents across page reloads; clear only after the destination is accepted. */
+export async function pendingAssistantIntent(userId: string | null, assistantId: string, prompt: string, appIds: string[]) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify([userId, assistantId, prompt, [...appIds].sort()])));
+  const key = `hosty:assistant-intent:${Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("")}`;
+  const requestId = sessionStorage.getItem(key) ?? createAssistantRequestId();
+  sessionStorage.setItem(key, requestId);
+  return { requestId, complete: () => sessionStorage.removeItem(key) };
 }

@@ -23,10 +23,10 @@
       "defaultEnabled": true
     },
     {
-      "id": "hosty.ai-gateway",
-      "title": "AI Gateway",
+      "id": "hosty.harness",
+      "title": "Hosty Harness",
       "description": "Admin-only Hosty assistant: operator chat sessions on a host-resident agent harness.",
-      "manifestRef": "apps/ai-gateway/manifest.json",
+      "manifestRef": "apps/harness/manifest.json",
       "defaultEnabled": false
     }
   ]

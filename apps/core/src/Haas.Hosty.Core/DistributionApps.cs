@@ -100,11 +100,11 @@ internal sealed class DistributionAppsProvider(
               "defaultEnabled": true
             },
             {
-              "id": "hosty.ai-gateway",
-              "title": "AI Gateway",
+              "id": "hosty.harness",
+              "title": "Hosty Harness",
               "description": "Admin-only Hosty assistant: operator chat sessions on a host-resident agent harness.",
-              "manifestRef": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/ai-gateway/manifest.json",
-              "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/ai-gateway/feeds.json",
+              "manifestRef": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/harness/manifest.json",
+              "feedsUrl": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/harness/feeds.json",
               "defaultEnabled": false
             }
           ]

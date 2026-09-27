@@ -1,9 +1,9 @@
-# AI Gateway
+# Hosty Harness
 
 Created: 2026-08-09
-Updated: 2026-09-26
+Updated: 2026-09-27
 
-The Hosty assistant: an optional, removable system app (`hosty.ai-gateway`) hosting admin-only
+The Hosty assistant: an optional, removable system app (`hosty.harness`) hosting admin-only
 operator chat sessions on a host-resident agent harness, plus the Shell surface that renders them.
 This is the operator milestone of the [AI Agent Bridge](../ai-agent-bridge/feature.md) umbrella; the
 decisions recorded there (execution profiles, placement, token mechanics, approval policy) govern
@@ -14,8 +14,8 @@ this feature.
 The Gateway settings page manages named Claude/Codex connections, authentication and the default
 for new chats. Each started chat keeps its own provider/account binding across restarts. Managed
 credentials use Core's App Secrets Store and native homes outside app backup data. See
-[AI Gateway Provider Connections](../ai-gateway-providers/feature.md) for setup, device-code sign-in,
-secret lifecycle, legacy migration and the session-selection contract.
+[Hosty Harness Provider Connections](../ai-gateway-providers/feature.md) for setup, device-code sign-in,
+secret lifecycle, fresh-install behavior and the session-selection contract.
 
 ## Session App Context
 
@@ -26,17 +26,25 @@ snapshot and revision for both native harnesses. Selection changes apply to subs
 grant no filesystem, command or runtime authority. The complete API, concurrency rules and coverage
 are documented in [Assistant App Context](../assistant-app-context/feature.md).
 
+## Versioned Handoffs
+
+Harness declares `interfaces.assistant` with `version: 1` and `capabilities: ["attachments"]`.
+Core preserves this metadata in registry and discovery responses. Shell uses prepare/upload/finalize
+and opens the result in Harness's own UI; it never submits the prompt by navigating. Drafts are the
+default, with a receiver-owned immediate-start setting. The full contract and coordinated replacement
+procedure are in [Hosty Harness integration](../hosty-harness-rename/feature.md).
+
 ## Discovery And Gating
 
 - `app.0.1` manifests may declare a top-level `interfaces` map (draft extension): interface name →
-  declarations `{key, endpoint, path}`. Validation is shape-only and mirrors `provides` — kebab
+  declarations `{key, endpoint, path, version?, capabilities?}`. `assistant` requires version and capabilities; other interfaces retain their existing shape validation, which mirrors `provides` — kebab
   names, keys unique within an interface ("default" when omitted), absolute paths — and unknown
   interface names are inert and forward-compatible. Declarations are normalized onto the app record
   at install/update and projected onto `AppSummary` with each declaration resolved to a
   ready-to-call URL from the app's endpoints.
 - Shell renders the assistant surface — the sidebar launcher (Host section), the chat panel, and
   "Ask assistant" in the app details dialog — only for a `host.admin` viewer and only when an
-  installed app holds the confirmed `assistant` role and declares `ai-gateway`. No provider or a non-admin viewer means
+  installed app holds the confirmed `assistant` role and declares `assistant`. No provider or a non-admin viewer means
   the feature leaves no trace in the UI.
 - A record built by a Core that predates the extension lacks the section, which is what the
   2026-08-09 rollout hit when the app was installed before the Core update. Since Core 0.74.1 the
@@ -58,7 +66,7 @@ are documented in [Assistant App Context](../assistant-app-context/feature.md).
 
 ## Gateway App
 
-- `apps/ai-gateway`: headless Node/TypeScript system app with two `localCommand` profiles:
+- `apps/harness`: headless Node/TypeScript system app with two `localCommand` profiles:
   `local` (default, `npm run start`) and `dev` (`development: true`, `npm run dev` / `tsx watch`).
   The development profile watches backend source changes and restarts the gateway process; active
   harness turns can be interrupted by that restart. Both profiles use the same data/cache directories,
@@ -71,7 +79,7 @@ are documented in [Assistant App Context](../assistant-app-context/feature.md).
   `HOSTY_PORT_HTTP`, data lives in `HOSTY_APP_DATA_DIR`, and each harness session starts in a
   workspace of its own under `HOSTY_APP_CACHE_DIR` — see
   [assistant-attachments](../assistant-attachments/feature.md). Outside Core, with no cache directory
-  injected, every session shares `HOSTY_AI_GATEWAY_WORKDIR` (a temp directory by default, no longer
+  injected, every session shares `HOSTY_HARNESS_WORKDIR` (a temp directory by default, no longer
   the home directory) and the gateway warns once that it does.
 - `GET /api/apps` returns the display name behind each MCP server name. A server name is the app id
   with dots replaced and a hash appended when that changed it — unique on the wire and unreadable in
@@ -90,7 +98,7 @@ are documented in [Assistant App Context](../assistant-app-context/feature.md).
   cookie, so a foreign page gains nothing from being allowed to send an unauthenticated request.
 - Transcripts are the persisted event log: `{data}/sessions/{id}/record.json` plus append-only
   `events.ndjson` with a monotonic seq; streaming deltas are live-only. A daily sweep deletes
-  sessions older than `HOSTY_AI_GATEWAY_RETENTION_DAYS` (default 30).
+  sessions older than `HOSTY_HARNESS_RETENTION_DAYS` (default 30).
 - Display: the manifest declares `catalogMetadata.icon` (`assets/icon.svg`) — a sparkle matching the
   glyph the Shell assistant surface uses, drawn in the same style as the other first-party icons.
   One declaration serves both surfaces: Core resolves it to its asset endpoint for Shell's app rows
@@ -103,14 +111,14 @@ are documented in [Assistant App Context](../assistant-app-context/feature.md).
 
 ## Settings Surface
 
-- The manifest declares one `ui.settings` surface, listed as **Hosty AI Gateway** under Shell's
+- The manifest declares one `ui.settings` surface, listed as **Hosty Harness** under Shell's
   Settings. Its app-owned page has **Providers**, **System prompt** and **MCP access** tabs.
   The iframe fills the workspace, so dialogs cover both the content and its internal tabs while
   the Shell header and sidebar remain accessible. Pages are served from the same Node process.
 - Why here and not in Shell: the assistant is optional, removable and replaceable, so a settings
   page baked into Shell would make Shell know one provider's configuration schema. Observability was
   moved out of Shell into its own app for the same reason. The page itself is a Next app in
-  `apps/ai-gateway/web`, built as a static export (`output: "export"`, `distDir: out-build`) that the
+  `apps/harness/web`, built as a static export (`output: "export"`, `distDir: out-build`) that the
   gateway's own process serves — the standard component stack without a second runtime.
 - Settings use the app's shadcn/ui components for tabs, provider menus and dialogs, labelled
   fields, inputs, selects, switches, alerts and empty states. Layout uses Tailwind utilities and
@@ -135,7 +143,7 @@ are documented in [Assistant App Context](../assistant-app-context/feature.md).
   and the embedder answers with `hosty:delegated-token` — the handshake in `@hosty-sdk/app`'s
   embedder slice, alongside launch-code recovery, and for the same irreducible reason: minting needs
   the user's Core session in a first-party context, which only the embedder has. Shell answers for
-  the app declaring `ai-gateway` and no other frame; it already mints these tokens to run the chat
+  the app declaring `assistant` and no other frame; it already mints these tokens to run the chat
   panel, so the settings page gains no reach the app did not already have, while a generic responder
   would hand a user-scoped credential to whatever an operator installed. The page repeats the request
   until it is answered — it runs the moment its document does, and an embedder attaching a listener a
@@ -189,7 +197,7 @@ are documented in [Assistant App Context](../assistant-app-context/feature.md).
 
 The adapter contract is start / send / resolveApproval / resolveQuestion / interrupt / stop plus a
 single event callback. Each chat resolves the adapter from its persisted provider connection;
-`HOSTY_AI_GATEWAY_HARNESS` is a legacy import preference (`fake` remains test-only). Each native
+`HOSTY_HARNESS_HARNESS` is a legacy import preference (`fake` remains test-only). Each native
 harness is pinned as a dependency. Health and capability checks are per chat, with aggregate
 availability for discovery. The harness-native session id is captured for resume after a restart;
 a stopped process does not transfer a chat to another provider.
@@ -212,7 +220,7 @@ a stopped process does not transfer a chat to another provider.
   `claude setup-token` token from Core secrets. Its own `CLAUDE_CONFIG_DIR` keeps native state
   separate from other accounts; inherited credentials for other providers are removed.
 - Every session's prompt begins with the host's own preamble
-  ([host-prompt.ts](../../../apps/ai-gateway/src/sessions/host-prompt.ts)): identity, the approval
+  ([host-prompt.ts](../../../apps/harness/src/sessions/host-prompt.ts)): identity, the approval
   gate's semantics, the platform's ground rules (never a second Core, never raw docker on managed
   containers, credential hygiene), and the trust boundary for third-party text. The operator's
   settings prompt follows it — later words win, so the operator can override any of it — and app

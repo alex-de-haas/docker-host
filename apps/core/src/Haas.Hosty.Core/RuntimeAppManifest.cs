@@ -1512,6 +1512,16 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
             var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (var declaration in declarations)
             {
+                if (name == "assistant" && (declaration.Version is null or < 1 || declaration.Capabilities is null))
+                {
+                    errors.Add(new("app_manifest_assistant_contract_required", "The assistant interface requires a positive integer version and a capabilities array.", path));
+                }
+                if (declaration.Version is < 1 || declaration.Capabilities is { } capabilities &&
+                    (capabilities.Any(capability => string.IsNullOrWhiteSpace(capability) || !ContractKeyPattern.IsMatch(capability)) ||
+                     capabilities.Distinct(StringComparer.Ordinal).Count() != capabilities.Count))
+                {
+                    errors.Add(new("app_manifest_interface_contract_invalid", "Interface version must be positive and capability names must be unique contract keys.", path));
+                }
                 var key = string.IsNullOrWhiteSpace(declaration.Key) ? "default" : declaration.Key.Trim();
                 if (!ContractKeyPattern.IsMatch(key))
                 {
@@ -3377,7 +3387,7 @@ internal sealed class RuntimeAppManifest
     // Requested authority. Approved grants live separately in Core and are never inferred on restart.
     public IReadOnlyList<string> CorePermissions { get => field ?? []; init; } = [];
     // Platform interfaces this app exposes for other components to discover through the registry,
-    // keyed by interface name (e.g. "ai-gateway" tells UI clients an assistant service is installed).
+    // keyed by interface name (e.g. "assistant" tells UI clients an assistant service is installed).
     // Like `provides`, unknown interface names are inert and forward-compatible; declarations are
     // shape-validated only. Draft extension, additive under schemaVersion app.0.1 — see
     // docs/features/ai-agent-bridge/feature.md, "Manifest Interfaces And Registry".
@@ -3413,6 +3423,8 @@ internal sealed record RuntimeAppAgentManifest
 // that origin ("/" when omitted).
 internal sealed record RuntimeAppInterfaceManifest
 {
+    public int? Version { get; init; }
+    public IReadOnlyList<string>? Capabilities { get; init; }
     public string? Key { get; init; }
     public string? Endpoint { get; init; }
     public string? Path { get; init; }

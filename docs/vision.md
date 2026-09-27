@@ -1,7 +1,7 @@
 # Hosty Platform Vision
 
 Created: 2026-08-19
-Updated: 2026-09-26
+Updated: 2026-09-27
 
 The umbrella document: where Hosty is going, so individual decisions have a criterion to be judged
 against. It authorizes no implementation and owns no deliverables — work it names is tracked in the
@@ -80,8 +80,9 @@ property:
 - MCP providers are off by default; enabling one is a decision, not a side effect of installing.
 - An app's `readOnlyHint` is an assertion, not enforcement; whose word counts is the operator's
   per-app choice.
-- Third-party text never becomes agent behaviour without a human between them: an app can fill the
-  assistant's draft, only the operator sends.
+- Assistant handoffs default to a draft. Owner clarification, 2026-09-27 (decision 16), permits an
+  explicit receiver-side immediate-start setting for all authorized handoffs, including app prompts;
+  prompt authorship is not treated as a verifiable authorization fact.
 - External clients stay read-only until enforcement is real rather than labelled.
 
 Any future feature that weakens one of these must say so in its plan, in those words.
@@ -132,10 +133,10 @@ Decisions 1–5: 2026-08-19.
      nothing more; one bad install must not silently become fleet-wide reach. This is not caution
      layered on top of the model — it is what makes the model coherent, and it is bought by the
      identity machinery, not by limiting what an app may do in its own ring.
-   One boundary survives this decision untouched: **the guards on third-party text steering the
-   agent** (draft-only ask-assistant, providers off by default). Those do not protect the system
-   from a bad app — they protect the administrator's own agency from being subverted, and consent
-   given at install time cannot cover a mechanism that works by deceiving the consenting party.
+   The original decision kept draft-only ask-assistant and providers-off-by-default as guards on
+   third-party text steering the agent. Decision 16, dated 2026-09-27, explicitly relaxes the handoff
+   draft guard through a separate assistant setting. Installing an app alone still does not enable
+   automatic prompt execution or offer its MCP tools.
 
 6. **Session development permissions apply to existing and new apps (2026-09-16).** An administrator
    can explicitly permit source edits and project commands for one or more apps in a session's
@@ -229,6 +230,44 @@ Decisions 1–5: 2026-08-19.
     app later. [Agent MCP directory](features/agent-mcp-directory/feature.md) owns the directory;
     [MCP facade](features/mcp-facade/plan.md) is On Hold.
 
+16. **Assistant handoff execution is an explicit receiver-side choice (2026-09-27).** Default to
+    a draft. If the operator enables immediate start in the assistant, every authorized finalized
+    handoff may run without individual Send confirmation, including one submitted by an app.
+    Do not claim to prove prompt authorship or exempt a self-reported "user" source. Authentication,
+    caller access and execution/tool permissions still apply. The
+    [Harness/interface plan](features/hosty-harness-rename/feature.md) owns implementation.
+
+17. **Assistants choose development actions; Core executes and observes them (2026-09-27).**
+    The assistant decides when to request a worktree, commit, push, draft/ready PR, merge and cleanup
+    under user intent and repository instructions. Core provides and executes managed operations,
+    enforces prerequisites/authorization and tracks durable results. It independently observes
+    changes, commits, PRs, CI and review, including draft PRs, even when the assistant is stopped.
+    Its value includes shared workspace lifecycle, recoverable operations and factual state across
+    assistant implementations. Observations reconcile Git/provider reality, including external
+    actions; assistant notifications only prompt refresh. Exclusive execution is an enforceable
+    guarantee only after verifying process, filesystem and credential isolation. A worktree or cwd
+    is not a sandbox. Native local commit permission and remote publication/merge permissions are
+    independent decisions; keeping provider credentials in Core requires protecting them from
+    agent processes and indirect access paths.
+    Observed milestones are not an autonomous workflow: a commit does not create a PR, and passing
+    checks do not authorize merge. Harness owns conversation and agent execution; Core owns the
+    factual development state. Completed merged worktrees need not be retained for history:
+    sessions keep PR references and Core can retrieve provider-held diffs/status. Authorized cleanup
+    still respects active consumers and unpublished work. The
+    [workspace](features/assistant-session-workspaces/plan.md) and
+    [PR lifecycle](features/assistant-pr-lifecycle/plan.md) plans own implementation.
+
+18. **Harness uses a coordinated breaking replacement (2026-09-27).** Ship Core, Shell and Harness
+    changes in one feature PR; operators update Core first, Shell next, then replace the old Gateway
+    with a fresh Harness installation and reconnect clients. Temporary assistant unavailability is
+    accepted. Do not maintain old interface/ID aliases or old manifest/feed URLs; document that older
+    installs must update and manually replace the app. Harness continues the Gateway version line
+    with a minor bump. Shell requires the base versioned `assistant` contract and treats `attachments`
+    as optional, with unavailable file/screenshot actions explained. The owner delegates handoff
+    route, retry and cleanup design to the agent; the
+    [Harness/interface plan](features/hosty-harness-rename/feature.md) records those details and owns
+    implementation. This direction does not authorize live uninstallation.
+
 ## Expectations And Later Directions
 
 - **Apps ship with source.** The default is open source; a company's internal apps are closed by
@@ -242,7 +281,7 @@ Decisions 1–5: 2026-08-19.
   backdoor does not make the backdoor absent, so this sharpens the administrator's decision and
   never substitutes for the perimeter.
 - **The gateway's name (owner follow-up, 2026-09-25).** Rename AI Gateway to **Hosty Harness**
-  within the broader [shared development session redesign](features/hosty-harness-rename/plan.md).
+  within the broader [shared development session redesign](features/hosty-harness-rename/feature.md).
   Owner clarification: change the app id too (`hosty.ai-gateway` -> planned `hosty.harness`). The
   operator will uninstall the old app, install the new one and configure it afresh. No old-session,
   settings or credential migration, in-place upgrade or legacy-id aliases are required. Update

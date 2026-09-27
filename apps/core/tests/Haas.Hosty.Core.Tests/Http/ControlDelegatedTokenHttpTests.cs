@@ -117,15 +117,15 @@ public sealed class ControlDelegatedTokenHttpTests
     public async Task DeniesANonAdminOnASystemApp()
     {
         await using var harness = await CoreHttpHarness.StartAsync();
-        await SeedAppAsync(harness, "hosty.ai-gateway", system: true);
+        await SeedAppAsync(harness, "hosty.harness", system: true);
         await SeedUsersAsync(harness);
         using var client = harness.CreateClient();
 
-        using var denied = await PostAsync(harness, client, "hosty.ai-gateway", "member@example.test");
+        using var denied = await PostAsync(harness, client, "hosty.harness", "member@example.test");
         Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
         Assert.Equal("system_app_admin_required", (await ReadJsonAsync(denied)).GetProperty("code").GetString());
 
-        using var allowed = await PostAsync(harness, client, "hosty.ai-gateway", "admin@example.test");
+        using var allowed = await PostAsync(harness, client, "hosty.harness", "admin@example.test");
         Assert.Equal(HttpStatusCode.OK, allowed.StatusCode);
     }
 

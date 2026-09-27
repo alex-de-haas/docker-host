@@ -1,7 +1,7 @@
 # Agent MCP Directory
 
 Created: 2026-09-26
-Updated: 2026-09-26
+Updated: 2026-09-27
 
 Core owns the host policy for MCP targets offered through Hosty assistants, the Gateway facade and
 `hosty mcp`. Administrators edit it in Shell **Settings → Agents**. Runtime apps start disabled;
@@ -71,7 +71,7 @@ turn retries the update, and a new session uses the current directory.
 
 Verified on 2026-09-26 with Codex CLI **0.155.0** and Claude Agent SDK **0.3.276**, using isolated
 homes, local model responses and MCP fixtures; no provider credentials or external inference.
-Reproduce with `npx tsx apps/ai-gateway/test/agent-directory-native.mts`.
+Reproduce with `npx tsx apps/harness/test/agent-directory-native.mts`.
 
 - Codex completes a fixture turn, restarts, resumes the same thread with its user and assistant text,
   and discovers a replacement MCP server and its new tools.

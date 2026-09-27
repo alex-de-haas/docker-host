@@ -1,7 +1,7 @@
 # MCP OAuth — Automated Issuance For Scoped Tokens
 
 Created: 2026-08-25
-Updated: 2026-09-08
+Updated: 2026-09-27
 
 Core is an OAuth 2.1 authorization server, per the MCP authorization specification, so a capable
 client (Claude Code, an editor) obtains and rotates [scoped access
@@ -61,7 +61,7 @@ budget the operator already tunes, refreshed on every rotation.
 The client names the MCP endpoint it wants a token for (RFC 8707), and Core resolves that URL to
 exactly one audience: its own `/api/mcp` → `hosty:core` (consent then requires an administrator,
 the same bar manual issuance sets), an app's declared `mcp` interface URL → that app, or the `/mcp`
-facade of an app declaring the `ai-gateway` interface → that app. **A request without a resource,
+facade of an app declaring the `assistant` interface → that app. **A request without a resource,
 or naming anything else, is refused — never defaulted to something broad.** A resource repeated at
 code redemption must be the one consent was given for. App and facade audiences accept only
 `mcp:read`. Core accepts `mcp:read`, optionally with `mcp:lifecycle` and/or `mcp:update`;

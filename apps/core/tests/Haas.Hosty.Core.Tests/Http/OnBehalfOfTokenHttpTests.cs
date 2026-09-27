@@ -16,14 +16,14 @@ public sealed class OnBehalfOfTokenHttpTests
         // The pair: either half alone is satisfied by a route that answers everyone, or by one that
         // answers nobody — and the second looks like security while being a bug.
         await using var harness = await CoreHttpHarness.StartAsync();
-        await SeedAppAsync(harness, "hosty.ai-gateway", system: true);
+        await SeedAppAsync(harness, "hosty.harness", system: true);
         await SeedAppAsync(harness, "com.example.forwarder", system: false);
         await SeedAppAsync(harness, "com.example.notes");
         var owner = await SeedUserAsync(harness, "host.admin");
         using var client = harness.CreateClient();
 
-        var facadeCredential = await CreateCredentialAsync(client, owner, "claude code", "hosty.ai-gateway");
-        using var issued = await OnBehalfOfAsync(client, harness, "hosty.ai-gateway", facadeCredential, "com.example.notes");
+        var facadeCredential = await CreateCredentialAsync(client, owner, "claude code", "hosty.harness");
+        using var issued = await OnBehalfOfAsync(client, harness, "hosty.harness", facadeCredential, "com.example.notes");
         Assert.Equal(HttpStatusCode.OK, issued.StatusCode);
         var token = (await ReadJsonAsync(issued)).GetProperty("token").GetString();
         Assert.False(string.IsNullOrWhiteSpace(token));
@@ -41,13 +41,13 @@ public sealed class OnBehalfOfTokenHttpTests
     public async Task ACredentialAddressedToOneAppCannotBeSpentByAnother()
     {
         await using var harness = await CoreHttpHarness.StartAsync();
-        await SeedAppAsync(harness, "hosty.ai-gateway", system: true);
+        await SeedAppAsync(harness, "hosty.harness", system: true);
         await SeedAppAsync(harness, "hosty.other-system-app", system: true);
         await SeedAppAsync(harness, "com.example.notes");
         var owner = await SeedUserAsync(harness, "host.admin");
         using var client = harness.CreateClient();
 
-        var facadeCredential = await CreateCredentialAsync(client, owner, "claude code", "hosty.ai-gateway");
+        var facadeCredential = await CreateCredentialAsync(client, owner, "claude code", "hosty.harness");
 
         // A second system app — equally entitled to the capability in general — presenting a
         // credential addressed to its neighbour. The audience Core checks is the caller it
@@ -65,21 +65,21 @@ public sealed class OnBehalfOfTokenHttpTests
         // reach personally. A member with no assignment is refused; the same call for an
         // administrator succeeds, so the refusal is shown to come from the access rule.
         await using var harness = await CoreHttpHarness.StartAsync();
-        await SeedAppAsync(harness, "hosty.ai-gateway", system: true);
+        await SeedAppAsync(harness, "hosty.harness", system: true);
         await SeedAppAsync(harness, "com.example.notes");
         var admin = await SeedUserAsync(harness, "host.admin");
         var member = await SeedUserAsync(harness, "host.user", "user_member", append: true);
-        await AssignAsync(harness, "hosty.ai-gateway", "user_member");
+        await AssignAsync(harness, "hosty.harness", "user_member");
         using var client = harness.CreateClient();
 
-        var memberCredential = await CreateCredentialAsync(client, member, "member client", "hosty.ai-gateway");
+        var memberCredential = await CreateCredentialAsync(client, member, "member client", "hosty.harness");
         using var unassigned = await OnBehalfOfAsync(
-            client, harness, "hosty.ai-gateway", memberCredential, "com.example.notes");
+            client, harness, "hosty.harness", memberCredential, "com.example.notes");
         Assert.Equal(HttpStatusCode.Forbidden, unassigned.StatusCode);
 
-        var adminCredential = await CreateCredentialAsync(client, admin, "admin client", "hosty.ai-gateway");
+        var adminCredential = await CreateCredentialAsync(client, admin, "admin client", "hosty.harness");
         using var allowed = await OnBehalfOfAsync(
-            client, harness, "hosty.ai-gateway", adminCredential, "com.example.notes");
+            client, harness, "hosty.harness", adminCredential, "com.example.notes");
         Assert.Equal(HttpStatusCode.OK, allowed.StatusCode);
     }
 
@@ -87,25 +87,25 @@ public sealed class OnBehalfOfTokenHttpTests
     public async Task RevocationStopsTheNextCall_AndAnonymousCallersAreRefused()
     {
         await using var harness = await CoreHttpHarness.StartAsync();
-        await SeedAppAsync(harness, "hosty.ai-gateway", system: true);
+        await SeedAppAsync(harness, "hosty.harness", system: true);
         await SeedAppAsync(harness, "com.example.notes");
         var owner = await SeedUserAsync(harness, "host.admin");
         using var client = harness.CreateClient();
 
         using var anonymous = await client.PostAsJsonAsync(
-            "/api/internal/apps/hosty.ai-gateway/delegated-token",
+            "/api/internal/apps/hosty.harness/delegated-token",
             new { token = "whatever", targetAppId = "com.example.notes" });
         Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
 
-        var credential = await CreateCredentialAsync(client, owner, "claude code", "hosty.ai-gateway");
-        using var before = await OnBehalfOfAsync(client, harness, "hosty.ai-gateway", credential, "com.example.notes");
+        var credential = await CreateCredentialAsync(client, owner, "claude code", "hosty.harness");
+        using var before = await OnBehalfOfAsync(client, harness, "hosty.harness", credential, "com.example.notes");
         Assert.Equal(HttpStatusCode.OK, before.StatusCode);
 
         using var revoked = await SendAsync(
             client, HttpMethod.Delete, $"/api/auth/credentials/{credential.Fingerprint}", owner);
         Assert.Equal(HttpStatusCode.OK, revoked.StatusCode);
 
-        using var after = await OnBehalfOfAsync(client, harness, "hosty.ai-gateway", credential, "com.example.notes");
+        using var after = await OnBehalfOfAsync(client, harness, "hosty.harness", credential, "com.example.notes");
         Assert.Equal(HttpStatusCode.Forbidden, after.StatusCode);
     }
 
@@ -116,14 +116,14 @@ public sealed class OnBehalfOfTokenHttpTests
         // tools have to be reachable the same way an app's are. The token it gets back is an
         // ordinary delegated token addressed to Core MCP, and that endpoint stays administrator-only.
         await using var harness = await CoreHttpHarness.StartAsync();
-        await SeedAppAsync(harness, "hosty.ai-gateway", system: true);
+        await SeedAppAsync(harness, "hosty.harness", system: true);
         var admin = await SeedUserAsync(harness, "host.admin");
         var member = await SeedUserAsync(harness, "host.user", "user_member", append: true);
-        await AssignAsync(harness, "hosty.ai-gateway", "user_member");
+        await AssignAsync(harness, "hosty.harness", "user_member");
         using var client = harness.CreateClient();
 
-        var adminCredential = await CreateCredentialAsync(client, admin, "claude code", "hosty.ai-gateway");
-        using var issued = await OnBehalfOfAsync(client, harness, "hosty.ai-gateway", adminCredential, "hosty:core");
+        var adminCredential = await CreateCredentialAsync(client, admin, "claude code", "hosty.harness");
+        using var issued = await OnBehalfOfAsync(client, harness, "hosty.harness", adminCredential, "hosty:core");
         Assert.Equal(HttpStatusCode.OK, issued.StatusCode);
         var coreToken = (await ReadJsonAsync(issued)).GetProperty("token").GetString()!;
 
@@ -149,8 +149,8 @@ public sealed class OnBehalfOfTokenHttpTests
 
         // An ordinary user reaching the gateway is still not an administrator, and the control plane
         // is where that has to keep being true.
-        var memberCredential = await CreateCredentialAsync(client, member, "member client", "hosty.ai-gateway");
-        using var refused = await OnBehalfOfAsync(client, harness, "hosty.ai-gateway", memberCredential, "hosty:core");
+        var memberCredential = await CreateCredentialAsync(client, member, "member client", "hosty.harness");
+        using var refused = await OnBehalfOfAsync(client, harness, "hosty.harness", memberCredential, "hosty:core");
         Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
         Assert.Equal("admin_required", (await ReadJsonAsync(refused)).GetProperty("code").GetString());
     }

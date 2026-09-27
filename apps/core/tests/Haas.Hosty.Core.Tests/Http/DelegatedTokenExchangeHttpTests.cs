@@ -15,7 +15,7 @@ namespace Haas.Hosty.Core.Tests.Http;
 // which is the failure mode this repository has been bitten by more than once.
 public sealed class DelegatedTokenExchangeHttpTests
 {
-    private const string Gateway = "hosty.ai-gateway";
+    private const string Gateway = "hosty.harness";
     private const string TargetApp = "com.example.notes";
 
     [Fact]

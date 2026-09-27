@@ -15,7 +15,7 @@ public sealed class DelegatedTokenHttpTests
     {
         await using var harness = await CoreHttpHarness.StartAsync();
         var apps = harness.Services.GetRequiredService<AppRegistryStore>();
-        const string appId = "hosty.ai-gateway";
+        const string appId = "hosty.harness";
         await apps.UpsertAppAsync(CreateApp(appId, system: true));
         var admin = await SeedSessionAsync(harness, "host.admin");
         using var client = harness.CreateClient();
@@ -42,15 +42,15 @@ public sealed class DelegatedTokenHttpTests
     {
         await using var harness = await CoreHttpHarness.StartAsync();
         var apps = harness.Services.GetRequiredService<AppRegistryStore>();
-        await apps.UpsertAppAsync(CreateApp("hosty.ai-gateway", system: true));
+        await apps.UpsertAppAsync(CreateApp("hosty.harness", system: true));
         using var client = harness.CreateClient();
 
         // A browser-shaped anonymous POST fails the CSRF gate first (403, platform convention for
         // requireCsrf endpoints); a CSRF-exempt bearer with an invalid session is the clean 401.
-        using var anonymous = await client.PostAsync("/api/apps/hosty.ai-gateway/delegated-token", null);
+        using var anonymous = await client.PostAsync("/api/apps/hosty.harness/delegated-token", null);
         Assert.Equal(HttpStatusCode.Forbidden, anonymous.StatusCode);
 
-        using var badBearer = await SendAsync(client, HttpMethod.Post, "/api/apps/hosty.ai-gateway/delegated-token", "not-a-session");
+        using var badBearer = await SendAsync(client, HttpMethod.Post, "/api/apps/hosty.harness/delegated-token", "not-a-session");
         Assert.Equal(HttpStatusCode.Unauthorized, badBearer.StatusCode);
     }
 
@@ -59,11 +59,11 @@ public sealed class DelegatedTokenHttpTests
     {
         await using var harness = await CoreHttpHarness.StartAsync();
         var apps = harness.Services.GetRequiredService<AppRegistryStore>();
-        await apps.UpsertAppAsync(CreateApp("hosty.ai-gateway", system: true));
+        await apps.UpsertAppAsync(CreateApp("hosty.harness", system: true));
         var member = await SeedSessionAsync(harness, "host.member");
         using var client = harness.CreateClient();
 
-        using var response = await SendAsync(client, HttpMethod.Post, "/api/apps/hosty.ai-gateway/delegated-token", member);
+        using var response = await SendAsync(client, HttpMethod.Post, "/api/apps/hosty.harness/delegated-token", member);
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         Assert.Equal("system_app_admin_required", (await ReadJsonAsync(response)).GetProperty("code").GetString());

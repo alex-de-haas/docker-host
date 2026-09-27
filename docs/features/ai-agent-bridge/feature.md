@@ -1,7 +1,7 @@
 # AI Agent Bridge
 
 Created: 2026-08-14
-Updated: 2026-09-26
+Updated: 2026-09-27
 
 The umbrella for Hosty's AI integration: how an authenticated user works with runtime apps and app
 source through an agent, without the model ever holding credentials, unrestricted application access,
@@ -29,7 +29,7 @@ flowchart LR
   Core["Core: lifecycle, auth, registry"]
   CoreMcp["Core MCP / Discovery API"]
   Shell["Shell system app"]
-  AIG["AI Gateway system app"]
+  AIG["Hosty Harness system app"]
   Ext["External Agent + Hosty skill"]
   PM["Runtime app"]
   PMMcp["App-owned MCP"]
@@ -110,14 +110,14 @@ flag, and Core derives a registry from installed manifests plus runtime state.
 | --- | --- |
 | `ui` | The app has Shell-readable navigation entries and app pages. |
 | `mcp` | The app exposes an agent/action MCP endpoint. |
-| `ai-gateway` | A system app exposes an assistant and its session API. |
+| `assistant` | A versioned prompt/app-context handoff; optional `attachments` adds file uploads. |
 
 ```json
 "interfaces": { "mcp": [{ "key": "default", "endpoint": "api", "path": "/api/mcp" }] }
 ```
 
 - An optional top-level `interfaces` map is a **draft extension under `app.0.1`**, formalized in the
-  next manifest revision once the contract stabilizes. Validation is shape-only and mirrors
+  next manifest revision once the contract stabilizes. Assistant entries require a positive integer version and explicit capabilities list; other validation mirrors
   `provides` — kebab names, keys unique within an interface ("default" when omitted), absolute paths
   — and unknown interface names are inert and forward-compatible: the opening deliberately kept for
   later platform interfaces such as `notifications`, `scheduler`, `search`, or a media index.
@@ -128,13 +128,13 @@ flag, and Core derives a registry from installed manifests plus runtime state.
 - Discovery must resolve app origins from the caller's vantage point — external ingress origins for
   remote clients, internal origins for on-host clients. If an app is browser-reachable from a client
   machine, its MCP endpoint is too.
-- Absence is a first-class answer. If no installed app declares `ai-gateway`, Shell hides every
+- Absence is a first-class answer. If no installed app declares `assistant`, Shell hides every
   assistant surface and the platform runs with no AI at all; when one is installed, the surfaces
   render for admin viewers only ([ai-gateway](../ai-gateway/feature.md)). If an app does not
   declare `mcp`, agent clients do not treat it as a target for domain actions and it shows no
   agent controls.
 - Core exposes the resolved registry to authorized clients without hardcoding module-specific
-  behavior beyond validation and lifecycle state. It knows `hosty.ai-gateway` only as an installed
+  behavior beyond validation and lifecycle state. It knows `hosty.harness` only as an installed
   system app declaring an interface, never as a special module.
 
 Hosty does not require an app to restate its MCP tool schemas in the manifest: the manifest carries

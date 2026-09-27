@@ -2,7 +2,7 @@
 
 Status: Draft
 Created: 2026-09-24
-Updated: 2026-09-26
+Updated: 2026-09-27
 
 ## Goal
 
@@ -47,13 +47,74 @@ independent Draft and approval boundary. No separate user-facing development tas
   send them together to a session. Administrators may also collect their own observations or send
   a reviewed item directly to a session; exact labels and capture UI are still proposals.
 
+## Backend And UI Boundary (Owner Decisions, 2026-09-27)
+
+The owner wants reusable session/context behavior with replaceable agent execution and independently
+chosen assistant UI, without a broad architectural rewrite for the current rename. The immediate
+selected scope is the [`assistant` interface and assistant handoff](../hosty-harness-rename/feature.md).
+These decisions guide further design. They do not approve a new Core session subsystem.
+
+Three roles stay distinct:
+
+| Role | Responsibility | Current location |
+| --- | --- | --- |
+| Agent provider | Access to an agent (Codex, Claude) behind one agent interface | Inside Harness until that interface can be defined; later the candidate `agent` role of the [core extension model](../core-extension-model/plan.md) |
+| Assistant | An app that owns and manages sessions | Harness; other assistant apps may bring their own session engine |
+| UI client | Presents and controls an assistant's sessions | Harness web UI, the Swift client, or another app's UI |
+
+- **Sessions live in their assistant.** A session is stored by the assistant backend that accepted its creation, regardless of which UI called it.
+  Assistants with independent session engines coexist. Hosty does not synchronize, federate or port
+  sessions between assistants, and neither the shared interface nor AHP creates universal sessions.
+- **Harness as a session backend.** Several UIs connected to Harness share its authoritative session
+  journal. Another app may use Harness's session backend and supply only its own UI, such as a side
+  panel. It must not have to reimplement context assembly, provider switching or conversation storage
+  to change presentation. This is an optional capability of the `assistant` interface. Its
+  cross-app authentication and the sessions such a UI may see still need design. The current
+  embedded first-party UI does not prove turnkey third-party client support.
+- **Core tracks only development sessions.** A session is a development session once it requests a
+  worktree. Usage sessions that only ask an assistant to do something, without source changes, are not
+  tracked by Core; any actions they perform through Core already appear in its audit log. For a
+  development session, Core records the requesting assistant app, that assistant's session id and a
+  path to open the session in the assistant's UI. It also observes uncommitted and unpushed changes,
+  PR state and CI results, and stops tracking when the worktree is released. Core does not store
+  conversations or own the conversation engine. Details belong to
+  [session workspaces](../assistant-session-workspaces/plan.md).
+- **Development decisions, operations and observations (owner clarification, 2026-09-27).**
+  The assistant decides when to request a worktree, commit, push, draft/ready PR, merge or cleanup
+  according to user intent and repository instructions. Core provides and executes managed Git/PR
+  operations, validates authorization and prerequisites, and owns their durable operation status.
+  Core also observes workspace changes, commits, PR state, CI and review independently of assistant
+  execution. These observed milestones do not prescribe the assistant's next action. A green CI
+  result does not itself authorize merge, and creating a PR does not mean development is complete.
+  Core reconciles actual Git/provider state, including changes made outside its API; assistant
+  notifications are refresh hints, not authoritative evidence. Exclusive execution requires a
+  verified process/filesystem/credential boundary, not merely a workspace path or instructions.
+  Permission for native local commits is independent of push, PR creation and remote merge rights;
+  the workspace backend and approval plans must settle that local capability before implementation.
+  Details belong to [PR lifecycle](../assistant-pr-lifecycle/plan.md).
+- **History after cleanup.** A completed merged worktree need not be retained for diff viewing.
+  Preserve session-to-PR references in the assistant's session record; Core can query the provider
+  for PR changes/state on demand. Multiple original/corrective PRs remain associated with the same
+  session. No retained checkout or separate historical diff archive is required.
+- **Session retention and archiving** are each assistant's own concern. Hosty defines no archive state.
+- Agent/model-provider discovery is a separate extensibility concern owned by the core extension
+  plan. A discovered provider is not automatically callable by every user or assistant, and a model
+  endpoint alone is not an agent execution contract.
+
+The Shell handoff need not synchronize a whole conversation. AHP remains under
+evaluation for full session clients, including Swift; protocol adoption does not decide where
+authoritative storage lives. User-controlled hiding/restoring of app panel entries is tracked
+separately in [app UI surfaces](../app-ui-surfaces/plan.md), without uninstalling the backend.
+
 ## Common Invariants
 
 These apply to the linked plans. Draft records intent; Ready requires explicit owner approval in
 chat. Choosing direction does not approve every technical default. Each independently useful feature
 ships in one PR across its phases; this umbrella does not gate one feature on every later idea.
 
-Core owns source/runtime authority; Harness owns conversation/orchestration. Context, discovery and
+Core owns source/runtime authority, managed development operations and observed development state;
+the assistant owns conversation, agent execution and decisions about which operation to request next.
+Context, discovery and
 protocol access do not grant write authority. Attribute imported content and recorded actions, keep
 unknown outcomes explicit, and use observed state for runtime/merge eligibility. Preserve durable
 source/evidence independently of conversation caches. Ordinary-user feedback starts no agent until
@@ -89,7 +150,7 @@ Uncommitted changes in the operator's main checkout are not part of this baselin
 
 | Feature | Scope and dependencies |
 | --- | --- |
-| [Harness rename](../hosty-harness-rename/plan.md) | Product/app identity, distribution retirement and fresh-install policy; independent of AHP |
+| [Harness rename](../hosty-harness-rename/feature.md) | Product/app identity, versioned `assistant` interface with the assistant handoff, distribution retirement and fresh-install policy; independent of AHP |
 | [Assistant provider permissions](../assistant-provider-permissions/feature.md) | Confirmed assistant role and approved permission instead of interface-derived authority; every assistant as its own Shell tab; ships before the rename |
 | [Agent MCP directory](../agent-mcp-directory/feature.md) | Core-owned policy for which apps' MCP servers agents use, published without credentials; agents call apps directly and Core never proxies |
 | [AHP client interface](../assistant-ahp/plan.md) | Bounded client/ingress spike and replaceable projection over Hosty sessions; existing web REST/SSE remains |
