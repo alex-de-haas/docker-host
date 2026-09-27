@@ -6,7 +6,7 @@ Updated: 2026-09-27
 
 ## Session Source Selection Dependency (2026-09-24)
 
-[Assistant session workspaces](../assistant-session-workspaces/plan.md) adds session
+[Assistant session workspaces](../assistant-session-workspaces/feature.md) adds session
 worktree identity. Source selection and test execution are deferred to
 [sandbox runtimes](../app-sandbox-runtimes/plan.md) by the owner on 2026-09-27. This plan continues
 to own typed inspect/enter/run/leave operations, runtime verification and their authority integration.

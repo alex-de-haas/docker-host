@@ -73,7 +73,7 @@ containment; each changes what it has to cover.
   permissions, and state that for a `localCommand` app those grants are an honest label rather than
   an enforced boundary. Under the docker profile they become the boundary, because Core's API is the
   only way in. Nothing here changes the permission model.
-- **[Session workspaces](../assistant-session-workspaces/plan.md),
+- **[Session workspaces](../assistant-session-workspaces/feature.md),
   [prototype workspaces](../app-prototype-workspaces/plan.md) and the
   [development sessions](../assistant-development-sessions/plan.md) umbrella** (Draft) have the
   harness edit Core-allocated source that appears per session. Container mounts are fixed at

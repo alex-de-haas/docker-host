@@ -7,7 +7,7 @@ Updated: 2026-09-27
 ## Workspace Delivery Boundary (Owner Decision, 2026-09-27)
 
 Workspace allocation, Git, diffs and cleanup ship independently in
-[session workspaces](../assistant-session-workspaces/plan.md). The owner explicitly defers execution
+[session workspaces](../assistant-session-workspaces/feature.md). The owner explicitly defers execution
 from a selected worktree and separate test data to this feature. Creating a worktree must not change
 the installed runtime. Runtime profile and selected source are separate inputs. Preserve active-use
 coordination so cleanup cannot remove a worktree used by a test instance. Concurrent test instances

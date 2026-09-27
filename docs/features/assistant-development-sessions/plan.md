@@ -78,7 +78,7 @@ Three roles stay distinct:
   path to open the session in the assistant's UI. It also observes uncommitted and unpushed changes,
   PR state and CI results, and stops tracking when the worktree is released. Core does not store
   conversations or own the conversation engine. Details belong to
-  [session workspaces](../assistant-session-workspaces/plan.md).
+  [session workspaces](../assistant-session-workspaces/feature.md).
 - **Development decisions, operations and observations (owner clarification, 2026-09-27).**
   The assistant decides when to request a worktree, commit, push, draft/ready PR, merge or cleanup
   according to user intent and repository instructions. Core provides and executes managed Git/PR
@@ -157,7 +157,7 @@ Uncommitted changes in the operator's main checkout are not part of this baselin
 | [Agent MCP directory](../agent-mcp-directory/feature.md) | Core-owned policy for which apps' MCP servers agents use, published without credentials; agents call apps directly and Core never proxies |
 | [AHP client interface](../assistant-ahp/plan.md) | Bounded client/ingress spike and replaceable projection over Hosty sessions; existing web REST/SSE remains |
 | [Shared history and switching](../assistant-shared-history/plan.md) | Hosty session journal/adapters, provider context reconciliation and session sharing |
-| [Session workspaces](../assistant-session-workspaces/plan.md) | Registered linked worktrees, agent instructions, diffs and cleanup; Core API authorization remains required, new filesystem isolation is deferred |
+| [Session workspaces](../assistant-session-workspaces/feature.md) | Registered linked worktrees, agent instructions, diffs and cleanup; Core API authorization remains required, new filesystem isolation is deferred |
 | [PR lifecycle](../assistant-pr-lifecycle/plan.md) | Publish/review/Merge/Complete, credentials, CI, ordered dependencies and corrective PRs |
 | [Action summary](../assistant-action-summary/plan.md) | Evidence-linked aggregation/UI over Hosty invocation events |
 | [Timeline analysis](../assistant-timeline-analysis/plan.md) | Later analysis over the event foundation; does not gate basic shared sessions or summary |

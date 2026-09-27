@@ -2,7 +2,7 @@
 
 Status: Draft
 Created: 2026-09-26
-Updated: 2026-09-26
+Updated: 2026-09-27
 
 ## Goal And Owner Direction
 
@@ -57,7 +57,7 @@ initiating actor and `Message.agent` selects a custom agent; neither alone estab
 for every assistant response. Unsupported generic-client controls should be reported explicitly.
 
 Changesets are release-candidate in the inspected reference. Defer their projection to the
-[workspace feature](../assistant-session-workspaces/plan.md), preserving existing Hosty diffs in
+[workspace feature](../assistant-session-workspaces/feature.md), preserving existing Hosty diffs in
 the meantime. The channel supports server-defined operations as well as file views, but
 [PR lifecycle](../assistant-pr-lifecycle/plan.md) still owns what Publish/Merge/Complete mean.
 Expose later Hosty capabilities through supported metadata/operations or scoped Hosty APIs;

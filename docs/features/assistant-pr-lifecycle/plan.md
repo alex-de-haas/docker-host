@@ -101,7 +101,7 @@ closed-unmerged or abandoned work needs an explicit disposition and is not silen
 PR/CI monitoring belongs to durable Core work with scoped authorization, not an open browser or
 an endlessly running model turn.
 
-Core executes requested cleanup through [session workspaces](../assistant-session-workspaces/plan.md);
+Core executes requested cleanup through [session workspaces](../assistant-session-workspaces/feature.md);
 completion does not override its retention or active-runtime protections. Observed merge alone does
 not authorize deletion; an authorized cleanup request can be part of the requested completion flow.
 

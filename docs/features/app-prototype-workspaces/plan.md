@@ -2,11 +2,11 @@
 
 Status: Draft
 Created: 2026-09-16
-Updated: 2026-09-26
+Updated: 2026-09-27
 
 ## Development Session Boundary (2026-09-24)
 
-[Assistant session workspaces](../assistant-session-workspaces/plan.md) owns registered
+[Assistant session workspaces](../assistant-session-workspaces/feature.md) owns registered
 Git workspaces and source selection. [Shared history](../assistant-shared-history/plan.md) owns
 cross-provider continuity and [PR lifecycle](../assistant-pr-lifecycle/plan.md) owns completion.
 This plan retains durable no-Git app creation, bootstrap/guide delivery and assisted initial Git setup. Once

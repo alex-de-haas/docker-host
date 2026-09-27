@@ -254,7 +254,7 @@ Decisions 1–5: 2026-08-19.
     factual development state. Completed merged worktrees need not be retained for history:
     sessions keep PR references and Core can retrieve provider-held diffs/status. Authorized cleanup
     still respects active consumers and unpublished work. The
-    [workspace](features/assistant-session-workspaces/plan.md) and
+    [workspace](features/assistant-session-workspaces/feature.md) and
     [PR lifecycle](features/assistant-pr-lifecycle/plan.md) plans own implementation.
 
 18. **Harness uses a coordinated breaking replacement (2026-09-27).** Ship Core, Shell and Harness

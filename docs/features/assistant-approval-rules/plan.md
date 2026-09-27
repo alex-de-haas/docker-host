@@ -17,7 +17,7 @@ Core provider row, and the typed approval cards are the ground this builds on.
 
 ## Shared Session Development Dependency (2026-09-24)
 
-[Session workspaces](../assistant-session-workspaces/plan.md) owns Git workspace registration and
+[Session workspaces](../assistant-session-workspaces/feature.md) owns Git workspace registration and
 uses linked worktrees; [shared history](../assistant-shared-history/plan.md) owns provider switching.
 Owner follow-up, 2026-09-27: workspace delivery uses instructions recommending work only in assigned
 worktrees and no access to original source checkouts. No new native sandbox configuration, OS
@@ -204,7 +204,7 @@ Toolchains/system libraries have only the access needed to run. Network destinat
 Git publication rights are separate permissions, visible in the grant summary. Source editing alone
 does not authorize push, host administration, global package installation or access to other apps.
 Owner clarification, 2026-09-27: native local commit permission, if supported by the selected
-[workspace backend](../assistant-session-workspaces/plan.md), is independent of push, PR creation
+[workspace backend](../assistant-session-workspaces/feature.md), is independent of push, PR creation
 and remote PR merge. Writable source files alone do not grant writable Git metadata or provider
 credentials. Core retains its managed operation API and independent observation; exclusive execution
 may be claimed only for a verified boundary that prevents bypass through agent processes, credentials
