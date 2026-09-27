@@ -32,6 +32,45 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Equal(w.Id, (await restart.PrepareAsync(owner, WorkspaceRequest(), default)).Id);
     }
 
+    [Theory]
+    [InlineData(".", "")]
+    [InlineData("../..", "apps/notes")]
+    public async Task Workspace_RelativeRepositoryUsesInstalledSourceRoot(string repository, string subpath)
+    {
+        var f = await LifecycleFixture.CreateAsync();
+        var origin = await CreateGitRepositoryAsync(f.Root);
+        var manifestDirectory = Path.Combine(origin, subpath);
+        Directory.CreateDirectory(manifestDirectory);
+        var manifest = Path.Combine(manifestDirectory, "manifest.json");
+        File.Copy(await f.WriteManifestAsync("1.0.0", sourceRepository: repository), manifest);
+        await f.Service.InstallAsync(new AppInstallRequest(manifest));
+        var before = (await f.Apps.GetAppAsync(SourceTestApp))!;
+        Assert.Equal(repository, before.SourceState!.Repository);
+        Assert.Equal(origin, before.SourceState.LocalOverridePath);
+        var service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
+        var w = await service.PrepareAsync(WorkspaceTestOwner(f), WorkspaceRequest(), default);
+        Assert.Equal("ok", w.Observation!.State);
+        Assert.Equal((await RunGitAsync(origin, ["rev-parse", "HEAD"])).Trim(), w.OriginalBase);
+        Assert.Equal("source", await File.ReadAllTextAsync(Path.Combine(w.Path, "README.md")));
+        Assert.Equal(before.SourceState, (await f.Apps.GetAppAsync(SourceTestApp))!.SourceState);
+        await File.WriteAllTextAsync(Path.Combine(w.Path, "README.md"), "workspace only");
+        Assert.Equal("source", await File.ReadAllTextAsync(Path.Combine(origin, "README.md")));
+    }
+
+    [Fact]
+    public async Task Workspace_RelativeRepositoryWithoutResolvedRootFailsClosed()
+    {
+        var (f, _) = await SourceFixtureAsync();
+        await f.Apps.UpdateAppAsync(SourceTestApp, app => app with
+        {
+            SourceState = app.SourceState! with { Repository = ".", LocalOverridePath = null },
+        });
+        var service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() => service.PrepareAsync(WorkspaceTestOwner(f), WorkspaceRequest(), default));
+        Assert.Equal("workspace_source_missing", error.Code);
+        Assert.Empty((await service.ListAsync(null, true, default)).Workspaces);
+    }
+
     [Fact]
     public async Task Workspace_CommitReplayKeepsSessionDiffAndSeesExternalCommits()
     {
@@ -95,7 +134,7 @@ public sealed partial class CoreLifecycleServiceTests
         var first = await service.PrepareAsync(owner, WorkspaceRequest(), default);
         await File.WriteAllTextAsync(Path.Combine(origin, "README.md"), "new target\n");
         await RunGitAsync(origin, ["add", "."]);
-        await RunGitAsync(origin, ["commit", "-m", "new target"]);
+        await RunGitAsync(origin, ["-c", "user.name=Test Agent", "-c", "user.email=agent@example.test", "commit", "-m", "new target"]);
         var second = await service.PrepareAsync(owner with { SessionId = "second" }, WorkspaceRequest("second"), default);
         Assert.NotEqual(first.OriginalBase, second.OriginalBase);
         Assert.Equal(first.OriginalBase, (await service.PrepareAsync(owner, WorkspaceRequest(), default)).OriginalBase);
@@ -113,7 +152,7 @@ public sealed partial class CoreLifecycleServiceTests
         await File.WriteAllTextAsync(Path.Combine(w.Path, "README.md"), "session\n");
         w = await service.CommandAsync(w.Id, owner, "commit", WorkspaceCommit(w.OriginalBase, "feat: session", "README.md"), default);
         await File.WriteAllTextAsync(Path.Combine(origin, "README.md"), "target\n");
-        await RunGitAsync(origin, ["add", "."]); await RunGitAsync(origin, ["commit", "-m", "target"]);
+        await RunGitAsync(origin, ["add", "."]); await RunGitAsync(origin, ["-c", "user.name=Test Agent", "-c", "user.email=agent@example.test", "commit", "-m", "target"]);
         var head = w.Observation!.Head;
         w = await service.CommandAsync(w.Id, owner, "merge", WorkspaceCommit(head!, "Merge main"), default);
         Assert.Equal("conflict", w.Operations.Last().State);

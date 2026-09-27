@@ -24,7 +24,9 @@ The installed package version is unrelated. Fetch failure never selects stale ca
 Repeated preparation reuses the existing binding without moving its base; conflicting target choices
 are refused. A local repository supplies its current branch head, without implicitly fetching its
 own remote. Source identities support canonical local Git repositories and credential-free HTTP(S)
-URLs. Private source can be supplied through an operator-maintained local repository.
+URLs. Relative local declarations such as `source.repository: "."` use the resolved source root
+recorded at installation; a missing root is an error, never a fallback to Core's working directory.
+Private source can be supplied through an operator-maintained local repository.
 
 ## Authorization And APIs
 

@@ -30,3 +30,12 @@ it("allocates only on request and reuses the request identity after a lost respo
   await render(true);
   expect(button("Prepare worktree").disabled).toBe(true);
 });
+
+it("shows non-Error failures during initial load and manual refresh", async () => {
+  vi.mocked(workspaceAction).mockRejectedValue("List unavailable");
+  await render(); await open();
+  expect(container.querySelector('[role="alert"]')?.textContent).toBe("List unavailable");
+  vi.mocked(workspaceAction).mockRejectedValue(null);
+  await act(async () => button("Refresh").click());
+  expect(container.querySelector('[role="alert"]')?.textContent).toBe("null");
+});

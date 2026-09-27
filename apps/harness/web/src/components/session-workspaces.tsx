@@ -20,7 +20,7 @@ export function SessionWorkspaces({ session, running }: { session: AssistantSess
     let active = true;
     const load = () => workspaceAction<{ workspaces: Workspace[] }>(session.id, "list").then(result => {
       if (active) { setWorkspaces(result.workspaces); if (!pending.current) setError(""); }
-    }).catch(cause => { if (active) setError(cause.message); });
+    }).catch(cause => { if (active) setError(cause instanceof Error ? cause.message : String(cause)); });
     void load();
     const timer = setInterval(() => { if (document.visibilityState === "visible") void load(); }, 20000);
     return () => { active = false; clearInterval(timer); };
@@ -47,7 +47,7 @@ export function SessionWorkspaces({ session, running }: { session: AssistantSess
           {(session.appIds ?? []).map(id => <option key={id} value={id}>{id}</option>)}
         </select>
         <Button size="sm" variant="outline" disabled={!appId || busy || running} onClick={() => void run("prepare", { appId })}>Prepare worktree</Button>
-        <Button size="sm" variant="ghost" disabled={busy} onClick={() => void refresh().catch(e => setError(e.message))}>Refresh</Button>
+        <Button size="sm" variant="ghost" disabled={busy} onClick={() => void refresh().catch(e => setError(e instanceof Error ? e.message : String(e)))}>Refresh</Button>
       </div>
       {error && <div role="alert" className="text-destructive">{error}{pending.current && <Button size="sm" variant="outline" disabled={busy} onClick={() => void run("", {}, true)}>Retry same request</Button>}</div>}
       {workspaces.length === 0 && !error && <p className="text-muted-foreground">No worktrees for this session.</p>}

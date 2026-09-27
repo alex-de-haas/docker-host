@@ -38,7 +38,7 @@ export function DevelopmentWorkspaces() {
     return () => { controller.abort(); clearInterval(timer); };
   }, [load]);
   const operate = async (w: Workspace, kind: string, extra: Record<string, unknown> = {}, retry = false) => {
-    const request = retry && pending.current ? pending.current : { id: w.id, kind, body: { ...extra, requestId: crypto.randomUUID(), expectedHead: w.observation?.head } };
+    const request = retry && pending.current ? pending.current : { id: w.id, kind, body: { ...extra, requestId: crypto.randomUUID(), ...(["commit", "merge", "abort-merge", "cleanup"].includes(kind) ? { expectedHead: w.observation?.head } : {}) } };
     pending.current = request; setBusy(true); setError("");
     try {
       const response = await sendCsrfJson(`${coreOrigin}/api/development/workspaces/${request.id}/operations/${request.kind}`, request.body);

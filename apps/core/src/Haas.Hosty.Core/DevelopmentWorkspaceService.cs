@@ -74,7 +74,7 @@ internal sealed class DevelopmentWorkspaceService(CoreDataPaths paths, AppRegist
                 throw Error("session_path_invalid", "Session path must be relative to the assistant origin.");
             var app = await apps.GetAppAsync(input.AppId, ct) ?? throw Error("app_missing", "The source app is no longer installed.");
             var source = app.SourceState ?? throw Error("source_missing", "This app has no source repository.");
-            var repository = await CanonicalRepository(source.Repository, ct);
+            var repository = await CanonicalRepository(source.Repository, source.LocalOverridePath, ct);
             var repositoryId = Hash(repository);
             var id = Hash(CoreJson.Text(owner) + "\n" + repositoryId);
             var existing = await JsonStorage.ReadAsync<DevelopmentWorkspace>(RecordPath(id), ct);
@@ -426,10 +426,19 @@ internal sealed class DevelopmentWorkspaceService(CoreDataPaths paths, AppRegist
         var relative = System.IO.Path.GetRelativePath(MountPathPolicy.ResolveRealPath(root), MountPathPolicy.ResolveRealPath(candidate));
         return relative == "." || (!System.IO.Path.IsPathRooted(relative) && relative != ".." && !relative.StartsWith(".." + System.IO.Path.DirectorySeparatorChar));
     }
-    private async Task<string> CanonicalRepository(string? repository, CancellationToken ct)
+    private async Task<string> CanonicalRepository(string? repository, string? localSourceRoot, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(repository)) throw Error("source_missing", "No source repository is declared.");
+        repository = repository.Trim();
         AppSourceService.ValidateManagedRepository(repository);
+        if (!System.IO.Path.IsPathFullyQualified(repository) && !Uri.TryCreate(repository, UriKind.Absolute, out _))
+        {
+            // Installation already resolves manifest-relative sources to a repository root.
+            // Never interpret the declaration relative to Core's current working directory.
+            if (string.IsNullOrWhiteSpace(localSourceRoot) || !System.IO.Path.IsPathFullyQualified(localSourceRoot))
+                throw Error("source_missing", "The relative source repository has no resolved local source root.");
+            repository = localSourceRoot;
+        }
         if (System.IO.Path.IsPathFullyQualified(repository))
         {
             var local = MountPathPolicy.ResolveRealPath(repository);

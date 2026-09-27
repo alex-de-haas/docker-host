@@ -24,6 +24,7 @@ it("calls Core's origin, retains the mutation ID on transport loss and shows bot
   await act(async () => button("Fetch target").click());
   const first = send.mock.calls[0]!;
   expect(first[0]).toBe(`https://core.test/api/development/workspaces/${workspace.id}/operations/refresh`);
+  expect(first[1]).not.toHaveProperty("expectedHead");
   await act(async () => button("Retry same request").click());
   expect(send.mock.calls[1]).toEqual(first);
   await act(async () => { const select = container.querySelector<HTMLSelectElement>('[aria-label="Change view"]')!; select.value = "local"; select.dispatchEvent(new Event("change", { bubbles: true })); });
@@ -42,4 +43,16 @@ it("recovers an interrupted operation using the durable command after reopening 
   await render();
   await act(async () => button("Recover interrupted cleanup").click());
   expect(send).toHaveBeenCalledWith(`https://core.test/api/development/workspaces/${workspace.id}/operations/cleanup`, command);
+});
+
+it("guards cleanup with the observed HEAD", async () => {
+  await render();
+  await act(async () => button("Remove merged worktree").click());
+  expect(send).toHaveBeenCalledWith(`https://core.test/api/development/workspaces/${workspace.id}/operations/cleanup`, { requestId: expect.any(String), expectedHead: "head" });
+});
+it("releases a stale lease without pinning an old HEAD", async () => {
+  vi.mocked(fetch).mockResolvedValue(Response.json({ workspaces: [{ ...workspace, leases: ["lease"] }] }));
+  await render();
+  await act(async () => button("Release lease").click());
+  expect(send).toHaveBeenCalledWith(`https://core.test/api/development/workspaces/${workspace.id}/operations/release-lease`, { requestId: expect.any(String), leaseId: "lease" });
 });
