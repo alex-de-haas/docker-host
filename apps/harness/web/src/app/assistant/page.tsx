@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { SessionWorkspaces } from "@/components/session-workspaces";
 import { SessionProvider } from "@/components/session-provider";
 import { AppContextPicker } from "@/components/app-context-picker";
 import { ArrowLeft, History, Loader2, MessageSquarePlus, Paperclip, Send, Sparkles, Square } from "lucide-react";
@@ -640,6 +641,7 @@ export default function AssistantPage() {
         setSession(current => current?.id === record.id ? record : current);
         void getHealth(record.id).then(value => { if (activeSessionId.current === record.id) setHealth(value); }).catch(() => {});
       }} />}
+      {!showSessions && session && <SessionWorkspaces key={session.id} session={session} running={running} />}
       {error && <div className="shrink-0 p-3" role="alert"><InlineError message={error} /></div>}
 
       {showSessions ? (

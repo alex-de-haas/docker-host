@@ -1,3 +1,4 @@
+import { DevelopmentClient } from "./sessions/development.js";
 import { AgentConnections } from "./connections/registry.js";
 import { CoreConnectionSecrets } from "./connections/secrets.js";
 import { WaitingNotifier } from "./notifications.js";
@@ -61,6 +62,7 @@ const manager: SessionManager = new SessionManager(
   proxyBaseUrl,
   notifier,
   connections,
+  new DevelopmentClient(config.coreOrigin, config.appId, config.serviceToken),
 );
 
 // Retention: once at boot, then daily. The sweep is cheap (a directory listing), and running it

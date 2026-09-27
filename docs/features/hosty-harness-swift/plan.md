@@ -2,7 +2,7 @@
 
 Status: Draft
 Created: 2026-09-25
-Updated: 2026-09-26
+Updated: 2026-09-27
 
 ## Goal And Owner Direction
 
@@ -20,7 +20,7 @@ retire it or add generic app side panels to it. The web Shell remains available 
 
 [Shared assistant development sessions](../assistant-development-sessions/plan.md) is the umbrella.
 Its children own [AHP](../assistant-ahp/plan.md), [provider switching](../assistant-shared-history/plan.md),
-[workspaces](../assistant-session-workspaces/plan.md), [PR lifecycle](../assistant-pr-lifecycle/plan.md),
+[workspaces](../assistant-session-workspaces/feature.md), [PR lifecycle](../assistant-pr-lifecycle/plan.md),
 [action summary](../assistant-action-summary/plan.md) and later
 [timeline analysis](../assistant-timeline-analysis/plan.md). This client consumes their advertised
 capabilities without implementing host-side policy or Git operations on the device.

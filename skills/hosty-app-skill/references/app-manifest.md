@@ -210,6 +210,9 @@ or panel. The role is inert until administrator confirmation at installation or 
 other supported permissions are `apps.install` and `apps.update`. Each required declaration is
 shown with a description; the operator accepts the complete set or declines. An older Core rejects
 unknown permissions. Install Core 0.108.0 or newer before requesting `apps.skills.read`.
+`apps.workspaces.manage` (Core 0.111.0+) requests session-owned Git worktree operations. Each call
+also requires a current administrator credential addressed to the calling app. Install Core before
+updating an assistant that requests this permission; the installation review shows the new grant.
 
 Changing a source manifest grants no roles or permissions. Shell shows each confirmed assistant
 as a separate tab and owns its choice for Ask assistant. The role does not replace the existing

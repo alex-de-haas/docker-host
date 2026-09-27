@@ -85,7 +85,7 @@ internal sealed partial class AppSourceService
     }
 
     internal static async Task<AppSourceDiff> ReadScopeDiffAsync(AppSourceStatus status, AppSourceDiffRequest request,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, string? indexPath = null)
     {
         var file = RequireChangedFile(status, request.Path);
         var scope = status.ScopePath!;
@@ -107,8 +107,8 @@ internal sealed partial class AppSourceService
                 "", tooLarge, status.Head, NewFile: true, Binary: binary);
         }
         string[] common = ["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--relative"];
-        var combined = await WorktreeGitAsync(scope, [.. common, .. status.Head is null ? Array.Empty<string>() : new[] { status.Head }, "--", file.Path], cancellationToken, limit: MaxDiffOutput);
-        var staged = await WorktreeGitAsync(scope, [.. common, "--cached", "--", file.Path], cancellationToken, limit: MaxDiffOutput);
+        var combined = await WorktreeGitAsync(scope, [.. common, .. status.Head is null ? Array.Empty<string>() : new[] { status.Head }, "--", file.Path], cancellationToken, limit: MaxDiffOutput, indexPath: indexPath);
+        var staged = await WorktreeGitAsync(scope, [.. common, "--cached", "--", file.Path], cancellationToken, limit: MaxDiffOutput, indexPath: indexPath);
         var truncated = combined.StandardOutput.Length > MaxDiffOutput || staged.StandardOutput.Length > MaxDiffOutput;
         return new(file.Path, truncated ? "" : combined.StandardOutput,
             truncated ? "" : staged.StandardOutput,
@@ -247,7 +247,7 @@ internal sealed partial class AppSourceService
     private static bool IsWithinScope(string root, string path)
         => Path.GetRelativePath(root, path) is var relative && relative != ".." && !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) && !Path.IsPathRooted(relative);
 
-    private static bool IsRegularSourcePath(string scope, string path)
+    internal static bool IsRegularSourcePath(string scope, string path)
     {
         if (!SafeRelativePath(path)) return false;
         var full = Path.GetFullPath(Path.Combine(scope, path));
@@ -256,7 +256,7 @@ internal sealed partial class AppSourceService
 
     private static AppLifecycleException SourceError(string code, string message) => new(code, message);
 
-    private static async Task RequireRegularFileAsync(string path, CancellationToken cancellationToken)
+    internal static async Task RequireRegularFileAsync(string path, CancellationToken cancellationToken)
     {
         if (!File.Exists(path)) return; // A deleted tracked file can still be restored.
         if (OperatingSystem.IsWindows())

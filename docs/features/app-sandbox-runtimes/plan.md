@@ -2,7 +2,16 @@
 
 Status: Draft
 Created: 2026-09-25
-Updated: 2026-09-26
+Updated: 2026-09-27
+
+## Workspace Delivery Boundary (Owner Decision, 2026-09-27)
+
+Workspace allocation, Git, diffs and cleanup ship independently in
+[session workspaces](../assistant-session-workspaces/feature.md). The owner explicitly defers execution
+from a selected worktree and separate test data to this feature. Creating a worktree must not change
+the installed runtime. Runtime profile and selected source are separate inputs. Preserve active-use
+coordination so cleanup cannot remove a worktree used by a test instance. Concurrent test instances
+versus temporary runtime replacement remains a decision of this Draft, not workspace implementation.
 
 ## Goal And Scope
 
@@ -122,6 +131,9 @@ payloads remain open. Status and artifacts link into the session timeline and fe
 All phases below are unapproved. Start with one representative container-compatible app and one
 repeatable scenario before generalizing or scheduling multiple evaluators.
 
+- [ ] Define and implement selection of a registered session worktree as runtime source, actual running
+  revision reporting, source-bound test evidence and safe completion/return-to-prior-runtime behavior
+  where replacement is selected; keep cwd, builds, mounts and manifest inspection on the same source.
 - [ ] Phase 1: specify runtime-instance identity, ownership, routing, scoped auth and dependency
   resolution; prove compatibility with the single-Core model and existing app lifecycle.
 - [ ] Phase 1: choose supported execution backends/platforms and isolation guarantees; verify mounts,

@@ -2,16 +2,17 @@
 
 Status: Draft
 Created: 2026-09-16
-Updated: 2026-09-26
+Updated: 2026-09-27
 
 ## Session Source Selection Dependency (2026-09-24)
 
-[Assistant session workspaces](../assistant-session-workspaces/plan.md) adds session
-worktree identity and an operator/agent choice of which session's source to run. This plan continues
+[Assistant session workspaces](../assistant-session-workspaces/feature.md) adds session
+worktree identity. Source selection and test execution are deferred to
+[sandbox runtimes](../app-sandbox-runtimes/plan.md) by the owner on 2026-09-27. This plan continues
 to own typed inspect/enter/run/leave operations, runtime verification and their authority integration.
 Consume the registered source selection in those operations; do not implement another workspace
 registry or encode the selection as a hidden rewrite of an operator source override. Runtime profile
-and source selection are separate inputs. The no-Git path remains valid. Both plans remain Draft.
+and source selection are separate inputs. The no-Git path remains valid. Runtime controls remain Draft.
 
 ## Goal
 
@@ -75,6 +76,10 @@ self-editing. A failed runtime-switch restart restores the prior selection and l
 Data compatibility and backup/restore decisions remain distinct from source discard.
 
 ## Deliverables
+
+- [ ] **Deferred migration:** demonstrate private/local-source, external-agent and self-development parity
+      before proposing removal of source overrides; obtain separate approval for a non-destructive migration.
+      Existing overrides remain available throughout workspace delivery.
 
 - [ ] Decide the authorization route, scope semantics and public tool/CLI contract; make the built-in
       assistant path explicit before claiming MCP-based development works there.

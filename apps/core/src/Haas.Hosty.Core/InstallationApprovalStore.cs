@@ -6,11 +6,13 @@ internal static class CoreAppPermissions
 {
     public const string Install = "apps.install";
     public const string Update = "apps.update";
+    public const string Workspaces = "apps.workspaces.manage";
     public const string ReadSkills = "apps.skills.read";
-    public static readonly string[] Known = [Install, Update, ReadSkills];
+    public static readonly string[] Known = [Install, Update, ReadSkills, Workspaces];
 
     public static string Describe(string permission) => permission switch
     {
+        Workspaces => "Manage session worktrees and local Git operations for an administrator",
         ReadSkills => "Read agent skills published by installed apps",
         Install => "Request installation of other apps (Core confirmation required)",
         Update => "Request updates to installed apps (Core confirmation required)",

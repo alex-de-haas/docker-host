@@ -25,6 +25,8 @@ export type SessionStatus =
   | "failed";
 
 export interface SessionRecord {
+  developmentWorkspaces?: import("./development.js").DevelopmentWorkspace[];
+  developmentLease?: string;
   handoffPending?: boolean;
   handoffDraft?: { text: string; attachments: { name: string; size: number }[] };
   handoffDispatch?: { id: string; state: "queued" | "running" | "completed" | "failed" | "unknown"; error?: string };
