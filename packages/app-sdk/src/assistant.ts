@@ -49,7 +49,7 @@ export class AssistantClient {
     this.baseUrl = baseUrl; this.contract = contract; this.token = token;
   }
 
-  private async request<T>(route: string, init: RequestInit = {}): Promise<T> {
+  private async request<T>(route: string, init: RequestInit = {}, controlDeadline = true): Promise<T> {
     const incompatible = assistantContractError(this.contract);
     if (incompatible) throw new Error(incompatible);
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -57,7 +57,7 @@ export class AssistantClient {
       const headers = new Headers(init.headers);
       headers.set("authorization", `Bearer ${grant.token}`);
       if (typeof init.body === "string") headers.set("content-type", "application/json");
-      const response = await fetch(`${this.baseUrl.replace(/\/$/, "")}${route}`, { ...init, headers, signal: AbortSignal.timeout(60_000) });
+      const response = await fetch(`${this.baseUrl.replace(/\/$/, "")}${route}`, { ...init, headers, signal: init.signal ?? (controlDeadline ? AbortSignal.timeout(60_000) : undefined) });
       if (response.status === 401 && attempt === 0) continue;
       const body = await response.json().catch(() => null) as { message?: string } | null;
       if (!response.ok) throw new Error(body?.message || `Assistant request failed (${response.status}).`);
@@ -68,11 +68,11 @@ export class AssistantClient {
   prepare(input: { requestId: string; prompt: string; appIds: string[] }): Promise<AssistantHandoff> {
     return this.request("/handoffs", { method: "POST", body: JSON.stringify(input) });
   }
-  upload(handoffId: string, attachmentId: string, file: Blob, name: string): Promise<AssistantHandoff["attachments"][number]> {
+  upload(handoffId: string, attachmentId: string, file: Blob, name: string, options: { signal?: AbortSignal } = {}): Promise<AssistantHandoff["attachments"][number]> {
     if (!this.contract.capabilities?.includes("attachments")) throw new Error("This assistant does not support attachments.");
     return this.request(`/handoffs/${encodeURIComponent(handoffId)}/attachments/${encodeURIComponent(attachmentId)}?name=${encodeURIComponent(name)}`, {
-      method: "PUT", body: file, headers: { "content-type": file.type || "application/octet-stream" },
-    });
+      method: "PUT", body: file, signal: options.signal, headers: { "content-type": file.type || "application/octet-stream" },
+    }, false);
   }
   finalize(handoffId: string, attachmentIds: string[]): Promise<AssistantHandoff> {
     return this.request(`/handoffs/${encodeURIComponent(handoffId)}/finalize`, { method: "POST", body: JSON.stringify({ attachmentIds }) });

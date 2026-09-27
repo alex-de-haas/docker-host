@@ -203,7 +203,7 @@ In short: you are free to use, self-host, modify, and redistribute Hosty — inc
 
 The former AI Gateway is now **Hosty Harness** (`hosty.harness`, `apps/harness`). Update in order:
 Core/CLI **0.110.0+**, Shell **0.85.0+**, then uninstall `hosty.ai-gateway` and install Harness
-**0.35.0+** fresh. Confirm its role/permissions, configure providers again and select it in Shell.
+**0.35.1+** fresh. Confirm its role/permissions, configure providers again and select it in Shell.
 The old `apps/ai-gateway` manifest/feed URLs are retired; no aliases, state migration or credential
 import are provided. Reconnect external MCP clients to the newly assigned Harness endpoint.
 See the [contract and replacement procedure](docs/features/hosty-harness-rename/feature.md).

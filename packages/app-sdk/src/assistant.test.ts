@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { assistantContractError, createAssistantRequestId, resolveAssistantDestination } from "./assistant.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { AssistantClient, assistantContractError, createAssistantRequestId, resolveAssistantDestination } from "./assistant.js";
 describe("assistant contract", () => {
   it("requires the base version but permits missing optional attachments and unknown optional capabilities", () => {
     expect(assistantContractError({})).not.toBeNull();
@@ -20,5 +20,36 @@ describe("assistant contract", () => {
   });
   it("rejects another endpoint", () => {
     expect(() => resolveAssistantDestination({ endpoint: "other", path: "/my-ui" }, surfaces)).toThrow();
+  });
+});
+
+describe("assistant upload deadlines", () => {
+  afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+  it("allows an upload lasting longer than the control deadline", async () => {
+    vi.useFakeTimers();
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      expect(init?.signal).toBeUndefined();
+      await new Promise(resolve => setTimeout(resolve, 75_000));
+      return Response.json({ attachmentId: "file" });
+    });
+    const client = new AssistantClient("https://assistant/api", { version: 1, capabilities: ["attachments"] }, async () => ({ token: "test" }));
+    const upload = client.upload("handoff", "file", new Blob(["data"]), "file.data");
+    await vi.advanceTimersByTimeAsync(75_000);
+    expect(await upload).toMatchObject({ attachmentId: "file" });
+    expect(timeout).not.toHaveBeenCalled();
+  });
+  it("passes the caller's cancellation signal through token refresh and retains control deadlines", async () => {
+    const controller = new AbortController(); const signals: unknown[] = [];
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      signals.push(init?.signal);
+      return signals.length === 1 ? Response.json({}, { status: 401 }) : Response.json({});
+    });
+    const client = new AssistantClient("https://assistant/api", { version: 1, capabilities: ["attachments"] }, async () => ({ token: "test" }));
+    await client.upload("handoff", "file", new Blob(["data"]), "file", { signal: controller.signal });
+    expect(signals).toEqual([controller.signal, controller.signal]);
+    expect(timeout).not.toHaveBeenCalled();
+    await client.status("handoff"); expect(timeout).toHaveBeenCalledWith(60_000);
   });
 });

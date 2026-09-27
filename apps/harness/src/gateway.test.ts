@@ -1,3 +1,4 @@
+import { HandoffStore } from "./handoff/store.js";
 import { type AssistantHandoff, createAssistantRequestId } from "@hosty-sdk/app/assistant";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { generateKeyPairSync, randomUUID, sign as signData } from "node:crypto";
@@ -102,6 +103,22 @@ describe("gateway", () => {
     headers.set("content-type", "application/json");
     return fetch(`${origin}${pathName}`, { ...init, headers });
   }
+
+  it("serves health and ordinary APIs after a rejected startup sweep", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const sweep = vi.spyOn(HandoffStore.prototype, "sweep").mockRejectedValueOnce(new Error("temporary storage outage"));
+    const recovering = createGatewayServer(manager, new FakeHarnessAdapter(), settings, directory);
+    try {
+      await new Promise<void>(resolve => recovering.listen(0, resolve));
+      await new Promise(resolve => setTimeout(resolve, 10)); // rejection happens before any request
+      const base = `http://127.0.0.1:${(recovering.address() as AddressInfo).port}`;
+      expect((await fetch(base + "/healthz")).status).toBe(200);
+      expect((await fetch(base + "/api/sessions", { headers: { authorization: `Bearer ${mintToken("host.admin")}` } })).status).toBe(200);
+      expect(log).toHaveBeenCalledWith("[handoff] startup recovery failed", expect.any(Error));
+    } finally {
+      await new Promise(resolve => recovering.close(resolve)); sweep.mockRestore(); log.mockRestore();
+    }
+  });
 
   it("authenticates the handoff lifecycle and refuses foreign handles and incomplete uploads", async () => {
     const route = "/api/assistant/v1/handoffs";

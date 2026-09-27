@@ -200,13 +200,19 @@ export class SessionManager {
   }
 
   async recoverHandoff(id: string): Promise<void> {
-    if (this.live.has(id)) return;
-    const record = await this.store.readRecord(id);
-    if (record?.handoffDispatch?.state === "running" || record?.handoffDispatch?.state === "unknown") {
-      record.handoffDispatch.state = "unknown";
-      record.status = "failed";
-      await this.store.saveRecord(record);
-    }
+    await this.serialize(id, async () => {
+      if (this.live.has(id)) return;
+      const record = await this.store.readRecord(id);
+      if (record?.handoffDispatch?.state === "running" || record?.handoffDispatch?.state === "unknown") {
+        const interrupted = ["running", "awaiting_approval", "awaiting_question"].includes(record.status);
+        const changed = record.handoffDispatch.state === "running" || interrupted;
+        record.handoffDispatch.state = "unknown";
+        // The original dispatch stays uncertain; a later successful manual turn is not its result.
+        // Only interrupted active work is failed, never a healthy idle conversation on every boot.
+        if (interrupted) record.status = "failed";
+        if (changed) await this.store.saveRecord(record);
+      }
+    });
   }
 
   async releaseHandoff(id: string, draft: SessionRecord["handoffDraft"], dispatchId?: string): Promise<void> {
@@ -1181,6 +1187,7 @@ export class SessionManager {
       // rather than reported as unknown, which is what it says everywhere else.
       const waitedMs = now - Date.parse(record.updatedAt);
       record.status = "abandoned";
+      if (record.handoffDispatch?.state === "running") record.handoffDispatch.state = "failed";
       record.updatedAt = new Date(now).toISOString();
       await this.store.saveRecord(record);
       this.audit.report("session_abandoned", { sessionId: record.id, waitedMs: String(waitedMs) });
@@ -1226,7 +1233,7 @@ export class SessionManager {
     }
 
     if (session.record.handoffDispatch?.state === "running" && status === "idle") session.record.handoffDispatch.state = "completed";
-    if (session.record.handoffDispatch?.state === "running" && status === "failed") session.record.handoffDispatch.state = "failed";
+    if (session.record.handoffDispatch?.state === "running" && ["failed", "cancelled", "abandoned"].includes(status)) session.record.handoffDispatch.state = "failed";
     session.record.status = status;
     session.record.updatedAt = new Date().toISOString();
     await this.store.saveRecord(session.record);

@@ -46,12 +46,15 @@ export class HandoffStore {
     try { return JSON.parse(await readFile(path.join(this.dir(id), "record.json"), "utf8")) as Record; }
     catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
   }
-  private async records(): Promise<Record[]> {
+  private async recordIds(): Promise<string[]> {
     const entries = await readdir(this.root).catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") return []; throw error;
     });
+    return entries.filter(id => UUID.test(id));
+  }
+  private async records(): Promise<Record[]> {
     const result: Record[] = [];
-    for (const id of entries.filter(id => UUID.test(id))) { const record = await this.read(id); if (record) result.push(record); }
+    for (const id of await this.recordIds()) { const record = await this.read(id); if (record) result.push(record); }
     return result;
   }
   private async owned(id: string, actor: string): Promise<Record> {
@@ -175,10 +178,10 @@ export class HandoffStore {
   async finalize(actor: string, id: string, ids: unknown, credential?: string): Promise<AssistantHandoff> {
     return this.serial(async () => {
       const record = await this.owned(id, actor);
+      if (record.state !== "finalized") this.pending(record);
       if (!Array.isArray(ids) || ids.some(x => typeof x !== "string" || !UUID.test(x)) || new Set(ids).size !== ids.length) fail(400, "attachments_invalid", "Provide unique completed attachment IDs.");
       if (JSON.stringify([...(ids as string[])].sort()) !== JSON.stringify(record.attachments.map(a => a.attachmentId).sort())) fail(409, "attachments_incomplete", "Finalize must name every completed attachment exactly once.");
       if (record.state !== "finalized") {
-        this.pending(record);
         await validateSelection(this.providers, record.appIds ?? []);
         if (!await this.manager.getSession(record.conversationId)) fail(410, "conversation_deleted", "The reserved conversation was deleted.");
         const immediate = (await this.settings?.read())?.immediateHandoffs === true && Boolean(record.prompt?.trim() || record.attachments.length);
@@ -202,13 +205,20 @@ export class HandoffStore {
   }
   async sweep(): Promise<void> {
     return this.serial(async () => {
-      for (const record of await this.records()) {
-        await this.manager.recoverHandoff(record.conversationId);
-        await this.expire(record);
-        const dir = path.join(this.dir(record.handoffId), "files");
-        for (const file of await readdir(dir).catch(() => [])) if (file.endsWith(".tmp")) await rm(path.join(dir, file), { force: true });
-        if (record.state === "finalized") await this.applyFinalized(record);
-        if (this.now() > Date.parse(record.replayUntil) && !await this.manager.getSession(record.conversationId)) await rm(this.dir(record.handoffId), { recursive: true, force: true });
+      for (const id of await this.recordIds()) {
+        try {
+          const record = await this.read(id);
+          if (!record) continue;
+          await this.manager.recoverHandoff(record.conversationId);
+          await this.expire(record);
+          const dir = path.join(this.dir(record.handoffId), "files");
+          for (const file of await readdir(dir).catch(() => [])) if (file.endsWith(".tmp")) await rm(path.join(dir, file), { force: true });
+          if (record.state === "finalized") await this.applyFinalized(record);
+          if (this.now() > Date.parse(record.replayUntil) && !await this.manager.getSession(record.conversationId)) await rm(this.dir(record.handoffId), { recursive: true, force: true });
+        } catch (error) {
+          // Retain the record for repair/retry; one unavailable workspace must not block others.
+          console.error(`[handoff] recovery failed for ${id}`, error);
+        }
       }
     });
   }

@@ -4,8 +4,8 @@ Created: 2026-09-27
 Updated: 2026-09-27
 
 Hosty Harness (`hosty.harness`, `apps/harness`) is the optional administrator assistant and MCP facade.
-It continues the former Gateway release line at 0.35.0. Core/CLI 0.110.0, Shell 0.85.0 and
-`@hosty-sdk/app` 0.16.0 carry the matching integration. Historical feature-folder names remain stable.
+It continues the former Gateway release line at 0.35.1. Core/CLI 0.110.0, Shell 0.85.0 and
+`@hosty-sdk/app` 0.16.1 carry the matching integration. Historical feature-folder names remain stable.
 Session storage, provider connections, conversation naming and UI belong to Harness. Core owns
 identity, installation, lifecycle and discovery. This integration does not implement AHP or the
 separate [development-session workspace plan](../assistant-development-sessions/plan.md).
@@ -72,7 +72,7 @@ unseen IDs older than 24 hours return 410, and clocks more than five minutes ahe
 Attachment IDs are UUIDs independent of display names. Two files with the same name survive;
 reusing an ID with changed bytes, name or media type returns 409. Digests are computed while streaming.
 Uploads land in temporary files and become visible only after validation and atomic publication.
-Serialized transitions prevent upload/finalize/cancel races. Oversized streams return structured 413
+Serialized transitions prevent upload/finalize/cancel races. Finalize checks closed state before attachment-set comparison, so retries after cancellation/expiry return 410 even after cleanup. Oversized streams return structured 413
 responses without publishing partial files.
 
 Status contains `handoffId`, `requestId`, `conversationId`, `state` (`pending`, `finalized`, `cancelled`
@@ -106,7 +106,7 @@ Finalization records its disposition and dispatch identity atomically before rel
 conversation. Retries return the same outcome even after settings change. Session-side dispatch
 state is persisted before native execution can start. Retry can deliver a queued identity; unknown
 native execution is never blindly sent again. Startup recovery exposes uncertainty, and the
-conversation shows a recovery message. A queued request can be retried explicitly after its provider
+conversation shows a recovery message. Recovery shares the session mutation lock and does not overwrite an idle conversation after a later manual turn. Stopped or abandoned running dispatches report `failed`. A queued request can be retried explicitly after its provider
 is configured. GET and UI navigation never start or retry execution.
 
 Shell validates the returned endpoint and normalized path against the selected app's declared panel,
@@ -114,7 +114,7 @@ navigation or entrypoint. External origins, protocol-relative paths, traversal a
 separators are rejected. Endpoint identities accompany UI surfaces in Core's projection. Shell opens
 the result through its normal embedded app authentication; Harness loads the stored draft and files.
 Edited or deliberately cleared local drafts are preserved. Current app metadata is used again after
-an update or port change. The SDK supports provider-owned routes and headless callers too.
+an update or port change. The SDK supports provider-owned routes and headless callers too. Control requests have a 60-second deadline; upload has no SDK-imposed deadline and accepts an optional caller AbortSignal, including across token refresh.
 
 Shell error toasts keep their request identity. App-context and embedded-app asks retain pending
 identities in session storage across reloads, isolated by actor, assistant and canonical input, until
@@ -128,7 +128,7 @@ Pending files are staged beside the record, then copied into the conversation's 
 workspace on finalization. Once released, replay protection retains metadata/fingerprints/results,
 not prompt or file contents. A startup and minute sweep repairs interrupted local release, removes
 crashed temporary uploads and expires preparations 24 hours after creation, without retry extension.
-Cancellation/expiry removes only that pending reservation and its files.
+Cancellation/expiry removes only that pending reservation and its files. Recovery isolates failing records; a startup storage failure is logged and retried by the periodic sweep without disabling unrelated API routes.
 
 Replay records remain for at least 30 days from creation and as long as the finalized conversation
 exists. Deleting a conversation leaves a tombstone through the replay window and never recreates
@@ -172,7 +172,7 @@ manifest update and app restart preserved that handoff and its draft. The fresh 
 remained empty. The operator's existing installation was not replaced.
 
 Automated checks passed: Core 2,106 tests (four environment-dependent skips), affected Core HTTP and
-distribution tests, CLI 223, Harness 362, Shell 174 Node tests plus 21 component tests, and SDK 116.
+distribution tests, CLI 223, Harness 371, Shell 174 Node tests plus 21 component tests, and SDK 118.
 Core, CLI, both web apps and SDK built successfully; version/doc index checks passed. Existing Core
 and Shell warnings remain. Browser visual smoke was unavailable: the in-app browser rejected the
 loopback URL and no Chrome browser surface was available. Real account execution and external-client

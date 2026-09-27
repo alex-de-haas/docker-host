@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
@@ -21,8 +21,86 @@ describe("durable assistant handoffs", () => {
     store = new SessionStore(root, path.join(root, "cache")); settings = new SettingsStore(root);
     manager = makeManager(); handoffs = new HandoffStore(manager, settings, null, () => now);
   });
-  afterEach(async () => { await manager.shutdown(); await rm(root, { recursive: true, force: true }); });
+  afterEach(async () => { vi.restoreAllMocks(); await manager.shutdown(); await rm(root, { recursive: true, force: true }); });
   const input = () => ({ requestId: createAssistantRequestId(now), prompt: "Please inspect this", appIds: [] });
+  it.each(["cancelled", "expired"])("reports 410 for a %s finalize retry with the original attachment IDs", async state => {
+    const { value } = await handoffs.prepare("alice", input());
+    const id = randomUUID();
+    await handoffs.upload("alice", value.handoffId, id, "file", "text/plain", Readable.from(["bytes"]));
+    if (state === "cancelled") await handoffs.cancel("alice", value.handoffId);
+    else now += DAY + 1;
+    await expect(handoffs.finalize("alice", value.handoffId, [id])).rejects.toMatchObject({ status: 410, code: "handoff_closed" });
+  });
+  it("isolates malformed records and unavailable finalized workspaces during cleanup", async () => {
+    const broken = await handoffs.prepare("alice", input());
+    const blocked = await handoffs.prepare("alice", input());
+    const expired = await handoffs.prepare("alice", input());
+    await handoffs.upload("alice", blocked.value.handoffId, randomUUID(), "file", "text/plain", Readable.from(["bytes"]));
+    const blockedFile = path.join(root, "handoffs", blocked.value.handoffId, "record.json");
+    const raw = JSON.parse(await readFile(blockedFile, "utf8")); raw.state = "finalized";
+    raw.result = { conversationId: raw.conversationId, disposition: "draft", open: { endpoint: "http", path: "/assistant" } };
+    await writeFile(blockedFile, JSON.stringify(raw));
+    await writeFile(path.join(root, "handoffs", broken.value.handoffId, "record.json"), "corrupt");
+    vi.spyOn(manager, "workspaceFor").mockResolvedValue(null);
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    now += DAY + 1;
+    await expect(handoffs.sweep()).resolves.toBeUndefined();
+    expect((await handoffs.status("alice", expired.value.handoffId)).state).toBe("expired");
+    expect(log).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(await readFile(blockedFile, "utf8")).prompt).toBe(raw.prompt);
+  });
+  it.each(["cancelled", "abandoned"])("settles accepted execution when the conversation is %s", async state => {
+    await settings.update({ immediateHandoffs: true });
+    const { value } = await handoffs.prepare("alice", { ...input(), prompt: "write a file" });
+    await handoffs.finalize("alice", value.handoffId, []);
+    await vi.waitFor(async () => expect((await manager.getSession(value.conversationId))?.status).toBe("awaiting_approval"));
+    if (state === "cancelled") await manager.cancelSession(value.conversationId);
+    else await manager.sweepAbandoned(DAY, Date.now() + DAY + 1000);
+    expect((await handoffs.status("alice", value.handoffId)).executionState).toBe("failed");
+  });
+  it("settles a persisted abandoned execution without hydrating its session", async () => {
+    await settings.update({ immediateHandoffs: true });
+    const { value } = await handoffs.prepare("alice", { ...input(), prompt: "write a file" });
+    await handoffs.finalize("alice", value.handoffId, []);
+    await vi.waitFor(async () => expect((await manager.getSession(value.conversationId))?.status).toBe("awaiting_approval"));
+    await manager.shutdown(); manager = makeManager();
+    await manager.sweepAbandoned(DAY, Date.now() + DAY + 1000);
+    expect(await store.readRecord(value.conversationId)).toMatchObject({ status: "abandoned", handoffDispatch: { state: "failed" } });
+  });
+  it("keeps an old uncertain dispatch separate from a later successful manual turn across restarts", async () => {
+    await settings.update({ immediateHandoffs: true });
+    const { value } = await handoffs.prepare("alice", input());
+    await handoffs.finalize("alice", value.handoffId, []);
+    await manager.shutdown();
+    const record = (await store.readRecord(value.conversationId))!;
+    record.handoffDispatch!.state = "unknown"; record.status = "failed"; await store.saveRecord(record);
+    manager = makeManager(); await manager.recoverHandoff(record.id);
+    await manager.postMessage(record.id, "a separate manual turn");
+    await vi.waitFor(async () => expect((await manager.getSession(record.id))?.status).toBe("idle"));
+    await manager.shutdown(); manager = makeManager();
+    await manager.recoverHandoff(record.id); await manager.recoverHandoff(record.id);
+    expect(await store.readRecord(record.id)).toMatchObject({ status: "idle", handoffDispatch: { state: "unknown" } });
+  });
+  it("serializes recovery before a concurrent session mutation", async () => {
+    const { value } = await handoffs.prepare("alice", input());
+    await handoffs.finalize("alice", value.handoffId, []);
+    await manager.shutdown(); manager = makeManager();
+    const record = (await store.readRecord(value.conversationId))!;
+    record.handoffDispatch = { id: randomUUID(), state: "running" }; record.status = "running";
+    await store.saveRecord(record);
+    let release!: () => void;
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    const read = store.readRecord.bind(store);
+    const spy = vi.spyOn(store, "readRecord").mockImplementationOnce(async id => { const snapshot = await read(id); await blocked; return snapshot; });
+    const recovery = manager.recoverHandoff(record.id);
+    await vi.waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+    const turn = manager.postMessage(record.id, "a manual follow-up");
+    await new Promise(resolve => setTimeout(resolve, 20));
+    try { expect(spy).toHaveBeenCalledTimes(1); } finally { release(); }
+    await Promise.all([recovery, turn]);
+    await vi.waitFor(async () => expect((await manager.getSession(record.id))?.status).toBe("idle"));
+    expect((await store.readEvents(record.id)).filter(e => e.type === "user_message")).toHaveLength(1);
+  });
   it("recovers the same actor-scoped preparation after restart and rejects changed input", async () => {
     const request = input(), first = await handoffs.prepare("alice", request);
     await manager.shutdown(); manager = makeManager(); handoffs = new HandoffStore(manager, settings, null, () => now);

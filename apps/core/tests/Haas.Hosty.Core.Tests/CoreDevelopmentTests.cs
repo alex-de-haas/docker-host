@@ -134,8 +134,11 @@ public sealed class CoreDevelopmentTests : IDisposable
             while ((!File.Exists(log) || new FileInfo(log).Length == 0) && DateTime.UtcNow < deadline && !runner.HasExited) await Task.Delay(50);
             Assert.False(runner.HasExited);
             var before = new FileInfo(log).Length;
-            await Task.Delay(1200);
-            Assert.True(new FileInfo(log).Length > before);
+            deadline = DateTime.UtcNow.AddSeconds(10);
+            while (new FileInfo(log).Length <= before && DateTime.UtcNow < deadline && !runner.HasExited)
+                await Task.Delay(50);
+            Assert.False(runner.HasExited);
+            Assert.True(new FileInfo(log).Length > before, "The detached runner must continue writing after Core closes its pipes.");
             await LocalCommandProcessReclaim.WriteAsync(root, new(runner.Id, runner.StartTime.ToUniversalTime(), "test.app", "web", !OperatingSystem.IsWindows(), root, new Dictionary<string, int> { ["http"] = 23456 }));
             var registry = new LocalCommandProcessRegistry();
             Assert.True(await registry.TryAdoptAsync(root, "test.app", "web", default));

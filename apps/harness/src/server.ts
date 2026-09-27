@@ -47,7 +47,11 @@ export function createGatewayServer(
   connections: AgentConnections | null = null,
 ): Server {
   const handoffs = new HandoffStore(manager, settings, providers);
-  const recovered = handoffs.sweep();
+  const recovered = handoffs.sweep().catch(error => {
+    // A transient directory/storage failure is retried by the periodic sweep. Keep unrelated
+    // endpoints available and attach the handler immediately, before the first request arrives.
+    console.error("[handoff] startup recovery failed", error);
+  });
   const timer = setInterval(() => { void handoffs.sweep().catch(error => console.error("[handoff] cleanup failed", error)); }, 60_000);
   timer.unref();
   const server = createServer((request, response) => {

@@ -192,7 +192,7 @@ import { AssistantClient, createAssistantRequestId } from "@hosty-sdk/app/assist
 const client = new AssistantClient(interfaceUrl, { version: 1, capabilities: ["attachments"] }, issueToken);
 const requestId = createAssistantRequestId(); // persist with the intent before the first request
 const handoff = await client.prepare({ requestId, prompt: "Inspect this", appIds: [appId] });
-// Optional: client.upload(handoff.handoffId, stableAttachmentId, file, file.name)
+// Optional: client.upload(handoff.handoffId, stableAttachmentId, file, file.name, { signal })
 const finalized = await client.finalize(handoff.handoffId, []);
 // Validate result.open with resolveAssistantDestination against Core's declared UI surfaces.
 // Opening never submits the prompt again. client.status/cancel inspect or cancel preparations.
@@ -202,3 +202,6 @@ The receiver owns draft/immediate-start policy. `askAssistant(text)` remains the
 message helper; Shell turns that message into a handoff using its verified mounted app ID. Its boolean
 result reports message delivery to the embedder, not execution. Files use the separate `attachments`
 capability and raw upload API. See [the complete contract](../../docs/features/hosty-harness-rename/feature.md).
+
+Assistant control requests use a 60-second deadline. Uploads accept an optional caller-owned
+`AbortSignal` and have no SDK-imposed deadline, so slow valid transfers are not aborted after a minute.
