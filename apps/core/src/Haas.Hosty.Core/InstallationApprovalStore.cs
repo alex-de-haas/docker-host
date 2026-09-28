@@ -134,7 +134,7 @@ internal sealed class InstallationApproval
 }
 
 internal sealed record InstallationPrepare(string? ManifestPath = null, string? FeedsUrl = null,
-    string? FeedId = null, string? SelectedRuntime = null, string? UpdateAppId = null, string? PlanDigest = null);
+    string? FeedId = null, string? SelectedRuntime = null, string? UpdateAppId = null, string? PlanDigest = null, PrivateSourceChoice? SourceConnections = null);
 internal sealed record InstallationSubmit(IReadOnlyDictionary<string, string?>? Settings = null, bool Autostart = true);
 internal sealed record InstallationRequestView(string Id, string Status, AppInstallPlan? Plan, AppUpdatePlan? UpdatePlan,
     string ApprovalUrl, DateTimeOffset ExpiresAt, string? Error);

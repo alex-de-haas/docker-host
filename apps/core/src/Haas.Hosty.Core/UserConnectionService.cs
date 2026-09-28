@@ -162,6 +162,22 @@ internal sealed class UserConnectionService(UserDirectoryStore users, UserConnec
                 throw;
             }
         }, ct);
+    // Internal credential consumption only; callers never return the connection to an HTTP client.
+    // Serialized with refresh/disconnect so token rotation cannot race another provider operation.
+    internal Task<T> UseForSourceAsync<T>(string userId, string id, Func<UserProviderConnection, Task<T>> action, CancellationToken ct)
+        => Locked(userId, async () =>
+        {
+            var connection = RequireConnection(await users.ReadAsync(ct), userId, id);
+            if (connection.Method == "oauth" && connection.ExpiresAt <= clock.UtcNow.AddMinutes(2))
+            {
+                var token = await provider.RefreshAsync(connection, ct);
+                connection = await SaveExisting(connection with { AccessToken = token.AccessToken,
+                    RefreshToken = token.RefreshToken, ExpiresAt = token.ExpiresAt }, ct);
+            }
+            if (connection.ExpiresAt <= clock.UtcNow) throw new UserConnectionException("connection_expired", "Reconnect the expired connection.");
+            return await action(connection);
+        }, ct);
+
     private Task<UserProviderConnection> SaveExisting(UserProviderConnection c, CancellationToken ct)
         => users.UpdateAsync(s =>
         {

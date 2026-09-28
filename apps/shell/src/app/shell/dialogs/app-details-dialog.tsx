@@ -1,4 +1,5 @@
 "use client";
+import { PrivateSourceConnections } from "./private-source-connections";
 
 import { SourceChangesButton } from "../source/source-changes";
 import type { FormEvent } from "react";
@@ -413,7 +414,7 @@ function SettingsDialog({
   const settings = app.settings || [];
   const hasPublicOrigins = settings.some((setting) => isPublicOriginSettingKey(setting.key));
   const hasMounts = (app.mounts?.length ?? 0) > 0;
-  const hasSource = Boolean(app.supportsSource);
+  const hasSource = Boolean(app.supportsSource) || canManageApps;
   const availableTabs = SETTINGS_TABS.filter((tab) => {
     switch (tab.id) {
       case "app":
@@ -480,13 +481,14 @@ function SettingsDialog({
       )}
       {hasSource && (
         <div className={cn("flex min-h-0 flex-1 flex-col", active !== "source" && "hidden")}>
-          <SourceForm
+          {app.supportsSource && <SourceForm
             app={app}
             busyAction={busyAction}
             canManageApps={canManageApps}
             onConfigureSource={onConfigureSource}
             onClearSource={onClearSource}
-          />
+          />}
+          {canManageApps && active === "source" && <PrivateSourceConnections appId={app.id} />}
         </div>
       )}
     </div>

@@ -24,6 +24,7 @@ internal sealed record DevelopmentWorkspace
     public required string OriginalBase { get; init; }
     public required string IntegrationBase { get; init; }
     public required string SessionPath { get; init; }
+    public SourceReadGrant? SourceGrant { get; init; }
     public string State { get; init; } = "preparing";
     public WorkspaceApp[] Apps { get; init; } = [];
     public WorkspaceOperation[] Operations { get; init; } = [];

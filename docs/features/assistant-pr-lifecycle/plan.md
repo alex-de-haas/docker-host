@@ -10,7 +10,7 @@ The umbrella's common invariants apply; this feature has independent scope and r
 ## Provider Connection Dependency (2026-09-28)
 
 [User profiles and connections](../user-profile-connections/feature.md) own multiple provider accounts
-per Hosty user. [Private app sources](../private-app-sources/plan.md) own installation/read bindings.
+per Hosty user. [Private app sources](../private-app-sources/feature.md) own installation/read bindings.
 PR publication must select a concrete connection and support forks of public upstream projects,
 not assume the user can push or merge upstream. Submitted contributions may await a maintainer;
 remote merge authority is not a prerequisite for contributing. Provider authentication must be

@@ -21,7 +21,7 @@ import { waitForShellUpdateToSettle } from "./shell/self-update";
 import { readCoreStatus, reconcileCoreUpdate } from "./shell/core-status";
 import { reconcileAppList } from "./shell/app-list-snapshot";
 import { AppDetailsDialog } from "./shell/dialogs/app-details-dialog";
-import { InstallDialog } from "@hosty-sdk/app/install/react";
+import { SourceInstallDialog } from "./shell/dialogs/private-source-connections";
 import { createInstallationClient, openInstallationConfirmation, showInstallationConfirmation } from "@hosty-sdk/app/install";
 import { useAssistantSelection } from "./shell/assistant/use-assistant-selection";
 import { assistantMessageFor, assistantSupportsContext, createAppSession, createErrorSession, createHandoff, pendingAssistantIntent, assistantOpenUrl } from "./shell/assistant/assistant-client";
@@ -2392,9 +2392,11 @@ export function ShellClient({
         </ShellWorkspaceSplit>
       </div>
 
-        {installOpen && <InstallDialog
+        {installOpen && <SourceInstallDialog
           key={installNonce}
           client={installationClient}
+          coreOrigin={coreOrigin}
+          sendCsrfJson={sendCsrfJson}
           source={installInitialManifest ? { manifestPath: installInitialManifest } : undefined}
           onClose={closeInstallDialog}
           onInstalled={() => {

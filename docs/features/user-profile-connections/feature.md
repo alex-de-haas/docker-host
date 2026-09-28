@@ -98,7 +98,7 @@ Closing the page stops polling; an abandoned attempt expires. Already completed 
 browser logout and Core restart.
 
 A connection record grants no app installation, source access, Git publication or merge authority.
-The separately tracked [private-source plan](../private-app-sources/plan.md) owns repository bindings and
+[Private app sources](../private-app-sources/feature.md) adds separately reviewed repository bindings and
 background read grants; [PR lifecycle](../assistant-pr-lifecycle/plan.md) owns remote collaboration.
 Core's service resolves connection IDs together with an enabled owner; there is no public token-export
 endpoint or automatic exposure to assistants/apps.

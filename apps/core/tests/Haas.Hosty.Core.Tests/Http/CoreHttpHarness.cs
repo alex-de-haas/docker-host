@@ -39,7 +39,7 @@ public sealed class CoreHttpHarness : IAsyncDisposable
 
     /// <summary>Boots the pipeline. Pass a clock to control time — used by tests that need a token to
     /// expire; omitted everywhere else, so the default stays the real clock.</summary>
-    internal static async Task<CoreHttpHarness> StartAsync(IClock? clock = null)
+    internal static async Task<CoreHttpHarness> StartAsync(IClock? clock = null, Action<IServiceCollection>? configure = null)
     {
         var dataRoot = Path.Combine(Path.GetTempPath(), $"hosty-core-http-tests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(dataRoot);
@@ -64,6 +64,7 @@ public sealed class CoreHttpHarness : IAsyncDisposable
             builder.Services.AddSingleton(clock);
         }
 
+        configure?.Invoke(builder.Services);
         builder.Services.RemoveAll<IHostedService>();
         builder.WebHost.UseTestServer();
 
