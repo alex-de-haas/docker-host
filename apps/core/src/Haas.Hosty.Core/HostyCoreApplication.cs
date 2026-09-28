@@ -91,6 +91,9 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<LocalPasswordAuthService>();
         builder.Services.AddSingleton<AuthBootstrapService>();
         builder.Services.AddSingleton<UserManagementService>();
+        builder.Services.AddSingleton<UserConnectionService>();
+        builder.Services.AddHttpClient<UserConnectionProvider>(client => client.Timeout = TimeSpan.FromSeconds(30))
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false });
         builder.Services.AddSingleton(sp => new AppManifestService(AppManifestService.CreateDefaultHttpClient()));
         // The feed document is untrusted lifecycle input fetched over http(s). Refuse auto-redirects
         // so a feed URL cannot bounce Core onto an internal host (SSRF); a 3xx surfaces as a non-success
@@ -393,6 +396,7 @@ internal static class HostyCoreApplication
         AccessTokenEndpoints.Map(app);
         AuthBootstrapEndpoints.Map(app);
         UserManagementEndpoints.Map(app);
+        UserProfileEndpoints.Map(app);
         LifecycleEndpoints.Map(app);
         GlobalMountEndpoints.Map(app);
         CoreBootstrapEndpoints.Map(app);

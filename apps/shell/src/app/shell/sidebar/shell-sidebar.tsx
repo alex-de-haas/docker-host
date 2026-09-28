@@ -133,7 +133,7 @@ export function ShellSidebar({
       </nav>
 
       <div className={cn("shrink-0 p-3", compact ? "space-y-2" : "space-y-3")}>
-        <SidebarFooterAccount compact={compact} coreOrigin={coreOrigin} activeUser={activeUser} />
+        <SidebarFooterAccount compact={compact} coreOrigin={coreOrigin} activeUser={activeUser} onProfile={() => onOpenSettings("profile")} />
       </div>
     </div>
   );
@@ -523,7 +523,9 @@ function SidebarFooterAccount({
   compact,
   coreOrigin,
   activeUser,
+  onProfile,
 }: {
+  onProfile: () => void;
   compact: boolean;
   coreOrigin: string;
   activeUser: SessionResponse["user"] | null;
@@ -576,6 +578,7 @@ function SidebarFooterAccount({
             <Badge variant="outline">{activeUser.role}</Badge>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={onProfile}>Your profile</DropdownMenuItem>
           <DropdownMenuItem
             onSelect={(event) => {
               // Logout is a state change, so it goes through the CSRF-protected POST rather than a GET

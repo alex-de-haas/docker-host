@@ -1,7 +1,7 @@
 # Shell Navigation
 
 Created: 2026-07-30
-Updated: 2026-09-25
+Updated: 2026-09-28
 
 The browser Shell has three top-level destinations: **Dashboard**, the host you manage; **Settings**,
 the host you configure; and **Apps**, the apps you use. This document owns the route table and the
@@ -54,7 +54,7 @@ before loading the iframe; codes are single-use, so a refresh re-mints rather th
 
 Two groups:
 
-- **Host** — Dashboard for administrators; Settings contains administrator sections and the viewer's own Access tokens section.
+- **Host** — Dashboard for administrators; Settings contains administrator sections and the viewer's own Profile and Access tokens sections.
 - **Apps** — every UI-capable app the session can see, ordinary and system alike, a system app marked
   by a badge. The Shell itself is excluded: opening it inside itself resolves back to Dashboard, so a
   row for it could only be a dead end.
@@ -273,6 +273,7 @@ available.
 
 One route with addressable host sections and app pages:
 
+- **Your profile** — personal display name and external provider accounts ([profile and connections](../user-profile-connections/feature.md)).
 - **Users** — accounts, invitations, roles, per-app assignment.
 - **Access tokens** — client credentials and OAuth connections.
 - **Core** — sessions, access, maintenance and connection settings. Loaded fresh each time the tab is shown, because the values are
@@ -306,7 +307,7 @@ and are excluded from bulk apply. Core updates use live status and release check
 with reconnecting, verifying and unconfirmed states instead of a fixed completion delay.
 
 The client authorization redirect uses the same section-aware policy as rendering: ordinary users
-stay on their Access tokens page, while host and app administration sections redirect to Apps.
+stay on their Profile and Access tokens pages, while host and app administration sections redirect to Apps.
 The check also runs when only the settings query parameter changes.
 
 ## Testing Expectations

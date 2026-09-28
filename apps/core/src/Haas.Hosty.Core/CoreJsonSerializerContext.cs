@@ -77,6 +77,13 @@ internal static class CoreJson
 [JsonSerializable(typeof(InstallationSubmit))]
 [JsonSerializable(typeof(InstallationRequestView))]
 [JsonSerializable(typeof(UserDirectoryState))]
+[JsonSerializable(typeof(UserProfileResponse))]
+[JsonSerializable(typeof(UserProfileUpdate))]
+[JsonSerializable(typeof(UserConnectionInput))]
+[JsonSerializable(typeof(UserConnectionRename))]
+[JsonSerializable(typeof(UserConnectionSummary))]
+[JsonSerializable(typeof(UserDeviceResponse))]
+[JsonSerializable(typeof(bool))]
 [JsonSerializable(typeof(AppStateDocument))]
 [JsonSerializable(typeof(GlobalMountState))]
 // Reachable via AppRecord/AppSummary, but rooted explicitly: the per-service artifact run-lock is

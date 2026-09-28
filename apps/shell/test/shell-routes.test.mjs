@@ -118,7 +118,7 @@ test("percent-encoded app ids survive the deep link", () => {
 test("builders and the parser agree", () => {
   assert.equal(readShellRoute(new URL(getShellViewHref("settings"), "http://x").pathname, params()).view, "settings");
 
-  for (const tab of ["users", "tokens", "core", "ingress", "mounts"]) {
+  for (const tab of ["profile", "users", "tokens", "core", "ingress", "mounts"]) {
     const settingsUrl = new URL(getSettingsHref(tab), "http://x");
     assert.equal(readShellRoute(settingsUrl.pathname, settingsUrl.searchParams).settingsTab, tab);
   }
@@ -130,11 +130,12 @@ test("builders and the parser agree", () => {
   });
 });
 
-// Settings is an administrator page except for one tab. Access tokens are per-user in Core — a
+// Settings also exposes personal profile and access tokens to ordinary users. Access tokens are per-user in Core — a
 // host.user creates, lists and revokes their own — so bouncing them to Available Apps would leave a
 // supported role with no way to manage its own credentials.
-test("an ordinary user reaches Settings only for the access-tokens tab", () => {
+test("an ordinary user reaches personal profile and access tokens", () => {
   assert.equal(getAuthorizedShellView("settings", false, "tokens"), "settings");
+  assert.equal(getAuthorizedShellView("settings", false, "profile"), "settings");
   assert.equal(getAuthorizedShellView("settings", false, "users"), "available-apps");
   assert.equal(getAuthorizedShellView("settings", false, "core"), "available-apps");
   assert.equal(getAuthorizedShellView("settings", false, undefined), "available-apps");
@@ -146,6 +147,7 @@ test("an ordinary user reaches Settings only for the access-tokens tab", () => {
 
 
 test("authorization redirects preserve personal tokens and react to settings tab changes", () => {
+  assert.equal(getShellAuthorizationRedirect(readShellRoute("/settings", params("tab=profile")), true, false), null);
   const tokens = readShellRoute("/settings", params("tab=tokens"));
   assert.equal(getShellAuthorizationRedirect(tokens, true, false), null);
   for (const tab of ["users", "core", "hosty.harness", "unknown"]) {

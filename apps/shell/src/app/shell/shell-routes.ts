@@ -46,6 +46,7 @@ export const SHELL_VIEW_LABELS: Record<ShellView, string> = {
 const ADMIN_SHELL_VIEWS = new Set<ShellView>(["dashboard", "settings"]);
 
 export const HOST_SETTINGS_SECTIONS: { id: HostSettingsTab; label: string }[] = [
+  { id: "profile", label: "Your profile" },
   { id: "agents", label: "Agents" },
   { id: "shell", label: "Shell" }, { id: "users", label: "Users" }, { id: "tokens", label: "Access tokens" },
   { id: "core", label: "Core" }, { id: "ingress", label: "Ingress" }, { id: "mounts", label: "Shared mounts" },
@@ -69,7 +70,7 @@ const LEGACY_VIEW_PATHS: Record<string, ShellView> = {
 // access tokens are per-user by construction — Core lets a host.user create, list and revoke their own
 // — so sending them to Available Apps would leave a supported role with no way to manage its own
 // credentials.
-const NON_ADMIN_HOST_SETTINGS_TABS = new Set<HostSettingsTab>(["tokens"]);
+const NON_ADMIN_HOST_SETTINGS_TABS = new Set<HostSettingsTab>(["profile", "tokens"]);
 
 export function isNonAdminHostSettingsTab(tab: HostSettingsTab) {
   return NON_ADMIN_HOST_SETTINGS_TABS.has(tab);
@@ -90,7 +91,7 @@ export function getAuthorizedShellView(
     return view;
   }
 
-  // Settings is admin-only as a page, not as a whole: one tab on it belongs to every user.
+  // Settings is admin-only as a page, not as a whole: personal profile and tokens belong to every user.
   return view === "settings" && settingsTab && isHostSettingsTab(settingsTab) && isNonAdminHostSettingsTab(settingsTab)
     ? view
     : "available-apps";
