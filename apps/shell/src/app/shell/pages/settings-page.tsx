@@ -20,6 +20,7 @@ import { SettingsIngressSection } from "./settings-ingress-section";
 import { SettingsMountsSection } from "./settings-mounts-section";
 import { SettingsAgentsSection } from "./settings-agents-section";
 import { SettingsTokensSection } from "./settings-tokens-section";
+import { UserProfilePage } from "./user-profile-page";
 import { UserManagementPanel } from "./user-management-page";
 
 // Everything that configures the host, in one place. Before this page, User Management was a route
@@ -69,7 +70,7 @@ export function SettingsPage({
   onSaveMount: (input: { name: string; hostPath: string; mode?: string; description?: string | null }) => Promise<void>;
   onDeleteMount: (name: string, force?: boolean) => Promise<void>;
 }) {
-  // An ordinary user reaches this page for exactly one tab — their own access tokens — so the rest,
+  // Ordinary users reach their own profile and access tokens, so the rest,
   // which administer the host, are not offered to them.
   const assistants = findAssistantGateways(apps);
   const visibleTabs = canManageApps ? HOST_SETTINGS_SECTIONS : HOST_SETTINGS_SECTIONS.filter((tab) => isNonAdminHostSettingsTab(tab.id));
@@ -87,6 +88,7 @@ export function SettingsPage({
   return (
     <div className="space-y-6">
       <h1 className="sr-only">Settings</h1>
+      {resolvedTab === "profile" && <UserProfilePage coreOrigin={coreOrigin} sendCsrfJson={sendCsrfJson} onSaved={onRefresh} />}
 
       {canManageApps && resolvedTab === "shell" && <section className="space-y-3 max-w-xl">
         <h2 className="text-lg font-medium">Assistant for Shell</h2>

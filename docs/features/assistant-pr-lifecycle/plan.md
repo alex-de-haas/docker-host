@@ -2,10 +2,19 @@
 
 Status: Draft
 Created: 2026-09-26
-Updated: 2026-09-27
+Updated: 2026-09-28
 
 Part of [shared assistant development sessions](../assistant-development-sessions/plan.md).
 The umbrella's common invariants apply; this feature has independent scope and requires its own Ready approval.
+
+## Provider Connection Dependency (2026-09-28)
+
+[User profiles and connections](../user-profile-connections/feature.md) own multiple provider accounts
+per Hosty user. [Private app sources](../private-app-sources/plan.md) own installation/read bindings.
+PR publication must select a concrete connection and support forks of public upstream projects,
+not assume the user can push or merge upstream. Submitted contributions may await a maintainer;
+remote merge authority is not a prerequisite for contributing. Provider authentication must be
+verified against the fork/push/PR flow rather than assuming every PAT type supports it.
 
 ## Target Behavior
 

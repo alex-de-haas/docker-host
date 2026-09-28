@@ -359,6 +359,7 @@ internal sealed class UserManagementService(
         return state with
         {
             Users = state.Users.Where(user => !ids.Contains(user.Id)).ToArray(),
+            ProviderConnections = state.ProviderConnections?.Where(c => !ids.Contains(c.UserId)).ToArray(),
             Sessions = state.Sessions.Where(session => !ids.Contains(session.UserId)).ToArray(),
             Assignments = state.Assignments.Where(assignment => !ids.Contains(assignment.UserId)).ToArray(),
             PasswordCredentials = state.PasswordCredentials?

@@ -103,7 +103,8 @@ internal sealed record UserDirectoryState(
     IReadOnlyList<HostInvitationRecord> Invitations,
     IReadOnlyList<AppAssignmentRecord> Assignments,
     IReadOnlyList<AuthSessionRecord> Sessions,
-    IReadOnlyList<LocalPasswordCredentialRecord>? PasswordCredentials = null);
+    IReadOnlyList<LocalPasswordCredentialRecord>? PasswordCredentials = null,
+    IReadOnlyList<UserProviderConnection>? ProviderConnections = null);
 
 internal sealed record HostUserRecord(
     string Id,

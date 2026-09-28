@@ -264,12 +264,15 @@ public sealed class UserManagementServiceTests
         var recentlyDisabled = CreateUser("user_recent", "host.user") with { Disabled = true, UpdatedAt = now.AddDays(-3) };
         var longDisabled = CreateUser("user_old", "host.user") with { Disabled = true, UpdatedAt = now.AddDays(-30) };
         await fixture.Users.WriteAsync(new UserDirectoryState(
-            1, [admin, active, recentlyDisabled, longDisabled], [], [], []));
+            1, [admin, active, recentlyDisabled, longDisabled], [], [], [], ProviderConnections:
+            [new("old", "user_old", "Old", "github", "", "", "42", "old-user", "pat", "old-secret", null, null, null, now, now, "connected", "v1"),
+             new("active", "user_active", "Active", "github", "", "", "43", "active-user", "pat", "active-secret", null, null, null, now, now, "connected", "v1")]));
 
         var purged = await fixture.Service.PurgeExpiredDisabledUsersAsync(TimeSpan.FromDays(10));
         var state = await fixture.Users.ReadAsync();
 
         Assert.Equal(["user_old"], purged);
+        Assert.Equal("active", Assert.Single(state.ProviderConnections!).Id);
         Assert.DoesNotContain(state.Users, candidate => candidate.Id == "user_old");
         Assert.Contains(state.Users, candidate => candidate.Id == "user_recent");
         Assert.Contains(state.Users, candidate => candidate.Id == "user_active");
