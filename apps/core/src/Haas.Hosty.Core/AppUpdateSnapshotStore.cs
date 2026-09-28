@@ -14,6 +14,7 @@ internal sealed record CachedUpdatePlan(
 {
     public string CacheId { get; init; } = Guid.NewGuid().ToString("N");
     public bool LiveSourceReview { get; init; }
+    public PrivateSourceAccess? PreviousPrivateSources { get; init; }
 }
 
 internal sealed record AppUpdateSnapshot(int SchemaVersion, string Base, CachedUpdatePlan? Plan, AppUpdateAvailability? Verdict);
@@ -22,7 +23,7 @@ internal sealed record AppUpdateBase(
     string Id, DateTimeOffset InstalledAt, string Version, string? Runtime,
     string ManifestHash, string? ManifestPath, string? ManifestUrl, string? InstallManifestPath,
     string? FeedsUrl, string? FeedId, AppSourceState? Source,
-    IReadOnlyDictionary<string, ArtifactLock>? ArtifactLocks);
+    IReadOnlyDictionary<string, ArtifactLock>? ArtifactLocks, PrivateSourceAccess? PrivateSources = null);
 
 // One atomic document keeps the verdict and the exact reviewed target together. It lives outside
 // app data/backups: restoring app data must not restore an old approval. All reads are local.

@@ -9,7 +9,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Haas.Hosty.Core;
 
-internal sealed class AppManifestService(HttpClient? httpClient = null)
+internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateSourceService? privateSources = null)
 {
     private const string ManifestFileName = "manifest.json";
     private const string SupportedSchemaVersion = "app.0.1";
@@ -57,7 +57,8 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
         CancellationToken cancellationToken = default,
         bool validateAllProfiles = false,
         bool requirePanelIcons = false,
-        string? legacyManifestDigest = null)
+        string? legacyManifestDigest = null,
+        SourceReadGrant? manifestGrant = null)
     {
         if (string.IsNullOrWhiteSpace(manifestPath))
         {
@@ -76,7 +77,10 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
             return Select(cached.Manifest, localPath, cached.Digest, selectedRuntime, cached.Json, manifestUrl: null, validateAllProfiles: validateAllProfiles, requirePanelIcons: requirePanelIcons && cached.Digest != legacyManifestDigest);
         }
 
-        var source = await ReadManifestSourceAsync(trimmed, cancellationToken);
+        var source = manifestGrant is null
+            ? await ReadManifestSourceAsync(trimmed, cancellationToken)
+            : new AppManifestSource(trimmed, Encoding.UTF8.GetString(await (privateSources ?? throw PrivateSourceService.Denied())
+                .ReadAsync(manifestGrant, trimmed, MaxManifestBytes, cancellationToken)), trimmed);
         var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(source.Json))).ToLowerInvariant();
         RuntimeAppManifest? manifest;
         try
@@ -176,7 +180,11 @@ internal sealed class AppManifestService(HttpClient? httpClient = null)
         }
 
         Func<string, long, Task<byte[]?>>? read = null;
-        if (!string.IsNullOrWhiteSpace(selection.ManifestUrl) &&
+        if (selection.PrivateSources?.Manifest is { } grant)
+        {
+            read = (rootRel, cap) => (privateSources ?? throw PrivateSourceService.Denied()).ReadAssetAsync(grant, rootRel, cap, cancellationToken);
+        }
+        else if (!string.IsNullOrWhiteSpace(selection.ManifestUrl) &&
             Uri.TryCreate(selection.ManifestUrl, UriKind.Absolute, out var manifestUri) &&
             (manifestUri.Scheme == Uri.UriSchemeHttp || manifestUri.Scheme == Uri.UriSchemeHttps))
         {
@@ -3308,7 +3316,8 @@ internal sealed record RuntimeAppManifestSelection(
     string? ManifestUrl,
     // The resolved `cache` target, mirroring DataTarget. Last and defaulted so existing positional
     // constructions (tests) stay valid.
-    RuntimeAppDataTarget? CacheTarget = null);
+    RuntimeAppDataTarget? CacheTarget = null,
+    PrivateSourceAccess? PrivateSources = null);
 
 internal sealed record RuntimeSelectedService(
     string Key,

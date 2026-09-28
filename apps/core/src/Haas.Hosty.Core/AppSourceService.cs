@@ -2,7 +2,7 @@ using System.Text.RegularExpressions;
 
 namespace Haas.Hosty.Core;
 
-internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryStore apps, IClock clock)
+internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryStore apps, IClock clock, PrivateSourceService? privateSources = null)
 {
     private static readonly Regex CommitPattern = new("^[0-9a-fA-F]{4,64}$", RegexOptions.Compiled);
 
@@ -32,11 +32,13 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
         }
 
         ValidateManagedRepository(source.Repository);
+        if (app.PrivateSources?.Git is { } grant && PrivateSourceService.NormalizeRepository(source.Repository) != grant.Repository)
+            throw PrivateSourceService.Denied("The Git source changed. Select and review its connection again.");
         var checkoutPath = ResolveManagedCheckoutPath(app);
-        await EnsureCheckoutAsync(source.Repository, checkoutPath, cancellationToken);
+        await EnsureCheckoutAsync(source.Repository, checkoutPath, cancellationToken, app.PrivateSources?.Git);
         if (request.Fetch)
         {
-            _ = await RunGitAsync(checkoutPath, FetchArgs, cancellationToken);
+            _ = await FetchAsync(checkoutPath, app.PrivateSources?.Git, cancellationToken);
         }
 
         var resolvedRef = request.Commit ?? request.Tag ?? request.Branch ?? source.ResolvedRef ?? "HEAD";
@@ -67,8 +69,10 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
         }
 
         ValidateManagedRepository(source.Repository);
+        if (app.PrivateSources?.Git is { } grant && PrivateSourceService.NormalizeRepository(source.Repository) != grant.Repository)
+            throw PrivateSourceService.Denied("The Git source changed. Select and review its connection again.");
         var checkoutPath = ResolveManagedCheckoutPath(app);
-        await EnsureCheckoutAsync(source.Repository, checkoutPath, cancellationToken);
+        await EnsureCheckoutAsync(source.Repository, checkoutPath, cancellationToken, app.PrivateSources?.Git);
 
         // The reviewed commit to pin to: the recorded one, and only a re-resolve of the reviewed ref when
         // nothing is recorded yet. A configured override does not change this — the override folder's own
@@ -84,7 +88,7 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
             ? await WithSourceFetchRetryAsync(
                 checkoutPath,
                 () => ResolveCommitAsync(checkoutPath, new AppSourceResolveRequest(), source.ResolvedRef ?? "HEAD", cancellationToken),
-                cancellationToken)
+                cancellationToken, app.PrivateSources?.Git)
             : source.Commit;
 
         var pinnedCommit = commit;
@@ -94,7 +98,7 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
             // to a commit this checkout has never fetched. A failing fetch is a real failure and surfaces:
             // pinning something older because the network blinked is the ghost update this lock exists to
             // prevent.
-            _ = await RunGitAsync(checkoutPath, FetchArgs, cancellationToken);
+            _ = await FetchAsync(checkoutPath, app.PrivateSources?.Git, cancellationToken);
             if (!await CommitExistsAsync(checkoutPath, pinnedCommit, cancellationToken))
             {
                 // The repository does not contain the recorded commit at all, and failing here would wedge
@@ -216,7 +220,7 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
     // pair, and apply persists it inside its own record write — the pin only ever moves as part of a
     // reviewed update. The checkout catches up at the next start: EnsurePinnedCommitAsync fetches and
     // retries when the pinned commit is not present locally yet.
-    public async Task<string> ResolveManifestCommitAsync(RuntimeAppSource source, CancellationToken cancellationToken = default)
+    public async Task<string> ResolveManifestCommitAsync(RuntimeAppSource source, CancellationToken cancellationToken = default, SourceReadGrant? grant = null)
     {
         if (source.Repository is null)
         {
@@ -235,12 +239,12 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
 
         if (!string.IsNullOrWhiteSpace(source.Tag))
         {
-            return await ResolveRemoteRefAsync(repository, $"refs/tags/{source.Tag.Trim()}", cancellationToken);
+            return await ResolveRemoteRefAsync(repository, $"refs/tags/{source.Tag.Trim()}", cancellationToken, grant);
         }
 
         return string.IsNullOrWhiteSpace(source.Branch)
-            ? await ResolveRemoteRefAsync(repository, "HEAD", cancellationToken)
-            : await ResolveRemoteRefAsync(repository, $"refs/heads/{source.Branch.Trim()}", cancellationToken);
+            ? await ResolveRemoteRefAsync(repository, "HEAD", cancellationToken, grant)
+            : await ResolveRemoteRefAsync(repository, $"refs/heads/{source.Branch.Trim()}", cancellationToken, grant);
     }
 
     // One `git ls-remote` lookup of a single fully-qualified ref. The peeled form is requested
@@ -250,10 +254,13 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
     // `v1.1`); for a branch or HEAD the peeled pattern simply matches nothing. A ref that does not
     // exist upstream is NOT a git failure — ls-remote exits 0 with empty output — so an unmatched
     // lookup is turned into an explicit error here rather than silently resolving to nothing.
-    private static async Task<string> ResolveRemoteRefAsync(string repository, string reference, CancellationToken cancellationToken)
+    private async Task<string> ResolveRemoteRefAsync(string repository, string reference, CancellationToken cancellationToken, SourceReadGrant? grant = null)
     {
         var peeled = $"{reference}^{{}}";
-        var output = await RunGitProcessAsync(null, ["ls-remote", "--", repository, reference, peeled], cancellationToken);
+        var output = grant is null
+            ? await RunGitProcessAsync(null, ["ls-remote", "--", repository, reference, peeled], cancellationToken)
+            : await (privateSources ?? throw PrivateSourceService.Denied()).GitAsync(grant, repository, null,
+                ["ls-remote", "--", grant.Repository, reference, peeled], cancellationToken);
         string? exact = null;
         foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
@@ -312,7 +319,7 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
     // Runs a git-backed operation against the managed checkout, fetching once and retrying if it fails
     // because the required object/ref isn't present locally yet. A genuine failure (e.g. the ref does not
     // exist upstream) surfaces on the retry. Cancellation propagates (never caught here).
-    private static async Task<string> WithSourceFetchRetryAsync(string checkoutPath, Func<Task<string>> operation, CancellationToken cancellationToken)
+    private async Task<string> WithSourceFetchRetryAsync(string checkoutPath, Func<Task<string>> operation, CancellationToken cancellationToken, SourceReadGrant? grant = null)
     {
         try
         {
@@ -320,7 +327,7 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
         }
         catch (AppLifecycleException)
         {
-            _ = await RunGitAsync(checkoutPath, FetchArgs, cancellationToken);
+            _ = await FetchAsync(checkoutPath, grant, cancellationToken);
             return await operation();
         }
     }
@@ -393,7 +400,7 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
         => await apps.GetAppAsync(appId, cancellationToken) ??
             throw new AppLifecycleException("app_not_found", $"Runtime app '{appId}' was not found.");
 
-    private static async Task EnsureCheckoutAsync(string repository, string checkoutPath, CancellationToken cancellationToken)
+    private async Task EnsureCheckoutAsync(string repository, string checkoutPath, CancellationToken cancellationToken, SourceReadGrant? grant = null)
     {
         if (HasGitMetadata(checkoutPath))
         {
@@ -406,7 +413,22 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
             throw new AppLifecycleException("source_checkout_not_empty", $"Managed source checkout path is not empty: {checkoutPath}");
         }
 
-        _ = await RunGitProcessAsync(null, ["clone", "--", repository, checkoutPath], cancellationToken);
+        if (grant is null) _ = await RunGitProcessAsync(null, ["clone", "--", repository, checkoutPath], cancellationToken);
+        else _ = await (privateSources ?? throw PrivateSourceService.Denied()).GitAsync(grant, repository, null,
+            ["clone", "--", grant.Repository, checkoutPath], cancellationToken);
+    }
+
+    private Task<string> FetchAsync(string checkoutPath, SourceReadGrant? grant, CancellationToken ct)
+        => grant is null ? RunGitAsync(checkoutPath, FetchArgs, ct)
+            : (privateSources ?? throw PrivateSourceService.Denied()).GitAsync(grant, grant.Repository, checkoutPath,
+                ["fetch", "--tags", "--prune", "--force", "--", grant.Repository, "+refs/heads/*:refs/remotes/origin/*"], ct);
+
+    internal async Task PrefetchPrivateAsync(AppRecord app, SourceReadGrant grant, string commit, CancellationToken ct)
+    {
+        var path = ResolveManagedCheckoutPath(app);
+        await EnsureCheckoutAsync(grant.Repository, path, ct, grant);
+        if (!await CommitExistsAsync(path, commit, ct)) await FetchAsync(path, grant, ct);
+        if (!await CommitExistsAsync(path, commit, ct)) throw PrivateSourceService.Denied("The reviewed source commit is no longer available. Review the update again.");
     }
 
     internal static void ValidateManagedRepository(string repository)

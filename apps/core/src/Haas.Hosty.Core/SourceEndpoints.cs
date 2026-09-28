@@ -5,6 +5,7 @@ internal static class SourceEndpoints
     public static void Map(WebApplication app)
     {
         SourceWorktreeEndpoints.Map(app);
+        PrivateSourceEndpoints.Map(app);
         app.MapGet("/control/v1/apps/{appId}/source", async (
             string appId,
             HttpRequest request,

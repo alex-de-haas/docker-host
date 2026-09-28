@@ -92,9 +92,11 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<AuthBootstrapService>();
         builder.Services.AddSingleton<UserManagementService>();
         builder.Services.AddSingleton<UserConnectionService>();
+        builder.Services.AddSingleton(sp => new PrivateSourceService(sp.GetRequiredService<UserConnectionService>(),
+            new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false }) { Timeout = TimeSpan.FromSeconds(30) }));
         builder.Services.AddHttpClient<UserConnectionProvider>(client => client.Timeout = TimeSpan.FromSeconds(30))
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false });
-        builder.Services.AddSingleton(sp => new AppManifestService(AppManifestService.CreateDefaultHttpClient()));
+        builder.Services.AddSingleton(sp => new AppManifestService(AppManifestService.CreateDefaultHttpClient(), sp.GetRequiredService<PrivateSourceService>()));
         // The feed document is untrusted lifecycle input fetched over http(s). Refuse auto-redirects
         // so a feed URL cannot bounce Core onto an internal host (SSRF); a 3xx surfaces as a non-success
         // status and fails the load. AppFeedService also rejects non-http(s)/credentialed URLs.

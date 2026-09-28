@@ -9,7 +9,8 @@ internal sealed record InstallationCaller(string UserId, string? AppId, string? 
 
 internal sealed class InstallationApprovalService(
     InstallationApprovalStore approvals, CoreLifecycleService lifecycle, AppRegistryStore apps,
-    AppIdentityService identity, AppServiceTokenService serviceTokens, AuditStore audit, IClock clock)
+    AppIdentityService identity, AppServiceTokenService serviceTokens, AuditStore audit, IClock clock,
+    PrivateSourceService? privateSources = null, AppManifestService? manifests = null)
 {
     public async Task<InstallationCaller> AuthenticateAppAsync(string appId, HttpRequest request, CancellationToken ct)
     {
@@ -38,17 +39,40 @@ internal sealed class InstallationApprovalService(
     {
         var update = !string.IsNullOrWhiteSpace(input.UpdateAppId);
         await RequirePermissionAsync(caller, update ? CoreAppPermissions.Update : CoreAppPermissions.Install, ct);
+        var installed = update ? await apps.GetAppAsync(input.UpdateAppId!, ct) : null;
+        if (caller.AppId is not null && (input.SourceConnections is not null || installed?.PrivateSources is not null))
+            throw PrivateSourceService.Denied("Private source reads require the direct operator interface.");
+        var access = installed?.PrivateSources;
+        if (input.SourceConnections is { } choice)
+        {
+            if (new[] { access?.Manifest, access?.Git }.OfType<SourceReadGrant>().Any(g => g.OwnerId != caller.UserId))
+                throw PrivateSourceService.Denied("Only the source owner can replace these connections.");
+            var sourceUrl = input.ManifestPath ?? installed?.ManifestUrl ?? installed?.InstallManifestPath ?? throw PrivateSourceService.Denied("Enter the manifest URL.");
+            var reader = privateSources ?? throw PrivateSourceService.Denied();
+            var manifestGrant = string.IsNullOrWhiteSpace(choice.ManifestConnectionId) ? access?.Manifest
+                : await reader.BindAsync(caller.UserId, choice.ManifestConnectionId, sourceUrl, true, ct);
+            SourceReadGrant? gitGrant = access?.Git;
+            if (!string.IsNullOrWhiteSpace(choice.GitConnectionId))
+            {
+                var selected = await (manifests ?? throw PrivateSourceService.Denied()).LoadAsync(sourceUrl,
+                    input.SelectedRuntime ?? installed?.SelectedRuntime, ct, manifestGrant: manifestGrant);
+                var repository = selected.Manifest.Source?.Repository ?? throw PrivateSourceService.Denied("The manifest does not declare a Git source.");
+                gitGrant = await reader.BindAsync(caller.UserId, choice.GitConnectionId, repository, false, ct);
+            }
+            access = new(manifestGrant, gitGrant);
+        }
         AppInstallPlan? plan = null;
         AppUpdatePlan? updatePlan = null;
         AppFeedInstallPlan? feed = null;
         if (update)
         {
-            updatePlan = string.IsNullOrWhiteSpace(input.PlanDigest)
-                ? await lifecycle.CreateUpdatePlanAsync(input.UpdateAppId!, new AppUpdatePlanRequest(input.ManifestPath, input.SelectedRuntime), ct)
+            updatePlan = input.SourceConnections is not null || string.IsNullOrWhiteSpace(input.PlanDigest)
+                ? await lifecycle.CreateUpdatePlanAsync(input.UpdateAppId!, new AppUpdatePlanRequest(input.ManifestPath, input.SelectedRuntime) { PrivateSources = access }, ct)
                 : await lifecycle.GetReviewedUpdatePlanAsync(input.UpdateAppId!, input.PlanDigest);
         }
         else if (!string.IsNullOrWhiteSpace(input.FeedsUrl))
         {
+            if (input.SourceConnections is not null) throw PrivateSourceService.Denied("Private feeds are not supported. Use a direct manifest URL.");
             feed = await lifecycle.CreateApprovalFeedPlanAsync(new(input.FeedsUrl, input.FeedId, input.SelectedRuntime), ct);
             plan = feed.Install;
         }
@@ -56,7 +80,7 @@ internal sealed class InstallationApprovalService(
         {
             if (string.IsNullOrWhiteSpace(input.ManifestPath))
                 throw new AppLifecycleException("manifest_path_required", "A manifest or feed source is required.");
-            plan = await lifecycle.CreateInstallPlanAsync(new(input.ManifestPath, input.SelectedRuntime), ct);
+            plan = await lifecycle.CreateInstallPlanAsync(new AppInstallPlanRequest(input.ManifestPath, input.SelectedRuntime) { PrivateSources = access }, ct);
         }
         if (plan is { Action: not "install" })
             throw new AppLifecycleException("already_installed", "This app is already installed. Use its update flow.");
@@ -296,8 +320,12 @@ internal static class InstallationApprovalEndpoints
         var source = entry.FeedsUrl ?? entry.InstallPlan?.ManifestPath ?? entry.UpdatePlan?.ManifestPath;
         var warning = entry.InstallPlan?.TargetRuntimeType == "localCommand"
             ? "<p class=warning>This app runs commands directly on your host, outside a container. Only install code you trust.</p>" : "";
+        var access = entry.InstallPlan?.PrivateSources ?? entry.UpdatePlan?.PrivateSources;
+        var grants = string.Join("", new[] { access?.Manifest, access?.Git }.OfType<SourceReadGrant>().Select(g =>
+            $"<li>{E(g.ManifestUrl is null ? "Git source" : "Manifest and display assets")}: {E(g.ManifestUrl ?? g.Repository)} — {E(g.Label)} ({E(g.AccountName)})</li>"));
+        var accessReview = grants.Length == 0 ? "" : $"<h2>Private source access</h2><ul>{grants}</ul><p>Allow Core to read these resources for this app, its background updates and source workspaces you request using your connections, including after you sign out. Disconnecting a connection or disabling your account blocks new reads; the installed app keeps running. Other app users do not receive your credentials.</p>";
         var body = entry.Status == "pending"
-            ? $"<p><strong>{E(name)}</strong> · {E(entry.InstallPlan?.TargetVersion ?? entry.UpdatePlan?.TargetVersion)}</p><p>Requested by {E(entry.CallerName)}</p><p class=source>Source: {E(source)}</p><h2>Provider roles</h2><ul>{roleItems}</ul><h2>Core permissions</h2><ul>{rights}{string.Join("", removed)}</ul>{warning}<form method=post><input type=hidden name=nonce value=\"{E(nonce)}\"><button name=decision value=deny>Cancel</button><button class=primary name=decision value=approve>{(installing ? "Install app" : "Apply update")}</button></form>"
+            ? $"<p><strong>{E(name)}</strong> · {E(entry.InstallPlan?.TargetVersion ?? entry.UpdatePlan?.TargetVersion)}</p><p>Requested by {E(entry.CallerName)}</p><p class=source>Source: {E(source)}</p><h2>Provider roles</h2><ul>{roleItems}</ul><h2>Core permissions</h2><ul>{rights}{string.Join("", removed)}</ul>{warning}{accessReview}<form method=post><input type=hidden name=nonce value=\"{E(nonce)}\"><button name=decision value=deny>Cancel</button><button class=primary name=decision value=approve>{(installing ? "Install app" : "Apply update")}</button></form>"
             : $"<p role=status>{E(entry.Status switch { "succeeded" => "Completed. You can close this window.", "denied" => "Cancelled. Nothing was changed. You can close this window.", "failed" => entry.Error ?? "The operation failed.", "executing" => "Your request was accepted. Follow its progress in the app. You can close this window.", _ => "Finish preparing this request in the app first." })}</p>";
         if (closeWindow) body += $"<script>{CloseWindowScript}</script>";
         return $"<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\"><title>{title} — Hosty Core</title><style>:root{{color-scheme:light dark;font-family:system-ui}}body{{margin:0;padding:24px;background:Canvas;color:CanvasText}}main{{max-width:560px;margin:8vh auto}}h1{{font-size:1.5rem}}h2{{font-size:1rem}}li{{margin:12px 0}}.source{{overflow-wrap:anywhere;font-size:.9rem;opacity:.75}}.warning{{padding:12px;border:1px solid #b7791f;border-radius:8px}}form{{display:flex;justify-content:flex-end;gap:12px;margin-top:32px}}button{{font:inherit;padding:10px 18px;border:1px solid GrayText;border-radius:8px;cursor:pointer}}.primary{{background:#2563eb;color:white;border-color:#2563eb}}button:focus-visible{{outline:3px solid #60a5fa;outline-offset:3px}}</style><main><p>HOSTY CORE</p><h1>{title}</h1>{body}</main></html>";

@@ -62,8 +62,20 @@ internal sealed partial class CoreLifecycleService(
     // production DI always supplies it.
     HostyCoreRuntimeConfig? runtimeConfig = null,
     LocalCommandProcessRegistry? localProcesses = null,
-    AgentPolicyStore? agentPolicies = null)
+    AgentPolicyStore? agentPolicies = null,
+    PrivateSourceService? privateSources = null)
 {
+    private async Task ValidatePrivateSelectionAsync(RuntimeAppManifestSelection selection, CancellationToken ct)
+    {
+        if (selection.PrivateSources is not { } access) return;
+        if (access.Manifest is { } manifest && manifest.ManifestUrl != selection.ManifestUrl)
+            throw PrivateSourceService.Denied("The manifest URL changed. Select and review its connection again.");
+        if (access.Git is { } git && (selection.Manifest.Source?.Repository is not { } repository ||
+            PrivateSourceService.NormalizeRepository(repository) != git.Repository))
+            throw PrivateSourceService.Denied("The Git source changed. Select and review its connection again.");
+        await (privateSources ?? throw PrivateSourceService.Denied()).ValidateAsync(access, ct);
+    }
+
     private static readonly Regex BackupReasonPattern = new("^[a-z0-9][a-z0-9-]{0,30}$", RegexOptions.Compiled);
     private static readonly Regex MountLabelPattern = new("^[a-z0-9][a-z0-9._-]{0,62}$", RegexOptions.Compiled);
 
@@ -131,7 +143,10 @@ internal sealed partial class CoreLifecycleService(
 
     public async Task<AppInstallPlan> CreateInstallPlanAsync(AppInstallPlanRequest request, CancellationToken cancellationToken = default)
     {
-        var selection = await manifests.LoadAsync(request.ManifestPath, request.SelectedRuntime, cancellationToken, validateAllProfiles: true, requirePanelIcons: true);
+        var selection = await manifests.LoadAsync(request.ManifestPath, request.SelectedRuntime, cancellationToken, validateAllProfiles: true,
+            requirePanelIcons: true, manifestGrant: request.PrivateSources?.Manifest);
+        selection = selection with { PrivateSources = request.PrivateSources };
+        await ValidatePrivateSelectionAsync(selection, cancellationToken);
         // Resolve each image service's tag to its current remote digest at plan time: what the plan
         // shows is what the bound apply pins (C-CR1 Fix B). An unresolvable candidate (offline
         // registry, local-only image) stays null — that service surfaces without a digest and
@@ -283,7 +298,8 @@ internal sealed partial class CoreLifecycleService(
                 .Select(setting => new AppInstallSetting(setting.Key, setting.Type, setting.Secret ? null : setting.Default, setting.Secret, setting.Required, setting.Label, setting.Description))
                 .ToArray(),
             CorePermissions: selection.Manifest.CorePermissions.ToArray(),
-            RequestedRoles: PlatformCapabilities.RequestedRoles(selection.Manifest.Provides));
+            RequestedRoles: PlatformCapabilities.RequestedRoles(selection.Manifest.Provides),
+            PrivateSources: selection.PrivateSources);
     }
 
     internal async Task<AppUpdatePlan> GetReviewedUpdatePlanAsync(string appId, string digest)
@@ -441,6 +457,7 @@ internal sealed partial class CoreLifecycleService(
                 $"App '{selection.Manifest.Id}' is already installed (version {alreadyInstalled.Version}). Apply an update to change it, or remove it first.");
         }
 
+        await ValidatePrivateSelectionAsync(selection, cancellationToken);
         var appRoot = GetAppRoot(selection.Manifest.Id!);
         var manifestCopyPath = Path.Combine(appRoot, "manifest.json");
 
@@ -1575,7 +1592,10 @@ internal sealed partial class CoreLifecycleService(
         // Rechecking the exact installed legacy manifest is not new authoring. Any changed
         // candidate still has to satisfy the panel-icon contract before it can be reviewed/applied.
         var selection = await manifests.LoadAsync(manifestPath, request.SelectedRuntime ?? app.SelectedRuntime, cancellationToken,
-            validateAllProfiles: true, requirePanelIcons: true, legacyManifestDigest: currentSelection.ManifestDigest);
+            validateAllProfiles: true, requirePanelIcons: true, legacyManifestDigest: currentSelection.ManifestDigest,
+            manifestGrant: (request.PrivateSources ?? app.PrivateSources)?.Manifest);
+        selection = selection with { PrivateSources = request.PrivateSources ?? app.PrivateSources };
+        await ValidatePrivateSelectionAsync(selection, cancellationToken);
         if (!string.Equals(selection.Manifest.Id, app.Id, StringComparison.Ordinal))
         {
             throw new AppLifecycleException("manifest_app_mismatch", $"Update manifest app id '{selection.Manifest.Id}' does not match installed app '{app.Id}'.");
@@ -1585,6 +1605,8 @@ internal sealed partial class CoreLifecycleService(
         // A followed feed is an external source in its own right, whatever its manifestRef looks like.
         var sourceConfigured = feedResolution is not null || HasExternalUpdateSource(app, request.ManifestPath);
         var changes = BuildUpdateChanges(app, currentSelection, selection).ToList();
+        if (selection.PrivateSources != app.PrivateSources)
+            changes.Add("source-access:" + System.Text.Json.JsonSerializer.Serialize(selection.PrivateSources, CoreJsonSerializerContext.Default.PrivateSourceAccess));
         foreach (var permission in selection.Manifest.CorePermissions.Except(app.GrantedCorePermissions ?? [], StringComparer.Ordinal))
             changes.Add($"Core permission added: {permission} — {CoreAppPermissions.Describe(permission)}");
         foreach (var permission in (app.GrantedCorePermissions ?? []).Except(selection.Manifest.CorePermissions, StringComparer.Ordinal))
@@ -1651,6 +1673,7 @@ internal sealed partial class CoreLifecycleService(
             TargetCorePermissions = selection.Manifest.CorePermissions.ToArray(),
             CurrentConfirmedRoles = app.ConfirmedRoles ?? [],
             TargetRoles = PlatformCapabilities.RequestedRoles(selection.Manifest.Provides),
+            PrivateSources = selection.PrivateSources,
         };
 
         // Retain the fully-resolved plan so apply can use exactly what the operator confirmed instead of
@@ -1661,6 +1684,7 @@ internal sealed partial class CoreLifecycleService(
         // for the base-state guard in apply. Overwrites any prior pending plan for this app.
         var cached = new CachedUpdatePlan(plan, selection, currentSelection.ManifestDigest, artifactProbes, resolvedSourceCommit, clock.UtcNow)
         {
+            PreviousPrivateSources = app.PrivateSources,
             LiveSourceReview = !string.IsNullOrWhiteSpace(request.ManifestPath) && IsLiveSourceApp(app, profiles),
         };
 
@@ -2092,7 +2116,8 @@ internal sealed partial class CoreLifecycleService(
         // version/runtime/manifest. If the app moved since (a concurrent update landed before this apply
         // took the lock, or the plan sat open across one), applying the stale plan could move it somewhere
         // the operator never saw — including a silent downgrade. Cheap and local; no network, no rebuild.
-        if (!string.Equals(app.Version, plan.CurrentVersion, StringComparison.Ordinal) ||
+        if (app.PrivateSources != confirmed.PreviousPrivateSources ||
+            !string.Equals(app.Version, plan.CurrentVersion, StringComparison.Ordinal) ||
             !string.Equals(app.SelectedRuntime, plan.CurrentRuntime, StringComparison.Ordinal) ||
             !string.Equals(currentSelection.ManifestDigest, confirmed.CurrentManifestDigest, StringComparison.Ordinal))
         {
@@ -2104,6 +2129,7 @@ internal sealed partial class CoreLifecycleService(
 
         await SetUpdateProgressAsync(appId, "preparing", null, cancellationToken);
         var selection = confirmed.Selection;
+        await ValidatePrivateSelectionAsync(selection, cancellationToken);
 
         // Check the target's managed checkout before any stop, backup, manifest replacement or pin
         // advancement. Checking only inside Start strands a running app and advertises the new version
@@ -2121,8 +2147,11 @@ internal sealed partial class CoreLifecycleService(
         if (UpdateMovesSourcePin(app, selection))
         {
             sourcePinCommit = confirmed.ResolvedSourceCommit
-                ?? await sources.ResolveManifestCommitAsync(selection.Manifest.Source!, cancellationToken);
+                ?? await sources.ResolveManifestCommitAsync(selection.Manifest.Source!, cancellationToken, selection.PrivateSources?.Git);
         }
+
+        if (selection.PrivateSources?.Git is not null && sourcePinCommit is not null)
+            await sources.PrefetchPrivateAsync(app, selection.PrivateSources.Git, sourcePinCommit, cancellationToken);
 
         var adapter = ResolveAdapter(currentSelection.RuntimeProfile.Type);
         var wasRunning = AppRuntimeStates.IsUp(app.RuntimeState);
@@ -3498,7 +3527,8 @@ internal sealed partial class CoreLifecycleService(
             // update/switch apply path.
             PortAssignments: existing?.PortAssignments,
             GrantedCorePermissions: existing?.GrantedCorePermissions,
-            ConfirmedRoles: existing?.ConfirmedRoles);
+            ConfirmedRoles: existing?.ConfirmedRoles,
+            PrivateSources: selection.PrivateSources ?? existing?.PrivateSources);
 
         return ApplyManifestProjections(record, manifest);
     }
@@ -5128,7 +5158,7 @@ internal sealed partial class CoreLifecycleService(
         string candidate;
         try
         {
-            candidate = await sources.ResolveManifestCommitAsync(selection.Manifest.Source!, cancellationToken);
+            candidate = await sources.ResolveManifestCommitAsync(selection.Manifest.Source!, cancellationToken, selection.PrivateSources?.Git);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -6262,7 +6292,11 @@ internal sealed record AppInstallPlanRequest(
     string ManifestPath,
     string? SelectedRuntime = null,
     bool System = false,
-    bool? Autostart = null);
+    bool? Autostart = null)
+{
+    [System.Text.Json.Serialization.JsonIgnore]
+    public PrivateSourceAccess? PrivateSources { get; init; }
+}
 
 internal sealed record AppInstallRequest(
     string ManifestPath,
@@ -6326,7 +6360,11 @@ internal sealed record AppMountBindingInput(string Key, string? Label = null, st
 
 internal sealed record AppUpdatePlanRequest(
     string? ManifestPath = null,
-    string? SelectedRuntime = null);
+    string? SelectedRuntime = null)
+{
+    [System.Text.Json.Serialization.JsonIgnore]
+    public PrivateSourceAccess? PrivateSources { get; init; }
+}
 
 internal sealed record AppUpdateApplyRequest(
     string PlanDigest,
@@ -6488,7 +6526,8 @@ internal sealed record AppInstallPlan(
     // which case that service TOFU-backfills at first start. Absent on the feed-embedded plan.
     IReadOnlyList<AppServiceArtifactProbe>? ArtifactDigests = null,
     IReadOnlyList<string>? CorePermissions = null,
-    IReadOnlyList<string>? RequestedRoles = null)
+    IReadOnlyList<string>? RequestedRoles = null,
+    PrivateSourceAccess? PrivateSources = null)
 {
     public IReadOnlyDictionary<string, string> PermissionDescriptions => (CorePermissions ?? []).ToDictionary(value => value, CoreAppPermissions.Describe, StringComparer.Ordinal);
     public IReadOnlyDictionary<string, string> RoleDescriptions => (RequestedRoles ?? []).ToDictionary(value => value, PlatformCapabilities.DescribeRole, StringComparer.Ordinal);
@@ -6545,6 +6584,7 @@ internal sealed record AppUpdatePlan(
     public IReadOnlyList<string> TargetCorePermissions { get; init; } = [];
     public IReadOnlyList<string> CurrentConfirmedRoles { get; init; } = [];
     public IReadOnlyList<string> TargetRoles { get; init; } = [];
+    public PrivateSourceAccess? PrivateSources { get; init; }
 }
 
 // Pending reviewed-update plan read (see GetPendingUpdatePlanAsync). A null plan means nothing is
