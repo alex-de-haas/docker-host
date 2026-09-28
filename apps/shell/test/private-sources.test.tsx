@@ -10,7 +10,7 @@ const connections = [
   { id: "personal", label: "Personal", accountName: "alice", provider: "github", organization: "", status: "connected" },
   { id: "work", label: "Work", accountName: "work-alice", provider: "azure-devops", organization: "acme", status: "connected" },
 ];
-const access = { manifestUrl: "https://github.com/team/private/blob/main/manifest.json", status: "reconnect-required",
+const access = { hasGitSource: true, manifestUrl: "https://github.com/team/private/blob/main/manifest.json", status: "reconnect-required",
   access: { manifest: { connectionId: "missing", label: "Old", accountName: "alice", repository: "https://github.com/team/private.git" } } };
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -52,4 +52,28 @@ it("passes selected accounts through the existing installation review flow", asy
   await act(async () => button("Review installation").click());
   expect(send.mock.calls[0][1]).toMatchObject({ manifestPath: access.manifestUrl, sourceConnections: { manifestConnectionId: "personal", gitConnectionId: "work" } });
   expect(document.body.textContent).toContain("Repository denied");
+});
+
+it("reviews explicit public access separately from keeping the current grant", async () => {
+  send.mockResolvedValue(Response.json({ message: "Review fixture", code: "fixture" }, { status: 409 }));
+  await act(async () => root.render(<PrivateSourceConnections appId="example.private" />));
+  await select(0, "__public__");
+  expect(button("Review source connections").disabled).toBe(false);
+  await act(async () => button("Review source connections").click());
+  expect(send.mock.calls[0][1]).toMatchObject({ sourceConnections: { clearManifestConnection: true } });
+  expect(send.mock.calls[0][1].sourceConnections.manifestConnectionId).toBeUndefined();
+  await select(0, "");
+  expect(button("Review source connections").disabled).toBe(true);
+});
+it("offers only Git rebinding for a local manifest and submits no host path", async () => {
+  vi.mocked(fetch).mockImplementation(async url => Response.json(String(url).endsWith("/api/profile")
+    ? { connections } : { status: "available", hasGitSource: true }));
+  send.mockResolvedValue(Response.json({ message: "Review fixture" }, { status: 409 }));
+  await act(async () => root.render(<PrivateSourceConnections appId="example.private" />));
+  expect(container.querySelectorAll("select")).toHaveLength(1);
+  expect(container.textContent).toContain("Git source connection");
+  expect(container.textContent).not.toContain("Manifest connection");
+  await select(0, "personal");
+  await act(async () => button("Review source connections").click());
+  expect(send.mock.calls[0][1]).toEqual({ updateAppId: "example.private", sourceConnections: { gitConnectionId: "personal", clearGitConnection: undefined } });
 });

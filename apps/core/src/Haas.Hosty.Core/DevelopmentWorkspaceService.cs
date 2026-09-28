@@ -466,8 +466,11 @@ internal sealed class DevelopmentWorkspaceService(CoreDataPaths paths, AppRegist
         foreach (var binding in workspace.Apps)
         {
             var app = await apps.GetAppAsync(binding.AppId, ct);
-            if (app?.InstalledAt == binding.Installation && app.PrivateSources?.Git is { } grant &&
-                grant.OwnerId == workspace.Owner.UserId && grant.Repository == workspace.Repository) return grant;
+            if (app?.InstalledAt != binding.Installation) continue;
+            if (app.PrivateSources?.Git is { } grant && grant.OwnerId == workspace.Owner.UserId &&
+                grant.Repository == workspace.Repository) return grant;
+            // A reviewed switch to public access must also stop old workspaces using the grant.
+            if (app.PrivateSources is { Git: null }) return null;
         }
         return workspace.SourceGrant;
     }

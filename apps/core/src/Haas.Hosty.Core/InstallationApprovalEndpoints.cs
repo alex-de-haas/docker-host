@@ -40,7 +40,7 @@ internal sealed class InstallationApprovalService(
         var update = !string.IsNullOrWhiteSpace(input.UpdateAppId);
         await RequirePermissionAsync(caller, update ? CoreAppPermissions.Update : CoreAppPermissions.Install, ct);
         var installed = update ? await apps.GetAppAsync(input.UpdateAppId!, ct) : null;
-        if (caller.AppId is not null && (input.SourceConnections is not null || installed?.PrivateSources is not null))
+        if (caller.AppId is not null && (input.SourceConnections is not null || installed?.PrivateSources?.Manifest is not null || installed?.PrivateSources?.Git is not null))
             throw PrivateSourceService.Denied("Private source reads require the direct operator interface.");
         var access = installed?.PrivateSources;
         if (input.SourceConnections is { } choice)
@@ -49,9 +49,12 @@ internal sealed class InstallationApprovalService(
                 throw PrivateSourceService.Denied("Only the source owner can replace these connections.");
             var sourceUrl = input.ManifestPath ?? installed?.ManifestUrl ?? installed?.InstallManifestPath ?? throw PrivateSourceService.Denied("Enter the manifest URL.");
             var reader = privateSources ?? throw PrivateSourceService.Denied();
-            var manifestGrant = string.IsNullOrWhiteSpace(choice.ManifestConnectionId) ? access?.Manifest
+            if ((choice.ClearManifestConnection && !string.IsNullOrWhiteSpace(choice.ManifestConnectionId)) ||
+                (choice.ClearGitConnection && !string.IsNullOrWhiteSpace(choice.GitConnectionId)))
+                throw PrivateSourceService.Denied("Choose either a connection or public access for each source.");
+            var manifestGrant = choice.ClearManifestConnection ? null : string.IsNullOrWhiteSpace(choice.ManifestConnectionId) ? access?.Manifest
                 : await reader.BindAsync(caller.UserId, choice.ManifestConnectionId, sourceUrl, true, ct);
-            SourceReadGrant? gitGrant = access?.Git;
+            SourceReadGrant? gitGrant = choice.ClearGitConnection ? null : access?.Git;
             if (!string.IsNullOrWhiteSpace(choice.GitConnectionId))
             {
                 var selected = await (manifests ?? throw PrivateSourceService.Denied()).LoadAsync(sourceUrl,
@@ -323,6 +326,9 @@ internal static class InstallationApprovalEndpoints
         var access = entry.InstallPlan?.PrivateSources ?? entry.UpdatePlan?.PrivateSources;
         var grants = string.Join("", new[] { access?.Manifest, access?.Git }.OfType<SourceReadGrant>().Select(g =>
             $"<li>{E(g.ManifestUrl is null ? "Git source" : "Manifest and display assets")}: {E(g.ManifestUrl ?? g.Repository)} — {E(g.Label)} ({E(g.AccountName)})</li>"));
+        if (access is not null)
+            grants += (access.Manifest is null ? "<li>Manifest: no personal connection</li>" : "")
+                + (access.Git is null ? "<li>Git source: no personal connection</li>" : "");
         var accessReview = grants.Length == 0 ? "" : $"<h2>Private source access</h2><ul>{grants}</ul><p>Allow Core to read these resources for this app, its background updates and source workspaces you request using your connections, including after you sign out. Disconnecting a connection or disabling your account blocks new reads; the installed app keeps running. Other app users do not receive your credentials.</p>";
         var body = entry.Status == "pending"
             ? $"<p><strong>{E(name)}</strong> · {E(entry.InstallPlan?.TargetVersion ?? entry.UpdatePlan?.TargetVersion)}</p><p>Requested by {E(entry.CallerName)}</p><p class=source>Source: {E(source)}</p><h2>Provider roles</h2><ul>{roleItems}</ul><h2>Core permissions</h2><ul>{rights}{string.Join("", removed)}</ul>{warning}{accessReview}<form method=post><input type=hidden name=nonce value=\"{E(nonce)}\"><button name=decision value=deny>Cancel</button><button class=primary name=decision value=approve>{(installing ? "Install app" : "Apply update")}</button></form>"

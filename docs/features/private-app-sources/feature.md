@@ -31,7 +31,11 @@ image pulls or other artifact hosts.
 ## Review And Persistence
 
 The direct operator installation request accepts `sourceConnections.manifestConnectionId` and
-`sourceConnections.gitConnectionId`. Core derives the owner from the authenticated user and validates
+`sourceConnections.gitConnectionId`. Updates keep omitted connections; explicit
+`clearManifestConnection` / `clearGitConnection` flags remove the corresponding grant after review.
+A request cannot both clear and select the same connection. The confirmation displays which resources
+use no personal connection. This also permits recovery after a formerly private source becomes public,
+without requiring the old connection to remain valid. Core derives the owner from the authenticated user and validates
 each resource against the selected provider; clients cannot supply trusted owner/grant records.
 App-delegated installation requests cannot select personal connections or update an app with private
 grants. Existing runtime assignments confer no repository credential access.
@@ -54,14 +58,16 @@ local copies or stop a runtime.
 
 Settings → Source → Repository connections shows the saved connections and local missing-access
 state. The source owner reconnects in Profile, selects replacement connections, then confirms a
-reviewed app update. A new connection ID never inherits old grants automatically. Ownership cannot
+reviewed app update. Public / no connection removes a saved binding. Local manifest installs expose
+only their Git connection selector; the source-access response never substitutes a host path for a URL.
+A new connection ID never inherits old grants automatically. Ownership cannot
 be transferred through this flow. Provider-side revocation is discovered on a provider read/check;
 a locally available connection is not proof of remote repository permission.
 
 Private Git reads cover managed checkout creation/fetch, source revision probes and session workspace
 fetch/refresh/integration/cleanup. A session can create a private worktree only for its source owner.
 Existing workspace ownership checks still apply. Workspaces use the current matching app grant after
-an explicit rebind and retain their original grant reference if the app is removed. Removal of that
+an explicit rebind or grant removal and retain their original grant reference if the app is removed. Removal of that
 connection blocks remote operations, while local files remain recoverable.
 
 Source updates prefetch missing reviewed Git objects before stopping the old runtime. A denied read

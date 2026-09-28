@@ -9,7 +9,8 @@ namespace Haas.Hosty.Core;
 internal sealed record SourceReadGrant(string OwnerId, string ConnectionId, string Provider,
     string AccountName, string Label, string Repository, string? ManifestUrl = null);
 internal sealed record PrivateSourceAccess(SourceReadGrant? Manifest = null, SourceReadGrant? Git = null);
-internal sealed record PrivateSourceChoice(string? ManifestConnectionId = null, string? GitConnectionId = null);
+internal sealed record PrivateSourceChoice(string? ManifestConnectionId = null, string? GitConnectionId = null,
+    bool ClearManifestConnection = false, bool ClearGitConnection = false);
 
 internal sealed class PrivateSourceService(UserConnectionService connections, HttpClient http)
 {

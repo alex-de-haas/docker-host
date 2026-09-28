@@ -271,10 +271,104 @@ public sealed class PrivateSourceTests
         finally { Directory.Delete(root, true); }
     }
 
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task PrepareUpdate_ClearGrants_RequiresOwnerReviewAndPersistsPublicAccess(bool clearManifest, bool clearGit)
+    {
+        using var provider = new FakeHttp();
+        await using var h = await Start(provider);
+        var checkout = Path.Combine(h.Services.GetRequiredService<CoreDataPaths>().DataRoot, "fixture-checkout");
+        Directory.CreateDirectory(checkout);
+        Assert.Equal(0, (await ProcessRunner.RunAsync(AppSourceService.CreateGitStartInfo(checkout, ["init"]))).ExitCode);
+        Assert.Equal(0, (await ProcessRunner.RunAsync(AppSourceService.CreateGitStartInfo(checkout,
+            ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "Fixture"])) ).ExitCode);
+        var commit = (await ProcessRunner.RunAsync(AppSourceService.CreateGitStartInfo(checkout, ["rev-parse", "HEAD"]))).StandardOutput.Trim();
+        provider.Body = Manifest.Replace("\"branch\":\"main\"", "\"commit\":\"" + commit + "\"");
+        var approvals = h.Services.GetRequiredService<InstallationApprovalService>();
+        var apps = h.Services.GetRequiredService<AppRegistryStore>();
+        var entry = await approvals.PrepareAsync(new("alice", null, null, "Alice"), new(ManifestPath: Url,
+            SourceConnections: new("github-a", "github-a")), default);
+        entry.Autostart = false;
+        await approvals.ExecuteAsync(entry, default);
+        Assert.Null(entry.Error);
+        await apps.UpdateAppAsync("example.private", app => app with { SourceState = app.SourceState! with { ManagedCheckoutPath = checkout } });
+        var original = (await apps.GetAppAsync("example.private"))!.PrivateSources;
+        var choice = new PrivateSourceChoice(ClearManifestConnection: clearManifest, ClearGitConnection: clearGit);
+        await Assert.ThrowsAsync<AppLifecycleException>(() => approvals.PrepareAsync(new("bob", null, null, "Bob"),
+            new(UpdateAppId: "example.private", SourceConnections: choice), default));
+        if (clearManifest && clearGit)
+            await h.Services.GetRequiredService<UserConnectionService>().DisconnectAsync("alice", "github-a", default);
+        provider.Calls.Clear();
+        var review = await approvals.PrepareAsync(new("alice", null, null, "Alice"),
+            new(UpdateAppId: "example.private", SourceConnections: choice), default);
+        Assert.Contains(review.UpdatePlan!.Changes, change => change.StartsWith("source-access:"));
+        Assert.Equal(original, (await apps.GetAppAsync("example.private"))!.PrivateSources);
+        Assert.All(provider.Calls, call => Assert.Equal(clearManifest ? null : "Bearer github-secret", call.Authorization));
+        using var client = h.CreateClient();
+        client.DefaultRequestHeaders.Add("Cookie", "hosty_session=alice-browser; hosty_csrf=test");
+        client.DefaultRequestHeaders.Add("X-Hosty-CSRF", "test");
+        using var submit = await client.PostAsJsonAsync($"/api/installations/{review.Id}/submit", new { autostart = false });
+        Assert.True(submit.IsSuccessStatusCode);
+        var html = await client.GetStringAsync($"/install/confirm/{review.Id}");
+        if (clearManifest) Assert.Contains("Manifest: no personal connection", html);
+        if (clearGit) Assert.Contains("Git source: no personal connection", html);
+        await approvals.ExecuteAsync(review, default);
+        Assert.Null(review.Error);
+        var updated = (await apps.GetAppAsync("example.private"))!.PrivateSources!;
+        Assert.Equal(clearManifest ? null : original!.Manifest, updated.Manifest);
+        Assert.Equal(clearGit ? null : original!.Git, updated.Git);
+        // A subsequent update keeps the reviewed public state rather than reviving old grants.
+        var next = await approvals.PrepareAsync(new("alice", null, null, "Alice"), new(UpdateAppId: "example.private"), default);
+        Assert.Equal(updated, next.UpdatePlan!.PrivateSources);
+    }
+
+    [Fact]
+    public async Task PrepareUpdate_ConflictingClearAndSelection_IsRejectedBeforeProviderRead()
+    {
+        using var provider = new FakeHttp(); await using var h = await Start(provider);
+        await Assert.ThrowsAsync<AppLifecycleException>(() => h.Services.GetRequiredService<InstallationApprovalService>()
+            .PrepareAsync(new("alice", null, null, "Alice"), new(ManifestPath: Url,
+                SourceConnections: new("github-a", ClearManifestConnection: true)), default));
+        Assert.Empty(provider.Calls);
+    }
+
+    [Fact]
+    public async Task SourceAccess_LocalManifest_HidesHostPathAndSupportsGitRebinding()
+    {
+        using var provider = new FakeHttp(); await using var h = await Start(provider);
+        var directory = Path.Combine(Path.GetTempPath(), "hosty-local-private-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var path = Path.Combine(directory, "manifest.json");
+            await File.WriteAllTextAsync(path, Manifest.Replace("\"branch\":\"main\"", "\"commit\":\"" + new string('a', 40) + "\""));
+            var approvals = h.Services.GetRequiredService<InstallationApprovalService>();
+            var install = await approvals.PrepareAsync(new("alice", null, null, "Alice"), new(ManifestPath: path), default);
+            install.Autostart = false; await approvals.ExecuteAsync(install, default); Assert.Null(install.Error);
+            using var client = h.CreateClient(); client.DefaultRequestHeaders.Add("Cookie", "hosty_session=alice-browser");
+            var json = await client.GetStringAsync("/api/apps/example.private/source-access");
+            Assert.DoesNotContain(directory, json);
+            using var response = JsonDocument.Parse(json);
+            Assert.False(response.RootElement.TryGetProperty("manifestUrl", out var url) && url.ValueKind == JsonValueKind.String);
+            Assert.True(response.RootElement.GetProperty("hasGitSource").GetBoolean());
+            var review = await approvals.PrepareAsync(new("alice", null, null, "Alice"),
+                new(UpdateAppId: "example.private", SourceConnections: new(GitConnectionId: "github-a")), default);
+            Assert.Null(review.UpdatePlan!.PrivateSources!.Manifest);
+            Assert.Equal("github-a", review.UpdatePlan.PrivateSources.Git!.ConnectionId);
+            Assert.Empty(provider.Calls);
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
     private static async Task<CoreHttpHarness> Start(FakeHttp handler)
     {
-        var h = await CoreHttpHarness.StartAsync(configure: services => services.AddSingleton(sp =>
-            new PrivateSourceService(sp.GetRequiredService<UserConnectionService>(), new HttpClient(handler))));
+        var h = await CoreHttpHarness.StartAsync(configure: services =>
+        {
+            services.AddSingleton(sp => new PrivateSourceService(sp.GetRequiredService<UserConnectionService>(), new HttpClient(handler)));
+            services.AddSingleton(sp => new AppManifestService(new HttpClient(handler), sp.GetRequiredService<PrivateSourceService>()));
+        });
         var now = DateTimeOffset.UtcNow;
         var users = h.Services.GetRequiredService<UserDirectoryStore>();
         await users.WriteAsync(new UserDirectoryState(1,

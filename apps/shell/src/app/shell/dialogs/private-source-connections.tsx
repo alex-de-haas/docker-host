@@ -10,10 +10,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { readCoreError } from "../core-api";
 import { useShellActions } from "../shell-context";
 
-type Choice = { manifestConnectionId?: string; gitConnectionId?: string };
+type Choice = { manifestConnectionId?: string; gitConnectionId?: string; clearManifestConnection?: boolean; clearGitConnection?: boolean };
 type Connection = { id: string; label: string; provider: string; accountName: string; organization: string; status: string };
 type Grant = { connectionId: string; label: string; accountName: string; repository: string };
-type Access = { manifestUrl?: string; status: string; access?: { manifest?: Grant; git?: Grant } };
+type Access = { manifestUrl?: string; hasGitSource: boolean; status: string; access?: { manifest?: Grant; git?: Grant } };
 type Send = (url: string, body?: unknown, method?: string) => Promise<Response>;
 const errorMessage = (value: unknown) => value instanceof Error ? value.message : String(value);
 
@@ -33,11 +33,12 @@ function ConnectionFields({ coreOrigin, value, onChange, existing }: {
   return <div className="space-y-3">
     <p className="text-sm text-muted-foreground">Public sources need no connection. For private sources, select your account for each resource. Add accounts in <a className="underline" href="/settings?tab=profile">Profile</a>.</p>
     {error && <p role="alert">{error}</p>}
-    {([['manifestConnectionId', 'Manifest', existing?.access?.manifest], ['gitConnectionId', 'Git source', existing?.access?.git]] as const).map(([key, label, grant]) => <label key={key} className="block space-y-1 text-sm">
+    {([['manifestConnectionId', 'Manifest', existing?.access?.manifest, 'clearManifestConnection', !existing || !!existing.manifestUrl], ['gitConnectionId', 'Git source', existing?.access?.git, 'clearGitConnection', !existing || existing.hasGitSource]] as const).filter(([, , , , visible]) => visible).map(([key, label, grant, clearKey]) => <label key={key} className="block space-y-1 text-sm">
       <span>{label} connection</span>
       {grant && <p className="text-muted-foreground">Current: {grant.label} ({grant.accountName}) · {grant.repository}</p>}
-      <select className="w-full rounded-md border bg-background p-2" value={value[key] ?? ""} onChange={event => onChange({ ...value, [key]: event.target.value || undefined })}>
+      <select className="w-full rounded-md border bg-background p-2" value={value[clearKey] ? "__public__" : value[key] ?? ""} onChange={event => onChange({ ...value, [key]: event.target.value === "__public__" ? undefined : event.target.value || undefined, [clearKey]: event.target.value === "__public__" ? true : undefined })}>
         <option value="">{grant ? "Keep current connection" : "Public / no connection"}</option>
+        {grant && <option value="__public__">Public / no connection (remove current)</option>}
         {connections.map(c => <option key={c.id} value={c.id}>{c.label} · {c.accountName}{c.organization ? ` · ${c.organization}` : ""} ({c.provider}, {c.status})</option>)}
       </select>
     </label>)}
@@ -122,8 +123,8 @@ export function PrivateSourceConnections({ appId }: { appId: string }) {
     {notice && <p role="status" className="text-sm">{notice}</p>}
     {pending && approvalUrl && <a href={approvalUrl} target="_blank" rel="noopener noreferrer" className="text-sm underline">Open Core confirmation</a>}
     {access?.status === "reconnect-required" && <p role="alert" className="text-sm">Access is missing. Reconnect in Profile, then select the replacement below. The installed app keeps running.</p>}
-    {access?.manifestUrl && <><ConnectionFields coreOrigin={coreOrigin} value={choice} onChange={setChoice} existing={access} />
-      <Button type="button" disabled={busy || !(choice.manifestConnectionId || choice.gitConnectionId)} onClick={() => void review()}>Review source connections</Button></>}
+    {access && (access.manifestUrl || access.hasGitSource) && <><ConnectionFields coreOrigin={coreOrigin} value={choice} onChange={setChoice} existing={access} />
+      <Button type="button" disabled={busy || !(choice.manifestConnectionId || choice.gitConnectionId || choice.clearManifestConnection || choice.clearGitConnection)} onClick={() => void review()}>Review source connections</Button></>}
     {access && !access.manifestUrl && <p className="text-sm text-muted-foreground">This app uses a local manifest. Private manifest connections apply to URL installations.</p>}
   </section>;
 }

@@ -1,6 +1,6 @@
 namespace Haas.Hosty.Core;
 
-internal sealed record AppPrivateSourceResponse(string? ManifestUrl, PrivateSourceAccess? Access, string Status);
+internal sealed record AppPrivateSourceResponse(string? ManifestUrl, PrivateSourceAccess? Access, string Status, bool HasGitSource);
 internal static class PrivateSourceEndpoints
 {
     internal static void Map(WebApplication app)
@@ -19,7 +19,7 @@ internal static class PrivateSourceEndpoints
                 var status = "available";
                 try { await reader.ValidateAsync(installed.PrivateSources, ct); }
                 catch (AppLifecycleException) { status = "reconnect-required"; }
-                return CoreJson.Json(new AppPrivateSourceResponse(installed.ManifestUrl ?? installed.InstallManifestPath, installed.PrivateSources, status));
+                return CoreJson.Json(new AppPrivateSourceResponse(installed.ManifestUrl, installed.PrivateSources, status, !string.IsNullOrWhiteSpace(installed.SourceState?.Repository)));
             }, cancellationToken: ct);
         });
     }
