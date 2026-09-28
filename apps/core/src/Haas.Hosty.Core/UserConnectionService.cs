@@ -1,13 +1,16 @@
+using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 
 namespace Haas.Hosty.Core;
 
 internal sealed class UserConnectionService(UserDirectoryStore users, UserConnectionProvider provider, IClock clock, AuditStore audit, CoreSettingsService settings)
 {
-    // Serializes refresh rotation and disconnect. User deletion is additionally fenced inside the
-    // auth store's atomic mutation, so an in-flight provider response cannot resurrect an account.
-    private readonly SemaphoreSlim gate = new(1, 1);
-    private readonly Dictionary<string, Pending> pending = [];
+    // Serialize one owner's refresh rotation and disconnect without holding up another user's I/O.
+    // Persistence still fences user deletion inside the auth store's atomic mutation.
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> userGates = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, Pending> pending = new(StringComparer.Ordinal);
+    // Includes provider starts that have not returned a device code yet.
+    private readonly SemaphoreSlim attemptSlots = new(256, 256);
     private sealed record Pending(string Id, string UserId, string SessionId, UserConnectionInput Input,
         string ClientId, ProviderDevice Device, DateTimeOffset ExpiresAt, DateTimeOffset NextPoll, int Interval);
 
@@ -30,7 +33,7 @@ internal sealed class UserConnectionService(UserDirectoryStore users, UserConnec
         return await ProfileAsync(userId, ct);
     }
     public Task<UserConnectionSummary> AddPatAsync(string userId, UserConnectionInput input, CancellationToken ct)
-        => Locked(async () =>
+        => Locked(userId, async () =>
         {
             input = Validate(input);
             if (string.IsNullOrWhiteSpace(input.Token) || input.Token.Length > 16384 || input.Token.Any(char.IsControl))
@@ -43,25 +46,31 @@ internal sealed class UserConnectionService(UserDirectoryStore users, UserConnec
             return Summary(c);
         }, ct);
     public Task<UserDeviceResponse> StartDeviceAsync(string userId, string sessionId, UserConnectionInput input, CancellationToken ct)
-        => Locked(async () =>
+        => Locked(userId, async () =>
         {
             input = Validate(input) with { Token = null };
             var state = await users.ReadAsync(ct);
             RequireUser(state, userId); RequireSession(state, userId, sessionId);
-            Prune(state);
-            if (pending.Count >= 256 || pending.Values.Count(p => p.UserId == userId) >= 3)
+            Prune(state, userId);
+            if (pending.Values.Count(p => p.UserId == userId) >= 3)
                 throw new UserConnectionException("connection_attempt_limit", "Finish or cancel an existing connection attempt first.", 409);
             if ((state.ProviderConnections ?? []).Count(c => c.UserId == userId) >= 32)
                 throw new UserConnectionException("connection_limit", "Remove an unused connection first.", 409);
             var clientId = provider.ClientId(input.Provider) ?? throw new UserConnectionException("provider_not_configured", "The host operator must configure the provider's OAuth client ID.", 409);
-            var device = await provider.StartAsync(input, clientId, ct);
-            var p = new Pending(Guid.NewGuid().ToString("N"), userId, sessionId, input, clientId, device,
-                clock.UtcNow.AddSeconds(device.ExpiresIn), clock.UtcNow.AddSeconds(device.Interval), device.Interval);
-            pending[p.Id] = p;
-            return DeviceResponse(p);
+            if (!attemptSlots.Wait(0, ct))
+                throw new UserConnectionException("connection_attempt_limit", "Finish or cancel an existing connection attempt first.", 409);
+            try
+            {
+                var device = await provider.StartAsync(input, clientId, ct);
+                var p = new Pending(Guid.NewGuid().ToString("N"), userId, sessionId, input, clientId, device,
+                    clock.UtcNow.AddSeconds(device.ExpiresIn), clock.UtcNow.AddSeconds(device.Interval), device.Interval);
+                pending[p.Id] = p;
+                return DeviceResponse(p);
+            }
+            catch { attemptSlots.Release(); throw; }
         }, ct);
     public Task<UserDeviceResponse> PollAsync(string userId, string id, CancellationToken ct)
-        => Locked(async () =>
+        => Locked(userId, async () =>
         {
             Prune();
             if (!pending.TryGetValue(id, out var p) || p.UserId != userId)
@@ -70,18 +79,18 @@ internal sealed class UserConnectionService(UserDirectoryStore users, UserConnec
             RequireUser(state, userId); RequireSession(state, userId, p.SessionId);
             if (p.NextPoll > clock.UtcNow) return DeviceResponse(p);
             // Reserve the interval before HTTP, including on a transport failure.
-            pending[id] = p = p with { NextPoll = clock.UtcNow.AddSeconds(p.Interval) };
+            p = UpdatePending(p, p with { NextPoll = clock.UtcNow.AddSeconds(p.Interval) });
             try
             {
                 var result = await provider.PollAsync(p.Input.Provider, p.Input.Tenant!, p.ClientId, p.Device.DeviceCode, ct);
                 if (result.Pending is not null)
                 {
-                    if (result.Pending == "slow_down") pending[id] = p = p with { Interval = Math.Min(int.MaxValue - 5, p.Interval) + 5, NextPoll = clock.UtcNow.AddSeconds(Math.Min(int.MaxValue - 5, p.Interval) + 5) };
+                    if (result.Pending == "slow_down") p = UpdatePending(p, p with { Interval = Math.Min(int.MaxValue - 5, p.Interval) + 5, NextPoll = clock.UtcNow.AddSeconds(Math.Min(int.MaxValue - 5, p.Interval) + 5) });
                     return DeviceResponse(p);
                 }
                 // OAuth authorization codes are consumed once. Do not repeat the exchange if identity
                 // verification or persistence fails; a new explicit authorization is then required.
-                pending.Remove(id);
+                RemovePending(id);
                 var token = result.Token!;
                 var identity = await provider.IdentityAsync(p.Input.Provider, p.Input.Organization!, "oauth", token.AccessToken, ct);
                 var c = NewConnection(userId, p.Input, identity, "oauth", token, p.ClientId);
@@ -95,17 +104,17 @@ internal sealed class UserConnectionService(UserDirectoryStore users, UserConnec
             }
             catch (UserConnectionException ex) when (ex.Status != 502)
             {
-                pending.Remove(id); throw;
+                RemovePending(id); throw;
             }
         }, ct);
     public Task<bool> CancelAsync(string userId, string id, CancellationToken ct)
-        => Locked(() =>
+        => Locked(userId, () =>
         {
-            if (pending.TryGetValue(id, out var p) && p.UserId == userId) pending.Remove(id);
+            if (pending.TryGetValue(id, out var p) && p.UserId == userId) RemovePending(id);
             return Task.FromResult(true);
         }, ct);
     public Task<UserConnectionSummary> RenameAsync(string userId, string id, string label, CancellationToken ct)
-        => Locked(async () =>
+        => Locked(userId, async () =>
         {
             label = BoundedName(label);
             var updated = await users.UpdateAsync(s =>
@@ -117,18 +126,18 @@ internal sealed class UserConnectionService(UserDirectoryStore users, UserConnec
             return Summary(updated);
         }, ct);
     public Task<bool> DisconnectAsync(string userId, string id, CancellationToken ct)
-        => Locked(async () =>
+        => Locked(userId, async () =>
         {
             await users.UpdateAsync(s =>
             {
-                RequireUser(s, userId);
+                RequireConnection(s, userId, id);
                 return s with { ProviderConnections = (s.ProviderConnections ?? []).Where(c => c.UserId != userId || c.Id != id).ToArray() };
             }, ct);
             await Audit(userId, "connection.disconnected", id, ct);
             return true;
         }, ct);
     public Task<UserConnectionSummary> CheckAsync(string userId, string id, CancellationToken ct)
-        => Locked(async () =>
+        => Locked(userId, async () =>
         {
             var c = RequireConnection(await users.ReadAsync(ct), userId, id);
             try
@@ -178,13 +187,25 @@ internal sealed class UserConnectionService(UserDirectoryStore users, UserConnec
         => new(c.Id, c.Label, c.Provider, c.Organization, c.AccountId, c.AccountName, c.Method, c.ExpiresAt, c.CheckedAt, c.Status);
     private UserDeviceResponse DeviceResponse(Pending p)
         => new(p.Id, "pending", p.Device.UserCode, p.Device.VerificationUri, p.ExpiresAt, Math.Max(p.Interval, (int)Math.Ceiling((p.NextPoll - clock.UtcNow).TotalSeconds)));
-    private void Prune(UserDirectoryState? state = null)
+    private void Prune(UserDirectoryState? state = null, string? userId = null)
     {
-        foreach (var id in pending.Values.Where(p => p.ExpiresAt <= clock.UtcNow || state is not null &&
+        foreach (var id in pending.Values.Where(p => p.ExpiresAt <= clock.UtcNow || state is not null && p.UserId == userId &&
             (!state.Users.Any(u => u.Id == p.UserId && !u.Disabled) ||
              !state.Sessions.Any(s => s.Id == p.SessionId && s.UserId == p.UserId && s.Kind is null && s.Audience is null &&
                  CoreSessionAuthorization.IsSessionLive(s, clock.UtcNow, settings.AuthLifetimes.IdleFor(null)))))
-            .Select(p => p.Id).ToArray()) pending.Remove(id);
+            .Select(p => p.Id).ToArray()) RemovePending(id);
+    }
+    private void RemovePending(string id)
+    {
+        if (pending.TryRemove(id, out _)) attemptSlots.Release();
+    }
+    private Pending UpdatePending(Pending previous, Pending next)
+    {
+        // Another owner can prune this attempt while its provider request is in flight.
+        // Never recreate a removed entry and silently consume an unreserved global slot.
+        if (!pending.TryUpdate(previous.Id, next, previous))
+            throw new UserConnectionException("connection_attempt_missing", "This connection attempt expired. Start again.", 404);
+        return next;
     }
     internal static HostUserRecord RequireUser(UserDirectoryState s, string userId)
         => s.Users.FirstOrDefault(u => u.Id == userId && !u.Disabled) ?? throw new UserConnectionException("user_unavailable", "This Hosty user is no longer active.", 403);
@@ -220,8 +241,9 @@ internal sealed class UserConnectionService(UserDirectoryStore users, UserConnec
     }
     private Task Audit(string userId, string action, string target, CancellationToken ct)
         => audit.AppendAsync(new AuditRecord("audit_" + Guid.NewGuid().ToString("N"), "auth." + action, "user.connection", target, "succeeded", userId, clock.UtcNow, new Dictionary<string, string>()), ct);
-    private async Task<T> Locked<T>(Func<Task<T>> action, CancellationToken ct)
+    private async Task<T> Locked<T>(string userId, Func<Task<T>> action, CancellationToken ct)
     {
+        var gate = userGates.GetOrAdd(userId, _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(ct);
         try { return await action(); } finally { gate.Release(); }
     }

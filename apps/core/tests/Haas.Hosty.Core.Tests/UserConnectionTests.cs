@@ -22,7 +22,7 @@ public sealed class UserConnectionTests
         Assert.NotEqual(one.Id, two.Id);
         Assert.Empty((await f.Service.ProfileAsync("bob", Ct)).Connections);
         Assert.Equal(404, (await Assert.ThrowsAsync<UserConnectionException>(() => f.Service.RenameAsync("bob", one.Id, "Stolen", Ct))).Status);
-        await f.Service.DisconnectAsync("bob", one.Id, Ct);
+        await Assert.ThrowsAsync<UserConnectionException>(() => f.Service.DisconnectAsync("bob", one.Id, Ct));
         Assert.Equal(2, (await f.Service.ProfileAsync("alice", Ct)).Connections.Length);
         var json = JsonSerializer.Serialize(await f.Service.ProfileAsync("alice", Ct), CoreJsonSerializerContext.Default.UserProfileResponse);
         Assert.DoesNotContain("private-token", json);
@@ -176,6 +176,99 @@ public sealed class UserConnectionTests
         Assert.Equal("pending", (await f.Service.StartDeviceAsync("alice", "replacement", new("New session", "github"), Ct)).Status);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OversizedProviderBodyIsSanitized(bool streamed)
+    {
+        using var f = await Fixture.Create();
+        var body = Encoding.UTF8.GetBytes("{\"id\":42,\"login\":\"octocat\",\"extra\":\"" + new string('x', 1024 * 1024) + "\"}");
+        using var directContent = streamed ? (HttpContent)new UnknownLengthContent(body) : new ByteArrayContent(body);
+        // .NET 10 uses HttpRequestException for this limit, already sanitized by the provider adapter.
+        await Assert.ThrowsAsync<HttpRequestException>(() => directContent.LoadIntoBufferAsync(1024 * 1024));
+        f.Http.Enqueue(_ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = streamed ? new UnknownLengthContent(body) : new ByteArrayContent(body),
+        }));
+        var error = await Assert.ThrowsAsync<UserConnectionException>(() => f.Service.AddPatAsync("alice", new("Work", "github", Token: "secret"), Ct));
+        Assert.Equal("provider_unavailable", error.Code);
+        Assert.Equal(502, error.Status);
+        Assert.Empty((await f.Users.ReadAsync()).ProviderConnections ?? []);
+    }
+
+    [Fact]
+    public async Task MissingOrForeignDisconnectDoesNotFabricateAuditEvents()
+    {
+        using var f = await Fixture.Create(); f.Http.Json(IdentityJson);
+        var c = await f.Service.AddPatAsync("alice", new("Work", "github", Token: "secret"), Ct);
+        var before = await File.ReadAllTextAsync(f.Paths.AuditLogPath);
+        foreach (var (owner, id) in new[] { ("bob", c.Id), ("alice", "arbitrary-id") })
+            Assert.Equal(404, (await Assert.ThrowsAsync<UserConnectionException>(() => f.Service.DisconnectAsync(owner, id, Ct))).Status);
+        Assert.Equal(before, await File.ReadAllTextAsync(f.Paths.AuditLogPath));
+        await f.Service.DisconnectAsync("alice", c.Id, Ct);
+        var after = await File.ReadAllTextAsync(f.Paths.AuditLogPath);
+        Assert.Contains("auth.connection.disconnected", after);
+        await Assert.ThrowsAsync<UserConnectionException>(() => f.Service.DisconnectAsync("alice", c.Id, Ct));
+        Assert.Equal(after, await File.ReadAllTextAsync(f.Paths.AuditLogPath));
+    }
+
+    [Fact]
+    public async Task SlowProviderDoesNotBlockOtherUsersAndSameOwnerDisconnectWaits()
+    {
+        using var f = await Fixture.Create(); f.Http.Json(IdentityJson); f.Http.Json(IdentityJson);
+        var alice = await f.Service.AddPatAsync("alice", new("Alice", "github", Token: "alice-secret"), Ct);
+        var bob = await f.Service.AddPatAsync("bob", new("Bob", "github", Token: "bob-secret"), Ct);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        f.Http.Enqueue(async _ => { entered.SetResult(); await release.Task; return Reply(IdentityJson); });
+        var checking = f.Service.CheckAsync("alice", alice.Id, Ct);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var removingAlice = f.Service.DisconnectAsync("alice", alice.Id, Ct);
+        try
+        {
+            await f.Service.RenameAsync("bob", bob.Id, "Renamed", Ct).WaitAsync(TimeSpan.FromSeconds(5));
+            await f.Service.DisconnectAsync("bob", bob.Id, Ct).WaitAsync(TimeSpan.FromSeconds(5));
+            f.Http.Json(IdentityJson);
+            await f.Service.AddPatAsync("bob", new("Another", "github", Token: "bob-next"), Ct).WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.False(removingAlice.IsCompleted);
+        }
+        finally { release.SetResult(); await checking; await removingAlice; }
+        Assert.Empty((await f.Service.ProfileAsync("alice", Ct)).Connections);
+        Assert.Single((await f.Service.ProfileAsync("bob", Ct)).Connections);
+    }
+
+    [Fact]
+    public async Task ConcurrentStartsReserveGlobalCapacityAndCancellationReleasesIt()
+    {
+        using var f = await Fixture.Create();
+        var now = f.Clock.UtcNow;
+        await f.Users.UpdateAsync(s => s with
+        {
+            Users = Enumerable.Range(0, 257).Select(i => new HostUserRecord($"user-{i}", null, "User", "host.user", false, now, now)).ToArray(),
+            Sessions = Enumerable.Range(0, 257).Select(i => new AuthSessionRecord($"session-{i}", $"user-{i}", now, now.AddHours(1), null, now)).ToArray(),
+        });
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        for (var i = 0; i < 256; i++) f.Http.Enqueue(async _ => { await release.Task; return Reply(DeviceJson); });
+        var starting = Enumerable.Range(0, 256).Select(i => f.Service.StartDeviceAsync($"user-{i}", $"session-{i}", new("Work", "github"), Ct)).ToArray();
+        UserDeviceResponse[] attempts;
+        try
+        {
+            var error = await Assert.ThrowsAsync<UserConnectionException>(() =>
+                f.Service.StartDeviceAsync("user-256", "session-256", new("Overflow", "github"), Ct).WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.Equal("connection_attempt_limit", error.Code);
+        }
+        finally { release.SetResult(); attempts = await Task.WhenAll(starting); }
+        await f.Service.CancelAsync("user-0", attempts[0].Id, Ct);
+        f.Http.Json(DeviceJson);
+        Assert.Equal("pending", (await f.Service.StartDeviceAsync("user-256", "session-256", new("Available", "github"), Ct)).Status);
+    }
+
+    private sealed class UnknownLengthContent(byte[] bytes) : HttpContent
+    {
+        protected override bool TryComputeLength(out long length) { length = 0; return false; }
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) => stream.WriteAsync(bytes).AsTask();
+    }
+
     private static HttpResponseMessage Reply(string json, HttpStatusCode status = HttpStatusCode.OK) => new(status) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
     private sealed record Call(Uri Uri, string Body, string? Authorization);
     private sealed class FakeHttp : HttpMessageHandler
@@ -186,8 +279,14 @@ public sealed class UserConnectionTests
         public void Enqueue(Func<HttpRequestMessage, Task<HttpResponseMessage>> response) => responses.Enqueue(response);
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
-            Calls.Add(new(request.RequestUri!, request.Content is null ? "" : await request.Content.ReadAsStringAsync(ct), request.Headers.Authorization?.ToString()));
-            return await responses.Dequeue()(request);
+            var body = request.Content is null ? "" : await request.Content.ReadAsStringAsync(ct);
+            Func<HttpRequestMessage, Task<HttpResponseMessage>> response;
+            lock (responses)
+            {
+                Calls.Add(new(request.RequestUri!, body, request.Headers.Authorization?.ToString()));
+                response = responses.Dequeue();
+            }
+            return await response(request);
         }
     }
     private sealed class Clock : IClock

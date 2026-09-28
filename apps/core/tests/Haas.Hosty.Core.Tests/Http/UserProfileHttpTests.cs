@@ -41,7 +41,7 @@ public sealed class UserProfileHttpTests
         Assert.Equal("Bob", state.Users.Single(u => u.Id == "bob").DisplayName);
         Assert.Equal("Alice Renamed", state.Users.Single(u => u.Id == "alice").DisplayName);
         Assert.Equal(HttpStatusCode.NotFound, (await client.PutAsJsonAsync("/api/profile/connections/other", new { label = "Stolen" })).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await client.DeleteAsync("/api/profile/connections/other")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.DeleteAsync("/api/profile/connections/other")).StatusCode);
         Assert.Equal(2, (await users.ReadAsync()).ProviderConnections!.Count);
         Assert.Equal(HttpStatusCode.OK, (await client.DeleteAsync("/api/profile/connections/owned")).StatusCode);
         Assert.Equal("other", Assert.Single((await users.ReadAsync()).ProviderConnections!).Id);

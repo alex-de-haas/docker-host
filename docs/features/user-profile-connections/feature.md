@@ -25,8 +25,9 @@ A PAT's provider permissions, expiry and organization policies still apply. A re
 credential needs an explicit new connection. Rename changes only the user's label.
 
 Disconnect deletes Core's stored credential. Provider-side authorization is separate: the confirmation
-explains how to revoke it in the provider's account settings. Disconnect and local credential operations
-are serialized; an already running request finishes before removal takes effect. Deleting/purging a Hosty
+explains how to revoke it in the provider's account settings. Disconnect requires an existing connection owned by the caller; missing or foreign IDs return 404
+without a success audit event. Local credential operations are serialized per user; unrelated users
+continue independently during provider requests; an already running request finishes before removal takes effect. Deleting/purging a Hosty
 user removes their connections; disabling the user prevents credential operations and completion of
 in-flight authorization. Atomic persistence revalidates the owner, so a late provider response cannot
 restore credentials for a deleted or disabled user.
@@ -87,7 +88,8 @@ Access tokens, refresh tokens and provider device codes are absent from API resp
 metadata. Audit events contain the actor and connection/profile identifier. Auth state uses the Native
 AOT JSON serialization context, including backward-compatible absent connection collections.
 
-Device attempts are in memory, limited to three per user and 256 per Core process. Completed connections
+Device attempts are in memory, limited to three per user and 256 per Core process, including starts
+waiting for a provider response. Completed connections
 are limited to 32 per user. Attempts expire at the provider deadline or 30 minutes, whichever is sooner;
 Core enforces provider polling intervals and `slow_down`. User-visible codes and fixed verification
 links go to Shell; opaque device codes stay on Core. Completion requires the original browser session
