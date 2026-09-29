@@ -51,6 +51,7 @@ jobs:
       shell: ${{ steps.filter.outputs.shell }}
       app_sdk: ${{ steps.filter.outputs.app_sdk }}
       app_sdk_dotnet: ${{ steps.filter.outputs.app_sdk_dotnet }}
+      whisper: ${{ steps.filter.outputs.whisper }}
       demo_app: ${{ steps.filter.outputs.demo_app }}
       core: ${{ steps.filter.outputs.core }}
       cli: ${{ steps.filter.outputs.cli }}
@@ -104,6 +105,11 @@ jobs:
             app_sdk:
               - *node_shared
               - 'packages/app-sdk/**'
+
+            whisper:
+              - *dotnet_shared
+              - 'apps/whisper/**'
+              - 'packages/app-sdk-dotnet/**'
 
             app_sdk_dotnet:
               - *dotnet_shared
@@ -296,6 +302,24 @@ jobs:
 
       - name: Test HostySdk.App
         run: dotnet test packages/app-sdk-dotnet/HostySdk.App.Tests/HostySdk.App.Tests.csproj
+
+  whisper:
+    name: Whisper (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: changes
+    if: needs.changes.outputs.whisper == 'true'
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+      - name: Test Whisper provider
+        env:
+          HOSTY_WHISPER_INTEGRATION: "1"
+        run: dotnet test apps/whisper/Hosty.Whisper.Tests/Hosty.Whisper.Tests.csproj
 
   demo-app:
     name: Demo App

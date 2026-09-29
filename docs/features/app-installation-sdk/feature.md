@@ -28,7 +28,8 @@ forwarded headers cannot authorize that fallback; configured public origins rema
 Core exposes create, submit and status operations under `/api/installations` for authenticated
 operator clients, and `/api/internal/apps/{appId}/installations` for delegated app callers.
 The app transport requires a currently enabled administrator and the installed app's approved
-permission. Shell retains its existing full Core browser-session transport; this is operator
+permission for installation/update requests. An app can request review of its own optional grants
+with `permissionsAppId` without an install/update grant. Shell retains its existing full Core browser-session transport; this is operator
 access, not an app-ID permission exemption. The remaining Shell-specific CORS policy for that
 legacy management transport is unchanged. Custom app clients use the SDK server adapter.
 
@@ -41,6 +42,16 @@ legacy management transport is unchanged. Custom app clients use the SDK server 
 | `apps.skills.read` | Read agent skills published by installed apps |
 | `apps.install` | Prepare installation requests and submit them for Core confirmation |
 | `apps.update` | Submit an existing reviewed update plan for Core confirmation |
+| `apps.workspaces.manage` | Session worktrees and local Git operations with an administrator credential |
+| `apps.publications.manage` | Session pull requests using the acting administrator's Git account |
+| `providers.speech-to-text` | List and use all confirmed speech providers |
+| `providers.assistant` | List and make user-attributed requests to all confirmed assistant providers |
+
+`optionalCorePermissions` adds separately selectable offers, unchecked on install. Required and optional
+sets are disjoint. Core stores both reviewed declarations plus effective grants and a revision. Optional
+changes use the same confirmation page and reject stale reviews; Shell exposes the review in app settings.
+Removed declarations revoke grants, unchanged accepted optional choices survive updates, and moving an
+optional declaration to required needs review. See [Provider consumption](../provider-consumption/feature.md).
 
 Unknown and duplicate entries fail manifest validation. These are distinct from lifecycle UI
 `capabilities`, platform `provides` slots, and external-client OAuth/MCP scopes.

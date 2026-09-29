@@ -384,7 +384,10 @@ internal sealed record AppRecord(
     string? AppliedConfigurationHash = null,
     IReadOnlyList<string>? GrantedCorePermissions = null,
     IReadOnlyList<string>? ConfirmedRoles = null,
-    PrivateSourceAccess? PrivateSources = null);
+    PrivateSourceAccess? PrivateSources = null,
+    IReadOnlyList<string>? RequiredCorePermissions = null,
+    IReadOnlyList<string>? OptionalCorePermissions = null,
+    string? PermissionRevision = null);
 
 // Last observed update stage, retained through completion for reconnecting clients.
 internal sealed record AppUpdateProgress(string Stage, DateTimeOffset ChangedAt, string? Service = null);
@@ -1002,7 +1005,9 @@ internal sealed record AppSummary(
     // Persisted administrator grants, never inferred from the current source manifest.
     IReadOnlyList<string>? GrantedCorePermissions = null,
     IReadOnlyList<string>? ConfirmedRoles = null,
-    string? EntryEndpoint = null)
+    string? EntryEndpoint = null,
+    IReadOnlyList<string>? RequiredCorePermissions = null,
+    IReadOnlyList<string>? OptionalCorePermissions = null)
 {
     public static AppSummary From(
         AppRecord app,
@@ -1102,7 +1107,9 @@ internal sealed record AppSummary(
             Icon: app.Ui?.Icon,
             GrantedCorePermissions: app.GrantedCorePermissions ?? [],
             ConfirmedRoles: app.ConfirmedRoles ?? [],
-            EntryEndpoint: ui is null ? null : ResolveEndpoint(endpoints, ui.EndpointKey)?.Key);
+            EntryEndpoint: ui is null ? null : ResolveEndpoint(endpoints, ui.EndpointKey)?.Key,
+            RequiredCorePermissions: app.RequiredCorePermissions ?? app.GrantedCorePermissions ?? [],
+            OptionalCorePermissions: app.OptionalCorePermissions ?? []);
     }
 
     private static IReadOnlyDictionary<string, IReadOnlyList<AppInterfaceSummary>>? BuildInterfaceSummaries(

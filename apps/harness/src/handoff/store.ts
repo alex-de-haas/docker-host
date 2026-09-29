@@ -16,7 +16,7 @@ const DAY = 86_400_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 type Attachment = AssistantHandoff["attachments"][number] & { storedName: string };
 type Record = Omit<AssistantHandoff, "attachments"> & {
-  actor: string; fingerprint: string; prompt?: string; appIds?: string[];
+  actor: string; consumer?: string; fingerprint: string; prompt?: string; appIds?: string[];
   attachments: Attachment[]; allocating?: boolean;
 };
 const fail = (status: number, code: string, message: string): never => { throw new AppContextError(status, code, message); };
@@ -57,9 +57,9 @@ export class HandoffStore {
     for (const id of await this.recordIds()) { const record = await this.read(id); if (record) result.push(record); }
     return result;
   }
-  private async owned(id: string, actor: string): Promise<Record> {
+  private async owned(id: string, actor: string, consumer?: string): Promise<Record> {
     const record = await this.read(id);
-    if (!record || record.actor !== actor) fail(404, "handoff_not_found", "Handoff not found.");
+    if (!record || record.actor !== actor || record.consumer !== consumer) fail(404, "handoff_not_found", "Handoff not found.");
     await this.expire(record!); return record!;
   }
   private pending(record: Record): void {
@@ -81,21 +81,21 @@ export class HandoffStore {
     await this.save(record);
   }
   private async view(record: Record): Promise<AssistantHandoff> {
-    const { actor: _actor, fingerprint: _fingerprint, prompt: _prompt, appIds: _apps, allocating: _allocating, ...visible } = record;
+    const { actor: _actor, consumer: _consumer, fingerprint: _fingerprint, prompt: _prompt, appIds: _apps, allocating: _allocating, ...visible } = record;
     const session = await this.manager.getSession(record.conversationId);
     return { ...visible, limits: { maxFileBytes: MAX_ATTACHMENT_BYTES, maxFiles: MAX_ATTACHMENTS_PER_SESSION, maxTotalBytes: MAX_SESSION_ATTACHMENT_BYTES }, attachments: record.attachments.map(({ storedName: _name, ...attachment }) => attachment),
       ...(record.result?.dispatchId ? { executionState: session?.handoffDispatch?.state ?? "unknown" } : {}),
       // Return a result reference after transcript deletion; never recreate the conversation.
     };
   }
-  async prepare(actor: string, input: { requestId?: unknown; prompt?: unknown; appIds?: unknown }): Promise<{ created: boolean; value: AssistantHandoff }> {
+  async prepare(actor: string, input: { requestId?: unknown; prompt?: unknown; appIds?: unknown }, consumer?: string): Promise<{ created: boolean; value: AssistantHandoff }> {
     return this.serial(async () => {
       if (typeof input.requestId !== "string" || !UUID.test(input.requestId) || input.requestId[14] !== "7") fail(400, "request_id_invalid", "requestId must be a UUIDv7.");
       if (typeof input.prompt !== "string" || Buffer.byteLength(input.prompt) > 48 * 1024) fail(400, "prompt_invalid", "Provide a prompt of at most 48 KiB.");
       const requestId = input.requestId as string, prompt = input.prompt as string;
       const appIds = parseAppIds(input.appIds).sort();
       const fingerprint = createHash("sha256").update(JSON.stringify({ prompt, appIds })).digest("hex");
-      let record = (await this.records()).find(r => r.actor === actor && r.requestId === requestId);
+      let record = (await this.records()).find(r => r.actor === actor && r.consumer === consumer && r.requestId === requestId);
       const created = !record;
       if (record) {
         if (record.fingerprint !== fingerprint) fail(409, "request_conflict", "This request identity already has different input.");
@@ -106,7 +106,7 @@ export class HandoffStore {
         if (time > now + 300_000) fail(400, "request_clock_skew", "The request clock is more than five minutes ahead.");
         await validateSelection(this.providers, appIds);
         const id = randomUUID();
-        record = { handoffId: id, conversationId: id, requestId, actor, fingerprint, prompt, appIds,
+        record = { handoffId: id, conversationId: id, requestId, actor, consumer, fingerprint, prompt, appIds,
           state: "pending", createdAt: new Date(now).toISOString(), expiresAt: new Date(now + DAY).toISOString(),
           replayUntil: new Date(now + 30 * DAY).toISOString(), attachments: [], allocating: true };
         await this.save(record);
@@ -118,9 +118,9 @@ export class HandoffStore {
       return { created, value: await this.view(record) };
     });
   }
-  async upload(actor: string, id: string, attachmentId: string, name: string, mediaType: string, stream: Readable): Promise<{ created: boolean; value: Omit<Attachment, "storedName"> }> {
+  async upload(actor: string, id: string, attachmentId: string, name: string, mediaType: string, stream: Readable, consumer?: string): Promise<{ created: boolean; value: Omit<Attachment, "storedName"> }> {
     return this.serial(async () => {
-      const record = await this.owned(id, actor); this.pending(record);
+      const record = await this.owned(id, actor, consumer); this.pending(record);
       if (!UUID.test(attachmentId) || !name || Buffer.byteLength(name) > 1024 || !sanitizeAttachmentName(name)) fail(400, "attachment_invalid", "Provide a UUID attachment identity and a filename.");
       const existing = record.attachments.find(a => a.attachmentId === attachmentId);
       if (!existing && record.attachments.length >= MAX_ATTACHMENTS_PER_SESSION) fail(413, "too_many_attachments", "At most 20 attachments are allowed.");
@@ -175,9 +175,9 @@ export class HandoffStore {
     await rm(path.join(this.dir(record.handoffId), "files"), { recursive: true, force: true });
     await this.save(record);
   }
-  async finalize(actor: string, id: string, ids: unknown, credential?: string): Promise<AssistantHandoff> {
+  async finalize(actor: string, id: string, ids: unknown, credential?: string, consumer?: string): Promise<AssistantHandoff> {
     return this.serial(async () => {
-      const record = await this.owned(id, actor);
+      const record = await this.owned(id, actor, consumer);
       if (record.state !== "finalized") this.pending(record);
       if (!Array.isArray(ids) || ids.some(x => typeof x !== "string" || !UUID.test(x)) || new Set(ids).size !== ids.length) fail(400, "attachments_invalid", "Provide unique completed attachment IDs.");
       if (JSON.stringify([...(ids as string[])].sort()) !== JSON.stringify(record.attachments.map(a => a.attachmentId).sort())) fail(409, "attachments_incomplete", "Finalize must name every completed attachment exactly once.");
@@ -192,12 +192,12 @@ export class HandoffStore {
       await this.applyFinalized(record, credential, true); return this.view(record);
     });
   }
-  async status(actor: string, id: string): Promise<AssistantHandoff> {
-    return this.serial(async () => { const record = await this.owned(id, actor); if (record.state === "finalized") await this.applyFinalized(record); return this.view(record); });
+  async status(actor: string, id: string, consumer?: string): Promise<AssistantHandoff> {
+    return this.serial(async () => { const record = await this.owned(id, actor, consumer); if (record.state === "finalized") await this.applyFinalized(record); return this.view(record); });
   }
-  async cancel(actor: string, id: string): Promise<AssistantHandoff> {
+  async cancel(actor: string, id: string, consumer?: string): Promise<AssistantHandoff> {
     return this.serial(async () => {
-      const record = await this.owned(id, actor);
+      const record = await this.owned(id, actor, consumer);
       if (record.state === "finalized") fail(409, "handoff_finalized", "Finalized handoffs cannot be cancelled through preparation cleanup.");
       if (record.state === "pending") { record.state = "cancelled"; await this.save(record); }
       await this.expire(record); return this.view(record);

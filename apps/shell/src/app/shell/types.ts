@@ -248,6 +248,8 @@ export type CoreNavigationItem = {
 export type CoreApp = {
   id: string;
   grantedCorePermissions?: string[] | null;
+  requiredCorePermissions?: string[] | null;
+  optionalCorePermissions?: string[] | null;
   confirmedRoles?: string[] | null;
   displayName: string;
   description?: string | null;

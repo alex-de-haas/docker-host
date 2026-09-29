@@ -20,13 +20,15 @@ internal sealed record PlatformCapability(
 internal static class PlatformCapabilities
 {
     public const string Assistant = "assistant";
+    public const string SpeechToText = "speech-to-text";
 
     // Only recognized consent-bearing roles participate; legacy provisioning slots stay unchanged.
     public static IReadOnlyList<string> RequestedRoles(IReadOnlyList<string> provides)
-        => provides.Where(slot => slot == Assistant).Distinct(StringComparer.Ordinal).ToArray();
+        => provides.Where(slot => slot is Assistant or SpeechToText).Distinct(StringComparer.Ordinal).ToArray();
 
     public static string DescribeRole(string role) => role switch
     {
+        SpeechToText => "Provide speech recognition for authorized apps",
         Assistant => "Provide an assistant that receives conversations and app context chosen in Shell",
         _ => role,
     };

@@ -35,3 +35,27 @@ lives in the Hosty repository:
 [`docs/features/hosty-app-sdk/feature.md`](https://github.com/alex-de-haas/docker-host/blob/main/docs/features/hosty-app-sdk/feature.md).
 
 License: AGPL-3.0-only.
+
+## Speech And Assistant Providers
+
+Core 0.115.0 adds category permissions `providers.speech-to-text` and `providers.assistant`, declared
+as required `corePermissions` or optional `optionalCorePermissions`. Each grant covers all confirmed
+providers in that category. `HostyProviderClient.PermissionsAsync()` reads the app's actual grants.
+
+```csharp
+using var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
+{
+    Timeout = TimeSpan.FromMinutes(5),
+};
+var client = new HostyProviderClient(http, HostyAppOptions.FromConfiguration(configuration, appId));
+var providers = await client.ListAsync("speech-to-text", cancellationToken);
+var selected = providers.Single(p => p.AppId == chosenAppId && p.Key == chosenKey);
+var result = await client.TranscribeAsync(selected, wavBytes, cancellationToken: cancellationToken);
+```
+
+The baseline recording format is 16 kHz mono PCM16 WAV; inspect `SpeechCapabilitiesAsync()` for the
+provider's limits/readiness. Clients capture audio themselves and keep recognized text editable.
+`SendAssistantAsync()` supports the existing version-one `/handoffs` operations with an acting user's
+app identity or delegated token. Provider-side `ValidateAsync()` checks live authority on every request.
+Service credentials stay in the app backend and are sent only to Core. A provider credential conveys
+no general administrator authority. See [Provider consumption](../../../docs/features/provider-consumption/feature.md).

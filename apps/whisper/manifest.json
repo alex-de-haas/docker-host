@@ -1,0 +1,123 @@
+{
+  "schemaVersion": "app.0.1",
+  "id": "hosty.whisper",
+  "name": "Whisper",
+  "description": "Local speech-to-text provider using whisper.cpp on the host CPU.",
+  "version": "0.1.0",
+  "source": {
+    "type": "git",
+    "repository": "https://github.com/alex-de-haas/docker-host.git",
+    "branch": "main"
+  },
+  "runtimeProfiles": [
+    {
+      "key": "local",
+      "type": "localCommand",
+      "default": true
+    },
+    {
+      "key": "dev",
+      "type": "localCommand",
+      "development": true
+    }
+  ],
+  "defaultRuntime": "local",
+  "services": [
+    {
+      "key": "api",
+      "runtimes": {
+        "local": {
+          "type": "localCommand",
+          "workingDirectory": ".",
+          "setup": "dotnet build apps/whisper/Hosty.Whisper/Hosty.Whisper.csproj --configuration Release",
+          "command": "dotnet run --project apps/whisper/Hosty.Whisper/Hosty.Whisper.csproj --configuration Release --no-build",
+          "ports": [
+            {
+              "key": "http",
+              "containerPort": 3500,
+              "protocol": "http",
+              "public": true
+            }
+          ],
+          "healthcheck": {
+            "type": "http",
+            "port": 3500,
+            "path": "/healthz",
+            "timeoutSeconds": 5
+          }
+        },
+        "dev": {
+          "type": "localCommand",
+          "workingDirectory": ".",
+          "setup": "dotnet build apps/whisper/Hosty.Whisper/Hosty.Whisper.csproj --configuration Release",
+          "command": "dotnet run --project apps/whisper/Hosty.Whisper/Hosty.Whisper.csproj --configuration Release --no-build",
+          "ports": [
+            {
+              "key": "http",
+              "containerPort": 3500,
+              "protocol": "http",
+              "public": true
+            }
+          ],
+          "healthcheck": {
+            "type": "http",
+            "port": 3500,
+            "path": "/healthz",
+            "timeoutSeconds": 5
+          }
+        }
+      }
+    }
+  ],
+  "cache": {
+    "enabled": true,
+    "targets": [
+      {
+        "runtime": "local",
+        "environment": "HOSTY_APP_CACHE_DIR"
+      },
+      {
+        "runtime": "dev",
+        "environment": "HOSTY_APP_CACHE_DIR"
+      }
+    ]
+  },
+  "endpoints": [
+    {
+      "key": "http",
+      "service": "api",
+      "port": "http",
+      "protocol": "http",
+      "public": true
+    }
+  ],
+  "settings": [
+    {
+      "key": "WHISPER_MODEL",
+      "type": "string",
+      "default": "small",
+      "required": true,
+      "label": "Speech model",
+      "description": "tiny, base or small (multilingual). Downloaded once into cache, verified by SHA-256. Restart to apply."
+    }
+  ],
+  "provides": [
+    "speech-to-text"
+  ],
+  "interfaces": {
+    "speech-to-text": [
+      {
+        "key": "default",
+        "endpoint": "http",
+        "path": "/api/speech/v1",
+        "version": 1,
+        "capabilities": [
+          "recording"
+        ]
+      }
+    ]
+  },
+  "capabilities": [
+    "logs"
+  ]
+}

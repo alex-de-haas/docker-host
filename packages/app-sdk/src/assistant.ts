@@ -57,7 +57,7 @@ export class AssistantClient {
       const headers = new Headers(init.headers);
       headers.set("authorization", `Bearer ${grant.token}`);
       if (typeof init.body === "string") headers.set("content-type", "application/json");
-      const response = await fetch(`${this.baseUrl.replace(/\/$/, "")}${route}`, { ...init, headers, signal: init.signal ?? (controlDeadline ? AbortSignal.timeout(60_000) : undefined) });
+      const response = await fetch(`${this.baseUrl.replace(/\/$/, "")}${route}`, { ...init, redirect: "error", headers, signal: init.signal ?? (controlDeadline ? AbortSignal.timeout(60_000) : undefined) });
       if (response.status === 401 && attempt === 0) continue;
       const body = await response.json().catch(() => null) as { message?: string } | null;
       if (!response.ok) throw new Error(body?.message || `Assistant request failed (${response.status}).`);

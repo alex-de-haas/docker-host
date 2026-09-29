@@ -513,13 +513,16 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
         }
 
         ValidateProvides(manifest.Provides, errors);
-        foreach (var permission in manifest.CorePermissions)
+        foreach (var permission in manifest.CorePermissions.Concat(manifest.OptionalCorePermissions))
         {
             if (!CoreAppPermissions.Known.Contains(permission, StringComparer.Ordinal))
                 errors.Add(new("app_manifest_core_permission_invalid", $"Unknown Core permission '{permission}'.", "$.corePermissions"));
         }
         if (manifest.CorePermissions.Distinct(StringComparer.Ordinal).Count() != manifest.CorePermissions.Count)
             errors.Add(new("app_manifest_core_permission_duplicate", "Core permissions must be unique.", "$.corePermissions"));
+        if (manifest.OptionalCorePermissions.Distinct(StringComparer.Ordinal).Count() != manifest.OptionalCorePermissions.Count
+            || manifest.CorePermissions.Intersect(manifest.OptionalCorePermissions, StringComparer.Ordinal).Any())
+            errors.Add(new("app_manifest_core_permission_duplicate", "Required and optional permissions must be distinct and disjoint.", "$.optionalCorePermissions"));
         ValidateInterfaces(manifest.Interfaces, errors);
         ValidateAgent(manifest.Agent, errors);
 
@@ -1520,7 +1523,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
             var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (var declaration in declarations)
             {
-                if (name == "assistant" && (declaration.Version is null or < 1 || declaration.Capabilities is null))
+                if (name is "assistant" or "speech-to-text" && (declaration.Version is null or < 1 || declaration.Capabilities is null))
                 {
                     errors.Add(new("app_manifest_assistant_contract_required", "The assistant interface requires a positive integer version and a capabilities array.", path));
                 }
@@ -3395,6 +3398,7 @@ internal sealed class RuntimeAppManifest
     public IReadOnlyList<string> Provides { get => field ?? []; init; } = [];
     // Requested authority. Approved grants live separately in Core and are never inferred on restart.
     public IReadOnlyList<string> CorePermissions { get => field ?? []; init; } = [];
+    public IReadOnlyList<string> OptionalCorePermissions { get => field ?? []; init; } = [];
     // Platform interfaces this app exposes for other components to discover through the registry,
     // keyed by interface name (e.g. "assistant" tells UI clients an assistant service is installed).
     // Like `provides`, unknown interface names are inert and forward-compatible; declarations are

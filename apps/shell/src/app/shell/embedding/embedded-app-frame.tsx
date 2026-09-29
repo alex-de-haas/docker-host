@@ -88,7 +88,8 @@ export function EmbeddedAppFrame({
   onAttention?: (count: number) => void;
 }) {
   const sandbox = appFrameSandbox(grantedCorePermissions);
-  const documentKey = `${frameKey ?? ""}:${src}:${sandbox}`;
+  const allow = grantedCorePermissions?.includes("providers.speech-to-text") ? "clipboard-write; microphone 'src'" : "clipboard-write";
+  const documentKey = `${frameKey ?? ""}:${src}:${sandbox}:${allow}`;
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [loadedDocument, setLoadedDocument] = useState(documentKey);
@@ -249,7 +250,7 @@ export function EmbeddedAppFrame({
       title={title}
       src={src}
       sandbox={sandbox}
-      allow="clipboard-write"
+      allow={allow}
       style={{ colorScheme: theme }}
       onLoad={handleLoad}
     />

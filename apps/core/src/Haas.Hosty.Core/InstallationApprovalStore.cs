@@ -9,11 +9,24 @@ internal static class CoreAppPermissions
     public const string Publication = "apps.publications.manage";
     public const string Workspaces = "apps.workspaces.manage";
     public const string ReadSkills = "apps.skills.read";
-    public static readonly string[] Known = [Install, Update, ReadSkills, Workspaces, Publication];
+    public const string SpeechProviders = "providers.speech-to-text";
+    public const string AssistantProviders = "providers.assistant";
+    public static readonly string[] Known = [Install, Update, ReadSkills, Workspaces, Publication, SpeechProviders, AssistantProviders];
+
+    public static IReadOnlyList<string> ResolveGrants(IReadOnlyList<string> required,
+        IReadOnlyList<string> optional, IReadOnlyList<string>? selected, IReadOnlyList<string>? previous = null)
+    {
+        var choices = selected ?? (previous ?? []).Intersect(optional, StringComparer.Ordinal).ToArray();
+        if (choices.Any(p => !optional.Contains(p, StringComparer.Ordinal)))
+            throw new AppLifecycleException("permission_selection_invalid", "An optional permission was not part of the reviewed declarations.");
+        return required.Concat(choices).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+    }
 
     public static string Describe(string permission) => permission switch
     {
         Publication => "Publish and merge session pull requests using the administrator's selected Git account",
+        SpeechProviders => "List and use all current and future speech-to-text providers",
+        AssistantProviders => "List and send requests to all current and future assistant providers",
         Workspaces => "Manage session worktrees and local Git operations for an administrator",
         ReadSkills => "Read agent skills published by installed apps",
         Install => "Request installation of other apps (Core confirmation required)",
@@ -79,7 +92,7 @@ internal sealed class InstallationApprovalStore(IClock clock)
         }
     }
 
-    public void Decide(InstallationApproval entry, string nonce, string sessionId, bool approve)
+    public void Decide(InstallationApproval entry, string nonce, string sessionId, bool approve, IReadOnlyList<string>? optionalPermissions = null)
     {
         lock (gate)
         {
@@ -88,6 +101,13 @@ internal sealed class InstallationApprovalStore(IClock clock)
                 !string.Equals(entry.DecisionSession, sessionId, StringComparison.Ordinal) ||
                 !CryptographicOperations.FixedTimeEquals(System.Text.Encoding.UTF8.GetBytes(entry.DecisionNonce), System.Text.Encoding.UTF8.GetBytes(nonce)))
                 throw new AppLifecycleException("approval_invalid", "The confirmation is invalid or has already been used.");
+            if (approve)
+            {
+                var declared = entry.PermissionPlan?.Optional ?? entry.InstallPlan?.OptionalCorePermissions ?? entry.UpdatePlan?.TargetOptionalCorePermissions ?? [];
+                var selected = optionalPermissions ?? [];
+                _ = CoreAppPermissions.ResolveGrants([], declared, selected);
+                entry.SelectedOptionalPermissions = selected.Distinct(StringComparer.Ordinal).ToArray();
+            }
             entry.DecisionNonce = null;
             entry.DecisionSession = null;
             entry.Status = approve ? "executing" : "denied";
@@ -110,7 +130,7 @@ internal sealed class InstallationApprovalStore(IClock clock)
     {
         lock (gate)
             return new(entry.Id, entry.Status, entry.InstallPlan, entry.UpdatePlan,
-                $"{origin.TrimEnd('/')}/install/confirm/{entry.Id}", entry.ExpiresAt, entry.Error);
+                $"{origin.TrimEnd('/')}/install/confirm/{entry.Id}", entry.ExpiresAt, entry.Error, entry.PermissionPlan);
     }
 }
 
@@ -124,6 +144,8 @@ internal sealed class InstallationApproval
     public required DateTimeOffset ExpiresAt { get; init; }
     public AppInstallPlan? InstallPlan { get; init; }
     public AppUpdatePlan? UpdatePlan { get; init; }
+    public AppPermissionPlan? PermissionPlan { get; init; }
+    public IReadOnlyList<string>? SelectedOptionalPermissions { get; set; }
     public string? FeedsUrl { get; init; }
     public string? FeedId { get; init; }
     public string Status { get; set; } = "draft";
@@ -132,11 +154,14 @@ internal sealed class InstallationApproval
     public string? Error { get; set; }
     internal string? DecisionNonce { get; set; }
     internal string? DecisionSession { get; set; }
-    public string Permission => UpdatePlan is null ? CoreAppPermissions.Install : CoreAppPermissions.Update;
+    public string? Permission => PermissionPlan is not null ? null : UpdatePlan is null ? CoreAppPermissions.Install : CoreAppPermissions.Update;
 }
 
 internal sealed record InstallationPrepare(string? ManifestPath = null, string? FeedsUrl = null,
-    string? FeedId = null, string? SelectedRuntime = null, string? UpdateAppId = null, string? PlanDigest = null, PrivateSourceChoice? SourceConnections = null);
+    string? FeedId = null, string? SelectedRuntime = null, string? UpdateAppId = null, string? PlanDigest = null, PrivateSourceChoice? SourceConnections = null, string? PermissionsAppId = null);
 internal sealed record InstallationSubmit(IReadOnlyDictionary<string, string?>? Settings = null, bool Autostart = true);
 internal sealed record InstallationRequestView(string Id, string Status, AppInstallPlan? Plan, AppUpdatePlan? UpdatePlan,
-    string ApprovalUrl, DateTimeOffset ExpiresAt, string? Error);
+    string ApprovalUrl, DateTimeOffset ExpiresAt, string? Error, AppPermissionPlan? PermissionPlan = null);
+
+internal sealed record AppPermissionPlan(string AppId, string DisplayName, DateTimeOffset InstalledAt,
+    string? Revision, IReadOnlyList<string> Required, IReadOnlyList<string> Optional, IReadOnlyList<string> Granted);

@@ -55,6 +55,50 @@ public sealed class InstallationApprovalHttpTests
         Assert.Equal("approval_expired", Assert.Throws<AppLifecycleException>(() => store.Get(entry.Id)).Code);
     }
 
+    [Fact]
+    public async Task OptionalReviewGrantsRevokesAndRejectsStaleConsent()
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        var session = await SeedAdmin(harness);
+        var apps = harness.Services.GetRequiredService<AppRegistryStore>();
+        await apps.UpsertAppAsync(new AppRecord("example.consumer", "Consumer", null, "1.0.0", "runtime", false,
+            "manifest", null, null, "dev", "installed", "stopped", null, null, [], new Dictionary<string, AppSettingValue>(),
+            [], [], [], DateTimeOffset.UtcNow, DateTimeOffset.UtcNow,
+            GrantedCorePermissions: [], RequiredCorePermissions: [], OptionalCorePermissions: [CoreAppPermissions.SpeechProviders], PermissionRevision: "initial"));
+        using var api = harness.CreateClient();
+        api.DefaultRequestHeaders.Authorization = new("Bearer", session);
+        using var browser = harness.CreateClient();
+        browser.DefaultRequestHeaders.Add("Cookie", $"hosty_session={session}");
+        async Task<(string Id, string Nonce)> Prepare()
+        {
+            var response = await api.PostAsJsonAsync("/api/installations", new { permissionsAppId = "example.consumer" });
+            Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+            var id = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
+            (await api.PostAsJsonAsync($"/api/installations/{id}/submit", new { })).EnsureSuccessStatusCode();
+            var html = await browser.GetStringAsync($"/install/confirm/{id}");
+            return (id, Regex.Match(html, "name=nonce value=\"([^\"]+)\"").Groups[1].Value);
+        }
+        async Task Decide((string Id, string Nonce) entry, bool allow, string status)
+        {
+            var fields = new Dictionary<string, string> { ["nonce"] = entry.Nonce, ["decision"] = "approve" };
+            if (allow) fields["optionalPermission"] = CoreAppPermissions.SpeechProviders;
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"/install/confirm/{entry.Id}")
+                { Content = new FormUrlEncodedContent(fields), Headers = { { "Origin", "http://localhost" } } };
+            (await browser.SendAsync(request)).EnsureSuccessStatusCode();
+            var approvals = harness.Services.GetRequiredService<InstallationApprovalStore>();
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            while (approvals.Get(entry.Id).Status == "executing") await Task.Delay(10, timeout.Token);
+            Assert.Equal(status, approvals.Get(entry.Id).Status);
+        }
+        var first = await Prepare(); var stale = await Prepare();
+        await Decide(first, true, "succeeded");
+        Assert.Contains(CoreAppPermissions.SpeechProviders, (await apps.GetAppAsync("example.consumer"))!.GrantedCorePermissions!);
+        await Decide(stale, false, "failed");
+        Assert.Contains(CoreAppPermissions.SpeechProviders, (await apps.GetAppAsync("example.consumer"))!.GrantedCorePermissions!);
+        await Decide(await Prepare(), false, "succeeded");
+        Assert.Empty((await apps.GetAppAsync("example.consumer"))!.GrantedCorePermissions!);
+    }
+
     private sealed class DecisionClock : IClock { public DateTimeOffset UtcNow { get; set; } = DateTimeOffset.UtcNow; }
 
     [Fact]

@@ -299,7 +299,8 @@ internal sealed partial class CoreLifecycleService(
                 .ToArray(),
             CorePermissions: selection.Manifest.CorePermissions.ToArray(),
             RequestedRoles: PlatformCapabilities.RequestedRoles(selection.Manifest.Provides),
-            PrivateSources: selection.PrivateSources);
+            PrivateSources: selection.PrivateSources,
+            OptionalCorePermissions: selection.Manifest.OptionalCorePermissions.ToArray());
     }
 
     internal async Task<AppUpdatePlan> GetReviewedUpdatePlanAsync(string appId, string digest)
@@ -310,6 +311,7 @@ internal sealed partial class CoreLifecycleService(
         {
             CurrentCorePermissions = app.GrantedCorePermissions ?? [],
             TargetCorePermissions = reviewed.Selection.Manifest.CorePermissions.ToArray(),
+            TargetOptionalCorePermissions = reviewed.Selection.Manifest.OptionalCorePermissions.ToArray(),
             CurrentConfirmedRoles = app.ConfirmedRoles ?? [],
             TargetRoles = PlatformCapabilities.RequestedRoles(reviewed.Selection.Manifest.Provides),
         };
@@ -457,6 +459,7 @@ internal sealed partial class CoreLifecycleService(
                 $"App '{selection.Manifest.Id}' is already installed (version {alreadyInstalled.Version}). Apply an update to change it, or remove it first.");
         }
 
+        var grantedPermissions = CoreAppPermissions.ResolveGrants(selection.Manifest.CorePermissions, selection.Manifest.OptionalCorePermissions, request.OptionalPermissions);
         await ValidatePrivateSelectionAsync(selection, cancellationToken);
         var appRoot = GetAppRoot(selection.Manifest.Id!);
         var manifestCopyPath = Path.Combine(appRoot, "manifest.json");
@@ -488,7 +491,10 @@ internal sealed partial class CoreLifecycleService(
             OperationStatus = "installed",
             RuntimeState = "stopped",
             LastOperation = "install",
-            GrantedCorePermissions = selection.Manifest.CorePermissions.ToArray(),
+            GrantedCorePermissions = grantedPermissions,
+            RequiredCorePermissions = selection.Manifest.CorePermissions.ToArray(),
+            OptionalCorePermissions = selection.Manifest.OptionalCorePermissions.ToArray(),
+            PermissionRevision = Guid.NewGuid().ToString("N"),
             ConfirmedRoles = PlatformCapabilities.RequestedRoles(selection.Manifest.Provides),
             Autostart = request.Autostart ?? true,
             FeedsUrl = string.IsNullOrWhiteSpace(request.FeedsUrl) ? null : request.FeedsUrl.Trim(),
@@ -1607,10 +1613,14 @@ internal sealed partial class CoreLifecycleService(
         var changes = BuildUpdateChanges(app, currentSelection, selection).ToList();
         if (selection.PrivateSources != app.PrivateSources)
             changes.Add("source-access:" + System.Text.Json.JsonSerializer.Serialize(selection.PrivateSources, CoreJsonSerializerContext.Default.PrivateSourceAccess));
-        foreach (var permission in selection.Manifest.CorePermissions.Except(app.GrantedCorePermissions ?? [], StringComparer.Ordinal))
+        foreach (var permission in selection.Manifest.CorePermissions.Except(app.RequiredCorePermissions ?? app.GrantedCorePermissions ?? [], StringComparer.Ordinal))
             changes.Add($"Core permission added: {permission} — {CoreAppPermissions.Describe(permission)}");
-        foreach (var permission in (app.GrantedCorePermissions ?? []).Except(selection.Manifest.CorePermissions, StringComparer.Ordinal))
+        foreach (var permission in (app.GrantedCorePermissions ?? []).Except(selection.Manifest.CorePermissions.Concat(selection.Manifest.OptionalCorePermissions), StringComparer.Ordinal))
             changes.Add($"Core permission removed: {permission} — {CoreAppPermissions.Describe(permission)}");
+        foreach (var permission in selection.Manifest.OptionalCorePermissions.Except(app.OptionalCorePermissions ?? [], StringComparer.Ordinal))
+            changes.Add($"Optional permission added: {permission}");
+        foreach (var permission in (app.OptionalCorePermissions ?? []).Except(selection.Manifest.OptionalCorePermissions, StringComparer.Ordinal))
+            changes.Add($"Optional permission removed: {permission}");
         foreach (var role in PlatformCapabilities.RequestedRoles(selection.Manifest.Provides).Except(app.ConfirmedRoles ?? [], StringComparer.Ordinal))
             changes.Add($"Provider role added: {role} — {PlatformCapabilities.DescribeRole(role)}");
         foreach (var role in (app.ConfirmedRoles ?? []).Except(PlatformCapabilities.RequestedRoles(selection.Manifest.Provides), StringComparer.Ordinal))
@@ -1671,6 +1681,7 @@ internal sealed partial class CoreLifecycleService(
         {
             CurrentCorePermissions = app.GrantedCorePermissions ?? [],
             TargetCorePermissions = selection.Manifest.CorePermissions.ToArray(),
+            TargetOptionalCorePermissions = selection.Manifest.OptionalCorePermissions.ToArray(),
             CurrentConfirmedRoles = app.ConfirmedRoles ?? [],
             TargetRoles = PlatformCapabilities.RequestedRoles(selection.Manifest.Provides),
             PrivateSources = selection.PrivateSources,
@@ -1685,6 +1696,7 @@ internal sealed partial class CoreLifecycleService(
         var cached = new CachedUpdatePlan(plan, selection, currentSelection.ManifestDigest, artifactProbes, resolvedSourceCommit, clock.UtcNow)
         {
             PreviousPrivateSources = app.PrivateSources,
+            PreviousPermissionRevision = app.PermissionRevision,
             LiveSourceReview = !string.IsNullOrWhiteSpace(request.ManifestPath) && IsLiveSourceApp(app, profiles),
         };
 
@@ -1740,6 +1752,24 @@ internal sealed partial class CoreLifecycleService(
         return cached;
     }
 
+    internal Task<bool> ApplyOptionalPermissionsAsync(AppPermissionPlan plan, IReadOnlyList<string> selected, CancellationToken ct)
+        => WithAppLockAsync(plan.AppId, async () =>
+        {
+            await apps.UpdateAppAsync(plan.AppId, current =>
+            {
+                if (current.InstalledAt != plan.InstalledAt || current.PermissionRevision != plan.Revision
+                    || !(current.OptionalCorePermissions ?? []).SequenceEqual(plan.Optional)
+                    || !(current.RequiredCorePermissions ?? current.GrantedCorePermissions ?? []).SequenceEqual(plan.Required))
+                    throw new AppLifecycleException("permission_review_stale", "The app or its permissions changed. Review them again.");
+                return current with
+                {
+                    GrantedCorePermissions = CoreAppPermissions.ResolveGrants(plan.Required, plan.Optional, selected),
+                    PermissionRevision = Guid.NewGuid().ToString("N"),
+                };
+            }, ct);
+            return true;
+        }, ct);
+
     public Task<AppLifecycleResponse> ApplyUpdateAsync(string appId, AppUpdateApplyRequest request, CancellationToken cancellationToken = default)
         => WithAppLockAsync(appId, async () =>
         {
@@ -1772,7 +1802,8 @@ internal sealed partial class CoreLifecycleService(
         // moved since it was reviewed.
         var confirmed = await ResolveConfirmedUpdatePlan(appId, request.PlanDigest);
         var app = await RequireAppAsync(appId, cancellationToken);
-        if (confirmed.Selection.Manifest.CorePermissions.Except(app.GrantedCorePermissions ?? [], StringComparer.Ordinal).Any()
+        if (request.OptionalPermissions is not null || confirmed.Selection.Manifest.OptionalCorePermissions.Except(app.OptionalCorePermissions ?? [], StringComparer.Ordinal).Any()
+            || confirmed.Selection.Manifest.CorePermissions.Except(app.RequiredCorePermissions ?? app.GrantedCorePermissions ?? [], StringComparer.Ordinal).Any()
             || PlatformCapabilities.RequestedRoles(confirmed.Selection.Manifest.Provides).Except(app.ConfirmedRoles ?? [], StringComparer.Ordinal).Any())
             throw new AppLifecycleException("approval_required", "New Core permissions or provider roles require confirmation on the Core approval page.");
         var currentSelection = await LoadSelectionForAppAsync(app, cancellationToken);
@@ -2116,7 +2147,7 @@ internal sealed partial class CoreLifecycleService(
         // version/runtime/manifest. If the app moved since (a concurrent update landed before this apply
         // took the lock, or the plan sat open across one), applying the stale plan could move it somewhere
         // the operator never saw — including a silent downgrade. Cheap and local; no network, no rebuild.
-        if (app.PrivateSources != confirmed.PreviousPrivateSources ||
+        if (app.PermissionRevision != confirmed.PreviousPermissionRevision || app.PrivateSources != confirmed.PreviousPrivateSources ||
             !string.Equals(app.Version, plan.CurrentVersion, StringComparison.Ordinal) ||
             !string.Equals(app.SelectedRuntime, plan.CurrentRuntime, StringComparison.Ordinal) ||
             !string.Equals(currentSelection.ManifestDigest, confirmed.CurrentManifestDigest, StringComparison.Ordinal))
@@ -2129,6 +2160,7 @@ internal sealed partial class CoreLifecycleService(
 
         await SetUpdateProgressAsync(appId, "preparing", null, cancellationToken);
         var selection = confirmed.Selection;
+        var grantedPermissions = CoreAppPermissions.ResolveGrants(selection.Manifest.CorePermissions, selection.Manifest.OptionalCorePermissions, request.OptionalPermissions, app.GrantedCorePermissions);
         await ValidatePrivateSelectionAsync(selection, cancellationToken);
 
         // Check the target's managed checkout before any stop, backup, manifest replacement or pin
@@ -2184,7 +2216,10 @@ internal sealed partial class CoreLifecycleService(
             UpdateProgress = new AppUpdateProgress("installing", clock.UtcNow),
             RuntimeState = "stopped",
             LastOperation = "update",
-            GrantedCorePermissions = selection.Manifest.CorePermissions.ToArray(),
+            GrantedCorePermissions = grantedPermissions,
+            RequiredCorePermissions = selection.Manifest.CorePermissions.ToArray(),
+            OptionalCorePermissions = selection.Manifest.OptionalCorePermissions.ToArray(),
+            PermissionRevision = Guid.NewGuid().ToString("N"),
             ConfirmedRoles = PlatformCapabilities.RequestedRoles(selection.Manifest.Provides),
             LastError = null,
         };
@@ -3528,7 +3563,10 @@ internal sealed partial class CoreLifecycleService(
             PortAssignments: existing?.PortAssignments,
             GrantedCorePermissions: existing?.GrantedCorePermissions,
             ConfirmedRoles: existing?.ConfirmedRoles,
-            PrivateSources: selection.PrivateSources ?? existing?.PrivateSources);
+            PrivateSources: selection.PrivateSources ?? existing?.PrivateSources,
+            RequiredCorePermissions: existing?.RequiredCorePermissions,
+            OptionalCorePermissions: existing?.OptionalCorePermissions,
+            PermissionRevision: existing?.PermissionRevision);
 
         return ApplyManifestProjections(record, manifest);
     }
@@ -6317,7 +6355,8 @@ internal sealed record AppInstallRequest(
     // Generic app-owned feed state. Only the digest-bound feed install path populates these; direct
     // browser/control installs clear them.
     string? FeedsUrl = null,
-    string? FeedId = null);
+    string? FeedId = null,
+    IReadOnlyList<string>? OptionalPermissions = null);
 
 internal sealed record AppFeedInstallPlanRequest(
     string FeedsUrl,
@@ -6369,7 +6408,8 @@ internal sealed record AppUpdatePlanRequest(
 internal sealed record AppUpdateApplyRequest(
     string PlanDigest,
     string? ManifestPath = null,
-    string? SelectedRuntime = null);
+    string? SelectedRuntime = null,
+    IReadOnlyList<string>? OptionalPermissions = null);
 
 internal sealed record AppRemoveRequest(
     bool DeleteRuntimeState = true,
@@ -6527,9 +6567,10 @@ internal sealed record AppInstallPlan(
     IReadOnlyList<AppServiceArtifactProbe>? ArtifactDigests = null,
     IReadOnlyList<string>? CorePermissions = null,
     IReadOnlyList<string>? RequestedRoles = null,
-    PrivateSourceAccess? PrivateSources = null)
+    PrivateSourceAccess? PrivateSources = null,
+    IReadOnlyList<string>? OptionalCorePermissions = null)
 {
-    public IReadOnlyDictionary<string, string> PermissionDescriptions => (CorePermissions ?? []).ToDictionary(value => value, CoreAppPermissions.Describe, StringComparer.Ordinal);
+    public IReadOnlyDictionary<string, string> PermissionDescriptions => (CorePermissions ?? []).Concat(OptionalCorePermissions ?? []).ToDictionary(value => value, CoreAppPermissions.Describe, StringComparer.Ordinal);
     public IReadOnlyDictionary<string, string> RoleDescriptions => (RequestedRoles ?? []).ToDictionary(value => value, PlatformCapabilities.DescribeRole, StringComparer.Ordinal);
 }
 
@@ -6582,6 +6623,7 @@ internal sealed record AppUpdatePlan(
     public string? Error { get; init; }
     public IReadOnlyList<string> CurrentCorePermissions { get; init; } = [];
     public IReadOnlyList<string> TargetCorePermissions { get; init; } = [];
+    public IReadOnlyList<string> TargetOptionalCorePermissions { get; init; } = [];
     public IReadOnlyList<string> CurrentConfirmedRoles { get; init; } = [];
     public IReadOnlyList<string> TargetRoles { get; init; } = [];
     public PrivateSourceAccess? PrivateSources { get; init; }

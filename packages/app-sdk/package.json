@@ -1,6 +1,6 @@
 {
   "name": "@hosty-sdk/app",
-  "version": "0.16.2",
+  "version": "0.17.0",
   "description": "Hosty app auth: session state machine, recovery bridge, Core revalidation, and the embedder responder.",
   "license": "AGPL-3.0-only",
   "type": "module",
@@ -16,7 +16,9 @@
     "./install": "./src/install.ts",
     "./install/react": "./src/install-react.tsx",
     "./install/server": "./src/install-server.ts",
-    "./assistant": "./src/assistant.ts"
+    "./assistant": "./src/assistant.ts",
+    "./providers": "./src/providers.ts",
+    "./providers/server": "./src/providers-server.ts"
   },
   "scripts": {
     "test": "vitest run",

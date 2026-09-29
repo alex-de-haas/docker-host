@@ -1,7 +1,7 @@
 # Runtime App Manifest
 
 Created: 2026-06-04
-Updated: 2026-09-18
+Updated: 2026-09-29
 
 ## Description
 
@@ -253,10 +253,19 @@ All fields are optional; blanks are dropped and an all-empty block is ignored. `
 
 ## Core Operation Permissions
 
-`corePermissions` requests named Core operations. The supported initial values are `apps.install`
-and `apps.update`; unknown or duplicate names fail validation. They authorize preparation of
-requests, with final confirmation performed on Core's own page. Core stores approved grants
-separately from live manifest projections. See [App installation](../app-installation-sdk/feature.md).
+`corePermissions` declares required operations. Supported names are `apps.install`, `apps.update`,
+`apps.skills.read`, `apps.workspaces.manage`, `apps.publications.manage`, `providers.speech-to-text`, and `providers.assistant`.
+Unknown or duplicate names fail validation. `optionalCorePermissions` declares optional operations;
+the required and optional lists must be disjoint. Installation review offers optional permissions
+unchecked. An update preserves accepted choices, requires review for new declarations or moving
+optional authority to required, and removes grants for removed declarations. Source restart does not
+grant authority. Shell app settings opens Core confirmation to change optional choices.
+
+Provider consumer permissions cover discovery and use of all confirmed providers in the category.
+Supply uses confirmed `provides: ["speech-to-text"]` or `provides: ["assistant"]`; a matching versioned
+interface alone conveys no authority. Speech interfaces require a positive version and unique
+capabilities, as assistant interfaces do. See [Provider consumption](../provider-consumption/feature.md)
+for the endpoint and SDK contracts and [App installation](../app-installation-sdk/feature.md) for review.
 
 ## Testing Expectations
 

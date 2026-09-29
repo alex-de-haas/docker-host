@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { SpeechInput } from "@/components/speech-input";
 import { SessionWorkspaces } from "@/components/session-workspaces";
 import { SessionProvider } from "@/components/session-provider";
 import { AppContextPicker } from "@/components/app-context-picker";
@@ -797,6 +798,7 @@ export default function AssistantPage() {
                     >
                       <Paperclip />
                     </Button>
+                    {session && <SpeechInput key={session.id} disabled={sending} onText={text => setInput(current => current ? `${current}${/\s$/.test(current) ? "" : " "}${text}` : text)} />}
                     {session && session.providerLocked !== undefined && <SessionProvider key={`${session.id}:${session.connectionId}:${session.connectionRevision}`} session={session} busy={sending} onSavingChange={onProviderSaving} onChange={record => {
                       setSession(current => current?.id === record.id ? record : current);
                       void getHealth(record.id).then(value => { if (activeSessionId.current === record.id) setHealth(value); }).catch(() => {});

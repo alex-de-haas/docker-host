@@ -23,6 +23,18 @@ describe("durable assistant handoffs", () => {
   });
   afterEach(async () => { vi.restoreAllMocks(); await manager.shutdown(); await rm(root, { recursive: true, force: true }); });
   const input = () => ({ requestId: createAssistantRequestId(now), prompt: "Please inspect this", appIds: [] });
+  it("isolates app-attributed handoffs from other consumers and reinstallations", async () => {
+    const request = input();
+    const { value } = await handoffs.prepare("alice", request, "app-one:installation-one");
+    for (const consumer of [undefined, "app-two:installation-one", "app-one:installation-two"]) {
+      await expect(handoffs.status("alice", value.handoffId, consumer)).rejects.toMatchObject({ status: 404 });
+      await expect(handoffs.cancel("alice", value.handoffId, consumer)).rejects.toMatchObject({ status: 404 });
+    }
+    const own = await handoffs.prepare("alice", request, "app-one:installation-one");
+    expect(own.value.handoffId).toBe(value.handoffId);
+    const other = await handoffs.prepare("alice", request, "app-two:installation-one");
+    expect(other.value.handoffId).not.toBe(value.handoffId);
+  });
   it.each(["cancelled", "expired"])("reports 410 for a %s finalize retry with the original attachment IDs", async state => {
     const { value } = await handoffs.prepare("alice", input());
     const id = randomUUID();

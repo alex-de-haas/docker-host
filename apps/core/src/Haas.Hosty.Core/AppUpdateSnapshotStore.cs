@@ -14,6 +14,7 @@ internal sealed record CachedUpdatePlan(
 {
     public string CacheId { get; init; } = Guid.NewGuid().ToString("N");
     public bool LiveSourceReview { get; init; }
+    public string? PreviousPermissionRevision { get; init; }
     public PrivateSourceAccess? PreviousPrivateSources { get; init; }
 }
 
