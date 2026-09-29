@@ -8,10 +8,12 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
+const lineDiffLabels = { "word-alt": "Word-Alt", word: "Word", char: "Character", none: "None" } as const;
 const separatorLabels = { "line-info-basic": "Line Info Basic", "line-info": "Line Info", metadata: "Metadata", simple: "Simple" } as const;
 
 export type SourceDiffSettings = Required<Pick<FileDiffOptions<undefined, undefined>,
-  "diffStyle" | "diffIndicators" | "lineDiffType" | "disableBackground" | "disableLineNumbers" | "overflow">> & {
+  "diffStyle" | "diffIndicators" | "disableBackground" | "disableLineNumbers" | "overflow">> & {
+  lineDiffType: keyof typeof lineDiffLabels;
   hunkSeparators: keyof typeof separatorLabels;
 };
 
@@ -24,8 +26,6 @@ export const defaultSourceDiffSettings: SourceDiffSettings = {
   disableLineNumbers: false,
   overflow: "wrap",
 };
-
-const lineDiffLabels = { "word-alt": "Word-Alt", word: "Word", char: "Character", none: "None" } as const;
 
 export function SourceDiffToolbar({ settings, onChange }: {
   settings: SourceDiffSettings;
