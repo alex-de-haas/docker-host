@@ -44,4 +44,40 @@ describe("installation server adapter", () => {
     }
     expect(fetch).not.toHaveBeenCalled();
   });
+  it("accepts browser-confirmed same-origin requests on a direct local endpoint", async () => {
+    vi.stubEnv("HOSTY_CORE_ORIGIN", "http://core.internal:7070"); vi.stubEnv("HOSTY_APP_SERVICE_TOKEN", "service-secret");
+    const fetch = vi.fn(async () => Response.json({ id: "request" })); vi.stubGlobal("fetch", fetch);
+    for (const suffix of ["", "/" + "a".repeat(48) + "/submit"]) {
+      const response = await handle(new Request("http://localhost:26495/api/hosty/installations" + suffix, {
+        method: "POST", headers: { origin: "http://127.0.0.1:26495", host: "127.0.0.1:26495",
+          "sec-fetch-site": "same-origin", "content-type": "application/json", cookie: "market_identity=identity" }, body: "{}",
+      }));
+      expect(response.status).toBe(200);
+    }
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+  it.each([
+    ["http://127.0.0.1:26495", "127.0.0.1:26495", null],
+    ["http://127.0.0.1:26495", "127.0.0.1:26495", "same-site"],
+    ["https://evil.example", "127.0.0.1:26495", "cross-site"],
+    ["http://127.0.0.1:9999", "127.0.0.1:26495", "same-origin"],
+    ["null", "127.0.0.1:26495", "same-origin"],
+    ["http://127.0.0.1:26495/path", "127.0.0.1:26495", "same-origin"],
+    ["http://127.0.0.1:26495", "", "same-origin"],
+  ])("denies unproven direct origin %s / %s / %s", async (origin, host, site) => {
+    const fetch = vi.fn(); vi.stubGlobal("fetch", fetch);
+    const headers = new Headers({ origin, host, "x-forwarded-host": "127.0.0.1:26495", "content-type": "application/json", cookie: "market_identity=identity" });
+    if (site) headers.set("sec-fetch-site", site);
+    const response = await handle(new Request("http://localhost:26495/api/hosty/installations", { method: "POST", headers, body: "{}" }));
+    expect(response.status).toBe(403); expect(fetch).not.toHaveBeenCalled();
+  });
+  it("does not use Fetch Metadata to override an explicit public origin", async () => {
+    const fetch = vi.fn(); vi.stubGlobal("fetch", fetch);
+    const configured = createInstallationRouteHandler({ appIdFallback: "market", identityCookieName: "identity" }, { publicOrigin: "https://market.example" });
+    const response = await configured(new Request("http://localhost:26495/api/hosty/installations", {
+      method: "POST", headers: { origin: "http://127.0.0.1:26495", host: "127.0.0.1:26495", "sec-fetch-site": "same-origin", "content-type": "application/json", cookie: "identity=token" }, body: "{}",
+    }));
+    expect(response.status).toBe(403); expect(fetch).not.toHaveBeenCalled();
+  });
+
 });

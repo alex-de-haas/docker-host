@@ -1,7 +1,7 @@
 # App Installation SDK And Core Confirmation
 
 Created: 2026-09-18
-Updated: 2026-09-26
+Updated: 2026-09-29
 
 ## Installation Ownership
 
@@ -19,7 +19,11 @@ The SDK provides three independent entry points:
 
 The server adapter accepts an explicit trusted `publicOrigin` for frameworks that expose an
 internal request URL. Marketplace supplies Core's `HOSTY_PUBLIC_ORIGIN_HTTP`; forwarded-host
-headers do not authorize browser requests.
+headers do not authorize browser requests. Without a configured public origin, the adapter also
+accepts an exact Origin/Host match when the browser supplies `Sec-Fetch-Site: same-origin`.
+This supports direct Core-managed local endpoints when Next reconstructs the request URL with
+`localhost` but Shell opens `127.0.0.1`. Host alone, same-site metadata, opaque origins and
+forwarded headers cannot authorize that fallback; configured public origins remain authoritative.
 
 Core exposes create, submit and status operations under `/api/installations` for authenticated
 operator clients, and `/api/internal/apps/{appId}/installations` for delegated app callers.
