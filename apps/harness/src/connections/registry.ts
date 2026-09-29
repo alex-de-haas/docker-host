@@ -437,6 +437,7 @@ export class AgentConnections {
             ...(state.retiredKeys ?? []),
             ...(changed && previous ? [previous.secretKey] : []),
           ],
+          defaultId: !previous && !importSource && state.connections.length === 0 ? connection.id : state.defaultId,
           connections: [
             ...state.connections.filter((c) => c.id !== connection.id),
             connection,
@@ -576,7 +577,7 @@ export class AgentConnections {
         throw new ConnectionError(
           409,
           "provider_reconnect_required",
-          "Reconnect this provider in Gateway settings. Its credential is missing.",
+          "Reconnect this provider in Hosty Harness settings. Its credential is missing.",
         );
       }
       const home = await this.nativeHome(connection);
@@ -718,7 +719,7 @@ export class AgentConnections {
     const missing = {
       name: "Agent providers",
       available: false,
-      reason: "Add and select a provider in Gateway settings.",
+      reason: "Choose a provider for this chat. Add a connection in Hosty Harness settings if none is available.",
       capabilities: {
         appContext: true,
         questions: false,
