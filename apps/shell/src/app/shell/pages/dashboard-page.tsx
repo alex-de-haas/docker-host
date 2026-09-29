@@ -320,6 +320,7 @@ export function DashboardPage({
           </div>
           <div className="dashboard-toolbar-resources min-w-0 p-2"><ResourceUsage label="All apps" /></div>
           <div className="dashboard-toolbar-actions flex min-w-0 flex-wrap items-center justify-end gap-1 p-2">
+            <div className="dashboard-toolbar-shortcuts flex items-center gap-1">
             <TooltipProvider delayDuration={150}>
               {canManageApps && (
                 <Tooltip>
@@ -358,6 +359,32 @@ export function DashboardPage({
                 </Tooltip>
               )}
             </TooltipProvider>
+            </div>
+            {canManageApps && (
+              <div className="dashboard-toolbar-overflow">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="icon-sm" aria-label="App actions">
+                      <MoreHorizontal className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onSelect={() => onInstall()}>
+                      <Plus className="h-4 w-4" /> Install app
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={onCheckUpdates} disabled={checkingUpdates}>
+                      {checkingUpdates ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ArrowUpCircle className="h-4 w-4" />}
+                      {checkingUpdates ? "Checking updates…" : "Check updates"}
+                    </DropdownMenuItem>
+                    {routineUpdateCount > 0 && (
+                      <DropdownMenuItem onSelect={onUpdateAll}>
+                        <Download className="h-4 w-4" /> Update all ({routineUpdateCount})
+                      </DropdownMenuItem>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            )}
           </div>
         </FrameHeader>
         <FramePanel className="min-w-0 p-0">
