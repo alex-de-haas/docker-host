@@ -1,12 +1,13 @@
 # Hosty Harness Provider Connections
 
 Created: 2026-09-17
-Updated: 2026-09-27
+Updated: 2026-09-29
 
 ## Behavior
 
 The Gateway owns named agent connections in **Settings → Hosty Harness**, in the **Providers** tab.
-Administrators add, edit, test, remove and choose a default connection. Multiple connections can use
+Administrators add, edit, test, remove and choose a default connection. The first connection added
+to an empty registry becomes the default automatically; adding another connection preserves that choice. Multiple connections can use
 the same provider. Configuration changes require no Gateway restart. Connections are shared by the
 host's administrators, consistent with the operator assistant; a connection name is not a user boundary.
 Adding and editing a connection use a modal form with provider-specific fields. Errors remain inside
@@ -55,7 +56,12 @@ discovery cannot return their provider. On narrow screens the list sits above th
 ## Chats and capabilities
 
 A new chat takes the configured default unless its creation request names a connection. An empty
-chat can explicitly select another connection; the first accepted message locks its choice. A
+chat applies a dropdown selection immediately, without a separate Select button. The compact provider
+control sits in the message composer actions beside attachments and app context. Its menu opens
+upward and marks the default connection. An unbound empty
+chat adopts the available default when its provider list refreshes. The first accepted message locks
+its choice, and the dropdown remains visible but disabled. Saving a selection disables sending; a
+failed save keeps the previous provider and displays the error. A
 started chat persists connection id, credential revision, adapter kind and native session id.
 Changing the default does not rebind existing chats or creation retries. Removing a connection
 preserves its chat history and prevents further dispatch; there is no fallback to another provider.

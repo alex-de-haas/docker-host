@@ -424,7 +424,7 @@ export function AgentProviders() {
                     await beginLogin(saved.id);
                   else
                     setNotice(
-                      "Provider saved. Choose Set default in its menu to use it for new chats.",
+                      "Provider saved. The first provider is the default for new chats; you can change the default in its menu.",
                     );
                 });
               }}

@@ -182,6 +182,17 @@ describe("sessions with provider connections", () => {
     await checkHealth(true);
   });
 
+  it("binds the first provider automatically and keeps an existing chat when the default changes", async () => {
+    const first = await connection("claude");
+    const chat = await manager.createSession({ createdBy: "operator" });
+    expect(chat.connectionId).toBe(first.id);
+    expect(chat.providerLocked).toBe(false);
+    const second = await connection("codex");
+    await registry.setDefault(second.id);
+    expect((await manager.getSession(chat.id))?.connectionId).toBe(first.id);
+    expect((await manager.createSession({ createdBy: "operator" })).connectionId).toBe(second.id);
+  });
+
   it("runs two providers and two Claude accounts concurrently without environment leakage; binds defaults and resumes identity", async () => {
     const claude = await connection("claude");
     const codex = await connection("codex");
@@ -247,6 +258,7 @@ describe("sessions with provider connections", () => {
 
   it("allows empty-chat selection, requires explicit binding for old chats, and preserves removed connection history", async () => {
     const c = await connection("codex");
+    await registry.setDefault(null);
     const blank = await manager.createSession({ createdBy: "operator" });
     await expect(
       manager.postMessage(blank.id, "no provider"),

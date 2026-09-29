@@ -97,7 +97,7 @@ export function GatewaySettings({
       <h1 className="text-2xl font-semibold tracking-tight">Hosty Harness</h1>
       <Tabs defaultValue={section} className="gap-6">
         <div className="-m-1 overflow-x-auto overflow-y-hidden p-1">
-          <TabsList variant="line" aria-label="Gateway settings">
+          <TabsList variant="line" aria-label="Hosty Harness settings">
             {(
               [
                 ["providers", "Providers"],
