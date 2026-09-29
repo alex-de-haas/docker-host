@@ -245,6 +245,11 @@ describe("sessions with provider connections", () => {
     manager = newManager();
     await manager.postMessage(first.id, "resume");
     await waitFor(async () => calls.some((c) => c.resume === nativeId));
+    // The resume call starts the turn; wait for its persisted result before checking
+    // that a rejected follow-up leaves the transcript unchanged.
+    await waitFor(async () =>
+      (await store.readEvents(first.id)).filter((event) => event.type === "result").length === 2,
+    );
     expect((await manager.getSession(first.id))!.connectionId).toBe(claude.id);
     values.delete(claude.secretKey);
     const count = (await store.readEvents(first.id)).length;

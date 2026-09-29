@@ -166,7 +166,8 @@ Gateway version: **0.29.0 → 0.30.0**; Core and SDK contracts are unchanged.
   the positive control. Test native conversation survival independently of credential reconstruction.
 - Exercise concurrent provider types and accounts, defaults/creation retries, empty-chat changes,
   started-chat locks, per-chat capabilities, restart resume, missing/removed credentials and explicit
-  legacy binding. Native protocol stand-ins supplement, not replace, real-provider acceptance checks.
+  legacy binding. Wait for a resumed turn to finish before asserting that a rejected follow-up
+  leaves its transcript unchanged. Native protocol stand-ins supplement, not replace, real-provider acceptance checks.
 - Verify settings and chat selection through a Core-managed app and Shell. Real ChatGPT authorization
   requires the account owner to complete the browser step; never insert test credentials into a real
   account or expose credentials in test output.
