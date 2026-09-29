@@ -22,7 +22,21 @@ export function createInstallationRouteHandler(config: HostyAppConfig, options: 
         return Response.json({ code: "hosty_misconfigured", message: "Installation public origin is invalid." }, { status: 503 });
       }
     }
-    if (request.method !== "GET" && (request.headers.get("origin") !== expectedOrigin ||
+    const origin = request.headers.get("origin");
+    let sameOrigin = origin === expectedOrigin;
+    // Next may reconstruct request.url with localhost while the browser uses a loopback IP.
+    // Without an explicit public origin, accept the actual Host only with the browser's
+    // unforgeable-by-page-script same-origin Fetch Metadata. Host/forwarded headers alone
+    // must never authorize a cookie-authenticated mutation.
+    if (!options.publicOrigin?.trim() && !sameOrigin && request.headers.get("sec-fetch-site") === "same-origin") {
+      try {
+        const browserOrigin = new URL(origin ?? "");
+        sameOrigin = ["http:", "https:"].includes(browserOrigin.protocol)
+          && browserOrigin.origin === origin
+          && browserOrigin.host === request.headers.get("host");
+      } catch { /* Missing, opaque or malformed origins remain denied. */ }
+    }
+    if (request.method !== "GET" && (!sameOrigin ||
         !request.headers.get("content-type")?.startsWith("application/json")))
       return Response.json({ code: "origin_denied", message: "A same-origin JSON request is required." }, { status: 403 });
     const token = readAppIdentityToken(request.headers, config);

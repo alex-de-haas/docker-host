@@ -86,6 +86,19 @@ describe("provider connections", () => {
     secret: `synthetic-${name}`,
   });
 
+  it("defaults the first provider and preserves later operator choices", async () => {
+    const first = await registry.update(api("first"));
+    expect((await registry.list()).defaultId).toBe(first.id);
+    const second = await registry.update(api("second"));
+    expect((await registry.list()).defaultId).toBe(first.id);
+    await registry.setDefault(second.id);
+    await registry.update(api("third"));
+    expect((await registry.list()).defaultId).toBe(second.id);
+    await registry.setDefault(null);
+    await registry.update({ name: "Renamed" }, first.id);
+    expect((await registry.list()).defaultId).toBeNull();
+  });
+
   it("stores only metadata in backup data; isolates native homes and recreates credentials after cache loss", async () => {
     const first = await registry.update(api("one"));
     const second = await registry.update(api("two"));

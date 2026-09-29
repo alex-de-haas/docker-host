@@ -74,6 +74,12 @@ export default function AssistantPage() {
   const [sending, setSending] = useState(false);
   const [stoppingSession, setStoppingSession] = useState<string | null>(null);
   const sendingRef = useRef(false);
+  const [providerSaving, setProviderSaving] = useState(false);
+  const providerSavingRef = useRef(false);
+  const onProviderSaving = useCallback((saving: boolean) => {
+    providerSavingRef.current = saving;
+    setProviderSaving(saving);
+  }, []);
   const stoppingRef = useRef<string | null>(null);
   const running = ["running", "awaiting_approval", "awaiting_question"].includes(status);
   const stopping = session?.id === stoppingSession;
@@ -415,7 +421,7 @@ export default function AssistantPage() {
 
   const send = useCallback(async () => {
     const trimmed = input.trim();
-    if (!hasMessageContent(trimmed, pending.length, uploaded.length) || !session || sendingRef.current || stoppingRef.current === session.id || running || contextSaving || !health?.available) {
+    if (!hasMessageContent(trimmed, pending.length, uploaded.length) || !session || sendingRef.current || providerSavingRef.current || stoppingRef.current === session.id || running || contextSaving || !health?.available) {
       return;
     }
     sendingRef.current = true;
@@ -484,7 +490,7 @@ export default function AssistantPage() {
   }, [input, pending, running, status, contextSaving, session, uploaded, withoutAppDetails, health?.available]);
 
   const stop = useCallback(async () => {
-    if (!session || !running || sendingRef.current || stoppingRef.current) return;
+    if (!session || !running || sendingRef.current || providerSavingRef.current || stoppingRef.current) return;
     const id = session.id;
     stoppingRef.current = id;
     setStoppingSession(id);
@@ -637,10 +643,7 @@ export default function AssistantPage() {
           </>
         )}
       </header>
-      {!showSessions && session && session.providerLocked !== undefined && <SessionProvider key={`${session.id}:${session.connectionId}:${session.connectionRevision}`} session={session} busy={sending} onChange={record => {
-        setSession(current => current?.id === record.id ? record : current);
-        void getHealth(record.id).then(value => { if (activeSessionId.current === record.id) setHealth(value); }).catch(() => {});
-      }} />}
+
       {!showSessions && session && <SessionWorkspaces key={session.id} session={session} running={running} />}
       {error && <div className="shrink-0 p-3" role="alert"><InlineError message={error} /></div>}
 
@@ -783,7 +786,7 @@ export default function AssistantPage() {
                   </div>
                 )}
                 <div className="flex items-end gap-2" role="group" aria-label="Message actions">
-                  <div className="flex min-w-0 flex-1 items-start gap-1">
+                  <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
                     <Button
                       type="button"
                       size="icon"
@@ -794,6 +797,10 @@ export default function AssistantPage() {
                     >
                       <Paperclip />
                     </Button>
+                    {session && session.providerLocked !== undefined && <SessionProvider key={`${session.id}:${session.connectionId}:${session.connectionRevision}`} session={session} busy={sending} onSavingChange={onProviderSaving} onChange={record => {
+                      setSession(current => current?.id === record.id ? record : current);
+                      void getHealth(record.id).then(value => { if (activeSessionId.current === record.id) setHealth(value); }).catch(() => {});
+                    }} />}
                     {session && (
                       <AppContextPicker key={session.id} session={session} busy={sending} onBusyChange={setContextSaving} running={running}
                         onChange={record => setSession(current => current?.id === record.id && (record.appContextRevision ?? 0) >= (current.appContextRevision ?? 0) ? record : current)} />
@@ -804,7 +811,7 @@ export default function AssistantPage() {
                       {sending || stopping ? <Loader2 className="animate-spin" /> : <Square className="fill-current" />}
                     </Button>
                   ) : (
-                    <Button type="submit" size="icon" className="shrink-0" disabled={!session || sending || contextSaving || !health?.available || !hasMessageContent(input, pending.length, uploaded.length)} aria-label="Send">
+                    <Button type="submit" size="icon" className="shrink-0" disabled={!session || sending || providerSaving || contextSaving || !health?.available || !hasMessageContent(input, pending.length, uploaded.length)} aria-label="Send">
                       {sending ? <Loader2 className="animate-spin" /> : <Send />}
                     </Button>
                   )}
