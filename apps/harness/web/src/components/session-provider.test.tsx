@@ -79,3 +79,15 @@ it("requires explicit account confirmation for an older unbound chat", async () 
   await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Confirm original provider")!.click());
   expect(api.setSessionProvider).toHaveBeenCalledWith("chat", "second", true);
 });
+
+it("rebinds the selected provider when credentials advance before the first message", async () => {
+  api.listAgentConnections.mockResolvedValue({ connections: [{ ...providers[0], revision: 2 }], defaultId: "first" });
+  api.setSessionProvider.mockResolvedValueOnce(chat({ connectionRevision: 2 }));
+  await render(); await select("first");
+  expect(api.setSessionProvider).toHaveBeenCalledExactlyOnceWith("chat", "first", false);
+  expect(change).toHaveBeenCalledWith(expect.objectContaining({ connectionId: "first", connectionRevision: 2 }));
+});
+it("does not save when reselecting an unchanged provider binding", async () => {
+  await render(); await select("first");
+  expect(api.setSessionProvider).not.toHaveBeenCalled();
+});

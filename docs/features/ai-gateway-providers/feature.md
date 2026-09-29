@@ -61,7 +61,8 @@ control sits in the message composer actions beside attachments and app context.
 upward and marks the default connection. An unbound empty
 chat adopts the available default when its provider list refreshes. The first accepted message locks
 its choice, and the dropdown remains visible but disabled. Saving a selection disables sending; a
-failed save keeps the previous provider and displays the error. A
+failed save keeps the previous provider and displays the error. Before the first message, reselecting
+the current provider refreshes its binding when its credential revision has changed. A
 started chat persists connection id, credential revision, adapter kind and native session id.
 Changing the default does not rebind existing chats or creation retries. Removing a connection
 preserves its chat history and prevents further dispatch; there is no fallback to another provider.

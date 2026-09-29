@@ -78,11 +78,12 @@ export function SessionProvider({ session, busy, onChange, onSavingChange }: {
         </DropdownMenuTrigger>
         <DropdownMenuContent side="top" align="start" className="w-64 max-w-[calc(100vw-2rem)]">
           <DropdownMenuLabel>Provider</DropdownMenuLabel>
-          <DropdownMenuRadioGroup value={selected} onValueChange={id => {
-            if (legacy) { setSelected(id); setConfirmed(false); }
-            else if (id && id !== session.connectionId) void save(id);
-          }}>
-            {connections.map(c => <DropdownMenuRadioItem key={c.id} value={c.id} disabled={!c.available}>
+          <DropdownMenuRadioGroup value={selected}>
+            {connections.map(c => <DropdownMenuRadioItem key={c.id} value={c.id} disabled={!c.available}
+              onSelect={() => {
+                if (legacy) { setSelected(c.id); setConfirmed(false); }
+                else if (c.id !== session.connectionId || c.revision !== session.connectionRevision) void save(c.id);
+              }}>
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="truncate">{c.name}</span>
