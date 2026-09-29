@@ -12,7 +12,7 @@ internal static class UserProfileEndpoints
         group.MapGet("", (HttpRequest request, UserDirectoryStore users, IClock clock, UserConnectionService service, CancellationToken ct)
             => CoreSessionAuthorization.RequireSessionAsync(request, users, clock, u => Handle(() => service.ProfileAsync(u.Id, ct)), cancellationToken: ct));
         group.MapPut("", (HttpRequest request, UserProfileUpdate input, UserDirectoryStore users, IClock clock, UserConnectionService service, CancellationToken ct)
-            => CoreSessionAuthorization.RequireBrowserSessionAsync(request, users, clock, u => Handle(() => service.UpdateProfileAsync(u.Id, input.DisplayName, ct)), ct));
+            => CoreSessionAuthorization.RequireBrowserSessionAsync(request, users, clock, u => Handle(() => service.UpdateProfileAsync(u.Id, input.DisplayName, ct, input.GitIdentity, input.UpdateGitIdentity)), ct));
         group.MapPost("/connections/pat", (HttpRequest request, UserConnectionInput input, UserDirectoryStore users, IClock clock, UserConnectionService service, CancellationToken ct)
             => CoreSessionAuthorization.RequireBrowserSessionAsync(request, users, clock, u => Handle(() => service.AddPatAsync(u.Id, input, ct)), ct));
         group.MapPost("/connections/device", (HttpRequest request, UserConnectionInput input, UserDirectoryStore users, IClock clock, UserConnectionService service, CancellationToken ct)

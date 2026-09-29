@@ -6,6 +6,7 @@ export const CORE_PROVIDER_ID = "hosty:core";
 
 export interface McpProvider {
   appId: string;
+  policyIdentity?: string;
   displayName: string;
   url: string | null;
   running: boolean;
@@ -18,6 +19,7 @@ export interface AppDirectoryEntry {
   runtimeState?: unknown; interfaces?: unknown;
 }
 interface AgentTarget {
+  installedAt?: string | null;
   id: string; displayName: string; offered: boolean; runtimeState: string;
   interfaces: Array<{ key: string; url: string | null; readiness: string }>;
   skills: Array<{ key: string; digest: string | null; approvedDigest: string | null }>;
@@ -97,6 +99,7 @@ export class ProviderDirectory {
       key: item.key, url: target.id === CORE_PROVIDER_ID && this.coreMcpUrl ? this.coreMcpUrl : item.url!,
     }));
     return {
+      policyIdentity: JSON.stringify([target.id, target.installedAt ?? "core", interfaces]),
       appId: target.id, displayName: target.displayName, offered: target.offered === true,
       url: interfaces.find(item => item.key === "default")?.url ?? interfaces[0]?.url ?? null,
       running: interfaces.length > 0, interfaces,

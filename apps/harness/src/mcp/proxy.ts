@@ -17,6 +17,7 @@
 // serve plain POST JSON-RPC (demo-app does) or full streamable HTTP with SSE and `Mcp-Session-Id`,
 // and the proxy has no business knowing which.
 
+import type { McpToolPolicy } from "./policy.js";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -73,6 +74,8 @@ interface Registration {
 }
 
 export class McpProxy {
+  policy?: McpToolPolicy;
+  identity?: (appId: string) => Promise<string>;
   private readonly sessions = new Map<string, Registration>();
 
   constructor(
@@ -103,6 +106,7 @@ export class McpProxy {
 
   /** Drops the session's routes. */
   unregister(sessionId: string): void {
+    this.policy?.cancel(sessionId);
     this.sessions.delete(sessionId);
   }
 
@@ -181,6 +185,39 @@ export class McpProxy {
       return true;
     }
 
+    if (this.policy && request.method === "POST" && body) {
+      let rpc: { id?: string | number; method?: string; params?: { name?: string; arguments?: unknown } };
+      try { rpc = JSON.parse(body.toString("utf8")); if (!rpc || Array.isArray(rpc)) throw new Error(); }
+      catch { sendJson(response, 400, { message: "A single JSON-RPC request is required." }); return true; }
+      if (rpc.method === "tools/list" || rpc.method === "tools/call") {
+        const abort = new AbortController();
+        const close = () => { if (!response.writableEnded) abort.abort(); };
+        response.on("close", close);
+        try {
+          if (rpc.id === undefined || typeof rpc.id !== "string" && typeof rpc.id !== "number") throw new Error("A tool request ID is required.");
+          const identity = await this.identity?.(appId) ?? target.url;
+          if (rpc.method === "tools/list") {
+            const tools = await this.policy.discover(appId, identity, target.url, token.token);
+            sendJson(response, 200, { jsonrpc: "2.0", id: rpc.id, result: { tools } });
+          } else {
+            if (typeof rpc.params?.name !== "string") throw new Error("A tool name is required.");
+            await this.policy.discover(appId, identity, target.url, token.token);
+            const dispatchGuard = await this.policy.authorize(sessionId, appId, identity, JSON.stringify([request.headers["mcp-session-id"] ?? "", rpc.id]),
+              rpc.params.name, rpc.params.arguments ?? {}, abort.signal);
+            const currentUrl = this.resolveOffered ? await this.resolveOffered(appId) : target.url;
+            if (!currentUrl || currentUrl !== target.url || identity !== (await this.identity?.(appId) ?? target.url)) throw new Error("Provider changed while the call waited. Discover its tools again.");
+            token = await this.mint(sessionId, appId);
+            if (!token) throw new Error("Session delegation expired before dispatch.");
+            if (!this.sessions.has(sessionId) || abort.signal.aborted) throw new Error("Session ended before dispatch.");
+            await dispatchGuard();
+            await this.forward(request, response, target, token.token, body);
+          }
+        } catch (error) { if (!response.headersSent && !response.destroyed) sendJson(response, 200, { jsonrpc: "2.0", id: rpc.id,
+          error: { code: -32001, message: error instanceof Error ? error.message : "MCP request refused." } }); }
+        finally { response.off("close", close); }
+        return true;
+      }
+    }
     await this.forward(request, response, target, token.token, body);
     return true;
   }

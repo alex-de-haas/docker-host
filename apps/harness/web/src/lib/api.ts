@@ -5,7 +5,10 @@ export type Provider = { appId: string; displayName: string; url: string | null;
 /** The provider id Core's own tools are offered under — the gateway's constant, mirrored here. */
 export const CORE_PROVIDER_ID = "hosty:core";
 
+export type ToolCatalog = { provider: string; identity: string; tools: { name: string; description?: string; annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean } }[] };
+export type ToolRule = { identity: string; mode: "ask" | "run" | "disabled" };
 export type Settings = {
+  mcpToolRules?: Record<string, ToolRule>;
   immediateHandoffs?: boolean;
   systemPrompt: string;
   mcpProviders: Record<string, boolean>;
@@ -22,6 +25,7 @@ export type PendingSkill = {
 };
 
 export type SettingsResponse = {
+  toolCatalogs?: ToolCatalog[];
   agentsSettingsUrl?: string | null;
   settings: Settings;
   agentConnections?: boolean;

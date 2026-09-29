@@ -1,7 +1,7 @@
 # Assistant Session Workspaces
 
 Created: 2026-09-27
-Updated: 2026-09-27
+Updated: 2026-09-29
 
 ## Ownership And Allocation
 
@@ -113,8 +113,11 @@ controls. It supports inspection even if the assistant is unavailable.
 
 Cleanup requires clean, available source without a pending merge, no activity lease, no selected
 installed-app source override and no known live local process or Docker mount consuming the tree.
-Core freshly fetches the target and requires the session HEAD to be an ancestor. A reported PR merge
-or submitted URL is insufficient. Unknown consumer state refuses removal.
+Ordinary workspace cleanup freshly fetches the target and requires the session HEAD to be an ancestor.
+A reported PR merge or submitted URL is insufficient. The publication service has a separate internal
+cleanup path after a durable authorized completion request and provider verification of the exact
+published head. It supports submitted contributions and squash merges without bypassing clean-file,
+lease or runtime-consumer checks. Unknown consumer state refuses removal.
 
 Cleanup validates the owned path, repository, registered branch and expected HEAD. It uses ordinary
 Git worktree removal without force and preserves retryable `releasing` state after partial failure.
@@ -125,7 +128,7 @@ Arbitrary external processes and direct Git changes remain outside managed coord
 
 Existing source overrides remain available. Selecting a worktree for isolated execution and separate
 test data belongs to [sandbox runtimes](../app-sandbox-runtimes/plan.md). Remote publication, provider
-merge verification, CI and PR history belong to [PR lifecycle](../assistant-pr-lifecycle/plan.md).
+merge verification, CI and PR history belong to [PR lifecycle](../assistant-pr-lifecycle/feature.md).
 
 ## Testing Expectations
 

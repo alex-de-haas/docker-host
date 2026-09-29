@@ -1,4 +1,5 @@
-import { DevelopmentClient, DevelopmentMcp, workspaceInstructions, type DevelopmentAction, type DevelopmentWorkspace } from "./development.js";
+import { McpToolPolicy } from "../mcp/policy.js";
+import { DevelopmentClient, DevelopmentMcp, DEVELOPMENT_PROVIDER, DEVELOPMENT_IDENTITY, developmentTools, workspaceInstructions, type DevelopmentAction, type DevelopmentWorkspace } from "./development.js";
 import { AgentConnections, ConnectionError, type ConnectionBinding } from "../connections/registry.js";
 import { AppContextError, parseAppIds, validateSelection, captureContext, withAppContext } from "./app-context.js";
 import { mkdir, stat } from "node:fs/promises";
@@ -66,6 +67,7 @@ interface LiveSession {
 }
 
 export class SessionManager {
+  readonly mcpPolicy: McpToolPolicy;
   readonly developmentMcp = new DevelopmentMcp(async (id, action, input) => {
     const session = this.live.get(id);
     if (!session || !["running", "awaiting_approval", "awaiting_question"].includes(session.record.status))
@@ -115,7 +117,65 @@ export class SessionManager {
     private readonly notifier: WaitingNotifier | null = null,
     private readonly connections: AgentConnections | null = null,
     private readonly development: DevelopmentClient | null = null,
-  ) {}
+  ) {
+    this.mcpPolicy = new McpToolPolicy(settings,
+      (id, event) => this.serialize(id, async () => {
+        const session = this.live.get(id);
+        if (!session || this.stopping) throw new Error("Session is no longer active.");
+        session.record.mcpPendingApprovals = [...(session.record.mcpPendingApprovals ?? []), { id: event.approvalId, tool: event.toolName }];
+        await this.store.saveRecord(session.record);
+        await this.applyHarnessEvent(id, event);
+      }),
+      (id, approvalId, toolName, allowed, automatic) => this.serialize(id, async () => {
+        const session = this.live.get(id);
+        if (!session || this.stopping) return;
+        session.pendingApprovals.delete(approvalId);
+        session.record.mcpPendingApprovals = session.record.mcpPendingApprovals?.filter(p => p.id !== approvalId);
+        if (!automatic) await this.append(id, { type: "approval_decision", approvalId, toolName, decision: allowed ? "allow" : "deny" });
+        if (session.record.status === "awaiting_approval" && session.pendingApprovals.size === 0) await this.setStatus(id, "running");
+        if (allowed) this.audit.report(automatic ? "ai_action_auto_allowed" : "ai_action_approved", { sessionId: id, toolName, mode: automatic ? "run" : "ask" });
+      }));
+    this.developmentMcp.policy = this.mcpPolicy;
+    if (proxy) {
+      proxy.policy = this.mcpPolicy;
+      proxy.identity = async appId => {
+        const snapshot = await providers?.read();
+        const p = [providers?.core(), ...(snapshot?.providers ?? [])].find(p => p?.appId === appId);
+        if (!p?.offered || !p.policyIdentity) throw new Error("Provider identity is unavailable.");
+        return p.policyIdentity;
+      };
+    }
+  }
+
+  async recoverMcpApprovals(): Promise<void> {
+    for (const record of await this.store.listRecords()) {
+      if (!record.mcpPendingApprovals?.length || this.live.has(record.id)) continue;
+      await this.serialize(record.id, async () => {
+        const session = await this.requireLive(record.id);
+        for (const pending of session.record.mcpPendingApprovals ?? [])
+          await this.append(record.id, { type: "approval_decision", approvalId: pending.id, toolName: pending.tool, decision: "deny", message: "The assistant restarted before dispatch. Request the operation again; retain its Core requestId." });
+        session.record.mcpPendingApprovals = [];
+        if (["running", "awaiting_approval"].includes(session.record.status)) session.record.status = "failed";
+        await this.store.saveRecord(session.record);
+      });
+    }
+  }
+
+  async discoverMcpTools(credential: string): Promise<string[]> {
+    const unavailable: string[] = [];
+    if (this.development?.available) await this.mcpPolicy.catalog(DEVELOPMENT_PROVIDER, DEVELOPMENT_IDENTITY, developmentTools());
+    const snapshot = await this.providers?.read();
+    if (!snapshot) return unavailable;
+    for (const p of [this.providers?.core(), ...snapshot.providers]) {
+      if (!p?.offered || !p.url || !p.policyIdentity) continue;
+      try {
+        const token = await this.exchange?.exchange(credential, p.appId);
+        if (!token) throw new Error("Provider identity unavailable");
+        await this.mcpPolicy.discover(p.appId, p.policyIdentity, p.url, token.token);
+      } catch { unavailable.push(p.appId); }
+    }
+    return unavailable;
+  }
 
   async workspaceAction(id: string, action: DevelopmentAction, input: Record<string, unknown>, credential?: string, userId?: string): Promise<unknown> {
     return this.serialize(id, async () => {
@@ -124,7 +184,7 @@ export class SessionManager {
       if (!this.development?.available) throw new AppContextError(503, "workspaces_unavailable", "Workspaces require a Core-managed assistant.");
       const token = credential ?? session.credential;
       if (!token) throw new AppContextError(401, "workspace_credentials_required", "Refresh the session's Hosty credentials before using workspaces.");
-      if (!["list", "prepare", "status", "diff", "commit", "refresh", "merge", "abort-merge", "cleanup", "references"].includes(action))
+      if (!["list", "prepare", "status", "diff", "commit", "refresh", "merge", "abort-merge", "cleanup", "references", "pr-resolve-review", "pr-commit", "pr-list", "pr-connections", "pr-status", "pr-configure", "pr-publish", "pr-link", "pr-ready", "pr-merge", "pr-complete", "pr-corrective"].includes(action))
         throw new AppContextError(400, "workspace_action_invalid", "Unknown workspace action.");
       if (action === "cleanup" && ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) throw new SessionBusyError();
       if (action === "prepare") {
@@ -134,8 +194,24 @@ export class SessionManager {
         input = { ...input, sessionPath: `/assistant?session=${encodeURIComponent(id)}`,
           leaseId: ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status) ? session.record.developmentLease : undefined };
       }
+      if (action === "pr-commit") {
+        const binding = session.record.connectionId && this.connections ? await this.connections.binding(session.record.connectionId) : null;
+        const agent = binding?.harnessKind ?? this.adapter.name.toLowerCase();
+        input = { ...input, contributors: agent.includes("codex") ? ["Codex <noreply@openai.com>"] : agent.includes("claude") ? ["Claude <noreply@anthropic.com>"] : [] };
+      }
+      if (action === "pr-complete") {
+        const publication = await this.development.call(id, token, "pr-status", input) as {
+          workspaceId: string; repository: string; url?: string; publishedHead?: string;
+          history?: { url: string; head?: string }[];
+        };
+        if (!publication.url && input.outcome !== "abandoned") throw new AppContextError(409, "publication_missing", "No PR reference to retain before completion.");
+        const references = [...(publication.history ?? []), ...(publication.url ? [{ url: publication.url, head: publication.publishedHead }] : [])]
+          .map(reference => ({ workspaceId: publication.workspaceId, repository: publication.repository, ...reference }));
+        session.record.publicationReferences = [...(session.record.publicationReferences ?? []).filter(r => !references.some(reference => reference.url === r.url)), ...references];
+        await this.store.saveRecord(session.record);
+      }
       const result = await this.development.call(id, token, action, input);
-      if (action !== "diff") {
+      if (action !== "diff" && !action.startsWith("pr-")) {
         const workspaces = action === "list" ? (result as { workspaces: DevelopmentWorkspace[] }).workspaces : [result as DevelopmentWorkspace];
         const known = new Map((session.record.developmentWorkspaces ?? []).map(w => [w.id, w]));
         for (const w of workspaces) known.set(w.id, w);
@@ -554,6 +630,7 @@ export class SessionManager {
             }
           }
 
+          this.mcpPolicy.cancel(id); // A new native client starts a fresh JSON-RPC request namespace.
           session.run = selectedAdapter.start({
             sessionId: id,
             cwd: workspace ?? this.workDir,
@@ -561,7 +638,7 @@ export class SessionManager {
             ...(mcpServers ? { mcpServers } : {}),
             // Read live rather than captured: a provider toggled off mid-session must stop being
             // auto-allowed at once, not at the next run.
-            isAutoAllowed: (toolName) => session.autoAllowed.has(toolName),
+            isAutoAllowed: (toolName) => toolName.startsWith("mcp__hosty-workspaces__") && this.development?.available === true || session.mcpAppIds.some(app => toolName.startsWith(`mcp__${serverName(app)}__`)),
             // A gateway restart loses the process but not the record: resume the harness-native
             // session when one was captured, per the reattach/resume decision in the plan.
             resumeHarnessSessionId: session.record.harnessSessionId ?? undefined,
@@ -588,7 +665,8 @@ export class SessionManager {
    * use: a provider whose exchange is refused stays absent. The proxy mints again per call.
    */
   private async buildMcpServers(session: LiveSession, knownCandidates?: McpProvider[]): Promise<Record<string, unknown> | undefined> {
-    const appServers = await this.buildAppMcpServers(session, knownCandidates);
+    const raw = await this.buildAppMcpServers(session, knownCandidates);
+    const appServers = raw && Object.fromEntries(Object.entries(raw).map(([key, server]) => [key, { ...(server as object), hostyPolicy: true }]));
     if (!this.development?.available || !this.proxyBaseUrl || !session.credential) return appServers;
     return { ...appServers, ...this.developmentMcp.config(session.record.id, this.proxyBaseUrl) };
   }
@@ -774,6 +852,7 @@ export class SessionManager {
     const servers = await this.buildMcpServers(session, candidates);
     const signature = JSON.stringify([servers ?? {}, session.mcpTargetSignature]);
     if (session.mcpSignature === signature) return true;
+    this.mcpPolicy.cancel(session.record.id); // Reconfiguration can replace the native client.
     const applied = await session.run.setMcpServers(servers ?? {}).catch(() => false);
     if (!applied && session.mcpNoticeSignature !== signature) {
       session.mcpNoticeSignature = signature;
@@ -857,8 +936,11 @@ export class SessionManager {
     approvalId: string,
     decision: "allow" | "deny",
     message?: string,
+    actorId?: string,
   ): Promise<boolean> {
     const session = await this.requireLive(id);
+    if (actorId && session.record.createdBy !== actorId) throw new AppContextError(403, "approval_forbidden", "This approval belongs to another user.");
+    if (this.mcpPolicy.resolve(id, approvalId, decision === "allow")) return true;
     const toolName = session.pendingApprovals.get(approvalId);
     if (!session.run || toolName === undefined) {
       return false;
@@ -1011,6 +1093,7 @@ export class SessionManager {
   }
 
   async shutdown(): Promise<void> {
+    this.mcpPolicy.close();
     this.stopping = true;
     for (const session of this.live.values()) {
       if (session.run) {

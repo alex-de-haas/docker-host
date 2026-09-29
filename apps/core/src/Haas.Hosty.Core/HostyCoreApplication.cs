@@ -109,6 +109,10 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<AppSourceService>();
         builder.Services.AddSingleton<DevelopmentWorkspaceService>();
         builder.Services.AddSingleton<WorkspaceAuthorization>();
+        builder.Services.AddSingleton<IPublicationProvider>(sp => new GitHubPublicationProvider(
+            new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false }) { Timeout = TimeSpan.FromSeconds(45) }, sp.GetRequiredService<IClock>()));
+        builder.Services.AddSingleton<PublicationService>();
+        builder.Services.AddHostedService<PublicationObserver>();
         builder.Services.AddHostedService<DevelopmentWorkspaceObserver>();
         // Shared flag the control-plane stop endpoint sets and the runtime-app supervisor reads at
         // shutdown to decide whether a stop leaves app containers running (keep-apps light restart).
@@ -410,6 +414,7 @@ internal static class HostyCoreApplication
         CloudflarePublicationEndpoints.Map(app);
         SourceEndpoints.Map(app);
         DevelopmentWorkspaceEndpoints.Map(app);
+        PublicationEndpoints.Map(app);
         ControlIdentityEndpoints.Map(app);
         AppDirectoryEndpoints.Map(app);
         AppAssetEndpoints.Map(app);

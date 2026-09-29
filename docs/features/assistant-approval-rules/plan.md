@@ -2,18 +2,11 @@
 
 Status: Draft
 Created: 2026-09-02
-Updated: 2026-09-27
+Updated: 2026-09-29
 
-Operator-owned rules for which assistant tools are disabled, ask before execution, or run without
-an approval card, beyond the per-app read-only grant that ships today. This is the "second iteration
-informed by real usage" that the
-[AI Agent Bridge](../ai-agent-bridge/feature.md#approval-posture) deferred when every write became
-approval-gated on 2026-08-08. The usage informing it: an operator answering a card for every
-`hosty apps update-plan`, and for every repeat of the same command inside one long session.
-
-Everything here is a diff against the shipped assistant in
-[ai-gateway](../ai-gateway/feature.md) — its per-app "run read-only tools unprompted" grant, the
-Core provider row, and the typed approval cards are the ground this builds on.
+Remaining work extends the [shipped per-tool MCP policy](feature.md) with session grants, shell
+prefix rules and explicit native development boundaries. Current MCP Ask / Run unprompted / Disabled
+controls already apply to Claude and Codex, including writes. The broader native policy remains Draft.
 
 ## Shared Session Development Dependency (2026-09-24)
 
@@ -33,6 +26,22 @@ accepted agent-trust workspace mode. Do not silently claim those guarantees for 
 existing restrictions. This decision does not enable broad credentials or bypass MCP/API permission
 checks. The [external context plan](../assistant-external-session-context/plan.md)'s integration still
 needs separately scoped authority and does not upgrade the read-only facade.
+
+## PR Lifecycle Integration (Owner Decision, 2026-09-29)
+
+[PR lifecycle](../assistant-pr-lifecycle/feature.md) consumes this plan's shared MCP tool policy for
+mutations, including push, PR publication and merge. Run unprompted must avoid repeated approval
+cards for authorized operations; do not create a second PR-specific confirmation preference or
+force every merge through a separate card. Ask and Disabled remain available. Core independently
+checks actor, repository/connection/workspace authority and CI/review gates. Provider credentials
+stay in Core, and the external read-only facade gains no mutation authority.
+
+This plan owns the shared rule model, settings, protocol-aware enforcement, pending-call recovery
+and adapter coordination. PR lifecycle owns its operation API and visualization of Core's facts.
+The owner approved the shared MCP slice with PR lifecycle on 2026-09-29; its current behavior is
+documented in [feature.md](feature.md). The remaining native filesystem/command policy stays Draft.
+The H2 native permission-setting bypass remains a gate for native rule controls, not the HTTP MCP
+broker, which receives calls even when a native agent has already allowed them.
 
 ## Goal
 
@@ -79,38 +88,11 @@ the separately accepted localCommand runtime responsibility.
 
 ## Target Behavior
 
-### A. Per-tool policy in settings
+### A. Existing MCP policy dependency
 
-- Under each enabled provider's row the settings page can expand **the provider's tool list**, read
-  from its `tools/list` the way the facade's catalog and the read-only probe already do: name,
-  description, and the app's `readOnlyHint` / `destructiveHint` as labels.
-- Keep the provider's master enable/disable switch. Each tool, including read-only tools, carries
-  one selectable mode: **Ask**, **Run unprompted**, or **Disabled**. The labels describe the
-  gateway's behavior, not a grant of missing authority in Core or the target app. Display the
-  app's annotations as app-declared hints. A destructive hint remains visible beside the control.
-- **Ask** keeps the tool available to the model, but the gateway holds each call for an approval
-  card before forwarding it. Approval authorizes that exact provider, tool and argument set.
-- **Run unprompted** keeps the tool available and forwards authorized calls without a gateway
-  approval card. Core and app authorization checks still apply.
-- **Disabled** removes the tool from the model-facing catalog and rejects calls by name, including
-  names retained in an existing conversation. A prompt instruction or catalog filter alone is
-  insufficient. Disabling the provider takes precedence over all of its tool modes.
-- New tools default to **Ask**. During migration preserve existing read-only auto-allow choices
-  for tools verified against a complete catalog snapshot; discovery failure must not create an
-  unprompted grant. Define this migration explicitly so a later new tool does not silently inherit
-  permission from an old provider-wide setting.
-- Bind rules to the provider/interface identity and tool name. Prune obsolete rules only after
-  authoritative removal or successful complete discovery, never because a stopped provider or
-  failed catalog read looks empty. A reappearing tool starts with the new-tool default.
-- Policy changes govern subsequent calls in existing sessions. Recheck current policy before
-  forwarding a waiting call; an old card or session grant cannot override a disabled tool/provider.
-  Refresh advertised catalogs where supported; otherwise show when a session refresh is needed.
-  Call-time enforcement must not wait for that refresh. Disabling does not undo an already
-  dispatched upstream action.
-- These controls cover MCP calls through the gateway's assistant-session route. They do not
-  prohibit an equivalent CLI/HTTP action or grant filesystem development access. External facade
-  callers retain their existing read-only restriction; this decision adds no external write path
-  or remote approval-card workflow.
+Reuse [the shipped MCP broker and settings](feature.md). Session/native extensions must preserve
+call-time enforcement, complete-discovery migration, identity-bound rules and independent Core
+permissions. Do not introduce a competing MCP approval path.
 
 ### B. Session grants from the card
 
@@ -136,29 +118,13 @@ the separately accepted localCommand runtime responsibility.
   rule**, and never matches a session grant: a prefix guards the head of one command, and a compound
   command has more than one head. Fail closed.
 
-### D. Where the policy is evaluated
+### D. Extend the shared policy to native actions
 
-- **Owned by the gateway, for both harnesses.** MCP catalogs and calls are governed at the
-  session MCP boundary before upstream dispatch. The existing transparent proxy needs protocol-aware
-  filtering and approval handling; this is not implemented by the current byte forwarder.
-  **Ask** creates the existing session approval event/card and waits for its decision before
-  invoking the app. **Disabled** never reaches the upstream tool. **Run unprompted** bypasses the
-  gateway card only after policy and session authorization checks.
-- Coordinate adapter permissions so one MCP call produces at most one Hosty approval card and
-  **Run unprompted** does not encounter a second native approval for that same call. Any native
-  allowance must cover only gateway-controlled MCP routes, never blanket shell/file permission.
-  Verify this against both pinned adapters rather than assuming their callbacks or defaults.
-- Shell/file approval callbacks continue to consult the shared policy; development grants also
-  configure native enforcement and require event-based auditing for actions that do not raise
-  callbacks (G). Do not write hidden grants to the harness's own permission store. Native options
-  must be derived from the visible Hosty policy, with verified enforcement and audit.
-- Bind a pending MCP decision to the session, request and arguments. Resolve denial, cancellation,
-  disconnect and timeout without forwarding the held action. Define retry/deduplication behavior
-  and restart recovery before shipping, so a retried request or replayed card cannot execute a
-  mutation twice or release a stale call. Support the actual JSON/SSE transports used by providers;
-  pending approval must not rely on an unbounded HTTP request surviving every client timeout.
-- The policy takes the tool name, input and effective session grant revision; a shell rule is about
-  the command and a source grant is about the resolved target, not just the tool name.
+MCP enforcement and pending-call recovery are described in [feature.md](feature.md). Extend the
+policy with session grant revisions and native shell/file decisions. A shell rule evaluates the
+command and a source grant evaluates the resolved target, not merely a tool name. Configure native
+enforcement and event-based auditing for actions without callbacks (G); never write hidden grants
+to the native harness's permission store. Verify native options against the visible Hosty policy.
 
 ### E. Audit
 
@@ -349,23 +315,14 @@ parity. A disposable spike establishes the contract; this Draft does not authori
 - [ ] Enforce sensitive reads across native file/search tools and shell; verify independent edit
       and command switches, instruction loading without permission-setting inheritance, declared
       scratch-space policy, and WebFetch/subagent/MCP paths against the same effective grant.
-- [ ] Rule model in the gateway's settings store: per-tool modes keyed by provider and tool name,
-  with interface identity, all three modes, explicit migration of existing read-only grants,
-  shell prefix rules, and validation/pruning against complete authoritative discovery.
-- [ ] Protocol-aware session MCP enforcement: filtered catalogs, call-time disabled checks,
-      gateway-owned Ask pauses, unprompted dispatch, policy changes and audit on both adapters.
-- [ ] Pending MCP request lifecycle: exact-call approval binding, cancellation/denial/timeouts,
-      retry deduplication, restart recovery, and no duplicate native/gateway approval prompts.
-- [ ] One policy over tool name, input and effective session grants, consulted by both adapters;
-      include native sandbox configuration and event auditing where no approval callback occurs.
-- [ ] Settings page: provider master switch and expandable tool list with Ask / Run unprompted /
-      Disabled per tool, descriptions, hint labels and effective-policy feedback; a Shell section
-      for prefix rules.
+- [ ] Extend the shipped MCP rule model with shell prefix rules and one effective native-tool policy
+      over tool name, input and session development grants, including native sandbox configuration.
+- [ ] Add the Shell prefix-rules section and native effective-policy feedback; keep existing MCP
+      controls bound to complete discovery and the Core provider offer policy.
 - [ ] Card: **Allow for this session**, with the grant it would make shown on the button.
 - [ ] Compound-command refusal, unit-tested against every separator listed in C.
-- [ ] `ai_action_auto_allowed` audit report with the matching rule, and the Core side accepting it
-  like the existing gateway actions.
-- [ ] Docs: `feature.md` for this feature; the approval posture in
+- [ ] Extend automatic-decision auditing to native shell-prefix and session development rules.
+- [ ] Docs: extend the current MCP `feature.md` with shipped native boundaries; keep the posture in
   [ai-agent-bridge](../ai-agent-bridge/feature.md) revised from "no exceptions, no session-scoped
   approvals" to the rules above; the index regenerated.
 

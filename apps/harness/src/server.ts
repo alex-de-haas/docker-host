@@ -47,7 +47,7 @@ export function createGatewayServer(
   connections: AgentConnections | null = null,
 ): Server {
   const handoffs = new HandoffStore(manager, settings, providers);
-  const recovered = handoffs.sweep().catch(error => {
+  const recovered = handoffs.sweep().then(() => manager.recoverMcpApprovals()).catch(error => {
     // A transient directory/storage failure is retried by the periodic sweep. Keep unrelated
     // endpoints available and attach the handler immediately, before the first request arrives.
     console.error("[handoff] startup recovery failed", error);
@@ -294,6 +294,13 @@ async function route(
     return;
   }
 
+  if (url.pathname === "/api/settings/tools" && settings && method === "GET") {
+    const credential = readBearer(request) ?? readIdentityCookie(request);
+    if (!credential) throw new AppContextError(401, "credentials_required", "Refresh your Hosty session.");
+    const unavailable = await manager.discoverMcpTools(credential);
+    sendJson(response, 200, { unavailable, catalogs: manager.mcpPolicy.snapshot(), settings: await settings.read() }); return;
+  }
+
   if (url.pathname === "/api/settings" && settings && (method === "GET" || method === "PUT")) {
     if (method === "PUT") {
       const body = await readJson(request);
@@ -324,6 +331,10 @@ async function route(
       }
       if (body.immediateHandoffs !== undefined && typeof body.immediateHandoffs !== "boolean") {
         sendJson(response, 400, { code: "handoff_setting_invalid", message: "immediateHandoffs must be a boolean." }); return;
+      }
+      if (body.mcpToolRules !== undefined) {
+        try { await manager.mcpPolicy.update(body.mcpToolRules as Record<string, import("./mcp/policy.js").ToolRule>); }
+        catch (error) { sendJson(response, 409, { code: "tool_policy_changed", message: error instanceof Error ? error.message : "Refresh the tool catalog." }); return; }
       }
       await settings.update({
         immediateHandoffs: typeof body.immediateHandoffs === "boolean" ? body.immediateHandoffs : undefined,
@@ -359,6 +370,7 @@ async function route(
     // instead of one wording that is false on one of them.
     sendJson(response, 200, {
       settings: { ...current, mcpProviders: Object.fromEntries([...(core ? [core] : []), ...(discovered?.providers ?? [])].map(provider => [provider.appId, provider.offered === true])), mcpSkillDigests: providers?.approvedSkills() ?? {} },
+      toolCatalogs: manager.mcpPolicy.snapshot(),
       agentsSettingsUrl: providers?.settingsUrl() ?? null,
       pendingSkills,
       providers: [...(core ? [core] : []), ...(discovered?.providers ?? [])],
@@ -541,7 +553,7 @@ async function route(
       });
       return;
     }
-    const resolved = await manager.resolveApproval(sessionId, approvalMatch[1]!, body.decision, reason || undefined);
+    const resolved = await manager.resolveApproval(sessionId, approvalMatch[1]!, body.decision, reason || undefined, actor.userId);
     if (!resolved) {
       sendJson(response, 409, {
         code: "approval_not_pending",

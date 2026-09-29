@@ -28,8 +28,8 @@ it("loads the user's accounts and saves their display name through Core", async 
   expect(fetch).toHaveBeenCalledWith("https://core.test/api/profile", expect.objectContaining({ credentials: "include", cache: "no-store" }));
   expect(container.textContent).toContain("octocat"); expect(container.textContent).toContain("work-account");
   await fill("profile-name", "New name");
-  await act(async () => button("Save name").click());
-  expect(send).toHaveBeenCalledWith("https://core.test/api/profile", { displayName: "New name" }, "PUT");
+  await act(async () => button("Save profile").click());
+  expect(send).toHaveBeenCalledWith("https://core.test/api/profile", { displayName: "New name", gitIdentity: null, updateGitIdentity: true }, "PUT");
   expect(saved).toHaveBeenCalledOnce();
 });
 it("offers PAT fallback when OAuth is not configured and clears rejected tokens", async () => {
@@ -67,4 +67,10 @@ it("disconnects only the confirmed account and keeps a failed rename editable", 
   expect(send).toHaveBeenCalledTimes(1);
   await act(async () => button("Remove connection").click());
   expect(send).toHaveBeenLastCalledWith("https://core.test/api/profile/connections/personal", undefined, "DELETE");
+});
+
+it("saves explicit Git identity separately from the connected account", async () => {
+  await render(); await fill("git-name", "Git Author"); await fill("git-email", "author@example.test");
+  await act(async () => button("Save profile").click());
+  expect(send).toHaveBeenCalledWith("https://core.test/api/profile", { displayName: "Alice", updateGitIdentity: true, gitIdentity: { name: "Git Author", email: "author@example.test" } }, "PUT");
 });

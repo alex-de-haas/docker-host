@@ -1,13 +1,22 @@
 # User Profile And Provider Connections
 
 Created: 2026-09-28
-Updated: 2026-09-28
+Updated: 2026-09-29
 
 Every enabled Hosty user has a personal profile at Shell `/settings?tab=profile`, also reachable
 from **Your profile** in the account menu. Users edit their display name and manage multiple
 GitHub.com and Azure DevOps Services accounts. A connection has an opaque ID, an owner, a label,
 a provider-verified identity, an organization for Azure DevOps, and the last observed status.
 Connecting an external account does not change Hosty login, roles or application assignments.
+
+## Git Attribution
+
+The profile stores an optional Git author name/email separately from display name and provider login.
+Saving both empty selects provider-verified attribution. Publication commits use this explicit identity
+or a verified primary GitHub email; Core does not invent an email from the account login. GitHub device
+sign-in requests `user:email` in addition to repository access. Existing connections without that
+scope can reconnect or use an explicit profile identity. Git identity edits require the user's browser
+session and CSRF checks, and do not expose or alter connection credentials.
 
 ## Account Operations
 
@@ -99,7 +108,7 @@ browser logout and Core restart.
 
 A connection record grants no app installation, source access, Git publication or merge authority.
 [Private app sources](../private-app-sources/feature.md) adds separately reviewed repository bindings and
-background read grants; [PR lifecycle](../assistant-pr-lifecycle/plan.md) owns remote collaboration.
+background read grants; [PR lifecycle](../assistant-pr-lifecycle/feature.md) owns remote collaboration.
 Core's service resolves connection IDs together with an enabled owner; there is no public token-export
 endpoint or automatic exposure to assistants/apps.
 

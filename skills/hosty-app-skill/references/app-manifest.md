@@ -213,6 +213,9 @@ unknown permissions. Install Core 0.108.0 or newer before requesting `apps.skill
 `apps.workspaces.manage` (Core 0.111.0+) requests session-owned Git worktree operations. Each call
 also requires a current administrator credential addressed to the calling app. Install Core before
 updating an assistant that requests this permission; the installation review shows the new grant.
+`apps.publications.manage` (Core 0.114.0+) additionally permits session-owned GitHub publication,
+review, merge and completion operations using the authenticated user's selected connection. It does
+not upgrade the external read-only facade.
 
 Changing a source manifest grants no roles or permissions. Shell shows each confirmed assistant
 as a separate tab and owns its choice for Ask assistant. The role does not replace the existing

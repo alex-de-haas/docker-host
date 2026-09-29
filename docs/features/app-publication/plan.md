@@ -2,11 +2,11 @@
 
 Status: Draft
 Created: 2026-09-16
-Updated: 2026-09-26
+Updated: 2026-09-29
 
 ## Code PR Publication Boundary (2026-09-24)
 
-[Assistant PR lifecycle](../assistant-pr-lifecycle/plan.md) owns Publish/review/
+[Assistant PR lifecycle](../assistant-pr-lifecycle/feature.md) owns Publish/review/
 Merge/Complete for code changes, including dependency-ordered merges, post-merge checks and corrective
 PRs. This plan continues to own repository provisioning, installable releases/feeds and catalog
 promotion. Reuse their recorded commits, PRs and artifact observations where the workflows meet;

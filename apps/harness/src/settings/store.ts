@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
+import { validRules, type ToolRule } from "../mcp/policy.js";
 import { CORE_PROVIDER_ID } from "./providers.js";
 
 // Operator-owned assistant policy, living in the gateway's own data directory.
@@ -14,6 +15,8 @@ import { CORE_PROVIDER_ID } from "./providers.js";
 // dialog, which cannot express a list that changes as the fleet changes.
 
 export interface AssistantSettings {
+  mcpToolRules?: Record<string, ToolRule>;
+  mcpPolicyMigrated?: string[];
   immediateHandoffs?: boolean;
   /**
    * Operator text appended to the harness's own instruction sources — never replacing them. The
@@ -107,6 +110,8 @@ export class SettingsStore {
       const parsed = JSON.parse(await readFile(this.file, "utf8")) as Partial<AssistantSettings>;
       this.cached = withCoreDefaults({
         immediateHandoffs: parsed.immediateHandoffs === true,
+        mcpToolRules: validRules(parsed.mcpToolRules) ? parsed.mcpToolRules : {},
+        mcpPolicyMigrated: Array.isArray(parsed.mcpPolicyMigrated) ? parsed.mcpPolicyMigrated.filter(v => typeof v === "string") : [],
         systemPrompt: typeof parsed.systemPrompt === "string" ? parsed.systemPrompt : "",
         mcpProviders: isBooleanRecord(parsed.mcpProviders) ? parsed.mcpProviders : {},
         mcpAutoAllow: isBooleanRecord(parsed.mcpAutoAllow) ? parsed.mcpAutoAllow : {},
@@ -126,6 +131,13 @@ export class SettingsStore {
     // is never one another writer has already replaced. A rejected predecessor must not poison the
     // chain, hence the swallow.
     const run = this.queue.then(() => this.applyUpdate(patch), () => this.applyUpdate(patch));
+    this.queue = run.catch(() => undefined);
+    return run;
+  }
+
+  async transform(change: (current: AssistantSettings) => Partial<AssistantSettings>): Promise<AssistantSettings> {
+    const apply = async () => this.applyUpdate(change(await this.read()));
+    const run = this.queue.then(apply, apply);
     this.queue = run.catch(() => undefined);
     return run;
   }
@@ -152,6 +164,8 @@ export class SettingsStore {
   ): Promise<AssistantSettings> {
     const current = await this.read();
     const next: AssistantSettings = {
+      mcpToolRules: patch.mcpToolRules ?? current.mcpToolRules ?? {},
+      mcpPolicyMigrated: patch.mcpPolicyMigrated ?? current.mcpPolicyMigrated ?? [],
       immediateHandoffs: patch.immediateHandoffs ?? current.immediateHandoffs ?? false,
       systemPrompt: (patch.systemPrompt ?? current.systemPrompt).slice(0, MAX_SYSTEM_PROMPT_CHARS),
       mcpProviders: patch.mcpProviders ?? current.mcpProviders,

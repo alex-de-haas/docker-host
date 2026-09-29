@@ -1,7 +1,7 @@
 # AI Agent Bridge
 
 Created: 2026-08-14
-Updated: 2026-09-27
+Updated: 2026-09-29
 
 The umbrella for Hosty's AI integration: how an authenticated user works with runtime apps and app
 source through an agent, without the model ever holding credentials, unrestricted application access,
@@ -74,7 +74,8 @@ environment plus the credentials it holds.
 **Operator profile (admin only)** — shipped. A host-resident CLI agent harness supervised by the
 gateway, with shell and filesystem access on the host: it reads live logs and telemetry, diagnoses
 failures, edits app source through the existing dev-mode and source workflows, and calls Core MCP and
-app MCP endpoints like any other client. Every write pauses for approval. See
+app MCP endpoints like any other client. MCP tools use per-tool Ask / Run unprompted / Disabled;
+native tool policy remains adapter-specific. See
 [ai-gateway](../ai-gateway/feature.md) for the harnesses, the approval mechanics and the Shell
 surface.
 
@@ -185,15 +186,15 @@ expected app id and fails closed when the id or the key is missing.
 
 ## Approval Posture
 
-In v1 **every write is approval-gated, with no exceptions and no session-scoped blanket approvals.**
-The trust model is new and the operator profile touches the host. Read-only tools are auto-allowed.
-Per-session allowlists for repeated low-risk actions are a later iteration informed by real usage.
+Harness enforces shared per-tool MCP Ask / Run unprompted / Disabled rules for both adapters,
+including writes. Its authenticated local proxy owns the pause and checks identity/policy again at
+dispatch; app permissions and Core-issued token audience remain independent hard limits. Native
+file/command controls retain their adapter-specific behavior. See
+[assistant approval rules](../assistant-approval-rules/feature.md).
 
-Operator sessions enforce this through the harness permission callback. Client-side layers are UX;
-the hard limit for any client is app-side domain permissions plus Core-issued token audience — which
-is why external MCP clients get no write path until scopes and an audit callback contract exist. The
-external path is read-only today because the tools it can reach are read-only, not because any scope
-enforces it; it is audited through token-issuance records and app logs.
+The external facade remains read-only. Internal Core development operations use their separate
+reviewed app permission and revalidated user authority; allowing an MCP tool unprompted does not
+upgrade a delegated token or the external client's access.
 
 ## Access Paths
 

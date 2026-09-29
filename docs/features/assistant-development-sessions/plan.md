@@ -2,7 +2,7 @@
 
 Status: Draft
 Created: 2026-09-24
-Updated: 2026-09-27
+Updated: 2026-09-29
 
 ## Goal
 
@@ -93,7 +93,7 @@ Three roles stay distinct:
   justify revisiting them; existing restrictions remain. Core-managed Git operations are the intended path, but preventing
   direct Git/host access with a Hosty-owned sandbox is not a workspace prerequisite. Core retains
   its API authorization and independent observation without claiming exclusive execution.
-  Details belong to [PR lifecycle](../assistant-pr-lifecycle/plan.md).
+  Details belong to [PR lifecycle](../assistant-pr-lifecycle/feature.md).
 - **History after cleanup.** A completed merged worktree need not be retained for diff viewing.
   Preserve session-to-PR references in the assistant's session record; Core can query the provider
   for PR changes/state on demand. Multiple original/corrective PRs remain associated with the same
@@ -158,7 +158,7 @@ Uncommitted changes in the operator's main checkout are not part of this baselin
 | [AHP client interface](../assistant-ahp/plan.md) | Bounded client/ingress spike and replaceable projection over Hosty sessions; existing web REST/SSE remains |
 | [Shared history and switching](../assistant-shared-history/plan.md) | Hosty session journal/adapters, provider context reconciliation and session sharing |
 | [Session workspaces](../assistant-session-workspaces/feature.md) | Registered linked worktrees, agent instructions, diffs and cleanup; Core API authorization remains required, new filesystem isolation is deferred |
-| [PR lifecycle](../assistant-pr-lifecycle/plan.md) | Publish/review/Merge/Complete, credentials, CI, ordered dependencies and corrective PRs |
+| [PR lifecycle](../assistant-pr-lifecycle/feature.md) | Publish/review/Merge/Complete, credentials, CI, ordered dependencies and corrective PRs |
 | [Action summary](../assistant-action-summary/plan.md) | Evidence-linked aggregation/UI over Hosty invocation events |
 | [Timeline analysis](../assistant-timeline-analysis/plan.md) | Later analysis over the event foundation; does not gate basic shared sessions or summary |
 | [Feedback inbox](../app-feedback-inbox/plan.md) | Independent ordinary-user intake and admin triage/batch delivery outside the privileged Harness process |
