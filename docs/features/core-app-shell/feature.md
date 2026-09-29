@@ -102,6 +102,7 @@ autostart back on.
 Below 1240 px of dashboard workspace width, the header actions collapse into an **App actions**
 ellipsis menu at the same breakpoint as the row shortcuts. The menu contains Install app,
 Check updates (disabled while a check is running), and Update all when routine updates are available.
+Checking updates keeps the menu open so its progress indicator remains visible.
 At wider widths, the existing icon buttons remain visible. Opening the assistant panel or resizing
 it changes this layout based on the remaining workspace width, not the browser viewport.
 

@@ -372,7 +372,7 @@ export function DashboardPage({
                     <DropdownMenuItem onSelect={() => onInstall()}>
                       <Plus className="h-4 w-4" /> Install app
                     </DropdownMenuItem>
-                    <DropdownMenuItem onSelect={onCheckUpdates} disabled={checkingUpdates}>
+                    <DropdownMenuItem onSelect={(event) => { event.preventDefault(); onCheckUpdates(); }} disabled={checkingUpdates}>
                       {checkingUpdates ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ArrowUpCircle className="h-4 w-4" />}
                       {checkingUpdates ? "Checking updates…" : "Check updates"}
                     </DropdownMenuItem>
