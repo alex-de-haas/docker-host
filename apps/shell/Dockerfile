@@ -1,6 +1,6 @@
 # Base pinned by digest for reproducible builds. To update: re-pin with
 #   docker buildx imagetools inspect node:24-bookworm-slim --format '{{.Manifest.Digest}}'
-FROM --platform=$BUILDPLATFORM node:24-bookworm-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553 AS builder
+FROM --platform=$BUILDPLATFORM node:24-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 AS builder
 WORKDIR /repo
 COPY package.json package-lock.json ./
 COPY apps/shell/package.json apps/shell/package.json
@@ -12,7 +12,7 @@ ENV NODE_ENV=production
 RUN npm run shell:build \
   && npm cache clean --force
 
-FROM node:24-bookworm-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553 AS runner
+FROM node:24-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 AS runner
 WORKDIR /repo
 ENV NODE_ENV=production
 ENV PORT=3000
