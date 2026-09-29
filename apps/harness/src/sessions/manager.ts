@@ -630,6 +630,7 @@ export class SessionManager {
             }
           }
 
+          this.mcpPolicy.cancel(id); // A new native client starts a fresh JSON-RPC request namespace.
           session.run = selectedAdapter.start({
             sessionId: id,
             cwd: workspace ?? this.workDir,
@@ -851,6 +852,7 @@ export class SessionManager {
     const servers = await this.buildMcpServers(session, candidates);
     const signature = JSON.stringify([servers ?? {}, session.mcpTargetSignature]);
     if (session.mcpSignature === signature) return true;
+    this.mcpPolicy.cancel(session.record.id); // Reconfiguration can replace the native client.
     const applied = await session.run.setMcpServers(servers ?? {}).catch(() => false);
     if (!applied && session.mcpNoticeSignature !== signature) {
       session.mcpNoticeSignature = signature;

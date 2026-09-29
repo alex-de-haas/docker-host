@@ -144,6 +144,13 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Null(corrective.Number); Assert.Null(corrective.PublishedHead);
         Assert.Equal(42, Assert.Single(corrective.History).Number);
         Assert.NotEqual(f.W.Branch, corrective.Branch);
+        var remote = Path.Combine(f.F.Root, "corrective-remote.git");
+        await RunGitAsync(f.F.Root, ["init", "--bare", remote]);
+        await RunGitAsync(f.W.Path, ["push", remote, head + ":refs/heads/" + f.W.Branch]);
+        await RunGitAsync(f.W.Path, ["push", remote, head + ":refs/heads/" + corrective.Branch]);
+        var refs = await RunGitAsync(remote, ["for-each-ref", "--format=%(refname)", "refs/heads/"]);
+        Assert.Contains("refs/heads/" + f.W.Branch, refs);
+        Assert.Contains("refs/heads/" + corrective.Branch, refs);
     }
     [Fact]
     public async Task Publication_RejectsCyclesAndMissingOtherWorkspaceDisposition()
@@ -153,10 +160,13 @@ public sealed partial class CoreLifecycleServiceTests
         var otherRepo = await CreateGitRepositoryAsync(Path.Combine(f.F.Root, "other-repo"));
         var app = (await f.F.Apps.GetAppAsync(SourceTestApp))!;
         await f.F.Apps.UpsertAppAsync(app with { Id = "other-app", SourceState = app.SourceState! with { Repository = otherRepo, LocalOverridePath = otherRepo } });
-        await f.Workspaces.PrepareAsync(f.W.Owner, WorkspaceRequest() with { AppId = "other-app" }, default);
+        var legacy = await f.Workspaces.PrepareAsync(f.W.Owner, WorkspaceRequest() with { AppId = "other-app" }, default);
         await f.Service.CommandAsync(f.W.Id, f.W.Owner, "publish", new(Guid.NewGuid().ToString(), f.W.Observation!.Head, Title: "Feature"), default);
         var error = await Assert.ThrowsAsync<PublicationException>(() => f.Service.CommandAsync(f.W.Id, f.W.Owner, "complete", new(Guid.NewGuid().ToString(), f.W.Observation.Head, Outcome: "submitted"), default));
         Assert.Equal("publication_session_unpublished", error.Code);
+        await f.Workspaces.CommandAsync(legacy.Id, f.W.Owner, "cleanup", new(Guid.NewGuid().ToString(), legacy.OriginalBase), default);
+        var completed = await f.Service.CommandAsync(f.W.Id, f.W.Owner, "complete", new(Guid.NewGuid().ToString(), f.W.Observation.Head, Outcome: "submitted"), default);
+        Assert.Equal("submitted", completed.Outcome);
     }
     [Fact]
     public async Task Publication_UnpublishedAbandonmentIsExplicitAndPreservesWork()

@@ -119,7 +119,7 @@ internal sealed class PublicationService(CoreDataPaths paths, DevelopmentWorkspa
         {
             if (workspace.Id == current.WorkspaceId) continue;
             var other = await Read(workspace.Id, ct);
-            if (other?.Outcome == "abandoned") continue;
+            if (other?.Outcome == "abandoned" || other is null && workspace.State == "released") continue;
             if (other is null) throw new PublicationException("session_unpublished", "Another session workspace has no published disposition.");
             other = await Observe(other, ct);
             if (other.Observation?.Head != other.PublishedHead || other.PublishedHead is null ||
@@ -265,7 +265,7 @@ internal sealed class PublicationService(CoreDataPaths paths, DevelopmentWorkspa
                     {
                         RequireHead(w, input);
                         if (record.Observation.State != "merged" || record.Outcome is not null) throw new PublicationException("corrective_invalid", "A corrective PR requires a merged PR in an unfinished session.");
-                        record = record with { History = [.. record.History, new(record.Number.Value, record.Url!, record.Observation.Head, record.Observation.MergeCommit)], Number = null, Url = null, PublishedHead = null, Observation = null, Branch = w.Branch + "/corrective/" + input.RequestId };
+                        record = record with { History = [.. record.History, new(record.Number.Value, record.Url!, record.Observation.Head, record.Observation.MergeCommit)], Number = null, Url = null, PublishedHead = null, Observation = null, Branch = w.Branch + "-corrective-" + input.RequestId };
                     }
                     else if (kind == "complete")
                     {

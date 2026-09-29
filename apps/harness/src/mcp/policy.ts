@@ -22,6 +22,7 @@ export class McpToolPolicy {
   private readonly catalogs = new Map<string, ToolCatalog>();
   private readonly pending = new Map<string, Pending>();
   private readonly dispatched = new Map<string, string>();
+  private readonly generations = new Map<string, symbol>();
   constructor(private readonly settings: SettingsStore | null,
     private readonly notify: (session: string, event: { type: "approval_request"; approvalId: string; toolName: string; input: unknown }) => Promise<void>,
     private readonly settled: (session: string, id: string, tool: string, allowed: boolean, automatic: boolean) => Promise<void>,
@@ -82,6 +83,8 @@ export class McpToolPolicy {
     return catalog?.identity === identity && current && rule?.identity === identity && rule.definition === definition(current) ? rule.mode : "ask";
   }
   async authorize(session: string, provider: string, identity: string, requestId: string, tool: string, input: unknown, signal: AbortSignal): Promise<() => Promise<void>> {
+    const generation = this.generations.get(session) ?? Symbol();
+    this.generations.set(session, generation);
     const key = JSON.stringify([session, provider, requestId]);
     const fingerprint = createHash("sha256").update(JSON.stringify([identity, tool, input])).digest("hex");
     if (this.dispatched.has(key)) throw new Error(this.dispatched.get(key) === fingerprint
@@ -91,7 +94,7 @@ export class McpToolPolicy {
     this.dispatched.set(key, fingerprint);
     let mode = await this.mode(provider, identity, tool);
     if (mode === "disabled") throw new Error("This tool is disabled in Harness MCP settings.");
-    if (signal.aborted) throw new Error("MCP request was canceled before dispatch.");
+    if (signal.aborted || this.generations.get(session) !== generation) throw new Error("MCP request was canceled before dispatch.");
     const observedTool = this.catalogs.get(provider)?.tools.find(t => t.name === tool);
     const observedDefinition = observedTool && definition(observedTool);
     if (!observedDefinition || this.catalogs.get(provider)?.identity !== identity) throw new Error("Unknown or changed tool; discover tools again.");
@@ -100,7 +103,7 @@ export class McpToolPolicy {
       const currentMode = await this.mode(provider, identity, tool);
       const current = this.catalogs.get(provider);
       const currentTool = current?.tools.find(t => t.name === tool);
-      if (signal.aborted || current?.identity !== identity || !currentTool || definition(currentTool) !== observedDefinition ||
+      if (signal.aborted || this.generations.get(session) !== generation || current?.identity !== identity || !currentTool || definition(currentTool) !== observedDefinition ||
           currentMode === "disabled" || automatic && currentMode !== "run")
         throw new Error("Tool policy changed or the request was canceled before dispatch. Retry with a new MCP request.");
     };
@@ -130,6 +133,7 @@ export class McpToolPolicy {
     this.pending.delete(id); pending.finish(allowed); return true;
   }
   cancel(session: string): void {
+    this.generations.delete(session);
     for (const p of this.pending.values()) if (p.session === session) p.finish(false);
     for (const key of this.dispatched.keys()) if (JSON.parse(key)[0] === session) this.dispatched.delete(key);
   }

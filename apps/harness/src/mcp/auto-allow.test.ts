@@ -143,15 +143,18 @@ describe("per-app auto-allow", () => {
     await vi.waitFor(async () => expect((await store.readEvents(record.id)).some(event => event.type === "result")).toBe(true));
     const live = (manager as unknown as { live: Map<string, { run: { setMcpServers: () => Promise<boolean> } }> }).live.get(record.id)!;
     const reconfigure = vi.spyOn(live.run, "setMcpServers").mockResolvedValue(false);
+    const renewRequests = vi.spyOn(manager.mcpPolicy, "cancel");
     directoryRevision = "unrelated-app-stopped";
     await manager.postMessage(record.id, "next turn", "seed-credential");
     expect(reconfigure).not.toHaveBeenCalled();
+    expect(renewRequests).not.toHaveBeenCalled();
     expect((await store.readEvents(record.id)).filter(event => event.type === "notice")).toHaveLength(0);
 
     providerUrl = `http://${APP}:9999/api/mcp`;
     directoryRevision = "target-url-changed";
     await manager.postMessage(record.id, "another turn", "seed-credential");
     expect(reconfigure).toHaveBeenCalledTimes(1);
+    expect(renewRequests).toHaveBeenCalledWith(record.id);
     expect((await store.readEvents(record.id)).filter(event => event.type === "notice")).toHaveLength(1);
   });
 

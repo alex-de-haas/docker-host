@@ -11,12 +11,13 @@ public sealed class GitHubPublicationTests
     private sealed class Http : HttpMessageHandler
     {
         public readonly Queue<string> Replies = new();
+        public readonly Dictionary<int, HttpStatusCode> Statuses = new();
         public readonly List<(string Url, string? Authorization, string Body)> Calls = [];
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             Calls.Add((request.RequestUri!.ToString(), request.Headers.Authorization?.ToString(), request.Content is null ? "" : await request.Content.ReadAsStringAsync(ct)));
             Assert.NotEmpty(Replies);
-            return new(HttpStatusCode.OK) { Content = new StringContent(Replies.Dequeue(), Encoding.UTF8, "application/json") };
+            return new(Statuses.GetValueOrDefault(Calls.Count, HttpStatusCode.OK)) { Content = new StringContent(Replies.Dequeue(), Encoding.UTF8, "application/json") };
         }
     }
     private static UserProviderConnection Connection => new("c", "admin", "GitHub", "github", "", "", "42", "owner", "pat", "provider-secret", null, null, null, DateTimeOffset.UtcNow, null, "connected", "r");
@@ -41,10 +42,51 @@ public sealed class GitHubPublicationTests
     public async Task ForkIsVerifiedAgainstUpstreamNetworkAndPushRights()
     {
         var h = new Http(); h.Replies.Enqueue("""{"full_name":"owner/repo","permissions":{"push":false}}""");
-        h.Replies.Enqueue("""{"full_name":"user/repo"}"""); h.Replies.Enqueue("""{"source":{"full_name":"owner/repo"},"permissions":{"push":true}}""");
+        h.Replies.Enqueue("""{"id":42,"login":"user"}"""); h.Replies.Enqueue("[]");
+        h.Replies.Enqueue("""{"full_name":"user/repo"}"""); h.Replies.Enqueue(Fork());
         var provider = new GitHubPublicationProvider(new HttpClient(h), new Clock());
         Assert.Equal("user/repo", await provider.DestinationAsync(Connection, "owner/repo", false, default));
         Assert.All(h.Calls, call => { Assert.StartsWith("https://api.github.com/", call.Url); Assert.Equal("Bearer provider-secret", call.Authorization); });
+    }
+    private static string Fork(string name = "user/repo") => new JsonObject {
+        ["full_name"] = name, ["fork"] = true, ["owner"] = new JsonObject { ["id"] = 42 },
+        ["source"] = new JsonObject { ["full_name"] = "owner/repo" }, ["permissions"] = new JsonObject { ["push"] = true }
+    }.ToJsonString();
+    [Fact]
+    public async Task ExistingRenamedForkIsReusedWithoutCreatingAnother()
+    {
+        var h = new Http(); h.Replies.Enqueue("""{"full_name":"owner/repo","permissions":{"push":false}}""");
+        h.Replies.Enqueue("""{"id":42,"login":"user"}""");
+        h.Replies.Enqueue("[" + Fork("user/renamed") + "]"); h.Replies.Enqueue(Fork("user/renamed"));
+        Assert.Equal("user/renamed", await new GitHubPublicationProvider(new HttpClient(h), new Clock()).DestinationAsync(Connection, "owner/repo", false, default));
+        Assert.DoesNotContain(h.Calls, c => c.Url.EndsWith("/forks"));
+    }
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ForkReconcilesLostCreateResponseOrDelayedLookup(bool delayedLookup)
+    {
+        var h = new Http(); h.Replies.Enqueue("""{"full_name":"owner/repo","permissions":{"push":false}}""");
+        h.Replies.Enqueue("""{"id":42,"login":"user"}"""); h.Replies.Enqueue("[]");
+        h.Replies.Enqueue(delayedLookup ? """{"full_name":"user/repo"}""" : "{}");
+        if (delayedLookup) { h.Replies.Enqueue("{}"); h.Statuses[5] = HttpStatusCode.NotFound; }
+        else h.Statuses[4] = HttpStatusCode.BadGateway;
+        h.Replies.Enqueue("[" + Fork() + "]"); h.Replies.Enqueue(Fork());
+        Assert.Equal("user/repo", await new GitHubPublicationProvider(new HttpClient(h), new Clock()).DestinationAsync(Connection, "owner/repo", false, default));
+        Assert.Single(h.Calls, c => c.Url.EndsWith("/forks"));
+    }
+    [Theory]
+    [InlineData("success", true)]
+    [InlineData("failure", false)]
+    public async Task RequiredChecksShareOneHeadBoundSnapshot(string second, bool complete)
+    {
+        var h = new Http(); h.Replies.Enqueue(Graph("MERGED"));
+        h.Replies.Enqueue(new JsonObject { ["total_count"] = 2, ["check_runs"] = new JsonArray(
+            new JsonObject { ["name"] = "build", ["head_sha"] = "merge", ["conclusion"] = "success", ["status"] = "completed" },
+            new JsonObject { ["name"] = "test", ["head_sha"] = "merge", ["conclusion"] = second, ["status"] = "completed" }) }.ToJsonString());
+        var observed = await new GitHubPublicationProvider(new HttpClient(h), new Clock()).ObserveAsync(Connection, Record with { Policy = new(["build", "test"], [], []) }, default);
+        Assert.Equal(complete, observed.Complete);
+        Assert.Single(h.Calls, c => c.Url.Contains("/check-runs?"));
     }
     [Fact]
     public async Task ObservationRefusesForeignHeadAndTruncatedReviewData()

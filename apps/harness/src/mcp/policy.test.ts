@@ -91,3 +91,14 @@ it("rejects malformed rule keys and unknown tools", async () => {
   await expect(call()).rejects.toThrow("Unknown");
   expect(notify).not.toHaveBeenCalled();
 });
+
+it("scopes RPC replay checks to the native client lifetime and invalidates old dispatch guards", async () => {
+  await policy.update({ [ruleKey("app", "merge")]: { identity: "install-1", mode: "run" } });
+  const old = await call("1");
+  await expect(call("1")).rejects.toThrow("already received");
+  policy.cancel("session");
+  await expect(old()).rejects.toThrow("canceled");
+  const current = await call("1");
+  await current();
+  await expect(call("1")).rejects.toThrow("already received");
+});

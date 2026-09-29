@@ -21,11 +21,12 @@ Native Claude MCP callbacks and marked Codex proxy entries delegate their approv
 These changes do not relax Core/app authority, repository protection or native file/command policy.
 A native tool bypass is not evidence of bypassing this HTTP MCP gate.
 
-Approval is bound to session, provider, RPC request identity and argument fingerprint. Another user's
+Approval is bound to session, native-client generation, provider, RPC request identity and argument fingerprint. Another user's
 session cannot approve it. Denial, a ninety-second timeout, disconnect or session cancellation stops
 pending dispatch. Pending approval references are persisted; startup recovery denies them rather than
 replaying a mutation. Duplicate RPC identities are refused with instructions to inspect the outcome;
-Core operations retain their independent idempotent request IDs. Refresh/reconfiguration rechecks the
+A native client start or server reconfiguration cancels pending approvals and starts a fresh RPC
+namespace, invalidating old dispatch guards. Core operations retain their independent idempotent request IDs. Refresh/reconfiguration rechecks the
 provider identity, current policy and a freshly minted token before forwarding. Already-dispatched
 provider operations are not rolled back by a later settings change.
 

@@ -23,8 +23,13 @@ it("gates real local MCP calls once and refuses a disabled mutation before invoc
     const pending = call(1); const id = await ready;
     expect(invoked).toBe(0); expect(policy.resolve("session", id, true)).toBe(true);
     expect((await (await pending).json() as { result: { isError?: boolean } }).result.isError).toBeUndefined(); expect(invoked).toBe(1);
+    await policy.update({ [ruleKey(DEVELOPMENT_PROVIDER, "pr_merge")]: { identity: DEVELOPMENT_IDENTITY, mode: "run" } });
+    expect((await (await call(1)).json() as { result: { isError?: boolean } }).result.isError).toBe(true);
+    policy.cancel("session"); // SessionManager does this before replacing/reconfiguring a native client.
+    expect((await (await call(1)).json() as { result: { isError?: boolean } }).result.isError).toBeUndefined();
+    expect(invoked).toBe(2);
     await policy.catalog(DEVELOPMENT_PROVIDER, DEVELOPMENT_IDENTITY, developmentTools());
     await policy.update({ [ruleKey(DEVELOPMENT_PROVIDER, "pr_merge")]: { identity: DEVELOPMENT_IDENTITY, mode: "disabled" } });
-    expect((await (await call(2)).json() as { result: { isError?: boolean } }).result.isError).toBe(true); expect(invoked).toBe(1);
+    expect((await (await call(2)).json() as { result: { isError?: boolean } }).result.isError).toBe(true); expect(invoked).toBe(2);
   } finally { policy.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await rm(dir, { recursive: true, force: true }); }
 });

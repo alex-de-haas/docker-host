@@ -53,14 +53,51 @@ internal sealed class GitHubPublicationProvider(HttpClient http, IClock clock) :
     {
         var repo = await Request(c, HttpMethod.Get, "/repos/" + Slug(repository), null, ct);
         if (!fork && repo["permissions"]?["push"]?.GetValue<bool>() == true) return repository;
-        var created = await Request(c, HttpMethod.Post, "/repos/" + repository + "/forks", new JsonObject(), ct);
-        var destination = Slug(Text(created, "full_name"));
-        var verified = await Request(c, HttpMethod.Get, "/repos/" + destination, null, ct);
-        if (!string.Equals(Text(verified["source"], "full_name"), Text(repo["source"] ?? repo, "full_name"), StringComparison.OrdinalIgnoreCase) ||
-            verified["permissions"]?["push"]?.GetValue<bool>() != true)
-            throw new PublicationException("fork_unavailable", "The fork is not ready or does not belong to this repository network. Retry the same request.");
-        return destination;
+        var account = await Request(c, HttpMethod.Get, "/user", null, ct);
+        if (account["id"]?.ToString() != c.AccountId) throw new PublicationException("identity_changed", "Reconnect the selected GitHub account.");
+        var login = Text(account, "login");
+        var network = Text(repo["source"] ?? repo, "full_name");
+        async Task<string?> ExistingFork()
+        {
+            for (var page = 1; page <= 10; page++)
+            {
+                var owned = (await Request(c, HttpMethod.Get, $"/user/repos?affiliation=owner&per_page=100&page={page}", null, ct)).AsArray();
+                foreach (var candidate in owned.Where(n => n?["fork"]?.GetValue<bool>() == true && n?["owner"]?["id"]?.ToString() == c.AccountId))
+                {
+                    var name = Slug(Text(candidate, "full_name"));
+                    if (!name.StartsWith(login + "/", StringComparison.OrdinalIgnoreCase)) continue;
+                    var verified = await Request(c, HttpMethod.Get, "/repos/" + name, null, ct);
+                    if (ValidFork(verified, name)) return name;
+                }
+                if (owned.Count < 100) return null;
+            }
+            throw new PublicationException("fork_unavailable", "Owned repository discovery is incomplete. Existing forks cannot be reconciled safely.");
+        }
+        bool ValidFork(JsonNode verified, string name) =>
+            name.StartsWith(login + "/", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(Text(verified, "full_name"), name, StringComparison.OrdinalIgnoreCase) &&
+            verified["owner"]?["id"]?.ToString() == c.AccountId &&
+            string.Equals(Text(verified["source"], "full_name"), network, StringComparison.OrdinalIgnoreCase) &&
+            verified["permissions"]?["push"]?.GetValue<bool>() == true;
+        var existing = await ExistingFork();
+        if (existing is not null) return existing;
+        try
+        {
+            var created = await Request(c, HttpMethod.Post, "/repos/" + repository + "/forks", new JsonObject(), ct);
+            var destination = Slug(Text(created, "full_name"));
+            var verified = await Request(c, HttpMethod.Get, "/repos/" + destination, null, ct);
+            if (!ValidFork(verified, destination)) throw new PublicationException("fork_unavailable", "The fork is not yet available with verified ownership, network and push rights. Retry the same request.");
+            return destination;
+        }
+        catch (Exception ex) when (ex is PublicationException or HttpRequestException || ex is OperationCanceledException && !ct.IsCancellationRequested)
+        {
+            // Creation can succeed despite a lost response or delayed immediate lookup.
+            existing = await ExistingFork();
+            if (existing is not null) return existing;
+            throw;
+        }
     }
+
     public async Task PushAsync(UserProviderConnection c, DevelopmentWorkspace w, string destination, string branch, string head, CancellationToken ct)
     {
         var url = "https://github.com/" + Slug(destination) + ".git";
@@ -129,10 +166,12 @@ internal sealed class GitHubPublicationProvider(HttpClient http, IClock clock) :
     private async Task<bool> Completion(UserProviderConnection c, PublicationRecord r, string commit, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(commit)) return false;
-        foreach (var name in r.Policy.RequiredChecks)
+        if (r.Policy.RequiredChecks.Length > 0)
         {
             var checks = await Request(c, HttpMethod.Get, $"/repos/{r.Repository}/commits/{commit}/check-runs?per_page=100&filter=latest", null, ct);
-            if (checks["total_count"]!.GetValue<int>() > 100 || !checks["check_runs"]!.AsArray().Any(n => Text(n, "name") == name && Text(n, "head_sha") == commit && Text(n, "conclusion") == "success" && Text(n, "status") == "completed")) return false;
+            if (checks["total_count"]!.GetValue<int>() > 100) return false;
+            var runs = checks["check_runs"]!.AsArray();
+            if (r.Policy.RequiredChecks.Any(name => !runs.Any(n => Text(n, "name") == name && Text(n, "head_sha") == commit && Text(n, "conclusion") == "success" && Text(n, "status") == "completed"))) return false;
         }
         foreach (var workflow in r.Policy.RequiredWorkflows)
         {

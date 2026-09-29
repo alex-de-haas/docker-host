@@ -3,6 +3,12 @@
 Created: 2026-09-29
 Updated: 2026-09-29
 
+The owner explicitly approved Ready and implementation in chat on 2026-09-29, including GitHub-first
+scope and the shared MCP policy. The approved working plan was marked Ready before implementation;
+its completed replacement and code were committed together after the later request to prepare a PR.
+There is no separate intermediate status commit. Remaining native permissions were not authorized by
+that approval and retain their separate Draft plan.
+
 Core owns GitHub.com publication records for registered session workspaces. The assistant chooses
 when to commit, publish a draft or ready PR, resolve addressed feedback, merge, complete and request
 cleanup. Core validates and executes those requests and observes remote facts independently. A passed
@@ -13,7 +19,7 @@ check does not schedule a merge. Core does not own the conversation or decide it
 The internal API extends the workspace owner tuple: assistant app ID and installation, administrator
 user ID and session ID. Every request needs both the app service token and a current user credential
 addressed to that app, the existing `apps.workspaces.manage` grant and the new
-`apps.publications.manage` installation grant. Install Core 0.114.0 before updating Harness 0.37.0;
+`apps.publications.manage` installation grant. Install Core 0.114.1 before updating Harness 0.37.1;
 review the new permission during the app update. Editing a manifest alone does not grant it.
 
 Each publication explicitly selects one of the user's GitHub connections. Core uses the existing
@@ -50,7 +56,9 @@ writes and merge; there is no separate PR approval toggle.
 
 Configure binds a canonical HTTPS GitHub.com repository to a concrete connection. It selects the
 upstream when the account can push, otherwise creates/verifies a fork in the upstream network.
-An explicit `fork` also selects this path. Provider restrictions, fork creation delay, missing PAT
+An explicit `fork` also selects this path. Core first reconciles user-owned forks (including renamed
+forks), verifies the upstream network and push rights, and repeats reconciliation after an uncertain
+creation response. Provider restrictions, fork creation delay, missing PAT
 permissions and unavailable identities produce actionable errors rather than assumed success.
 Configuration includes dependencies and completion requirements and is locked after publication.
 
@@ -102,14 +110,16 @@ artifact conditions. Operations remain per repository, preserve partial outcomes
 merge; they are not an atomic cross-repository transaction.
 
 A corrective operation preserves the merged PR reference and starts a fresh remote publication branch
-for the same registered checkout. Subsequent publish creates a new PR; the prior merged PR is not
+for the same registered checkout. The corrective branch is a sibling ref so the original remote
+branch can remain present. Subsequent publish creates a new PR; the prior merged PR is not
 updated. The assistant performs required source corrections/target integration in the worktree and
 can explicitly configure the new cycle's release selectors before publication.
 
 Complete accepts `merged`, `submitted` or `abandoned`. Merged requires verified post-merge evidence;
 submitted requires the intended open PR and records **Submitted for review**, without waiting for an
 upstream maintainer. The published head must equal the clean workspace head. Other session workspaces
-must have published, verified or explicit dispositions; incomplete dependencies remain blockers.
+must have published, verified or explicit dispositions. Already-released legacy workspaces without
+publication records retain their completed cleanup disposition; incomplete dependencies remain blockers.
 An abandoned disposition is explicit and is not displayed as successful completion. Unpublished work
 can be abandoned without inventing a PR; automatic publication cleanup is refused because it lacks
 a remote recovery reference. Explicit workspace cleanup retains its ordinary checks. A completed
