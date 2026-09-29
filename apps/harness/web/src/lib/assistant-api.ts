@@ -335,3 +335,12 @@ export type Workspace = {
 export async function workspaceAction<T>(sessionId: string, action: string, input: Record<string, unknown> = {}): Promise<T> {
   return (await call(`/sessions/${encodeURIComponent(sessionId)}/workspaces`, { method: "POST", body: JSON.stringify({ ...input, action }) })).json();
 }
+
+export interface Publication {
+  workspaceId: string; repository: string; branch: string; targetBranch: string; number?: number; url?: string;
+  outcome?: string; completedAt?: string; cleanupRequested: boolean; dependencies: string[];
+  observation?: { at: string; state: string; head?: string; mergeCommit?: string; draft: boolean; mergeState?: string;
+    reviewDecision?: string; unresolvedThreads: number; complete: boolean; checks?: { name: string; state: string }[]; error?: string };
+  history: { number: number; url: string }[];
+  operations: { id: string; kind: string; state: string; error?: string }[];
+}

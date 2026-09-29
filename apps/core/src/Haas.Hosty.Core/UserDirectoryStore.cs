@@ -113,7 +113,8 @@ internal sealed record HostUserRecord(
     string Role,
     bool Disabled,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    PublicationIdentity? GitIdentity = null);
 
 internal sealed record HostInvitationRecord(
     string Id,

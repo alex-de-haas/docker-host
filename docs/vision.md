@@ -1,7 +1,7 @@
 # Hosty Platform Vision
 
 Created: 2026-08-19
-Updated: 2026-09-27
+Updated: 2026-09-29
 
 The umbrella document: where Hosty is going, so individual decisions have a criterion to be judged
 against. It authorizes no implementation and owns no deliverables — work it names is tracked in the
@@ -255,7 +255,7 @@ Decisions 1–5: 2026-08-19.
     sessions keep PR references and Core can retrieve provider-held diffs/status. Authorized cleanup
     still respects active consumers and unpublished work. The
     [workspace](features/assistant-session-workspaces/feature.md) and
-    [PR lifecycle](features/assistant-pr-lifecycle/plan.md) plans own implementation.
+    [PR lifecycle](features/assistant-pr-lifecycle/feature.md) own implementation.
 
 18. **Harness uses a coordinated breaking replacement (2026-09-27).** Ship Core, Shell and Harness
     changes in one feature PR; operators update Core first, Shell next, then replace the old Gateway

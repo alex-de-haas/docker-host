@@ -2,7 +2,7 @@
 
 Status: Draft
 Created: 2026-09-26
-Updated: 2026-09-27
+Updated: 2026-09-29
 
 ## Goal And Owner Direction
 
@@ -59,7 +59,7 @@ for every assistant response. Unsupported generic-client controls should be repo
 Changesets are release-candidate in the inspected reference. Defer their projection to the
 [workspace feature](../assistant-session-workspaces/feature.md), preserving existing Hosty diffs in
 the meantime. The channel supports server-defined operations as well as file views, but
-[PR lifecycle](../assistant-pr-lifecycle/plan.md) still owns what Publish/Merge/Complete mean.
+[PR lifecycle](../assistant-pr-lifecycle/feature.md) still owns what Publish/Merge/Complete mean.
 Expose later Hosty capabilities through supported metadata/operations or scoped Hosty APIs;
 do not promise generic clients understand them or invent protocol commands without a contract.
 

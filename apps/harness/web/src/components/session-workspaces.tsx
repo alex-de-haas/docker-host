@@ -2,11 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { workspaceAction, type AssistantSession, type Workspace } from "@/lib/assistant-api";
+import { workspaceAction, type AssistantSession, type Workspace, type Publication } from "@/lib/assistant-api";
 
 export function SessionWorkspaces({ session, running }: { session: AssistantSession; running: boolean }) {
   const [open, setOpen] = useState(false);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [publications, setPublications] = useState<Publication[]>([]);
+  const [publicationError, setPublicationError] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [appId, setAppId] = useState("");
@@ -25,6 +27,17 @@ export function SessionWorkspaces({ session, running }: { session: AssistantSess
     const timer = setInterval(() => { if (document.visibilityState === "visible") void load(); }, 20000);
     return () => { active = false; clearInterval(timer); };
   }, [open, session.id]);
+  useEffect(() => {
+    setPublications([]); setPublicationError("");
+    if (!open) return;
+    let active = true;
+    const load = () => workspaceAction<{ publications: Publication[] }>(session.id, "pr-list").then(result => {
+      if (active) { setPublications(result.publications); setPublicationError(""); }
+    }).catch(cause => { if (active) setPublicationError(cause instanceof Error ? cause.message : String(cause)); });
+    void load();
+    const timer = setInterval(() => { if (document.visibilityState === "visible") void load(); }, 20000);
+    return () => { active = false; clearInterval(timer); };
+  }, [session.id, open]);
   const run = async (action: string, input: Record<string, unknown>, retry = false) => {
     const request = retry && pending.current ? pending.current : { action, input: { ...input, requestId: crypto.randomUUID() } };
     pending.current = request; setBusy(true); setError("");
@@ -50,6 +63,8 @@ export function SessionWorkspaces({ session, running }: { session: AssistantSess
         <Button size="sm" variant="ghost" disabled={busy} onClick={() => void refresh().catch(e => setError(e instanceof Error ? e.message : String(e)))}>Refresh</Button>
       </div>
       {error && <div role="alert" className="text-destructive">{error}{pending.current && <Button size="sm" variant="outline" disabled={busy} onClick={() => void run("", {}, true)}>Retry same request</Button>}</div>}
+      {publicationError && <p role="alert" className="text-xs text-destructive">Publication status: {publicationError}</p>}
+      {publications.map(p => <PublicationCard key={p.workspaceId} publication={p} />)}
       {workspaces.length === 0 && !error && <p className="text-muted-foreground">No worktrees for this session.</p>}
       {workspaces.map(workspace => <WorkspaceCard key={workspace.id} workspace={workspace} sessionId={session.id} busy={busy || running}
         cleanup={() => void run("cleanup", { workspaceId: workspace.id, expectedHead: workspace.observation?.head })}
@@ -94,5 +109,25 @@ function WorkspaceCard({ workspace: w, sessionId, busy, cleanup, refresh }: {
       </div>}
     </>}
     {w.pullRequests?.map(url => <a key={url} href={url} target="_blank" rel="noreferrer" className="block break-all underline">Pull request</a>)}
+  </section>;
+}
+
+function PublicationCard({ publication: p }: { publication: Publication }) {
+  const o = p.observation;
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 20000); return () => clearInterval(timer); }, []);
+  const stale = !o || now - Date.parse(o.at) > 90_000;
+  const label = p.outcome === "submitted" ? "Submitted for review" : p.outcome === "merged" ? "Completed" : p.outcome === "abandoned" ? "Abandoned" : o?.state === "merged" ? o.complete ? "Merged · release verified" : "Merged · awaiting release evidence" : o?.draft ? "Draft PR" : o?.state ?? "Not yet observed";
+  return <section className="space-y-2 rounded border p-2" aria-label={`Publication ${p.repository}`}>
+    <p className="break-all font-medium">{p.repository} · {label}</p>
+    {p.url && <a className="underline" href={p.url} target="_blank" rel="noreferrer">Pull request #{p.number}</a>}
+    <p className="text-xs">{p.branch} → {p.targetBranch} · {o?.head?.slice(0, 8) ?? "Unknown head"}</p>
+    <p className="text-xs text-muted-foreground">{o ? `Last checked ${new Date(o.at).toLocaleString()}` : "No provider observation"}{stale ? " · stale" : ""}</p>
+    {o?.error && <p role="alert">{o.error}</p>}
+    {o?.reviewDecision && <p className="text-xs">Review: {o.reviewDecision} · unresolved threads: {o.unresolvedThreads}</p>}
+    {o?.checks?.map((c, i) => <p key={`${c.name}-${i}`} className="text-xs">{c.name}: {c.state}</p>)}
+    {p.operations.filter(op => op.state !== "succeeded").map(op => <p key={op.id} className="text-xs">{op.kind}: {op.state} · {op.error}</p>)}
+    {p.cleanupRequested && <p className="text-xs">Cleanup queued until the worktree is clean and unused.</p>}
+    {p.history.map(h => <a key={h.number} className="block text-xs underline" href={h.url} target="_blank" rel="noreferrer">Previous PR #{h.number}</a>)}
   </section>;
 }

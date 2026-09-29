@@ -316,6 +316,40 @@ internal sealed class DevelopmentWorkspaceService(CoreDataPaths paths, AppRegist
             }
         }, ct);
 
+    internal Task<T> WithPublicationAsync<T>(string id, WorkspaceOwner owner, string head, Func<DevelopmentWorkspace, Task<T>> action, CancellationToken ct)
+        => Locked(async () =>
+        {
+            var w = await Observe(await Read(id, owner, ct), ct);
+            if (w.State != "active" || w.Observation is not { State: "ok", Conflict: false, Local: { Files.Count: 0, Truncated: false } } || w.Observation.Head != head)
+                throw Error("stale_head", "Publication requires the current clean workspace head.");
+            return await action(w);
+        }, ct);
+    internal Task<bool> AddPublicationReferenceAsync(string id, WorkspaceOwner owner, string url, CancellationToken ct)
+        => Locked(async () =>
+        {
+            var w = await Read(id, owner, ct);
+            await Save(w with { PullRequests = w.PullRequests.Append(url).Distinct().ToArray() }); return true;
+        }, ct);
+    // Only PublicationService calls this after persisting and revalidating the chosen completion outcome.
+    internal Task<DevelopmentWorkspace> ReleasePublishedAsync(string id, WorkspaceOwner owner, string publishedHead, CancellationToken ct)
+        => Locked(async () =>
+        {
+            var w = await Read(id, owner, ct);
+            if (w.State == "released") return w;
+            if (w.State == "releasing" && w.Operations.LastOrDefault(o => o.Id == "publication-cleanup") is { } pending)
+            {
+                if (pending.BeforeHead != publishedHead) throw Error("stale_head", "Publication cleanup head changed.");
+                return await FinishCleanup(w, pending, ct, published: true);
+            }
+            w = await Observe(w, ct);
+            if (w.Observation is not { State: "ok", Conflict: false, Local: { Files.Count: 0, Truncated: false } } || w.Observation.Head != publishedHead)
+                throw Error("dirty", "Published workspace changed; cleanup is unavailable.");
+            await CheckConsumers(w, ct);
+            var op = new WorkspaceOperation("publication-cleanup", "cleanup", publishedHead, "pending", publishedHead);
+            w = w with { State = "releasing", Operations = [.. w.Operations.Where(o => o.Id != op.Id), op] }; await Save(w);
+            return await FinishCleanup(w, op, ct, published: true);
+        }, ct);
+
     private static void RequireHead(WorkspaceCommand input)
     {
         if (string.IsNullOrWhiteSpace(input.ExpectedHead)) throw Error("head_required", "Expected HEAD is required for this mutation.");
@@ -402,7 +436,7 @@ internal sealed class DevelopmentWorkspaceService(CoreDataPaths paths, AppRegist
             throw Error("consumer_unavailable", "Cannot verify running Docker source consumers; cleanup was refused.");
         }
     }
-    private async Task<DevelopmentWorkspace> FinishCleanup(DevelopmentWorkspace w, WorkspaceOperation op, CancellationToken ct)
+    private async Task<DevelopmentWorkspace> FinishCleanup(DevelopmentWorkspace w, WorkspaceOperation op, CancellationToken ct, bool published = false)
     {
         await CheckConsumers(w, ct);
         if (Directory.Exists(w.Path))
@@ -410,7 +444,9 @@ internal sealed class DevelopmentWorkspaceService(CoreDataPaths paths, AppRegist
             await ValidateTree(w, ct);
             w = await Observe(w, ct);
             if (w.Observation?.Head != op.BeforeHead) throw Error("stale_head", "Workspace HEAD changed during cleanup; source was preserved.");
-            await CheckCleanup(w, ct);
+            if (w.Observation is not { State: "ok", Conflict: false, Local: { Files.Count: 0, Truncated: false } })
+                throw Error("dirty", "Workspace changed during cleanup.");
+            if (!published) await CheckCleanup(w, ct);
             await Git(RepoPath(w.RepositoryId), ["worktree", "remove", w.Path], ct);
         }
         var branch = await Git(RepoPath(w.RepositoryId), ["show-ref", "--verify", "refs/heads/" + w.Branch], ct, true);
@@ -418,9 +454,12 @@ internal sealed class DevelopmentWorkspaceService(CoreDataPaths paths, AppRegist
         {
             var head = branch.StandardOutput.Split(' ')[0];
             if (head != op.BeforeHead) throw Error("stale_head", "The branch changed during cleanup; it was preserved.");
-            var target = await Fetch(RepoPath(w.RepositoryId), w.Repository, w.TargetBranch, ct, await WorkspaceGrantAsync(w, ct));
-            if ((await Git(RepoPath(w.RepositoryId), ["merge-base", "--is-ancestor", head, target], ct, true)).ExitCode != 0)
-                throw Error("unmerged", "The target changed during cleanup; the branch was preserved.");
+            if (!published)
+            {
+                var target = await Fetch(RepoPath(w.RepositoryId), w.Repository, w.TargetBranch, ct, await WorkspaceGrantAsync(w, ct));
+                if ((await Git(RepoPath(w.RepositoryId), ["merge-base", "--is-ancestor", head, target], ct, true)).ExitCode != 0)
+                    throw Error("unmerged", "The target changed during cleanup; the branch was preserved.");
+            }
             var registrations = await Git(RepoPath(w.RepositoryId), ["worktree", "list", "--porcelain"], ct);
             if (registrations.StandardOutput.Split('\n').Contains("branch refs/heads/" + w.Branch, StringComparer.Ordinal))
                 throw Error("in_use", "The branch still has a registered worktree; recover its registration before retrying.");

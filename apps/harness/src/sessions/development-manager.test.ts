@@ -60,3 +60,34 @@ describe("development session coordination", () => {
     expect(starts).toHaveLength(0);
   });
 });
+
+it("binds shared MCP approvals to the session owner and persists denial after restart", async () => {
+  const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
+  await manager.postMessage(record.id, "edit", "credential");
+  await manager.mcpPolicy.catalog("hosty:development", "v1", [{ name: "pr_merge" }]);
+  const pending = manager.mcpPolicy.authorize(record.id, "hosty:development", "v1", "request", "pr_merge", { expectedHead: "abc" }, new AbortController().signal).catch(error => error);
+  const event = await vi.waitFor(async () => {
+    const approval = (await store.readEvents(record.id)).find(e => e.type === "approval_request");
+    expect(approval).toBeDefined(); return approval!;
+  });
+  await expect(manager.resolveApproval(record.id, event.approvalId as string, "allow", undefined, "another-user")).rejects.toThrow("another user");
+  await manager.shutdown(); await pending;
+  manager = build(); await manager.recoverMcpApprovals();
+  expect((await store.readRecord(record.id))!.mcpPendingApprovals).toEqual([]);
+  expect((await store.readEvents(record.id)).some(e => e.type === "approval_decision" && e.decision === "deny")).toBe(true);
+  expect(await manager.resolveApproval(record.id, event.approvalId as string, "allow")).toBe(false);
+  expect(client.call).not.toHaveBeenCalled();
+});
+
+it("retains corrective PR history before completion and allows an explicit unpublished abandonment", async () => {
+  const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
+  vi.mocked(client.call).mockImplementation(async (_id, _token, action) => {
+    if (action === "pr-status") return { workspaceId: "workspace", repository: "owner/repo", url: "https://github.com/owner/repo/pull/2", publishedHead: "new", history: [{ url: "https://github.com/owner/repo/pull/1", head: "old" }] };
+    expect((await store.readRecord(record.id))!.publicationReferences).toHaveLength(2);
+    return {};
+  });
+  await manager.workspaceAction(record.id, "pr-complete", { workspaceId: "workspace", outcome: "merged" }, "token", "admin");
+  vi.mocked(client.call).mockResolvedValue({ workspaceId: "workspace", repository: "owner/repo" });
+  await manager.workspaceAction(record.id, "pr-complete", { workspaceId: "workspace", outcome: "abandoned" }, "token", "admin");
+  expect((await store.readRecord(record.id))!.publicationReferences).toHaveLength(2);
+});

@@ -60,7 +60,9 @@ export function GatewaySettings({
       const live = saved.harness?.capabilities?.liveReconfigure;
       const immediate = patch.mcpAutoAllow;
       setStatus(
-        immediate && live
+        patch.mcpToolRules
+          ? "Applied to subsequent tool calls. Already running calls continue."
+          : immediate && live
           ? "Applied to running sessions."
           : "Saved — applies to the next session.",
       );

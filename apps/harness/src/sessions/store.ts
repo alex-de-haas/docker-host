@@ -32,6 +32,8 @@ export interface SessionRecord {
   handoffDispatch?: { id: string; state: "queued" | "running" | "completed" | "failed" | "unknown"; error?: string };
 
   id: string;
+  mcpPendingApprovals?: { id: string; tool: string }[];
+  publicationReferences?: { workspaceId: string; repository: string; url: string; head?: string }[];
   connectionId?: string;
   connectionRevision?: number;
   connectionIdentity?: string;

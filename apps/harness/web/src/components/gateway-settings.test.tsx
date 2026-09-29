@@ -61,7 +61,7 @@ it("selects and searches applications without changing access or showing another
   expect(details().textContent).toContain("Review and approve application instructions in Hosty Shell");
   await select("Media Server");
   expect(details().textContent).not.toContain("Complete updated instructions");
-  expect(details().querySelector<HTMLButtonElement>('[role="combobox"]')!.disabled).toBe(true);
+  expect(details().textContent).toContain("Refresh tools to load the available actions.");
   await search("projects");
   expect(details().querySelector("h2")?.textContent).toBe("Project Manager");
   await search("missing");
@@ -76,7 +76,7 @@ it("shows Core offers and a Shell link without local policy mutation controls", 
   data.agentsSettingsUrl = "https://shell.test/settings?tab=agents";
   await render();
   await select("Project Manager");
-  expect(details().textContent).toContain("Offered by Core");
+  expect(details().textContent).toContain("Core permissions and repository checks still apply.");
   expect(details().querySelector('[role="switch"]')).toBeNull();
   expect(details().querySelector("pre")).toBeNull();
   expect(container.querySelector<HTMLAnchorElement>('a[target="_top"]')?.href).toBe(data.agentsSettingsUrl);
@@ -92,9 +92,11 @@ it("reports discovery failure without exposing legacy skill approvals", async ()
   expect(container.textContent).not.toContain("Approve instructions");
 });
 
-it("retains harness-specific disabled approvals even for enabled applications", async () => {
+it("offers shared write approval controls even when the native adapter has no auto-allow callback", async () => {
   data.harness = { name: "Codex", capabilities: { autoAllow: false } };
+  data.toolCatalogs = [{ provider: "hosty:core", identity: "core-1", tools: [{ name: "merge" }] }];
   await render();
-  expect(details().querySelector<HTMLButtonElement>('[role="combobox"]')!.disabled).toBe(true);
-  expect(details().textContent).toContain("Codex harness decides which calls pause");
+  const select = details().querySelector<HTMLSelectElement>('[aria-label="Approval for merge"]')!;
+  expect(select.disabled).toBe(false);
+  expect([...select.options].map(o => o.text)).toEqual(["Ask", "Run unprompted", "Disabled"]);
 });

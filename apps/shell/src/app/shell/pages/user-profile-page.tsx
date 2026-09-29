@@ -8,7 +8,7 @@ import { readCoreError, redirectToCoreLoginIfAuthRequired } from "../core-api";
 
 type Connection = { id: string; label: string; provider: string; organization: string; accountId: string; accountName: string;
   method: string; status: string; checkedAt?: string; expiresAt?: string };
-type Profile = { id: string; email?: string; displayName?: string; connections: Connection[]; providers: { gitHubDevice: boolean; azureDevice: boolean } };
+type Profile = { gitIdentity?: { name: string; email: string }; id: string; email?: string; displayName?: string; connections: Connection[]; providers: { gitHubDevice: boolean; azureDevice: boolean } };
 type Device = { id: string; status: string; userCode: string; verificationUri: string; expiresAt: string; interval: number };
 type Send = (url: string, body?: unknown, method?: string) => Promise<Response>;
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
@@ -16,6 +16,8 @@ const message = (error: unknown) => error instanceof Error ? error.message : Str
 export function UserProfilePage({ coreOrigin, sendCsrfJson, onSaved }: { coreOrigin: string; sendCsrfJson: Send; onSaved: () => Promise<void> }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [name, setName] = useState("");
+  const [gitName, setGitName] = useState("");
+  const [gitEmail, setGitEmail] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -37,7 +39,7 @@ export function UserProfilePage({ coreOrigin, sendCsrfJson, onSaved }: { coreOri
   }, [endpoint, coreOrigin]);
   useEffect(() => {
     const controller = new AbortController();
-    void load(controller.signal).then(value => { if (!controller.signal.aborted) { setProfile(value); setName(value.displayName ?? ""); } })
+    void load(controller.signal).then(value => { if (!controller.signal.aborted) { setProfile(value); setName(value.displayName ?? ""); setGitName(value.gitIdentity?.name ?? ""); setGitEmail(value.gitIdentity?.email ?? ""); } })
       .catch(cause => { if (!controller.signal.aborted) setError(message(cause)); });
     return () => controller.abort();
   }, [load]);
@@ -65,7 +67,7 @@ export function UserProfilePage({ coreOrigin, sendCsrfJson, onSaved }: { coreOri
     finally { setBusy(false); }
   };
   const saveName = () => run(async () => {
-    const response = await sendCsrfJson(endpoint, { displayName: name }, "PUT");
+    const response = await sendCsrfJson(endpoint, { displayName: name, updateGitIdentity: true, gitIdentity: gitName.trim() || gitEmail.trim() ? { name: gitName.trim(), email: gitEmail.trim() } : null }, "PUT");
     const updated = await response.json() as Profile;
     setProfile(updated); setName(updated.displayName ?? ""); setNotice("Profile saved."); await onSaved();
   });
@@ -102,7 +104,10 @@ export function UserProfilePage({ coreOrigin, sendCsrfJson, onSaved }: { coreOri
         <p className="text-sm text-muted-foreground">{profile.email}</p>
         <Label htmlFor="profile-name">Display name</Label>
         <Input id="profile-name" value={name} onChange={event => setName(event.target.value)} maxLength={100} required />
-        <Button type="submit" disabled={busy || !name.trim()}>Save name</Button>
+        <p className="text-sm text-muted-foreground">Git author (optional). Leave both empty to use a verified email from the selected provider account.</p>
+        <Label htmlFor="git-name">Git author name</Label><Input id="git-name" value={gitName} onChange={e => setGitName(e.target.value)} maxLength={200} />
+        <Label htmlFor="git-email">Git author email</Label><Input id="git-email" type="email" value={gitEmail} onChange={e => setGitEmail(e.target.value)} maxLength={254} />
+        <Button type="submit" disabled={busy || !name.trim()}>Save profile</Button>
       </form>
       <div className="space-y-3">
         <div className="flex items-center justify-between"><h3 className="font-medium">Connected accounts</h3>

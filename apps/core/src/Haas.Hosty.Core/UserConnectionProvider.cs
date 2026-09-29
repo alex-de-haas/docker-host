@@ -22,7 +22,7 @@ internal sealed class UserConnectionProvider(HttpClient client, IConfiguration c
         using var json = await SendAsync(HttpMethod.Post, url, new Dictionary<string, string>
         {
             ["client_id"] = clientId,
-            ["scope"] = input.Provider == "github" ? (input.PrivateRepositories ? "repo" : "public_repo") + " offline_access" : AzureScope,
+            ["scope"] = input.Provider == "github" ? (input.PrivateRepositories ? "repo" : "public_repo") + " user:email offline_access" : AzureScope,
         }, ct: ct);
         CheckError(json.RootElement);
         var root = json.RootElement;

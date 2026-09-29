@@ -1,7 +1,7 @@
 # Hosty Harness
 
 Created: 2026-08-09
-Updated: 2026-09-27
+Updated: 2026-09-29
 
 The Hosty assistant: an optional, removable system app (`hosty.harness`) hosting admin-only
 operator chat sessions on a host-resident agent harness, plus the Shell surface that renders them.
@@ -174,22 +174,13 @@ procedure are in [Hosty Harness integration](../hosty-harness-rename/feature.md)
   update tools on that credential whatever the operator's role — the rule the facade's path already
   lives under (see [core-mcp](../core-mcp/feature.md)). The host preamble says so and points the
   model at the CLI for those, so it does not spend a turn discovering the refusal.
-- **Approval behavior depends on the chat's agent provider.** Claude supports the read-only
-  auto-allow mode; Codex raises approvals through its native sandbox rules. The shared settings
-  surface explains this distinction and keeps the controls available for Claude chats even when
-  Codex is the default. Per-chat health reports the actual adapter's capabilities.
-  Each provider carries two controls, shaped so neither can be read two ways: a **switch** for
-  enable/disable — its position is the state, after a button labelled "Disabled" proved equally
-  readable as "this is off" and "click to disable" — and a **select** for the approval mode ("Ask
-  before every tool" / "Run read-only tools unprompted"), disabled while the provider is off, since
-  the choice means nothing then. Both controls freeze while a save is in flight and are re-rendered
-  from confirmed state on every outcome: the browser mutates a control the moment it is used, so a
-  failed save would otherwise display a value the persisted policy does not hold — a select showing
-  "Ask before every tool" over a policy that still auto-allows being the case that matters. The
-  switch's label describes the true direction: enabling lets the **assistant call the app's tools**;
-  it grants the app nothing toward the assistant.
+- **MCP approval behavior is shared across Claude and Codex.** Harness owns per-tool Ask,
+  Run unprompted and Disabled rules, including writes, through its local proxy. See
+  [MCP approval rules](../assistant-approval-rules/feature.md) for identity binding, migration,
+  cancellation, restart recovery and native adapter coordination. Core/app authorization remains
+  independent. Native file and shell tools retain their adapter-specific policy.
 - **Where state lives:** Core stays the registry (which apps exist, which declare `mcp`, at what
-  URL); the gateway owns the policy (which are enabled). Toggles never go into Core. Settings live
+  URL); the gateway owns MCP prompting rules; Core owns provider offers. Settings live
   in `{data}/settings.json`, written temp-then-rename so a crash mid-write cannot leave a truncated
   file that the next start reads as "everything disabled, prompt gone".
 

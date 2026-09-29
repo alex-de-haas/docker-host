@@ -7,8 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
-import { ProviderRow } from "@/components/provider-row";
-import { CORE_PROVIDER_ID, type Settings, type SettingsResponse } from "@/lib/api";
+import { call, CORE_PROVIDER_ID, type Settings, type SettingsResponse, type ToolCatalog, type ToolRule } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 export function McpAccess({ data, busy, error, status, feedbackAppId, onSave }: {
@@ -21,7 +20,17 @@ export function McpAccess({ data, busy, error, status, feedbackAppId, onSave }: 
 }) {
   const [selectedId, setSelectedId] = useState(CORE_PROVIDER_ID);
   const [search, setSearch] = useState("");
-  const { settings, providers, discovery } = data;
+  const [catalogs, setCatalogs] = useState<ToolCatalog[]>(data.toolCatalogs ?? []);
+  const [toolError, setToolError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const { settings, discovery } = data;
+  const providers = [...data.providers, { appId: "hosty:development", displayName: "Development & publications", running: true, url: null }];
+  const refreshTools = async () => {
+    setLoading(true); setToolError("");
+    try { const result = await (await call("/settings/tools")).json() as { catalogs: ToolCatalog[]; unavailable?: string[] }; setCatalogs(result.catalogs); if (result.unavailable?.length) setToolError(`Tools unavailable for: ${result.unavailable.join(", ")}. Existing rules are preserved.`); await onSave({}, selectedId); }
+    catch (cause) { setToolError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setLoading(false); }
+  };
   const entries = [...providers].sort((a, b) => a.appId === CORE_PROVIDER_ID ? -1 : b.appId === CORE_PROVIDER_ID ? 1 : 0);
   const query = search.trim().toLocaleLowerCase();
   const visibleEntries = entries.filter(entry =>
@@ -29,8 +38,6 @@ export function McpAccess({ data, busy, error, status, feedbackAppId, onSave }: 
   );
   const selected = visibleEntries.find(entry => entry.appId === selectedId) ?? visibleEntries[0];
   const provider = providers.find(entry => entry.appId === selected?.appId);
-  const autoAllowSupported = data.harness?.capabilities?.autoAllow !== false;
-  const harnessName = data.harness?.name ?? "harness";
   const SelectedIcon = selected?.appId === CORE_PROVIDER_ID ? Server : Box;
 
   return (
@@ -60,7 +67,7 @@ export function McpAccess({ data, busy, error, status, feedbackAppId, onSave }: 
           <nav aria-label="Select an MCP application" className="flex max-h-64 flex-col gap-1 overflow-y-auto p-1 md:max-h-[65vh]">
             {visibleEntries.map(entry => {
               const Icon = entry.appId === CORE_PROVIDER_ID ? Server : Box;
-              const enabled = settings.mcpProviders[entry.appId] === true;
+              const enabled = entry.appId === "hosty:development" || settings.mcpProviders[entry.appId] === true;
               return (
                 <Button
                   key={entry.appId}
@@ -100,21 +107,25 @@ export function McpAccess({ data, busy, error, status, feedbackAppId, onSave }: 
                   <p className="break-all text-xs text-muted-foreground">{selected.appId}</p>
                 </div>
               </header>
-              {provider ? (
-                <ProviderRow
-                  key={provider.appId}
-                  provider={provider}
-                  enabled={settings.mcpProviders[provider.appId] === true}
-                  autoAllow={settings.mcpAutoAllow[provider.appId] === true}
-                  autoAllowSupported={autoAllowSupported}
-                  harnessName={harnessName}
-                  busy={busy}
-                  multipleConnections={data.agentConnections === true}
-                  onApprovalChange={next => void onSave({ mcpAutoAllow: { ...settings.mcpAutoAllow, [provider.appId]: next } }, provider.appId)}
-                />
-              ) : (
-                <Alert><AlertDescription>Access controls are unavailable until this application is discovered again.</AlertDescription></Alert>
-              )}
+              <p className="text-sm text-muted-foreground">Choose how each tool runs for Claude and Codex. Run unprompted also applies to writes; Core permissions and repository checks still apply.</p>
+              <Button variant="outline" disabled={loading} onClick={() => void refreshTools()}>{loading ? "Loading tools…" : "Refresh tools"}</Button>
+              {toolError && <p role="alert" className="text-destructive">{toolError}</p>}
+              {(() => {
+                const catalog = catalogs.find(c => c.provider === provider?.appId);
+                if (!catalog) return <p className="text-sm text-muted-foreground">Refresh tools to load the available actions.</p>;
+                return <div className="divide-y rounded-lg border">{catalog.tools.map(tool => {
+                  const key = JSON.stringify([catalog.provider, tool.name]);
+                  const rule = settings.mcpToolRules?.[key];
+                  return <div key={tool.name} className="flex flex-wrap items-center justify-between gap-3 p-3">
+                    <div className="min-w-0 flex-1"><p className="break-all font-medium">{tool.name}</p><p className="text-xs text-muted-foreground">{tool.description}</p>{(tool.annotations?.readOnlyHint || tool.annotations?.destructiveHint) && <p className="text-xs text-muted-foreground">App-declared: {[tool.annotations?.readOnlyHint && "Read-only", tool.annotations?.destructiveHint && "Destructive"].filter(Boolean).join(" · ")}</p>}</div>
+                    <select aria-label={`Approval for ${tool.name}`} className="rounded border bg-background p-2 text-sm" disabled={busy}
+                      value={rule?.identity === catalog.identity ? rule.mode : "ask"}
+                      onChange={e => void onSave({ mcpToolRules: { [key]: { identity: catalog.identity, mode: e.target.value as ToolRule["mode"] } } }, catalog.provider)}>
+                      <option value="ask">Ask</option><option value="run">Run unprompted</option><option value="disabled">Disabled</option>
+                    </select>
+                  </div>;
+                })}</div>;
+              })()}
 
               <Card className="gap-0 overflow-hidden py-0 shadow-none">
                 <CardHeader className="bg-muted/40 px-5 py-4">

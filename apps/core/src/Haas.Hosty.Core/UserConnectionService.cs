@@ -19,15 +19,17 @@ internal sealed class UserConnectionService(UserDirectoryStore users, UserConnec
         var state = await users.ReadAsync(ct);
         var user = RequireUser(state, userId);
         return new(user.Id, user.Email, user.DisplayName,
-            (state.ProviderConnections ?? []).Where(c => c.UserId == userId).Select(Summary).ToArray(), provider.Availability);
+            (state.ProviderConnections ?? []).Where(c => c.UserId == userId).Select(Summary).ToArray(), provider.Availability, user.GitIdentity);
     }
-    public async Task<UserProfileResponse> UpdateProfileAsync(string userId, string name, CancellationToken ct)
+    public async Task<UserProfileResponse> UpdateProfileAsync(string userId, string name, CancellationToken ct, PublicationIdentity? gitIdentity = null, bool updateGitIdentity = false)
     {
+        if (gitIdentity is not null && (string.IsNullOrWhiteSpace(gitIdentity.Name) || gitIdentity.Name.Length > 200 || gitIdentity.Name.Any(c => char.IsControl(c) || c is '<' or '>') || string.IsNullOrWhiteSpace(gitIdentity.Email) || gitIdentity.Email.Length > 254 || !gitIdentity.Email.Contains('@') || gitIdentity.Email.Any(c => char.IsWhiteSpace(c) || c is '<' or '>')))
+            throw new UserConnectionException("git_identity_invalid", "Enter a valid Git author name and email.");
         name = BoundedName(name);
         await users.UpdateAsync(state =>
         {
             var user = RequireUser(state, userId);
-            return state with { Users = state.Users.Select(u => u.Id == userId ? user with { DisplayName = name, UpdatedAt = clock.UtcNow } : u).ToArray() };
+            return state with { Users = state.Users.Select(u => u.Id == userId ? user with { DisplayName = name, GitIdentity = updateGitIdentity ? gitIdentity : u.GitIdentity, UpdatedAt = clock.UtcNow } : u).ToArray() };
         }, ct);
         await Audit(userId, "profile.updated", userId, ct);
         return await ProfileAsync(userId, ct);

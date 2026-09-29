@@ -155,12 +155,12 @@ describe("per-app auto-allow", () => {
     expect((await store.readEvents(record.id)).filter(event => event.type === "notice")).toHaveLength(1);
   });
 
-  it("asks when the operator has not vouched for the app", async () => {
+  it("delegates app MCP prompting to the shared broker", async () => {
     // The provider is enabled — the app may reach the assistant — but nobody has said its own word
     // about read-only counts. Enabling and trusting are two decisions, not one.
     await settings.update({ mcpProviders: { [APP]: true } });
 
-    expect(await run("apptool please", "approval_request")).toContain("approval_request");
+    expect(await run("apptool please", "assistant_text")).not.toContain("approval_request");
   });
 
   it("runs a read-only tool unprompted once the operator has", async () => {
@@ -225,7 +225,7 @@ describe("per-app auto-allow", () => {
         : new Response("stopped", { status: 503 }),
     );
 
-    expect(await run("apptool please", "approval_request")).toContain("approval_request");
+    expect(await run("apptool please", "assistant_text")).not.toContain("approval_request");
   });
 });
 
@@ -286,13 +286,13 @@ describe("Core's default grant", () => {
     expect([...granted(record.id)]).toEqual([CORE_TOOL]);
   });
 
-  it("asks once the operator sets Core to ask, like any other provider", async () => {
+  it("delegates Core prompting to the same broker without a native duplicate", async () => {
     await settings.update({ mcpAutoAllow: { "hosty:core": false } });
 
     const record = await manager.createSession({ createdBy: "user_admin" });
     await manager.postMessage(record.id, "coretool please", "seed-credential");
     await vi.waitFor(async () => {
-      expect((await store.readEvents(record.id)).map((event) => event.type)).toContain("approval_request");
+      expect((await store.readEvents(record.id)).map((event) => event.type)).toContain("assistant_text");
     });
   });
 });
