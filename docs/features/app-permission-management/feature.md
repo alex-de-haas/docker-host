@@ -52,6 +52,19 @@ refreshes permission state and app summaries on success. Closing the confirmatio
 not success. Updated grants drive the existing embedded-app iframe policy. Harness uses Core's
 `reviewAvailable` capability for accurate dictation guidance, including legacy installations.
 
+## Verified Acceptance
+
+On 2026-09-30, the owner confirmed the remaining real-installation checks: cancelling the Core
+review preserves effective access, and revoking/restoring Harness speech permission updates the
+interface without a page reload. This completes the permission-management acceptance plan.
+
+Earlier Core-managed browser checks verified live/legacy manifest drift, isolated confirmation,
+Dashboard warning removal and iframe microphone policy refresh without restarting Harness.
+Automated coverage includes 2,233 passing Core tests (four environment-gated integrations skipped),
+a final 46-test permission/installation/provider run, 177 Shell node tests, 40 Shell component tests
+and 132 App SDK tests. The combined Harness changes pass 452 tests. Affected builds and lint pass;
+Shell retains two pre-existing navigation warnings.
+
 ## Testing Expectations
 
 - Observe live edits without restart; retain installed-release behavior and recover from invalid sources.
