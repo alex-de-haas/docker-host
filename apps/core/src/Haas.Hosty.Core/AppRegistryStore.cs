@@ -1007,7 +1007,8 @@ internal sealed record AppSummary(
     IReadOnlyList<string>? ConfirmedRoles = null,
     string? EntryEndpoint = null,
     IReadOnlyList<string>? RequiredCorePermissions = null,
-    IReadOnlyList<string>? OptionalCorePermissions = null)
+    IReadOnlyList<string>? OptionalCorePermissions = null,
+    AppPermissionObservation? PermissionState = null)
 {
     public static AppSummary From(
         AppRecord app,

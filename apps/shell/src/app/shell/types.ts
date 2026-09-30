@@ -58,7 +58,7 @@ export type AlertSeverity = "error" | "warning";
 
 // One problem an app has, as derived by collectAppProblems. Rendered both as a severity icon on the
 // collapsed row and as an alert in the details panel, from that single derivation.
-export type AppProblem = { severity: AlertSeverity; title: string; detail?: string };
+export type AppProblem = { action?: "permissions"; severity: AlertSeverity; title: string; detail?: string };
 
 // One declared cross-app dependency as Core resolved it against the installed set. `running` is only
 // meaningful when `installed`; `endpoints[].resolved` is false for everything while the provider is
@@ -250,6 +250,7 @@ export type CoreApp = {
   grantedCorePermissions?: string[] | null;
   requiredCorePermissions?: string[] | null;
   optionalCorePermissions?: string[] | null;
+  permissionState?: AppPermissionObservation | null;
   confirmedRoles?: string[] | null;
   displayName: string;
   description?: string | null;
@@ -719,7 +720,7 @@ export type AppAction = "start" | "stop" | "restart" | "backup";
 export type DetailView = "backups" | "settings" | "update" | "remove" | "logs";
 
 // Tabs inside the consolidated Settings dialog. Hidden when the app has no matching data.
-export type SettingsTab = "app" | "publicOrigins" | "mounts" | "source";
+export type SettingsTab = "app" | "permissions" | "publicOrigins" | "mounts" | "source";
 // Three top-level destinations: the host you manage, the host you configure, and the apps you use.
 // `installed-apps` and `users` were folded into `dashboard` and `settings`; their URLs still resolve
 // and are canonicalized by the client.
@@ -944,4 +945,11 @@ export type NotificationsResponse = {
 export type NotificationMarkReadResponse = {
   updated: number;
   unreadCount: number;
+};
+
+export type AppPermissionObservation = {
+  status: "known" | "unknown" | "stale";
+  required: string[]; optional: string[]; acceptedRequired: string[]; acceptedOptional: string[];
+  granted: string[]; missingRequired: string[]; reviewRequired: boolean; unconfirmedRoles: string[];
+  error: string | null; checkedAt: string | null; descriptions: Record<string, string>;
 };

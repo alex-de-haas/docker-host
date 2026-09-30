@@ -9,10 +9,10 @@ vi.mock("@/lib/api", () => ({ establishSession: vi.fn().mockResolvedValue(undefi
 vi.mock("@/lib/assistant-api", async original => ({
   ...await original<typeof api>(),
   getHealth: vi.fn(), listSessions: vi.fn(), getSession: vi.fn(), createSession: vi.fn(),
-  listAppNames: vi.fn(), postMessage: vi.fn(), stopSession: vi.fn(), streamEvents: vi.fn(),
+  listAppNames: vi.fn(), listContextApps: vi.fn(), setSessionApps: vi.fn(), postMessage: vi.fn(), stopSession: vi.fn(), streamEvents: vi.fn(),
 }));
 vi.mock("@/components/speech-input", () => ({ SpeechInput: () => null }));
-vi.mock("@/components/app-context-picker", () => ({ AppContextPicker: () => null }));
+vi.mock("@/components/app-context-picker", () => ({ AppContextPicker: () => <button aria-label="Select app context" /> }));
 vi.mock("@/components/ui/message-scroller", () => {
   const Wrap = ({ children }: { children: ReactNode }) => <div>{children}</div>;
   return { ...Object.fromEntries(["MessageScroller", "MessageScrollerProvider", "MessageScrollerViewport", "MessageScrollerContent", "MessageScrollerItem"].map(name => [name, Wrap])), MessageScrollerButton: () => null };
@@ -24,6 +24,7 @@ let record: api.AssistantSession;
 let emit: (event: api.AssistantEvent) => void;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   localStorage.clear();
   window.history.replaceState({}, "", "/assistant");
   record = { id: "session-one", title: "Conversation", status: "idle", createdAt: "" };
@@ -200,4 +201,32 @@ it("shows unknown execution instead of automatically sending an accepted handoff
   await render();
   expect(container.textContent).toContain("unknown");
   expect(api.postMessage).not.toHaveBeenCalled();
+});
+
+it("sends mention text only after the app association commits, with the returned revision", async () => {
+  const app = { id: "media", displayName: "Media Server", available: true };
+  vi.mocked(api.listContextApps).mockResolvedValue({ apps: [app], nextOffset: null });
+  let resolve!: (session: api.AssistantSession) => void;
+  vi.mocked(api.setSessionApps).mockReturnValue(new Promise(done => { resolve = done; }));
+  await render();
+  await act(async () => input().focus());
+  await type("Compare @media");
+  await act(async () => { await new Promise(done => setTimeout(done, 180)); });
+  await act(async () => input().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
+  expect(api.postMessage).not.toHaveBeenCalled();
+  expect(button("Send")?.disabled).toBe(true);
+  await act(async () => container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+  expect(api.postMessage).not.toHaveBeenCalled();
+  await act(async () => resolve({ ...record, appIds: ["media"], appContextRevision: 1 }));
+  expect(input().value).toBe("Compare @Media Server ");
+  await act(async () => button("Send")!.click());
+  expect(api.postMessage).toHaveBeenCalledExactlyOnceWith(record.id, "Compare @Media Server (media)", [], 1, false);
+});
+
+
+it("places session context in the chat header outside the composer", async () => {
+  await render();
+  const picker = button("Select app context");
+  expect(picker?.closest("header")).not.toBeNull();
+  expect(picker?.closest("form")).toBeNull();
 });

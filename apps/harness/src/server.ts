@@ -433,6 +433,11 @@ async function route(
       ? await readContextApps(providers).catch(() => null) : [];
     sendJson(response, 200, { sessions: records.map(record => ({
       ...record,
+      contextApps: roster === null ? undefined : (record.appIds ?? []).map(id => {
+        const app = roster.find(app => app.id === id);
+        return app ? { id, displayName: app.displayName, available: app.available, icon: app.icon, iconUrl: app.iconUrl }
+          : { id, displayName: id, available: false };
+      }),
       appContext: contextFromRoster(roster ?? [], record.appIds ?? [], record.appContextRevision ?? 0,
         roster === null && record.appIds?.length ? "unavailable" : "ok"),
     })) });

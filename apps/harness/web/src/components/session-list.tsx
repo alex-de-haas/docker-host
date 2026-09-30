@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { Check, Loader2, Pencil, Trash2, X } from "lucide-react";
+import { AppContextIcons } from "@/components/app-context-icons";
 import { isWaiting } from "@/lib/attention";
 import { cn } from "@/lib/utils";
 import type { AssistantSession } from "@/lib/assistant-api";
@@ -97,21 +98,24 @@ export function SessionList({
               <button
                 type="button"
                 onClick={() => onPick(record)}
-                className="min-w-0 flex-1 rounded-md px-2 py-1.5 text-left"
+                className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left"
               >
-                <div className="truncate text-sm">{record.title || "Untitled session"}</div>
-                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  {isWaiting(record.status) && (
-                    // Marked as well as ordered: ordering alone is invisible to someone who has not seen the
-                    // list before, and the row has to say *why* it is first.
-                    <span className="inline-flex size-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden />
-                  )}
-                  <span>{new Date(record.createdAt).toLocaleString()}</span>
-                  <span aria-hidden>·</span>
-                  <span className={cn(isWaiting(record.status) && "font-medium text-amber-600 dark:text-amber-500")}>
-                    {isWaiting(record.status) ? "waiting for you" : record.status}
-                  </span>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm">{record.title || "Untitled session"}</div>
+                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    {isWaiting(record.status) && (
+                      // Marked as well as ordered: ordering alone is invisible to someone who has not seen the
+                      // list before, and the row has to say *why* it is first.
+                      <span className="inline-flex size-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden />
+                    )}
+                    <span>{new Date(record.createdAt).toLocaleString()}</span>
+                    <span aria-hidden>·</span>
+                    <span className={cn(isWaiting(record.status) && "font-medium text-amber-600 dark:text-amber-500")}>
+                      {isWaiting(record.status) ? "waiting for you" : record.status}
+                    </span>
+                  </div>
                 </div>
+                <AppContextIcons ids={record.appIds ?? []} apps={record.contextApps} />
               </button>
               {/* Kept out of the row button rather than inside it: a button within a button is invalid,
                   and the rename must not double as "open this session". Focus reveals it too, so it is

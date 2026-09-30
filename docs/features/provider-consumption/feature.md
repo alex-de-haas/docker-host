@@ -18,11 +18,11 @@ New declarations and optional-to-required transitions require review. Core store
 and a permission revision independently of the live source manifest. Restart and source adoption do
 not grant permissions.
 
-Shell app settings shows permission state and opens the isolated Core confirmation page for optional
-changes. An administrator accepts or denies there; an app cannot manufacture consent. An app can
-prepare its own optional review with `permissionsAppId` through the existing installation adapter;
-it cannot request another app's optional changes. Stale installation/revision snapshots are rejected.
-Required permissions are changed through a reviewed update, not the optional editor.
+Shell's administrator-only Permissions tab shows accepted declarations, effective grants and the
+current manifest. Required changes and optional choices use isolated Core permission-only confirmation,
+including live development edits and legacy installations. A delegated app can request review only
+for itself using `permissionsAppId`. Confirmation is bound to installation, permission revision,
+source/runtime and the complete manifest digest. See [App permission management](../app-permission-management/feature.md).
 Changing optional grants invalidates an already reviewed update plan: enqueue rejects it synchronously
 before marking the app as updating or starting background work. Interface contract validation identifies
 the declared provider category in both the error code and message.
@@ -129,7 +129,13 @@ changing that grant remounts the frame to release the prior document's microphon
 Recognized text is appended to the current editable draft, preserving text and attachments and never
 sending a message automatically. Cancellation, sending, unmount and switching conversations invalidate
 late results and stop microphone tracks. Permission/provider errors retain the draft. An absent grant
-leaves dictation disabled and directs the operator to app settings.
+leaves dictation disabled. When Core advertises permission review, the tooltip
+points to Dashboard → Harness → Settings → Permissions → Review changes, including legacy declarations.
+Older Core versions retain guidance based on their stored optional declarations. Source observation
+alone never grants access.
+The microphone's tooltip remains available on hover and keyboard focus when the button is disabled.
+It distinguishes loading, discovery errors, missing consent, no providers, an unselected provider,
+an unavailable provider and a message being sent. Discovery failures do not imply missing consent.
 
 ## Testing Expectations
 

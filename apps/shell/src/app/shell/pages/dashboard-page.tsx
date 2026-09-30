@@ -1184,7 +1184,7 @@ function InstalledAppRow({
               <span className="truncate font-medium" title={app.displayName}>{app.displayName}</span>
               {app.system && <AppRoleIcon kind="system" />}
               {isShell && <AppRoleIcon kind="shell" />}
-              <AppProblemIcons problems={problems} />
+              <AppProblemIcons problems={problems} onPermissions={() => onOpenPanel(app, "settings", { settingsTab: "permissions" })} />
             </div>
             <div className="truncate text-xs text-muted-foreground">{app.id}</div>
             {app.restartRequired && (
@@ -1238,7 +1238,6 @@ function InstalledAppRow({
             )}
 
           </div>
-          <AppUpdateFeedback key={app.updateProgress?.changedAt ?? "no-update"} app={app} />
         </div>
       </TableCell>
       <TableCell role="cell" className="dashboard-resources"><ResourceUsage appId={app.id} label={app.displayName} /></TableCell>
@@ -1323,8 +1322,8 @@ function AppUpdateFeedback({ app }: { app: CoreApp }) {
   if (!label) return null;
   const success = app.updateProgress?.stage === "completed";
   const busy = app.operationStatus === "updating" && !["failed", "interrupted"].includes(app.updateProgress?.stage ?? "");
-  return <div role="status" title={app.lastError ?? undefined} className={cn("flex items-center gap-1 text-xs", success ? "text-emerald-600" : busy ? "text-muted-foreground" : "text-amber-600")}>
-    {success ? <Check className="size-3" /> : busy ? <LoaderCircle className="size-3 animate-spin" /> : <CircleAlert className="size-3" />}{label}
+  return <div role="status" title={app.lastError ?? undefined} className={cn("flex min-w-0 items-start gap-1 text-xs leading-4 [&>svg]:mt-0.5 [&>svg]:shrink-0", success ? "text-emerald-600" : busy ? "text-muted-foreground" : "text-amber-600")}>
+    {success ? <Check className="size-3" /> : busy ? <LoaderCircle className="size-3 animate-spin" /> : <CircleAlert className="size-3" />}<span className="min-w-0 whitespace-normal wrap-anywhere">{label}</span>
   </div>;
 }
 
@@ -1434,6 +1433,7 @@ function AppVersionCell({
               />
             </div>
           )}
+          <AppUpdateFeedback key={app.updateProgress?.changedAt ?? "no-update"} app={app} />
         </div>
         {updateVisible && (needsReview ? (
           <Button
@@ -1539,12 +1539,18 @@ function AppRoleIcon({ kind }: { kind: "system" | "shell" }) {
   );
 }
 
-function AppProblemIcons({ problems }: { problems: AppProblem[] }) {
+function AppProblemIcons({ problems, onPermissions }: { problems: AppProblem[]; onPermissions: () => void }) {
+  const permissionProblems = problems.filter(problem => problem.action === "permissions");
+  problems = problems.filter(problem => problem.action !== "permissions");
   const errors = problems.filter((problem) => problem.severity === "error");
   const warnings = problems.filter((problem) => problem.severity === "warning");
 
   return (
     <>
+      {permissionProblems.map(problem => <button key={problem.title} type="button" onClick={onPermissions}
+        title={`${problem.title}: ${problem.detail}`} aria-label={problem.title} className="inline-flex shrink-0 rounded focus-visible:outline-2 focus-visible:outline-ring">
+        <CircleAlert className={cn("h-4 w-4", problem.severity === "error" ? "text-destructive" : "text-amber-500")} />
+      </button>)}
       {errors.length > 0 && <AppProblemIcon severity="error" problems={errors} />}
       {warnings.length > 0 && <AppProblemIcon severity="warning" problems={warnings} />}
     </>
@@ -1554,7 +1560,7 @@ function AppProblemIcons({ problems }: { problems: AppProblem[] }) {
 function AppProblemIcon({ severity, problems }: { severity: AlertSeverity; problems: AppProblem[] }) {
   const Icon = severity === "error" ? CircleAlert : TriangleAlert;
   const label = severity === "error"
-    ? `${problems.length} problem${problems.length === 1 ? "" : "s"} stopping this app`
+    ? `${problems.length} problem${problems.length === 1 ? "" : "s"} affecting this app`
     : `${problems.length} problem${problems.length === 1 ? "" : "s"} needing attention`;
   // Titles alone: the details belong in the panel, and a multi-paragraph tooltip is unreadable.
   const summary = problems.map((problem) => problem.title).join("\n");
@@ -1577,7 +1583,7 @@ function RuntimeModeBadge({ profile }: { profile: CoreRuntimeProfile }) {
       )}
       title={
         live
-          ? "Development profile: runs from editable source. Reload behavior depends on its commands; manifest changes require restart."
+          ? "Development profile: runs from editable source. Reload behavior depends on its commands; permission changes are detected automatically and require approval; other manifest changes require restart."
           : "Reviewed profile: uses a fixed image/build or pinned source, advanced by a reviewed update."
       }
     >

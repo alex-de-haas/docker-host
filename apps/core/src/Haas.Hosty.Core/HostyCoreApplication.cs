@@ -189,6 +189,7 @@ internal static class HostyCoreApplication
         // status block read it) and its scheduler runs it on the Core-settings cadence.
         builder.Services.AddSingleton<AppUpdateSweepService>();
         builder.Services.AddHostedService<AppUpdateSweepScheduler>();
+        builder.Services.AddHostedService<AppPermissionObserver>();
         builder.Services.AddSingleton<ProviderAccessService>();
         builder.Services.AddSingleton<InstallationApprovalStore>();
         builder.Services.AddSingleton<InstallationApprovalService>();

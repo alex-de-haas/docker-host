@@ -8,6 +8,14 @@ function client(): InstallationClient {
 }
 
 describe("installation client", () => {
+  it("stages optional choices without making an approval decision", async () => {
+    const request = vi.fn(async () => Response.json(draft));
+    const api = createInstallationClient({ request });
+    await api.submit(draft.id, {}, false, ["providers.speech-to-text"]);
+    expect(request).toHaveBeenCalledExactlyOnceWith(`/api/hosty/installations/${draft.id}/submit`, {
+      settings: {}, autostart: false, optionalPermissions: ["providers.speech-to-text"],
+    }, "POST");
+  });
   it("uses request/submit/status only and preserves settings without an apply endpoint", async () => {
     const request = vi.fn(async () => Response.json(draft));
     const api = createInstallationClient({ request });

@@ -4,7 +4,7 @@ export type ProviderDescriptor = {
   appId: string; displayName: string; kind: ProviderKind; key: string;
   version: number | null; capabilities: string[]; url: string | null; available: boolean;
 };
-export type AppPermissionState = { required: string[]; optional: string[]; granted: string[] };
+export type AppPermissionState = { required: string[]; optional: string[]; granted: string[]; reviewAvailable?: boolean };
 export type ProviderInvocation = { callerAppId: string; callerInstallation: string; userId: string | null; hostRole: string | null; kind: ProviderKind; key: string };
 export type SpeechResult = { text: string; language?: string | null };
 export type SpeechCapabilities = { version: 1; mediaTypes: string[]; maxBytes: number; maxDurationSeconds: number; backend: string; ready: boolean };

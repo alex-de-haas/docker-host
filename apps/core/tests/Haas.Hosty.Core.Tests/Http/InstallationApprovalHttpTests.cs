@@ -184,6 +184,10 @@ public sealed class InstallationApprovalHttpTests
         using var response = await client.PostAsJsonAsync("/api/internal/apps/example.market/installations", new { });
         Assert.Equal(granted ? HttpStatusCode.Conflict : HttpStatusCode.Forbidden, response.StatusCode);
         Assert.Contains(granted ? "manifest_path_required" : "app_permission_required", await response.Content.ReadAsStringAsync());
+        using var otherPermissions = await client.PostAsJsonAsync("/api/internal/apps/example.market/installations", new { permissionsAppId = "other.app" });
+        Assert.Equal(HttpStatusCode.Forbidden, otherPermissions.StatusCode);
+        using var browserPermissions = await client.GetAsync("/api/apps/example.market/permissions");
+        Assert.Equal(HttpStatusCode.Unauthorized, browserPermissions.StatusCode);
         using var page = await client.GetAsync("/install/confirm/" + new string('a', 48));
         Assert.Equal(HttpStatusCode.Redirect, page.StatusCode);
         Assert.StartsWith("/login?", page.Headers.Location!.ToString());

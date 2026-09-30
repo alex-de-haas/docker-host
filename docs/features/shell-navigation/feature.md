@@ -1,7 +1,7 @@
 # Shell Navigation
 
 Created: 2026-07-30
-Updated: 2026-09-28
+Updated: 2026-09-30
 
 The browser Shell has three top-level destinations: **Dashboard**, the host you manage; **Settings**,
 the host you configure; and **Apps**, the apps you use. This document owns the route table and the
@@ -302,6 +302,9 @@ theme bridges — depends on the Shell **origin** alone.
   `/` for an administrator, `/apps` for a user.
 
 Dashboard update feedback follows Core's app stages and expires a success label after 30 seconds.
+The indicator and stage message sit directly below the installed app version, in the space vacated
+by the available version during an update. Long messages wrap within the version column; the update
+button keeps its position beside the version block, and runtime status stays in its own column.
 Version tooltips include the last successful update-check time; failed checks retain found updates
 and are excluded from bulk apply. Core updates use live status and release checks for completion,
 with reconnecting, verifying and unconfirmed states instead of a fixed completion delay.
@@ -309,6 +312,12 @@ with reconnecting, verifying and unconfirmed states instead of a fixed completio
 The client authorization redirect uses the same section-aware policy as rendering: ordinary users
 stay on their Profile and Access tokens pages, while host and app administration sections redirect to Apps.
 The check also runs when only the settings query parameter changes.
+
+Administrators have an always-visible Permissions tab in each app's settings panel. It displays
+accepted and observed declarations, effective grants, optional draft choices and confirmation status.
+Dashboard's actionable permission problem opens that tab; missing required access contributes to the
+attention count without changing the factual runtime badge. Invalid observation is a distinct warning;
+disabled optional permissions are not a problem. See [App permission management](../app-permission-management/feature.md).
 
 ## Testing Expectations
 

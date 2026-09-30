@@ -165,7 +165,7 @@ describe("gateway", () => {
     }
     expect((await call("/api/session-apps")).status).toBe(503);
     vi.spyOn(directory, "readApps").mockResolvedValue([
-      { id: "notes", displayName: "Notes", runtimeState: "stopped", interfaces: [] },
+      { id: "notes", displayName: "Notes", runtimeState: "stopped", interfaces: [], iconUrl: "https://core.example/api/apps/notes/assets/icon.svg" },
       { id: "media", displayName: "Media", runtimeState: "running", interfaces: [] },
     ]);
     const roster = await (await call("/api/session-apps?search=notes")).json() as { apps: Array<{ id: string }> };
@@ -176,13 +176,19 @@ describe("gateway", () => {
     const b = await (await call("/api/sessions", { method: "POST", body: JSON.stringify(input) })).json() as { id: string };
     expect(a.id).toBe(b.id);
     expect(a.status).toBe("idle"); expect(a.appContextRevision).toBe(0);
-    const listed = await (await call("/api/sessions")).json();
+    const listed = await (await call("/api/sessions")).json() as { sessions: Array<{ appContext: unknown }> };
     expect(listed).toMatchObject({ sessions: [{ id: a.id, appIds: ["notes"], appContextRevision: 0,
-      appContext: { resolution: "ok", apps: [{ id: "notes", runtimeState: "stopped", available: true }] } }] });
+      appContext: { resolution: "ok", apps: [{ id: "notes", runtimeState: "stopped", available: true }] },
+      contextApps: [{ id: "notes", displayName: "Notes", available: true, iconUrl: "https://core.example/api/apps/notes/assets/icon.svg" }] }] });
+    expect(JSON.stringify(listed.sessions[0]!.appContext)).not.toContain("iconUrl");
     const exact = await (await call("/api/session-apps?ids=notes,missing")).json();
     expect(exact).toMatchObject({ apps: [{ id: "notes", available: true }, { id: "missing", available: false }] });
     vi.mocked(directory.readApps).mockResolvedValueOnce(null);
-    expect(await (await call("/api/sessions")).json()).toMatchObject({ sessions: [{ appIds: ["notes"], appContext: { resolution: "unavailable" } }] });
+    const unavailable = await (await call("/api/sessions")).json() as { sessions: Array<{ contextApps?: unknown }> };
+    expect(unavailable).toMatchObject({ sessions: [{ appIds: ["notes"], appContext: { resolution: "unavailable" } }] });
+    expect(unavailable.sessions[0]!.contextApps).toBeUndefined();
+    vi.mocked(directory.readApps).mockResolvedValueOnce([]);
+    expect(await (await call("/api/sessions")).json()).toMatchObject({ sessions: [{ contextApps: [{ id: "notes", displayName: "notes", available: false }] }] });
     const changed = await call(`/api/sessions/${a.id}/apps`, { method: "PUT", body: JSON.stringify({ appIds: ["media"], expectedRevision: 0 }) });
     expect(changed.status).toBe(200);
     expect((await call(`/api/sessions/${a.id}/messages`, { method: "POST", body: JSON.stringify({ text: "hello", appContextRevision: 0 }) })).status).toBe(409);

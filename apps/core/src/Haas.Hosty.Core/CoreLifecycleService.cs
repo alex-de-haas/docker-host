@@ -1755,14 +1755,26 @@ internal sealed partial class CoreLifecycleService(
     internal Task<bool> ApplyOptionalPermissionsAsync(AppPermissionPlan plan, IReadOnlyList<string> selected, CancellationToken ct)
         => WithAppLockAsync(plan.AppId, async () =>
         {
+            var app = await apps.GetAppAsync(plan.AppId, ct)
+                ?? throw new AppLifecycleException("permission_review_stale", "The app is no longer installed.");
+            if (plan.Identity is not null)
+            {
+                var candidate = await ReadPermissionCandidateAsync(app, ct, forceRead: true);
+                if (PermissionIdentity(app) != plan.Identity || candidate.Source != plan.Source
+                    || candidate.Runtime != plan.Runtime || candidate.Digest != plan.ManifestDigest)
+                    throw new AppLifecycleException("permission_review_stale", "The source manifest or app changed. Review permissions again.");
+            }
             await apps.UpdateAppAsync(plan.AppId, current =>
             {
                 if (current.InstalledAt != plan.InstalledAt || current.PermissionRevision != plan.Revision
-                    || !(current.OptionalCorePermissions ?? []).SequenceEqual(plan.Optional)
-                    || !(current.RequiredCorePermissions ?? current.GrantedCorePermissions ?? []).SequenceEqual(plan.Required))
+                    || !(current.OptionalCorePermissions ?? []).SequenceEqual(plan.AcceptedOptional ?? plan.Optional)
+                    || !(current.RequiredCorePermissions ?? current.GrantedCorePermissions ?? []).SequenceEqual(plan.AcceptedRequired ?? plan.Required)
+                    || (plan.Identity is not null && PermissionIdentity(current) != plan.Identity))
                     throw new AppLifecycleException("permission_review_stale", "The app or its permissions changed. Review them again.");
                 return current with
                 {
+                    RequiredCorePermissions = plan.Required.ToArray(),
+                    OptionalCorePermissions = plan.Optional.ToArray(),
                     GrantedCorePermissions = CoreAppPermissions.ResolveGrants(plan.Required, plan.Optional, selected),
                     PermissionRevision = Guid.NewGuid().ToString("N"),
                 };
@@ -3670,6 +3682,7 @@ internal sealed partial class CoreLifecycleService(
         {
             RestartRequired = app.AppliedConfigurationHash is not null && AppRuntimeStates.IsUp(app.RuntimeState)
                 && AppConfigurationFingerprint.RequiresRestart(app, await globalMounts.ReadAsync(cancellationToken)),
+            PermissionState = CachedPermissions(app),
             UpdateProgress = app.UpdateProgress,
             UpdateCheck = (await ReadUpdateSnapshotAsync(app, cancellationToken, summary.Live))?.Verdict,
             Dependencies = await ResolveDependencySummariesAsync(app, installed, cancellationToken),

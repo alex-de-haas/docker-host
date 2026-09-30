@@ -1,7 +1,7 @@
 # Assistant App Context
 
 Created: 2026-09-16
-Updated: 2026-09-27
+Updated: 2026-09-30
 
 Administrators associate up to 16 installed apps with an assistant session. The gateway persists
 an ordered, unique `appIds` selection and an `appContextRevision`; it resolves fresh metadata from
@@ -10,11 +10,14 @@ the shared session manager.
 
 ## Selecting Apps
 
-The **+** button beside the context chips opens a searchable, paginated checkbox popover.
-Both the app list and selected chips display the app icon, with a named-icon or generic fallback.
-Escape or an outside click dismisses the popover without applying the draft selection. Apply persists the
-selection; Cancel keeps the previous selection. Removable chips show the current apps, including
-unavailable identities after uninstall. Empty selection means general host context. Search and
+The composer's leftmost **+** menu offers **Add app context** and **Attach files**. The provider
+selector follows it. The chat header, beside the session status, shows a compact stack of up to
+three overlapping app icons and a `+N` overflow count. The stack is hidden for general context and has no separate plus button. Its tooltip lists
+selected names and unavailable states. Opening the stack or choosing **Add app context** reveals
+the searchable, paginated checkbox popover and removable named chips, including unavailable identities.
+Icons use the existing image, named-icon or generic fallback. Removing a chip edits the draft;
+Apply persists the selection, while Cancel, Escape or an outside click keeps the previous selection.
+Empty selection means general host context. Search and
 selection are independent of MCP-provider toggles, runtime state and source availability: stopped,
 Docker-only and system apps are all valid subjects.
 
@@ -23,6 +26,12 @@ events and propagate to connected clients. While the model is active, **Applies 
 message** explains that its accepted turn retains the earlier snapshot. Clearing context affects
 subsequent messages; it does not erase earlier conversation text or model knowledge.
 
+Session history rows show the same compact icons for each chat's current saved selection, with
+names in a tooltip. General-context chats have no icons. The session-list response includes
+display-only `contextApps` metadata from one Core directory read shared across all rows; icons do
+not enter model snapshots. Missing apps retain their ids and an unavailable label. A directory
+outage preserves the saved ids with generic icons and does not falsely label apps as uninstalled.
+
 Each selection write and message carries the displayed revision. A stale write or send returns
 `app_context_conflict`; the UI reloads the authoritative selection and retains the unsent draft.
 Reopening a session from the list, a Shell action or a notification fetches its current record,
@@ -30,7 +39,10 @@ including sessions absent from the initial list. Reloading preserves the committ
 
 Icon metadata comes from the authenticated Core directory. Relative asset URLs resolve against
 `HOSTY_CORE_PUBLIC_ORIGIN` (falling back to the local Core origin when no public origin is configured);
-Core image requests retain the existing browser session gate. Icon URLs and names are display-only
+For Core asset URLs on loopback, the UI uses the current page's loopback hostname while preserving
+the scheme, port, path and query. This keeps host-only Core cookies when Shell uses `127.0.0.1`
+but the configured public origin uses `localhost` (or vice versa). Remote URLs and non-Core assets
+are unchanged. Core image requests retain the existing browser session gate. Icon URLs and names are display-only
 and are excluded from the model snapshot.
 
 Directory failures are reported as **App context is unavailable**, with Retry. A failed context
@@ -38,6 +50,35 @@ resolution prevents message dispatch; the operator can explicitly choose **Send 
 details for this message**. The resulting snapshot says `resolution: unavailable`. An uninstalled
 app instead retains its id with `available: false`; stale URLs are not reused. Removing an
 unavailable association remains possible during a directory outage.
+
+## Inline App Mentions
+
+Typing `@` at the start of text or after whitespace opens an app search above the composer. Search
+matches installed app ids and titles; email addresses, selected text and existing mention spans
+are not triggers. Arrow keys navigate, Enter chooses without sending, and Escape dismisses without
+changing the draft. Loading, empty results, retry and pagination are supported. IME confirmation
+never sends a message.
+
+A selected result inserts a highlighted, editable `@Display Name` reference and adds the
+app to session context. Association saves use the current revision and disable Send until they
+complete; failed or conflicting saves retain the query and draft. Conflicts refresh the committed
+selection. Existing associations are reused, and the 16-app limit does not prevent mentioning an
+already-selected app. Responses from obsolete searches or a previous session do not modify the
+current draft. External draft edits during a save are retained instead of overwritten.
+
+Deleting or editing the reference changes text only. The app stays in context until removed through
+the icon stack. Conversely, removing an app from context leaves its text intact and marks known
+mentions as outside the current context. A mention grants no permissions and does not silently
+re-add a removed association. During an active run, context changes still apply to the next message.
+
+The editor keeps a native textarea with a highlight layer, preserving text selection, plain-text
+copy/paste, image paste and dictation. Copying a complete mention includes its stable id in plain
+text, as does sending; the editor itself displays the compact name. Undo/redo restores mention identity as well as text without
+undoing context changes. Local draft metadata records exact mention spans, is validated against the
+saved text on restore, and is cleared/pruned with its session draft. Typed or pasted lookalike text
+is ordinary text. Editing inside a mention turns that span into ordinary text; edits around it retain
+its identity. The existing message API and transcript receive readable text including the stable
+app id; the accepted context snapshot remains authoritative. No prompt-delivery API changes are required.
 
 ## New Session From An App
 
@@ -115,6 +156,26 @@ documents that integration boundary and performs no implicit rebinding.
 associations rather than implementing another session binding mechanism.
 
 ## Testing Expectations
+
+- Header placement, history selection/overflow/fallback rendering, and session-list display metadata
+  are covered by component and API tests. Directory outages preserve saved associations.
+
+- Icon URL tests cover loopback aliases, IPv6, remote/external destinations and invalid URLs.
+  Component coverage verifies image-first rendering, failure fallback and retry after asset changes.
+  Core-managed browser verification on 2026-09-30 confirmed loaded image dimensions for the selected
+  Media Server icon and all 11 image assets in the picker when Core advertises `localhost` and the
+  browser uses `127.0.0.1`.
+
+- Mention model/component tests cover caret boundaries, stable-id serialization, span edits, duplicate
+  association avoidance, the 16-app limit, IME, keyboard/native undo and redo, stale searches,
+  network/conflict recovery, session switches, external insertions during saves and draft restoration.
+- Composer integration tests verify that Enter selects rather than sends, Send waits for context
+  persistence and the message uses the returned revision. Draft cleanup removes mention metadata.
+- Core-managed browser verification on 2026-09-30 covered the shared plus menu, app picker cancellation,
+  `@media` selection without a model run, retained context after deleting text, Undo, explicit removal
+  through the icon stack, outside-context feedback and restored metadata after reload. A 360-pixel
+  viewport retained all actions without horizontal composer overflow. Shell embedding was checked
+  separately from the direct Core-managed app-origin interaction.
 
 - Gateway tests cover persistence across restart, actor-scoped retry deduplication, revision
   conflicts, serialized selection/message capture, next-turn and empty-context behavior, event

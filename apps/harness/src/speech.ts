@@ -16,7 +16,7 @@ export async function speechRoute(request: IncomingMessage, response: ServerResp
       const permissions = await client.permissions(signal);
       const granted = permissions.granted.includes("providers.speech-to-text");
       response.setHeader("content-type", "application/json");
-      response.end(JSON.stringify({ granted, providers: granted ? await client.list("speech-to-text", signal) : [] }));
+      response.end(JSON.stringify({ granted, reviewAvailable: permissions.reviewAvailable, requestable: permissions.optional.includes("providers.speech-to-text"), providers: granted ? await client.list("speech-to-text", signal) : [] }));
       return true;
     }
     if (request.method !== "POST" || url.pathname !== "/api/speech/transcriptions") return false;
