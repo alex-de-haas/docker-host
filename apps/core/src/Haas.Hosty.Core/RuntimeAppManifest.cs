@@ -58,7 +58,8 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
         bool validateAllProfiles = false,
         bool requirePanelIcons = false,
         string? legacyManifestDigest = null,
-        SourceReadGrant? manifestGrant = null)
+        SourceReadGrant? manifestGrant = null,
+        bool forceRead = false)
     {
         if (string.IsNullOrWhiteSpace(manifestPath))
         {
@@ -70,7 +71,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
         // a stale stamp — the next load sees the mismatch and re-reads.
         var localPath = TryResolveLocalManifestPath(trimmed);
         var stamp = localPath is null ? default : FileStamp.Read(localPath);
-        if (localPath is not null &&
+        if (!forceRead && localPath is not null &&
             localManifestCache.TryGetValue(localPath, out var cached) &&
             cached.Stamp == stamp)
         {

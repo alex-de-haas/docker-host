@@ -54,3 +54,11 @@ test("search matches name and ID, ignores case/outer whitespace, and combines wi
   assert.deepEqual(apps.filter(app => matchesAppSearch(app, "media") && matchesAppStateFilter(app, "updates")), [apps[0]]);
   assert.equal(matchesAppSearch(apps[1], "unknown"), false);
 });
+
+test("required permission consent contributes to attention independently of runtime", () => {
+  const app = { runtimeState: "running", permissionState: { status: "known", missingRequired: ["apps.skills.read"] } };
+  assert.equal(matchesAppStateFilter(app, "attention"), true);
+  assert.equal(matchesAppStateFilter(app, "running"), true);
+  app.permissionState.missingRequired = [];
+  assert.equal(matchesAppStateFilter(app, "attention"), false);
+});

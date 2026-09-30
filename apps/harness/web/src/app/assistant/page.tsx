@@ -4,8 +4,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SpeechInput } from "@/components/speech-input";
 import { SessionWorkspaces } from "@/components/session-workspaces";
 import { SessionProvider } from "@/components/session-provider";
-import { AppContextPicker } from "@/components/app-context-picker";
-import { ArrowLeft, History, Loader2, MessageSquarePlus, Paperclip, Send, Sparkles, Square } from "lucide-react";
+import { AppMentionInput, type AppMentionInputHandle } from "@/components/app-mention-input";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { AppContextPicker, type AppContextPickerHandle } from "@/components/app-context-picker";
+import { ArrowLeft, History, Loader2, MessageSquarePlus, Paperclip, Plus, Blocks, Send, Sparkles, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, InlineError, StatusBadge } from "@/components/status";
 import { Markdown } from "@/components/markdown";
@@ -15,7 +17,7 @@ import {
   MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport,
 } from "@/components/ui/message-scroller";
 import { transcriptItems } from "@/lib/transcript-items";
-import { InputGroup, InputGroupAddon, InputGroupTextarea } from "@/components/ui/input-group";
+import { InputGroup, InputGroupAddon } from "@/components/ui/input-group";
 import { SessionList } from "@/components/session-list";
 import { hasMessageContent, indexAttachments, takeChosenFiles, takePastedImages } from "@/lib/attachments";
 import { ToolActivity, TranscriptEvent, type ApprovalDecision } from "@/components/transcript";
@@ -85,6 +87,15 @@ export default function AssistantPage() {
   const running = ["running", "awaiting_approval", "awaiting_question"].includes(status);
   const stopping = session?.id === stoppingSession;
   const [contextSaving, setContextSaving] = useState(false);
+  const [mentionSaving, setMentionSaving] = useState(false);
+  const mentionSavingRef = useRef(false);
+  const onMentionSaving = useCallback((busy: boolean) => { mentionSavingRef.current = busy; setMentionSaving(busy); }, []);
+  const contextPickerRef = useRef<AppContextPickerHandle>(null);
+  const addButtonRef = useRef<HTMLButtonElement>(null);
+  const openContextAfterMenu = useRef(false);
+  const onContextChange = useCallback((record: AssistantSession) => {
+    setSession(current => current?.id === record.id && (record.appContextRevision ?? 0) >= (current.appContextRevision ?? 0) ? record : current);
+  }, []);
   const [contextUnavailable, setContextUnavailable] = useState(false);
   const [withoutAppDetails, setWithoutAppDetails] = useState(false);
   // Chosen but not yet sent. Uploaded only when the message goes, so a file picked and then
@@ -117,6 +128,7 @@ export default function AssistantPage() {
   // and its own click must not come back as "this session was deleted" from somewhere else.
   const selfDeleted = useRef(new Set<string>());
 
+  const mentionInputRef = useRef<AppMentionInputHandle>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
 
   /** Attaches to one session and follows its log. Shared by reattach, switch and new. */
@@ -421,8 +433,8 @@ export default function AssistantPage() {
   }, []);
 
   const send = useCallback(async () => {
-    const trimmed = input.trim();
-    if (!hasMessageContent(trimmed, pending.length, uploaded.length) || !session || sendingRef.current || providerSavingRef.current || stoppingRef.current === session.id || running || contextSaving || !health?.available) {
+    const trimmed = (mentionInputRef.current?.serialize() ?? input).trim();
+    if (!hasMessageContent(trimmed, pending.length, uploaded.length) || !session || sendingRef.current || providerSavingRef.current || stoppingRef.current === session.id || running || contextSaving || mentionSavingRef.current || !health?.available) {
       return;
     }
     sendingRef.current = true;
@@ -622,7 +634,7 @@ export default function AssistantPage() {
 
   return (
     <div className="flex h-dvh min-h-0 flex-col">
-      <header className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
+      <header className="flex flex-wrap shrink-0 items-center gap-2 border-b px-3 py-2">
         {showSessions ? (
           <>
             {session && <Button variant="ghost" size="icon-sm" aria-label="Back to conversation" title="Back to conversation" onClick={() => setHistoryOpen(false)}><ArrowLeft /></Button>}
@@ -634,6 +646,10 @@ export default function AssistantPage() {
             <Sparkles className="hosty-shell-chrome h-4 w-4 shrink-0" aria-hidden />
             <span className="hosty-shell-chrome text-sm font-medium">Assistant</span>
             <StatusBadge value={status} />
+            {session && (
+              <AppContextPicker key={session.id} ref={contextPickerRef} opener={addButtonRef} compact side="bottom" session={session} busy={sending || mentionSaving || providerSaving} onBusyChange={setContextSaving} running={running}
+                onChange={onContextChange} />
+            )}
             <div className="ml-auto flex items-center gap-1">
               <Button variant="ghost" size="icon-sm" title="Session history" aria-label="Session history" disabled={!ready} onClick={() => {
                 setHistoryOpen(true);
@@ -734,10 +750,16 @@ export default function AssistantPage() {
                   onClick={() => { setSending(true); void retryHandoff(session.id).then(attach).catch(cause => setError(String(cause))).finally(() => setSending(false)); }}>Retry starting</Button>}
               </div>}
             <InputGroup aria-label="Message and context">
-              <InputGroupTextarea
-                ref={composerRef}
+              <AppMentionInput
+                ref={mentionInputRef}
+                key={session?.id ?? "empty"}
+                inputRef={composerRef}
+                session={session}
+                contextBusy={contextSaving || sending || providerSaving}
+                onContextChange={onContextChange}
+                onBusyChange={onMentionSaving}
                 value={input}
-                onChange={(event) => setInput(event.target.value)}
+                onChange={setInput}
                 onPaste={(event) => {
                   // Leave native paste intact for every text flavor, including HTML-only clipboards.
                   const images = takePastedImages(event.clipboardData);
@@ -788,32 +810,34 @@ export default function AssistantPage() {
                 )}
                 <div className="flex items-end gap-2" role="group" aria-label="Message actions">
                   <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="ghost"
-                      disabled={!session || sending}
-                      aria-label="Attach files"
-                      onClick={() => fileInputRef.current?.click()}
-                    >
-                      <Paperclip />
-                    </Button>
-                    {session && <SpeechInput key={session.id} disabled={sending} onText={text => setInput(current => current ? `${current}${/\s$/.test(current) ? "" : " "}${text}` : text)} />}
-                    {session && session.providerLocked !== undefined && <SessionProvider key={`${session.id}:${session.connectionId}:${session.connectionRevision}`} session={session} busy={sending} onSavingChange={onProviderSaving} onChange={record => {
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button ref={addButtonRef} type="button" size="icon" variant="ghost" disabled={!session || sending || mentionSaving || providerSaving} aria-label="Add to message"><Plus /></Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent side="top" align="start" onCloseAutoFocus={event => {
+                        if (openContextAfterMenu.current) {
+                          event.preventDefault(); openContextAfterMenu.current = false;
+                          contextPickerRef.current?.open();
+                        }
+                      }}>
+                        <DropdownMenuGroup>
+                          <DropdownMenuItem disabled={contextSaving} onSelect={() => { openContextAfterMenu.current = true; }}><Blocks />Add app context</DropdownMenuItem>
+                          <DropdownMenuItem onSelect={() => fileInputRef.current?.click()}><Paperclip />Attach files</DropdownMenuItem>
+                        </DropdownMenuGroup>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                    {session && session.providerLocked !== undefined && <SessionProvider key={`${session.id}:${session.connectionId}:${session.connectionRevision}`} session={session} busy={sending || mentionSaving || contextSaving} onSavingChange={onProviderSaving} onChange={record => {
                       setSession(current => current?.id === record.id ? record : current);
                       void getHealth(record.id).then(value => { if (activeSessionId.current === record.id) setHealth(value); }).catch(() => {});
                     }} />}
-                    {session && (
-                      <AppContextPicker key={session.id} session={session} busy={sending} onBusyChange={setContextSaving} running={running}
-                        onChange={record => setSession(current => current?.id === record.id && (record.appContextRevision ?? 0) >= (current.appContextRevision ?? 0) ? record : current)} />
-                    )}
                   </div>
+                  {session && <SpeechInput key={session.id} disabled={sending} onText={text => setInput(current => current ? `${current}${/\s$/.test(current) ? "" : " "}${text}` : text)} />}
                   {running || stopping ? (
                     <Button type="button" size="icon" className="shrink-0" disabled={sending || stopping} onClick={() => void stop()} aria-label="Stop" title="Stop response">
                       {sending || stopping ? <Loader2 className="animate-spin" /> : <Square className="fill-current" />}
                     </Button>
                   ) : (
-                    <Button type="submit" size="icon" className="shrink-0" disabled={!session || sending || providerSaving || contextSaving || !health?.available || !hasMessageContent(input, pending.length, uploaded.length)} aria-label="Send">
+                    <Button type="submit" size="icon" className="shrink-0" disabled={!session || sending || providerSaving || contextSaving || mentionSaving || !health?.available || !hasMessageContent(input, pending.length, uploaded.length)} aria-label="Send">
                       {sending ? <Loader2 className="animate-spin" /> : <Send />}
                     </Button>
                   )}

@@ -10,6 +10,8 @@
 // Per session rather than one global draft: switching sessions and finding someone else's half-written
 // sentence in the box would be its own kind of loss.
 
+import { MENTION_DRAFT_PREFIX } from "./app-mentions";
+
 const PREFIX = "hosty.assistant.draft.";
 
 /** Long enough for any real message; short enough that local storage cannot be filled from the box. */
@@ -48,6 +50,7 @@ export function writeDraft(sessionId: string, text: string): void {
 export function clearDraft(sessionId: string): void {
   try {
     window.localStorage.removeItem(PREFIX + sessionId);
+    window.localStorage.removeItem(MENTION_DRAFT_PREFIX + sessionId);
   } catch {
     // Ignored for the same reason.
   }
@@ -64,7 +67,8 @@ export function pruneDrafts(liveSessionIds: readonly string[]): void {
     const live = new Set(liveSessionIds);
     for (let index = window.localStorage.length - 1; index >= 0; index -= 1) {
       const key = window.localStorage.key(index);
-      if (key?.startsWith(PREFIX) && !live.has(key.slice(PREFIX.length))) {
+      const prefix = key?.startsWith(PREFIX) ? PREFIX : key?.startsWith(MENTION_DRAFT_PREFIX) ? MENTION_DRAFT_PREFIX : null;
+      if (key && prefix && !live.has(key.slice(prefix.length))) {
         window.localStorage.removeItem(key);
       }
     }

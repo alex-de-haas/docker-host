@@ -1,7 +1,7 @@
 # App Installation SDK And Core Confirmation
 
 Created: 2026-09-18
-Updated: 2026-09-29
+Updated: 2026-09-30
 
 ## Installation Ownership
 
@@ -28,7 +28,7 @@ forwarded headers cannot authorize that fallback; configured public origins rema
 Core exposes create, submit and status operations under `/api/installations` for authenticated
 operator clients, and `/api/internal/apps/{appId}/installations` for delegated app callers.
 The app transport requires a currently enabled administrator and the installed app's approved
-permission for installation/update requests. An app can request review of its own optional grants
+permission for installation/update requests. An app can request review of its own permission declarations and optional grants
 with `permissionsAppId` without an install/update grant. Shell retains its existing full Core browser-session transport; this is operator
 access, not an app-ID permission exemption. The remaining Shell-specific CORS policy for that
 legacy management transport is unchanged. Custom app clients use the SDK server adapter.
@@ -130,6 +130,11 @@ new binaries to a running host are operational migration steps, not implicit SDK
 
 This protects the app-token API boundary. Full operator credentials and localCommand processes
 running as Core's OS account are separate trust boundaries; it is not an OS sandbox.
+
+Permission-only reviews read the app's current local manifest in Core and freeze its digest and
+installation/source/runtime identity. `submit` accepts optional draft selections as a fourth argument;
+these preselect the Core confirmation form and do not authorize a grant. Required/optional transitions
+and removals are shown on the isolated page. See [App permission management](../app-permission-management/feature.md).
 
 ## Testing Expectations
 

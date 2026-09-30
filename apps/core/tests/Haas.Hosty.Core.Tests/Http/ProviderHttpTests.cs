@@ -27,7 +27,7 @@ public sealed class ProviderHttpTests
             return await client.SendAsync(request);
         }
         Assert.Equal(HttpStatusCode.Forbidden, (await Call("example.consumer", "providers/speech-to-text")).StatusCode);
-        await apps.UpdateAppAsync("example.consumer", r => r with { GrantedCorePermissions = [CoreAppPermissions.SpeechProviders], PermissionRevision = "grant-1" });
+        await apps.UpdateAppAsync("example.consumer", r => r with { GrantedCorePermissions = [CoreAppPermissions.SpeechProviders], RequiredCorePermissions = [], OptionalCorePermissions = [CoreAppPermissions.SpeechProviders], PermissionRevision = "grant-1" });
         var list = await Call("example.consumer", "providers/speech-to-text");
         Assert.Equal(HttpStatusCode.OK, list.StatusCode);
         Assert.Equal(2, (await list.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("providers").GetArrayLength());
@@ -41,7 +41,9 @@ public sealed class ProviderHttpTests
         Assert.Equal(HttpStatusCode.Unauthorized, (await Call("example.speech", "provider/introspect", new { token, kind = "assistant" })).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await Call("example.consumer", "providers/assistant")).StatusCode);
         // Revocation invalidates already-issued credentials; granting again does not resurrect them.
-        await apps.UpdateAppAsync("example.consumer", r => r with { GrantedCorePermissions = [], PermissionRevision = "grant-2" });
+        var lifecycle = host.Services.GetRequiredService<CoreLifecycleService>();
+        var review = await lifecycle.CreatePermissionPlanAsync("example.consumer", default);
+        await lifecycle.ApplyOptionalPermissionsAsync(review, [], default);
         Assert.Equal(HttpStatusCode.Forbidden, (await Call("example.speech", "provider/introspect", new { token, kind = "speech-to-text" })).StatusCode);
         await apps.UpdateAppAsync("example.consumer", r => r with { GrantedCorePermissions = [CoreAppPermissions.SpeechProviders], PermissionRevision = "grant-3" });
         Assert.Equal(HttpStatusCode.Forbidden, (await Call("example.speech", "provider/introspect", new { token, kind = "speech-to-text" })).StatusCode);

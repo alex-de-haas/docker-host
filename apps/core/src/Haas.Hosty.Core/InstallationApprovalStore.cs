@@ -75,6 +75,13 @@ internal sealed class InstallationApprovalStore(IClock clock)
             if (entry.Status != "draft")
                 throw new AppLifecycleException("approval_frozen", "This request has already been submitted.");
             entry.Settings = input.Settings is null ? new Dictionary<string, string?>() : new Dictionary<string, string?>(input.Settings, StringComparer.Ordinal);
+            if (input.OptionalPermissions is not null)
+            {
+                var declared = entry.PermissionPlan?.Optional ?? entry.InstallPlan?.OptionalCorePermissions ?? entry.UpdatePlan?.TargetOptionalCorePermissions ?? [];
+                if (input.OptionalPermissions.Except(declared, StringComparer.Ordinal).Any())
+                    throw new AppLifecycleException("optional_permission_invalid", "Only declared optional permissions may be selected.");
+                entry.SelectedOptionalPermissions = input.OptionalPermissions.Distinct(StringComparer.Ordinal).ToArray();
+            }
             entry.Autostart = input.Autostart;
             entry.Status = "pending";
         }
@@ -159,9 +166,11 @@ internal sealed class InstallationApproval
 
 internal sealed record InstallationPrepare(string? ManifestPath = null, string? FeedsUrl = null,
     string? FeedId = null, string? SelectedRuntime = null, string? UpdateAppId = null, string? PlanDigest = null, PrivateSourceChoice? SourceConnections = null, string? PermissionsAppId = null);
-internal sealed record InstallationSubmit(IReadOnlyDictionary<string, string?>? Settings = null, bool Autostart = true);
+internal sealed record InstallationSubmit(IReadOnlyDictionary<string, string?>? Settings = null, bool Autostart = true, IReadOnlyList<string>? OptionalPermissions = null);
 internal sealed record InstallationRequestView(string Id, string Status, AppInstallPlan? Plan, AppUpdatePlan? UpdatePlan,
     string ApprovalUrl, DateTimeOffset ExpiresAt, string? Error, AppPermissionPlan? PermissionPlan = null);
 
 internal sealed record AppPermissionPlan(string AppId, string DisplayName, DateTimeOffset InstalledAt,
-    string? Revision, IReadOnlyList<string> Required, IReadOnlyList<string> Optional, IReadOnlyList<string> Granted);
+    string? Revision, IReadOnlyList<string> Required, IReadOnlyList<string> Optional, IReadOnlyList<string> Granted,
+    string? Source = null, string? Runtime = null, string? ManifestDigest = null, string? Identity = null,
+    IReadOnlyList<string>? AcceptedRequired = null, IReadOnlyList<string>? AcceptedOptional = null);

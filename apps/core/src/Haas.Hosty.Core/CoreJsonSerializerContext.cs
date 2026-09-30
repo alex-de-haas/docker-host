@@ -85,6 +85,7 @@ internal static class CoreJson
 [JsonSerializable(typeof(ProviderIntrospectionRequest))]
 [JsonSerializable(typeof(ProviderInvocation))]
 [JsonSerializable(typeof(AppPermissionState))]
+[JsonSerializable(typeof(AppPermissionObservation))]
 [JsonSerializable(typeof(InstallationPrepare))]
 [JsonSerializable(typeof(InstallationSubmit))]
 [JsonSerializable(typeof(InstallationRequestView))]

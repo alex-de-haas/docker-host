@@ -1,0 +1,60 @@
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { AppPermissions } from "../src/app/shell/dialogs/app-permissions";
+import type { AppPermissionObservation, CoreApp } from "../src/app/shell/types";
+const api = vi.hoisted(() => ({ prepare: vi.fn(), submit: vi.fn(), status: vi.fn(), refresh: vi.fn(), send: vi.fn() }));
+vi.mock("../src/app/shell/shell-context", () => ({ useShellActions: () => ({ coreOrigin: "https://core.test", sendCsrfJson: api.send, refresh: api.refresh }) }));
+vi.mock("@hosty-sdk/app/install", () => ({ InstallationError: class extends Error {}, createInstallationClient: () => api, openInstallationConfirmation: () => null, showInstallationConfirmation: vi.fn() }));
+let root: Root, container: HTMLDivElement;
+let state: AppPermissionObservation;
+beforeEach(() => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  state = { status: "known", required: ["apps.skills.read"], optional: ["providers.speech-to-text"], acceptedRequired: [], acceptedOptional: [], granted: [], missingRequired: ["apps.skills.read"], reviewRequired: true, unconfirmedRoles: [], error: null, checkedAt: "now", descriptions: { "apps.skills.read": "Read skills" } };
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json(state)));
+  api.prepare.mockImplementation(async () => ({ id: "review", permissionPlan: state }));
+  api.submit.mockResolvedValue({ id: "review", approvalUrl: "https://core.test/install/confirm/review" });
+  api.status.mockResolvedValue({ status: "denied" });
+  container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+});
+afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.resetAllMocks(); vi.unstubAllGlobals(); });
+const render = () => act(async () => root.render(<AppPermissions app={{ id: "legacy" } as CoreApp} />));
+const review = () => act(async () => [...container.querySelectorAll("button")].find(b => b.textContent === "Review changes")!.click());
+it("shows legacy declarations, separates required consent, and preserves a denied optional draft", async () => {
+  await render();
+  expect(container.textContent).toContain("Required permissions need approval");
+  expect(container.textContent).toContain("Read skills");
+  expect(container.querySelectorAll('[role="switch"]')).toHaveLength(1);
+  const toggle = container.querySelector<HTMLButtonElement>('[role="switch"]')!;
+  expect(toggle.getAttribute("aria-checked")).toBe("false");
+  await act(async () => toggle.click());
+  await review();
+  expect(api.submit).toHaveBeenCalledWith("review", {}, true, ["providers.speech-to-text"]);
+  expect(container.textContent).toContain("cancelled");
+  expect(toggle.getAttribute("aria-checked")).toBe("true");
+  expect(api.refresh).not.toHaveBeenCalled();
+});
+it("refreshes grants and dashboard after successful confirmation", async () => {
+  await render();
+  api.status.mockImplementation(async () => { state = { ...state, granted: state.required, missingRequired: [], reviewRequired: false }; return { status: "succeeded" }; });
+  await review();
+  expect(api.refresh).toHaveBeenCalledOnce();
+  expect(container.textContent).toContain("Permissions updated");
+  expect(container.textContent).not.toContain("Required permissions need approval");
+});
+it("refuses to submit an unseen declaration set and retains the draft", async () => {
+  await render();
+  api.prepare.mockResolvedValue({ id: "review", permissionPlan: { ...state, required: ["apps.install"] } });
+  await review();
+  expect(api.submit).not.toHaveBeenCalled();
+  expect(container.textContent).toContain("manifest changed");
+});
+it("shows explicit empty and unavailable states", async () => {
+  state = { ...state, required: [], optional: [], missingRequired: [], reviewRequired: false };
+  await render();
+  expect(container.textContent).toContain("requests no Core permissions");
+  state = { ...state, status: "stale", error: "Invalid JSON" };
+  await act(async () => [...container.querySelectorAll("button")].find(b => b.textContent === "Refresh")!.click());
+  expect(container.textContent).toContain("Existing access is unchanged");
+  expect([...container.querySelectorAll("button")].some(b => b.textContent === "Review changes")).toBe(false);
+});

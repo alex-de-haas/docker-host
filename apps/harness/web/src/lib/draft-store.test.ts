@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { readMentionDraft, writeMentionDraft } from "./app-mentions";
 import { clearDraft, pruneDrafts, readDraft, writeDraft } from "./draft-store.js";
 
 /** Enough of the Storage surface for these paths, including the throwing case. */
@@ -78,4 +79,16 @@ describe("draft store", () => {
     expect(() => pruneDrafts(["a"])).not.toThrow();
     expect(readDraft("a")).toBe("");
   });
+});
+
+it("clears and prunes mention metadata together with its owning draft", () => {
+  const map = installStorage();
+  const draft = { text: "@App (app)", mentions: [{ id: "app", label: "@App (app)", start: 0, end: 10 }] };
+  writeDraft("live", draft.text); writeMentionDraft("live", draft);
+  writeDraft("gone", draft.text); writeMentionDraft("gone", draft);
+  pruneDrafts(["live"]);
+  expect(map.size).toBe(2);
+  expect(readMentionDraft("live", draft.text).mentions).toHaveLength(1);
+  expect(readMentionDraft("live", "edited").mentions).toEqual([]);
+  clearDraft("live"); expect(map.size).toBe(0);
 });

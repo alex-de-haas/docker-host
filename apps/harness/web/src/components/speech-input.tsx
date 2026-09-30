@@ -2,12 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Loader2, Mic, Square, X } from "lucide-react";
+import { Tooltip } from "radix-ui";
 import type { ProviderDescriptor, SpeechResult } from "@hosty-sdk/app/providers";
 import { Button } from "@/components/ui/button";
 import { call } from "@/lib/api";
 import { recordingWave } from "@/lib/speech-audio";
 
-type Roster = { granted: boolean; providers: ProviderDescriptor[] };
+type Roster = { granted: boolean; requestable?: boolean; reviewAvailable?: boolean; providers: ProviderDescriptor[] };
 type Recording = { controller: AbortController; stream?: MediaStream; recorder?: MediaRecorder; timer?: ReturnType<typeof setTimeout> };
 
 /** Remount per conversation; cleanup invalidates every pending microphone/recognition operation. */
@@ -16,12 +17,13 @@ export function SpeechInput({ disabled, onText }: { disabled: boolean; onText: (
   const [selected, setSelected] = useState("");
   const [phase, setPhase] = useState<"idle" | "starting" | "recording" | "transcribing">("idle");
   const [error, setError] = useState("");
+  const [rosterError, setRosterError] = useState("");
   const active = useRef<Recording | null>(null);
   const onResult = useRef(onText); onResult.current = onText;
   const blocked = useRef(disabled); blocked.current = disabled;
   useEffect(() => {
     const controller = new AbortController();
-    const refresh = () => { void call("/speech/providers", { signal: controller.signal }).then(r => r.json() as Promise<Roster>).then(value => { if (!controller.signal.aborted) setRoster(value); }).catch(cause => { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Speech providers are unavailable."); }); };
+    const refresh = () => { void call("/speech/providers", { signal: controller.signal }).then(r => r.json() as Promise<Roster>).then(value => { if (!controller.signal.aborted) { setRoster(value); setRosterError(""); } }).catch(cause => { if (!controller.signal.aborted) setRosterError(cause instanceof Error ? cause.message : "Speech providers are unavailable."); }); };
     refresh(); window.addEventListener("focus", refresh);
     return () => { controller.abort(); window.removeEventListener("focus", refresh); };
   }, []);
@@ -69,7 +71,21 @@ export function SpeechInput({ disabled, onText }: { disabled: boolean; onText: (
       if (valid()) { setError(cause instanceof Error ? cause.message : "Microphone access failed."); cancel(); }
     }
   }
-  const hint = !roster?.granted ? "Allow speech-to-text in Harness app settings to enable dictation." : !provider ? "Choose a speech provider." : !provider.available ? "Selected speech provider is unavailable." : "Dictate into your draft";
+  const unavailable = disabled || !roster?.granted || !provider?.available;
+  const hint = disabled ? "Dictation is unavailable while a message is being sent."
+    : rosterError ? `Could not check speech providers: ${rosterError}`
+    : !roster ? "Checking speech-to-text availability…"
+    : !roster.granted ? roster.reviewAvailable === true
+      ? "In Hosty Dashboard, open Harness → Settings → Permissions, enable speech-to-text, then Review changes and confirm in Core."
+      : roster.requestable === true
+      ? "In Hosty Dashboard, open Harness → Settings → Permissions → Review optional permissions, then approve speech-to-text in Core."
+      : roster.requestable === false
+        ? "This Harness installation has no optional speech-to-text permission. Review an updated Harness manifest in Core before enabling dictation."
+        : "Harness has no speech-to-text permission. Ask a host administrator to review its installation permissions."
+    : roster.providers.length === 0 ? "No speech providers were found. Check your speech-to-text apps in Dashboard."
+    : !provider ? "Choose a speech provider to enable dictation."
+    : !provider.available ? `${provider.displayName} is unavailable. Check the app's status in Dashboard.`
+    : "Dictate into your draft";
   return <div className="flex flex-wrap items-center gap-1">
     {roster?.granted && roster.providers.length > 1 && <select aria-label="Speech provider" className="max-w-40 rounded border bg-background p-1 text-xs" value={choice} disabled={busy || disabled} onChange={e => setSelected(e.target.value)}>
       <option value="">Speech provider…</option>{roster.providers.map(p => <option key={identity(p)} value={identity(p)}>{p.displayName}{p.available ? "" : " (unavailable)"}</option>)}
@@ -78,7 +94,17 @@ export function SpeechInput({ disabled, onText }: { disabled: boolean; onText: (
       <Button type="button" size="icon" variant="ghost" aria-label={phase === "recording" ? "Stop recording" : "Transcribing"} disabled={phase !== "recording"} onClick={() => active.current?.recorder?.stop()}>{phase === "recording" ? <Square /> : <Loader2 className="animate-spin" />}</Button>
       <Button type="button" size="icon" variant="ghost" aria-label="Cancel dictation" onClick={cancel}><X /></Button>
       <span role="status" className="text-xs">{phase === "recording" ? "Recording (up to 120 s)" : phase === "starting" ? "Opening microphone…" : "Transcribing…"}</span>
-    </> : <Button type="button" size="icon" variant="ghost" aria-label="Dictate" title={hint} disabled={disabled || !roster?.granted || !provider?.available} onClick={() => void start()}><Mic /></Button>}
+    </> : <Tooltip.Provider delayDuration={150}><Tooltip.Root>
+      <Tooltip.Trigger asChild>
+        <span className="inline-flex rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" tabIndex={unavailable ? 0 : undefined} aria-label={unavailable ? `Dictation unavailable. ${hint}` : undefined}>
+          <Button type="button" size="icon" variant="ghost" aria-label="Dictate" disabled={unavailable} onClick={() => void start()}><Mic /></Button>
+        </span>
+      </Tooltip.Trigger>
+      <Tooltip.Portal><Tooltip.Content side="top" sideOffset={6} className="z-50 max-w-64 rounded-md bg-foreground px-3 py-2 text-xs text-background shadow-md">
+        {hint}<Tooltip.Arrow className="fill-foreground" />
+      </Tooltip.Content></Tooltip.Portal>
+    </Tooltip.Root></Tooltip.Provider>}
+    {rosterError && <p role="alert" className="w-full text-xs text-destructive">Could not check speech providers: {rosterError}</p>}
     {error && <p role="alert" className="w-full text-xs text-destructive">{error}</p>}
   </div>;
 }

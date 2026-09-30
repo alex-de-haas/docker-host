@@ -381,6 +381,7 @@ function BackupsPanel({
 
 const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
   { id: "app", label: "App settings" },
+  { id: "permissions", label: "Permissions" },
   { id: "publicOrigins", label: "Public origins" },
   { id: "mounts", label: "Mounts" },
   { id: "source", label: "Source" },
@@ -420,6 +421,8 @@ function SettingsDialog({
     switch (tab.id) {
       case "app":
         return true;
+      case "permissions":
+        return canManageApps;
       case "publicOrigins":
         return hasPublicOrigins;
       case "mounts":
@@ -442,7 +445,7 @@ function SettingsDialog({
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
       {availableTabs.length > 1 && (
-        <div className="flex gap-1 border-b">
+        <div className="flex flex-wrap gap-1 border-b">
           {availableTabs.map((tab) => (
             <button
               key={tab.id}
@@ -458,7 +461,7 @@ function SettingsDialog({
           ))}
         </div>
       )}
-      {active === "app" && canManageApps && <AppPermissions key={app.id} app={app} />}
+      {canManageApps && <div className={cn("min-h-0 overflow-y-auto", active !== "permissions" && "hidden")}><AppPermissions key={app.id} app={app} active={active === "permissions"} /></div>}
       {/* All forms stay mounted (toggled with hidden) so drafts survive tab switches. */}
       <div className={cn("flex min-h-0 flex-1 flex-col", active !== "app" && active !== "publicOrigins" && "hidden")}>
         <SettingsForm

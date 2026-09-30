@@ -1,7 +1,7 @@
 # Hosty Harness Chat Components
 
 Created: 2026-09-22
-Updated: 2026-09-27
+Updated: 2026-09-30
 
 The [Hosty Harness assistant](../ai-gateway/feature.md#shell-surface) uses Message Scroller,
 Code Block, Attachment, Input Group and collapsible activity in its existing Radix/shadcn
@@ -49,8 +49,9 @@ their existing diff presentation and limits.
 ## Composer and App Context
 
 One Input Group contains the full-width text field, selected attachments and a bottom
-action row. Attachment selection and app-context chips sit on the left; Send sits on the
-right. While the agent is running or waiting for approval/an answer, the same button
+action row. A single leftmost **+** menu contains **Add app context** and **Attach files**,
+followed by the provider selector. Dictation sits immediately
+before Send on the right. While the agent is running or waiting for approval/an answer, the same button
 shows Stop and cancels the active run through the existing session cancellation API.
 Every SSE subscription finishes its persisted replay with the current session status, including
 when no new persisted events exist, so reconnecting cannot leave Stop stuck after a completed turn.
@@ -63,13 +64,23 @@ When idle, Enter sends, Shift+Enter inserts a newline, and IME composition does 
 This layout does not change provider locking or add model selection or starter prompts.
 
 The app-context popover retains search, paging, the 16-app limit and revision-conflict
-recovery. Selected chips retain unavailable-app labels and individual removal controls.
+recovery. Selected chips inside the popover retain unavailable-app labels and individual draft-removal controls.
+The chat header shows at most three overlapping context icons beside the status and an overflow
+count; the empty stack is hidden. Session history rows show the same icons for their saved app context.
+The separate attachment button and the stack's plus affordance are absent.
 Changes during a running turn apply to the next message. Saving context temporarily
 disables Send; context buttons do not submit the surrounding message form.
 Busy notifications retain the active save state across renders and clear on unmount.
 Clicking unused space in the action row focuses the message field, while interactive
 controls and portaled context content retain their own focus. Addon click handlers can
 cancel the default focus behavior.
+
+The textarea supports [inline app mentions](../assistant-app-context/feature.md#inline-app-mentions):
+`@` opens an accessible search above the field, and selection inserts a highlighted stable-id
+reference while adding the app to session context. Mention association saves block Send and context/
+provider changes; ordinary dictation can finish without losing its insertion. Deleting mention text
+leaves context intact. The native textarea and its highlight layer retain selection, paste, IME and
+undo/redo, with mention metadata saved alongside the local draft.
 
 ## Attachments
 

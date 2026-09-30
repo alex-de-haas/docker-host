@@ -40,16 +40,14 @@ internal sealed class InstallationApprovalService(
         if (input.PermissionsAppId is { } targetId)
         {
             if (caller.AppId is not null && caller.AppId != targetId)
-                throw new AppIdentityException("app_access_denied", "An app may request changes only to its own optional permissions.");
+                throw new AppIdentityException("app_access_denied", "An app may request changes only to its own permissions.");
             var target = await apps.GetAppAsync(targetId, ct)
                 ?? throw new AppIdentityException("app_access_denied", "The app is not installed.");
             var permissionEntry = approvals.Add(new InstallationApproval
             {
                 UserId = caller.UserId, CallerAppId = caller.AppId, IdentityToken = caller.Token,
                 CallerName = caller.Name, ExpiresAt = clock.UtcNow.Add(InstallationApprovalStore.Lifetime),
-                PermissionPlan = new(target.Id, target.DisplayName, target.InstalledAt, target.PermissionRevision,
-                    target.RequiredCorePermissions ?? target.GrantedCorePermissions ?? [], target.OptionalCorePermissions ?? [],
-                    target.GrantedCorePermissions ?? []),
+                PermissionPlan = await lifecycle.CreatePermissionPlanAsync(target.Id, ct),
             });
             await RecordAsync(permissionEntry, "requested", ct);
             return permissionEntry;
@@ -181,6 +179,10 @@ internal static class InstallationApprovalEndpoints
                 store.Submit(entry, input);
                 return Task.FromResult(CoreJson.Json(store.View(entry, origins.Effective)));
             }, ct));
+        app.MapGet("/api/apps/{id}/permissions", async (string id, HttpRequest request,
+            UserDirectoryStore users, IClock clock, CoreLifecycleService lifecycle, CancellationToken ct) =>
+            await BrowserAsync(request, users, clock, async _ =>
+                CoreJson.Json(await lifecycle.ObservePermissionsAsync(id, true, ct)), ct, csrf: false));
         app.MapGet("/api/installations/{id}", async (string id, HttpRequest request,
             UserDirectoryStore users, IClock clock, InstallationApprovalService service,
             InstallationApprovalStore store, CorePublicOriginResolver origins, CancellationToken ct) =>
@@ -331,16 +333,27 @@ internal static class InstallationApprovalEndpoints
     {
         static string E(string? text) => WebUtility.HtmlEncode(text ?? "");
         var installing = entry.InstallPlan is not null;
-        var title = entry.PermissionPlan is not null ? "Review optional permissions" : installing ? "Confirm app installation" : "Confirm app update";
+        var title = entry.PermissionPlan is not null ? "Review app permissions" : installing ? "Confirm app installation" : "Confirm app update";
         var name = entry.PermissionPlan?.DisplayName ?? entry.InstallPlan?.DisplayName ?? entry.UpdatePlan?.AppId;
         var permissions = entry.PermissionPlan?.Required ?? entry.InstallPlan?.CorePermissions ?? entry.UpdatePlan?.TargetCorePermissions ?? [];
         var before = entry.PermissionPlan?.Granted ?? entry.UpdatePlan?.CurrentCorePermissions ?? [];
         var optional = entry.PermissionPlan?.Optional ?? entry.InstallPlan?.OptionalCorePermissions ?? entry.UpdatePlan?.TargetOptionalCorePermissions ?? [];
+        string DeclarationChange(string permission, bool required)
+        {
+            var plan = entry.PermissionPlan;
+            if (plan is null) return "";
+            var wasRequired = (plan.AcceptedRequired ?? plan.Required).Contains(permission, StringComparer.Ordinal);
+            var wasOptional = (plan.AcceptedOptional ?? plan.Optional).Contains(permission, StringComparer.Ordinal);
+            return required && wasOptional ? " <strong>(optional → required)</strong>"
+                : !required && wasRequired ? " <strong>(required → optional)</strong>"
+                : !wasRequired && !wasOptional ? " <strong>(new declaration)</strong>" : "";
+        }
+        var optionalDefaults = entry.SelectedOptionalPermissions ?? (entry.PermissionPlan is { AcceptedOptional: { } acceptedOptional } ? before.Intersect(acceptedOptional, StringComparer.Ordinal).ToArray() : before);
         var optionalReview = optional.Count == 0 ? "" : "<fieldset><legend>Optional permissions</legend>" + string.Join("", optional.Select(p =>
-            $"<p><label><input type=checkbox name=optionalPermission value=\"{E(p)}\"{(before.Contains(p, StringComparer.Ordinal) ? " checked" : "")}> {E(CoreAppPermissions.Describe(p))}</label></p>")) + "</fieldset>";
+            $"<p><label><input type=checkbox name=optionalPermission value=\"{E(p)}\"{(optionalDefaults.Contains(p, StringComparer.Ordinal) ? " checked" : "")}> {E(CoreAppPermissions.Describe(p))} <code>{E(p)}</code>{DeclarationChange(p, false)}</label></p>")) + "</fieldset>";
         var rights = permissions.Count == 0 ? "<li>No Core permissions requested</li>" : string.Join("", permissions.Select(p =>
-            $"<li>{E(CoreAppPermissions.Describe(p))}{(!installing && !before.Contains(p, StringComparer.Ordinal) ? " <strong>(new)</strong>" : "")}</li>"));
-        var removed = before.Except(permissions.Concat(optional), StringComparer.Ordinal).Select(p => $"<li>Removed: {E(CoreAppPermissions.Describe(p))}</li>");
+            $"<li>{E(CoreAppPermissions.Describe(p))} <code>{E(p)}</code>{DeclarationChange(p, true)}{(!installing && !before.Contains(p, StringComparer.Ordinal) ? " <strong>(new)</strong>" : "")}</li>"));
+        var removed = before.Concat(entry.PermissionPlan?.AcceptedRequired ?? []).Concat(entry.PermissionPlan?.AcceptedOptional ?? []).Distinct(StringComparer.Ordinal).Except(permissions.Concat(optional), StringComparer.Ordinal).Select(p => $"<li>Removed: {E(CoreAppPermissions.Describe(p))}</li>");
         var roles = entry.InstallPlan?.RequestedRoles ?? entry.UpdatePlan?.TargetRoles ?? [];
         var previousRoles = entry.UpdatePlan?.CurrentConfirmedRoles ?? [];
         var roleItems = roles.Count == 0 ? "<li>No provider roles requested</li>" : string.Join("", roles.Select(role =>

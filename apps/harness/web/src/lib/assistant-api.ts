@@ -40,6 +40,7 @@ export type AssistantSession = {
   createdBy?: string;
   appIds?: string[];
   appContextRevision?: number;
+  contextApps?: ContextApp[];
 };
 
 export type HarnessHealth = {

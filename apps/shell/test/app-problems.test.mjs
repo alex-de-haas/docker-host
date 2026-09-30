@@ -182,3 +182,16 @@ test("problems accumulate, errors ahead of warnings", () => {
   }));
   assert.deepEqual(problems.map((problem) => problem.severity), ["error", "error", "warning"]);
 });
+
+test("missing required consent is actionable while the app continues running", () => {
+  const problems = collectAppProblems(app({ runtimeState: "running", permissionState: { status: "known", missingRequired: ["apps.skills.read"] } }));
+  assert.equal(problems[0].severity, "error");
+  assert.equal(problems[0].action, "permissions");
+  assert.match(problems[0].detail, /Operations requiring/);
+});
+test("optional declarations and stale observations never invent required failures", () => {
+  assert.deepEqual(collectAppProblems(app({ permissionState: { status: "known", missingRequired: [], reviewRequired: true } })), []);
+  const problems = collectAppProblems(app({ permissionState: { status: "stale", missingRequired: ["apps.install"], error: "Invalid manifest" } }));
+  assert.equal(problems.length, 1);
+  assert.equal(problems[0].severity, "warning");
+});

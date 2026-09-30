@@ -26,7 +26,7 @@ export type AppStateFilter = "all" | "running" | "transitioning" | "attention" |
 
 /** Shared by Dashboard counts and visible rows so each count describes its own result set. */
 export function matchesAppStateFilter(
-  app: { runtimeState?: string | null; operationStatus?: string | null; lastError?: string | null; restartRequired?: boolean; updateCheck?: { updateAvailable?: boolean; error?: string | null } | null },
+  app: { permissionState?: { status: string; missingRequired: string[]; error?: string | null } | null; runtimeState?: string | null; operationStatus?: string | null; lastError?: string | null; restartRequired?: boolean; updateCheck?: { updateAvailable?: boolean; error?: string | null } | null },
   filter: AppStateFilter,
 ): boolean {
   switch (filter) {
@@ -34,7 +34,7 @@ export function matchesAppStateFilter(
     case "running": return isAppUp(app.runtimeState);
     case "transitioning": return isAppBusy(app.runtimeState);
     case "updates": return Boolean(app.updateCheck?.updateAvailable);
-    case "attention": return Boolean(app.restartRequired || app.updateCheck?.error || app.lastError || app.operationStatus === "failed" || app.runtimeState === "unknown");
+    case "attention": return Boolean(app.permissionState?.error || (app.permissionState?.status === "known" && app.permissionState.missingRequired.length > 0) || app.restartRequired || app.updateCheck?.error || app.lastError || app.operationStatus === "failed" || app.runtimeState === "unknown");
   }
 }
 

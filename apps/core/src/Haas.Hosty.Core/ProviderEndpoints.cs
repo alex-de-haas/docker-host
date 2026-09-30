@@ -7,7 +7,7 @@ namespace Haas.Hosty.Core;
 internal sealed record ProviderDescriptor(string AppId, string DisplayName, string Kind, string Key,
     int? Version, IReadOnlyList<string> Capabilities, string? Url, bool Available);
 internal sealed record ProviderDirectory(IReadOnlyList<ProviderDescriptor> Providers);
-internal sealed record AppPermissionState(IReadOnlyList<string> Required, IReadOnlyList<string> Optional, IReadOnlyList<string> Granted);
+internal sealed record AppPermissionState(IReadOnlyList<string> Required, IReadOnlyList<string> Optional, IReadOnlyList<string> Granted, bool ReviewAvailable = true);
 internal sealed record ProviderTokenRequest(string ProviderAppId, string Key = "default");
 internal sealed record ProviderTokenResponse(string Token, DateTimeOffset ExpiresAt, ProviderDescriptor Provider);
 internal sealed record ProviderIntrospectionRequest(string Token, string Kind, string Key = "default");

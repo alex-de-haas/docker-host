@@ -16,18 +16,18 @@ export interface InstallPlan {
 export interface InstallationSource {
   manifestPath?: string; feedsUrl?: string; feedId?: string; selectedRuntime?: string;
   updateAppId?: string; planDigest?: string;
-  /** Review optional grants for this installed app, without reinstalling it. */
+  /** Review permission declarations and optional grants for this installed app, without reinstalling it. */
   permissionsAppId?: string;
 }
 export interface InstallationRequest {
   id: string; status: "draft" | "pending" | "executing" | "succeeded" | "denied" | "failed";
   plan: InstallPlan | null;
-  permissionPlan?: { appId: string; displayName: string; required: string[]; optional: string[]; granted: string[] } | null;
+  permissionPlan?: { appId: string; displayName: string; required: string[]; optional: string[]; granted: string[]; acceptedRequired?: string[]; acceptedOptional?: string[] } | null;
   approvalUrl: string; expiresAt: string; error?: string | null;
 }
 export interface InstallationClient {
   prepare(source: InstallationSource): Promise<InstallationRequest>;
-  submit(id: string, settings: Record<string, string | null>, autostart: boolean): Promise<InstallationRequest>;
+  submit(id: string, settings: Record<string, string | null>, autostart: boolean, optionalPermissions?: string[]): Promise<InstallationRequest>;
   status(id: string): Promise<InstallationRequest>;
 }
 export class InstallationError extends Error {
@@ -54,7 +54,7 @@ export function createInstallationClient(options: {
   }
   return {
     prepare: source => call("", source),
-    submit: (id, settings, autostart) => call(`/${encodeURIComponent(id)}/submit`, { settings, autostart }),
+    submit: (id, settings, autostart, optionalPermissions) => call(`/${encodeURIComponent(id)}/submit`, { settings, autostart, ...(optionalPermissions === undefined ? {} : { optionalPermissions }) }),
     status: id => call(`/${encodeURIComponent(id)}`, undefined, "GET"),
   };
 }
