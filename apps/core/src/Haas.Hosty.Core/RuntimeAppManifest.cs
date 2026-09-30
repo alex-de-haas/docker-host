@@ -1525,7 +1525,8 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
             {
                 if (name is "assistant" or "speech-to-text" && (declaration.Version is null or < 1 || declaration.Capabilities is null))
                 {
-                    errors.Add(new("app_manifest_assistant_contract_required", "The assistant interface requires a positive integer version and a capabilities array.", path));
+                    var code = name == "assistant" ? "app_manifest_assistant_contract_required" : "app_manifest_speech_to_text_contract_required";
+                    errors.Add(new(code, $"The {name} interface requires a positive integer version and a capabilities array.", path));
                 }
                 if (declaration.Version is < 1 || declaration.Capabilities is { } capabilities &&
                     (capabilities.Any(capability => string.IsNullOrWhiteSpace(capability) || !ContractKeyPattern.IsMatch(capability)) ||

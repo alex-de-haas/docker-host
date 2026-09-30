@@ -1807,7 +1807,8 @@ internal sealed partial class CoreLifecycleService(
             || PlatformCapabilities.RequestedRoles(confirmed.Selection.Manifest.Provides).Except(app.ConfirmedRoles ?? [], StringComparer.Ordinal).Any())
             throw new AppLifecycleException("approval_required", "New Core permissions or provider roles require confirmation on the Core approval page.");
         var currentSelection = await LoadSelectionForAppAsync(app, cancellationToken);
-        if (!string.Equals(app.Version, confirmed.Plan.CurrentVersion, StringComparison.Ordinal) ||
+        if (app.PermissionRevision != confirmed.PreviousPermissionRevision ||
+            !string.Equals(app.Version, confirmed.Plan.CurrentVersion, StringComparison.Ordinal) ||
             !string.Equals(app.SelectedRuntime, confirmed.Plan.CurrentRuntime, StringComparison.Ordinal) ||
             !string.Equals(currentSelection.ManifestDigest, confirmed.CurrentManifestDigest, StringComparison.Ordinal))
         {

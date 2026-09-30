@@ -1,11 +1,11 @@
 # Provider Consumption And Speech Recognition
 
 Created: 2026-09-29
-Updated: 2026-09-29
+Updated: 2026-09-30
 
 ## Permissions And Review
 
-Core 0.115.0 accepts `providers.speech-to-text` and `providers.assistant`. Each grants discovery and
+Core 0.115.1 accepts `providers.speech-to-text` and `providers.assistant`. Each grants discovery and
 use of every confirmed provider in its category, including later installations. There is no separate
 use permission or per-provider ACL. Supply roles are `speech-to-text` and `assistant` in `provides`;
 roles require installation/update confirmation. Ordinary runtime apps can supply and consume these
@@ -23,6 +23,9 @@ changes. An administrator accepts or denies there; an app cannot manufacture con
 prepare its own optional review with `permissionsAppId` through the existing installation adapter;
 it cannot request another app's optional changes. Stale installation/revision snapshots are rejected.
 Required permissions are changed through a reviewed update, not the optional editor.
+Changing optional grants invalidates an already reviewed update plan: enqueue rejects it synchronously
+before marking the app as updating or starting background work. Interface contract validation identifies
+the declared provider category in both the error code and message.
 
 ## Discovery And Authority
 
@@ -132,6 +135,8 @@ leaves dictation disabled and directs the operator to app settings.
 
 - Core: optional defaults and updates, review-only mutation, stale consent, stored declarations,
   role confirmation, audience/category/installation binding, live revocation and user-access checks.
+  Grant changes in either direction must reject stale update enqueue without changing operation state;
+  missing speech and assistant interface contracts must report category-specific validation errors.
 - SDKs: credential separation, denied access, compatibility, cancellation and assistant handoff ownership.
 - Whisper: malformed/oversized WAV, PCM decoding, silence, busy capacity, cancellation and actual native
   CPU inference. `HOSTY_WHISPER_INTEGRATION=1 dotnet test apps/whisper/Hosty.Whisper.Tests` downloads the

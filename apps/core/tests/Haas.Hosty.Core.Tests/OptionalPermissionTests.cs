@@ -43,6 +43,37 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.DoesNotContain(CoreAppPermissions.SpeechProviders, (await fixture.Service.ListAppsAsync()).Single().GrantedCorePermissions!);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task EnqueueUpdateAsync_AfterOptionalGrantChange_RejectsBeforeQueuing(bool initiallyGranted)
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var path = await fixture.WriteManifestAsync("1.0.0");
+        var manifest = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(path))!;
+        manifest["optionalCorePermissions"] = new System.Text.Json.Nodes.JsonArray(CoreAppPermissions.SpeechProviders);
+        await File.WriteAllTextAsync(path, manifest.ToJsonString());
+        await fixture.Service.InstallAsync(new(path, OptionalPermissions: initiallyGranted ? [CoreAppPermissions.SpeechProviders] : []));
+        var app = (await fixture.Apps.GetAppAsync("com.example.notes"))!;
+        var update = await fixture.Service.CreateUpdatePlanAsync(app.Id, new(path));
+        await fixture.Service.ApplyOptionalPermissionsAsync(
+            new(app.Id, "Notes", app.InstalledAt, app.PermissionRevision,
+                app.RequiredCorePermissions!, app.OptionalCorePermissions!, app.GrantedCorePermissions!),
+            initiallyGranted ? [] : [CoreAppPermissions.SpeechProviders], CancellationToken.None);
+        var before = (await fixture.Apps.GetAppAsync(app.Id))!;
+
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.EnqueueUpdateAsync(app.Id, new(update.PlanDigest)));
+
+        Assert.Equal("update_plan_stale", error.Code);
+        var after = (await fixture.Apps.GetAppAsync(app.Id))!;
+        Assert.Equal(before.OperationStatus, after.OperationStatus);
+        Assert.Equal(before.UpdateProgress, after.UpdateProgress);
+        Assert.Equal(before.LastOperation, after.LastOperation);
+        Assert.Equal(before.LastError, after.LastError);
+        Assert.Null(fixture.Service.TryGetRunningBackgroundUpdate(app.Id));
+    }
+
     [Fact]
     public void OptionalConsentCannotGrantAnUndeclaredPermission()
     {
