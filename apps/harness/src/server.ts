@@ -1,3 +1,6 @@
+import { speechRoute } from "./speech.js";
+import { ProviderClient } from "@hosty-sdk/app/providers/server";
+import { ProviderError, type ProviderInvocation } from "@hosty-sdk/app/providers";
 import { HandoffStore } from "./handoff/store.js";
 import { ConnectionError, type AgentConnections } from "./connections/registry.js";
 import { AppContextError, readContextApps, parseAppIds, captureContext, contextFromRoster } from "./sessions/app-context.js";
@@ -56,6 +59,7 @@ export function createGatewayServer(
   timer.unref();
   const server = createServer((request, response) => {
     void recovered.then(() => route(request, response, manager, adapter, settings, providers, proxy, facade, connections, handoffs)).catch((error) => {
+      if (error instanceof ProviderError) { sendJson(response, error.status, { code: error.code, message: error.message }); return; }
       if (error instanceof SessionBusyError) {
         sendJson(response, 409, { code: "session_busy", message: error.message });
         return;
@@ -184,7 +188,17 @@ async function route(
   // Everything under /api is operator surface: admin-only by decision, no anonymous reads. Two
   // credential shapes, because there are two clients — the Shell assistant panel presents a
   // delegated token, the settings page its own Hosty session. Both must resolve to an administrator.
-  const actor = await resolveAdminActor(request);
+  let invocation: ProviderInvocation | null = null;
+  const providerBearer = readBearer(request);
+  if (providerBearer?.startsWith("hosty_provider.") && (url.pathname === "/api/assistant/v1/handoffs" || url.pathname.startsWith("/api/assistant/v1/handoffs/"))) {
+    invocation = await new ProviderClient().validate(providerBearer, "assistant");
+    if (!invocation.userId || invocation.hostRole !== "host.admin") {
+      sendJson(response, 403, { code: "admin_required", message: "This assistant accepts administrator requests only." }); return;
+    }
+  }
+  const consumer = invocation ? `${invocation.callerAppId}:${invocation.callerInstallation}` : undefined;
+  const actor = invocation ? { userId: invocation.userId!, via: "provider-token" as const, expiresAtSeconds: null }
+    : await resolveAdminActor(request);
   if (!actor) {
     sendJson(response, 401, {
       code: "unauthorized",
@@ -208,21 +222,23 @@ async function route(
     return;
   }
 
+  if (await speechRoute(request, response, url)) return;
+
   if (url.pathname === "/api/assistant/v1/handoffs" && method === "POST") {
-    const prepared = await handoffs.prepare(actor.userId, await readJson(request));
+    const prepared = await handoffs.prepare(actor.userId, await readJson(request), consumer);
     sendJson(response, prepared.created ? 201 : 200, prepared.value); return;
   }
   const handoff = url.pathname.match(/^\/api\/assistant\/v1\/handoffs\/([^/]+)(?:\/(finalize|attachments)(?:\/([^/]+))?)?$/);
   if (handoff) {
     const [, id, action, attachmentId] = handoff;
-    if (!action && method === "GET") { sendJson(response, 200, await handoffs.status(actor.userId, id!)); return; }
-    if (!action && method === "DELETE") { sendJson(response, 200, await handoffs.cancel(actor.userId, id!)); return; }
+    if (!action && method === "GET") { sendJson(response, 200, await handoffs.status(actor.userId, id!, consumer)); return; }
+    if (!action && method === "DELETE") { sendJson(response, 200, await handoffs.cancel(actor.userId, id!, consumer)); return; }
     if (action === "finalize" && method === "POST") {
       const body = await readJson(request);
-      sendJson(response, 200, await handoffs.finalize(actor.userId, id!, body.attachmentIds, readBearer(request))); return;
+      sendJson(response, 200, await handoffs.finalize(actor.userId, id!, body.attachmentIds, invocation ? undefined : readBearer(request), consumer)); return;
     }
     if (action === "attachments" && attachmentId && method === "PUT") {
-      const uploaded = await handoffs.upload(actor.userId, id!, attachmentId, url.searchParams.get("name") ?? "", request.headers["content-type"] ?? "application/octet-stream", request);
+      const uploaded = await handoffs.upload(actor.userId, id!, attachmentId, url.searchParams.get("name") ?? "", request.headers["content-type"] ?? "application/octet-stream", request, consumer);
       sendJson(response, uploaded.created ? 201 : 200, uploaded.value); return;
     }
     sendJson(response, 405, { code: "method_not_allowed", message: "Unsupported handoff operation." }); return;

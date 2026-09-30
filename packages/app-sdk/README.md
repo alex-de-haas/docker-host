@@ -14,6 +14,8 @@ npm install @hosty-sdk/app
 | `@hosty-sdk/app/server` | server only | Core revalidation with caching, cookie helpers, the app-code route factory, the app secrets client |
 | `@hosty-sdk/app/react` | client | `<AppIdentityBridge />` — probe, silent recovery, fallback cards |
 | `@hosty-sdk/app/embedder` | client | verified responders — launch-code recovery and delegated tokens — plus the theme sender half, for anything that embeds Hosty apps |
+| `@hosty-sdk/app/providers` | anywhere | permission state, provider descriptors, speech contract types |
+| `@hosty-sdk/app/providers/server` | server only | `ProviderClient`: discovery, speech recognition, assistant handoffs and live credential validation |
 | `@hosty-sdk/app/theme` | anywhere | the shell→app theme protocol: constants, `resolveTheme`, `applyTheme`, `parseShellThemeMessage`, `themeBootstrapScript` / `createThemeBootstrapScript` |
 
 Minimal Next.js wiring:
@@ -205,3 +207,17 @@ capability and raw upload API. See [the complete contract](../../docs/features/h
 
 Assistant control requests use a 60-second deadline. Uploads accept an optional caller-owned
 `AbortSignal` and have no SDK-imposed deadline, so slow valid transfers are not aborted after a minute.
+
+## Speech And Assistant Providers
+
+Core 0.115.0 supports required `corePermissions` and optional `optionalCorePermissions` with
+`providers.speech-to-text` / `providers.assistant`. Each accepted permission covers all confirmed
+providers of that category. Read `new ProviderClient().permissions()` before offering optional UI.
+Select an app ID and interface key explicitly, use `list("speech-to-text")`, `speechCapabilities(...)`
+and `transcribe(selected, wavBlob, { signal })` on the server. Never expose the app service token to
+a browser. Transcription accepts the provider's documented format; the v1 baseline is 16 kHz mono
+PCM16 WAV. Browser microphone consent is separate from Core permission.
+
+`assistant(selected, getUserToken)` returns the existing `AssistantClient` with bounded provider
+credentials and the acting user's access. It does not expose general agent execution.
+See [Provider consumption](../../docs/features/provider-consumption/feature.md) for the full contract.

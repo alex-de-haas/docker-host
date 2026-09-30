@@ -8,7 +8,7 @@ export interface InstallPlan {
   appId: string; displayName: string; description?: string | null; action: string;
   planId?: string | null; targetVersion: string; targetRuntime: string; targetRuntimeType: string;
   targetManifestDigest: string; manifestPath: string; defaultAutostart?: boolean;
-  system?: boolean; corePermissions?: string[]; requestedRoles?: string[];
+  system?: boolean; corePermissions?: string[]; optionalCorePermissions?: string[]; requestedRoles?: string[];
   permissionDescriptions?: Record<string, string>; roleDescriptions?: Record<string, string>;
   runtimeProfiles?: { key: string; type: string; default: boolean; development?: boolean }[];
   settings: InstallSetting[];
@@ -16,10 +16,13 @@ export interface InstallPlan {
 export interface InstallationSource {
   manifestPath?: string; feedsUrl?: string; feedId?: string; selectedRuntime?: string;
   updateAppId?: string; planDigest?: string;
+  /** Review optional grants for this installed app, without reinstalling it. */
+  permissionsAppId?: string;
 }
 export interface InstallationRequest {
   id: string; status: "draft" | "pending" | "executing" | "succeeded" | "denied" | "failed";
   plan: InstallPlan | null;
+  permissionPlan?: { appId: string; displayName: string; required: string[]; optional: string[]; granted: string[] } | null;
   approvalUrl: string; expiresAt: string; error?: string | null;
 }
 export interface InstallationClient {

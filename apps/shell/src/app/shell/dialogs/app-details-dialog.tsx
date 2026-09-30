@@ -1,4 +1,5 @@
 "use client";
+import { AppPermissions } from "./app-permissions";
 import { PrivateSourceConnections } from "./private-source-connections";
 
 import { SourceChangesButton } from "../source/source-changes";
@@ -457,6 +458,7 @@ function SettingsDialog({
           ))}
         </div>
       )}
+      {active === "app" && canManageApps && <AppPermissions key={app.id} app={app} />}
       {/* All forms stay mounted (toggled with hidden) so drafts survive tab switches. */}
       <div className={cn("flex min-h-0 flex-1 flex-col", active !== "app" && active !== "publicOrigins" && "hidden")}>
         <SettingsForm

@@ -100,6 +100,19 @@ public sealed class AppManifestServiceTests
         Assert.NotNull(Assert.Single(result.Manifest.Interfaces["assistant"]).Capabilities);
     }
 
+    [Theory]
+    [InlineData("assistant", "app_manifest_assistant_contract_required")]
+    [InlineData("speech-to-text", "app_manifest_speech_to_text_contract_required")]
+    public async Task LoadAsync_MissingProviderContract_IdentifiesTheInterface(string name, string code)
+    {
+        var path = await WriteManifestAsync("com.example.provider", role: $$""", "interfaces": { "{{name}}": [{}] } """);
+
+        var error = await Assert.ThrowsAsync<AppManifestException>(() => new AppManifestService().LoadAsync(path));
+
+        var contractError = Assert.Single(error.Errors, candidate => candidate.Code == code);
+        Assert.Equal($"The {name} interface requires a positive integer version and a capabilities array.", contractError.Message);
+    }
+
     [Fact]
     public async Task LoadAsync_AcceptsInterfaces()
     {

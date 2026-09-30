@@ -2,7 +2,7 @@
 
 Status: Draft
 Created: 2026-07-10
-Updated: 2026-09-27
+Updated: 2026-09-29
 
 Exploratory. This plan authorizes no implementation and changes no current system-app behavior; it
 formalizes a pattern the platform already uses ad hoc so the next capability does not invent a second
@@ -370,9 +370,12 @@ plan is Draft.
 - [ ] 5. Replace every `role: system` privilege check with the permission model above: a delegation
       permission for the exchange and on-behalf-of tokens, grant-and-user intersection for access, a
       lifetime setting, and Core-side ownership state; align permission names with access-token scopes.
-- [ ] 6. Implement optional permissions: `optionalCorePermissions`, unchecked install-time offers,
-      administrator changes in app settings, app-initiated requests through Core confirmation, the
-      granted set exposed to apps through the SDK, and the update rules above.
+Optional consumer permissions and the speech/assistant category contracts are owned by
+[Provider consumption](../provider-consumption/feature.md), with remaining acceptance work in its
+[plan](../provider-consumption/plan.md). They do not activate this broader extension model.
+The agreed name for an agent consumer permission is `providers.agent`; its contract and agent
+extraction remain unimplemented and outside that feature.
+
 - [ ] 7. Docs: a `feature.md` here once a contract ships, plus the manifest and Shell documents the
       `provides`/`corePermissions` sections touch.
 
