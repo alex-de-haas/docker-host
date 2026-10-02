@@ -26,7 +26,7 @@ internal static class CoreAppPermissions
     {
         Publication => "Publish and merge session pull requests using the administrator's selected Git account",
         SpeechProviders => "List and use all current and future speech-to-text providers",
-        AssistantProviders => "List and send requests to all current and future assistant providers",
+        AssistantProviders => "Create draft assistant conversations on your behalf",
         Workspaces => "Manage session worktrees and local Git operations for an administrator",
         ReadSkills => "Read agent skills published by installed apps",
         Install => "Request installation of other apps (Core confirmation required)",
