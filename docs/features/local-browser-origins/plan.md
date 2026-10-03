@@ -2,7 +2,7 @@
 
 Status: In Progress
 Created: 2026-09-30
-Updated: 2026-10-02
+Updated: 2026-10-03
 
 ## Goal
 
@@ -1282,8 +1282,8 @@ checklist stays open.
   Operator output and running Core/apps were untouched. No native browser or cross-platform rerun
   was performed for this batch; popup behavior is covered by SDK and iframe component tests.
 - Version consistency, docs index and whitespace checks passed. Existing uncommitted release
-  version bumps cover C1–C2. C4 is independently tracked by PR #540 from main (Harness 0.39.1,
-  platform 0.116.1), not included in this working tree.
+  version bumps cover C1–C2. C4 shipped separately in PR #540 (Harness 0.39.1, platform 0.116.1), merged on
+  2026-10-03. This branch includes that main merge and preserves its draft-only provider behavior.
 
 - Final Shell lint and verified-frame regression passed after moving its UI reset out of an effect;
   its isolated production build was repeated successfully. SDK's official production build and

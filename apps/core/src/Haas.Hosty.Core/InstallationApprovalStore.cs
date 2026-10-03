@@ -51,7 +51,7 @@ internal static class CoreAppPermissions
         ReadUsers => "Read user-management information",
         ManageUsers => "Manage users and their access",
         SpeechProviders => "List and use all current and future speech-to-text providers",
-        AssistantProviders => "List and send requests to all current and future assistant providers",
+        AssistantProviders => "Create draft assistant conversations on your behalf",
         ReadSkills => "Read agent skills published by installed apps",
         Install => "Request installation, update and removal of applications (Core confirmation required)",
         _ => permission,
