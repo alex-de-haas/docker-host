@@ -1,7 +1,7 @@
 # Provider Consumption And Speech Recognition
 
 Created: 2026-09-29
-Updated: 2026-09-30
+Updated: 2026-10-02
 
 ## Permissions And Review
 
@@ -55,8 +55,10 @@ Assistant calls additionally require `X-Hosty-User-Token`, an app identity or de
 to the caller. Core checks the user's access to both apps. Harness retains its administrator-only policy,
 accepts provider credentials only on `/api/assistant/v1/handoffs`, and binds handoffs to the acting user,
 consumer app and consumer installation. These credentials do not grant access to other conversations,
-settings, MCP, agent connections or general Core APIs. Finalization retains the receiver's configured
-draft/immediate-handoff policy, without turning the provider credential into general delegation.
+settings, MCP, agent connections or general Core APIs. Finalization always uses a
+draft-only policy for provider-originated handoffs, regardless of the immediate-handoff setting.
+Only Harness's own operator clients can dispatch immediately. Provider credentials never become
+general delegation.
 
 ## SDKs
 
@@ -156,3 +158,5 @@ an unavailable provider and a message being sent. Discovery failures do not impl
   Docker consumer and the authenticated Harness backend. Reviewed revocation returns 403 on the next
   Harness transcription. Browser verification confirms optional consent and iframe microphone delegation. Tiny
   recognition contains errors; this is interoperability evidence rather than an accuracy benchmark.
+
+- With immediate handoffs enabled, provider-originated finalization remains a draft, while operator finalization dispatches immediately.

@@ -23,6 +23,19 @@ describe("durable assistant handoffs", () => {
   });
   afterEach(async () => { vi.restoreAllMocks(); await manager.shutdown(); await rm(root, { recursive: true, force: true }); });
   const input = () => ({ requestId: createAssistantRequestId(now), prompt: "Please inspect this", appIds: [] });
+  it.each(["consumer:installation", undefined])("restricts immediate handoffs to operator clients (%s)", async consumer => {
+    await settings.update({ immediateHandoffs: true });
+    const { value } = await handoffs.prepare("alice", input(), consumer);
+    const result = await handoffs.finalize("alice", value.handoffId, [], undefined, consumer);
+    expect(result.result?.disposition).toBe(consumer ? "draft" : "accepted");
+    if (consumer) {
+      expect(result.result?.dispatchId).toBeUndefined();
+      expect((await store.readRecord(value.conversationId))?.handoffDispatch).toBeUndefined();
+    } else {
+      expect(result.result?.dispatchId).toBeTruthy();
+      await vi.waitFor(async () => expect((await store.readRecord(value.conversationId))?.handoffDispatch).toBeDefined());
+    }
+  });
   it("isolates app-attributed handoffs from other consumers and reinstallations", async () => {
     const request = input();
     const { value } = await handoffs.prepare("alice", request, "app-one:installation-one");

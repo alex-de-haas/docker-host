@@ -184,7 +184,7 @@ export class HandoffStore {
       if (record.state !== "finalized") {
         await validateSelection(this.providers, record.appIds ?? []);
         if (!await this.manager.getSession(record.conversationId)) fail(410, "conversation_deleted", "The reserved conversation was deleted.");
-        const immediate = (await this.settings?.read())?.immediateHandoffs === true && Boolean(record.prompt?.trim() || record.attachments.length);
+        const immediate = record.consumer === undefined && (await this.settings?.read())?.immediateHandoffs === true && Boolean(record.prompt?.trim() || record.attachments.length);
         record.result = { conversationId: record.conversationId, disposition: immediate ? "accepted" : "draft",
           open: { endpoint: "http", path: `/assistant?session=${encodeURIComponent(record.conversationId)}` }, ...(immediate ? { dispatchId: randomUUID() } : {}) };
         record.state = "finalized"; await this.save(record);
