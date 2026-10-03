@@ -1,7 +1,7 @@
 # App UI Surfaces
 
 Created: 2026-08-19
-Updated: 2026-09-24
+Updated: 2026-10-01
 
 An app declares **where** its pages belong, and Shell places them. Before this, an app had exactly
 one placement — the sidebar — so operator configuration, domain work, and always-at-hand tools all
@@ -67,44 +67,28 @@ A declaration says where a page is shown, and nothing else. The page stays reach
 (`hosty apps open`), and being embedded grants it nothing — the app keeps enforcing its own
 authorization on every request.
 
-The direct-link question this raises has a better answer than expected for system apps: Core's
-`RequireAccessibleUserAsync` runs on **every** identity flow including revalidation, so it refuses a
-non-administrator a session for a system app at all, and a downgraded administrator loses access at
-the next revalidation rather than the next login. The app does not have to remember to check. An
-ordinary app gets no such rule, and its own authorization decides — which is the app's
-responsibility, stated as such in the skill reference.
+Core's `RequireAccessibleUserAsync` checks assignments on every identity flow, including
+revalidation, for both system and ordinary apps. Administrators have implicit app access; other
+users need an explicit assignment. Losing that assignment terminates access on revalidation.
+An assignment allows entry, not administrative actions: each app checks its own operation-level
+roles, and Core management checks the user's authority independently of the app's grants.
 
-## Embedded Surfaces Authenticate Like Every Other Page
+## Embedded Authorization
 
-Shell mints a launch code and the frame lands with a real Hosty app session, exactly as a sidebar
-page does. This is the part that is easy to get subtly wrong: embedding Core's resolved endpoint URL
-directly produces a frame with **no** session, and an app authenticating the ordinary way then loads
-unauthenticated and cannot recover, because `hosty:auth-required` recovery is scoped to the active
-workspace.
+Shell opens resolved app URLs without a launch code in workspaces, settings and panel surfaces.
+`EmbeddedAppFrame` supplies the theme, launch mode and mixed-content checks. Its legacy auth/delegated
+callbacks confer no authority. `useAppSurfaceSrc` resolves a surface URL and discards stale results;
+it does not exchange credentials.
 
-So the mechanism is shared rather than copied, at two levels:
+Each app owns its recovery. The JavaScript SDK probes the app's session, offers a Core sign-in popup
+when needed, and validates the reply's window, exact origin and initiation state. Its same-origin
+`appFetch` supports an in-memory app grant when iframe cookies are unavailable. This works independently
+of which Shell surface hosts the app. Core checks assignments on every revalidation.
 
-- **`EmbeddedAppFrame`** — one embedder for every context Shell embeds an app in: the workspace, a
-  Settings tab, a panel tab. It owns the theme post, auth recovery, the delegated-token handshake,
-  and the mixed-content refusal.
-- **`useAppSurfaceSrc`** — one launch-code exchange for every placed surface, including the
-  stale-answer rule: an answer belongs to the surface it was minted for, so a slow response for a tab
-  the operator has left cannot land under the label of the one they are looking at.
-
-A copy per context is how the gap this replaced happened: only the workspace answered the
-delegated-token handshake, so a settings page embedded elsewhere never loaded at all.
-
-**Recovery is the placed surface's own.** When a frame reports `hosty:auth-required`, the workspace's
-recovery re-mints against the workspace's URL and does nothing unless the centre pane belongs to that
-same app — so a panel docked beside a Shell page, or beside a *different* app, could never recover
-and would sit unauthenticated until it was remounted. A placed surface re-mints its own code instead,
-behind the same per-app rate limiter, since a frame that never accepts the new code must not drive an
-unbounded reissue storm. The previous answer stays on screen until the new one lands, so recovery
-does not blank the tool being used.
-
-The gateway used to be the one app that authenticated differently — a delegated token where every
-other app used a session. It now uses a session for its settings page and keeps the delegated token
-only for the Shell assistant panel, which is a genuinely different client rather than an exception.
+Harness uses the same app identity for its browser API, with its own administrator requirement.
+Legacy signed direct clients remain supported; app identity alone is refused as MCP delegation
+consent. The remaining consent mechanism and chat/tool acceptance are tracked in
+[local browser origins](../local-browser-origins/plan.md).
 
 ## Shell's Chrome
 
@@ -133,7 +117,7 @@ The rail scrolls vertically. Tooltips name the app and panel, buttons expose the
 open/hidden state, and app-level attention remains visible beside the icon. Up/Down
 and Home/End move focus without activating a tool; Enter/Space activates it. Hidden
 content is inert and cannot receive keyboard focus. A collapsed rail does not mint
-launch codes or mount an unopened iframe. Once opened, the selected iframe stays
+credentials or mount an unopened iframe. Once opened, the selected iframe stays
 mounted across collapse/expand, retaining unsent input; switching still uses only one
 selected iframe. Runtime disappearance and authentication recovery still apply while hidden.
 
@@ -176,7 +160,7 @@ proves nothing about the app. Readiness gates opening only: a frame already on s
 `healthy → degraded` — a transient probe failure must not destroy what the operator has typed — and is
 unmounted only when its own service stops running or a lifecycle verb takes the app down. Decided per
 service, so a dead sibling leaves the living service's tab open while the app reads `unknown`. No
-launch code is minted for a tab that has not opened.
+authentication starts for a tab that has not opened.
 
 **The top strip** owns what belongs to neither rail: a toggle for each rail, and the name
 of whatever fills the content area — an app's page, or the Shell page — plus the notification bell
@@ -285,7 +269,7 @@ Core/CLI **0.107.0**. Gateway **0.32.2** declares `bot`; Demo App **0.11.2** dec
   - The top-strip sidebar toggle preserves keyboard focus and works in expanded, compact,
     and mobile drawer layouts without changing the right panel.
   - The gateway is gone from the sidebar, and — the pair that matters, since the page-link rule is
-    shared — an ordinary app page still embeds in the workspace, its frame carrying the launch code,
+    shared — an ordinary app page still embeds in the workspace, its frame carrying
     `hosty_launch=embedded` and the theme parameters.
   - Measured rather than eyeballed: the content column and the embedded frame resolve to the same
     colour, and a non-app settings tab keeps the page's own surface.

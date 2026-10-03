@@ -133,6 +133,7 @@ public sealed class AppDirectoryInterfacesHttpTests
             Endpoints: [],
             InstalledAt: DateTimeOffset.UtcNow,
             UpdatedAt: DateTimeOffset.UtcNow,
+            GrantedCorePermissions: [CoreAppPermissions.ReadApps],
             Ui: new AppUiContract(null, "Network", null, "/", []),
             CatalogMetadata: new AppCatalogMetadataContract(null, null, [], "assets/icon.svg", [], null, null, null, null, null, null));
 }

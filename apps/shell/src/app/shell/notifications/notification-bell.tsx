@@ -1,5 +1,8 @@
 "use client";
 
+import { fetchCore } from "../core-transport.js";
+
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Bell, CheckCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -45,7 +48,7 @@ export function NotificationBell() {
 
   const load = useCallback(async () => {
     try {
-      const response = await fetch(`${coreOrigin}/api/notifications?limit=${LIST_LIMIT}`, {
+      const response = await fetchCore(`${coreOrigin}/api/notifications?limit=${LIST_LIMIT}`, {
         credentials: "include",
       });
       // A background poll must not hijack navigation; the main shell refresh owns auth redirects.

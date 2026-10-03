@@ -39,7 +39,7 @@ public sealed class UserManagementServiceTests
         var invitation = Assert.Single(state.Invitations);
 
         Assert.StartsWith("dhstp_", result.Token, StringComparison.Ordinal);
-        Assert.StartsWith("http://127.0.0.1:3001/setup/invite?setupToken=", result.SetupUrl, StringComparison.Ordinal);
+        Assert.StartsWith("http://core.hosty.localhost:3001/setup/invite?setupToken=", result.SetupUrl, StringComparison.Ordinal);
         Assert.NotEqual(result.Token, invitation.TokenHash);
         Assert.NotEmpty(invitation.TokenHash!);
         Assert.Equal(["com.example.notes"], invitation.AssignedAppIds);

@@ -4,6 +4,54 @@ namespace Haas.Hosty.Core.Tests;
 
 public sealed partial class CoreLifecycleServiceTests
 {
+    [Theory]
+    [InlineData("install")]
+    [InlineData("update")]
+    [InlineData("permissions")]
+    public async Task OptionalDefaults_UseOnlyPersistedGrants_RegardlessOfCallerSelections(string operation)
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var path = await WritePermissionManifest(fixture, [], [CoreAppPermissions.SpeechProviders, CoreAppPermissions.AssistantProviders]);
+        if (operation != "install")
+            await fixture.Service.InstallAsync(new(path, Autostart: false, OptionalPermissions: [CoreAppPermissions.SpeechProviders]));
+        var entry = new InstallationApproval {
+            UserId = "admin", CallerName = "Marketplace", ExpiresAt = fixture.Clock.UtcNow.AddMinutes(15),
+            InstallPlan = operation == "install" ? await fixture.Service.CreateInstallPlanAsync(new(path)) : null,
+            UpdatePlan = operation == "update" ? await fixture.Service.CreateUpdatePlanAsync("example.permissions", new(path)) : null,
+            PermissionPlan = operation == "permissions" ? await fixture.Service.CreatePermissionPlanAsync("example.permissions", default) : null,
+        };
+        var store = new InstallationApprovalStore(fixture.Clock);
+        store.Add(entry);
+        // Legacy or malicious JSON must not select new rights or deselect existing ones.
+        var input = System.Text.Json.JsonSerializer.Deserialize("""
+            {"optionalPermissions":["providers.assistant","apps.install"],
+             "selectedOptionalPermissions":["providers.assistant"],"settings":{},"autostart":false}
+            """, CoreJson.TypeInfo<InstallationSubmit>())!;
+        store.Submit(entry, input);
+        Assert.Null(entry.SelectedOptionalPermissions);
+        var nonce = store.IssueNonce(entry, "browser");
+        var html = InstallationApprovalEndpoints.Render(entry, nonce);
+        Assert.Equal(operation != "install", html.Contains($"value=\"{CoreAppPermissions.SpeechProviders}\" checked"));
+        Assert.DoesNotContain($"value=\"{CoreAppPermissions.AssistantProviders}\" checked", html);
+        // The Core page can independently revoke the old right and select the new one.
+        store.Decide(entry, nonce, "browser", true, [CoreAppPermissions.AssistantProviders]);
+        Assert.Equal([CoreAppPermissions.AssistantProviders], entry.SelectedOptionalPermissions);
+    }
+
+    [Fact]
+    public void OptionalDefaults_PreserveAlreadyGrantedRightsAfterRequiredToOptionalTransition()
+    {
+        var entry = new InstallationApproval {
+            UserId = "admin", CallerName = "Consumer", ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5), Status = "pending",
+            PermissionPlan = new("example.consumer", "Consumer", DateTimeOffset.UtcNow, "revision", [],
+                [CoreAppPermissions.SpeechProviders], [CoreAppPermissions.SpeechProviders],
+                AcceptedRequired: [CoreAppPermissions.SpeechProviders], AcceptedOptional: []),
+        };
+        var html = InstallationApprovalEndpoints.Render(entry, "nonce");
+        Assert.Contains($"value=\"{CoreAppPermissions.SpeechProviders}\" checked", html);
+        Assert.Contains("required → optional", html);
+    }
+
     [Fact]
     public async Task OptionalPermissionsRemainUnselected_AndReviewedChangesSurviveRestart()
     {

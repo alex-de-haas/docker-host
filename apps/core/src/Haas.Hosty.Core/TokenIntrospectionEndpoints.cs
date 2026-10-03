@@ -27,6 +27,7 @@ internal static class TokenIntrospectionEndpoints
             HttpRequest request,
             TokenIntrospectionRequest? input,
             AppServiceTokenService serviceTokens,
+            AssistantMcpAccess assistantMcp,
             AppRegistryStore apps,
             UserDirectoryStore users,
             OAuthStore oauth,
@@ -61,6 +62,13 @@ internal static class TokenIntrospectionEndpoints
             }
 
             var tool = NormalizeTool(input.Tool);
+            if (input.Token.StartsWith(AssistantMcpAccess.Prefix, StringComparison.Ordinal))
+            {
+                var actor = input.Purpose == "mcp" ? await assistantMcp.ValidateAsync(input.Token, appId, cancellationToken) : null;
+                await WriteAuditAsync(audit, clock, actor is null ? "refused" : "succeeded", appId, tool, actor?.UserId, cancellationToken);
+                return actor is null ? Inactive() : CoreJson.Json(new TokenIntrospectionResponse(true, actor.UserId, actor.Role,
+                    ["mcp:read", "mcp:invoke"], actor.Caller.Id));
+            }
             var state = await users.ReadAsync(cancellationToken);
             var match = ScopedCredentials.Resolve(state, input.Token, clock.UtcNow, lifetimes, appId);
             if (match is null)
@@ -156,7 +164,7 @@ internal static class TokenIntrospectionEndpoints
     }
 }
 
-internal sealed record TokenIntrospectionRequest(string? Token, string? Tool = null);
+internal sealed record TokenIntrospectionRequest(string? Token, string? Tool = null, string? Purpose = null);
 
 // Deliberately close to RFC 7662's shape: `active` first and sufficient on its own, everything else
 // present only when it is true. A caller that reads nothing but `active` is not thereby insecure.
@@ -164,4 +172,4 @@ internal sealed record TokenIntrospectionResponse(
     bool Active,
     string? Sub,
     string? Role,
-    IReadOnlyList<string> Scopes);
+    IReadOnlyList<string> Scopes, string? CallerAppId = null);

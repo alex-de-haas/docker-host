@@ -91,3 +91,18 @@ it("retains corrective PR history before completion and allows an explicit unpub
   await manager.workspaceAction(record.id, "pr-complete", { workspaceId: "workspace", outcome: "abandoned" }, "token", "admin");
   expect((await store.readRecord(record.id))!.publicationReferences).toHaveLength(2);
 });
+
+it("uses app identity for source operations without creating a cross-app credential", async () => {
+  const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
+  await manager.workspaceAction(record.id, "prepare", { appId: "notes", requestId: "prepare-own" }, "hostyg_own", "admin");
+  await manager.postMessage(record.id, "work on the attached source", undefined, [], { workspaceCredential: "hostyg_own" });
+  expect(starts[0]!.mcpServers).toHaveProperty("hosty-workspaces");
+  expect(await manager.mintAppToken(record.id, "another.app")).toBeNull();
+  await manager.workspaceAction(record.id, "status", { workspaceId: tree.id });
+  expect(client.call).toHaveBeenCalledWith(record.id, "hostyg_own", "status", expect.objectContaining({ workspaceId: tree.id }));
+  await finish(record.id);
+  expect(client.call).toHaveBeenCalledWith(record.id, "hostyg_own", "release-lease", expect.anything());
+  expect(JSON.stringify(await store.readRecord(record.id))).not.toContain("hostyg_own");
+  await manager.postMessage(record.id, "continue from a legacy client", "fresh-delegation");
+  expect(client.call).toHaveBeenCalledWith(record.id, "fresh-delegation", "list", {});
+});

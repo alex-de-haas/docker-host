@@ -21,7 +21,7 @@ public sealed class HostyCoreRuntimeConfigTests
         Assert.Equal(7070, config.CorePort);
         Assert.Equal("http://localhost:7070", config.ListenUrl);
         Assert.Null(config.CorePublicOrigin);
-        Assert.Equal("http://localhost:7070", config.EffectiveCorePublicOrigin);
+        Assert.Equal("http://core.hosty.localhost:7070", config.EffectiveCorePublicOrigin);
         // No effective-Shell counterpart: Core no longer synthesises a Shell origin. Where Shell is
         // reachable comes from its own app record now (ShellPublicOriginResolver), and a host without
         // Shell has none at all — the old http://localhost:{ShellPort} fallback pointed at nothing.
@@ -66,7 +66,7 @@ public sealed class HostyCoreRuntimeConfigTests
 
         Assert.Equal(8080, config.CorePort);
         Assert.Equal("http://localhost:8080", config.ListenUrl);
-        Assert.Equal("http://localhost:8080", config.EffectiveCorePublicOrigin);
+        Assert.Equal("http://core.hosty.localhost:8080", config.EffectiveCorePublicOrigin);
     }
 
     [Fact]
@@ -132,7 +132,7 @@ public sealed class HostyCoreRuntimeConfigTests
             shellPublicOrigin: null,
             cloudflareConnected: false);
 
-        Assert.Equal("http://localhost:7070", response.CorePublicOrigin);
+        Assert.Equal("http://core.hosty.localhost:7070", response.CorePublicOrigin);
         // Reported straight from the resolver: null here stands for "this host has no Shell installed".
         Assert.Null(response.ShellPublicOrigin);
         Assert.False(string.IsNullOrWhiteSpace(response.Version));

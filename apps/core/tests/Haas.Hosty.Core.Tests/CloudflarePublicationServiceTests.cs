@@ -82,7 +82,7 @@ public sealed class CloudflarePublicationServiceTests : IDisposable
         await Assert.ThrowsAnyAsync<Exception>(() => service.PublishCoreAsync("core"));
 
         Assert.Null(coreSettings!.StoredCorePublicOrigin);
-        Assert.Equal("http://localhost:7070", coreOrigins!.Effective);
+        Assert.Equal("http://core.hosty.localhost:7070", coreOrigins!.Effective);
     }
 
     [Fact]
@@ -113,7 +113,7 @@ public sealed class CloudflarePublicationServiceTests : IDisposable
         await service.UnpublishCoreAsync();
 
         Assert.Null(coreSettings!.StoredCorePublicOrigin);
-        Assert.Equal("http://localhost:7070", coreOrigins!.Effective);
+        Assert.Equal("http://core.hosty.localhost:7070", coreOrigins!.Effective);
     }
 
     // The rule the plan singles out: an administrator who edited the origin after publishing has made a
@@ -206,7 +206,7 @@ public sealed class CloudflarePublicationServiceTests : IDisposable
         var before = await service.GetCoreAsync();
         Assert.Null(before.Publication);
         Assert.False(before.Configured);
-        Assert.Equal("http://localhost:7070", before.Origin);
+        Assert.Equal("http://core.hosty.localhost:7070", before.Origin);
 
         await service.PublishCoreAsync("core");
 

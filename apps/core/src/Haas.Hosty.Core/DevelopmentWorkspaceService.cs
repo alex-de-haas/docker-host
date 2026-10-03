@@ -169,6 +169,7 @@ internal sealed class DevelopmentWorkspaceService(CoreDataPaths paths, AppRegist
     }
     public Task<DevelopmentWorkspace> ObserveAsync(string id, WorkspaceOwner? owner, CancellationToken ct)
         => Locked(async () => await Observe(await Read(id, owner, ct), ct), ct);
+
     private async Task<DevelopmentWorkspace> Observe(DevelopmentWorkspace w, CancellationToken ct)
     {
         if (w.State == "released") return w;

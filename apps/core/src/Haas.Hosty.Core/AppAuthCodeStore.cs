@@ -88,4 +88,6 @@ internal sealed record AppAuthCodeRecord(
     DateTimeOffset? ConsumedAt,
     // The Core session that authorized this code, carried onto the issued grant so an explicit logout can
     // cascade-revoke it. Null for codes minted outside a browser session (e.g. the CLI/control path).
-    string? AuthorizingSessionId = null);
+    string? AuthorizingSessionId = null,
+    string? AuthRevision = null,
+    bool ActivityAuthorized = false);

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { hasScope, introspectScopedToken, SCOPE_MCP_READ } from "./scoped-token";
+import { hasScope, introspectScopedToken, introspectMcpToken, SCOPE_MCP_READ } from "./scoped-token";
 
 const ENV_KEYS = ["HOSTY_CORE_ORIGIN", "HOSTY_APP_ID", "HOSTY_APP_SERVICE_TOKEN"] as const;
 const savedEnv: Partial<Record<(typeof ENV_KEYS)[number], string | undefined>> = {};
@@ -130,4 +130,14 @@ describe("introspectScopedToken", () => {
     expect(result.active === false && result.error?.code).toBe("introspection_unconfigured");
     expect(fetchMock).not.toHaveBeenCalled();
   });
+});
+
+it("marks MCP introspection explicitly and preserves the calling assistant", async () => {
+  const network = vi.fn().mockResolvedValue(jsonResponse(200, { active: true, sub: "user", role: "host.admin", scopes: ["mcp:invoke"], callerAppId: "assistant" }));
+  vi.stubGlobal("fetch", network);
+  const result = await introspectMcpToken("hosty_mcp.1.token", { tool: "change_item" });
+  expect(result).toMatchObject({ active: true, callerAppId: "assistant" });
+  expect(JSON.parse(network.mock.calls[0][1].body)).toEqual({ token: "hosty_mcp.1.token", purpose: "mcp", tool: "change_item" });
+  await introspectScopedToken("hosty_mcp.1.token");
+  expect(JSON.parse(network.mock.calls[1][1].body)).not.toHaveProperty("purpose");
 });

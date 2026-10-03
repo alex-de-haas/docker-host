@@ -18,256 +18,41 @@ public sealed class DelegatedTokenExchangeHttpTests
     private const string Gateway = "hosty.harness";
     private const string TargetApp = "com.example.notes";
 
-    [Fact]
-    public async Task ConfirmedNonSystemAssistantStillCannotDelegateToOtherApps()
+    [Theory]
+    [InlineData(Gateway, TargetApp)]
+    [InlineData(TargetApp, "com.example.other")]
+    [InlineData(Gateway, "hosty:core")]
+    public async Task LegacyTokenCannotBranchRegardlessOfSystemRole(string caller, string target)
     {
-        await using var harness = await StartAsync();
-        var apps = harness.Services.GetRequiredService<AppRegistryStore>();
-        await apps.UpdateAppAsync(TargetApp, app => app with
-        {
-            ConfirmedRoles = [PlatformCapabilities.Assistant], GrantedCorePermissions = [CoreAppPermissions.ReadSkills],
-        });
-        using var client = harness.CreateClient();
-        using var refused = await ExchangeAsync(client, "com.example.other", Mint(harness, TargetApp));
-        Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
-        Assert.Equal("exchange_forbidden", (await ReadJsonAsync(refused)).GetProperty("code").GetString());
+        await using var host = await StartAsync();
+        using var client = host.CreateClient();
+        using var result = await ExchangeAsync(client, target, Mint(host, caller));
+        Assert.Equal(HttpStatusCode.Forbidden, result.StatusCode);
+        Assert.Equal("mcp_grant_required", (await ReadJsonAsync(result)).GetProperty("code").GetString());
     }
 
     [Fact]
-    public async Task SystemCallerExchangesForAnotherApp_WhileANonSystemCallerCannot()
-    {
-        await using var harness = await StartAsync();
-        using var client = harness.CreateClient();
-
-        // The pair: identical requests, differing only in whether the caller is a system app.
-        var systemToken = Mint(harness, Gateway);
-        using var allowed = await ExchangeAsync(client, TargetApp, systemToken);
-        Assert.Equal(HttpStatusCode.OK, allowed.StatusCode);
-        var issued = await ReadJsonAsync(allowed);
-        Assert.Equal(TargetApp, issued.GetProperty("appId").GetString());
-
-        var domainToken = Mint(harness, TargetApp);
-        using var refused = await ExchangeAsync(client, "com.example.other", domainToken);
-        Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
-        Assert.Equal("exchange_forbidden", (await ReadJsonAsync(refused)).GetProperty("code").GetString());
-    }
-
-    [Fact]
-    public async Task ABranchedTokenRefreshesItself_ButCannotReachAThirdApp()
-    {
-        // The heart of the design: branching once is the point, branching twice would let reach spread
-        // app to app, and refusing both would leave a caller unable to keep its own credential alive.
-        //
-        // The branch target here is a SYSTEM app on purpose. The system-only caller rule and the
-        // refresh rule only ever meet when the branched token's audience is itself a system app —
-        // a branched token for a domain app cannot be presented at all, because its audience is not
-        // allowed to exchange. That is not a gap: a caller keeps app credentials fresh by re-branching
-        // from its own token, never by refreshing the branched one.
-        await using var harness = await StartAsync();
-        using var client = harness.CreateClient();
-
-        using var branchResponse = await ExchangeAsync(client, "hosty.shell", Mint(harness, Gateway));
-        Assert.Equal(HttpStatusCode.OK, branchResponse.StatusCode);
-        var branched = (await ReadJsonAsync(branchResponse)).GetProperty("token").GetString()!;
-
-        // Same audience: a refresh, allowed.
-        using var refreshed = await ExchangeAsync(client, "hosty.shell", branched);
-        Assert.Equal(HttpStatusCode.OK, refreshed.StatusCode);
-
-        // Different audience: a second branch, refused — the laundering this rule exists to stop.
-        using var hop = await ExchangeAsync(client, TargetApp, branched);
-        Assert.Equal(HttpStatusCode.Forbidden, hop.StatusCode);
-        Assert.Equal("exchange_chain_forbidden", (await ReadJsonAsync(hop)).GetProperty("code").GetString());
-    }
-
-    [Fact]
-    public async Task ATokenBranchedToADomainAppCannotExchangeAtAll()
-    {
-        // The practical shape of the rule: the gateway's demo-app token is a dead end by construction,
-        // because its audience is not a system app. Fresh app credentials come from re-branching.
-        await using var harness = await StartAsync();
-        using var client = harness.CreateClient();
-
-        using var branchResponse = await ExchangeAsync(client, TargetApp, Mint(harness, Gateway));
-        var branched = (await ReadJsonAsync(branchResponse)).GetProperty("token").GetString()!;
-
-        using var refresh = await ExchangeAsync(client, TargetApp, branched);
-        Assert.Equal(HttpStatusCode.Forbidden, refresh.StatusCode);
-        Assert.Equal("exchange_forbidden", (await ReadJsonAsync(refresh)).GetProperty("code").GetString());
-    }
-
-    [Fact]
-    public async Task SelfRefreshKeepsTheRightToBranch()
-    {
-        // A caller renewing its OWN credential has not branched, so it must still be able to reach an
-        // app afterwards. Getting this wrong would leave the gateway unable to serve MCP providers
-        // after its first refresh — the case that made an unqualified no-chaining rule unworkable.
-        await using var harness = await StartAsync();
-        using var client = harness.CreateClient();
-
-        using var selfRefresh = await ExchangeAsync(client, Gateway, Mint(harness, Gateway));
-        Assert.Equal(HttpStatusCode.OK, selfRefresh.StatusCode);
-        var renewed = (await ReadJsonAsync(selfRefresh)).GetProperty("token").GetString()!;
-
-        using var branch = await ExchangeAsync(client, TargetApp, renewed);
-        Assert.Equal(HttpStatusCode.OK, branch.StatusCode);
-    }
-
-    [Fact]
-    public async Task TheChainExpiresAnHourAfterTheHumanInteraction()
-    {
-        await using var harness = await StartAsync();
-        using var client = harness.CreateClient();
-        var now = DateTimeOffset.UtcNow;
-
-        // A chain that started moments ago still works…
-        using var stillValid = await ExchangeAsync(
-            client, TargetApp, Mint(harness, Gateway, chainOrigin: now.AddMinutes(-59).ToUnixTimeSeconds()));
-        Assert.Equal(HttpStatusCode.OK, stillValid.StatusCode);
-
-        // …and the refusal past the hour is about the CHAIN, not the token's own five minutes: the
-        // token below is freshly minted and unexpired, only its origin is old.
-        using var expired = await ExchangeAsync(
-            client, TargetApp, Mint(harness, Gateway, chainOrigin: now.AddHours(-2).ToUnixTimeSeconds()));
-        Assert.Equal(HttpStatusCode.Forbidden, expired.StatusCode);
-        Assert.Equal("exchange_chain_expired", (await ReadJsonAsync(expired)).GetProperty("code").GetString());
-    }
-
-    [Fact]
-    public async Task RejectsAForgedTokenWithoutFallingBackToTheSessionPath()
-    {
-        await using var harness = await StartAsync();
-        using var client = harness.CreateClient();
-
-        // A tampered payload fails the signature check, so it is not readable as claims and falls
-        // through to the session path — which refuses it because it is not a session id either.
-        var token = Mint(harness, Gateway);
-        var parts = token.Split('.');
-        var forged = $"{parts[0]}.{parts[1]}.{parts[2]}.{new string('A', parts[3].Length)}";
-        using var forgedResponse = await ExchangeAsync(client, TargetApp, forged);
-        Assert.Equal(HttpStatusCode.Unauthorized, forgedResponse.StatusCode);
-
-    }
-
-    [Fact]
-    public async Task RejectsATokenThatHasExpired()
+    public async Task LegacySelfRefreshRetainsExpiryAndActorChecks()
     {
         var clock = new MovableClock();
-        await using var harness = await StartAsync(clock);
-        using var client = harness.CreateClient();
-
-        var token = Mint(harness, Gateway);
-        using var beforeExpiry = await ExchangeAsync(client, TargetApp, token);
-        Assert.Equal(HttpStatusCode.OK, beforeExpiry.StatusCode);
-
-        clock.Advance(TimeSpan.FromMinutes(10));
-        using var afterExpiry = await ExchangeAsync(client, TargetApp, token);
-        Assert.Equal(HttpStatusCode.Unauthorized, afterExpiry.StatusCode);
+        await using var host = await StartAsync(clock);
+        using var client = host.CreateClient();
+        var token = Mint(host, Gateway);
+        Assert.Equal(HttpStatusCode.OK, (await ExchangeAsync(client, Gateway, token)).StatusCode);
+        clock.Advance(TimeSpan.FromMinutes(6));
+        Assert.False((await ExchangeAsync(client, Gateway, token)).IsSuccessStatusCode);
     }
 
     [Fact]
-    public async Task RefusesAUserWhoCannotReachTheTarget_WhileAPermittedUserSucceeds()
+    public async Task LegacySelfRefreshCannotResetTheAbsoluteChainLimit()
     {
-        // The access policy is the real gate, and it runs on the exchange exactly as on the session
-        // path. Without the succeeding half this test would pass against a route that refuses all.
-        await using var harness = await StartAsync();
-        using var client = harness.CreateClient();
-
-        using var admin = await ExchangeAsync(client, "hosty.shell", Mint(harness, Gateway, sub: "user_admin", role: "host.admin"));
-        Assert.Equal(HttpStatusCode.OK, admin.StatusCode);
-
-        // hosty.shell is a system app, so a non-admin is refused by the system-app-admin rule.
-        using var member = await ExchangeAsync(client, "hosty.shell", Mint(harness, Gateway, sub: "user_member", role: "host.member"));
-        Assert.Equal(HttpStatusCode.Forbidden, member.StatusCode);
-        Assert.Equal("system_app_admin_required", (await ReadJsonAsync(member)).GetProperty("code").GetString());
-    }
-
-    [Fact]
-    public async Task AuditsPolicyRefusalsAndNotOnlySuccesses()
-    {
-        // The refusals are the interesting half of a record about one app acting as a user toward
-        // another, and they are raised as exceptions — so they are the easy half to lose.
-        await using var harness = await StartAsync();
-        using var client = harness.CreateClient();
-        var auditStore = harness.Services.GetRequiredService<AuditStore>();
-
-        using var refused = await ExchangeAsync(
-            client, "hosty.shell", Mint(harness, Gateway, sub: "user_member", role: "host.member"));
-        Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
-
-        var records = await auditStore.ReadRecentAsync(50);
-        var exchange = records.Where(record => record.Action == "auth.delegated-token.exchange").ToArray();
-        Assert.Contains(exchange, record => record.Outcome == "system_app_admin_required");
-    }
-
-    [Fact]
-    public async Task RefusesATargetThatIsNotInstalled()
-    {
-        await using var harness = await StartAsync();
-        using var client = harness.CreateClient();
-
-        using var response = await ExchangeAsync(client, "com.example.ghost", Mint(harness, Gateway));
-
+        var clock = new MovableClock();
+        await using var host = await StartAsync(clock);
+        using var client = host.CreateClient();
+        var tooOld = Mint(host, Gateway, chainOrigin: clock.UtcNow.AddHours(-2).ToUnixTimeSeconds());
+        using var response = await ExchangeAsync(client, Gateway, tooOld);
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
-        Assert.Equal("app_not_found", (await ReadJsonAsync(response)).GetProperty("code").GetString());
-    }
-
-    [Fact]
-    public async Task SystemCallerExchangesForCoreAsAnAdministrator_WhileAMemberIsRefused()
-    {
-        // Core's own MCP endpoint as a target: the assistant panel reaches Core's read-only tools
-        // through the same exchange it uses for the apps. There is no app record for `hosty:core`, so
-        // the gate is the one that surface has always had — administrators only — and the pair is what
-        // tells that gate apart from a route that refuses everything.
-        await using var harness = await StartAsync();
-        using var client = harness.CreateClient();
-
-        using var admin = await ExchangeAsync(client, "hosty:core", Mint(harness, Gateway));
-        Assert.Equal(HttpStatusCode.OK, admin.StatusCode);
-        var issued = await ReadJsonAsync(admin);
-        Assert.Equal("hosty:core", issued.GetProperty("appId").GetString());
-        var coreToken = issued.GetProperty("token").GetString()!;
-
-        // Accepted by the surface it was minted for. Reads only — the MCP suite pins that a delegated
-        // token never carries lifecycle; this checks that the token reaches the surface at all.
-        using var list = new HttpRequestMessage(HttpMethod.Post, "/api/mcp");
-        list.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-        list.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
-        list.Headers.Authorization = new AuthenticationHeaderValue("Bearer", coreToken);
-        list.Content = new StringContent(
-            """{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}""", Encoding.UTF8, "application/json");
-        using var listed = await client.SendAsync(list);
-        Assert.Equal(HttpStatusCode.OK, listed.StatusCode);
-
-        // A Core-audience token is a dead end for the exchange, like a token branched to a domain app:
-        // `hosty:core` is not a system app, so it may not exchange — not even to refresh itself.
-        using var refresh = await ExchangeAsync(client, "hosty:core", coreToken);
-        Assert.Equal(HttpStatusCode.Forbidden, refresh.StatusCode);
-        Assert.Equal("exchange_forbidden", (await ReadJsonAsync(refresh)).GetProperty("code").GetString());
-
-        using var member = await ExchangeAsync(
-            client, "hosty:core", Mint(harness, Gateway, sub: "user_member", role: "host.member"));
-        Assert.Equal(HttpStatusCode.Forbidden, member.StatusCode);
-        Assert.Equal("admin_required", (await ReadJsonAsync(member)).GetProperty("code").GetString());
-    }
-
-    [Fact]
-    public async Task TheSessionPathStillWorksAndIsStillTheUnbranchedOrigin()
-    {
-        // The exchange is additive: the browser path must be untouched, and a token it mints must
-        // still be branchable — otherwise Shell's tokens would be dead ends.
-        await using var harness = await StartAsync();
-        using var client = harness.CreateClient();
-        var session = await SeedSessionAsync(harness, "user_admin");
-
-        using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/apps/{Gateway}/delegated-token");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", session);
-        using var response = await client.SendAsync(request);
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-
-        var token = (await ReadJsonAsync(response)).GetProperty("token").GetString()!;
-        using var branch = await ExchangeAsync(client, TargetApp, token);
-        Assert.Equal(HttpStatusCode.OK, branch.StatusCode);
+        Assert.Equal("exchange_chain_expired", (await ReadJsonAsync(response)).GetProperty("code").GetString());
     }
 
     /// <summary>A clock the test drives, so a token can be aged past its five minutes.</summary>

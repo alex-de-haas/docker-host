@@ -1,14 +1,14 @@
 # Access Tokens — Credentials For Clients Without A Browser
 
 Created: 2026-07-31
-Updated: 2026-09-08
+Updated: 2026-10-01
 
 Core accepts a session as `Authorization: Bearer <session id>`, but a session could once only be created
 by posting Core's HTML login form — which is why the Swift Shell used to sign in through a `WKWebView`
 on `/login`. A client with no browser engine had no way in at all.
 
-Two ways in now exist. A device shows a short code and someone approves it in Shell; or a credential is
-created in Shell directly and its value shown once. Both produce the same thing. The Swift Shell is
+Two ways in now exist. A device shows a short code and someone approves it on Core `/account/tokens`; or a credential is
+created on that Core page directly and its value shown once. Both produce the same thing. The Swift Shell is
 the consumer — it signs in this way rather than in a web view, because an embedded web view is where a
 saved password cannot be reached ([swift-shell](../swift-shell/feature.md)). `hosty login` was the
 first, and was removed on 2026-08-17; see below.
@@ -29,14 +29,14 @@ Two kinds exist, differing only in where they came from
 | Kind | Origin |
 | --- | --- |
 | `device` | Approved through the device authorization flow. |
-| `manual` | Created in Shell, value shown once. For a client that cannot run the device flow. |
+| `manual` | Created on Core's account page, value shown once. For a client that cannot run the device flow. |
 
 ## The credential carries its approver's full role
 
 Core has two roles, so an access token can do everything the user who approved it can do — including
 installing apps, reading app secrets and managing users when that user is a `host.admin`.
 
-This is stated wherever it matters rather than left to be discovered: the Shell surface says it, and a
+This is stated wherever it matters rather than left to be discovered: the Core account surface says it, and a
 client that presents itself as narrower than its credential is narrower only in its own interface,
 which is not an authorization boundary.
 
@@ -59,13 +59,11 @@ Both are unauthenticated, because the caller has no credential yet — that is t
 the only two public routes here; approval and credential management are session-gated
 ([AccessTokenEndpoints.cs](../../../apps/core/src/Haas.Hosty.Core/AccessTokenEndpoints.cs)).
 
-`verificationUri` points at Shell's own Settings route (`/settings?tab=tokens`), because Settings opens
-on Users otherwise. It survives a sign-in: Shell names the page it was heading for when it sends a
-visitor without a session to `/login`, and Core resolves that continuation against the Shell origin
-([local-password-login](../local-password-login/feature.md)). Without both halves the operator who
-follows an approval link with no browser session lands on Shell's bare origin, having lost the pending
-code they came to approve — the likeliest case of all, since a device is usually enrolled from a browser
-that has not signed in yet.
+`verificationUri` points at Core `/account/tokens`. Core's password login preserves this
+allowlisted continuation; neither device approval nor token management requires Shell. Shell's
+Tokens settings section links to Core. The page groups OAuth grants by exact client ID, shows
+fingerprints and owner/timing information, and requires explicit revocation confirmation.
+Credential renaming remains administrator-only.
 
 Pending requests live in memory only
 ([DeviceAuthorizationStore.cs](../../../apps/core/src/Haas.Hosty.Core/DeviceAuthorizationStore.cs)).

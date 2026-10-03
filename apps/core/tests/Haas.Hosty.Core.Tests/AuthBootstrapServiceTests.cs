@@ -27,7 +27,7 @@ public sealed class AuthBootstrapServiceTests
         var token = Assert.Single(state.Tokens);
 
         Assert.StartsWith("dhstp_", result.Token, StringComparison.Ordinal);
-        Assert.StartsWith("http://127.0.0.1:3001/setup?setupToken=", result.SetupUrl, StringComparison.Ordinal);
+        Assert.StartsWith("http://core.hosty.localhost:3001/setup?setupToken=", result.SetupUrl, StringComparison.Ordinal);
         Assert.Null(result.RecoveryUrl);
         Assert.NotEqual(result.Token, token.TokenHash);
         Assert.NotEmpty(token.TokenHash);
@@ -147,6 +147,8 @@ public sealed class AuthBootstrapServiceTests
         Assert.False(stored.Disabled);
         Assert.Equal("Recovered Admin", stored.DisplayName);
         Assert.NotNull(storedSession.RevokedAt);
+        Assert.NotNull(stored.AuthRevision);
+        Assert.NotEqual(user.AuthRevision, stored.AuthRevision);
         Assert.Equal(user.Id, credential.UserId);
         Assert.NotEqual("replacement horse battery staple", credential.Hash);
     }
@@ -212,6 +214,30 @@ public sealed class AuthBootstrapServiceTests
 
         Assert.Equal("recovery_token_invalid", error.Code);
         Assert.Equal(stale, File.GetLastWriteTimeUtc(fixture.TokenStatePath));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task BootstrapTokens_RejectExpiredTokensWithoutChangingUsers(bool recovery)
+    {
+        var fixture = await AuthBootstrapFixture.CreateAsync();
+        if (recovery)
+            await fixture.Users.WriteAsync(new UserDirectoryState(1, [CreateUser("user_1", "host.user")], [], [], []));
+        var token = recovery ? await fixture.Service.CreateRecoveryTokenAsync() : await fixture.Service.CreateSetupTokenAsync();
+        var before = await fixture.Users.ReadAsync();
+        fixture.Clock.UtcNow = token.ExpiresAt.AddSeconds(1);
+
+        var error = await Assert.ThrowsAsync<AuthBootstrapException>(async () =>
+        {
+            if (recovery)
+                await fixture.Service.RecoverAsync(new AuthRecoveryRequest(token.Token, "user_1@example.test", Password: "new test password"));
+            else
+                await fixture.Service.BootstrapAsync(new AuthBootstrapRequest(token.Token, "admin@example.test", Password: "new test password"));
+        });
+
+        Assert.Equal(recovery ? "recovery_token_invalid" : "setup_token_invalid", error.Code);
+        Assert.Equal(before.Users, (await fixture.Users.ReadAsync()).Users);
     }
 
     private static HostUserRecord CreateUser(string id, string role)

@@ -371,6 +371,13 @@ public sealed partial class CoreLifecycleServiceTests
         var adapter = new RecordingRuntimeAdapter("localCommand");
         var fixture = await LifecycleFixture.CreateAsync(manifests, localRuntimeAdapter: adapter);
         repository = await CreateLocalCommandGitRepositoryAsync(fixture.Root);
+        if (development)
+        {
+            await File.WriteAllTextAsync(Path.Combine(repository, "manifest.json"),
+                CreateRemoteLocalCommandManifestJson(repository, version())
+                    .Replace("\"default\": true", "\"default\": true, \"development\": true", StringComparison.Ordinal));
+            await RunGitAsync(repository, ["add", "manifest.json"]);
+        }
         await File.WriteAllTextAsync(Path.Combine(repository, "package-lock.json"), "original lock");
         await RunGitAsync(repository, ["add", "package-lock.json"]);
         await RunGitAsync(repository, ["-c", "user.name=Hosty Test", "-c", "user.email=hosty@example.test", "commit", "-m", "Add lockfile"]);

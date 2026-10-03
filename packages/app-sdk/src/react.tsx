@@ -4,7 +4,10 @@
 // cards. Prop-less by design: the app id and browser-reachable Core origin arrive in the
 // probe response's `recovery` field (request-time values, never build-time props).
 
+import { AppActivityBridge } from "./activity-react";
+import { AuthNotice, AuthNoticeButton, authNoticeActionStyle } from "./auth-notice";
 import { useEffect, useRef, useState } from "react";
+import { appFetch, appSessionActive, rememberAppGrant, openAppSignIn, APP_SESSION_ENDED } from "./browser-auth";
 import type { ReactNode } from "react";
 import {
   buildCoreOpenUrl,
@@ -35,9 +38,6 @@ import {
 // Once-per-tab guard so a standalone app that returns from Core still unauthorized does
 // not bounce through /open forever. Cleared on a successful code exchange.
 const RECOVERY_GUARD_KEY = "hosty.auth.recovery-attempted";
-// How long an embedded frame waits for the Shell to reissue a launch code before showing
-// the manual sign-in fallback (i.e. it is embedded by something other than Hosty Shell).
-const EMBEDDED_RECOVERY_TIMEOUT_MS = 4_000;
 // Cap the status probe so a stalled request cannot leave the bridge stuck hidden — on
 // timeout it classifies as unavailable and the user gets a Retry affordance.
 const IDENTITY_PROBE_TIMEOUT_MS = 4_000;
@@ -182,7 +182,7 @@ export function useLaunchMode(): AppLaunchMode | null {
 export type AppIdentityBridgeState =
   | { kind: "recovering" }
   | { kind: "active" }
-  | { kind: "signin"; openUrl: string | null; embedded: boolean }
+  | { kind: "signin"; openUrl: string | null; embedded: boolean; signIn?: () => void; error?: string }
   | { kind: "denied" }
   | { kind: "unavailable" }
   | { kind: "misconfigured" };
@@ -194,12 +194,13 @@ export interface AppIdentityBridgeProps {
   appCodePath?: string;
   /** Optional app-owned rendering, including loading and active content. Recovery remains SDK-owned. */
   renderState?: (state: AppIdentityBridgeState) => ReactNode;
+  children?: ReactNode;
 }
 
 /**
  * Mount once at the top of the root layout body. On first load it consumes a `?code` from
  * the URL (exchanging it for the identity cookie), then probes the session and runs the
- * recovery decision: silent `hosty:auth-required` to the Shell when embedded, a once-per-tab
+ * recovery decision: an app-owned Core popup when embedded, a once-per-tab
  * redirect through Core `/open` when standalone, and cards only in fallback/terminal states
  * — never a login UI while recovery is still running.
  */
@@ -207,10 +208,13 @@ export function AppIdentityBridge({
   probePath = "/api/auth/identity",
   appCodePath = "/api/auth/app-code",
   renderState,
+  children,
 }: AppIdentityBridgeProps = {}) {
   const [ui, setUi] = useState<AppIdentityBridgeState>({ kind: "recovering" });
   // A launch code is single-use. Strict Mode replays the effect after the URL is cleaned;
   // keep its exchange alive and let the replacement effect await the same response.
+  const wasActive = useRef(false);
+  const [activity, setActivity] = useState<{ openUrl: string; activeUntil?: string | null; activityRequired?: boolean } | null>(null);
   const exchangeRef = useRef<{ path: string; response: Promise<Response> } | null>(null);
 
   useEffect(() => {
@@ -230,16 +234,18 @@ export function AppIdentityBridge({
       let openUrl: string | null = null;
       let appId: string | null = null;
       try {
-        const response = await fetch(probePath, {
+        const response = await appFetch(probePath, {
           headers: { Accept: "application/json" },
           cache: "no-store",
           signal: probeController.signal,
-        });
+        }, false);
         const body: unknown = await response.json().catch(() => null);
         status = readProbedSessionStatus(body);
         const recovery = readRecoveryParams(body);
         appId = recovery.appId;
         openUrl = appId ? buildCoreOpenUrl(recovery.corePublicOrigin, appId, window.location) : null;
+        const metadata = body as { activeUntil?: string | null; activityRequired?: boolean };
+        if (!cancelled && openUrl) setActivity({ openUrl, activeUntil: metadata?.activeUntil, activityRequired: metadata?.activityRequired });
       } catch {
         // A failed or timed-out probe (Core unreachable) classifies as unavailable below.
         status = null;
@@ -264,24 +270,31 @@ export function AppIdentityBridge({
 
       switch (action.kind) {
         case "none":
+          appSessionActive();
+          wasActive.current = true;
           setUi({ kind: "active" });
           return;
         case "post-auth-required": {
-          // The payload carries no secret, so targetOrigin "*" is safe — the Shell verifies
-          // the sender before acting, and answers by swapping the iframe src.
-          try {
-            window.parent.postMessage(action.intent, "*");
-          } catch {
-            // Ignore; the timeout below still falls back to the manual sign-in card.
-          }
-          const timeoutId = window.setTimeout(() => {
-            if (!cancelled) {
-              setUi({ kind: "signin", openUrl, embedded: true });
-            }
-          }, EMBEDDED_RECOVERY_TIMEOUT_MS);
-          controller.signal.addEventListener("abort", () => window.clearTimeout(timeoutId), {
-            once: true,
-          });
+          const showSignIn = (error?: string) => setUi({ kind: "signin", openUrl, embedded: true, error,
+            signIn: openUrl ? () => {
+              // Open synchronously in the click handler; an awaited request loses the user gesture.
+              const result = openAppSignIn(openUrl, controller.signal);
+              setUi({ kind: "recovering" });
+              void result.then(async code => {
+                const response = await appFetch(appCodePath, {
+                  method: "POST", headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ code }),
+                });
+                const body = await response.json();
+                if (!response.ok || typeof body.accessToken !== "string" || !body.accessToken)
+                  throw new Error("Hosty could not establish this app session.");
+                if (cancelled) return;
+                rememberAppGrant(body.accessToken);
+                writeGuard(false);
+                await probeAndRecover();
+              }).catch(error => { if (!cancelled) showSignIn(error instanceof Error ? error.message : "Sign-in failed."); });
+            } : undefined });
+          showSignIn();
           return;
         }
         case "redirect":
@@ -298,6 +311,8 @@ export function AppIdentityBridge({
       }
     }
 
+    const recover = () => { if (!cancelled && !wasActive.current) { setUi({ kind: "recovering" }); void probeAndRecover(); } };
+    window.addEventListener(APP_SESSION_ENDED, recover);
     const url = new URL(window.location.href);
     const code = url.searchParams.get("code")?.trim();
     if (code) {
@@ -315,13 +330,16 @@ export function AppIdentityBridge({
     const exchange = exchangeRef.current;
     if (exchange && exchange.path === appCodePath) {
       void exchange.response
-        .then((response) => {
+        .then(async (response) => {
           if (cancelled) {
             return;
           }
           if (response.ok) {
             writeGuard(false);
-            window.location.reload();
+            const body = await response.json().catch(() => null);
+            if (typeof body?.accessToken === "string") rememberAppGrant(body.accessToken);
+            exchangeRef.current = null;
+            await probeAndRecover();
           } else {
             exchangeRef.current = null;
             void probeAndRecover();
@@ -340,25 +358,30 @@ export function AppIdentityBridge({
     return () => {
       cancelled = true;
       controller.abort();
+      window.removeEventListener(APP_SESSION_ENDED, recover);
     };
   }, [probePath, appCodePath]);
 
+  if (wasActive.current) return <>
+    {activity && <AppActivityBridge {...activity} appCodePath={appCodePath} />}
+    {renderState ? renderState({ kind: "active" }) : children}
+  </>;
+
   if (renderState) return renderState(ui);
 
-  if (ui.kind === "recovering" || ui.kind === "active") {
-    return null;
-  }
+  if (ui.kind === "active") return children ?? null;
+  if (ui.kind === "recovering") return <AuthNotice>Connecting to Hosty…</AuthNotice>;
 
   return (
-    <div role="status" style={barStyle}>
+    <AuthNotice>
       {ui.kind === "signin" ? (
         <>
-          <span>Your Hosty session ended.</span>
-          {ui.openUrl ? (
+          <span>{ui.error ?? "Sign in through Hosty to use this app."}</span>
+          {ui.signIn ? <AuthNoticeButton onClick={ui.signIn}>Sign in via Hosty</AuthNoticeButton> : ui.openUrl ? (
             <a
               href={ui.openUrl}
               {...(ui.embedded ? { target: "_blank", rel: "noopener noreferrer" } : {})}
-              style={actionStyle}
+              style={authNoticeActionStyle}
             >
               Sign in via Hosty
             </a>
@@ -373,44 +396,14 @@ export function AppIdentityBridge({
       ) : (
         <>
           <span>Can&rsquo;t reach Hosty right now.</span>
-          <button type="button" onClick={() => window.location.reload()} style={actionStyle}>
+          <AuthNoticeButton onClick={() => window.location.reload()}>
             Retry
-          </button>
+          </AuthNoticeButton>
         </>
       )}
-    </div>
+    </AuthNotice>
   );
 }
-
-const barStyle: React.CSSProperties = {
-  position: "fixed",
-  insetInline: 0,
-  bottom: 0,
-  zIndex: 2147483647,
-  display: "flex",
-  flexWrap: "wrap",
-  alignItems: "center",
-  justifyContent: "center",
-  gap: "0.75rem",
-  padding: "0.75rem 1rem",
-  background: "#111827",
-  color: "#f9fafb",
-  font: "500 0.875rem/1.4 system-ui, sans-serif",
-  boxShadow: "0 -1px 0 rgba(255,255,255,0.08)",
-};
-
-const actionStyle: React.CSSProperties = {
-  display: "inline-block",
-  padding: "0.4rem 0.85rem",
-  borderRadius: "0.5rem",
-  background: "#f9fafb",
-  color: "#111827",
-  border: "none",
-  cursor: "pointer",
-  font: "inherit",
-  fontWeight: 650,
-  textDecoration: "none",
-};
 
 function readStoredTheme(key: string): string | null {
   try {
@@ -531,3 +524,7 @@ export function HostThemeBridge({ followSystem = true, onTheme }: HostThemeBridg
 
   return null;
 }
+
+export { MissingPermissionsNotice } from "./permissions-react";
+
+export { AppActivityBridge } from "./activity-react";

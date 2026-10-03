@@ -1,7 +1,7 @@
 # Feature: Observability (telemetry collection, storage, and UI)
 
 Created: 2026-06-28
-Updated: 2026-09-25
+Updated: 2026-10-01
 
 Runtime apps export OpenTelemetry to a collector; a Hosty-native **telemetry backend** stores the
 three signals in embedded SQLite and serves a query API; a **telemetry UI** system app renders
@@ -152,7 +152,9 @@ collects Docker containers, Local Command process trees, and Core itself. Docker
 on a 10-second cadence; local samples use 3 seconds while Dashboard is viewed, otherwise 10 seconds
 for Telemetry. Core retains only five minutes in RAM. Dashboard reads those snapshots directly;
 Telemetry's existing backend scrapes `GET /api/internal/telemetry/metrics` as its second target and
-keeps its normal SQLite history. These samples do not pass through the OTLP collector.
+keeps its normal SQLite history. The scrape authenticates the installed app's service token and
+requires both `apps.read` and `core.read`; revoking either blocks the next scrape. Telemetry declares
+both as required permissions. These samples do not pass through the OTLP collector.
 
 Docker metrics retain their names: `container.cpu.percent`, `container.memory.bytes`, and
 `container.memory.percent`. Local services and Core expose `process.cpu.percent` and

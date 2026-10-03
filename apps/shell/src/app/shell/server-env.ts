@@ -11,7 +11,7 @@ export function getCoreOrigin() {
   }
 
   const corePort = (process.env.HOSTY_CORE_PORT || process.env.NEXT_PUBLIC_HOSTY_CORE_PORT || "3001").trim();
-  return `http://localhost:${corePort}`;
+  return `http://core.hosty.localhost:${corePort}`;
 }
 
 export function getShellAppId() {

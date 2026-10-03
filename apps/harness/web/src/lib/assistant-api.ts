@@ -1,14 +1,10 @@
 "use client";
 
 import type { AgentConnection } from "@/components/agent-providers";
-import { getDelegatedToken } from "./delegated-token";
+import { appFetch } from "@hosty-sdk/app/browser-auth";
 
-// The assistant's own API, called from the page the gateway serves.
-//
-// This is the Shell client moved inward, and the move deletes most of it: no base URL to resolve, no
-// delegated token to mint, refresh and attach, no Core round trip before the first request. The page
-// is served by the process it talks to, so every call is relative and carries this app's own Hosty
-// session — the same credential every other embedded Hosty page uses.
+// App-local requests carry this document's app grant or same-origin cookie.
+// MCP delegation requires separate authority on the server.
 
 export type AssistantEvent = {
   seq: number;
@@ -69,35 +65,12 @@ export async function setSessionApps(id: string, appIds: string[], expectedRevis
 /** Terminal for a stream: retrying cannot fix a revoked role or a session that is gone. */
 const TERMINAL_STREAM_STATUSES = new Set([401, 403, 404, 410]);
 
-/**
- * One request, carrying the operator's delegated token when an embedder grants one.
- *
- * The token is not what authenticates the page — the app-session cookie does that, and the gateway
- * accepts either. It is here because the gateway keeps the presented token as the session's
- * delegation seed for app MCP, so a panel that stopped sending it would leave the agent with no app
- * tools and no error to show for it.
- *
- * A 401 is retried exactly once with a refreshed token: only this page learns a token was refused,
- * and a single retry separates "the token aged out mid-turn" from "this operator has no access".
- */
-async function call(path: string, init: RequestInit = {}, retried = false): Promise<Response> {
-  const token = await getDelegatedToken(retried);
-  const response = await fetch(`/api${path}`, {
+/** Same-origin app identity; the server obtains any MCP delegation without exposing it to script. */
+async function call(path: string, init: RequestInit = {}): Promise<Response> {
+  const response = await appFetch(`/api${path}`, {
     ...init,
-    credentials: "include",
-    headers: {
-      ...(init.body ? { "content-type": "application/json" } : {}),
-      ...init.headers,
-      // Last on purpose: a caller header that shadowed this would drop the session's delegation
-      // seed and take the agent's app tools with it, silently.
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-    },
+    headers: { ...(init.body ? { "content-type": "application/json" } : {}), ...init.headers },
   });
-
-  if (response.status === 401 && token && !retried) {
-    return call(path, init, true);
-  }
-
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as { message?: string; code?: string } | null;
     throw new AssistantApiError(body?.code, body?.message || `Request failed (${response.status}).`);
@@ -220,28 +193,15 @@ export async function streamEvents(
   // A long conversation outlives a short-TTL token, so a 401 here is far more likely to be an aged
   // token than a revoked role. Refreshed once before the refusal is believed, exactly as `call`
   // does — treating the first 401 as terminal would end a live stream on a routine expiry.
-  let refreshNext = false;
-  let retriedOn401 = false;
   while (!signal.aborted) {
     try {
-      const token = await getDelegatedToken(refreshNext);
-      refreshNext = false;
-      const response = await fetch(
+      const response = await appFetch(
         `/api/sessions/${encodeURIComponent(sessionId)}/events?after=${lastSeq}`,
         {
           credentials: "include",
-          headers: token ? { authorization: `Bearer ${token}` } : undefined,
           signal,
         },
       );
-      if (response.status === 401 && token && !retriedOn401) {
-        // Immediately, without the backoff below: this is the token being renewed, not the server
-        // being unwell. The flag is cleared only once a stream actually opens, so a genuinely
-        // refused caller falls through to the terminal branch instead of spinning here.
-        retriedOn401 = true;
-        refreshNext = true;
-        continue;
-      }
       if (TERMINAL_STREAM_STATUSES.has(response.status)) {
         // Reported rather than retried, and with a negative seq so it can never collide with a
         // stored event. A silent retry loop would leave the panel stuck with no explanation.
@@ -257,7 +217,6 @@ export async function streamEvents(
         throw new Error(`stream failed (${response.status})`);
       }
 
-      retriedOn401 = false;
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";

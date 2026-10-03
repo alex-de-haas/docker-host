@@ -186,13 +186,13 @@ describe("resolveAppSession", () => {
 });
 
 describe("readAppIdentityToken", () => {
-  it("prefers the cookie, then bearer, then the legacy header", () => {
+  it("prefers an explicit bearer, then cookie, then the legacy header", () => {
     expect(
       readAppIdentityToken(
         headers({ cookie: "a=1; hosty_example_identity=tok; b=2", authorization: "Bearer other" }),
         config,
       ),
-    ).toBe("tok");
+    ).toBe("other");
     expect(readAppIdentityToken(headers({ authorization: "Bearer btok" }), config)).toBe("btok");
     expect(readAppIdentityToken(headers({ "x-docker-host-identity": "htok" }), config)).toBe("htok");
     expect(readAppIdentityToken(headers({}), config)).toBeNull();
@@ -208,10 +208,27 @@ describe("identityCookieAttributes", () => {
 });
 
 describe("createAppCodeRouteHandler", () => {
+  it("rejects cross-origin exchange before contacting Core", async () => {
+    const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
+    const response = await createAppCodeRouteHandler(config)(new Request("http://app.local/api/auth/app-code", {
+      method: "POST", headers: { origin: "http://evil.local" }, body: JSON.stringify({ code: "attacker-code" }),
+    }));
+    expect(response.status).toBe(403); expect(fetcher).not.toHaveBeenCalled();
+  });
+  it("never returns or stores a grant rejected for this app", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse(200, { accessToken: "foreign-grant" }))
+      .mockResolvedValueOnce(jsonResponse(403, { code: "token_app_mismatch" })));
+    const response = await createAppCodeRouteHandler(config)(new Request("http://app.local/api/auth/app-code", {
+      method: "POST", headers: { origin: "http://app.local" }, body: JSON.stringify({ code: "foreign-code" }),
+    }));
+    expect(response.status).toBe(403); expect(response.headers.has("set-cookie")).toBe(false);
+    expect(await response.text()).not.toContain("foreign-grant");
+  });
+
   it("rejects a missing code with 422", async () => {
     const handler = createAppCodeRouteHandler(config);
     const response = await handler(
-      new Request("http://app.local/api/auth/app-code", { method: "POST", body: "{}" }),
+      new Request("http://app.local/api/auth/app-code", { method: "POST", headers: { "sec-fetch-site": "same-origin" }, body: "{}" }),
     );
     expect(response.status).toBe(422);
   });
@@ -219,12 +236,12 @@ describe("createAppCodeRouteHandler", () => {
   it("exchanges the code and sets the app identity cookie", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => jsonResponse(200, { accessToken: "hostyg_new", expiresInSeconds: 3600 })),
+      vi.fn(async (url) => String(url).endsWith("/revalidate") ? jsonResponse(200, activePayload) : jsonResponse(200, { accessToken: "hostyg_new", expiresInSeconds: 3600 })),
     );
     const handler = createAppCodeRouteHandler(config);
     const response = await handler(
       new Request("http://app.local/api/auth/app-code", {
-        method: "POST",
+        method: "POST", headers: { "sec-fetch-site": "same-origin" },
         body: JSON.stringify({ code: "one-time" }),
       }),
     );
@@ -234,19 +251,19 @@ describe("createAppCodeRouteHandler", () => {
     expect(cookie).toContain("HttpOnly");
     expect(cookie).toContain("SameSite=Lax");
     expect(cookie).not.toContain("Secure");
-    expect(await response.json()).toEqual({ accessToken: "hostyg_new", expiresInSeconds: 3600 });
+    expect(await response.json()).toEqual({ accessToken: "hostyg_new", expiresInSeconds: 3600, activeUntil: null });
   });
 
   it("uses SameSite=None; Secure behind an https ingress", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => jsonResponse(200, { accessToken: "hostyg_new", expiresInSeconds: 3600 })),
+      vi.fn(async (url) => String(url).endsWith("/revalidate") ? jsonResponse(200, activePayload) : jsonResponse(200, { accessToken: "hostyg_new", expiresInSeconds: 3600 })),
     );
     const handler = createAppCodeRouteHandler(config);
     const response = await handler(
       new Request("http://app.local/api/auth/app-code", {
         method: "POST",
-        headers: { "x-forwarded-proto": "https" },
+        headers: { "sec-fetch-site": "same-origin", "x-forwarded-proto": "https" },
         body: JSON.stringify({ code: "one-time" }),
       }),
     );

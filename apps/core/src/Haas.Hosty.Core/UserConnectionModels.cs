@@ -10,7 +10,10 @@ internal sealed record UserConnectionSummary(string Id, string Label, string Pro
 internal sealed record UserProfileResponse(string Id, string? Email, string? DisplayName,
     UserConnectionSummary[] Connections, UserConnectionProviders Providers, PublicationIdentity? GitIdentity = null);
 internal sealed record UserConnectionProviders(bool GitHubDevice, bool AzureDevice);
-internal sealed record UserProfileUpdate(string DisplayName, PublicationIdentity? GitIdentity = null, bool UpdateGitIdentity = false);
+internal sealed record UserProfileUpdate(string DisplayName);
+internal sealed record BasicUserProfile(string Id, string? Email, string? DisplayName);
+internal sealed record SourceConnectionsResponse(UserConnectionSummary[] Connections, UserConnectionProviders Providers, PublicationIdentity? GitIdentity);
+internal sealed record SourceIdentityUpdate(PublicationIdentity? GitIdentity);
 internal sealed record UserConnectionInput(string Label, string Provider, string? Organization = null,
     string? Tenant = null, string? Token = null, bool PrivateRepositories = false);
 internal sealed record UserConnectionRename(string Label);

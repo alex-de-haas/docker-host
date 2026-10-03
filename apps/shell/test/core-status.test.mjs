@@ -22,9 +22,10 @@ test("a reconnect refreshes the displayed Core version after a restart, includin
     addEventListener() {}
     close() {}
   }
+  const listeners = new Map();
   const originals = Object.fromEntries(["window", "document", "EventSource"].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   Object.assign(globalThis, {
-    window: {},
+    window: { addEventListener(name, listener) { listeners.set(name, listener); }, removeEventListener(name) { listeners.delete(name); }, location: { href: "http://shell.test/", origin: "http://shell.test" } },
     document: { addEventListener() {}, removeEventListener() {} },
     EventSource: FakeEventSource,
   });
@@ -44,9 +45,15 @@ test("a reconnect refreshes the displayed Core version after a restart, includin
       await settle();
       assert.equal(displayed.version, expected);
     }
-    assert.equal(requests.length, 4);
-    assert.ok(requests.every(({ url, options }) => url === `${origin}/api/core/status`
-      && options.cache === "no-store" && options.credentials === "include"));
+    const oldSource = FakeEventSource.current;
+    answers.push(core("0.99.1"));
+    listeners.get("hosty:app-activity-renewed")();
+    await settle();
+    assert.notEqual(FakeEventSource.current, oldSource);
+    assert.equal(displayed.version, "0.99.1");
+    assert.equal(requests.length, 5);
+    assert.ok(requests.every(({ url, options }) => url === "/api/core/api/core/status"
+      && options.cache === "no-store" && options.credentials === "same-origin"));
   } finally {
     unsubscribe();
     for (const [key, descriptor] of Object.entries(originals)) {

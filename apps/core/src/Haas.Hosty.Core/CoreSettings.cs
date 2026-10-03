@@ -97,6 +97,9 @@ internal static class CoreAuthSettings
         new("HOSTY_AUTH_CLI_GRANT_HOURS", "CLI diagnostic grants", "Lifetime",
             "Fixed lifetime in hours of the short-lived grant minted by `hosty apps identity`. Applies to grants issued after the change.",
             x => x.CliGrantLifetime, (x, t) => x with { CliGrantLifetime = t }),
+        new("HOSTY_AUTH_APP_ACTIVITY_HOURS", "App activity", "Privileged activity window",
+            "Browser-authorized app privileges expire after this fixed window. Server calls never extend it.",
+            value => value.EffectiveActivityWindow, (value, hours) => value with { AppActivityWindow = hours }),
         new("HOSTY_AUTH_ACCESS_TOKEN_IDLE_HOURS", "Access tokens", "Idle timeout",
             "Access tokens (device consoles, CLI logins, scripts) expire after this many hours of inactivity and have no maximum lifetime — a credential that is being used keeps working. Applies immediately, including to existing tokens.",
             x => x.AccessTokenIdle, (x, t) => x with { AccessTokenIdle = t }),
@@ -640,9 +643,14 @@ internal sealed class CoreSettingsService
     private volatile UserRetentionSettings currentUserRetention;
     private volatile OAuthSettings currentOAuth;
 
-    public CoreSettingsService(CoreSettingsStore store)
+    private readonly AppRegistryStore? apps;
+    private readonly HostyCoreRuntimeConfig? config;
+
+    public CoreSettingsService(CoreSettingsStore store, AppRegistryStore? apps = null, HostyCoreRuntimeConfig? config = null)
     {
         this.store = store;
+        this.apps = apps;
+        this.config = config;
         var document = store.Load();
         overrides = LoadOverrides(document);
         ingressOverrides = LoadIngressOverrides(document);
@@ -738,6 +746,12 @@ internal sealed class CoreSettingsService
     // 400). Auth keys carry a number of hours; ingress keys carry their string value.
     public async Task UpdateAsync(IReadOnlyDictionary<string, string?> input, CancellationToken cancellationToken = default)
     {
+        if (apps is not null && config is not null && input.TryGetValue(CoreOriginSettings.PublicOriginKey, out var requested))
+        {
+            var origin = string.IsNullOrWhiteSpace(requested) ? config.EffectiveCorePublicOrigin
+                : PublicOriginSettings.TryNormalizeOrigin(requested, out var normalized) ? LocalBrowserOrigins.Core(normalized, config.InstanceId) : null;
+            if (origin is not null) await LocalBrowserOrigins.ValidateCoreAsync(origin, apps, cancellationToken);
+        }
         // Parse + validate everything before touching state, so a single bad key rejects the whole PUT.
         var authChanges = new Dictionary<string, double?>(StringComparer.Ordinal);
         var ingressChanges = new Dictionary<string, string?>(StringComparer.Ordinal);

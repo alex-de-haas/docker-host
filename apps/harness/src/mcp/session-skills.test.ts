@@ -43,7 +43,7 @@ describe("app skills in a session", () => {
     dataDir = mkdtempSync(path.join(os.tmpdir(), "hosty-session-skills-"));
     settings = new SettingsStore(dataDir);
     adapter = new FakeHarnessAdapter();
-    const exchange = new TokenExchange("http://core.test", "hosty.harness");
+    const exchange = new TokenExchange("http://core.test", "hosty.harness", "service");
     const proxy = new McpProxy((sessionId, appId) => manager.mintAppToken(sessionId, appId));
     manager = new SessionManager(
       new SessionStore(dataDir),
@@ -59,7 +59,8 @@ describe("app skills in a session", () => {
 
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
-      if (url.includes("/delegated-token")) {
+    if (url.includes("/api/auth/apps/revalidate")) return Response.json({ active: true, expiresAt: new Date(Date.now() + 3600_000).toISOString() });
+      if (url.includes("/mcp/token")) {
         return new Response(
           JSON.stringify({ token: "app-token", expiresAt: new Date(Date.now() + 300_000).toISOString() }),
           { status: 200, headers: { "content-type": "application/json" } },
@@ -80,7 +81,7 @@ describe("app skills in a session", () => {
 
   async function startSession(): Promise<string | undefined> {
     const record = await manager.createSession({ createdBy: "user_admin" });
-    await manager.postMessage(record.id, "hello", "seed-credential");
+    await manager.postMessage(record.id, "hello", "hostyg_seed");
     return adapter.lastStart?.systemPrompt;
   }
 

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { validateDelegatedToken } from "@hosty-sdk/app/delegated";
-import { hasScope, introspectScopedToken, SCOPE_MCP_READ } from "@hosty-sdk/app/scoped-token";
+import { hasScope, introspectMcpToken, SCOPE_MCP_READ } from "@hosty-sdk/app/scoped-token";
 import { buildProtectedResourceMetadata, buildWwwAuthenticate } from "@hosty-sdk/app/oauth-resource";
 import { getAppDirectorySnapshot } from "@/lib/host-auth";
 import { getDemoConfig } from "@/lib/demo-config";
@@ -225,7 +225,7 @@ async function resolveActor(request: Request, tool: string | undefined): Promise
     return { ok: true, actor: { userId: claims.sub, hostRole: claims.role } };
   }
 
-  const introspected = await introspectScopedToken(token, { tool });
+  const introspected = await introspectMcpToken(token, { tool });
   if (introspected.active) {
     // Every tool here is read-only, so `mcp:read` is the whole of what this surface offers. The
     // scope is checked even though nothing else is on offer yet: a credential that was never

@@ -22,9 +22,13 @@ export function collectAppProblems(app: CoreApp): AppProblem[] {
   const problems: AppProblem[] = [];
 
   const permissions = app.permissionState;
+  if (permissions?.status === "known" && permissions.unsupportedRequired?.length) {
+    problems.push({ severity: "error", action: "permissions", title: "Required permissions are unsupported",
+      detail: `Core does not support these required permissions: ${permissions.unsupportedRequired.join(", ")}. Install compatible app/Core versions or wait for an app update.` });
+  }
   if (permissions?.status === "known" && permissions.missingRequired.length > 0) {
     problems.push({ severity: "error", action: "permissions", title: "Required permissions need approval",
-      detail: `Operations requiring these permissions are blocked: ${permissions.missingRequired.join(", ")}. Review them in Settings → Permissions.` });
+      detail: `Operations requiring these permissions are unavailable until approval: ${permissions.missingRequired.join(", ")}. Review them in Settings → Permissions.` });
   } else if (permissions?.error) {
     problems.push({ severity: "warning", action: "permissions", title: "Permission manifest could not be checked", detail: permissions.error });
   }

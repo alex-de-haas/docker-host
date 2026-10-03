@@ -1,7 +1,7 @@
 # MCP OAuth — Automated Issuance For Scoped Tokens
 
 Created: 2026-08-25
-Updated: 2026-09-27
+Updated: 2026-10-01
 
 Core is an OAuth 2.1 authorization server, per the MCP authorization specification, so a capable
 client (Claude Code, an editor) obtains and rotates [scoped access
@@ -24,9 +24,9 @@ same introspection. OAuth replaces issuance only, nothing downstream of it.
 2. The client reads `/.well-known/oauth-authorization-server` (RFC 8414) and registers itself via
    Dynamic Client Registration (RFC 7591).
 3. `GET /api/auth/oauth/authorize` validates everything — client, redirect_uri, PKCE (S256 only),
-   resource, scopes — **parks the validated request server-side**, and sends the browser to Shell's
+   resource, scopes — **parks the validated request server-side**, and sends the browser to Core's
    consent page with nothing but a request id in the URL. Nothing the user consents to can be
-   swapped between validation and the render. Sign-in is Shell's ordinary login continuation.
+   swapped between validation and the render. Sign-in uses Core's allowlisted password-login continuation; Shell is not required.
 4. The consent page (`/oauth/consent`) renders Core's copy: client name, the resource's display
    name, the scopes in words, the acting user. Approval mints a one-time code; **denial is
    first-class** — the browser carries `access_denied` back to the client's own redirect_uri, an

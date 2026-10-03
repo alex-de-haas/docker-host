@@ -14,6 +14,10 @@ const nextConfig: NextConfig = {
     optimizePackageImports: ["lucide-react"],
   },
   output: "standalone",
+  webpack(config) {
+    config.resolve.extensionAlias = { ...config.resolve.extensionAlias, ".js": [".ts", ".tsx", ".js"] };
+    return config;
+  },
   // The SDK ships TypeScript source from the workspace; Next transpiles it in place.
   transpilePackages: ["@hosty-sdk/app"],
   outputFileTracingRoot: path.join(__dirname, "../.."),

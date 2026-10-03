@@ -166,3 +166,34 @@ describe("token exchange", () => {
     expect(serverName("hosty-core").startsWith("hosty-core-")).toBe(true);
   });
 });
+
+it("requires the assistant service credential before using its app session", async () => {
+  const network = vi.spyOn(globalThis, "fetch");
+  const exchange = new TokenExchange(CORE, GATEWAY);
+  expect(await exchange.exchange("hostyg_own-app-session", "another.app")).toBeNull();
+  expect(await exchange.refreshSelf("hostyg_own-app-session")).toBeNull();
+  expect(network).not.toHaveBeenCalled();
+  network.mockRestore();
+});
+
+it("asks Core for the exact target with separate service and user credentials", async () => {
+  const network = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(issued("hosty_mcp.1.target-token"))
+    .mockResolvedValueOnce(new Response("denied", { status: 403 }));
+  const exchange = new TokenExchange(CORE, GATEWAY, "service-secret");
+  expect((await exchange.exchange("hostyg_user", "notes"))?.token).toBe("hosty_mcp.1.target-token");
+  expect(network).toHaveBeenCalledWith(`${CORE}/api/internal/apps/${GATEWAY}/mcp/token`, expect.objectContaining({
+    headers: { authorization: "Bearer service-secret", "X-Hosty-User-Token": "hostyg_user", "content-type": "application/json" },
+    body: JSON.stringify({ targetAppId: "notes" }),
+  }));
+  expect(await exchange.exchange("hostyg_user", "other")).toBeNull();
+});
+
+it("binds token issuance to the exact assistant session and cannot use legacy seeds for session tools", async () => {
+  const network = vi.spyOn(globalThis, "fetch").mockResolvedValue(issued("session-token"));
+  const exchange = new TokenExchange(CORE, GATEWAY, "service");
+  await exchange.exchange("hostyg_user", "notes", "session-one");
+  expect(network).toHaveBeenLastCalledWith(expect.any(String), expect.objectContaining({ body: JSON.stringify({ targetAppId: "notes", sessionId: "session-one" }) }));
+  network.mockClear();
+  expect(await exchange.exchange("legacy-signed-token", "notes", "session-one")).toBeNull();
+  expect(network).not.toHaveBeenCalled();
+});

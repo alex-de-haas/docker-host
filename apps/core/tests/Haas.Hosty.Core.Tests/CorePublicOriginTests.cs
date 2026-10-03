@@ -30,8 +30,8 @@ public sealed class CorePublicOriginTests : IDisposable
         var (origins, _) = CoreOriginTestFactory.Create(config, Paths);
 
         Assert.Null(origins.Configured);
-        Assert.Equal("http://localhost:7070", origins.Effective);
-        Assert.Equal("http://localhost:7070", origins.Baseline);
+        Assert.Equal("http://core.hosty.localhost:7070", origins.Effective);
+        Assert.Equal("http://core.hosty.localhost:7070", origins.Baseline);
         Assert.False(origins.GetRow().Overridden);
     }
 
@@ -76,7 +76,7 @@ public sealed class CorePublicOriginTests : IDisposable
 
         await CoreOriginTestFactory.SetAsync(settings, "   ");
 
-        Assert.Equal("http://localhost:7070", origins.Effective);
+        Assert.Equal("http://core.hosty.localhost:7070", origins.Effective);
     }
 
     [Fact]
@@ -129,7 +129,7 @@ public sealed class CorePublicOriginTests : IDisposable
         Assert.Equal("core_setting_invalid", failure.Code);
         // Rejected before anything was written: a bad submission never displaces a working value.
         Assert.Null(settings.StoredCorePublicOrigin);
-        Assert.Equal("http://localhost:7070", origins.Effective);
+        Assert.Equal("http://core.hosty.localhost:7070", origins.Effective);
     }
 
     [Fact]
@@ -161,7 +161,7 @@ public sealed class CorePublicOriginTests : IDisposable
 
         var origins = CoreOriginTestFactory.CreateResolver(Config(envBaseline: null), Paths);
 
-        Assert.Equal("http://localhost:7070", origins.Effective);
+        Assert.Equal("http://core.hosty.localhost:7070", origins.Effective);
         // The sibling key in the same group is unaffected.
         Assert.Equal(7171, CoreSettingsStore.TryReadStoredPort(Path.Combine(root, "core")));
     }

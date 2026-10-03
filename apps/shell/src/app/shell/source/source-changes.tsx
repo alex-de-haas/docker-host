@@ -1,38 +1,26 @@
 "use client";
 
-import { useCallback, useEffect, useId, useState } from "react";
-import dynamic from "next/dynamic";
-import { ChevronRight, FileDiff, GitBranch, LoaderCircle, RefreshCw } from "lucide-react";
-import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Button } from "@/components/ui/button";
-import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { useCallback, useEffect, useState } from "react";
+import { GitBranch } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { readCoreError, redirectToCoreLoginIfAuthRequired } from "../core-api";
+import { fetchCore } from "../core-transport.js";
 import { useShellActions, useShellState } from "../shell-context";
 import type { CoreApp } from "../types";
-import { isBinarySourceDiff, type SourceDiff, type SourceLineStats } from "./source-preview-data";
-import SourceImageView from "./source-image-view";
-import { defaultSourceDiffSettings, SourceDiffToolbar, type SourceDiffSettings } from "./source-diff-settings";
+import type { SourceLineStats } from "./source-preview-data";
 
-const SourceDiffView = dynamic(() => import("./source-diff-view"), {
-  ssr: false,
-  loading: () => <p role="status" className="p-3 text-sm text-muted-foreground">Loading diff viewer…</p>,
-});
-
-type SourceFile = { path: string; status: string; newFile: boolean; canDiscard: boolean; lineStats?: SourceLineStats | null; binary?: boolean };
 type SourceStatus = {
   appId: string; state: string; scopePath: string | null; branch: string | null; head: string | null;
-  fileCount: number; files: SourceFile[]; truncated: boolean; observedAt: string; error?: string | null; lineStats?: SourceLineStats | null;
+  fileCount: number; truncated: boolean; observedAt: string; error?: string | null; lineStats?: SourceLineStats | null;
 };
-type DiscardPlan = { reviewId: string; head: string; scopePath: string; files: SourceFile[]; expiresAt: string };
 
-function useSourceStatus(endpointPath: string, enabled: boolean, includeFiles = false, sourceKey = "") {
+function useSourceStatus(endpointPath: string, enabled: boolean, sourceKey = "") {
   const { coreOrigin } = useShellActions();
   const [status, setStatus] = useState<SourceStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
   const refresh = useCallback(() => setNonce((value) => value + 1), []);
-  const url = `${coreOrigin}${endpointPath}/${includeFiles ? "status" : "summary"}`;
+  const url = `${coreOrigin}${endpointPath}/summary`;
   useEffect(() => {
     if (!enabled) return;
     let active = true;
@@ -41,11 +29,11 @@ function useSourceStatus(endpointPath: string, enabled: boolean, includeFiles = 
       if (controller || document.visibilityState === "hidden") return;
       controller = new AbortController();
       try {
-        const response = await fetch(url, { credentials: "include", cache: "no-store", signal: controller.signal });
+        const response = await fetchCore(url, { credentials: "include", cache: "no-store", signal: controller.signal });
         redirectToCoreLoginIfAuthRequired(response, coreOrigin);
         if (!response.ok) throw new Error(await readCoreError(response));
-        const next = await response.json() as Omit<SourceStatus, "files"> & { files?: SourceFile[] };
-        if (active) { setStatus({ ...next, files: next.files ?? [] }); setError(next.error ?? null); }
+        const next = await response.json() as SourceStatus;
+        if (active) { setStatus(next); setError(next.error ?? null); }
       } catch (failure) {
         if (active) setError(failure instanceof Error ? failure.message : "Source status unavailable.");
       } finally { controller = null; }
@@ -71,8 +59,7 @@ function sourceLabel(status: SourceStatus | null, error: string | null, includeC
 
 export function SourceVersionCell({ app }: { app: CoreApp }) {
   const { canManageApps } = useShellState();
-  const [open, setOpen] = useState(false);
-  const { status, error, refresh } = useSourceStatus(`/api/apps/${encodeURIComponent(app.id)}/source`, canManageApps && !open, false, `${app.sourceOverridePath}:${app.sourceManagedPath}`);
+  const { status, error } = useSourceStatus(`/api/apps/${encodeURIComponent(app.id)}/source`, canManageApps, `${app.sourceOverridePath}:${app.sourceManagedPath}`);
   if (!canManageApps) return <span className="font-mono text-sm" title="Manifest version">{app.version}</span>;
   return <>
     <TooltipProvider delayDuration={150}>
@@ -104,22 +91,28 @@ export function SourceVersionCell({ app }: { app: CoreApp }) {
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>
-    <button type="button" className="flex max-w-full flex-wrap items-center gap-x-2 text-left text-xs text-muted-foreground hover:underline" onClick={() => setOpen(true)} aria-label={`Source changes for ${app.displayName}`}>
+    <span className="text-xs text-muted-foreground">
       {!error && status && ["clean", "changes"].includes(status.state)
-        ? status.truncated ? `${status.fileCount}+ files` : status.fileCount ? `${status.fileCount} file${status.fileCount === 1 ? "" : "s"}` : "No changes"
-        : "Inspect source"}
+        ? `${status.fileCount}${status.truncated ? "+" : ""} changed files` : ""}
       {!error && status?.fileCount && status.lineStats ? <LineCounts stats={status.lineStats} /> : null}
-    </button>
-    {open && <SourceChangesDialog app={app} onClose={() => { setOpen(false); refresh(); }} />}
+    </span>
   </>;
 }
 
 export function SourceChangesButton({ app }: { app: CoreApp }) {
-  const [open, setOpen] = useState(false);
-  return <>
-    <Button type="button" variant="outline" onClick={() => setOpen(true)}><FileDiff className="size-4" />Inspect source changes</Button>
-    {open && <SourceChangesDialog app={app} onClose={() => setOpen(false)} />}
-  </>;
+  return <SourceToolsLink context={app.displayName} />;
+}
+
+export function SourceToolsLink({ context = "source code" }: { context?: string }) {
+  const { state } = useShellState();
+  const { coreOrigin } = useShellActions();
+  const tools = state.apps.filter(app => app.grantedCorePermissions?.includes("apps.sources") && app.embeddedUrl);
+  return <div className="space-y-2 text-sm text-muted-foreground">
+    <p>Inspect and edit {context} in your source tools.</p>
+    {tools.map(app => <a className="block underline" key={app.id} target="_blank" rel="noopener noreferrer"
+      href={`${coreOrigin}/api/apps/${encodeURIComponent(app.id)}/open?redirectUri=${encodeURIComponent(app.embeddedUrl!)}`}>Open {app.displayName}</a>)}
+    {!tools.length && <p>No app with source access is available. Install and authorize Hosty Harness to work with source code.</p>}
+  </div>;
 }
 
 function LineCounts({ stats }: { stats: SourceLineStats }) {
@@ -127,174 +120,4 @@ function LineCounts({ stats }: { stats: SourceLineStats }) {
     <span aria-hidden="true" className="text-green-700 dark:text-green-400">+{stats.additions}</span>
     <span aria-hidden="true" className="text-red-700 dark:text-red-400">−{stats.deletions}</span>
   </span>;
-}
-
-function SourceFilePreview({ endpoint, path, untracked, settings }: { endpoint: string; path: string; untracked: boolean; settings: SourceDiffSettings }) {
-  const { sendCsrfJson } = useShellActions();
-  const [diff, setDiff] = useState<SourceDiff | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    let active = true;
-    const load = async () => {
-      try {
-        const response = await sendCsrfJson(`${endpoint}/diff`, { path });
-        const next = await response.json() as SourceDiff;
-        if (active) setDiff(next);
-      } catch (failure) {
-        if (active) setError(failure instanceof Error ? failure.message : "Diff unavailable.");
-      }
-    };
-    void load();
-    return () => { active = false; };
-  }, [endpoint, path, sendCsrfJson]);
-
-  if (error) return <p role="alert" className="p-3 text-sm text-destructive">{error}</p>;
-  if (!diff) return <p role="status" className="flex items-center gap-2 p-3 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />Loading changes…</p>;
-  if (diff.image) return <SourceImageView path={diff.path} before={diff.image.before} after={diff.image.after} />;
-  if (isBinarySourceDiff(diff, untracked)) return <p className="p-3 text-sm text-muted-foreground">Binary file — a preview is not available for this format. Open it locally to view its contents.</p>;
-  if (diff.truncated) return <p role="status" className="p-3 text-sm text-muted-foreground">This diff is too large to preview here. Open the repository in your editor or Git client to view the complete changes.</p>;
-  return <div className="min-w-0">
-    <SourceDiffView settings={settings} path={diff.path} content={diff.combined} untracked={untracked} truncated={diff.truncated} />
-    {diff.staged && <details className="border-t"><summary className="cursor-pointer px-3 py-2 text-sm">Staged changes</summary><SourceDiffView settings={settings} path={diff.path} content={diff.staged} truncated={diff.truncated} /></details>}
-  </div>;
-}
-
-function SourceFileSection({ file, endpoint, selected, selectionDisabled, busy, onSelect, settings, readOnly }: {
-  file: SourceFile;
-  readOnly: boolean;
-  settings: SourceDiffSettings;
-  endpoint: string;
-  selected: boolean;
-  selectionDisabled: boolean;
-  busy: boolean;
-  onSelect: (selected: boolean) => void;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const previewId = useId();
-  return <div className="min-w-0 overflow-hidden rounded-md border">
-    <div className="flex items-center gap-2 bg-muted/40 px-3">
-      {!readOnly && <input type="checkbox" aria-label={`Select ${file.path}`} checked={selected} disabled={selectionDisabled} onChange={(event) => onSelect(event.target.checked)} />}
-      <button type="button" className="group flex min-w-0 flex-1 items-center gap-2 py-3 text-left text-sm hover:underline" aria-expanded={expanded} aria-controls={previewId} disabled={busy} onClick={() => setExpanded((value) => !value)}>
-        <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground transition-transform group-aria-expanded:rotate-90" />
-        <code className="shrink-0 whitespace-pre text-xs text-muted-foreground">{file.status}</code>
-        <span className="min-w-0 break-all font-mono text-xs">{file.path}</span>
-      </button>
-      {file.lineStats && <LineCounts stats={file.lineStats} />}
-    </div>
-    <div id={previewId} hidden={!expanded} className="border-t">
-      {expanded && <SourceFilePreview settings={settings} key={file.status} endpoint={endpoint} path={file.path} untracked={file.status === "??"} />}
-    </div>
-  </div>;
-}
-
-function SourceChangesDialog({ app, onClose }: { app: CoreApp; onClose: () => void }) {
-  return <SourceInspectionDialog endpointPath={`/api/apps/${encodeURIComponent(app.id)}/source`}
-    displayName={app.displayName} version={app.version} sourceKey={`${app.sourceOverridePath}:${app.sourceManagedPath}`} onClose={onClose} />;
-}
-
-export function CoreSourceChangesDialog({ onClose }: { onClose: () => void }) {
-  return <SourceInspectionDialog endpointPath="/api/core/source" displayName="Hosty Core" readOnly onClose={onClose} />;
-}
-
-function SourceInspectionDialog({ endpointPath, displayName, version, sourceKey, readOnly = false, onClose }: {
-  endpointPath: string; displayName: string; version?: string; sourceKey?: string; readOnly?: boolean; onClose: () => void;
-}) {
-  const { coreOrigin, sendCsrfJson } = useShellActions();
-  const { status, error: statusError, refresh } = useSourceStatus(endpointPath, true, true, sourceKey);
-  const [diffSettings, setDiffSettings] = useState(defaultSourceDiffSettings);
-  const [selected, setSelected] = useState<string[]>([]);
-  const [plan, setPlan] = useState<DiscardPlan | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
-  const selectablePaths = status?.files.filter((file) => file.canDiscard).map((file) => file.path) ?? [];
-  const selectedPaths = selectablePaths.filter((path) => selected.includes(path));
-  const selectedCount = selectedPaths.length;
-  const allSelected = selectablePaths.length > 0 && selectedCount === selectablePaths.length;
-  const partlySelected = selectedCount > 0 && !allSelected;
-  const endpoint = `${coreOrigin}${endpointPath}`;
-  const review = async () => {
-    if (readOnly || busy || plan || !selectedCount || selectedCount > 32 || statusError || status?.truncated || !status?.head) return;
-    setBusy(true); setError(null); setMessage(null);
-    try {
-      const response = await sendCsrfJson(`${endpoint}/discard/plan`, { paths: selectedPaths });
-      setPlan(await response.json() as DiscardPlan);
-    } catch (failure) { setError(failure instanceof Error ? failure.message : "Review failed."); refresh(); }
-    finally { setBusy(false); }
-  };
-  const discard = async () => {
-    if (readOnly || !plan) return;
-    setBusy(true); setError(null);
-    try {
-      await sendCsrfJson(`${endpoint}/discard`, { reviewId: plan.reviewId });
-      setSelected([]);
-      setMessage("Selected changes discarded. Reload the app, or restart it if its development commands require it.");
-    } catch (failure) { setError(failure instanceof Error ? failure.message : "Discard failed. Refresh to inspect the result."); }
-    finally { setPlan(null); setBusy(false); refresh(); }
-  };
-  return <Dialog open onOpenChange={(value) => { if (!value && !busy) onClose(); }}>
-    <DialogContent className="h-dvh max-h-dvh max-w-full rounded-none border-0 sm:h-[calc(100dvh-2rem)] sm:max-w-[calc(100%-2rem)] sm:rounded-lg sm:border">
-      <DialogHeader className="pr-6"><DialogTitle>Source changes · {displayName}</DialogTitle>
-        <DialogDescription>Changes on disk; the running process may need a reload or restart.{version && <> Manifest version {version}.</>}</DialogDescription>
-      </DialogHeader>
-      <DialogBody className="space-y-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0"><p className="font-mono text-sm">{sourceLabel(status, statusError)}</p>
-            {status?.scopePath && <p className="break-all text-xs text-muted-foreground">Scope: {status.scopePath}</p>}
-            {status && ["clean", "changes"].includes(status.state) && <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
-              <span>{status.fileCount}{status.truncated ? "+" : ""} {status.fileCount === 1 ? "file" : "files"}</span>
-              {status.lineStats && <LineCounts stats={status.lineStats} />}
-            </p>}
-            {status && <p className="text-xs text-muted-foreground">Observed {new Date(status.observedAt).toLocaleTimeString()}</p>}
-          </div>
-          <Button type="button" variant="ghost" size="icon" aria-label="Refresh source status" disabled={busy} onClick={refresh}><RefreshCw className="size-4" /></Button>
-        </div>
-        {(error || statusError) && <p role="alert" className="text-sm text-destructive">{error || statusError}</p>}
-        {message && <p role="status" className="text-sm">{message}</p>}
-        {status?.state === "no-git" && <p className="text-sm">This folder has no Git history. Hosty cannot restore earlier file contents.</p>}
-        {status && ["clean", "changes"].includes(status.state) && !status.head && <p className="text-sm">No HEAD commit yet. Files can be inspected.{!readOnly && " Discard requires an existing commit."}</p>}
-        {status?.truncated && <p className="text-sm">This list is incomplete. Use Git directly to inspect this larger change.</p>}
-        {plan && <AlertDialog open onOpenChange={open => { if (!open && !busy) setPlan(null); }}>
-          <AlertDialogContent>
-          <AlertDialogHeader><AlertDialogTitle>Discard selected changes?</AlertDialogTitle><AlertDialogDescription>Against commit {plan.head.slice(0, 12)}. Hosty keeps no copy of discarded content.</AlertDialogDescription></AlertDialogHeader>
-          <p className="text-sm">Tracked files and their staging state will be restored to this commit. New files listed below will be deleted. Other changes are preserved. Hosty keeps no copy of discarded content.</p>
-          <ul className="max-h-56 overflow-auto text-sm">{plan.files.map((file) => <li key={file.path} className="break-all py-1"><strong>{file.newFile ? "Delete" : "Restore"}</strong> · {file.path}</li>)}</ul>
-          <p className="text-xs text-muted-foreground">The review expires at {new Date(plan.expiresAt).toLocaleTimeString()}. Changed files require a new review.</p>
-
-            <AlertDialogFooter>
-              <AlertDialogCancel disabled={busy}>Back</AlertDialogCancel>
-              <Button variant="destructive" disabled={busy} onClick={() => void discard()}>{busy && <LoaderCircle className="animate-spin" />}Discard selected changes</Button>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>}
-        <>
-          {!!status?.files.length && <SourceDiffToolbar settings={diffSettings} onChange={setDiffSettings} />}
-          <div className="space-y-3">
-            {!readOnly && !!status?.files.length && <div className="space-y-1 px-3 py-1">
-              <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={allSelected} aria-checked={partlySelected ? "mixed" : allSelected}
-                  ref={(input) => { if (input) input.indeterminate = partlySelected; }}
-                  disabled={busy || !!statusError || status.truncated || selectablePaths.length === 0 || selectablePaths.length > 32}
-                  onChange={(event) => setSelected(event.target.checked ? selectablePaths : [])} />
-                Select all
-              </label>
-              {selectablePaths.length > 32 && <p className="text-xs text-muted-foreground">Select up to 32 files per review.</p>}
-              {selectablePaths.length < status.files.length && <p className="text-xs text-muted-foreground">Only files available for discard can be selected.</p>}
-            </div>}
-            {status?.files.map((file) => <SourceFileSection readOnly={readOnly} settings={diffSettings} key={`${status.scopePath}:${status.head}:${file.path}`} file={file} endpoint={endpoint}
-              selected={selectedPaths.includes(file.path)} busy={busy}
-              selectionDisabled={busy || !file.canDiscard || status.truncated || (selectedCount >= 32 && !selected.includes(file.path))}
-              onSelect={(checked) => setSelected((current) => checked ? [...current, file.path] : current.filter((path) => path !== file.path))} />)}
-            {status?.state === "clean" && <p className="p-3 text-sm text-muted-foreground">No changes in this source scope.</p>}
-          </div>
-        </>
-      </DialogBody>
-      <DialogFooter>
-        <Button type="button" variant="outline" disabled={busy} onClick={onClose}>Close</Button>
-        {!readOnly && <Button type="button" variant="default" disabled={busy || !!plan || selectedCount === 0 || !!statusError || status?.truncated || !status?.head} onClick={() => void review()}>
-          {busy && <LoaderCircle className="size-4 animate-spin" />}{`Review discard (${selectedCount})`}
-        </Button>}
-      </DialogFooter>
-    </DialogContent>
-  </Dialog>;
 }

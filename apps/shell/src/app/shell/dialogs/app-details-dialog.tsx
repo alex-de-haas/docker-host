@@ -1,4 +1,7 @@
 "use client";
+
+import { fetchCore } from "../core-transport.js";
+
 import { AppPermissions } from "./app-permissions";
 import { PrivateSourceConnections } from "./private-source-connections";
 
@@ -195,7 +198,7 @@ function ConsoleLogsPanel({ app, coreOrigin }: { app: CoreApp; coreOrigin: strin
   const loadLogs = useCallback(async (signal?: AbortSignal) => {
     setState((current) => ({ ...current, loading: true, error: null }));
     try {
-      const response = await fetch(`${coreOrigin}/api/apps/${encodeURIComponent(app.id)}/logs?tail=200`, {
+      const response = await fetchCore(`${coreOrigin}/api/apps/${encodeURIComponent(app.id)}/logs?tail=200`, {
         credentials: "include",
         signal,
       });
@@ -1231,7 +1234,7 @@ function RemovePanel({
     <div className="flex min-h-0 flex-1 flex-col gap-4">
       <DialogBody className="space-y-4">
         <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          Runtime state is always removed. Optional cleanup controls app data, backups, and source checkout.
+          Runtime state is always removed. Choose optional cleanup below, then confirm removal in Hosty Core.
         </div>
 
         {isShell && (
@@ -1305,7 +1308,7 @@ function RemovePanel({
         <AlertDialogCancel disabled={busyAction === `${app.id}:remove`}>Cancel</AlertDialogCancel>
         <Button variant="destructive" onClick={() => onRemove(app, options)} disabled={!canRemove || busyAction === `${app.id}:remove`}>
           {busyAction === `${app.id}:remove` ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-          Remove app
+          Review removal in Core
         </Button>
       </AlertDialogFooter>
     </div>

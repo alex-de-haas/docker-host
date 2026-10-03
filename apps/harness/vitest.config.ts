@@ -2,7 +2,8 @@ import { defineConfig } from "vitest/config";
 import { fileURLToPath } from "node:url";
 
 export default defineConfig({
-  resolve: { alias: { "@": fileURLToPath(new URL("./web/src", import.meta.url)) } },
+  oxc: { jsx: { runtime: "automatic" } },
+  resolve: { alias: { "@hosty-sdk/app/install/react": fileURLToPath(new URL("../../packages/app-sdk/src/install-react.tsx", import.meta.url)), "@": fileURLToPath(new URL("./web/src", import.meta.url)) } },
   test: {
     environment: "node",
     // The suites configure the harness through process.env (the Codex binary override, the

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { appFetch } from "@hosty-sdk/app/browser-auth";
 import { Check, LoaderCircle, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -28,7 +29,7 @@ export function AppRoleManager({
     setMessage(null);
 
     try {
-      const response = await fetch(`/api/roles/${encodeURIComponent(userId)}`, {
+      const response = await appFetch(`/api/roles/${encodeURIComponent(userId)}`, {
         method: role ? "PUT" : "DELETE",
         headers: role ? { "Content-Type": "application/json" } : undefined,
         body: role ? JSON.stringify({ role }) : undefined,

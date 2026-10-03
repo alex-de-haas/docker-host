@@ -1,3 +1,5 @@
+import { readOwnPermissionNotice } from "@hosty-sdk/app/permissions/server";
+import { delegationCredential } from "./session-delegation.js";
 import { speechRoute } from "./speech.js";
 import { ProviderClient } from "@hosty-sdk/app/providers/server";
 import { ProviderError, type ProviderInvocation } from "@hosty-sdk/app/providers";
@@ -11,7 +13,8 @@ import { stat } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { isSameOriginRequest, resolveAdminActor } from "./auth.js";
-import { readIdentityCookie, exchangeLaunchCode } from "./app-session.js";
+import { readAppCredential, resolveAppSession, exchangeLaunchCode } from "./app-session.js";
+import { isSourceConnectionRoute, requestSourceConnection } from "./source-connections.js";
 import { serveStaticSite } from "./settings/static-site.js";
 
 // Upper bound for an event stream opened with an app session rather than a delegated token: the
@@ -136,6 +139,23 @@ async function route(
     return;
   }
 
+  if (method === "GET" && url.pathname === "/api/hosty/permissions") {
+    const session = await resolveAppSession(readAppCredential(request));
+    response.setHeader("Cache-Control", "no-store");
+    try {
+      sendJson(response, 200, await readOwnPermissionNotice(session.status === "active" ? session.identity.hostRole : null));
+    } catch { sendJson(response, 503, { message: "Permission state is unavailable." }); }
+    return;
+  }
+
+  if (method === "GET" && url.pathname === "/api/auth/identity") {
+    const session = await resolveAppSession(readAppCredential(request));
+    sendJson(response, 200, { status: session.status === "active" && session.identity.hostRole !== "host.admin" ? "forbidden" : session.status,
+      ...(session.status === "active" ? { activeUntil: session.identity.activeUntil, activityRequired: session.identity.activityRequired } : {}),
+      recovery: { appId: process.env.HOSTY_APP_ID ?? "hosty.harness", corePublicOrigin: process.env.HOSTY_CORE_PUBLIC_ORIGIN ?? null } });
+    return;
+  }
+
   // The settings page itself is a static shell — it holds no data and fetches everything through
   // the admin-gated /api routes below with a delegated token, exactly as the chat panel does. Serving
   // the shell without a token is what lets Shell embed it as an ordinary app UI.
@@ -169,8 +189,8 @@ async function route(
       return;
     }
 
-    response.writeHead(204, { "set-cookie": exchange.setCookie });
-    response.end();
+    response.setHeader("set-cookie", exchange.setCookie);
+    sendJson(response, 200, { accessToken: exchange.accessToken, expiresInSeconds: exchange.expiresInSeconds, activeUntil: exchange.activeUntil });
     return;
   }
 
@@ -186,8 +206,8 @@ async function route(
   }
 
   // Everything under /api is operator surface: admin-only by decision, no anonymous reads. Two
-  // credential shapes, because there are two clients — the Shell assistant panel presents a
-  // delegated token, the settings page its own Hosty session. Both must resolve to an administrator.
+  // credential shapes: the browser presents its app grant; existing direct clients may present
+  // a delegated token. Both must resolve to an administrator.
   let invocation: ProviderInvocation | null = null;
   const providerBearer = readBearer(request);
   if (providerBearer?.startsWith("hosty_provider.") && (url.pathname === "/api/assistant/v1/handoffs" || url.pathname.startsWith("/api/assistant/v1/handoffs/"))) {
@@ -222,6 +242,16 @@ async function route(
     return;
   }
 
+  if (isSourceConnectionRoute(method, url.pathname)) {
+    response.setHeader("cache-control", "no-store");
+    if (actor.via !== "app-session") {
+      sendJson(response, 403, { code: "app_session_required", message: "Sign in to Harness through Core to manage source providers." }); return;
+    }
+    const result = await requestSourceConnection(method, url.pathname, readAppCredential(request),
+      method === "POST" || method === "PUT" ? await readJson(request) : undefined);
+    sendJson(response, result.status, result.body); return;
+  }
+
   if (await speechRoute(request, response, url)) return;
 
   if (url.pathname === "/api/assistant/v1/handoffs" && method === "POST") {
@@ -235,7 +265,8 @@ async function route(
     if (!action && method === "DELETE") { sendJson(response, 200, await handoffs.cancel(actor.userId, id!, consumer)); return; }
     if (action === "finalize" && method === "POST") {
       const body = await readJson(request);
-      sendJson(response, 200, await handoffs.finalize(actor.userId, id!, body.attachmentIds, invocation ? undefined : readBearer(request), consumer)); return;
+      sendJson(response, 200, await handoffs.finalize(actor.userId, id!, body.attachmentIds, invocation ? undefined : await delegationCredential(request, false), consumer,
+        actor.via === "app-session" ? readAppCredential(request) ?? undefined : undefined)); return;
     }
     if (action === "attachments" && attachmentId && method === "PUT") {
       const uploaded = await handoffs.upload(actor.userId, id!, attachmentId, url.searchParams.get("name") ?? "", request.headers["content-type"] ?? "application/octet-stream", request, consumer);
@@ -311,9 +342,11 @@ async function route(
   }
 
   if (url.pathname === "/api/settings/tools" && settings && method === "GET") {
-    const credential = readBearer(request) ?? readIdentityCookie(request);
+    const credential = await delegationCredential(request);
     if (!credential) throw new AppContextError(401, "credentials_required", "Refresh your Hosty session.");
-    const unavailable = await manager.discoverMcpTools(credential);
+    const sessionId = url.searchParams.get("sessionId");
+    if (!sessionId) throw new AppContextError(400, "session_required", "Select a session with Core-approved tool authority to refresh tools.");
+    const unavailable = await manager.discoverMcpTools(credential, sessionId, actor.userId);
     sendJson(response, 200, { unavailable, catalogs: manager.mcpPolicy.snapshot(), settings: await settings.read() }); return;
   }
 
@@ -456,10 +489,26 @@ async function route(
     const action = body.action;
     if (typeof action !== "string") throw new AppContextError(400, "workspace_action_invalid", "Workspace action is required.");
     sendJson(response, 200, await manager.workspaceAction(sessionId, action as import("./sessions/development.js").DevelopmentAction,
-      body, readBearer(request) ?? readIdentityCookie(request) ?? undefined, actor.userId)); return;
+      body, (actor.via === "app-session" ? readAppCredential(request) : readBearer(request)) ?? undefined, actor.userId)); return;
   }
 
   const rest = sessionMatch[2] ?? "";
+  if (rest === "/authority" && (method === "GET" || method === "POST")) {
+    const record = await manager.getSession(sessionId);
+    if (!record || record.createdBy !== actor.userId) throw new AppContextError(403, "session_forbidden", "This session belongs to another user.");
+    const credential = readAppCredential(request);
+    const origin = process.env.HOSTY_CORE_ORIGIN;
+    const service = process.env.HOSTY_APP_SERVICE_TOKEN;
+    if (!credential) throw new AppContextError(401, "reauth_required", "Sign in through Core to manage session authority.");
+    if (!origin || !service) throw new AppContextError(503, "core_unavailable", "Session authority requires Core.");
+    const result = await fetch(new URL(`/api/internal/apps/${encodeURIComponent(process.env.HOSTY_APP_ID ?? "hosty.harness")}/sessions/${encodeURIComponent(sessionId)}/authority`, origin), {
+      headers: { authorization: `Bearer ${service}`, "X-Hosty-User-Token": credential }, signal: AbortSignal.timeout(5000),
+    });
+    const state = await result.json() as { active?: boolean };
+    if (result.ok && method === "POST" && state.active) await manager.refreshSessionAuthority(sessionId, actor.userId, credential);
+    response.setHeader("Cache-Control", "no-store"); sendJson(response, result.status, state); return;
+  }
+
 
   if (rest === "/provider" && method === "PUT") {
     const body = await readJson(request);
@@ -538,7 +587,8 @@ async function route(
     }
     try {
       // The presented token seeds the session's delegation chain; see SessionManager.postMessage.
-      await manager.postMessage(sessionId, body.text, readBearer(request), attachments, { expectedRevision: body.appContextRevision, withoutDetails: body.withoutAppDetails === true });
+      await manager.postMessage(sessionId, body.text, await delegationCredential(request, false), attachments, { expectedRevision: body.appContextRevision, withoutDetails: body.withoutAppDetails === true,
+        workspaceCredential: actor.via === "app-session" ? readAppCredential(request) : undefined });
     } catch (error) {
       if (error instanceof Error && /attachments need a workspace/.test(error.message)) {
         // The gateway's configuration, not the request: the same answer the upload route gives.

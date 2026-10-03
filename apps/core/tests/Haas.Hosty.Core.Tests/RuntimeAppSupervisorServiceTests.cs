@@ -253,6 +253,9 @@ public sealed class RuntimeAppSupervisorServiceTests : IDisposable
             // Core-owned config and sink/store dirs.
             var dataDir = Path.Combine(fixture.Paths.AppsRoot, "hosty.telemetry", "data");
             await WaitForFileAsync(Path.Combine(dataDir, "config.yaml"));
+            // The config is written before its sink directories. Wait for the completed start,
+            // rather than racing the remainder of asynchronous capability provisioning.
+            await WaitForAppAsync(fixture.Apps, "hosty.telemetry", app => app.RuntimeState == "running");
             Assert.True(Directory.Exists(Path.Combine(dataDir, "otlp-logs")));
             Assert.True(Directory.Exists(Path.Combine(dataDir, "otlp-traces")));
             Assert.True(Directory.Exists(Path.Combine(dataDir, "store")));

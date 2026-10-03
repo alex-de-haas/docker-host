@@ -31,7 +31,7 @@ internal static class GlobalMountEndpoints
                 request,
                 users,
                 clock,
-                () => Handle(async () => new GlobalMountListResponse(await mounts.UpsertAsync(input, cancellationToken))),
+                () => Handle(async () => new GlobalMountListResponse(await mounts.UpsertAsync(input, cancellationToken, AppManagementAuthorization.Caller(request) is not null))),
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
@@ -90,6 +90,7 @@ internal static class GlobalMountEndpoints
         {
             var statusCode = ex.Code switch
             {
+                "global_mount_confirmation_required" or "app_mount_path_is_source" => StatusCodes.Status403Forbidden,
                 "global_mount_not_found" => StatusCodes.Status404NotFound,
                 "global_mount_in_use" => StatusCodes.Status409Conflict,
                 _ => StatusCodes.Status400BadRequest,

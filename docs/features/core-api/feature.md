@@ -1,7 +1,7 @@
 # Core API
 
 Created: 2026-05-13
-Updated: 2026-09-18
+Updated: 2026-10-01
 
 ## Description
 
@@ -16,9 +16,12 @@ A Host user session may be presented either as the `hosty_session` cookie or as 
 Mutating browser endpoints are CSRF-protected: `GET /api/auth/csrf` sets the double-submit cookie and returns the token to echo in `X-Hosty-CSRF`.
 
 - `GET /api/core/status` - public Core status.
-- `GET /login` - Core-owned login page. Development renders the local user selector; non-development renders email/password login.
-- `POST /login` - create a Core session from the development selector or from local email/password credentials, depending on environment, then redirect to the effective Shell origin.
+- `GET /login` - Core-owned email/password login page in every environment, including Development.
+- `POST /login` - verify local email/password credentials and create a Core session, then follow a validated continuation or return to Shell.
+- `GET /api/auth/session` - inspect the caller's existing session. POST is not supported; knowing a user ID cannot create a session.
 - `GET /api/apps` - apps visible to the active Host session, including the selected runtime and available `runtimeProfiles`.
+- `GET /api/profile` / `PUT /api/profile` - current-user ID/email/display-name read and display-name edit. App identity is sufficient; no `users.read/manage`. These routes expose no source-provider metadata or Git identity.
+- `/api/source-connections` - current administrator's source-provider summaries, Git attribution, PAT/device connection setup and connection management. App callers require `apps.sources`; credentials stay in Core. See [profile and source connections](../user-profile-connections/feature.md).
 - `GET /api/users` - admin user directory state.
 - `POST /api/auth/bootstrap` - consume a setup token, create the first administrator, store the submitted password credential, and create a Core session.
 - `POST /api/auth/recovery` - consume a recovery token, create or restore an administrator, replace the submitted password credential, and create a Core session.

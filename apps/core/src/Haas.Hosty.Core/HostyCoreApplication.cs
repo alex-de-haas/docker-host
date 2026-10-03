@@ -5,7 +5,6 @@ using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
-using Microsoft.AspNetCore.Cors.Infrastructure;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Configuration.Memory;
 
@@ -79,6 +78,7 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<AuthBootstrapTokenStore>();
         builder.Services.AddSingleton<AuditStore>();
         builder.Services.AddSingleton<AgentPolicyStore>();
+        builder.Services.AddSingleton<AssistantMcpAccess>();
         builder.Services.AddSingleton<AgentMcpDirectory>();
         builder.Services.AddSingleton<AppAuthCodeStore>();
         builder.Services.AddSingleton<DeviceAuthorizationStore>();
@@ -88,6 +88,7 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<OAuthRegistrationLimiter>();
         builder.Services.AddSingleton<AppSessionGrantStore>();
         builder.Services.AddSingleton<AppIdentityService>();
+        builder.Services.AddSingleton<AssistantSessionAuthority>();
         builder.Services.AddSingleton<LocalPasswordAuthService>();
         builder.Services.AddSingleton<AuthBootstrapService>();
         builder.Services.AddSingleton<UserManagementService>();
@@ -181,6 +182,7 @@ internal static class HostyCoreApplication
         // Selects the API ingress provider on a host that connected Cloudflare before it was one. Runs
         // before the supervisor so the first app start of this boot already sees the right provider.
         builder.Services.AddHostedService<CloudflareProviderMigration>();
+        builder.Services.AddHostedService<AppPermissionMigration>();
         builder.Services.AddHostedService<RuntimeAppSupervisorService>();
         builder.Services.AddHostedService<AppBackupRetentionScheduler>();
         builder.Services.AddHostedService<NotificationRetentionScheduler>();
@@ -192,12 +194,9 @@ internal static class HostyCoreApplication
         builder.Services.AddHostedService<AppPermissionObserver>();
         builder.Services.AddSingleton<ProviderAccessService>();
         builder.Services.AddSingleton<InstallationApprovalStore>();
+        builder.Services.AddSingleton<HostPathApprovalService>();
         builder.Services.AddSingleton<InstallationApprovalService>();
         builder.Services.AddCors();
-        // Registered after AddCors so it wins over the default provider it TryAdds. The Shell policy is
-        // built per request because its origin now lives in Shell's app record, which the operator can
-        // change without restarting Core — see ShellCorsPolicyProvider.
-        builder.Services.AddSingleton<ICorsPolicyProvider, ShellCorsPolicyProvider>();
         builder.Services.Configure<ForwardedHeadersOptions>(options =>
         {
             options.ForwardedHeaders =
@@ -211,7 +210,10 @@ internal static class HostyCoreApplication
     public static void MapEndpoints(WebApplication app)
     {
         app.UseForwardedHeaders();
-        app.UseCors("HostyShell");
+        app.Use(LocalBrowserNavigation.InvokeAsync);
+        app.UseRouting();
+        app.UseCors();
+        app.Use(AppManagementAuthorization.InvokeAsync);
         InstallationApprovalEndpoints.Map(app);
         ProviderEndpoints.Map(app);
 
@@ -258,105 +260,60 @@ internal static class HostyCoreApplication
                 return CoreJson.Json(new StopResponse(keepApps ? "stopping-keep-apps" : "stopping"));
             }));
 
-        if (app.Environment.IsDevelopment())
+        app.MapGet("/login", (string? returnTo) => Results.Content(
+            RenderPasswordLoginPage(returnTo: returnTo),
+            "text/html"));
+        app.MapPost("/login", async (
+            HttpRequest request,
+            HttpResponse response,
+            CorePublicOriginResolver coreOrigins,
+            ShellPublicOriginResolver shellOrigins,
+            LocalPasswordAuthService passwords,
+            UserDirectoryStore users,
+            IClock clock,
+            AuthLifetimes lifetimes,
+            CancellationToken cancellationToken) =>
         {
-            app.MapGet("/login", async (string? returnTo, UserDirectoryStore users, CancellationToken cancellationToken) =>
+            var form = await request.ReadFormAsync(cancellationToken);
+            var returnTo = form["returnTo"].ToString();
+            var shellOrigin = await shellOrigins.ResolveAsync(cancellationToken);
+            try
             {
-                var state = await users.ReadAsync(cancellationToken);
-                return Results.Content(RenderDevelopmentLoginPage(state.Users, returnTo: returnTo), "text/html");
-            });
-            app.MapPost("/login", async (
-                HttpRequest request,
-                HttpResponse response,
-                CorePublicOriginResolver coreOrigins,
-                ShellPublicOriginResolver shellOrigins,
-                UserDirectoryStore users,
-                IClock clock,
-                AuthLifetimes lifetimes,
-                CancellationToken cancellationToken) =>
-            {
-                var form = await request.ReadFormAsync(cancellationToken);
-                var returnTo = form["returnTo"].ToString();
+                var user = await passwords.AuthenticateAsync(
+                    new LocalPasswordLoginRequest(
+                        form["email"].ToString(),
+                        form["password"].ToString()),
+                    request.HttpContext.Connection.RemoteIpAddress?.ToString(),
+                    cancellationToken);
                 var result = await AuthEndpoints.CreateSessionAsync(
-                    form["userId"].ToString(),
-                    secureCookie: false,
+                    user.Id,
+                    secureCookie: request.IsHttps,
                     response,
                     users,
                     clock,
                     lifetimes,
                     cancellationToken);
 
-                var shellOrigin = await shellOrigins.ResolveAsync(cancellationToken);
-                if (result.Succeeded)
-                {
-                    return RedirectAfterLogin(returnTo, shellOrigin, coreOrigins.Effective);
-                }
-
-                var state = await users.ReadAsync(cancellationToken);
-                return Results.Content(
-                    RenderDevelopmentLoginPage(state.Users, "Select an enabled local Hosty user.", returnTo),
-                    "text/html",
-                    Encoding.UTF8,
-                    StatusCodes.Status403Forbidden);
-            });
-        }
-        else
-        {
-            app.MapGet("/login", (string? returnTo) => Results.Content(
-                RenderPasswordLoginPage(returnTo: returnTo),
-                "text/html"));
-            app.MapPost("/login", async (
-                HttpRequest request,
-                HttpResponse response,
-                CorePublicOriginResolver coreOrigins,
-                ShellPublicOriginResolver shellOrigins,
-                LocalPasswordAuthService passwords,
-                UserDirectoryStore users,
-                IClock clock,
-                AuthLifetimes lifetimes,
-                CancellationToken cancellationToken) =>
-            {
-                var form = await request.ReadFormAsync(cancellationToken);
-                var returnTo = form["returnTo"].ToString();
-                var shellOrigin = await shellOrigins.ResolveAsync(cancellationToken);
-                try
-                {
-                    var user = await passwords.AuthenticateAsync(
-                        new LocalPasswordLoginRequest(
-                            form["email"].ToString(),
-                            form["password"].ToString()),
-                        request.HttpContext.Connection.RemoteIpAddress?.ToString(),
-                        cancellationToken);
-                    var result = await AuthEndpoints.CreateSessionAsync(
-                        user.Id,
-                        secureCookie: request.IsHttps,
-                        response,
-                        users,
-                        clock,
-                        lifetimes,
-                        cancellationToken);
-
-                    return result.Succeeded
-                        ? RedirectAfterLogin(returnTo, shellOrigin, coreOrigins.Effective)
-                        : Results.Content(
-                            RenderPasswordLoginPage("Email or password is invalid.", returnTo),
-                            "text/html",
-                            Encoding.UTF8,
-                            StatusCodes.Status403Forbidden);
-                }
-                catch (LocalPasswordAuthException ex)
-                {
-                    var message = ex.Code == "login_throttled"
-                        ? ex.Message
-                        : "Email or password is invalid.";
-                    return Results.Content(
-                        RenderPasswordLoginPage(message, returnTo),
+                return result.Succeeded
+                    ? RedirectAfterLogin(returnTo, shellOrigin, coreOrigins.Effective)
+                    : Results.Content(
+                        RenderPasswordLoginPage("Email or password is invalid.", returnTo),
                         "text/html",
                         Encoding.UTF8,
-                        ex.StatusCode);
-                }
-            });
-        }
+                        StatusCodes.Status403Forbidden);
+            }
+            catch (LocalPasswordAuthException ex)
+            {
+                var message = ex.Code == "login_throttled"
+                    ? ex.Message
+                    : "Email or password is invalid.";
+                return Results.Content(
+                    RenderPasswordLoginPage(message, returnTo),
+                    "text/html",
+                    Encoding.UTF8,
+                    ex.StatusCode);
+            }
+        });
         app.MapGet("/setup", async (string? setupToken, ShellPublicOriginResolver shellOrigins, CancellationToken cancellationToken) => Results.Content(
             RenderSetupPage(await shellOrigins.ResolveAsync(cancellationToken), setupToken),
             "text/html"));
@@ -406,6 +363,7 @@ internal static class HostyCoreApplication
         AuthBootstrapEndpoints.Map(app);
         UserManagementEndpoints.Map(app);
         UserProfileEndpoints.Map(app);
+        CoreAccountEndpoints.Map(app);
         LifecycleEndpoints.Map(app);
         GlobalMountEndpoints.Map(app);
         CoreBootstrapEndpoints.Map(app);
@@ -424,6 +382,8 @@ internal static class HostyCoreApplication
         AppBackupEndpoints.Map(app);
         AppSecretsEndpoints.Map(app);
         TokenIntrospectionEndpoints.Map(app);
+        AssistantMcpEndpoints.Map(app);
+        AssistantSessionAuthorityEndpoints.Map(app);
         OnBehalfOfTokenEndpoints.Map(app);
         OAuthEndpoints.Map(app);
         NotificationEndpoints.Map(app);
@@ -589,61 +549,6 @@ internal static class HostyCoreApplication
         => AuthEndpoints.IsAllowedLoginContinuation(returnTo)
             ? $"""<input type="hidden" name="returnTo" value="{HtmlEncoder.Default.Encode(returnTo!)}">"""
             : string.Empty;
-
-    private static string RenderDevelopmentLoginPage(
-        IReadOnlyList<HostUserRecord> users,
-        string? error = null,
-        string? returnTo = null)
-    {
-        var returnToField = RenderReturnToField(returnTo);
-        var enabledUsers = users.Where(user => !user.Disabled).ToArray();
-        var options = string.Join(Environment.NewLine, enabledUsers.Select(user =>
-        {
-            var encodedId = HtmlEncoder.Default.Encode(user.Id);
-            var encodedLabel = HtmlEncoder.Default.Encode($"{user.DisplayName} - {user.Email} - {user.Role}");
-            return $"""<option value="{encodedId}">{encodedLabel}</option>""";
-        }));
-        var encodedError = error is null
-            ? string.Empty
-            : $"""<p class="error">{HtmlEncoder.Default.Encode(error)}</p>""";
-        var form = enabledUsers.Length == 0
-            ? """<p>No enabled local Hosty users are available.</p>"""
-            : $$"""
-              <form method="post" action="/login">
-                {{returnToField}}
-                <div class="field">
-                  <label for="userId">Development user</label>
-                  <select id="userId" name="userId">{{options}}</select>
-                </div>
-                <button type="submit">Start development session</button>
-              </form>
-              """;
-
-        return $$"""
-          <!doctype html>
-          <html lang="en">
-          <head>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <title>Hosty Login</title>
-            <style>
-          {{PageStyles}}
-            </style>
-          </head>
-          <body>
-            <main>
-              <h1>Hosty Login</h1>
-              <p>Development-only local session helper.</p>
-              {{encodedError}}
-              {{form}}
-              <div class="meta">
-                <p>Production authentication remains owned by Core auth providers.</p>
-              </div>
-            </main>
-          </body>
-          </html>
-          """;
-    }
 
     private static string RenderPasswordLoginPage(string? error = null, string? returnTo = null)
     {
@@ -995,7 +900,7 @@ internal sealed record HostyCoreRuntimeConfig(
     // The env baseline resolved against the listen URL, and nothing more. It is NOT what Core advertises:
     // the persisted setting layers over this, so every reader goes through CorePublicOriginResolver and
     // only a fixture without one falls back here.
-    public string EffectiveCorePublicOrigin => CorePublicOrigin ?? ListenUrl;
+    public string EffectiveCorePublicOrigin => LocalBrowserOrigins.Core(CorePublicOrigin ?? ListenUrl, InstanceId);
 
     // No EffectiveShellPublicOrigin: where Shell is reachable is resolved from Shell's own app record
     // (ShellPublicOriginResolver), not from Core's launch config. Shell is an optional distribution app,
@@ -1298,6 +1203,7 @@ internal sealed class RuntimeAppSupervisorService(
         await RecoverStrandedLifecycleStatesAsync(stoppingToken);
         await RecoverInterruptedUpdatesAsync(stoppingToken);
         await StopAutostartDisabledAppsAsync(stoppingToken);
+        await lifecycle.ObserveAppPermissionsAsync(stoppingToken);
         await StartAutostartAppsAsync(stoppingToken);
         await lifecycle.ReconcileIngressAsync(stoppingToken);
 
@@ -1371,6 +1277,11 @@ internal sealed class RuntimeAppSupervisorService(
     // future crash starts from a fresh budget.
     private async Task ApplyRestartPolicyAsync(AppHealthObservation observation, CancellationToken cancellationToken)
     {
+        if ((await apps.GetAppAsync(observation.AppId, cancellationToken))?.OperationStatus == "blocked")
+        {
+            restartGates.Remove(observation.AppId);
+            return;
+        }
         if (string.Equals(observation.Status, "healthy", StringComparison.Ordinal))
         {
             restartGates.Remove(observation.AppId);

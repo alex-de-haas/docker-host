@@ -1,7 +1,7 @@
 # Runtime Artifact Model
 
 Created: 2026-07-02
-Updated: 2026-09-17
+Updated: 2026-10-02
 
 ## Execution And Artifacts
 
@@ -38,6 +38,8 @@ is available for source-capable apps, including apps that have only a reviewed s
 A local folder without a pinnable repository has no immutable Git-baseline guarantee.
 
 Live apps adopt manifest edits on restart and do not use the ordinary reviewed update flow.
+Core rereads live manifests and update candidates even when a same-size edit retains the file
+timestamp; the cached installed copy does not mask an operator edit.
 An explicit external manifest comparison remains available through the existing update API.
 For source paths, command supervision, runtime switching and failure semantics, see
 [Runtime Source Workflows](../runtime-source-workflows/feature.md).
@@ -56,6 +58,9 @@ folder, materializes it under `apps/<id>/runtimes/<key>/artifact/<hash>/`, recor
 its artifact lock, and runs from that immutable copy. Repeated starts retain the locked copy; a
 reviewed update drops the lock and permits adoption of the current delivery. Source checkouts
 remain app-level under `apps/<id>/source`, with persisted legacy paths honored.
+
+Installed manifest copies invalidate their parsed cache entry after atomic replacement, including
+replacements with the same byte length and file timestamp.
 
 ## Testing Expectations
 

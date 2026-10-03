@@ -1,6 +1,6 @@
 import type { IncomingMessage } from "node:http";
 
-// Validating this app's own Hosty session, for the settings page.
+// Validating this app's own Hosty session for its browser API.
 //
 // Deliberately not `@hosty-sdk/app/server`: that entry is the SDK's **Next** server slice — it opens
 // with `import "server-only"`, which throws outside a React server environment, and it is written
@@ -13,7 +13,7 @@ import type { IncomingMessage } from "node:http";
 
 export const identityCookieName = "hosty_harness_identity";
 
-export type AppSessionIdentity = { userId: string; hostRole: string | null };
+export type AppSessionIdentity = { userId: string; hostRole: string | null; activeUntil?: string | null; activityRequired?: boolean };
 
 export type AppSessionResult =
   | { status: "active"; identity: AppSessionIdentity }
@@ -40,6 +40,12 @@ export function readIdentityCookie(request: IncomingMessage): string | null {
   }
 
   return null;
+}
+
+export function readAppCredential(request: IncomingMessage): string | null {
+  const authorization = request.headers.authorization;
+  if (authorization?.startsWith("Bearer hostyg_")) return authorization.slice(7).trim();
+  return readIdentityCookie(request);
 }
 
 export async function resolveAppSession(token: string | null): Promise<AppSessionResult> {
@@ -77,7 +83,7 @@ export async function resolveAppSession(token: string | null): Promise<AppSessio
   // field that carries the answer, and reading only the identity would let a future negative result
   // pass as a session.
   const payload = (await response.json().catch(() => null)) as
-    | { active?: unknown; userId?: unknown; hostRole?: unknown }
+    | { active?: unknown; userId?: unknown; hostRole?: unknown; activeUntil?: unknown; activityRequired?: unknown }
     | null;
   const userId = typeof payload?.userId === "string" ? payload.userId : "";
   if (payload?.active !== true || !userId) {
@@ -86,7 +92,7 @@ export async function resolveAppSession(token: string | null): Promise<AppSessio
 
   return {
     status: "active",
-    identity: { userId, hostRole: typeof payload.hostRole === "string" ? payload.hostRole : null },
+    identity: { userId, hostRole: typeof payload.hostRole === "string" ? payload.hostRole : null, activeUntil: typeof payload.activeUntil === "string" ? payload.activeUntil : null, activityRequired: payload.activityRequired === true },
   };
 }
 
@@ -104,15 +110,15 @@ function classifyRevalidationStatus(status: number): Exclude<AppSessionResult["s
 /**
  * Trades a Hosty launch code for this app's session cookie.
  *
- * Shell hands the page a `code` on the launch URL; this exchanges it with Core and returns the
- * `Set-Cookie` the browser needs. `sameSite` follows `secure` because an embedded page is
+ * Core returns a code to this app through navigation or a popup. The server exchanges and
+ * validates it against its own app identity before returning the app grant and cookie. `sameSite` follows `secure` because an embedded page is
  * cross-site to Shell whenever Hosty is served over https — a lax cookie would simply not be sent
  * from inside the frame, which looks exactly like "the app refused me".
  */
 export async function exchangeLaunchCode(
   code: string,
   secure: boolean,
-): Promise<{ ok: true; setCookie: string } | { ok: false; status: number; code: string; message: string }> {
+): Promise<{ ok: true; setCookie: string; accessToken: string; expiresInSeconds: number; activeUntil?: string | null } | { ok: false; status: number; code: string; message: string }> {
   const coreOrigin = process.env.HOSTY_CORE_ORIGIN?.trim();
   if (!coreOrigin) {
     return { ok: false, status: 503, code: "core_origin_missing", message: "HOSTY_CORE_ORIGIN is not configured." };
@@ -146,6 +152,9 @@ export async function exchangeLaunchCode(
     return { ok: false, status: 502, code: "app_identity_token_missing", message: "Core returned no usable identity token." };
   }
 
+  const validation = await resolveAppSession(accessToken);
+  if (validation.status !== "active") return { ok: false, status: validation.status === "unavailable" || validation.status === "misconfigured" ? 503 : 403,
+    code: "app_identity_rejected", message: "Core could not validate this app session." };
   const maxAge = typeof payload?.expiresInSeconds === "number" ? Math.max(0, Math.floor(payload.expiresInSeconds)) : 3600;
   const attributes = [
     `${identityCookieName}=${encodeURIComponent(accessToken)}`,
@@ -155,5 +164,5 @@ export async function exchangeLaunchCode(
     `SameSite=${secure ? "None" : "Lax"}`,
     ...(secure ? ["Secure"] : []),
   ];
-  return { ok: true, setCookie: attributes.join("; ") };
+  return { ok: true, setCookie: attributes.join("; "), accessToken, expiresInSeconds: maxAge, activeUntil: validation.identity.activeUntil };
 }

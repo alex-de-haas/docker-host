@@ -7,7 +7,7 @@ namespace Haas.Hosty.Core;
 // origin — which is what the old `http://localhost:{ShellPort}` fallback did.
 //
 // Resolution is the same path every other app uses: the operator's HOSTY_PUBLIC_ORIGIN_<endpoint>
-// setting, else the loopback URL Core assigned the endpoint. (The `PublicOrigin` field on the endpoint
+// setting, else the browser projection of the transport URL Core assigned the endpoint. (The `PublicOrigin` field on the endpoint
 // contract is projected onto summaries only and is null in the persisted record, so the setting is the
 // authoritative read.)
 //
@@ -72,16 +72,6 @@ internal sealed class ShellPublicOriginResolver(AppRegistryStore apps, IClock cl
             return null;
         }
 
-        var configured = app.Settings is { } settings &&
-            settings.TryGetValue(PublicOriginSettings.BuildSettingKey(endpoint.Key), out var setting)
-                ? setting.Value
-                : null;
-        if (PublicOriginSettings.TryNormalizeOrigin(configured, out var published))
-        {
-            return published;
-        }
-
-        // Not published: Shell is still reachable on the loopback URL Core assigned it.
-        return PublicOriginSettings.TryNormalizeOrigin(endpoint.Url, out var local) ? local : null;
+        return LocalBrowserOrigins.App(app, endpoint);
     }
 }

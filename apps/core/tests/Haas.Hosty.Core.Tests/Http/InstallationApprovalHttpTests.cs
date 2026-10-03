@@ -9,6 +9,65 @@ namespace Haas.Hosty.Core.Tests.Http;
 public sealed class InstallationApprovalHttpTests
 {
     [Theory]
+    [InlineData("/api/installations")]
+    [InlineData("/api/internal/apps/example.market/installations")]
+    public async Task MarketplaceCannotPreselectOptionalPermissionsOnCorePage(string route)
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        using var app = await AppManagementHttpTests.CreateAppClient(harness, "example.market", [CoreAppPermissions.Install]);
+        await harness.Services.GetRequiredService<UserDirectoryStore>().UpdateAsync(s => s with {
+            Sessions = s.Sessions.Select(session => session with { BrowserOrigin = "http://localhost" }).ToArray(),
+        });
+        var path = Path.Combine(harness.Services.GetRequiredService<CoreDataPaths>().DataRoot, "optional-fixture.json");
+        await File.WriteAllTextAsync(path, """
+            {"schemaVersion":"app.0.1","id":"example.consumer","name":"Consumer","version":"1.0.0",
+             "optionalCorePermissions":["apps.sources"],
+             "runtimeProfiles":[{"key":"dev","type":"localCommand","default":true}],"defaultRuntime":"dev",
+             "services":[{"key":"app","runtimes":{"dev":{"type":"localCommand","command":"echo unused","workingDirectory":"."}}}]}
+            """);
+        using var prepared = await app.PostAsJsonAsync(route, new { manifestPath = path, optionalPermissions = new[] { "apps.sources" } });
+        prepared.EnsureSuccessStatusCode();
+        var id = (await prepared.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
+        (await app.PostAsJsonAsync($"{route}/{id}/submit", new {
+            optionalPermissions = new[] { "apps.sources" }, selectedOptionalPermissions = new[] { "apps.sources" },
+        })).EnsureSuccessStatusCode();
+        using var browser = harness.CreateClient();
+        browser.DefaultRequestHeaders.Add("Cookie", "hosty_session=operator");
+        var html = await browser.GetStringAsync($"/install/confirm/{id}");
+        Assert.Contains("value=\"apps.sources\"", html);
+        Assert.DoesNotContain(" checked", html);
+        Assert.Null(harness.Services.GetRequiredService<InstallationApprovalStore>().Get(id).SelectedOptionalPermissions);
+        Assert.Null(await harness.Services.GetRequiredService<AppRegistryStore>().GetAppAsync("example.consumer"));
+    }
+
+    [Fact]
+    public async Task CorePermissionRecovery_WorksWithoutRunningShell_AndRequiresCoreAdminCookie()
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        var session = await SeedAdmin(harness);
+        var apps = harness.Services.GetRequiredService<AppRegistryStore>();
+        await apps.UpsertAppAsync(new AppRecord("example.shell", "Shell", null, "1.0.0", "runtime", false,
+            "manifest", null, null, "dev", "installed", "stopped", null, null, [], new Dictionary<string, AppSettingValue>(),
+            [], [], [], DateTimeOffset.UtcNow, DateTimeOffset.UtcNow,
+            GrantedCorePermissions: [], RequiredCorePermissions: [CoreAppPermissions.Install], OptionalCorePermissions: []));
+        using var browser = harness.CreateClient();
+        using var anonymous = await browser.GetAsync("/install/permissions/example.shell");
+        Assert.Equal(HttpStatusCode.Redirect, anonymous.StatusCode);
+        Assert.StartsWith("/login?returnTo=", anonymous.Headers.Location!.OriginalString);
+        browser.DefaultRequestHeaders.Add("Cookie", $"hosty_session={session}");
+        using var response = await browser.GetAsync("/install/permissions/example.shell");
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        Assert.StartsWith("/install/confirm/", response.Headers.Location!.OriginalString);
+        var html = await browser.GetStringAsync(response.Headers.Location);
+        Assert.Contains(CoreAppPermissions.Install, html);
+        Assert.Contains("name=nonce", html);
+        Assert.Empty((await apps.GetAppAsync("example.shell"))!.GrantedCorePermissions!);
+        browser.DefaultRequestHeaders.Add("Sec-Fetch-Mode", "cors");
+        using var fetch = await browser.GetAsync("/install/permissions/example.shell");
+        Assert.Equal(HttpStatusCode.Forbidden, fetch.StatusCode);
+    }
+
+    [Theory]
     [InlineData("approve")]
     [InlineData("deny")]
     public async Task AuditFailure_TerminatesDecision_ClearsSecrets_AndReleasesCapacity(string decision)
@@ -42,7 +101,7 @@ public sealed class InstallationApprovalHttpTests
         Assert.Null(entry.IdentityToken);
         Assert.Null(entry.Settings);
         var body = await response.Content.ReadAsStringAsync();
-        Assert.Contains("No installation or update was started", body);
+        Assert.Contains("No operation was started", body);
         Assert.DoesNotContain("window.close()", body);
         Assert.DoesNotContain("private-", body);
         using var replay = DecisionRequest();
@@ -74,8 +133,14 @@ public sealed class InstallationApprovalHttpTests
             var response = await api.PostAsJsonAsync("/api/installations", new { permissionsAppId = "example.consumer" });
             Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
             var id = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
-            (await api.PostAsJsonAsync($"/api/installations/{id}/submit", new { })).EnsureSuccessStatusCode();
+            var granted = (await apps.GetAppAsync("example.consumer"))!.GrantedCorePermissions!.Contains(CoreAppPermissions.SpeechProviders);
+            // An old or hostile caller tries to set the opposite of the persisted grant.
+            (await api.PostAsJsonAsync($"/api/installations/{id}/submit", new {
+                optionalPermissions = granted ? Array.Empty<string>() : new[] { CoreAppPermissions.SpeechProviders },
+                selectedOptionalPermissions = new[] { CoreAppPermissions.SpeechProviders },
+            })).EnsureSuccessStatusCode();
             var html = await browser.GetStringAsync($"/install/confirm/{id}");
+            Assert.Equal(granted, html.Contains($"value=\"{CoreAppPermissions.SpeechProviders}\" checked"));
             return (id, Regex.Match(html, "name=nonce value=\"([^\"]+)\"").Groups[1].Value);
         }
         async Task Decide((string Id, string Nonce) entry, bool allow, string status)
@@ -187,10 +252,9 @@ public sealed class InstallationApprovalHttpTests
         using var otherPermissions = await client.PostAsJsonAsync("/api/internal/apps/example.market/installations", new { permissionsAppId = "other.app" });
         Assert.Equal(HttpStatusCode.Forbidden, otherPermissions.StatusCode);
         using var browserPermissions = await client.GetAsync("/api/apps/example.market/permissions");
-        Assert.Equal(HttpStatusCode.Unauthorized, browserPermissions.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, browserPermissions.StatusCode);
         using var page = await client.GetAsync("/install/confirm/" + new string('a', 48));
-        Assert.Equal(HttpStatusCode.Redirect, page.StatusCode);
-        Assert.StartsWith("/login?", page.Headers.Location!.ToString());
+        Assert.Equal(HttpStatusCode.Forbidden, page.StatusCode);
     }
 
     [Fact]
@@ -216,7 +280,7 @@ public sealed class InstallationApprovalHttpTests
         using var submitted = await api.PostAsJsonAsync($"/api/installations/{id}/submit", new { autostart = false });
         Assert.True(submitted.IsSuccessStatusCode, await submitted.Content.ReadAsStringAsync());
         // The publisher changes its source while the user reads the plan. This cannot add rights.
-        await File.WriteAllTextAsync(manifestPath, manifest.Replace("[\"apps.install\"]", "[\"apps.install\",\"apps.update\"]").Replace("\"provides\":[]", "\"provides\":[\"assistant\"]"));
+        await File.WriteAllTextAsync(manifestPath, manifest.Replace("[\"apps.install\"]", "[\"apps.install\",\"apps.read\"]").Replace("\"provides\":[]", "\"provides\":[\"assistant\"]"));
         using var browser = harness.CreateClient();
         browser.DefaultRequestHeaders.Add("Cookie", $"hosty_session={session}");
         var path = $"/install/confirm/{id}";
@@ -249,7 +313,7 @@ public sealed class InstallationApprovalHttpTests
 
         var lifecycle = harness.Services.GetRequiredService<CoreLifecycleService>();
         var update = await lifecycle.CreateUpdatePlanAsync("example.fixture", new(manifestPath));
-        Assert.Contains(CoreAppPermissions.Update, update.TargetCorePermissions);
+        Assert.Contains(CoreAppPermissions.ReadApps, update.TargetCorePermissions);
         Assert.Equal([PlatformCapabilities.Assistant], update.TargetRoles);
         var refused = await Assert.ThrowsAsync<AppLifecycleException>(() =>
             lifecycle.EnqueueUpdateAsync("example.fixture", new(update.PlanDigest)));

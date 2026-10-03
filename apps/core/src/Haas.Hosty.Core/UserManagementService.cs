@@ -20,7 +20,6 @@ internal sealed class UserManagementService(
         var state = await users.ReadAsync(cancellationToken);
         var now = clock.UtcNow;
         var appSummaries = (await apps.ListAppsAsync(cancellationToken))
-            .Where(app => !app.System)
             .OrderBy(app => app.DisplayName, StringComparer.OrdinalIgnoreCase)
             .Select(app => new AssignableAppSummary(app.Id, app.DisplayName, app.Version, app.OperationStatus))
             .ToArray();

@@ -5,6 +5,8 @@ import { ExternalLink, ShieldAlert } from "lucide-react";
 import { ASK_ASSISTANT_TYPE, DELEGATED_TOKEN_TYPE } from "@hosty-sdk/app";
 import { createShellThemeMessage } from "@hosty-sdk/app/theme";
 import {
+  parseActiveFramePermissionReview,
+  parseActiveFrameAssistantReview,
   parseActiveFrameAskAssistant,
   parseActiveFrameAttention,
   parseActiveFrameDelegatedTokenRequest,
@@ -15,6 +17,8 @@ import type { HostyResolvedTheme, HostyThemePreference } from "../types";
 import { parseActiveFrameAuthRequired } from "../workspace/auth-intent";
 import type { DelegatedTokenGrant } from "../workspace/delegated-token-intent";
 import { getEmbedOrigin, isInsecureEmbedBlocked, isLoopbackEmbedHost } from "../workspace/insecure-embed";
+import { permissionReviewUrl } from "@hosty-sdk/app/permissions";
+import { useShellActions } from "../shell-context";
 import { appFrameSandbox } from "./frame-sandbox";
 
 // Every place Shell embeds an app's page. There are three now — the workspace, a Settings tab, and a
@@ -87,6 +91,8 @@ export function EmbeddedAppFrame({
    */
   onAttention?: (count: number) => void;
 }) {
+  const { coreOrigin } = useShellActions();
+  const [reviewUrl, setReviewUrl] = useState<string | null>(null);
   const sandbox = appFrameSandbox(grantedCorePermissions);
   const allow = grantedCorePermissions?.includes("providers.speech-to-text") ? "clipboard-write; microphone 'src'" : "clipboard-write";
   const documentKey = `${frameKey ?? ""}:${src}:${sandbox}:${allow}`;
@@ -98,7 +104,22 @@ export function EmbeddedAppFrame({
   if (loadedDocument !== documentKey) {
     setLoadedDocument(documentKey);
     setLoaded(false);
+    setReviewUrl(null);
   }
+
+  useEffect(() => {
+    const review = (event: MessageEvent) => {
+      const trustedApp = parseActiveFramePermissionReview(event, iframeRef.current?.contentWindow, src, appId);
+      const assistant = parseActiveFrameAssistantReview(event, iframeRef.current?.contentWindow, src, appId);
+      if (!trustedApp && !assistant) return;
+      const url = assistant ? new URL(`/activity/assistants/${encodeURIComponent(assistant.appId)}/${encodeURIComponent(assistant.sessionId)}`, coreOrigin).href : permissionReviewUrl(coreOrigin, trustedApp!);
+      // Some browsers do not carry user activation across postMessage; keep a clickable fallback.
+      setReviewUrl(url);
+      window.open(url, "_blank", "noopener,noreferrer");
+    };
+    window.addEventListener("message", review);
+    return () => window.removeEventListener("message", review);
+  }, [src, appId, coreOrigin]);
 
   const postTheme = useCallback(() => {
     const frame = iframeRef.current;
@@ -243,6 +264,8 @@ export function EmbeddedAppFrame({
   }
 
   return (
+    <>
+    {reviewUrl && <a className="absolute right-4 top-4 z-50 rounded border bg-background p-3 text-sm underline" href={reviewUrl} target="_blank" rel="noopener noreferrer">Review this app’s permissions in Core</a>}
     <iframe
       ref={iframeRef}
       key={documentKey}
@@ -254,6 +277,7 @@ export function EmbeddedAppFrame({
       style={{ colorScheme: theme }}
       onLoad={handleLoad}
     />
+    </>
   );
 }
 

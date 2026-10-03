@@ -50,6 +50,15 @@ public sealed class MixedRuntimeTests
     }
 
     [Fact]
+    public async Task Start_ReportsOnlyFreshServicesWhenAnotherServiceIsAdopted()
+    {
+        var events = new List<string>();
+        var adapter = new MixedRuntimeAdapter([new FakeAdapter("docker", events, running: true), new FakeAdapter("localCommand", events)]);
+        var result = await adapter.StartAsync(Context());
+        Assert.Equal(new[] { "backend", "ui" }, result.CreatedServices);
+    }
+
+    [Fact]
     public async Task FailedStart_StopsOnlyServicesStartedByThisOperation()
     {
         var events = new List<string>();

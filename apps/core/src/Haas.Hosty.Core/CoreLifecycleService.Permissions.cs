@@ -10,6 +10,9 @@ internal sealed record AppPermissionObservation(
     bool ReviewRequired, IReadOnlyList<string> UnconfirmedRoles, string? Error,
     DateTimeOffset? CheckedAt)
 {
+    public IReadOnlyList<string> UnsupportedRequired => Required.Where(p => !CoreAppPermissions.Known.Contains(p, StringComparer.Ordinal)).ToArray();
+    public IReadOnlyList<string> UnsupportedOptional => Optional.Where(p => !CoreAppPermissions.Known.Contains(p, StringComparer.Ordinal)).ToArray();
+
     public IReadOnlyDictionary<string, string> Descriptions => Required.Concat(Optional)
         .Concat(AcceptedRequired).Concat(AcceptedOptional).Concat(Granted).Distinct(StringComparer.Ordinal)
         .ToDictionary(p => p, CoreAppPermissions.Describe, StringComparer.Ordinal);
@@ -46,7 +49,9 @@ internal sealed partial class CoreLifecycleService
             // Missing configured source is an observation failure, not permission to fall back
             // to an older installed manifest and report that the current contract is healthy.
             if (!string.IsNullOrWhiteSpace(app.SourceState?.LocalOverridePath)) live = app.SourceState.LocalOverridePath;
-            else if (!string.IsNullOrWhiteSpace(app.SourceState?.ManagedCheckoutPath)) live = app.SourceState.ManagedCheckoutPath;
+            // Before the first clone, the reviewed installed manifest is the launch contract.
+            // Once materialized, a missing manifest in that checkout is a real verification failure.
+            else if (!string.IsNullOrWhiteSpace(app.SourceState?.ManagedCheckoutPath) && Directory.Exists(app.SourceState.ManagedCheckoutPath)) live = app.SourceState.ManagedCheckoutPath;
             else if (string.IsNullOrWhiteSpace(app.ManifestUrl) && !string.IsNullOrWhiteSpace(app.InstallManifestPath)
                 && !IsInternalAppPath(app.Id, app.InstallManifestPath)) live = app.InstallManifestPath;
         }
@@ -63,7 +68,7 @@ internal sealed partial class CoreLifecycleService
         if (Uri.TryCreate(path, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https")
             throw new AppLifecycleException("permission_manifest_unavailable", "Review the installed manifest locally; remote releases require an app update review.");
         // Never use a remote update/feed or the last-good fallback for a broken live manifest.
-        var selection = await manifests.LoadAsync(path, app.SelectedRuntime, ct, validateAllProfiles: true, forceRead: forceRead);
+        var selection = await manifests.LoadAsync(path, app.SelectedRuntime, ct, validateAllProfiles: true, forceRead: forceRead, allowUnsupportedPermissions: true);
         if (selection.Manifest.Id != app.Id)
             throw new AppLifecycleException("permission_manifest_invalid", "The source manifest describes a different app.");
         return new(selection.ManifestPath, selection.RuntimeProfile.Key, selection.ManifestDigest,
@@ -71,7 +76,7 @@ internal sealed partial class CoreLifecycleService
             selection.Manifest.Provides.ToArray());
     }
 
-    internal async Task<AppPermissionObservation> ObservePermissionsAsync(string appId, bool refresh, CancellationToken ct)
+    internal async Task<AppPermissionObservation> ObservePermissionsAsync(string appId, bool refresh, CancellationToken ct, bool forceRead = false)
     {
         await permissionObservationGate.WaitAsync(ct);
         try
@@ -80,16 +85,16 @@ internal sealed partial class CoreLifecycleService
                 ?? throw new AppLifecycleException("app_not_found", "The app is no longer installed.");
             var identity = PermissionIdentity(app);
             var prior = CachedPermissions(app);
-            if (!refresh && prior.CheckedAt is { } checkedAt && clock.UtcNow - checkedAt < TimeSpan.FromSeconds(5)) return prior;
+            if (!refresh && !forceRead && prior.CheckedAt is { } checkedAt && clock.UtcNow - checkedAt < TimeSpan.FromSeconds(5)) return prior;
             AppPermissionObservation observed;
             try
             {
-                var candidate = await ReadPermissionCandidateAsync(app, ct);
+                var candidate = await ReadPermissionCandidateAsync(app, ct, forceRead);
                 var required = app.RequiredCorePermissions ?? app.GrantedCorePermissions ?? [];
                 var optional = app.OptionalCorePermissions ?? [];
                 var granted = app.GrantedCorePermissions ?? [];
                 observed = new("known", candidate.Required, candidate.Optional, required, optional, granted,
-                    candidate.Required.Except(granted, StringComparer.Ordinal).ToArray(),
+                    candidate.Required.Where(p => CoreAppPermissions.Known.Contains(p, StringComparer.Ordinal)).Except(granted, StringComparer.Ordinal).ToArray(),
                     !candidate.Required.ToHashSet(StringComparer.Ordinal).SetEquals(required)
                     || !candidate.Optional.ToHashSet(StringComparer.Ordinal).SetEquals(optional)
                     || app.RequiredCorePermissions is null || app.OptionalCorePermissions is null,
@@ -97,7 +102,10 @@ internal sealed partial class CoreLifecycleService
             }
             catch (Exception ex) when (ex is AppManifestException or AppLifecycleException or IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
             {
-                observed = prior with { Status = prior.Status == "unknown" ? "unknown" : "stale", Error = ex.Message, CheckedAt = clock.UtcNow };
+                observed = prior with {
+                    Status = AppRuntimeStates.IsUp(app.RuntimeState) || prior.Status != "unknown" ? "stale" : "unknown",
+                    Error = ex.Message, CheckedAt = clock.UtcNow,
+                };
             }
             // A concurrent lifecycle operation must not publish an observation for its old installation.
             var current = await apps.GetAppAsync(appId, ct);
@@ -116,7 +124,21 @@ internal sealed partial class CoreLifecycleService
         var records = await apps.ListAppRecordsAsync(ct);
         var installed = records.Select(a => a.Id).ToHashSet(StringComparer.Ordinal);
         foreach (var id in permissionSnapshots.Keys.Where(id => !installed.Contains(id))) permissionSnapshots.TryRemove(id, out _);
-        foreach (var app in records) await ObservePermissionsAsync(app.Id, false, ct);
+        foreach (var app in records)
+        {
+            // Observation must neither interrupt an in-flight lifecycle operation nor queue behind
+            // it and delay checks for every other app. Retry busy apps on the next observer pass.
+            var mutex = apps.OperationLock(app.Id);
+            if (!await mutex.WaitAsync(0, ct)) continue;
+            try
+            {
+                var current = await apps.GetAppAsync(app.Id, ct);
+                if (current is null) continue;
+                var running = AppRuntimeStates.IsUp(current.RuntimeState);
+                await ObservePermissionsAsync(current.Id, false, ct, forceRead: running);
+            }
+            finally { mutex.Release(); }
+        }
     }
 
     internal Task<AppPermissionPlan> CreatePermissionPlanAsync(string appId, CancellationToken ct)
@@ -124,6 +146,7 @@ internal sealed partial class CoreLifecycleService
         {
             var app = await apps.GetAppAsync(appId, ct) ?? throw new AppLifecycleException("app_not_found", "The app is no longer installed.");
             var candidate = await ReadPermissionCandidateAsync(app, ct, forceRead: true);
+            _ = CoreAppPermissions.ResolveGrants(candidate.Required, candidate.Optional, []);
             return new AppPermissionPlan(app.Id, app.DisplayName, app.InstalledAt, app.PermissionRevision,
                 candidate.Required, candidate.Optional, app.GrantedCorePermissions ?? [],
                 candidate.Source, candidate.Runtime, candidate.Digest, PermissionIdentity(app),

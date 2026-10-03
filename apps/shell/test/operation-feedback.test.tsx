@@ -93,13 +93,10 @@ it("reuses a request ID on failed handoff and ignores double clicks while openin
 });
 
 it("hands off the error prompt with explicit app context and stable retry identity", async () => {
-  const fetchMock = vi.fn().mockRejectedValueOnce(new TypeError("connection lost"))
-    .mockResolvedValueOnce(Response.json({ handoffId: "prepared" }))
-    .mockResolvedValueOnce(Response.json({ conversationId: "fresh-session", result: { conversationId: "fresh-session", disposition: "draft", open: { endpoint: "web", path: "/chat" } } }));
-  vi.stubGlobal("fetch", fetchMock);
-  const issue = vi.fn(async () => ({ token: "test-token" }));
-  const result = await createErrorSession({ appId: "harness", running: true, baseUrl: "https://harness.test/api", version: 1, capabilities: [] }, issue, "demo.app", "same-request", "Port occupied");
+  const send = vi.fn().mockRejectedValueOnce(new TypeError("connection lost"))
+    .mockResolvedValueOnce(Response.json({ id: "fresh-session", result: { conversationId: "fresh-session", disposition: "draft", open: { endpoint: "web", path: "/chat" } } }));
+  const result = await createErrorSession({ appId: "harness", running: true, baseUrl: "https://harness.test/api", version: 1, capabilities: [] }, send, "demo.app", "same-request", "Port occupied");
   expect(result.id).toBe("fresh-session");
-  expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ requestId: "same-request", prompt: "Port occupied", appIds: ["demo.app"] });
-  expect(fetchMock.mock.calls[1][1].body).toBe(fetchMock.mock.calls[0][1].body);
+  expect(send.mock.calls[0]).toEqual(["/api/assistant/handoff", { providerAppId: "harness", key: "default", requestId: "same-request", prompt: "Port occupied", appIds: ["demo.app"] }]);
+  expect(send.mock.calls[1]).toEqual(send.mock.calls[0]);
 });

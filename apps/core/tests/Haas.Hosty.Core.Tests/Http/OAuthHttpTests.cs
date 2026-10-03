@@ -412,7 +412,7 @@ public sealed class OAuthHttpTests
         var authorize = await AuthorizeAsync(client, clientId, challenge, resource: "http://localhost:7070/api/mcp");
         Assert.Equal(HttpStatusCode.Redirect, authorize.StatusCode);
         var location = authorize.Headers.Location!.ToString();
-        Assert.StartsWith("http://127.0.0.1:7171/oauth/consent?request=", location, StringComparison.Ordinal);
+        Assert.StartsWith("http://core.hosty.localhost:7070/oauth/consent?request=", location, StringComparison.Ordinal);
         var requestId = location.Split("request=")[1];
 
         // 3. The consent page reads Core's copy of the request.
@@ -645,7 +645,7 @@ public sealed class OAuthHttpTests
         using var client = harness.CreateClient();
 
         var server = await ReadJsonAsync(await client.GetAsync("/.well-known/oauth-authorization-server"));
-        Assert.Equal("http://localhost:7070", server.GetProperty("issuer").GetString());
+        Assert.Equal("http://core.hosty.localhost:7070", server.GetProperty("issuer").GetString());
         Assert.Equal(AccessTokenScopes.Known, server.GetProperty("scopes_supported").EnumerateArray().Select(scope => scope.GetString()));
         Assert.Equal("S256", server.GetProperty("code_challenge_methods_supported").EnumerateArray().Single().GetString());
 
@@ -654,9 +654,9 @@ public sealed class OAuthHttpTests
         using var resourceResponse = await client.GetAsync("/.well-known/oauth-protected-resource/api/mcp");
         Assert.True(resourceResponse.Headers.CacheControl?.NoStore);
         var resource = await ReadJsonAsync(resourceResponse);
-        Assert.Equal("http://localhost:7070/api/mcp", resource.GetProperty("resource").GetString());
+        Assert.Equal("http://core.hosty.localhost:7070/api/mcp", resource.GetProperty("resource").GetString());
         Assert.Equal("mcp:read", Assert.Single(resource.GetProperty("scopes_supported").EnumerateArray()).GetString());
-        Assert.Equal("http://localhost:7070", resource.GetProperty("authorization_servers").EnumerateArray().Single().GetString());
+        Assert.Equal("http://core.hosty.localhost:7070", resource.GetProperty("authorization_servers").EnumerateArray().Single().GetString());
 
         // A 401 from Core MCP names where the metadata lives — the thread a stock client pulls to
         // discover the whole flow.
@@ -686,12 +686,12 @@ public sealed class OAuthHttpTests
         Assert.False(off.TryGetProperty("registration_endpoint", out _));
         // The rest of the document is unaffected: the flow stays discoverable for a client that
         // already registered while the breaker was on.
-        Assert.Equal("http://localhost:7070/api/auth/oauth/token", off.GetProperty("token_endpoint").GetString());
+        Assert.Equal("http://core.hosty.localhost:7070/api/auth/oauth/token", off.GetProperty("token_endpoint").GetString());
 
         await EnableRegistrationAsync(client, admin);
         var on = await ReadJsonAsync(await client.GetAsync("/.well-known/oauth-authorization-server"));
         Assert.Equal(
-            "http://localhost:7070/api/auth/oauth/register",
+            "http://core.hosty.localhost:7070/api/auth/oauth/register",
             on.GetProperty("registration_endpoint").GetString());
 
         // And it disappears again with the breaker, in the same process — the endpoint reads the

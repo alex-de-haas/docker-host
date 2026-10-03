@@ -1,7 +1,7 @@
 # Removable System Apps — Distribution Catalog and One Lifecycle
 
 Created: 2026-07-12
-Updated: 2026-07-25
+Updated: 2026-10-01
 
 Hosty ships first-party apps (Shell, Marketplace, Telemetry) as ordinary runtime apps. They are
 installed and uninstalled through the same lifecycle as any other app, from any surface: the Shell's
@@ -11,12 +11,12 @@ boot again.
 
 ## What "system" means
 
-A manifest may declare `role: "system"`. That marker governs *reach*, not lifecycle:
+A manifest may declare `role: "system"`. That marker describes a platform app:
 
-- Only host administrators can authorize, launch, or hold a session for the app
-  (`system_app_admin_required`, [AppIdentityService](../../../apps/core/src/Haas.Hosty.Core/AppIdentityService.cs)).
-- The app is hidden from non-admin users and cannot be assigned to them
-  ([AppAccessPolicy](../../../apps/core/src/Haas.Hosty.Core/AppAccessPolicy.cs)).
+- Enabled administrators have implicit access; other users need an explicit assignment, just as for
+  ordinary apps ([AppAccessPolicy](../../../apps/core/src/Haas.Hosty.Core/AppAccessPolicy.cs)).
+- App access does not grant administrative operations. Core checks the user's role and the calling
+  app's permissions independently.
 - It gets its own session idle/absolute grant windows ([AuthLifetimes](../../../apps/core/src/Haas.Hosty.Core/AuthLifetimes.cs)).
 - Its manifest UI block is validated strictly (explicit entrypoint, no path duplicates, no runtime
   endpoint guessing).

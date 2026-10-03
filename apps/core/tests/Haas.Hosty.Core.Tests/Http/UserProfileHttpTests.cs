@@ -31,7 +31,8 @@ public sealed class UserProfileHttpTests
         Assert.DoesNotContain("secret", text); Assert.DoesNotContain("other-user", text); Assert.DoesNotContain("client-id", text);
         using var profile = JsonDocument.Parse(text);
         Assert.Equal("alice", profile.RootElement.GetProperty("id").GetString());
-        Assert.Single(profile.RootElement.GetProperty("connections").EnumerateArray());
+        Assert.False(profile.RootElement.TryGetProperty("connections", out _));
+        Assert.False(profile.RootElement.TryGetProperty("gitIdentity", out _));
         async Task<HttpResponseMessage> Save() => await client.PutAsJsonAsync("/api/profile", new { displayName = "Alice Renamed", userId = "bob", role = "host.admin" });
         Assert.Equal(HttpStatusCode.Forbidden, (await Save()).StatusCode);
         client.DefaultRequestHeaders.Add("X-Hosty-CSRF", "csrf");
@@ -43,8 +44,10 @@ public sealed class UserProfileHttpTests
         Assert.Equal(HttpStatusCode.NotFound, (await client.PutAsJsonAsync("/api/profile/connections/other", new { label = "Stolen" })).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await client.DeleteAsync("/api/profile/connections/other")).StatusCode);
         Assert.Equal(2, (await users.ReadAsync()).ProviderConnections!.Count);
-        Assert.Equal(HttpStatusCode.OK, (await client.DeleteAsync("/api/profile/connections/owned")).StatusCode);
-        Assert.Equal("other", Assert.Single((await users.ReadAsync()).ProviderConnections!).Id);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.DeleteAsync("/api/profile/connections/owned")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/source-connections")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.DeleteAsync("/api/source-connections/owned")).StatusCode);
+        Assert.Equal(2, (await users.ReadAsync()).ProviderConnections!.Count);
         client.DefaultRequestHeaders.Remove("Cookie");
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "scoped");
         Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/profile")).StatusCode);

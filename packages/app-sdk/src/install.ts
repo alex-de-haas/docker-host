@@ -1,3 +1,4 @@
+import { appFetch } from "./browser-auth";
 /** Framework-independent client for Core's reviewed, user-confirmed installation requests. */
 export interface InstallSetting {
   key: string; type: string; defaultValue?: string | null; secret: boolean;
@@ -18,16 +19,28 @@ export interface InstallationSource {
   updateAppId?: string; planDigest?: string;
   /** Review permission declarations and optional grants for this installed app, without reinstalling it. */
   permissionsAppId?: string;
+  /** Request removal of this installed app. Core freezes these options for its confirmation page. */
+  removeAppId?: string;
+  removalOptions?: { deleteRuntimeState?: boolean; deleteData?: boolean; deleteBackups?: boolean; deleteSource?: boolean; ignoreRuntimeErrors?: boolean };
+  hostPathChange?:
+    | { kind: "source-override"; appId: string; source: { path: string; commit?: string } }
+    | { kind: "app-mounts"; appId: string; mounts: { mounts: { key: string; label?: string | null; hostPath?: string | null; globalMountName?: string | null }[] } }
+    | { kind: "global-mount"; globalMount: { name: string; hostPath: string; mode?: string; description?: string | null } };
+  /** Personal source selection requires apps.sources as well as apps.install and Core review. */
+  sourceConnections?: { manifestConnectionId?: string; gitConnectionId?: string; clearManifestConnection?: boolean; clearGitConnection?: boolean };
 }
 export interface InstallationRequest {
   id: string; status: "draft" | "pending" | "executing" | "succeeded" | "denied" | "failed";
   plan: InstallPlan | null;
+  updatePlan?: { appId: string; displayName: string; targetVersion: string; targetRuntime: string; changes: string[] } | null;
   permissionPlan?: { appId: string; displayName: string; required: string[]; optional: string[]; granted: string[]; acceptedRequired?: string[]; acceptedOptional?: string[] } | null;
+  removalPlan?: { appId: string; displayName: string; version: string; options: NonNullable<InstallationSource["removalOptions"]> } | null;
+  hostPathPlan?: { change: InstallationSource["hostPathChange"]; displayName: string; details: string[] } | null;
   approvalUrl: string; expiresAt: string; error?: string | null;
 }
 export interface InstallationClient {
   prepare(source: InstallationSource): Promise<InstallationRequest>;
-  submit(id: string, settings: Record<string, string | null>, autostart: boolean, optionalPermissions?: string[]): Promise<InstallationRequest>;
+  submit(id: string, settings: Record<string, string | null>, autostart: boolean): Promise<InstallationRequest>;
   status(id: string): Promise<InstallationRequest>;
 }
 export class InstallationError extends Error {
@@ -39,7 +52,7 @@ export function createInstallationClient(options: {
   request?: (url: string, body?: unknown, method?: string) => Promise<Response>;
 } = {}): InstallationClient {
   const base = (options.baseUrl ?? "/api/hosty/installations").replace(/\/$/, "");
-  const request = options.request ?? ((url, body, method = "POST") => fetch(url, {
+  const request = options.request ?? ((url, body, method = "POST") => appFetch(url, {
     method, credentials: "same-origin", cache: "no-store",
     headers: { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -54,7 +67,7 @@ export function createInstallationClient(options: {
   }
   return {
     prepare: source => call("", source),
-    submit: (id, settings, autostart, optionalPermissions) => call(`/${encodeURIComponent(id)}/submit`, { settings, autostart, ...(optionalPermissions === undefined ? {} : { optionalPermissions }) }),
+    submit: (id, settings, autostart) => call(`/${encodeURIComponent(id)}/submit`, { settings, autostart }),
     status: id => call(`/${encodeURIComponent(id)}`, undefined, "GET"),
   };
 }

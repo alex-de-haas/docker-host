@@ -20,6 +20,7 @@ public sealed class DevelopmentWorkspaceHttpTests
         var apps = host.Services.GetRequiredService<AppRegistryStore>();
         var app = new AppRecord("hosty.harness", "Harness", null, "1.0.0", "runtime", true, "installed", null, null,
             "local", "installed", "running", null, null, [], new Dictionary<string, AppSettingValue>(), [], [], [], now, now);
+        app = app with { ConfirmedRoles = ["assistant"], Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["assistant"] = [new("default", null, "/assistant")] } };
         await apps.UpsertAppAsync(app);
         using var client = host.CreateClient();
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync(Root)).StatusCode);
@@ -27,7 +28,12 @@ public sealed class DevelopmentWorkspaceHttpTests
         var tokens = host.Services.GetRequiredService<DelegatedTokenService>();
         client.DefaultRequestHeaders.Add("X-Hosty-User-Token", tokens.CreateToken(app.Id, "admin", "host.admin").Token);
         Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync(Root)).StatusCode);
-        await apps.UpsertAppAsync(app with { GrantedCorePermissions = [CoreAppPermissions.Workspaces] });
+        await apps.UpsertAppAsync(app with { GrantedCorePermissions = [CoreAppPermissions.Sources] });
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync(Root)).StatusCode);
+        var browserGrant = await BrowserAuthorityFixture.Grant(host, app.Id, "admin");
+        await BrowserAuthorityFixture.Approve(host, app.Id, "admin");
+        client.DefaultRequestHeaders.Remove("X-Hosty-User-Token");
+        client.DefaultRequestHeaders.Add("X-Hosty-User-Token", browserGrant.AccessToken);
         var success = await client.GetAsync(Root);
         Assert.Equal(HttpStatusCode.OK, success.StatusCode);
         Assert.Contains("workspaces", await success.Content.ReadAsStringAsync());
@@ -35,7 +41,7 @@ public sealed class DevelopmentWorkspaceHttpTests
         client.DefaultRequestHeaders.Add("X-Hosty-User-Token", tokens.CreateToken("other.app", "admin", "host.admin").Token);
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync(Root)).StatusCode);
         client.DefaultRequestHeaders.Remove("X-Hosty-User-Token");
-        client.DefaultRequestHeaders.Add("X-Hosty-User-Token", tokens.CreateToken(app.Id, "admin", "host.admin").Token);
+        client.DefaultRequestHeaders.Add("X-Hosty-User-Token", browserGrant.AccessToken);
         await users.UpdateAsync(state => state with { Users = state.Users.Select(u => u with { Role = "host.user" }).ToArray() });
         Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync(Root)).StatusCode);
     }

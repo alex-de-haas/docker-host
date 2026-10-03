@@ -3,6 +3,7 @@ import { launchModeBootstrapScript } from "@hosty-sdk/app";
 import { AppIdentityBridge, HostLaunchBridge, HostThemeBridge } from "@hosty-sdk/app/react";
 import { themeBootstrapScript } from "@hosty-sdk/app/theme";
 import "./globals.css";
+import { DemoSession } from "@/components/DemoSession";
 
 export const metadata: Metadata = {
   title: "Hosty Demo App",
@@ -25,8 +26,7 @@ export default function RootLayout({
       <body className="font-sans antialiased">
         <HostThemeBridge />
         <HostLaunchBridge />
-        <AppIdentityBridge />
-        {children}
+        <AppIdentityBridge><DemoSession>{children}</DemoSession></AppIdentityBridge>
       </body>
     </html>
   );

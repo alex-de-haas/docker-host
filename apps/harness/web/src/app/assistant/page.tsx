@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SpeechInput } from "@/components/speech-input";
+import { SessionAuthority } from "@/components/session-authority";
 import { SessionWorkspaces } from "@/components/session-workspaces";
 import { SessionProvider } from "@/components/session-provider";
 import { AppMentionInput, type AppMentionInputHandle } from "@/components/app-mention-input";
@@ -21,7 +22,6 @@ import { InputGroup, InputGroupAddon } from "@/components/ui/input-group";
 import { SessionList } from "@/components/session-list";
 import { hasMessageContent, indexAttachments, takeChosenFiles, takePastedImages } from "@/lib/attachments";
 import { ToolActivity, TranscriptEvent, type ApprovalDecision } from "@/components/transcript";
-import { establishSession } from "@/lib/api";
 import { retryHandoff } from "@/lib/assistant-api";
 import { composeAskDraft } from "@/lib/ask-draft";
 import { clearDraft, pruneDrafts, readDraft, writeDraft } from "@/lib/draft-store";
@@ -224,7 +224,6 @@ export default function AssistantPage() {
     let cancelled = false;
     void (async () => {
       try {
-        await establishSession();
         const requested = new URLSearchParams(window.location.search).get("session");
         if (requested && /^[a-zA-Z0-9-]+$/.test(requested)) {
           requestedSessionRef.current = requested;
@@ -661,6 +660,7 @@ export default function AssistantPage() {
         )}
       </header>
 
+      {!showSessions && session && <SessionAuthority key={session.id} sessionId={session.id} />}
       {!showSessions && session && <SessionWorkspaces key={session.id} session={session} running={running} />}
       {error && <div className="shrink-0 p-3" role="alert"><InlineError message={error} /></div>}
 

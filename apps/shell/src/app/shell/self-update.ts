@@ -1,3 +1,4 @@
+import { fetchCore } from "./core-transport.js";
 import type { AppsResponse } from "./types";
 
 // Kept a leaf module — types only, no runtime imports — so it stays directly testable under
@@ -76,7 +77,7 @@ export function waitForShellUpdateToSettle(options: {
       }
 
       try {
-        const response = await fetch(`${coreOrigin}/api/apps`, { credentials: "include", cache: "no-store" });
+        const response = await fetchCore(`${coreOrigin}/api/apps`, { credentials: "include", cache: "no-store" });
         if (!response.ok) {
           return;
         }

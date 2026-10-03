@@ -1,12 +1,13 @@
 {
   "name": "@hosty-sdk/app",
-  "version": "0.18.0",
+  "version": "0.19.0",
   "description": "Hosty app auth: session state machine, recovery bridge, Core revalidation, and the embedder responder.",
   "license": "AGPL-3.0-only",
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
     "./server": "./src/server.ts",
+    "./browser-auth": "./src/browser-auth.ts",
     "./delegated": "./src/delegated.ts",
     "./scoped-token": "./src/scoped-token.ts",
     "./oauth-resource": "./src/oauth-resource.ts",
@@ -18,7 +19,19 @@
     "./install/server": "./src/install-server.ts",
     "./assistant": "./src/assistant.ts",
     "./providers": "./src/providers.ts",
-    "./providers/server": "./src/providers-server.ts"
+    "./providers/server": "./src/providers-server.ts",
+    "./permissions": {
+      "types": "./dist/permissions.d.ts",
+      "default": "./dist/permissions.js"
+    },
+    "./permissions/server": {
+      "types": "./dist/permissions-server.d.ts",
+      "default": "./dist/permissions-server.js"
+    },
+    "./permissions/react": {
+      "types": "./dist/permissions-react.d.ts",
+      "default": "./dist/permissions-react.js"
+    }
   },
   "scripts": {
     "test": "vitest run",
@@ -43,7 +56,11 @@
     "@types/node": "^24.19.0",
     "@types/react": "^19.3.0",
     "typescript": "^6",
-    "vitest": "^5.0.2"
+    "vitest": "^5.0.2",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "jsdom": "^30.1.1"
   },
   "repository": {
     "type": "git",

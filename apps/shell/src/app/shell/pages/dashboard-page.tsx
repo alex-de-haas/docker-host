@@ -1,5 +1,8 @@
 "use client";
 
+import { fetchCore } from "../core-transport.js";
+
+
 import { DevelopmentWorkspaces } from "./development-workspaces";
 import { ResourceUsageProvider, ResourceUsage } from "../resources/resource-usage";
 import { Frame, FrameHeader, FramePanel } from "@/components/reui/frame";
@@ -189,7 +192,7 @@ export function DashboardPage({
       try {
         // Without `refresh` Core answers from its cached plan (no network work); refresh=true forces
         // a single-app rebuild — the actions menu's explicit "Check for updates" uses it.
-        const response = await fetch(
+        const response = await fetchCore(
           `${coreOrigin}/api/apps/${encodeURIComponent(app.id)}/update-status${options?.refresh ? "?refresh=true" : ""}`,
           { credentials: "include" },
         );
@@ -826,10 +829,10 @@ function AppServiceDetailsPanel({
                         </div>
                         <div className={cn("grid gap-2", endpoint.public && "dashboard-service-endpoints")}>
                           <EndpointUrlBlock
-                            url={endpoint.url}
+                            url={endpoint.browserOrigin ?? endpoint.url}
                             missingText="not assigned"
-                            copyTitle="Copy local endpoint URL"
-                            openTitle="Open local endpoint URL"
+                            copyTitle="Copy endpoint URL"
+                            openTitle="Open endpoint URL"
                             onCopy={copyEndpointUrl}
                             actions={<PortReassignControl app={app} endpoint={endpoint} />}
                           />
@@ -983,7 +986,7 @@ function InstalledAppsTable({
     }));
 
     try {
-      const response = await fetch(`${coreOrigin}/api/apps/${encodeURIComponent(app.id)}/health`, { credentials: "include" });
+      const response = await fetchCore(`${coreOrigin}/api/apps/${encodeURIComponent(app.id)}/health`, { credentials: "include" });
       redirectToCoreLoginIfAuthRequired(response, coreOrigin);
       if (!response.ok) {
         throw new Error(await readCoreError(response));
@@ -1147,8 +1150,8 @@ function InstalledAppRow({
   const needsReview = Boolean(verdict?.error || verdict?.requiresReview || !verdict?.planDigest);
   // Removal, like start/stop/restart/update, is an inherent Core operation: the endpoint authorizes on
   // the admin session, never on the manifest `capabilities` list, so an app cannot decline to be
-  // uninstalled by omitting a token. System apps are removable too — "system" governs who may see and
-  // reach an app, not whether it can be uninstalled; the remove panel explains the consequences.
+  // uninstalled by omitting a token. System apps are removable too; the remove panel explains
+  // the consequences. App permissions and the acting user's role are checked by Core.
   const canRemove = canManageApps;
   const isBusy = (action: string) => busyAction === `${app.id}:${action}`;
   const autostartEnabled = isAppAutostartEnabled(app);

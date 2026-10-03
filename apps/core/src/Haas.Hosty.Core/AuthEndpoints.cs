@@ -28,6 +28,8 @@ internal static class AuthEndpoints
 
         app.MapGet("/api/auth/session", async (HttpRequest request, UserDirectoryStore users, AuthLifetimes lifetimes, CancellationToken cancellationToken) =>
         {
+            if (AppManagementAuthorization.Caller(request) is { } caller)
+                return CoreJson.Json(new AuthSessionResponse(true, caller.User, "app"));
             var state = await users.ReadAsync(cancellationToken);
             var sessionId = CoreSessionAuthorization.ReadSessionId(request);
             var now = DateTimeOffset.UtcNow;
@@ -46,26 +48,6 @@ internal static class AuthEndpoints
             // Kind lets a non-browser client see what it is holding — the Cardputer console reads the
             // role here to warn when it was authorized by a host.user rather than an administrator.
             return CoreJson.Json(new AuthSessionResponse(user is not null && !user.Disabled, user, session?.Kind));
-        });
-
-        app.MapPost("/api/auth/session", async (
-            AuthSessionCreateRequest input,
-            HttpResponse response,
-            IHostEnvironment environment,
-            UserDirectoryStore users,
-            IClock clock,
-            AuthLifetimes lifetimes,
-            CancellationToken cancellationToken) =>
-        {
-            if (!environment.IsDevelopment())
-            {
-                return CoreJson.Json(new ErrorResponse("session_create_unavailable", "Direct session creation is available only in development."), statusCode: StatusCodes.Status404NotFound);
-            }
-
-            var result = await CreateSessionAsync(input.UserId, input.SecureCookie, response, users, clock, lifetimes, cancellationToken);
-            return result.Succeeded
-                ? CoreJson.Json(new AuthSessionResponse(true, result.User))
-                : CoreJson.Json(new ErrorResponse("session_denied", "Host user is missing or disabled."), statusCode: StatusCodes.Status403Forbidden);
         });
 
         app.MapPost("/api/auth/trusted-proxy/session", async (
@@ -216,7 +198,10 @@ internal static class AuthEndpoints
         app.MapGet("/api/apps/{appId}/open", async (
             string appId,
             string? redirectUri,
+            string? responseMode,
+            string? state,
             HttpRequest request,
+            AppRegistryStore apps,
             UserDirectoryStore users,
             IClock clock,
             AppIdentityService identity,
@@ -225,6 +210,16 @@ internal static class AuthEndpoints
             if (string.IsNullOrWhiteSpace(redirectUri))
             {
                 return CoreJson.Json(new ErrorResponse("redirect_uri_missing", "Redirect URI is required."), statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            var popup = string.Equals(responseMode, "web_message", StringComparison.Ordinal);
+            if (responseMode is not null && (!popup || state is null || state.Length != 64 || !state.All(Uri.IsHexDigit)))
+                return CoreJson.Json(new ErrorResponse("response_mode_invalid", "Popup recovery requires a 256-bit initiation state."), statusCode: 400);
+            if (popup)
+            {
+                if (!InstallationApprovalEndpoints.IsPageNavigation(request)) return Results.StatusCode(403);
+                if (!await InstallationApprovalEndpoints.HasIsolatedCookieHostAsync(request, apps, cancellationToken))
+                    return Results.Text("Open sign-in on Core's isolated browser origin.", statusCode: 409);
             }
 
             // This is a top-level browser navigation (the standalone app recovery target). A missing or
@@ -237,7 +232,7 @@ internal static class AuthEndpoints
                 return navigation.Denied;
             }
 
-            if (navigation.User is null)
+            if (navigation.User is null || (popup && await InstallationApprovalEndpoints.BrowserActorAsync(request, users, clock, cancellationToken) is null))
             {
                 var continuation = request.Path + request.QueryString;
                 return Results.Redirect($"/login?returnTo={Uri.EscapeDataString(continuation)}");
@@ -246,7 +241,11 @@ internal static class AuthEndpoints
             return await HandleIdentityError(async () =>
             {
                 var authorization = await identity.CreateAuthorizationCodeAsync(
-                    appId, navigation.User.Id, redirectUri, CoreSessionAuthorization.ReadSessionId(request), cancellationToken);
+                    appId, navigation.User.Id, redirectUri, CoreSessionAuthorization.ReadSessionId(request), cancellationToken,
+                    activityAuthorized: InstallationApprovalEndpoints.IsPageNavigation(request)
+                        && await InstallationApprovalEndpoints.HasIsolatedCookieHostAsync(request, apps, cancellationToken)
+                        && await InstallationApprovalEndpoints.BrowserActorAsync(request, users, clock, cancellationToken) is not null);
+                if (popup) return AppPopupResponse.Render(request.HttpContext.Response, redirectUri, state!, authorization.Code);
                 return Results.Redirect(authorization.RedirectUri);
             });
         });
@@ -287,20 +286,15 @@ internal static class AuthEndpoints
             return CoreJson.Json(new ErrorResponse(code, message), statusCode: status);
         }
 
+        if (branching)
+            return await DenyAsync("mcp_grant_required", "Cross-app assistant calls require an explicit MCP grant and MCP-only token.", StatusCodes.Status403Forbidden);
+
         var caller = await apps.GetAppAsync(callerAppId, cancellationToken);
         if (caller is null || !caller.System)
         {
             return await DenyAsync(
                 "exchange_forbidden",
                 "Only an installed system app may exchange a delegated token.",
-                StatusCodes.Status403Forbidden);
-        }
-
-        if (claims.Branched == true && branching)
-        {
-            return await DenyAsync(
-                "exchange_chain_forbidden",
-                "A token obtained by exchange may be refreshed for its own audience, never exchanged for another app.",
                 StatusCodes.Status403Forbidden);
         }
 
@@ -313,42 +307,8 @@ internal static class AuthEndpoints
                 StatusCodes.Status403Forbidden);
         }
 
-        // Core's own MCP endpoint as a target, for the reason the on-behalf-of route accepts it: the
-        // assistant panel reaches Core's tools through the same exchange it uses for the apps, so one
-        // session carries the control plane beside them. No app record exists to resolve access
-        // against, so the rule is the one that surface has always had — administrators only, re-read
-        // from the directory rather than taken from the claims, because a role downgrade must reach a
-        // chain that is still alive. What the token may do there is the MCP endpoint's decision, and
-        // it is reads only: a delegated token never carries scopes, so it cannot prove a standing
-        // grant, whoever the actor is.
-        if (string.Equals(target, AccessTokenScopes.CoreAudience, StringComparison.Ordinal))
-        {
-            var state = await users.ReadAsync(cancellationToken);
-            var actor = state.Users.FirstOrDefault(candidate =>
-                string.Equals(candidate.Id, claims.Sub, StringComparison.Ordinal));
-            if (actor is null || actor.Disabled || !AppAccessPolicy.IsAdmin(actor))
-            {
-                return await DenyAsync(
-                    "admin_required",
-                    "Core MCP requires a Host administrator.",
-                    StatusCodes.Status403Forbidden);
-            }
-
-            var coreToken = delegatedTokens.CreateToken(
-                AccessTokenScopes.CoreAudience,
-                actor.Id,
-                actor.Role,
-                chainOrigin: origin,
-                branched: claims.Branched == true || branching);
-            await AppendExchangeAuditAsync(audit, claims, callerAppId, target, "succeeded", clock, cancellationToken);
-            return CoreJson.Json(coreToken);
-        }
-
-        // The access-policy refusals — an unassigned member, a disabled user, an uninstalled target —
-        // are raised as AppIdentityException. HandleIdentityError converts them to a response WITHOUT
-        // rethrowing, so wrapping it would have produced dead code; the exception is caught here
-        // instead and mapped with the same rules. Auditing only the success path would have dropped
-        // exactly the refusals this trail exists to keep.
+        // Legacy credentials can renew only their own audience. Cross-app callers use the
+        // service-authenticated MCP endpoint and installation-bound grants instead.
         try
         {
             var (actor, resolved) = await identity.RequireAccessibleUserAsync(target, claims.Sub, cancellationToken);
@@ -419,7 +379,7 @@ internal static class AuthEndpoints
     internal static int MapIdentityErrorStatus(string code) => code switch
     {
         "invalid_code" or "code_expired" or "code_consumed"
-            or "token_invalid" or "token_expired" or "token_revoked"
+            or "token_invalid" or "token_expired" or "token_revoked" or "reauth_required"
             => StatusCodes.Status401Unauthorized,
         "redirect_uri_invalid" => StatusCodes.Status400BadRequest,
         "signing_key_unavailable" => StatusCodes.Status500InternalServerError,
@@ -462,8 +422,12 @@ internal static class AuthEndpoints
 
     internal static bool IsAllowedLoginReturnTo(string? returnTo)
         => IsRelativeContinuation(returnTo, out var path) &&
-            ((path.StartsWith("/api/apps/", StringComparison.Ordinal) &&
+            (path is "/account/tokens" or "/oauth/consent" ||
+             (path.StartsWith("/api/apps/", StringComparison.Ordinal) &&
               path.EndsWith("/open", StringComparison.Ordinal)) ||
+             (path.StartsWith("/activity/assistants/", StringComparison.Ordinal) && path.Length < 256) ||
+             (path.StartsWith("/install/permissions/", StringComparison.Ordinal) && path.Length is > 21 and <= 84 &&
+              path[21..].IndexOfAnyExcept("abcdefghijklmnopqrstuvwxyz0123456789._-") < 0) ||
              (path.StartsWith("/install/confirm/", StringComparison.Ordinal) && path.Length == 65 &&
               path[17..].IndexOfAnyExcept("0123456789abcdef") < 0));
 
@@ -600,7 +564,6 @@ internal static class AuthEndpoints
 
 internal sealed record CsrfResponse(string Token);
 
-internal sealed record AuthSessionCreateRequest(string UserId, bool SecureCookie = false);
 
 internal sealed record AuthSessionResponse(bool Authenticated, HostUserRecord? User, string? Kind = null);
 

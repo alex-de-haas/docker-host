@@ -66,7 +66,7 @@ public sealed class DelegatedTokenHttpTests
         using var response = await SendAsync(client, HttpMethod.Post, "/api/apps/hosty.harness/delegated-token", member);
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
-        Assert.Equal("system_app_admin_required", (await ReadJsonAsync(response)).GetProperty("code").GetString());
+        Assert.Equal("app_access_denied", (await ReadJsonAsync(response)).GetProperty("code").GetString());
     }
 
     [Fact]

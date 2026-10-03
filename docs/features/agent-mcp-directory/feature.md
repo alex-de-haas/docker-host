@@ -1,11 +1,30 @@
 # Agent MCP Directory
 
 Created: 2026-09-26
-Updated: 2026-09-27
+Updated: 2026-10-01
 
 Core owns the host policy for MCP targets offered through Hosty assistants, the Gateway facade and
 `hosty mcp`. Administrators edit it in Shell **Settings → Agents**. Runtime apps start disabled;
 `hosty:core` starts enabled. Gateway auto-allow remains a separate assistant setting.
+
+## Assistant Access
+
+The host-wide offer remains an upper bound shared with the CLI and facade. Within each target,
+**Allowed assistants** grants MCP access to individual installed, confirmed assistants. This is
+Core policy, not a user preference or an assistant-local setting. Existing offers grant no assistant
+access automatically. There is no blanket `apps.mcp` permission and no additional per-user consent
+screen. The acting user's current assignments and role still restrict every invocation.
+
+Each relationship binds the assistant and target installation identities. Revocation removes the
+relationship; granting it again creates a new revision, so previous tokens remain invalid. A new
+installation of either app needs explicit reassignment. The administrative API accepts `assistantIds`
+with the reviewed directory revision; omitted assignments preserve the current relationships.
+Assistant service credentials cannot edit policy. App-based administration requires `core.configure`
+and a current administrator, like the other Core settings.
+
+Core filters the app-facing directory for the requesting assistant and independently checks the
+relationship at token issuance and MCP introspection. Its authority does not depend on a cooperating
+Harness proxy. See [MCP delegation](../delegated-token-exchange/feature.md).
 
 ## Policy And Skill Review
 
@@ -34,6 +53,8 @@ adds `agents: { revision, targets, settingsUrl }`. Targets include identity, dis
 MCP interface keys and resolved URLs, per-service readiness, installation identity and skill digests.
 It contains no credentials or skill text. A request with `?revision=<current>` receives 304 and no body.
 Policy, installation, fleet metadata, URL, readiness and skill changes invalidate the revision.
+The revision includes grant nonces, so revoke/regrant cannot revive an earlier reviewed snapshot.
+App-facing responses omit the assistant roster and other assistants' assignment lists.
 
 The local control endpoint `GET /control/v1/agents/directory` exposes the same credentials-free
 configuration behind the control secret. Admin reads additionally include the complete skill text.
@@ -94,6 +115,8 @@ This feature is independent of the [AHP plan](../assistant-ahp/plan.md) and the 
 
 ## Testing Expectations
 
+- Assistant-specific defaults, stale grant revisions, ordinary service credential refusal, both
+  installation identities and revoke/regrant without token resurrection.
 - Defaults, admin/CSRF boundaries, exact-digest approvals, stale revision refusal, audit and retained-data
   uninstall/reinstall behavior through the real Core HTTP pipeline.
 - Credentials-free conditional discovery, per-interface readiness, Core's switch and rejection of

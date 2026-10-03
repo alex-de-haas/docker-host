@@ -93,7 +93,7 @@ export function InstallDialog({ client, source, onClose, onInstalled }: InstallD
           <option key={runtime.key} value={runtime.key}>{runtime.key} ({runtime.type})</option>)}
       </select></label>
       {plan.targetRuntimeType === "localCommand" && <p className="warning">This runtime runs commands directly on your host, outside a container. Only install code you trust.</p>}
-      {plan.system && <p className="warning">This is a system app. Only host administrators can open it.</p>}
+      {plan.system && <p className="warning">This is a system app. User access is controlled by Hosty assignments.</p>}
       {!!plan.requestedRoles?.length && <section><h3>Requested provider roles</h3><ul>{plan.requestedRoles.map(role => <li key={role}>{plan.roleDescriptions?.[role] ?? role}</li>)}</ul></section>}
       {!!plan.corePermissions?.length && <section><h3>Requested Core permissions</h3><ul>{plan.corePermissions.map(permission => <li key={permission}>{plan.permissionDescriptions?.[permission] ?? permission}</li>)}</ul></section>}
       {plan.settings.map(setting => <label key={setting.key}>

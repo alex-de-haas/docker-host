@@ -965,6 +965,7 @@ public sealed class DockerRuntimeAdapterTests
         Assert.Equal("running", result.RuntimeState);
         // The lock is preserved (adoption reuses the existing one; it never re-resolves the tag).
         Assert.Equal(digest, result.ArtifactLocks?["app"].ImageDigest);
+        Assert.Empty(result.CreatedServices!);
     }
 
     [Fact]

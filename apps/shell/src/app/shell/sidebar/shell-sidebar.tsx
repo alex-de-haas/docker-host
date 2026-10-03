@@ -491,32 +491,10 @@ function CompactAppMenu({
   );
 }
 
-// Logs out via the CSRF-protected POST /api/auth/logout (C-L2), then navigates to Core's login page.
-// The CSRF token is a cookie+header double-submit pair; a concurrent CSRF-protected operation elsewhere
-// in the Shell can refresh (overwrite) the cookie between our token fetch and the POST, so a single 403
-// is retried once with a fresh token before giving up. The redirect runs regardless of the outcome —
-// the destination is the same and leaving the user on a half-logged-out sidebar is worse.
+// Core revokes the primary session and its app grants on a top-level browser navigation.
 async function logout(coreOrigin: string) {
-  const postLogout = async () => {
-    const csrfResponse = await fetch(`${coreOrigin}/api/auth/csrf`, { credentials: "include" });
-    const { token } = (await csrfResponse.json()) as { token: string };
-    return fetch(`${coreOrigin}/api/auth/logout`, {
-      method: "POST",
-      credentials: "include",
-      headers: { "X-Hosty-CSRF": token },
-    });
-  };
-
-  try {
-    let response = await postLogout();
-    if (response.status === 403) {
-      response = await postLogout();
-    }
-  } catch {
-    // Ignore — navigate to login regardless below.
-  } finally {
-    window.location.href = `${coreOrigin}/login`;
-  }
+  void coreOrigin;
+  window.location.assign("/auth/logout");
 }
 
 function SidebarFooterAccount({

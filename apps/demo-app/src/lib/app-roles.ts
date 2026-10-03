@@ -243,20 +243,7 @@ export function getDemoRolePermissions(role: DemoAppResolvedRole) {
   return role === "anonymous" ? anonymousPermissions : roleDefinitions[role].permissions;
 }
 
-export function roleSourceLabel(source: DemoAppRoleSource) {
-  switch (source) {
-    case "stored":
-      return "App store";
-    case "host-admin-bootstrap":
-      return "Host admin bootstrap";
-    case "host-assignment":
-      return "Host assignment default";
-    case "host-authenticated":
-      return "Host login default";
-    case "anonymous":
-      return "Anonymous request";
-  }
-}
+export { roleSourceLabel } from "./app-role-labels";
 
 export function isDemoAppRoleError(error: unknown): error is DemoAppRoleError {
   return error instanceof DemoAppRoleError;

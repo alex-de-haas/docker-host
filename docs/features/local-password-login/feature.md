@@ -1,7 +1,7 @@
 # Local Password Login
 
 Created: 2026-07-06
-Updated: 2026-08-04
+Updated: 2026-10-01
 
 Core owns sign-in for an installed host: an operator signs in at Core `/login` with an email and a
 password, and gets the ordinary browser session every other surface already understands
@@ -33,9 +33,10 @@ operator opening a pending code's approval link with no session used to arrive a
 having lost the code they came to approve — and a browser without a session is exactly the browser whose
 saved password has not been used yet.
 
-In `Development` the same route is a different page: a selector over the enabled seeded users, with no
-password. Production login and the development helper are separate renderers, so neither drifts into the
-other.
+The same email/password route runs in every environment, including `Development` and IDE/source
+launches. There is no user selector or direct `POST /api/auth/session` creation endpoint; the latter
+returns HTTP 405 because the session resource supports GET only. Environment configuration never
+disables password verification. Trusted-proxy authentication retains its separate secret-protected route.
 
 External OIDC providers, password-reset email, multi-factor authentication, and throttle state that
 survives a Core restart are all outside this feature.
@@ -92,6 +93,11 @@ through recovery or an invitation. Nothing is migrated automatically and no temp
 generated — a recoverable password created on the user's behalf is worse than an explicit recovery step.
 `hosty auth recovery-token` once after an upgrade is the intended path, and the login page says so.
 
+This includes old development accounts created without credentials. Target their actual data root,
+for example `hosty --data-root "$PWD/.hosty-dev" auth recovery-token`. The development launcher
+does not create, re-enable or change users and does not generate default passwords. A fresh data
+root uses `auth setup-token` and the ordinary Core setup form instead.
+
 Setup is unavailable once an enabled administrator exists; recovery remains the break-glass flow.
 
 ## Testing Expectations
@@ -100,6 +106,10 @@ Setup is unavailable once an enabled administrator exists; recovery remains the 
 - Wrong password, disabled user, missing credential, and throttling behavior.
 - Setup requires a password and stores only hash material; recovery sets or replaces a credential and
   revokes existing sessions; an accepted invitation produces a credential.
-- The development login helper stays separate from production login.
+- Development and Production serve the same password login and reject both a user-id-only form
+  submission and direct session creation without issuing a cookie or storing a session.
+- HTTP tests seed users/credentials or sessions only inside their isolated in-process test stores;
+  the production route table contains no test authentication endpoint. Browser acceptance uses real
+  setup/recovery and password login, not hand-written session cookies or a development shortcut.
 - Core's served pages keep `border-box` layout and the `username` / `current-password` pair
   ([CorePageMarkupHttpTests.cs](../../../apps/core/tests/Haas.Hosty.Core.Tests/Http/CorePageMarkupHttpTests.cs)).

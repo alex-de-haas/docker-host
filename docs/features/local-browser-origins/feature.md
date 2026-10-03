@@ -1,0 +1,160 @@
+# Local Browser Origins
+
+Created: 2026-09-30
+Updated: 2026-10-02
+
+Core derives browser addresses for plain HTTP loopback endpoints without storing a public-origin
+setting or provisioning DNS. The default instance uses `core.hosty.localhost:<port>` for Core.
+Public app endpoints use a stable app hostname beneath `hosty.localhost`, with their assigned ports.
+Non-default data roots include their persisted instance identity: `i-<instance-id>.hosty.localhost`.
+These addresses refer to the browser's own machine; they are not remote/LAN addresses.
+
+## Resolution and transport
+
+`LocalBrowserOrigins` owns the policy. App IDs escape hyphens as `-h`, dots as `-d` and underscores
+as `-u`, then split into 50-character chunks wrapped in `a` and `z` to keep every DNS label valid.
+For example, `hosty.shell` uses `ahosty-dshellz.hosty.localhost`. Distinct accepted app IDs retain
+distinct names; display names do not participate. Core's `core` label is reserved.
+
+A valid explicit app `HOSTY_PUBLIC_ORIGIN_<ENDPOINT>` takes precedence. Clearing it restores the
+local default. Core resolves the persisted setting, environment baseline, then listen address,
+and canonicalizes plain HTTP `localhost`, `127.0.0.1` and `::1` to its separate browser hostname.
+HTTPS, LAN and external origins retain their configured hostnames.
+
+Endpoint summaries expose `browserOrigin` separately from transport `url` and explicit
+`publicOrigin`. Navigation, app identity redirect validation and runtime
+`HOSTY_PUBLIC_ORIGIN_*` environment use the browser projection. Container-to-Core transport still
+uses `host.docker.internal`; local processes, readiness probes, port assignment and CLI control keep
+their existing direct transport. Generated origins are absent from publication settings and ingress
+publication state. Ingress `none` still accepts a full custom origin; it provisions no DNS or proxy.
+
+App origin edits reject the Core hostname and another app's effective or reserved generated name.
+Core origin edits reject a hostname used by a registered public app endpoint. Confirmation also
+checks the actual request hostname at decision time, including legacy transport hosts.
+
+## Navigation and migration
+
+Shell canonicalizes ordinary query-free document GET navigation from bare local hosts on its
+entry routes before authentication. Core canonicalizes login and confirmation entry GETs, and
+query-free setup/recovery entries. API calls and POST bodies are not redirected. Login preserves
+only an allowlisted continuation; token-bearing setup/recovery links stay on their requested origin.
+Newly generated setup, recovery, invitation, confirmation and OAuth links already use Core's
+browser origin.
+
+A Core session remains host-only and bound to its issuing browser origin. An old session cannot
+approve a decision on the new origin; the confirmation route sends the user through fresh login.
+The shared-host denial, nonce, request-origin, expiry and replay protections remain in place.
+
+App-requested removal also uses this isolated Core confirmation. `apps.install` permits preparing
+the request, while direct app-token removal is forbidden. The page shows frozen cleanup choices,
+including data/backups deletion; execution rejects a missing or replaced installation. Shell uses
+this same flow. See [installation SDK and confirmation](../app-installation-sdk/feature.md).
+
+Running apps store `appliedBrowserOrigin` after start/restart. A legacy running app without it, or
+one started against a different Core browser origin, reports `restartRequired`. Its next explicit
+restart applies the injected environment. Core does not silently restart live workloads to migrate
+browser addresses. Adopting existing Docker containers or partially adopting a mixed service graph
+preserves the last applied origin/configuration rather than claiming the new environment is active.
+Configured app origins and existing port assignments are preserved.
+
+## Verified behavior and current limitation
+
+On 2026-09-30 a separate Core-managed localCommand Shell instance passed the Chromium browser
+entry, Core login, authenticated dashboard and required-permission review-page flow without public
+origin settings. Real-password HTTP tests exercise approval and denial on the isolated hostname.
+
+On 2026-10-01, Safari 27 and Chromium passed real password login and the authenticated Shell
+dashboard on an isolated Core-managed localCommand installation. Shell now navigates through Core
+and exchanges an app-bound code on its server; background API calls use its own cookie and
+service credential. Core's cookie is not part of this transport. Next's internal Request URL can
+contain its listen address, so Shell validates the browser Host against the configured callback
+origin instead of comparing the internal URL's origin.
+
+The JavaScript SDK also supports app-owned popup authorization for embedded content. A Core-managed
+Marketplace fixture passed embedded sign-in in Chromium and Safari 27. Chromium additionally passed
+sign-in without `apps.install`, using the ordinary sandbox, and rejected a revoked parent session on
+reload before recovering through a new Core login. The fixture had no real catalog configured.
+
+Native Safari 27 also passed embedded Harness recovery after Core logout: a subsequent API request
+rejected the revoked app grant, the user entered the normal password in Core's popup, and Harness
+loaded protected source settings again without reloading Shell. A separate Marketplace fixture
+without `apps.install` passed popup sign-in under the ordinary iframe sandbox. Chromium verified
+Harness MCP calls and assignment revocation against Core with a deterministic model adapter.
+
+An isolated 0.116.0-to-source upgrade preserved a running localCommand process and a Docker container.
+Both reported `restartRequired` with their old environment; explicit app restarts injected the new
+browser addresses and cleared the flag without changing transport ports or public-origin settings.
+
+Native Ubuntu 24.04 ARM64 and Mac Docker Desktop pass the server-side Shell authorization-code
+exchange, authenticated API access and recovery revocation with the same ARM64 Shell image.
+On Linux, changing both Core and Shell to custom `*.localhost` origins preserves that flow;
+clearing the settings restores the generated origins. These checks exercise public HTTP routes,
+not browser automation or an external ingress provider.
+
+Firefox 157 on Ubuntu 24.04 ARM64 also passes the interactive Shell login flow:
+opening `localhost:7171` reaches Core's generated hostname, ordinary email/password login
+returns to Shell's generated hostname, and the authenticated dashboard displays the current
+user, app inventory and live Core state. Reloading the page preserves the session. This
+targeted check does not cover permission approval, embedded apps or interactive setup/recovery.
+
+## Docker-to-Core transport
+
+For a plain HTTP loopback Core listener on native Linux, Core discovers Docker's default bridge
+and verifies its gateway against addresses assigned to the corresponding local bridge interface.
+It adds a Kestrel listener on that address and maps `host.docker.internal` to it when creating app
+containers. The ordinary loopback listener, browser origins, port publication and API authorization
+are unchanged. The additional listener rejects `/control` routes before forwarded headers.
+
+Discovery runs at Core startup and Docker app start. There is no background network polling or
+proxy process. If Docker becomes available later, app start reloads the endpoint and waits for
+Core health before launching the app. Docker absence does not prevent local Core startup.
+Discovery/readiness failures produce `docker_core_transport_unavailable` when starting Docker apps.
+A previously running container retains its creation-time address mapping; a changed Docker gateway
+requires recreating that container through its normal app lifecycle.
+
+Mac/Windows Docker Desktop use the existing host relay. Native Linux detection skips bridge
+binding for Docker Desktop and refuses to guess addresses for remote or rootless daemons; automatic
+bridge transport requires a local Docker Engine bridge with an IPv4 gateway. Explicit non-loopback,
+HTTPS or Kestrel endpoint configurations remain operator-controlled. No wildcard listener or host
+firewall change is introduced. A public-origin edit never changes this internal transport.
+
+Live external provider/private-repository checks and the remaining platform/browser matrix
+remain open in [the plan](plan.md). These checks do not establish complete release acceptance.
+
+## Host Source And Mount Authority
+
+Core requires its own confirmation when an app selects any source override (including registered
+worktrees), selects an inline host mount, or changes the shared-mount registry. Existing approved
+global mount selections remain immediate. Ordinary lifecycle operations and clearing an override
+require no additional confirmation. All callers are prohibited
+from selecting app storage or externally mounted paths as executable overrides, and external mounts
+cannot expose the Core data root or executable source folders. Reviews freeze paths and target state,
+recheck caller authority under mutation locks and leave source/mount state unchanged on stale consent.
+See [source workflows](../runtime-source-workflows/feature.md) and
+[shared mounts](../global-mounts/feature.md) for the path policy.
+
+## Permission setup without lifecycle blocking
+
+Required declarations are setup diagnostics, not launch preconditions. Missing or
+unsupported rights never prevent start, restart, autostart, runtime switching or workload
+adoption. Permission observation cannot stop an app. Current grants still authorize each
+privileged call and unknown permissions cannot be approved. The shared SDK notice in
+Shell, Harness, Marketplace and Telemetry UI opens isolated Core review for administrators,
+including a verified-frame embedding path. See [permission management](../app-permission-management/feature.md)
+for the launch authority audit and notice behavior.
+
+## Testing Expectations
+
+- Keep generated names injective, label lengths bounded and instance identity stable.
+- Preserve explicit origins, internal transport and publication ownership; clearing settings restores defaults.
+- Exercise real login and approval/denial, host-only session cookies, origin binding and shared-host rejection.
+- Verify legacy GET navigation without forwarding credentials, callback codes or POST bodies.
+- Verify runtime environment and restart-required migration for both localCommand and Docker.
+- Run `python3 scripts/check-docker-core-transport.py <built-core-dll-or-executable>` for changes to
+  the transport. It starts an isolated Core and checks health and authorization from default and
+  per-app Docker networks. `--image <local-node-image>` reuses an existing image. Linux CI scopes
+  this smoke check to transport source/workflow changes; it does not add a full OS/browser matrix.
+- Cover bridge discovery refusal, endpoint reload/removal, late Docker availability and CLI-route
+  isolation. The ordinary test suite covers public-origin/transport separation.
+- Complete browser acceptance for Shell, embedded/standalone apps and browser capabilities, including Safari;
+  resolution success alone is insufficient.

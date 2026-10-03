@@ -4,14 +4,17 @@ using System.Text.Json;
 
 namespace Haas.Hosty.Core;
 
-internal sealed record AgentTargetPolicy(DateTimeOffset? InstalledAt, bool Offered, IReadOnlyDictionary<string, string> ApprovedSkills);
+internal sealed record AssistantTargetGrant(DateTimeOffset InstalledAt, string Revision);
+internal sealed record AgentAssistant(string Id, string DisplayName);
+internal sealed record AgentTargetPolicy(DateTimeOffset? InstalledAt, bool Offered, IReadOnlyDictionary<string, string> ApprovedSkills,
+    IReadOnlyDictionary<string, AssistantTargetGrant>? Assistants = null);
 internal sealed record AgentPolicyDocument(IReadOnlyDictionary<string, AgentTargetPolicy> Targets);
 internal sealed record AgentSkillStatus(string Key, string? Digest, string? ApprovedDigest, string? Markdown);
 internal sealed record AgentMcpInterface(string Key, string? Url, string? Service, string Readiness);
 internal sealed record AgentMcpTarget(string Id, string DisplayName, bool Offered, string RuntimeState,
-    IReadOnlyList<AgentMcpInterface> Interfaces, IReadOnlyList<AgentSkillStatus> Skills, DateTimeOffset? InstalledAt = null);
-internal sealed record AgentDirectoryResponse(string Revision, IReadOnlyList<AgentMcpTarget> Targets, string? SettingsUrl = null);
-internal sealed record AgentPolicyUpdate(string Revision, bool Offered, IReadOnlyDictionary<string, string>? ApproveSkills = null);
+    IReadOnlyList<AgentMcpInterface> Interfaces, IReadOnlyList<AgentSkillStatus> Skills, DateTimeOffset? InstalledAt = null, IReadOnlyList<string>? AssistantIds = null);
+internal sealed record AgentDirectoryResponse(string Revision, IReadOnlyList<AgentMcpTarget> Targets, string? SettingsUrl = null, IReadOnlyList<AgentAssistant>? Assistants = null);
+internal sealed record AgentPolicyUpdate(string Revision, bool Offered, IReadOnlyDictionary<string, string>? ApproveSkills = null, IReadOnlyList<string>? AssistantIds = null);
 
 /// Core-owned policy, independent of assistant settings. Installation identity prevents retained data
 /// or a racing removal from granting a later installation of the same app id.
@@ -54,10 +57,12 @@ internal sealed class AgentMcpDirectory(
         var policy = await policies.ReadAsync(cancellationToken);
         var installed = await lifecycle.ListAppsAsync(cancellationToken);
         var records = (await apps.ListAppRecordsAsync(cancellationToken)).ToDictionary(app => app.Id, StringComparer.Ordinal);
+        var assistants = records.Values.Where(IsAssistant).OrderBy(a => a.Id, StringComparer.Ordinal).ToArray();
+        string[] Granted(AgentTargetPolicy? entry) => assistants.Where(a => entry?.Assistants?.GetValueOrDefault(a.Id)?.InstalledAt == a.InstalledAt).Select(a => a.Id).ToArray();
         var targets = new List<AgentMcpTarget>();
         policy.Targets.TryGetValue(CoreId, out var corePolicy);
         targets.Add(new(CoreId, "Hosty Core", corePolicy?.Offered ?? true, "running",
-            [new("default", config.ListenUrl.TrimEnd('/') + "/api/mcp", null, "ready")], []));
+            [new("default", config.ListenUrl.TrimEnd('/') + "/api/mcp", null, "ready")], [], AssistantIds: Granted(corePolicy)));
         foreach (var app in installed.OrderBy(app => app.Id, StringComparer.Ordinal))
         {
             if (app.Interfaces?.TryGetValue("mcp", out var declarations) != true || !records.TryGetValue(app.Id, out var record)) continue;
@@ -78,7 +83,7 @@ internal sealed class AgentMcpDirectory(
                         ? (app.RuntimeState == "running" ? "ready" : "unavailable")
                         : health.Status != "running" ? "unavailable" : health.Health == "healthy" || health.Health is null ? "ready" : health.Health;
                     return new AgentMcpInterface(declaration.Key, declaration.Url, declaration.Service, readiness);
-                }).ToArray(), skills, record.InstalledAt));
+                }).ToArray(), skills, record.InstalledAt, Granted(entry)));
         }
         // Text is excluded so admin and consumer snapshots share one revision. Changes to skill bytes,
         // policy, URLs, readiness, installation identity or any app's fleet state invalidate it.
@@ -88,7 +93,11 @@ internal sealed class AgentMcpDirectory(
         var fleet = string.Join("\n", records.Values.OrderBy(app => app.Id, StringComparer.Ordinal)
             .Select(app => $"{app.Id}:{app.InstalledAt:O}:{app.Version}:{app.RuntimeState}:{app.DisplayName}:{app.Description}:{app.SelectedRuntime}:{app.UpdatedAt:O}"));
         var shell = await shellOrigins.ResolveAsync(cancellationToken);
-        return new(Digest(json + fleet + shell), targets, shell is null ? null : shell.TrimEnd('/') + "/settings?tab=agents");
+        var grantsRevision = string.Join("\n", policy.Targets.OrderBy(p => p.Key, StringComparer.Ordinal)
+            .SelectMany(p => (p.Value.Assistants ?? new Dictionary<string, AssistantTargetGrant>()).OrderBy(a => a.Key, StringComparer.Ordinal)
+                .Select(a => $"{p.Key}:{a.Key}:{a.Value.InstalledAt:O}:{a.Value.Revision}")));
+        return new(Digest(json + fleet + shell + grantsRevision), targets, shell is null ? null : shell.TrimEnd('/') + "/settings?tab=agents",
+            assistants.Select(a => new AgentAssistant(a.Id, a.DisplayName)).ToArray());
     }
 
     public async Task<IResult> UpdateAsync(string id, AgentPolicyUpdate input, string actor, CancellationToken cancellationToken)
@@ -111,16 +120,42 @@ internal sealed class AgentMcpDirectory(
                     return CoreJson.Json(new ErrorResponse("agent_skill_changed", "The skill changed. Reload and review its current text."), statusCode: 409);
                 approved[key] = digest;
             }
+            var oldPolicy = (await policies.ReadAsync(cancellationToken)).Targets.GetValueOrDefault(id);
+            var bindings = new Dictionary<string, AssistantTargetGrant>(oldPolicy?.Assistants ?? new Dictionary<string, AssistantTargetGrant>(), StringComparer.Ordinal);
+            if (input.AssistantIds is not null)
+            {
+                bindings.Clear();
+                foreach (var assistantId in input.AssistantIds.Distinct(StringComparer.Ordinal))
+                {
+                    var assistant = await apps.GetAppAsync(assistantId, cancellationToken);
+                    if (assistant is null || !IsAssistant(assistant))
+                        return CoreJson.Json(new ErrorResponse("assistant_not_found", "Select an installed, confirmed assistant."), 400);
+                    var previous = oldPolicy?.Assistants?.GetValueOrDefault(assistantId);
+                    bindings[assistantId] = previous?.InstalledAt == assistant.InstalledAt ? previous
+                        : new(assistant.InstalledAt, Guid.NewGuid().ToString("N"));
+                }
+            }
             await audit.AppendAsync(new AuditRecord($"audit_{Guid.NewGuid():N}", "agent.policy.updated", "agent-target", id,
                 "succeeded", actor, clock.UtcNow, new Dictionary<string, string>
                 {
                     ["offered"] = input.Offered.ToString(),
+                    ["assistants"] = string.Join(",", bindings.Keys.Order(StringComparer.Ordinal)),
                     ["approvedSkills"] = string.Join(",", approved.OrderBy(pair => pair.Key).Select(pair => $"{pair.Key}:{pair.Value}")),
                 }), cancellationToken);
-            await policies.ChangeAsync(id, new(record?.InstalledAt, input.Offered, approved), cancellationToken);
+            await policies.ChangeAsync(id, new(record?.InstalledAt, input.Offered, approved, bindings), cancellationToken);
             return CoreJson.Json(await ReadAsync(includeText: true, cancellationToken));
         }
         finally { updateGate.Release(); }
+    }
+
+    internal static bool IsAssistant(AppRecord app) => app.ConfirmedRoles?.Contains("assistant", StringComparer.Ordinal) == true
+        && app.Interfaces?.ContainsKey("assistant") == true;
+
+    internal async Task<AgentDirectoryResponse> ReadForAssistantAsync(string appId, CancellationToken ct)
+    {
+        var snapshot = await ReadAsync(false, ct);
+        return snapshot with { Targets = snapshot.Targets.Select(t => t with
+            { Offered = t.Offered && t.AssistantIds?.Contains(appId, StringComparer.Ordinal) == true, AssistantIds = null }).ToArray(), Assistants = null };
     }
 
     private async Task<string?> ReadSkillAsync(string id, string file, CancellationToken cancellationToken)

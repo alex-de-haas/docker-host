@@ -5,7 +5,6 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import AssistantPage from "./page";
 import * as api from "@/lib/assistant-api";
 
-vi.mock("@/lib/api", () => ({ establishSession: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("@/lib/assistant-api", async original => ({
   ...await original<typeof api>(),
   getHealth: vi.fn(), listSessions: vi.fn(), getSession: vi.fn(), createSession: vi.fn(),

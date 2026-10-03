@@ -1,5 +1,8 @@
 "use client";
 
+import { fetchCore } from "../core-transport.js";
+
+
 import { useCallback, useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -53,7 +56,7 @@ export function CoreLogsDialog({
     async (signal?: AbortSignal) => {
       setState((current) => ({ ...current, loading: true, error: null }));
       try {
-        const response = await fetch(
+        const response = await fetchCore(
           `${coreOrigin}/api/core/logs?ring=${ring}&level=${level}&tail=500`,
           { credentials: "include", signal },
         );

@@ -5,9 +5,13 @@ namespace Haas.Hosty.Core;
 
 // The event hub is optional only for unit fixtures that construct the store directly; production DI
 // always supplies it. When absent, commits simply publish nothing.
-internal sealed class AppRegistryStore(CoreDataPaths paths, CoreEventHub? events = null)
+internal sealed class AppRegistryStore(CoreDataPaths paths, CoreEventHub? events = null, HostyCoreRuntimeConfig? config = null)
 {
     private readonly ConcurrentDictionary<string, SemaphoreSlim> appLocks = new(StringComparer.Ordinal);
+    // Lifecycle/source operations share these locks. Order: operation -> host paths -> record write.
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> operationLocks = new(StringComparer.Ordinal);
+    internal SemaphoreSlim OperationLock(string appId) => operationLocks.GetOrAdd(appId, _ => new SemaphoreSlim(1, 1));
+    internal SemaphoreSlim HostPathMutationLock { get; } = new(1, 1);
     private readonly ConcurrentDictionary<string, long> dataRemovalGenerations = new(StringComparer.Ordinal);
 
     // Parsed records, keyed by app id (== directory name). The registry is read on every list poll,
@@ -99,6 +103,7 @@ internal sealed class AppRegistryStore(CoreDataPaths paths, CoreEventHub? events
         }
 
         var record = await HydrateAppUiAsync(Migrate(document), appRoot, cancellationToken);
+        record = record with { BrowserOriginScope = config?.InstanceId ?? "" };
         recordCache[appId] = new CachedRecord(record, stamp);
         return record;
     }
@@ -146,9 +151,11 @@ internal sealed class AppRegistryStore(CoreDataPaths paths, CoreEventHub? events
 
     private async Task<AppStateDocument> UpsertAppCoreAsync(AppRecord app, CancellationToken cancellationToken)
     {
+        app = RemoveUnsupportedGrants(app);
         var now = DateTimeOffset.UtcNow;
         var normalized = app with
         {
+            BrowserOriginScope = config?.InstanceId ?? "",
             UpdatedAt = now,
             InstalledAt = app.InstalledAt == default ? now : app.InstalledAt,
         };
@@ -184,6 +191,35 @@ internal sealed class AppRegistryStore(CoreDataPaths paths, CoreEventHub? events
 
     private string GetAppStatePath(string appId)
         => Path.Combine(CoreDataPaths.ResolveContainedPath(paths.AppsRoot, appId), "state.json");
+
+    private static AppRecord RemoveUnsupportedGrants(AppRecord app)
+    {
+        if (app.GrantedCorePermissions is not { } grants || grants.All(p => CoreAppPermissions.Known.Contains(p, StringComparer.Ordinal)))
+            return app;
+        return app with
+        {
+            // Declarations remain intact: an unknown required name is a compatibility error.
+            RequiredCorePermissions = app.RequiredCorePermissions ?? grants.ToArray(),
+            GrantedCorePermissions = grants.Where(p => CoreAppPermissions.Known.Contains(p, StringComparer.Ordinal)).ToArray(),
+            PermissionRevision = Guid.NewGuid().ToString("N"),
+        };
+    }
+
+    internal async Task RemoveUnsupportedGrantsAsync(CancellationToken cancellationToken)
+    {
+        foreach (var app in await ListAppRecordsAsync(cancellationToken))
+        {
+            var mutex = GetAppLock(app.Id);
+            await mutex.WaitAsync(cancellationToken);
+            try
+            {
+                var current = await GetAppAsync(app.Id, cancellationToken);
+                if (current?.GrantedCorePermissions?.Any(p => !CoreAppPermissions.Known.Contains(p, StringComparer.Ordinal)) == true)
+                    await UpsertAppCoreAsync(current, cancellationToken);
+            }
+            finally { mutex.Release(); }
+        }
+    }
 
     // Bumped only when a field's *meaning* changes — an additive nullable field needs no bump, since an
     // older record simply reads it back as null. v2: AppSourceState.Commit is the reviewed pin and
@@ -387,7 +423,15 @@ internal sealed record AppRecord(
     PrivateSourceAccess? PrivateSources = null,
     IReadOnlyList<string>? RequiredCorePermissions = null,
     IReadOnlyList<string>? OptionalCorePermissions = null,
-    string? PermissionRevision = null);
+    string? PermissionRevision = null,
+    string? AppliedBrowserOrigin = null,
+    // Host paths retained by a runtime until a verified stop or complete fresh start replaces them.
+    IReadOnlyList<string>? ActiveMountPaths = null,
+    IReadOnlyList<string>? ActiveSourcePaths = null)
+{
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string BrowserOriginScope { get; init; } = "";
+}
 
 // Last observed update stage, retained through completion for reconnecting clients.
 internal sealed record AppUpdateProgress(string Stage, DateTimeOffset ChangedAt, string? Service = null);
@@ -590,7 +634,8 @@ internal sealed record AppEndpointContract(
     string? PublicOrigin = null,
     // Availability projected on summaries only (assigned/running/unavailable); left null in the persisted
     // record and attached in AppSummary.From, exactly like PublicOrigin. See EndpointAvailability.
-    string? Availability = null);
+    string? Availability = null,
+    string? BrowserOrigin = null);
 
 internal sealed record AppRuntimeProfileSummary(string Key, string Type, bool Default, bool Development = false);
 
@@ -1017,7 +1062,7 @@ internal sealed record AppSummary(
         string? liveSourcePath = null)
     {
         var ui = app.Ui;
-        var endpoints = AttachAvailability(AttachPublicOrigins(app.Endpoints, app.Settings), app);
+        var endpoints = AttachAvailability(AttachPublicOrigins(app.Endpoints, app.Settings).Select(e => e with { BrowserOrigin = LocalBrowserOrigins.App(app, e) }).ToArray(), app);
         var profiles = runtimeProfiles ?? app.RuntimeProfiles ?? [];
         // The UI entry URL is only meaningful when the app declares a `ui` section. A headless
         // app (e.g. a backend service that exposes only a control endpoint for other apps to
@@ -1300,7 +1345,7 @@ internal sealed record AppSummary(
         => !string.IsNullOrWhiteSpace(endpoint.PublicOrigin) || !string.IsNullOrWhiteSpace(endpoint.Url);
 
     private static string? ResolveEndpointOpenUrl(AppEndpointContract? endpoint)
-        => string.IsNullOrWhiteSpace(endpoint?.PublicOrigin) ? endpoint?.Url : endpoint.PublicOrigin;
+        => endpoint?.BrowserOrigin ?? (string.IsNullOrWhiteSpace(endpoint?.PublicOrigin) ? endpoint?.Url : endpoint.PublicOrigin);
 
     private static string? BuildUiUrl(string? baseUrl, string? path)
     {

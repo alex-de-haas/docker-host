@@ -29,7 +29,11 @@ internal static class DomainEndpoints
                     var apps = await lifecycle.ListAppsAsync(cancellationToken);
                     // The sweep status block drives the "Check updates" spinner from server state,
                     // so a page opened mid-sweep (or after a reload) shows the check in progress.
-                    return CoreJson.Json(new AppsResponse(FilterAppsForUser(apps, state, user), updateSweep.Status));
+                    var visible = FilterAppsForUser(apps, state, user);
+                    if (!AppAccessPolicy.IsAdmin(user) || (AppManagementAuthorization.Caller(request) is { } caller &&
+                        !AppManagementAuthorization.HasPermission(caller.App, CoreAppPermissions.ConfigureApps)))
+                        visible = visible.Select(app => app with { Settings = [], Mounts = [] }).ToArray();
+                    return CoreJson.Json(new AppsResponse(visible, updateSweep.Status));
                 },
                 cancellationToken: cancellationToken));
 
@@ -78,7 +82,7 @@ internal static class DomainEndpoints
         // App-authenticated read of installed app ids. An app (e.g. Marketplace) calls this with its
         // own service token to learn which apps are already installed — enough to flag catalog entries
         // as installed — without holding a Core session. Returns ids only; the richer per-app state
-        // stays session-gated on GET /api/apps. Any valid app service token is accepted.
+        // stays session-gated on GET /api/apps. The caller also needs apps.read.
         app.MapGet("/api/internal/apps/{appId}/installed-apps", async (
             string appId,
             HttpRequest request,
@@ -95,11 +99,14 @@ internal static class DomainEndpoints
                     statusCode: StatusCodes.Status401Unauthorized);
             }
 
-            if (await apps.GetAppAsync(appId, cancellationToken) is null)
+            var caller = await apps.GetAppAsync(appId, cancellationToken);
+            if (caller is null)
             {
-                return CoreJson.Json(
-                    new ErrorResponse("app_not_found", "Runtime app was not found."),
-                    statusCode: StatusCodes.Status404NotFound);
+                return CoreJson.Json(new ErrorResponse("app_not_found", "Runtime app was not found."), 404);
+            }
+            if (!AppManagementAuthorization.HasPermission(caller, CoreAppPermissions.ReadApps))
+            {
+                return CoreJson.Json(new ErrorResponse("app_permission_required", "The calling app requires 'apps.read'."), 403);
             }
 
             var installed = await lifecycle.ListAppsAsync(cancellationToken);
@@ -109,7 +116,7 @@ internal static class DomainEndpoints
         // App-authenticated read of the installed app roster (id → display name). A system app (e.g. the
         // Telemetry UI) calls this with its own service token to label its appId-keyed data (metrics /
         // logs / traces) with human-readable names — the display-name enrichment the removed telemetry
-        // read proxy used to do. Any valid app service token is accepted; returns id + display name only,
+        // read proxy used to do. An apps.read grant is required; returns id + display name only,
         // so the richer per-app state on GET /api/apps stays session-gated.
         // One app's agent skill, read by another app.
         //
@@ -203,15 +210,18 @@ internal static class DomainEndpoints
                     statusCode: StatusCodes.Status401Unauthorized);
             }
 
-            if (await apps.GetAppAsync(appId, cancellationToken) is null)
+            var caller = await apps.GetAppAsync(appId, cancellationToken);
+            if (caller is null)
             {
-                return CoreJson.Json(
-                    new ErrorResponse("app_not_found", "Runtime app was not found."),
-                    statusCode: StatusCodes.Status404NotFound);
+                return CoreJson.Json(new ErrorResponse("app_not_found", "Runtime app was not found."), 404);
+            }
+            if (!AppManagementAuthorization.HasPermission(caller, CoreAppPermissions.ReadApps))
+            {
+                return CoreJson.Json(new ErrorResponse("app_permission_required", "The calling app requires 'apps.read'."), 403);
             }
 
             var installed = await lifecycle.ListAppsAsync(cancellationToken);
-            var directory = await agents.ReadAsync(false, cancellationToken);
+            var directory = await agents.ReadForAssistantAsync(appId, cancellationToken);
             if (request.Query["revision"] == directory.Revision) return Results.StatusCode(304);
             return CoreJson.Json(new AppDirectoryResponse(
                 installed
@@ -300,7 +310,7 @@ internal static class DomainEndpoints
         // App-authenticated per-app update check. Marketplace calls this (with its own service token)
         // to show an "Update" affordance for an already-installed catalog app. Returns only whether an
         // update is available; the richer per-service status stays admin-session-gated on
-        // GET /api/apps/{appId}/update-status. Any valid app service token is accepted.
+        // GET /api/apps/{appId}/update-status. The caller also needs apps.read.
         app.MapGet("/api/internal/apps/{appId}/installed-apps/{targetAppId}/update-status", async (
             string appId,
             string targetAppId,
@@ -318,11 +328,14 @@ internal static class DomainEndpoints
                     statusCode: StatusCodes.Status401Unauthorized);
             }
 
-            if (await apps.GetAppAsync(appId, cancellationToken) is null)
+            var caller = await apps.GetAppAsync(appId, cancellationToken);
+            if (caller is null)
             {
-                return CoreJson.Json(
-                    new ErrorResponse("app_not_found", "Runtime app was not found."),
-                    statusCode: StatusCodes.Status404NotFound);
+                return CoreJson.Json(new ErrorResponse("app_not_found", "Runtime app was not found."), 404);
+            }
+            if (!AppManagementAuthorization.HasPermission(caller, CoreAppPermissions.ReadApps))
+            {
+                return CoreJson.Json(new ErrorResponse("app_permission_required", "The calling app requires 'apps.read'."), 403);
             }
 
             // The target isn't installed → nothing to update.

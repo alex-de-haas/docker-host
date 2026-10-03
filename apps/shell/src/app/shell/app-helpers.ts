@@ -15,14 +15,14 @@ import { buildPublicOriginSettingKey } from "./settings";
 export { shortDigest };
 
 // Resolve a Core asset URL (iconUrl / descriptionUrl / page iconUrl) to something loadable: an
-// absolute https URL passes through; a Core-origin-relative path is prefixed with the Core origin so
-// the browser sends the same-site session cookie the asset endpoint requires. Null when there is none.
+// absolute https URL passes through; a Core-relative path uses the app-authenticated Shell proxy.
 export function resolveAssetSrc(coreOrigin: string, url?: string | null): string | null {
+  void coreOrigin;
   if (!url) {
     return null;
   }
 
-  return /^https?:\/\//i.test(url) ? url : `${coreOrigin}${url}`;
+  return /^https?:\/\//i.test(url) ? url : `/api/core${url}`;
 }
 
 export function isAppAutostartEnabled(app: CoreApp) {

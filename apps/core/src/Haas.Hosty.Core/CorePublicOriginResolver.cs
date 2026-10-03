@@ -9,7 +9,7 @@ namespace Haas.Hosty.Core;
 // opposite of what an operator who just corrected the value expects.
 //
 // The layering: the persisted Core setting wins, then the HOSTY_CORE_PUBLIC_ORIGIN environment baseline
-// captured at startup, then Core's listen URL. Clearing the setting therefore falls back rather than
+// captured at startup, then Core's listen URL with a canonical local browser hostname. Clearing the setting falls back rather than
 // blanking the value — the same stance the ingress settings take towards their env vars, and the reason
 // `hosty core settings reset HOSTY_CORE_PUBLIC_ORIGIN` is a complete recovery.
 //
@@ -28,10 +28,10 @@ internal sealed class CorePublicOriginResolver(HostyCoreRuntimeConfig config, Co
     public string? Configured => settings.StoredCorePublicOrigin ?? config.CorePublicOrigin;
 
     // What Core advertises for itself, always a usable origin.
-    public string Effective => Configured ?? config.ListenUrl;
+    public string Effective => LocalBrowserOrigins.Core(Configured ?? config.ListenUrl, config.InstanceId);
 
-    // What clearing the persisted value would fall back to: the environment baseline, else the listen URL.
-    public string Baseline => config.CorePublicOrigin ?? config.ListenUrl;
+    // Clearing the persisted value uses the environment baseline, else the local browser default.
+    public string Baseline => LocalBrowserOrigins.Core(config.CorePublicOrigin ?? config.ListenUrl, config.InstanceId);
 
     public CorePublicOriginSettingRow GetRow()
         => new(Effective, Baseline, Overridden: settings.StoredCorePublicOrigin is not null);

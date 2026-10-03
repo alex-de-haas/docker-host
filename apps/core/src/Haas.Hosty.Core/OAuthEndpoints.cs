@@ -100,7 +100,6 @@ internal static class OAuthEndpoints
             CoreLifecycleService lifecycle,
             HostyCoreRuntimeConfig config,
             CorePublicOriginResolver coreOrigins,
-            ShellPublicOriginResolver shellOrigin,
             CancellationToken cancellationToken) =>
         {
             var query = request.Query;
@@ -186,19 +185,12 @@ internal static class OAuthEndpoints
                 return Results.Redirect(RedirectError("temporarily_unavailable", "Too many pending authorization requests from this address."));
             }
 
-            // Off to Shell, which owns the consent UI. Sign-in is Shell's ordinary continuation:
-            // the page is session-gated and names itself as the destination.
-            var shell = await shellOrigin.ResolveAsync(cancellationToken);
-            if (string.IsNullOrWhiteSpace(shell))
-            {
-                return Results.Redirect(RedirectError("temporarily_unavailable", "This host has no Shell to show a consent page."));
-            }
-
-            return Results.Redirect($"{shell.TrimEnd('/')}/oauth/consent?request={Uri.EscapeDataString(parked.Id)}");
+            // Core owns the consent surface; no runtime app receives a browser-session privilege.
+            return Results.Redirect($"{coreOrigins.Effective}/oauth/consent?request={Uri.EscapeDataString(parked.Id)}");
         });
     }
 
-    // --- Consent (Shell's data + decision endpoints) -------------------------------------------
+    // --- Consent (Core's data + decision endpoints) -------------------------------------------
 
     private static void MapConsent(WebApplication app)
     {

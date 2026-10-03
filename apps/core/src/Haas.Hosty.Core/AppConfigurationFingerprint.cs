@@ -62,9 +62,12 @@ internal static class AppConfigurationFingerprint
     // Older Core versions did not record the applied snapshot. Capture the pre-edit configuration
     // on the first supported edit, rather than marking every existing running app as needing restart.
     public static AppRecord CaptureLegacyBaseline(AppRecord app, GlobalMountState library)
-        => app.AppliedConfigurationHash is null && AppRuntimeStates.IsUp(app.RuntimeState)
+    {
+        app = HostPathAuthority.CaptureRuntimePaths(app, library);
+        return app.AppliedConfigurationHash is null && AppRuntimeStates.IsUp(app.RuntimeState)
             ? app with { AppliedConfigurationHash = ComputeDesired(app, library) ?? "" }
             : app;
+    }
 
     public static bool RequiresRestart(AppRecord app, GlobalMountState library)
         => AppRuntimeStates.IsUp(app.RuntimeState) && app.AppliedConfigurationHash is { } applied

@@ -1,7 +1,7 @@
 # Assistant Session Workspaces
 
 Created: 2026-09-27
-Updated: 2026-09-29
+Updated: 2026-10-02
 
 ## Ownership And Allocation
 
@@ -31,8 +31,8 @@ Private source can be supplied through an operator-maintained local repository.
 
 ## Authorization And APIs
 
-Core/CLI 0.111.0 adds the reviewed `apps.workspaces.manage` permission. Harness 0.36.0 requests it;
-Shell 0.86.0 presents the host-wide overview. Update Core before confirming the Harness update.
+Core/CLI 0.117.0 uses the reviewed `apps.sources` permission for workspace and publication operations.
+Harness 0.40.0 requests it; Shell presents the host-wide overview. Update Core before confirming the Harness update.
 An older Core rejects the unknown permission. SDK and manifest schema versions are unchanged.
 
 Assistant requests use `/api/internal/apps/{assistant}/sessions/{session}/workspaces` with the app
@@ -54,12 +54,15 @@ Administrators use `/api/development/workspaces` to list active records across a
 CSRF. Responses use `Cache-Control: no-store`. Managed requests produce Core audit records; observed
 external Git activity does not acquire a fabricated managed-operation audit entry.
 
+Shell's development-workspaces section links to source-capable tools. Shell does not declare
+`apps.sources`, so it no longer reads workspace files or performs workspace Git operations.
+
 ## Git Operations And Recovery
 
 Core serializes its managed operations. It stores intent, argument fingerprints and results in
 owner-only atomic JSON records before advancing Git refs. Retries reuse the exact request ID and
 arguments. A reused ID with changed arguments is refused. Pending operations block new mutations
-until reconciled; Shell exposes recovery using their durable commands after reload.
+until reconciled; the operation API exposes their durable commands for explicit recovery after reload.
 
 - `commit` takes selected repository-relative `paths`, `expectedHead`, `message`, `authorName` and
   `authorEmail`. An isolated index creates one commit with the supplied attribution, preserving
@@ -93,7 +96,10 @@ output sizes are checked. A temporary index preserves the before side when a com
 recreated as an untracked file, without staging the user's files.
 
 Harness offers `hosty-workspaces` through a loopback, session-key-authenticated MCP endpoint. Core
-credentials stay inside Harness. Tools bind to the session and its user; workspace preparation requires
+credentials stay inside Harness. Its own app grant is held only in memory, separately from any
+cross-app MCP delegation seed, and supplies source operations and activity leases. Core checks the
+current app grant, `apps.sources` and administrator on each operation. The grant is not exchanged
+for other applications' tokens or persisted with the session. Tools bind to the session and its user; workspace preparation requires
 an attached app. The normal provider approval policy remains in effect. Every initial/resumed message
 instructs the agent to prepare before editing, work only in registered worktrees, avoid original source
 checkouts and use Core Git operations. These are cooperation instructions, not filesystem isolation.
@@ -130,6 +136,13 @@ Existing source overrides remain available. Selecting a worktree for isolated ex
 test data belongs to [sandbox runtimes](../app-sandbox-runtimes/plan.md). Remote publication, provider
 merge verification, CI and PR history belong to [PR lifecycle](../assistant-pr-lifecycle/feature.md).
 
+## Selecting A Workspace For Runtime Development
+
+Selecting a worktree as a runtime app's source requires Core confirmation when requested by an app,
+including Shell. Registered worktrees have no exception to this rule. Direct CLI/Core operators can
+still select them subject to the common source-path restrictions. Harness's workspace API and source
+editing keep their existing `apps.sources` authorization; Shell does not acquire that permission.
+
 ## Testing Expectations
 
 - Exercise duplicate/concurrent preparation, monorepo bindings, distinct owners, reinstall ownership,
@@ -143,3 +156,6 @@ merge verification, CI and PR history belong to [PR lifecycle](../assistant-pr-l
 - Test MCP authentication/notifications, initial and resumed instructions, no allocation for chat,
   failed activity coordination and UI retry identities/diff views. Build Core, Shell and Harness;
   check Native AOT serialization, versions and the documentation index.
+
+- Verify source/mount approval, protected paths and symlinks, stale snapshots and caller revocation;
+  require confirmation for app-selected workspaces and preserve operator authority and intentional Docker source mounts.

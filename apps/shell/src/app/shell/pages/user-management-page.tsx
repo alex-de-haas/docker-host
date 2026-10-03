@@ -1,5 +1,8 @@
 "use client";
 
+import { fetchCore } from "../core-transport.js";
+
+
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useState } from "react";
 import { Check, CheckCircle2, LoaderCircle, MoreHorizontal, Trash2, UserCog, UserPlus, UserX } from "lucide-react";
@@ -68,7 +71,7 @@ export function UserManagementPanel({
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`${coreOrigin}/api/auth/users`, { credentials: "include" });
+      const response = await fetchCore(`${coreOrigin}/api/auth/users`, { credentials: "include" });
       redirectToCoreLoginIfAuthRequired(response, coreOrigin);
       if (!response.ok) {
         throw new Error(await readCoreError(response));

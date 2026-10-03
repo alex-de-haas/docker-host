@@ -25,7 +25,7 @@ internal sealed partial class GlobalMountService(GlobalMountStore store, AppRegi
         return state.Mounts.FirstOrDefault(mount => string.Equals(mount.Name, name, StringComparison.Ordinal));
     }
 
-    public async Task<IReadOnlyList<GlobalMountSummary>> UpsertAsync(GlobalMountUpsertRequest request, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<GlobalMountSummary>> UpsertAsync(GlobalMountUpsertRequest request, CancellationToken cancellationToken = default, bool appCaller = false, Func<Task>? verifyReview = null)
     {
         var name = request.Name?.Trim() ?? string.Empty;
         if (!NamePattern().IsMatch(name))
@@ -41,16 +41,24 @@ internal sealed partial class GlobalMountService(GlobalMountStore store, AppRegi
         await mutationLock.WaitAsync(cancellationToken);
         try
         {
-            var state = await store.ReadAsync(cancellationToken);
-            var mounts = state.Mounts
-                .Where(existing => !string.Equals(existing.Name, name, StringComparison.Ordinal))
-                .Append(entry)
-                .OrderBy(mount => mount.Name, StringComparer.Ordinal)
-                .ToArray();
-            var updated = state with { Mounts = mounts };
-            await CaptureLegacyBaselinesAsync(name, state, cancellationToken);
-            await store.WriteAsync(updated, cancellationToken);
-            return await BuildSummariesAsync(updated, cancellationToken);
+            await apps.HostPathMutationLock.WaitAsync(cancellationToken);
+            try
+            {
+                if (verifyReview is not null) await verifyReview();
+                await new HostPathAuthority(mountPathPolicy.Paths, apps).MountAsync(hostPath, cancellationToken);
+                if (appCaller) throw new AppLifecycleException("global_mount_confirmation_required", "Confirm shared host paths in Core before publishing them to the mount registry.");
+                var state = await store.ReadAsync(cancellationToken);
+                var mounts = state.Mounts
+                    .Where(existing => !string.Equals(existing.Name, name, StringComparison.Ordinal))
+                    .Append(entry)
+                    .OrderBy(mount => mount.Name, StringComparer.Ordinal)
+                    .ToArray();
+                var updated = state with { Mounts = mounts };
+                await CaptureLegacyBaselinesAsync(name, state, cancellationToken);
+                await store.WriteAsync(updated, cancellationToken);
+                return await BuildSummariesAsync(updated, cancellationToken);
+            }
+            finally { apps.HostPathMutationLock.Release(); }
         }
         finally
         {
@@ -63,31 +71,31 @@ internal sealed partial class GlobalMountService(GlobalMountStore store, AppRegi
         await mutationLock.WaitAsync(cancellationToken);
         try
         {
-            var state = await store.ReadAsync(cancellationToken);
-            if (!state.Mounts.Any(mount => string.Equals(mount.Name, name, StringComparison.Ordinal)))
+            await apps.HostPathMutationLock.WaitAsync(cancellationToken);
+            try
             {
-                throw new AppLifecycleException("global_mount_not_found", $"Shared mount '{name}' was not found.");
-            }
+                var state = await store.ReadAsync(cancellationToken);
+                if (!state.Mounts.Any(mount => string.Equals(mount.Name, name, StringComparison.Ordinal)))
+                    throw new AppLifecycleException("global_mount_not_found", $"Shared mount '{name}' was not found.");
 
-            if (!force)
-            {
-                var usage = await ComputeUsageAsync(cancellationToken);
-                var usedBy = usage.GetValueOrDefault(name);
-                if (usedBy > 0)
+                if (!force)
                 {
-                    throw new AppLifecycleException(
-                        "global_mount_in_use",
-                        $"Shared mount '{name}' is referenced by {usedBy} app(s). Detach it from those apps first, or force the delete (their bindings become inert).");
+                    var usage = await ComputeUsageAsync(cancellationToken);
+                    var usedBy = usage.GetValueOrDefault(name);
+                    if (usedBy > 0)
+                        throw new AppLifecycleException("global_mount_in_use",
+                            $"Shared mount '{name}' is referenced by {usedBy} app(s). Detach it from those apps first, or force the delete (their bindings become inert).");
                 }
-            }
 
-            var mounts = state.Mounts
-                .Where(mount => !string.Equals(mount.Name, name, StringComparison.Ordinal))
-                .ToArray();
-            var updated = state with { Mounts = mounts };
-            await CaptureLegacyBaselinesAsync(name, state, cancellationToken);
-            await store.WriteAsync(updated, cancellationToken);
-            return await BuildSummariesAsync(updated, cancellationToken);
+                var mounts = state.Mounts
+                    .Where(mount => !string.Equals(mount.Name, name, StringComparison.Ordinal))
+                    .ToArray();
+                var updated = state with { Mounts = mounts };
+                await CaptureLegacyBaselinesAsync(name, state, cancellationToken);
+                await store.WriteAsync(updated, cancellationToken);
+                return await BuildSummariesAsync(updated, cancellationToken);
+            }
+            finally { apps.HostPathMutationLock.Release(); }
         }
         finally
         {
@@ -99,8 +107,7 @@ internal sealed partial class GlobalMountService(GlobalMountStore store, AppRegi
     {
         foreach (var app in await apps.ListAppRecordsAsync(cancellationToken))
         {
-            if (app.AppliedConfigurationHash is not null || !AppRuntimeStates.IsUp(app.RuntimeState)
-                || !(app.Mounts ?? []).Any(binding => binding.GlobalMountName == name)) continue;
+            if (app.RuntimeState == "stopped" || !(app.Mounts ?? []).Any(binding => binding.GlobalMountName == name)) continue;
             await apps.UpdateAppAsync(app.Id,
                 current => AppConfigurationFingerprint.CaptureLegacyBaseline(current, before), cancellationToken);
         }

@@ -50,8 +50,11 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
             ManagedCheckoutPath = checkoutPath,
             UpdatedAt = clock.UtcNow,
         };
-        await apps.UpdateAppAsync(appId, current => current with { SourceState = state }, cancellationToken);
-        return new AppSourceResponse(appId, state);
+        var updated = await apps.UpdateAppAsync(appId, current => current with { SourceState = state with {
+            LocalOverridePath = current.SourceState?.LocalOverridePath,
+            OverrideCommit = current.SourceState?.OverrideCommit,
+        } }, cancellationToken);
+        return new AppSourceResponse(appId, updated.App.SourceState);
     }
 
     // Materializes the managed checkout at the pinned commit (detached HEAD) for a locked source runtime
@@ -332,23 +335,27 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
         }
     }
 
-    public async Task<AppSourceResponse> SetLocalOverrideAsync(
-        string appId,
-        AppSourceOverrideRequest request,
-        CancellationToken cancellationToken = default)
+    internal async Task<T> WithSourceLockAsync<T>(string appId, Func<AppRecord, Task<T>> action, CancellationToken ct)
     {
-        var app = await RequireAppAsync(appId, cancellationToken);
-        if (string.IsNullOrWhiteSpace(request.Path))
+        var mutex = apps.OperationLock(appId);
+        await mutex.WaitAsync(ct);
+        try
         {
-            throw new AppLifecycleException("source_override_path_required", "Local source override path is required.");
+            await apps.HostPathMutationLock.WaitAsync(ct);
+            try { return await action(await RequireAppAsync(appId, ct)); }
+            finally { apps.HostPathMutationLock.Release(); }
         }
+        finally { mutex.Release(); }
+    }
 
-        var overridePath = Path.GetFullPath(request.Path);
-        if (!Directory.Exists(overridePath))
-        {
-            throw new AppLifecycleException("source_override_not_found", $"Local source override path was not found: {overridePath}");
-        }
+    public Task<AppSourceResponse> SetLocalOverrideAsync(string appId, AppSourceOverrideRequest request,
+        CancellationToken cancellationToken = default)
+        => WithSourceLockAsync(appId, app => SetLocalOverrideCoreAsync(app, request, cancellationToken), cancellationToken);
 
+    internal async Task<AppSourceResponse> SetLocalOverrideCoreAsync(AppRecord app, AppSourceOverrideRequest request, CancellationToken cancellationToken)
+    {
+        var appId = app.Id;
+        var overridePath = await new HostPathAuthority(paths, apps).OverrideAsync(app, request.Path, cancellationToken);
         // Ask git rather than looking for a `.git` directory: that test misses a linked worktree (where
         // `.git` is a file) and a folder nested inside a repository, both of which resolve a HEAD
         // perfectly well. A folder git refuses simply records no commit.
@@ -356,6 +363,7 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
             ? await TryResolveHeadAsync(overridePath, cancellationToken)
             : request.Commit;
 
+        app = HostPathAuthority.CaptureRuntimePaths(app, await new GlobalMountStore(paths).ReadAsync(cancellationToken));
         var existing = app.SourceState;
         var state = new AppSourceState(
             Type: existing?.Type ?? "git",
@@ -373,26 +381,30 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
             ManifestSubpath: existing?.ManifestSubpath,
             OverrideCommit: string.IsNullOrWhiteSpace(commit) ? null : commit.Trim(),
             InspectionPaths: existing?.InspectionPaths);
-        await apps.UpdateAppAsync(appId, current => current with { SourceState = state }, cancellationToken);
+        await apps.UpdateAppAsync(appId, current => current with { SourceState = state, ActiveSourcePaths = app.ActiveSourcePaths }, cancellationToken);
         return new AppSourceResponse(appId, state);
     }
 
-    public async Task<AppSourceResponse> ClearLocalOverrideAsync(string appId, CancellationToken cancellationToken = default)
+    public Task<AppSourceResponse> ClearLocalOverrideAsync(string appId, CancellationToken cancellationToken = default)
+        => WithSourceLockAsync(appId, app => ClearLocalOverrideCoreAsync(app, cancellationToken), cancellationToken);
+
+    private async Task<AppSourceResponse> ClearLocalOverrideCoreAsync(AppRecord app, CancellationToken cancellationToken)
     {
-        var app = await RequireAppAsync(appId, cancellationToken);
+        var appId = app.Id;
         if (app.SourceState is null)
         {
             return new AppSourceResponse(appId, null);
         }
 
-        var state = app.SourceState with
+        app = HostPathAuthority.CaptureRuntimePaths(app, await new GlobalMountStore(paths).ReadAsync(cancellationToken));
+        var state = app.SourceState! with
         {
             LocalOverridePath = null,
             // The recorded commit belonged to the folder, not to the app.
             OverrideCommit = null,
             UpdatedAt = clock.UtcNow,
         };
-        await apps.UpdateAppAsync(appId, current => current with { SourceState = state }, cancellationToken);
+        await apps.UpdateAppAsync(appId, current => current with { SourceState = state, ActiveSourcePaths = app.ActiveSourcePaths }, cancellationToken);
         return new AppSourceResponse(appId, state);
     }
 

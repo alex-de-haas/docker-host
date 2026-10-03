@@ -1,16 +1,13 @@
 # Core Source Inspection
 
 Created: 2026-09-22
-Updated: 2026-09-22
+Updated: 2026-10-01
 
 ## Dashboard
 
-The changed-file summary in the development-mode Hosty Core row opens the shared
-source changes dialog. The button supports mouse and keyboard activation. The
-viewer lists changed files with line counts and expands individual files on demand.
-It uses the same unified/split diff settings, staged-change view and image previews
-as runtime apps. Core inspection is read-only; it has no file-selection or discard
-controls. The Core branch label uses the same monospace size, line height and
+The development-mode Hosty Core row shows branch and aggregate changed-file statistics.
+Shell does not request source files or diffs: source inspection requires `apps.sources`,
+which Shell does not declare. The Core inspection API remains read-only and has no discard controls. The Core branch label uses the same monospace size, line height and
 dotted underline as app source labels. Release-mode version presentation is unchanged.
 The Dashboard polls Core development state every 15 seconds while idle and every
 3 seconds during a pending restart. Polling pauses while the tab is hidden and
@@ -19,8 +16,7 @@ wakes reconciliation without waiting for the idle interval.
 
 ## Scope and API
 
-`GET /api/core/source/status` and `POST /api/core/source/diff` use administrator
-session authorization and return `Cache-Control: no-store`. Diff requests use the
+`GET /api/core/source/status` and `POST /api/core/source/diff` require an administrator; app callers also need `apps.sources` and return `Cache-Control: no-store`. Diff requests use the
 existing `{ path }` body and require browser CSRF validation. These routes reuse
 the app source status and diff contracts and bounded Git implementation; Core does
 not need an installed runtime app record. Core status marks every file as unavailable

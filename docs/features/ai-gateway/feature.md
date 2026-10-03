@@ -1,7 +1,7 @@
 # Hosty Harness
 
 Created: 2026-08-09
-Updated: 2026-09-29
+Updated: 2026-10-01
 
 The Hosty assistant: an optional, removable system app (`hosty.harness`) hosting admin-only
 operator chat sessions on a host-resident agent harness, plus the Shell surface that renders them.
@@ -51,11 +51,24 @@ procedure are in [Hosty Harness integration](../hosty-harness-rename/feature.md)
   boot-time [manifest projection backfill](../manifest-projection-backfill/feature.md) re-projects
   such records from the reviewed manifest copy automatically; no operator action is needed.
 
-## Delegated Tokens
+## Browser Identity And MCP Authority
+
+Harness uses the common Core app-code flow and its own app grant, with a current administrator
+check. Core owns login; Shell supplies neither the primary session nor a delegated-token responder.
+Core's Agents settings explicitly grant this assistant access to individual MCP targets. Ordinary
+chat requires no such target grant. Source operations use `apps.sources` with the app's own identity.
+
+For MCP, Harness presents its app grant and separate service credential to Core's dedicated token
+endpoint. Core checks the assistant-target relationship and user before issuing an MCP-only token.
+The local proxy forwards that target token; native agents never receive the app grant. Core MCP
+tools additionally require the corresponding Core permissions, declared as optional in Harness.
+See [assistant MCP delegation](../delegated-token-exchange/feature.md).
+
+## Legacy Delegated Tokens
 
 - `POST /api/apps/{appId}/delegated-token` trades the caller's Core session (CSRF-gated) for a
   short-TTL signed token with audience = that app. Every issue re-runs the full identity access
-  policy (disabled user, system-app-admin, assignment), so revocation propagates within one TTL;
+  policy (disabled user and app assignment), so revocation propagates within one TTL;
   refresh is simply calling again. Format: `hosty_delegated.1.<claims>.<sig>` — ECDSA P-256 over
   the token prefix, claims `sub`/`role`/`aud`/`iat`/`exp`/`jti`, 5-minute TTL.
 - The signing key (`{AuthRoot}/delegated-token-signing.key`) is durable across Core restarts; the
@@ -88,14 +101,11 @@ procedure are in [Hosty Harness integration](../hosty-harness-rename/feature.md)
   grants are keyed on it. So the id stays and the label is translated, in the transcript rows and in
   the approval card. A gateway that cannot answer, or an app discovery that fails, leaves every label
   as the wire name.
-- Session API, admin delegated token required on every `/api` route: create session (optional
-  `title` and structured `context`), list, get, `GET .../events` (SSE with an `?after=<seq>`
-  reattach cursor; the connection ends at the token's expiry and the client reconnects with a
-  freshly issued token), post message, resolve approval (`allow`/`deny`; a second decision on the
-  same approval is a 409), answer a question (`answers` keyed by question text; a second answer is a
-  409), read and write settings, cancel. `/healthz` is public and reports harness availability with an
-  operator-facing reason. CORS reflects the request origin — auth is a header token, never a
-  cookie, so a foreign page gains nothing from being allowed to send an unauthenticated request.
+- Session API requires an administrator authenticated by a current app session or a valid legacy
+  delegated token. It supports create/list/get, SSE with an `?after=<seq>` cursor, messages, approvals,
+  question answers, settings and cancellation. App-owned requests use the same-origin transport;
+  cookie-authenticated mutations enforce origin checks. `/healthz` is public and reports harness
+  availability with an operator-facing reason.
 - Transcripts are the persisted event log: `{data}/sessions/{id}/record.json` plus append-only
   `events.ndjson` with a monotonic seq; streaming deltas are live-only. A daily sweep deletes
   sessions older than `HOSTY_HARNESS_RETENTION_DAYS` (default 30).
@@ -112,7 +122,7 @@ procedure are in [Hosty Harness integration](../hosty-harness-rename/feature.md)
 ## Settings Surface
 
 - The manifest declares one `ui.settings` surface, listed as **Hosty Harness** under Shell's
-  Settings. Its app-owned page has **Providers**, **System prompt** and **MCP access** tabs.
+  Settings. Its app-owned page has **Agent providers**, **Source providers**, **System prompt** and **MCP access** tabs.
   The iframe fills the workspace, so dialogs cover both the content and its internal tabs while
   the Shell header and sidebar remain accessible. Pages are served from the same Node process.
 - Why here and not in Shell: the assistant is optional, removable and replaceable, so a settings
@@ -136,23 +146,16 @@ procedure are in [Hosty Harness integration](../hosty-harness-rename/feature.md)
   packages, installing them did not fix it, and the app stayed broken through every restart. `.next`
   holds only intermediate state for this app — the served bytes are in `out-build` — so discarding
   it costs a cold build of about a second and removes the whole class of poisoned-cache failures.
-- The page shell is served unauthenticated because it holds no data: everything it renders comes
-  from `/api/settings`, admin-gated like every other `/api` route, reached with a delegated token
-  the embedder supplies. That is the same posture the chat panel already has.
-- **How the token reaches the page.** The page posts `hosty:request-delegated-token` to its parent
-  and the embedder answers with `hosty:delegated-token` — the handshake in `@hosty-sdk/app`'s
-  embedder slice, alongside launch-code recovery, and for the same irreducible reason: minting needs
-  the user's Core session in a first-party context, which only the embedder has. Shell answers for
-  the app declaring `assistant` and no other frame; it already mints these tokens to run the chat
-  panel, so the settings page gains no reach the app did not already have, while a generic responder
-  would hand a user-scoped credential to whatever an operator installed. The page repeats the request
-  until it is answered — it runs the moment its document does, and an embedder attaching a listener a
-  beat later would otherwise leave it dead for the whole timeout — while Shell attaches its own in a
-  layout effect, closing the same race from the other side. The token is cached on both sides until
-  nearly spent, so a save is not a fresh trip to Core; a 401 drops the page's copy **and** marks the
-  next request as a refresh, since Shell's cached mint would otherwise replay the credential the API
-  just refused. Standalone there is no embedder and therefore no token: the page says so at once
-  rather than rendering an empty form that looks configurable.
+- The page shell is served unauthenticated and contains no account data. Its API requires current
+  administrator identity. The common SDK opens Core login through top-level navigation or an
+  app-owned popup and exchanges the one-use code at Harness. The app-local cookie supports ordinary
+  navigation; a memory-only app bearer supports frames where cookies are restricted. Shell never
+  receives or forwards Core's primary cookie or the app's grant. Both standalone and embedded
+  settings use this transport.
+- **Source providers** manages GitHub/Azure DevOps connections and Git attribution through a narrow
+  Harness server proxy. Core retains saved secrets and enforces `apps.sources`, current administrator
+  and owner checks. Saved tokens are not returned to the page. See
+  [User source connections](../user-profile-connections/feature.md).
 - **System prompt.** Operator text appended to the harness's own instruction sources, capped at 8000
   characters. It applies to the **next session**, not the running one: the prompt is a session's
   instruction set, and swapping it mid-conversation would leave a transcript whose halves ran under
@@ -161,19 +164,14 @@ procedure are in [Hosty Harness integration](../hosty-harness-rename/feature.md)
   The Gateway page shows the offer state and links to Shell Settings → Agents. New apps default off;
   Core defaults on, and the same switch governs sessions, the facade and `hosty mcp`. Gateway's legacy
   offer/skill settings do not grant access. Auto-allow remains a Gateway setting, independent of offers.
-- Sessions refresh the directory before every turn. The forwarding proxy checks policy and resolves
+- Sessions refresh their assistant-specific directory before every turn. The forwarding proxy checks policy and resolves
   the current target URL before each request, then obtains a fresh token. Core outages retain the
   previous listing but cannot forward calls using an older token. Claude applies server updates through
   SDK reconfiguration and explicitly disables omitted startup servers. Codex prepares a resumed
   app-server between turns; failure preserves the old process and produces a visible notice.
-- What Core contributes to a session is **the read-only half of its surface** — `list_apps`,
-  `get_app`, `get_host_status`, `tail_app_logs`, `search_audit` — under the reserved server name
-  `hosty-core` (an app id that spells the same string is given a digest suffix instead, since the
-  grant set is keyed on these names). The session reaches Core with a delegated token branched from
-  the operator's own, and a delegated token never carries scopes, so Core refuses its lifecycle and
-  update tools on that credential whatever the operator's role — the rule the facade's path already
-  lives under (see [core-mcp](../core-mcp/feature.md)). The host preamble says so and points the
-  model at the CLI for those, so it does not spend a turn discovering the refusal.
+- Core is a separate MCP target under the reserved server name `hosty-core`. Its explicit assistant
+  relationship and the acting administrator allow connection; individual operations still check
+  Harness's Core permissions. A Core relationship does not implicitly authorize logs or mutations.
 - **MCP approval behavior is shared across Claude and Codex.** Harness owns per-tool Ask,
   Run unprompted and Disabled rules, including writes, through its local proxy. See
   [MCP approval rules](../assistant-approval-rules/feature.md) for identity binding, migration,

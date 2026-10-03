@@ -59,3 +59,12 @@ provider's limits/readiness. Clients capture audio themselves and keep recognize
 app identity or delegated token. Provider-side `ValidateAsync()` checks live authority on every request.
 Service credentials stay in the app backend and are sent only to Core. A provider credential conveys
 no general administrator authority. See [Provider consumption](../../../docs/features/provider-consumption/feature.md).
+
+## Assistant MCP credentials
+
+Use `HostyScopedTokenClient.IntrospectMcpAsync` only in MCP handlers. It sends an explicit MCP
+purpose to Core, supports scoped/OAuth and `hosty_mcp.1` assistant credentials, and returns the
+current user, scopes and `CallerAppId`. Require `mcp:read` for reads or `mcp:invoke` for assistant
+mutations and apply app user permissions. Never cache introspection. Ordinary APIs retain
+`IntrospectAsync`, which rejects MCP-only credentials. Core checks the explicit assistant-target
+relationship, installations and parent app session on every MCP validation.

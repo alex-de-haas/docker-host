@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Box, Search, Server } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,9 @@ export function McpAccess({ data, busy, error, status, feedbackAppId, onSave }: 
   feedbackAppId: string | null;
   onSave: (patch: Partial<Settings>, appId: string) => Promise<void>;
 }) {
+  const [sessions, setSessions] = useState<{ id: string; title: string | null }[]>([]);
+  const [authoritySession, setAuthoritySession] = useState("");
+  useEffect(() => { let live = true; void call("/sessions").then(r => r.json()).then(value => { if (live) setSessions(value.sessions ?? []); }).catch(() => {}); return () => { live = false; }; }, []);
   const [selectedId, setSelectedId] = useState(CORE_PROVIDER_ID);
   const [search, setSearch] = useState("");
   const [catalogs, setCatalogs] = useState<ToolCatalog[]>(data.toolCatalogs ?? []);
@@ -27,7 +30,7 @@ export function McpAccess({ data, busy, error, status, feedbackAppId, onSave }: 
   const providers = [...data.providers, { appId: "hosty:development", displayName: "Development & publications", running: true, url: null }];
   const refreshTools = async () => {
     setLoading(true); setToolError("");
-    try { const result = await (await call("/settings/tools")).json() as { catalogs: ToolCatalog[]; unavailable?: string[] }; setCatalogs(result.catalogs); if (result.unavailable?.length) setToolError(`Tools unavailable for: ${result.unavailable.join(", ")}. Existing rules are preserved.`); await onSave({}, selectedId); }
+    try { const result = await (await call(`/settings/tools?sessionId=${encodeURIComponent(authoritySession)}`)).json() as { catalogs: ToolCatalog[]; unavailable?: string[] }; setCatalogs(result.catalogs); if (result.unavailable?.length) setToolError(`Tools unavailable for: ${result.unavailable.join(", ")}. Existing rules are preserved.`); await onSave({}, selectedId); }
     catch (cause) { setToolError(cause instanceof Error ? cause.message : String(cause)); }
     finally { setLoading(false); }
   };
@@ -108,7 +111,10 @@ export function McpAccess({ data, busy, error, status, feedbackAppId, onSave }: 
                 </div>
               </header>
               <p className="text-sm text-muted-foreground">Choose how each tool runs for Claude and Codex. Run unprompted also applies to writes; Core permissions and repository checks still apply.</p>
-              <Button variant="outline" disabled={loading} onClick={() => void refreshTools()}>{loading ? "Loading tools…" : "Refresh tools"}</Button>
+              <label>Session with Core-approved tool access <select aria-label="Tool discovery session" value={authoritySession} onChange={event => setAuthoritySession(event.target.value)}>
+                <option value="">Choose a session</option>{sessions.map(session => <option key={session.id} value={session.id}>{session.title || session.id}</option>)}
+              </select></label>
+              <Button variant="outline" disabled={loading || !authoritySession} onClick={() => void refreshTools()}>{loading ? "Loading tools…" : "Refresh tools"}</Button>
               {toolError && <p role="alert" className="text-destructive">{toolError}</p>}
               {(() => {
                 const catalog = catalogs.find(c => c.provider === provider?.appId);

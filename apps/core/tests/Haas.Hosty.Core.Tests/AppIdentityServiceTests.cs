@@ -5,6 +5,39 @@ namespace Haas.Hosty.Core.Tests;
 
 public sealed class AppIdentityServiceTests
 {
+    [Theory]
+    [InlineData(null)]
+    [InlineData("previous-recovery")]
+    public async Task RecoveryRevision_RejectsOldCodesAndGrantsButAllowsFreshIdentity(string? initialRevision)
+    {
+        var fixture = await IdentityFixture.CreateAsync();
+        await fixture.WriteUsersAsync([CreateUser("user_1") with { AuthRevision = initialRevision }],
+            [new AppAssignmentRecord("com.example.notes", "user_1", fixture.Clock.UtcNow)]);
+        var code = await fixture.Service.CreateAuthorizationCodeAsync("com.example.notes", "user_1", "https://notes.example/callback");
+        var grant = await fixture.Service.CreateLaunchTokenAsync("com.example.notes", "user_1");
+        var oldRecord = Assert.Single((await fixture.Grants.ReadAsync()).Grants);
+        await fixture.Users.UpdateAsync(state => state with
+        {
+            Users = state.Users.Select(user => user with { AuthRevision = "new-recovery" }).ToArray(),
+        });
+
+        var codeError = await Assert.ThrowsAsync<AppIdentityException>(() => fixture.Service.ExchangeCodeAsync(code.Code));
+        var grantError = await Assert.ThrowsAsync<AppIdentityException>(() => fixture.Service.RevalidateAsync(grant.AccessToken, "com.example.notes"));
+        Assert.Equal("token_revoked", codeError.Code);
+        Assert.Equal("token_revoked", grantError.Code);
+
+        // A pre-recovery exchange can finish writing after recovery; wall-clock issuance cannot
+        // restore authority. Online validation must compare the captured user revision.
+        fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddSeconds(1);
+        await fixture.Grants.AppendAsync(oldRecord with { Id = "late", TokenHash = "late-hash", CreatedAt = fixture.Clock.UtcNow }, fixture.Clock.UtcNow);
+        var late = await Assert.ThrowsAsync<AppIdentityException>(() => fixture.Service.RevalidateHashAsync("late-hash", "com.example.notes", default));
+        Assert.Equal("token_revoked", late.Code);
+
+        var freshCode = await fixture.Service.CreateAuthorizationCodeAsync("com.example.notes", "user_1", "https://notes.example/callback");
+        var freshGrant = await fixture.Service.ExchangeCodeAsync(freshCode.Code);
+        Assert.True((await fixture.Service.RevalidateAsync(freshGrant.AccessToken, "com.example.notes")).Active);
+    }
+
     [Fact]
     public async Task ExchangeCodeAsync_RejectsExpiredCode()
     {
@@ -211,6 +244,28 @@ public sealed class AppIdentityServiceTests
     }
 
     [Fact]
+    public async Task CreateAuthorizationCodeAsync_AllowsOnlyTheAssignedLocalBrowserHost()
+    {
+        var fixture = await IdentityFixture.CreateAsync();
+        const string id = "com.example.notes";
+        await fixture.WriteUsersAsync([CreateUser("user_1")], [new AppAssignmentRecord(id, "user_1", fixture.Clock.UtcNow)]);
+        await fixture.Apps.UpdateAppAsync(id, app => app with
+        {
+            Settings = new Dictionary<string, AppSettingValue>(),
+            Endpoints = [new AppEndpointContract("web", "http", "http://127.0.0.1:3210", true)],
+        });
+        var origin = $"http://{LocalBrowserOrigins.AppHost(id)}:3210";
+        var authorization = await fixture.Service.CreateAuthorizationCodeAsync(id, "user_1", origin + "/callback");
+        Assert.StartsWith(origin + "/callback?code=", authorization.RedirectUri, StringComparison.Ordinal);
+        foreach (var denied in new[] { $"http://{LocalBrowserOrigins.AppHost("com.example.other")}:3210", $"http://{LocalBrowserOrigins.AppHost(id)}.attacker.test:3210", "http://core.hosty.localhost:3210" })
+        {
+            var error = await Assert.ThrowsAsync<AppIdentityException>(() =>
+                fixture.Service.CreateAuthorizationCodeAsync(id, "user_1", denied + "/callback"));
+            Assert.Equal("redirect_uri_denied", error.Code);
+        }
+    }
+
+    [Fact]
     public async Task CreateAuthorizationCodeAsync_AllowsEndpointPublicOriginRedirectUris()
     {
         var fixture = await IdentityFixture.CreateAsync();
@@ -246,7 +301,25 @@ public sealed class AppIdentityServiceTests
         var error = await Assert.ThrowsAsync<AppIdentityException>(() =>
             fixture.Service.CreateAuthorizationCodeAsync("hosty.sysapp", "user_1", "https://sysapp.example/callback"));
 
-        Assert.Equal("system_app_admin_required", error.Code);
+        Assert.Equal("app_access_denied", error.Code);
+    }
+
+    [Fact]
+    public async Task AssignedSystemApp_AllowsMemberCodeExchangeAndRevalidation_UntilAssignmentRevoked()
+    {
+        var fixture = await IdentityFixture.CreateAsync();
+        await fixture.UpsertSystemAppAsync();
+        await fixture.WriteUsersAsync([CreateUser("member")],
+            [new AppAssignmentRecord("hosty.sysapp", "member", fixture.Clock.UtcNow)]);
+        var code = await fixture.Service.CreateAuthorizationCodeAsync(
+            "hosty.sysapp", "member", "https://sysapp.example/callback");
+        var grant = await fixture.Service.ExchangeCodeAsync(code.Code);
+        var actor = await fixture.Service.RevalidateAsync(grant.AccessToken, "hosty.sysapp");
+        Assert.Equal("host.user", actor.HostRole);
+        await fixture.WriteUsersAsync([CreateUser("member")], []);
+        var error = await Assert.ThrowsAsync<AppIdentityException>(() =>
+            fixture.Service.RevalidateAsync(grant.AccessToken, "hosty.sysapp"));
+        Assert.Equal("app_access_denied", error.Code);
     }
 
     [Fact]
@@ -278,7 +351,7 @@ public sealed class AppIdentityServiceTests
 
         var error = await Assert.ThrowsAsync<AppIdentityException>(() => fixture.Service.ExchangeCodeAsync(authorization.Code));
 
-        Assert.Equal("system_app_admin_required", error.Code);
+        Assert.Equal("app_access_denied", error.Code);
     }
 
     [Fact]
@@ -292,7 +365,7 @@ public sealed class AppIdentityServiceTests
 
         var error = await Assert.ThrowsAsync<AppIdentityException>(() => fixture.Service.RevalidateAsync(token.AccessToken, "hosty.sysapp"));
 
-        Assert.Equal("system_app_admin_required", error.Code);
+        Assert.Equal("app_access_denied", error.Code);
     }
 
     [Fact]

@@ -63,7 +63,8 @@ internal sealed partial class CoreLifecycleService(
     HostyCoreRuntimeConfig? runtimeConfig = null,
     LocalCommandProcessRegistry? localProcesses = null,
     AgentPolicyStore? agentPolicies = null,
-    PrivateSourceService? privateSources = null)
+    PrivateSourceService? privateSources = null,
+    CorePublicOriginResolver? coreOrigins = null)
 {
     private async Task ValidatePrivateSelectionAsync(RuntimeAppManifestSelection selection, CancellationToken ct)
     {
@@ -106,11 +107,10 @@ internal sealed partial class CoreLifecycleService(
     // id and unbounded like appLocks (bounded in practice by the number of distinct apps ever operated).
     // NOT reentrant: verbs that internally start an app (ApplyUpdate,
     // ApplyRuntimeSwitch, CreateManualBackup) call StartCoreAsync — the unlocked body — never StartAsync.
-    private readonly ConcurrentDictionary<string, SemaphoreSlim> operationLocks = new(StringComparer.Ordinal);
 
-    private async Task<T> WithAppLockAsync<T>(string appId, Func<Task<T>> operation, CancellationToken cancellationToken)
+    internal async Task<T> WithAppLockAsync<T>(string appId, Func<Task<T>> operation, CancellationToken cancellationToken)
     {
-        var mutex = operationLocks.GetOrAdd(appId, _ => new SemaphoreSlim(1, 1));
+        var mutex = apps.OperationLock(appId);
         await mutex.WaitAsync(cancellationToken);
         try
         {
@@ -521,6 +521,10 @@ internal sealed partial class CoreLifecycleService(
             record = record with { Settings = MergeSettings(record.Settings, request.Settings) };
         }
 
+        record = record with { BrowserOriginScope = runtimeConfig?.InstanceId ?? "" };
+        await LocalBrowserOrigins.ValidateAppAsync(record,
+            coreOrigins?.Effective ?? runtimeConfig?.EffectiveCorePublicOrigin ?? "http://core.hosty.localhost:7070", apps, cancellationToken);
+
         // Reserve host ports now — after settings (including any HOSTY_PORT_* overrides) are final — so a
         // stopped app carries durable endpoint URLs before its first start, and its ports are excluded
         // from every other app's allocation. The exclusion-view read, the assignment, and the upsert run
@@ -582,6 +586,14 @@ internal sealed partial class CoreLifecycleService(
         var managedOrigins = publicOrigins is null
             ? []
             : await publicOrigins.FindManagedKeysAsync(appId, request.Settings?.Keys, cancellationToken);
+        if (request.Settings?.Keys.Any(PublicOriginSettings.IsSettingKey) == true)
+        {
+            ValidatePublicOriginSettings(request.Settings);
+            var existing = await apps.GetAppAsync(appId, cancellationToken)
+                ?? throw new AppLifecycleException("app_not_found", "The app is not installed.");
+            await LocalBrowserOrigins.ValidateAppAsync(existing with { Settings = MergeSettings(existing.Settings, request.Settings) },
+                coreOrigins?.Effective ?? runtimeConfig?.EffectiveCorePublicOrigin ?? "http://core.hosty.localhost:7070", apps, cancellationToken);
+        }
         var document = await apps.UpdateAppAsync(appId, app =>
         {
             ValidatePublicOriginSettings(request.Settings);
@@ -741,10 +753,25 @@ internal sealed partial class CoreLifecycleService(
     public Task<AppLifecycleResponse> ConfigureMountsAsync(
         string appId,
         AppMountsRequest request,
-        CancellationToken cancellationToken = default)
-        => WithAppLockAsync(appId, () => ConfigureMountsCoreAsync(appId, request, cancellationToken), cancellationToken);
+        CancellationToken cancellationToken = default, bool appCaller = false)
+        => WithAppLockAsync(appId, async () =>
+        {
+            await apps.HostPathMutationLock.WaitAsync(cancellationToken);
+            try
+            {
+                if (appCaller && (request.Mounts ?? []).Any(m => string.IsNullOrWhiteSpace(m.GlobalMountName)))
+                {
+                    var current = await RequireAppAsync(appId, cancellationToken);
+                    var registry = await globalMounts.ReadAsync(cancellationToken);
+                    await new HostPathAuthority(paths, apps).AppAsync(current with { Mounts = ValidateMountBindings(current, request.Mounts ?? [], registry) }, cancellationToken);
+                    throw new AppLifecycleException("app_mount_confirmation_required", "Confirm external host paths in Core before binding them to an app.");
+                }
+                return await ConfigureMountsCoreAsync(appId, request, cancellationToken);
+            }
+            finally { apps.HostPathMutationLock.Release(); }
+        }, cancellationToken);
 
-    private async Task<AppLifecycleResponse> ConfigureMountsCoreAsync(
+    internal async Task<AppLifecycleResponse> ConfigureMountsCoreAsync(
         string appId,
         AppMountsRequest request,
         CancellationToken cancellationToken)
@@ -753,6 +780,8 @@ internal sealed partial class CoreLifecycleService(
         // against the current record inside UpdateAppAsync so bindings are checked against the
         // record's live mount slots, not a stale pre-fetched copy.
         var registry = await globalMounts.ReadAsync(cancellationToken);
+        var candidate = await RequireAppAsync(appId, cancellationToken);
+        await new HostPathAuthority(paths, apps).AppAsync(candidate with { Mounts = ValidateMountBindings(candidate, request.Mounts ?? [], registry) }, cancellationToken);
 
         var document = await apps.UpdateAppAsync(appId, current => AppConfigurationFingerprint.CaptureLegacyBaseline(current, registry) with
         {
@@ -765,7 +794,7 @@ internal sealed partial class CoreLifecycleService(
         return new AppLifecycleResponse(await BuildAppSummaryAsync(document.App, cancellationToken), null, "configured");
     }
 
-    private IReadOnlyList<AppMountBinding> ValidateMountBindings(AppRecord app, IReadOnlyList<AppMountBindingInput> inputs, GlobalMountState registry)
+    internal IReadOnlyList<AppMountBinding> ValidateMountBindings(AppRecord app, IReadOnlyList<AppMountBindingInput> inputs, GlobalMountState registry)
     {
         var slots = (app.MountSlots ?? []).ToDictionary(slot => slot.Key, StringComparer.Ordinal);
         var library = registry.Mounts.ToDictionary(mount => mount.Name, StringComparer.Ordinal);
@@ -917,23 +946,10 @@ internal sealed partial class CoreLifecycleService(
             }
             app = await EnsureLocalCommandSourceReadyAsync(app, selection, cancellationToken);
             app = await EnsureIngressPublicOriginsAsync(app, selection, cancellationToken);
-            // The process about to start reads the current HOSTY_PUBLIC_ORIGIN_* values, which is exactly
-            // what a pending-restart flag was waiting for. Best-effort: this is bookkeeping, not a start
-            // precondition.
-            if (cloudflarePublications is not null)
-            {
-                try
-                {
-                    await cloudflarePublications.ClearPendingRestartAsync(app.Id, cancellationToken);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    logger.LogWarning(ex, "Could not clear the Cloudflare pending-restart flag for {AppId}.", app.Id);
-                }
-            }
             adapter = ResolveAdapter(selection.RuntimeProfile.Type);
             context = await CreateRuntimeContextAsync(app, selection, cancellationToken);
-            context = EnsureMountsReadyForStart(context);
+            await new HostPathAuthority(paths, apps).AppAsync(context.App, cancellationToken);
+            context = await ReserveRuntimePathsAsync(EnsureMountsReadyForStart(context), cancellationToken);
             var appliedConfigurationHash = AppConfigurationFingerprint.Compute(context.App, context.Mounts);
             if (app.OperationStatus == "updating")
                 context = context with { ReportUpdateProgress = (stage, service) => SetUpdateProgressAsync(appId, stage, service, cancellationToken) };
@@ -949,6 +965,21 @@ internal sealed partial class CoreLifecycleService(
 
             var result = await adapter.StartAsync(context, cancellationToken);
             runtimeStarted = true;
+            // Adopted containers/processes retain their old environment. Only a complete fresh
+            // start can mark the current configuration and browser origin as applied.
+            var configurationApplied = result.CreatedServices is null ||
+                selection.Services.All(service => result.CreatedServices.Contains(service.Key));
+            if (configurationApplied && cloudflarePublications is not null)
+            {
+                try
+                {
+                    await cloudflarePublications.ClearPendingRestartAsync(app.Id, cancellationToken);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    logger.LogWarning(ex, "Could not clear the Cloudflare pending-restart flag for {AppId}.", app.Id);
+                }
+            }
             // The wait probes the endpoint set the record is about to persist — the same merge the write
             // below applies — so the start and the supervisor's later observations target the same ports.
             if (context.ReportUpdateProgress is not null) await context.ReportUpdateProgress("checking", null);
@@ -956,7 +987,10 @@ internal sealed partial class CoreLifecycleService(
             var updated = await apps.UpdateAppAsync(appId, current => current with
             {
                 RuntimeState = result.RuntimeState,
-                AppliedConfigurationHash = appliedConfigurationHash,
+                AppliedConfigurationHash = configurationApplied ? appliedConfigurationHash : current.AppliedConfigurationHash,
+                ActiveMountPaths = configurationApplied ? context.Mounts.Select(m => m.HostPath).Distinct().ToArray() : current.ActiveMountPaths,
+                ActiveSourcePaths = configurationApplied ? HostPathAuthority.CodePaths(context.App with { ActiveSourcePaths = null }).Select(MountPathPolicy.ResolveRealPath).Distinct().ToArray() : current.ActiveSourcePaths,
+                AppliedBrowserOrigin = configurationApplied ? coreOrigins?.Effective ?? runtimeConfig?.EffectiveCorePublicOrigin : current.AppliedBrowserOrigin,
                 Health = readiness,
                 OperationStatus = current.OperationStatus == "updating" ? "updating" : "started",
                 LastOperation = current.OperationStatus == "updating" ? "update" : "start",
@@ -1016,6 +1050,8 @@ internal sealed partial class CoreLifecycleService(
             var updated = await apps.UpdateAppAsync(appId, current => current with
             {
                 RuntimeState = result.RuntimeState,
+                ActiveMountPaths = result.RuntimeState == "stopped" ? null : current.ActiveMountPaths,
+                ActiveSourcePaths = result.RuntimeState == "stopped" ? null : current.ActiveSourcePaths,
                 // Health is meaningful only while the app is up; a stopped app must not keep its last
                 // `healthy` (the observation skips non-up apps, so nothing else would clear it).
                 Health = null,
@@ -1335,7 +1371,8 @@ internal sealed partial class CoreLifecycleService(
 
             adapter = ResolveAdapter(selection.RuntimeProfile.Type);
             context = await CreateRuntimeContextAsync(app, selection, cancellationToken);
-            context = EnsureMountsReadyForStart(context);
+            await new HostPathAuthority(paths, apps).AppAsync(context.App, cancellationToken);
+            context = await ReserveRuntimePathsAsync(EnsureMountsReadyForStart(context), cancellationToken);
             var appliedConfigurationHash = AppConfigurationFingerprint.Compute(context.App, context.Mounts);
             // A restart reports its two halves instead of a single `restarting`: both are IsBusy, so
             // clients behave identically either way, and the operator gets to see which half is slow.
@@ -1354,7 +1391,8 @@ internal sealed partial class CoreLifecycleService(
             // failed update may have saved a new pin while the checkout still contains the old code.
             app = await EnsureLocalCommandSourceReadyAsync(app, selection, cancellationToken);
             context = await CreateRuntimeContextAsync(app, selection, cancellationToken);
-            context = EnsureMountsReadyForStart(context);
+            await new HostPathAuthority(paths, apps).AppAsync(context.App, cancellationToken);
+            context = await ReserveRuntimePathsAsync(EnsureMountsReadyForStart(context), cancellationToken);
             appliedConfigurationHash = AppConfigurationFingerprint.Compute(context.App, context.Mounts);
             // Re-run capability provisioning on restart too, so a config-template change ships forward
             // and the app comes back with fresh Core-owned files (see PlatformCapabilities). Ordered
@@ -1368,13 +1406,18 @@ internal sealed partial class CoreLifecycleService(
 
             var start = await adapter.StartAsync(context, cancellationToken);
             runtimeStarted = true;
+            var configurationApplied = start.CreatedServices is null ||
+                selection.Services.All(service => start.CreatedServices.Contains(service.Key));
             // The same wait a cold start runs: this verb calls the adapter directly rather than through
             // StartCoreAsync, so a start-only wait would leave every restart without one.
             var readiness = await WaitForReadinessAsync(appId, adapter, context, selection, MergeEndpointUrls(app.Endpoints, start.Endpoints, selection), cancellationToken);
             var updated = await apps.UpdateAppAsync(appId, current => current with
             {
                 RuntimeState = start.RuntimeState,
-                AppliedConfigurationHash = appliedConfigurationHash,
+                AppliedConfigurationHash = configurationApplied ? appliedConfigurationHash : current.AppliedConfigurationHash,
+                ActiveMountPaths = configurationApplied ? context.Mounts.Select(m => m.HostPath).Distinct().ToArray() : current.ActiveMountPaths,
+                ActiveSourcePaths = configurationApplied ? HostPathAuthority.CodePaths(context.App with { ActiveSourcePaths = null }).Select(MountPathPolicy.ResolveRealPath).Distinct().ToArray() : current.ActiveSourcePaths,
+                AppliedBrowserOrigin = configurationApplied ? coreOrigins?.Effective ?? runtimeConfig?.EffectiveCorePublicOrigin : current.AppliedBrowserOrigin,
                 Health = readiness,
                 OperationStatus = "restarted",
                 LastOperation = "restart",
@@ -1599,7 +1642,7 @@ internal sealed partial class CoreLifecycleService(
         // candidate still has to satisfy the panel-icon contract before it can be reviewed/applied.
         var selection = await manifests.LoadAsync(manifestPath, request.SelectedRuntime ?? app.SelectedRuntime, cancellationToken,
             validateAllProfiles: true, requirePanelIcons: true, legacyManifestDigest: currentSelection.ManifestDigest,
-            manifestGrant: (request.PrivateSources ?? app.PrivateSources)?.Manifest);
+            manifestGrant: (request.PrivateSources ?? app.PrivateSources)?.Manifest, forceRead: true);
         selection = selection with { PrivateSources = request.PrivateSources ?? app.PrivateSources };
         await ValidatePrivateSelectionAsync(selection, cancellationToken);
         if (!string.Equals(selection.Manifest.Id, app.Id, StringComparison.Ordinal))
@@ -1948,7 +1991,7 @@ internal sealed partial class CoreLifecycleService(
             // a verb that is legitimately in flight right now (Core is already serving while this sweep
             // runs) holds it, and stamping over that app's `starting` would be exactly the corruption
             // this sweep exists to remove. Skipping is safe — that verb writes its own terminal state.
-            var mutex = operationLocks.GetOrAdd(app.Id, _ => new SemaphoreSlim(1, 1));
+            var mutex = apps.OperationLock(app.Id);
             if (!await mutex.WaitAsync(0, cancellationToken))
             {
                 continue;
@@ -2278,9 +2321,17 @@ internal sealed partial class CoreLifecycleService(
         return new AppLifecycleResponse(await BuildAppSummaryAsync(finished.App, cancellationToken), backup, "updated");
     }
 
-    private Task<AppStateDocument> PersistRuntimePortsAsync(AppRecord record, RuntimeAppManifestSelection selection, CancellationToken cancellationToken)
-        => portAllocator is null ? apps.UpsertAppAsync(record, cancellationToken)
-            : portAllocator.AssignAndPersistAsync(record, selection, apps.ListAppRecordsAsync, apps.UpsertAppAsync, cancellationToken);
+    private async Task<AppStateDocument> PersistRuntimePortsAsync(AppRecord record, RuntimeAppManifestSelection selection, CancellationToken cancellationToken)
+    {
+        await apps.HostPathMutationLock.WaitAsync(cancellationToken);
+        try
+        {
+            await new HostPathAuthority(paths, apps).AppAsync(record, cancellationToken);
+            return portAllocator is null ? await apps.UpsertAppAsync(record, cancellationToken)
+                : await portAllocator.AssignAndPersistAsync(record, selection, apps.ListAppRecordsAsync, apps.UpsertAppAsync, cancellationToken);
+        }
+        finally { apps.HostPathMutationLock.Release(); }
+    }
 
     public async Task<AppRuntimeSwitchPlan> CreateRuntimeSwitchPlanAsync(
         string appId,
@@ -3544,6 +3595,9 @@ internal sealed partial class CoreLifecycleService(
             UpdatedAt: default,
             SourceState: BuildSourceState(selection, existing),
             AppliedConfigurationHash: existing?.AppliedConfigurationHash,
+            ActiveMountPaths: existing?.ActiveMountPaths,
+            ActiveSourcePaths: existing?.ActiveSourcePaths,
+            AppliedBrowserOrigin: existing?.AppliedBrowserOrigin,
             Autostart: existing?.Autostart ?? true,
             Mounts: PreserveMounts(manifest, existing?.Mounts),
             // Sticky once captured at install; URL installs leave it null (covered by ManifestUrl).
@@ -3671,6 +3725,7 @@ internal sealed partial class CoreLifecycleService(
         CancellationToken cancellationToken,
         IReadOnlyList<AppRecord>? installed = null)
     {
+        app = app with { BrowserOriginScope = runtimeConfig?.InstanceId ?? app.BrowserOriginScope };
         var profiles = await ResolveRuntimeProfilesAsync(app, cancellationToken);
         var liveSourcePath = ResolveLiveSourcePath(app, profiles);
         var summary = AppSummary.From(app, profiles, liveSourcePath is not null, liveSourcePath);
@@ -3680,8 +3735,9 @@ internal sealed partial class CoreLifecycleService(
         // (sweep pruning alone can't be relied on: the scheduler may be disabled).
         return summary with
         {
-            RestartRequired = app.AppliedConfigurationHash is not null && AppRuntimeStates.IsUp(app.RuntimeState)
-                && AppConfigurationFingerprint.RequiresRestart(app, await globalMounts.ReadAsync(cancellationToken)),
+            RestartRequired = AppRuntimeStates.IsUp(app.RuntimeState) && (
+                AppConfigurationFingerprint.RequiresRestart(app, await globalMounts.ReadAsync(cancellationToken)) ||
+                (coreOrigins is not null && !string.Equals(app.AppliedBrowserOrigin, coreOrigins.Effective, StringComparison.Ordinal))),
             PermissionState = CachedPermissions(app),
             UpdateProgress = app.UpdateProgress,
             UpdateCheck = (await ReadUpdateSnapshotAsync(app, cancellationToken, summary.Live))?.Verdict,
@@ -4417,6 +4473,25 @@ internal sealed partial class CoreLifecycleService(
     // Validates the mounts and returns the context with each mount's HostPath rewritten to its
     // fully-resolved real path, so Docker binds the exact location Core validated rather than a path it
     // would re-traverse through a symlink (C-H3). Callers must use the returned context.
+    private async Task<RuntimeLifecycleContext> ReserveRuntimePathsAsync(RuntimeLifecycleContext context, CancellationToken ct)
+    {
+        await apps.HostPathMutationLock.WaitAsync(ct);
+        try
+        {
+            var policy = new HostPathAuthority(paths, apps);
+            await policy.AppAsync(context.App, ct);
+            foreach (var mount in context.Mounts) await policy.MountAsync(mount.HostPath, ct, context.App);
+            var sourcePaths = HostPathAuthority.CodePaths(context.App).Select(MountPathPolicy.ResolveRealPath).ToArray();
+            await apps.UpdateAppAsync(context.App.Id, current => current with
+            {
+                ActiveMountPaths = (current.ActiveMountPaths ?? []).Concat(context.Mounts.Select(m => m.HostPath)).Distinct().ToArray(),
+                ActiveSourcePaths = (current.ActiveSourcePaths ?? []).Concat(sourcePaths).Distinct().ToArray(),
+            }, ct);
+            return context;
+        }
+        finally { apps.HostPathMutationLock.Release(); }
+    }
+
     private RuntimeLifecycleContext EnsureMountsReadyForStart(RuntimeLifecycleContext context)
     {
         // Required check runs over the resolved mounts (context.Mounts): a global binding whose
@@ -4706,7 +4781,7 @@ internal sealed partial class CoreLifecycleService(
 
         // The reviewed internal copy is always valid (validated + saved at install/update); it is the
         // last-good snapshot a live source app falls back to when its folder manifest is mid-edit.
-        var lastGood = await manifests.LoadAsync(app.ManifestPath, app.SelectedRuntime, cancellationToken);
+        var lastGood = await manifests.LoadAsync(app.ManifestPath, app.SelectedRuntime, cancellationToken, allowUnsupportedPermissions: true);
 
         // Legacy records may predate persisted RuntimeProfiles; fall back to the profiles of the
         // just-loaded internal copy (same source as ResolveRuntimeProfilesAsync, but reusing lastGood so
@@ -4727,7 +4802,9 @@ internal sealed partial class CoreLifecycleService(
 
         try
         {
-            var live = await manifests.LoadAsync(liveManifestPath, app.SelectedRuntime, cancellationToken, validateAllProfiles: true);
+            // Same-size edits can retain the file timestamp on Linux. Operator-owned source must
+            // be read again; only the immutable installed copy can rely on the stamp cache.
+            var live = await manifests.LoadAsync(liveManifestPath, app.SelectedRuntime, cancellationToken, validateAllProfiles: true, forceRead: true, allowUnsupportedPermissions: true);
             // A folder whose manifest now describes a different app is an operator mistake, not a
             // contract Core should adopt — treat it like an invalid edit and keep the last-good copy.
             if (!string.Equals(live.Manifest.Id, app.Id, StringComparison.Ordinal))
@@ -4764,41 +4841,48 @@ internal sealed partial class CoreLifecycleService(
     // binding (orphaned, inert) via PreserveMounts (R7).
     internal async Task<AppRecord> ReconcileLiveContractAsync(AppRecord app, AppSelectionLoad load, CancellationToken cancellationToken)
     {
-        var selection = load.Selection;
-        IReadOnlyList<string> changes = load.Baseline is null
-            ? []
-            : BuildUpdateChanges(app, load.Baseline, selection);
-
-        await manifests.SaveManifestCopyAsync(selection, GetAppRoot(app.Id), cancellationToken);
-        await manifests.VendorDisplayAssetsAsync(selection, GetAppRoot(app.Id), cancellationToken);
-
-        // Build the reconciled contract from the fresh `current` record inside the update lambda, not
-        // the stale `app` captured before the lock, so a setting/mount change applied concurrently
-        // (ConfigureAsync / ConfigureMountsAsync) is carried forward by BuildAppRecord instead of being
-        // overwritten with stale operator state. The lambda is pure and may re-run on a write conflict.
-        var updated = await apps.UpdateAppAsync(app.Id, current =>
+        await apps.HostPathMutationLock.WaitAsync(cancellationToken);
+        try
         {
-            var reconciled = BuildAppRecord(selection, current.ManifestPath!, manifestUrl: current.ManifestUrl, system: current.System, existing: current);
-            // Manifest projections come from the shared choke point rather than a hand-copied field
-            // list, so every projected section — including ones added later — reaches a live adoption
-            // without this site naming it (Interfaces was silently missing from the old list). The
-            // remaining fields are the selection/carry-forward rebuilds only BuildAppRecord can do.
-            return ApplyManifestProjections(current, selection.Manifest) with
+            var selection = load.Selection;
+            var currentApp = await RequireAppAsync(app.Id, cancellationToken);
+            await new HostPathAuthority(paths, apps).AppAsync(BuildAppRecord(selection, currentApp.ManifestPath!, manifestUrl: currentApp.ManifestUrl, system: currentApp.System, existing: currentApp), cancellationToken);
+            IReadOnlyList<string> changes = load.Baseline is null
+                ? []
+                : BuildUpdateChanges(app, load.Baseline, selection);
+
+            await manifests.SaveManifestCopyAsync(selection, GetAppRoot(app.Id), cancellationToken);
+            await manifests.VendorDisplayAssetsAsync(selection, GetAppRoot(app.Id), cancellationToken);
+
+            // Build the reconciled contract from the fresh `current` record inside the update lambda, not
+            // the stale `app` captured before the lock, so a setting/mount change applied concurrently
+            // (ConfigureAsync / ConfigureMountsAsync) is carried forward by BuildAppRecord instead of being
+            // overwritten with stale operator state. The lambda is pure and may re-run on a write conflict.
+            var updated = await apps.UpdateAppAsync(app.Id, current =>
             {
-                Version = reconciled.Version,
-                DisplayName = reconciled.DisplayName,
-                Description = reconciled.Description,
-                Source = reconciled.Source,
-                Settings = reconciled.Settings,
-                StorageMappings = reconciled.StorageMappings,
-                Endpoints = reconciled.Endpoints,
-                Mounts = reconciled.Mounts,
-                SourceState = reconciled.SourceState,
-                // Record this start's adopted deltas; null when nothing changed so clients show no badge.
-                LiveChanges = changes.Count > 0 ? changes : null,
-            };
-        }, cancellationToken);
-        return updated.App;
+                var reconciled = BuildAppRecord(selection, current.ManifestPath!, manifestUrl: current.ManifestUrl, system: current.System, existing: current);
+                // Manifest projections come from the shared choke point rather than a hand-copied field
+                // list, so every projected section — including ones added later — reaches a live adoption
+                // without this site naming it (Interfaces was silently missing from the old list). The
+                // remaining fields are the selection/carry-forward rebuilds only BuildAppRecord can do.
+                return ApplyManifestProjections(current, selection.Manifest) with
+                {
+                    Version = reconciled.Version,
+                    DisplayName = reconciled.DisplayName,
+                    Description = reconciled.Description,
+                    Source = reconciled.Source,
+                    Settings = reconciled.Settings,
+                    StorageMappings = reconciled.StorageMappings,
+                    Endpoints = reconciled.Endpoints,
+                    Mounts = reconciled.Mounts,
+                    SourceState = reconciled.SourceState,
+                    // Record this start's adopted deltas; null when nothing changed so clients show no badge.
+                    LiveChanges = changes.Count > 0 ? changes : null,
+                };
+            }, cancellationToken);
+            return updated.App;
+        }
+        finally { apps.HostPathMutationLock.Release(); }
     }
 
     // True when the app's selected runtime is a live source artifact owned by the operator: a
@@ -6160,7 +6244,7 @@ internal sealed partial class CoreLifecycleService(
             // otherwise the sweep could overwrite that verb's "stopped" back to "running" (the very drift
             // this sweep exists to remove). A record that is still genuinely stopped-but-running is caught
             // next tick; a wrongly-set "running" self-heals via ObserveRuntimeHealthForAppAsync.
-            var mutex = operationLocks.GetOrAdd(app.Id, _ => new SemaphoreSlim(1, 1));
+            var mutex = apps.OperationLock(app.Id);
             if (!await mutex.WaitAsync(0, cancellationToken))
             {
                 continue;
@@ -6240,7 +6324,7 @@ internal sealed partial class CoreLifecycleService(
             // flight owns the record: an observation sampled before a Stop cleared the health must not
             // commit after it, and while a start verb runs its readiness wait it is the only writer.
             // A held lock means skip; the next tick observes again.
-            var mutex = operationLocks.GetOrAdd(app.Id, _ => new SemaphoreSlim(1, 1));
+            var mutex = apps.OperationLock(app.Id);
             if (await mutex.WaitAsync(0, cancellationToken))
             {
                 try

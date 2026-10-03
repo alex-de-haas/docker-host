@@ -114,7 +114,8 @@ internal sealed record HostUserRecord(
     bool Disabled,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    PublicationIdentity? GitIdentity = null);
+    PublicationIdentity? GitIdentity = null,
+    string? AuthRevision = null);
 
 internal sealed record HostInvitationRecord(
     string Id,

@@ -54,6 +54,7 @@ jobs:
       whisper: ${{ steps.filter.outputs.whisper }}
       demo_app: ${{ steps.filter.outputs.demo_app }}
       core: ${{ steps.filter.outputs.core }}
+      core_transport: ${{ steps.filter.outputs.core_transport }}
       cli: ${{ steps.filter.outputs.cli }}
       telemetry_backend: ${{ steps.filter.outputs.telemetry_backend }}
       marketplace: ${{ steps.filter.outputs.marketplace }}
@@ -140,12 +141,21 @@ jobs:
               - 'packages/app-sdk/**'
               - 'apps/telemetry-ui/**'
 
+            core_transport:
+              - 'apps/core/src/Haas.Hosty.Core/DockerCoreListener.cs'
+              - 'apps/core/src/Haas.Hosty.Core/Program.cs'
+              - 'apps/core/src/Haas.Hosty.Core/HostyCoreApplication.cs'
+              - 'apps/core/src/Haas.Hosty.Core/RuntimeAppManifest.cs'
+              - 'scripts/check-docker-core-transport.py'
+              - '.github/workflows/ci.yml'
+
             core:
               - *dotnet_shared
               - 'apps/core/**'
               - 'shared/**'
               # The AOT gate is part of this job, so a change to the gate itself must run it.
               - 'scripts/check-core-aot.mjs'
+              - 'scripts/check-docker-core-transport.py'
 
             cli:
               - *dotnet_shared
@@ -364,6 +374,10 @@ jobs:
 
       - name: Test Core
         run: npm run core:test
+
+      - name: Check Core transport from real Docker networks
+        if: needs.changes.outputs.core_transport == 'true'
+        run: python3 scripts/check-docker-core-transport.py apps/core/src/Haas.Hosty.Core/bin/Debug/net10.0/hosty-core.dll
 
       # Core ships as a Native AOT binary, but its publish used to run only at release time — so a
       # trimming regression could sit on main until a release surfaced it. Core now has a NuGet

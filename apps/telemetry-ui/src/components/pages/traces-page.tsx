@@ -1,5 +1,7 @@
 "use client";
 
+import { appFetch } from "@hosty-sdk/app/browser-auth";
+
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
@@ -87,7 +89,7 @@ export function ObservabilityTracesPage({ apps: roster }: { apps: TelemetryApp[]
         if (trimmed) {
           params.set("q", trimmed);
         }
-        const response = await fetch(`/api/observability/traces?${params.toString()}`);
+        const response = await appFetch(`/api/observability/traces?${params.toString()}`);
         throwIfAuthRequired(response);
         if (!response.ok) {
           throw new Error(await readApiError(response));
@@ -119,7 +121,7 @@ export function ObservabilityTracesPage({ apps: roster }: { apps: TelemetryApp[]
       const token = ++detailRequestRef.current;
       setDetail({ loading: true, error: null, response: null });
       try {
-        const response = await fetch(`/api/observability/traces/${encodeURIComponent(traceId)}`);
+        const response = await appFetch(`/api/observability/traces/${encodeURIComponent(traceId)}`);
         throwIfAuthRequired(response);
         if (!response.ok) {
           throw new Error(await readApiError(response));

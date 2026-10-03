@@ -49,6 +49,22 @@ public sealed class HostyScopedTokenClientTests
         => new(new StubFactory(handler), options ?? Options());
 
     [Fact]
+    public async Task McpIntrospectionDeclaresPurposeAndReturnsCallingAssistant()
+    {
+        var handler = new RecordingHandler(HttpStatusCode.OK,
+            new { active = true, sub = "user", role = "host.member", scopes = new[] { "mcp:invoke" }, callerAppId = "assistant" });
+        var client = Client(handler);
+        var result = await client.IntrospectMcpAsync("hosty_mcp.1.token", "change_item");
+        Assert.Equal("assistant", result.CallerAppId);
+        Assert.True(result.HasScope("mcp:invoke"));
+        using var body = JsonDocument.Parse(handler.Requests[0].Body!);
+        Assert.Equal("mcp", body.RootElement.GetProperty("purpose").GetString());
+        await client.IntrospectAsync("hosty_mcp.1.token");
+        using var ordinary = JsonDocument.Parse(handler.Requests[1].Body!);
+        Assert.Equal(JsonValueKind.Null, ordinary.RootElement.GetProperty("purpose").ValueKind);
+    }
+
+    [Fact]
     public async Task IntrospectAsync_AsksForItsOwnAppAndCarriesTheToolForTheAuditLine()
     {
         var handler = new RecordingHandler(

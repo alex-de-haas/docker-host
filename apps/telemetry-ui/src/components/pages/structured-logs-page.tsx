@@ -1,5 +1,7 @@
 "use client";
 
+import { appFetch } from "@hosty-sdk/app/browser-auth";
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, LoaderCircle, RefreshCw, ScrollText, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -73,7 +75,7 @@ export function ObservabilityStructuredLogsPage({ apps: roster }: { apps: Teleme
         if (trimmed) {
           params.set("q", trimmed);
         }
-        const response = await fetch(`/api/observability/logs?${params.toString()}`);
+        const response = await appFetch(`/api/observability/logs?${params.toString()}`);
         throwIfAuthRequired(response);
         if (!response.ok) {
           throw new Error(await readApiError(response));

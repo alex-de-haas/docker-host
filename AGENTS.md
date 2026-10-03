@@ -144,6 +144,12 @@ renames, deletes, or changes the status of a doc.
 
 ## Hosty Runtime App Development
 
+- Core uses normal email/password authentication even in Development. Never add or rely on a
+  user-selector login, unauthenticated session-creation endpoint, seeded administrator or default
+  password. For browser QA, use a separate data root and normal setup/recovery followed by password
+  login; always include its `--data-root` in CLI setup/recovery commands. Existing passwordless dev
+  accounts need explicit recovery. In-process tests may seed only their isolated test stores; do not
+  use such sessions as evidence that browser login works.
 - Do not validate Hosty identity, Shell embedding, app assignments, or scoped directory behavior by running an app only in standalone mode.
 - Use Core-managed runtime app lifecycle for local app work that depends on Hosty identity. Install the app manifest with the local/source runtime profile, then start it through Core:
   ```bash

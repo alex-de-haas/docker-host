@@ -1,7 +1,7 @@
 # Provider Consumption And Speech Recognition
 
 Created: 2026-09-29
-Updated: 2026-09-30
+Updated: 2026-10-02
 
 ## Permissions And Review
 
@@ -76,7 +76,9 @@ const result = await speech.transcribe(selected, wavBlob, { signal, language: "r
 `permissions`, `list`, `speechCapabilities`, `transcribe` and provider-side `validate` accept cancellation.
 `assistant(selected, getUserToken)` returns the existing version-one `AssistantClient`, minting fresh
 bounded authority per operation. Provider changes require explicit reconnection. Redirects carrying
-credentials are refused.
+credentials are refused. Assistant HTTP failures expose `AssistantError` with the provider status
+and code. Shell preserves these refusals, including a 409 `request_conflict` when a request identity
+is reused with different input, instead of reporting a transport failure.
 
 .NET `HostySdk.App` 0.7.0 exposes `HostyProviderClient` with `PermissionsAsync`, `ListAsync`,
 `SpeechCapabilitiesAsync`, `TranscribeAsync`, `ValidateAsync` and `SendAssistantAsync`. The latter sends
@@ -136,6 +138,14 @@ alone never grants access.
 The microphone's tooltip remains available on hover and keyboard focus when the button is disabled.
 It distinguishes loading, discovery errors, missing consent, no providers, an unselected provider,
 an unavailable provider and a message being sent. Discovery failures do not imply missing consent.
+
+
+## Assistant Activity Authority
+
+Assistant-provider issuance requires the consumer's current browser-established
+[activity window](../app-activity-window/feature.md) and live parent Core session. Provider token
+validation rechecks that activity; a delegated credential cannot replace it. Separately, Harness
+uses a Core-owned per-conversation lease for MCP and workspace/publication tool calls.
 
 ## Testing Expectations
 

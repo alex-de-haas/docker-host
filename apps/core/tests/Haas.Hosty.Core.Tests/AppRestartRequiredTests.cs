@@ -4,6 +4,35 @@ namespace Haas.Hosty.Core.Tests;
 
 public sealed partial class CoreLifecycleServiceTests
 {
+    [Theory]
+    [InlineData(null)]
+    [InlineData("http://localhost:7070")]
+    public async Task RestartRequired_AdoptionPreservesOldEnvironmentUntilExplicitRestart(string? previousOrigin)
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        await fixture.Service.InstallAsync(new AppInstallRequest(await fixture.WriteManifestAsync("1.0.0")));
+        await fixture.Service.StartAsync("com.example.notes");
+        var oldHash = (await fixture.Apps.GetAppAsync("com.example.notes"))!.AppliedConfigurationHash;
+        await fixture.Apps.UpdateAppAsync("com.example.notes", app => app with { AppliedBrowserOrigin = previousOrigin });
+        await fixture.Service.ConfigureAsync("com.example.notes", new(Settings: new Dictionary<string, string?> { ["APP_MODE"] = "changed" }));
+        var config = new HostyCoreRuntimeConfig(fixture.Root, Path.Combine(fixture.Root, "run"),
+            Path.Combine(fixture.Root, "run/control.json"), 7070, "http://localhost:7070", null, "localhost", null, false);
+        var origins = new CorePublicOriginResolver(config, fixture.CoreSettings);
+        var service = fixture.RecreateService(origins);
+        fixture.Adapter.CreatedServices = [];
+
+        Assert.True((await service.StartAsync("com.example.notes")).App!.RestartRequired);
+        var adopted = (await fixture.Apps.GetAppAsync("com.example.notes"))!;
+        Assert.Equal(previousOrigin, adopted.AppliedBrowserOrigin);
+        Assert.Equal(oldHash, adopted.AppliedConfigurationHash);
+
+        fixture.Adapter.CreatedServices = ["app"];
+        Assert.False((await service.RestartAsync("com.example.notes")).App!.RestartRequired);
+        var restarted = (await fixture.Apps.GetAppAsync("com.example.notes"))!;
+        Assert.Equal(origins.Effective, restarted.AppliedBrowserOrigin);
+        Assert.NotEqual(oldHash, restarted.AppliedConfigurationHash);
+    }
+
     [Fact]
     public async Task RestartRequired_SettingsChangesSurviveCoreRestartAndClearOnRevertOrRestart()
     {

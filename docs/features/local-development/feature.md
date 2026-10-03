@@ -1,7 +1,7 @@
 # Local Development And Testing
 
 Created: 2026-05-13
-Updated: 2026-09-18
+Updated: 2026-10-01
 
 This document describes the current local feedback loops after the Core/Shell/runtime app split.
 
@@ -46,7 +46,26 @@ npm install
 npm run dev
 ```
 
-`npm run dev` starts Core and Shell together. Core listens on `http://localhost:3001`, Shell listens on `http://localhost:3000`, and local state is stored in `.hosty-dev/` so branch development does not mutate an installed Hosty CLI data root. The script ensures two development-only local users exist for the Core login helper: `admin@hosty.local` with `host.admin` and `user@hosty.local` with `host.user`.
+`npm run dev` starts Core and Shell together. Core listens on `http://localhost:3001`, Shell listens on `http://localhost:3000`, and local state is stored in `.hosty-dev/` so branch development does not mutate an installed Hosty CLI data root. The script does not create users or modify existing accounts. Core requires the same email/password sign-in in Development and Production.
+
+Once Core is ready, run this from another terminal for a new data root:
+
+```bash
+hosty --data-root "$PWD/.hosty-dev" auth setup-token
+```
+
+Open the returned Core setup URL and choose the first administrator's email and password. For an
+existing passwordless development account, run `hosty --data-root "$PWD/.hosty-dev" auth recovery-token`
+and complete Core's recovery form instead. Recovery replaces that account's credential and revokes
+its existing sessions. Use the absolute `HOSTY_DEV_DATA_ROOT` path when it overrides `.hosty-dev`;
+never issue a setup/recovery token against a different installation by omitting `--data-root`.
+Additional users follow the ordinary invitation flow. The old `HOSTY_DEV_USER_*` and
+`HOSTY_DEV_LOCAL_USER_*` seeding variables have no effect.
+
+For automated HTTP tests, create users, password credentials and any prerequisite sessions through
+the test host's isolated stores in-process. Do not add a public test-login endpoint or write test
+sessions into an operator's data root. Browser acceptance must exercise ordinary setup/recovery and
+password login; a test-only session does not verify that flow.
 
 The script also lets Core bootstrap `hosty.shell` into the `.hosty-dev` app registry as a system app using the Shell manifest's `dev` runtime profile and this repository as the local source override. Core then autostarts Shell through the normal runtime app lifecycle, so the Shell dev server is visible in System Apps and its logs/health come from Core.
 

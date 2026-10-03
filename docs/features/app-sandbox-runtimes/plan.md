@@ -1,8 +1,27 @@
 # App Sandbox Runtimes And Agent Testing
 
-Status: Draft
+Status: On Hold
 Created: 2026-09-25
-Updated: 2026-09-27
+Updated: 2026-10-01
+
+## Deferral And Caller-Supplied Test Configuration (Owner Decision, 2026-10-01)
+
+The owner explicitly deferred sandbox implementation while selecting the initial
+[application permission catalogue](../local-browser-origins/plan.md). `apps.sandbox` is a candidate
+name only, not an implemented or approved grant in that initial catalogue. Source access and test
+execution are separate capabilities.
+
+A useful test instance needs caller-supplied settings, environment and substitute mounts in addition
+to a separate app-data directory. The eventual contract must validate those inputs against the
+selected isolation mode rather than pass through arbitrary host authority. Never inherit production
+mounts just because the selected source belongs to the same app.
+
+An application may reference a separately installed database or another external dependency.
+Automatically copying the dependency graph or identifying every production connection is not a
+reliable general solution when Core does not know the application's internals. Design explicit test
+dependencies, endpoint overrides or mocks, and report unsupported cases. A separate folder and a
+container do not by themselves establish a complete sandbox guarantee. Existing feasibility and
+verification deliverables below remain unfinished; this decision authorizes no sandbox implementation.
 
 ## Workspace Delivery Boundary (Owner Decision, 2026-09-27)
 
@@ -136,6 +155,8 @@ repeatable scenario before generalizing or scheduling multiple evaluators.
   where replacement is selected; keep cwd, builds, mounts and manifest inspection on the same source.
 - [ ] Phase 1: specify runtime-instance identity, ownership, routing, scoped auth and dependency
   resolution; prove compatibility with the single-Core model and existing app lifecycle.
+- [ ] Phase 1: define caller-supplied settings/environment, substitute mounts and explicit dependency
+  overrides or mocks, including how unsupported or unknown external connections are reported.
 - [ ] Phase 1: choose supported execution backends/platforms and isolation guarantees; verify mounts,
   inherited environment, builds, egress and Core access against those guarantees.
 - [ ] Phase 2: implement sandbox creation, readiness, stop/reset/dispose, synthetic seeds, separate

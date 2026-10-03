@@ -1,5 +1,7 @@
 "use client";
 
+import { appFetch } from "@hosty-sdk/app/browser-auth";
+
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -35,7 +37,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     const controller = new AbortController();
     void (async () => {
       try {
-        const response = await fetch("/api/apps", { signal: controller.signal });
+        const response = await appFetch("/api/apps", { signal: controller.signal });
         if (!response.ok) {
           throw new Error(`Roster request failed (${response.status}).`);
         }
