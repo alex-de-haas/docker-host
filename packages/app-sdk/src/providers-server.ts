@@ -1,5 +1,5 @@
-import { AssistantClient } from "./assistant.js";
-import { ProviderError, type AppPermissionState, type ProviderDescriptor, type ProviderInvocation, type ProviderKind, type SpeechCapabilities, type SpeechResult } from "./providers.js";
+import { AssistantClient } from "@hosty-sdk/app/assistant";
+import { ProviderError, type AppPermissionState, type ProviderDescriptor, type ProviderInvocation, type ProviderKind, type SpeechCapabilities, type SpeechResult } from "@hosty-sdk/app/providers";
 
 export type ProviderServerOptions = {
   appId?: string; coreOrigin?: string; serviceToken?: string;

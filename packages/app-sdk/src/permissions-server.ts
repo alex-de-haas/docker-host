@@ -1,5 +1,5 @@
-import { ProviderClient, type ProviderServerOptions } from "./providers-server";
-import type { PermissionNoticeState } from "./permissions";
+import { ProviderClient, type ProviderServerOptions } from "@hosty-sdk/app/providers/server";
+import type { PermissionNoticeState } from "./permission-types.js";
 
 /** Server-only: pass the role from an authenticated session, never from request input. */
 export async function readOwnPermissionNotice(hostRole: string | null, options: ProviderServerOptions & { corePublicOrigin?: string | null } = {}, signal?: AbortSignal): Promise<PermissionNoticeState> {

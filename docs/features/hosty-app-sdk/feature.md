@@ -1,7 +1,7 @@
 # Hosty App SDK
 
 Created: 2026-07-15
-Updated: 2026-10-02
+Updated: 2026-10-03
 
 Shared Host integration for runtime apps, in two published packages: **`@hosty-sdk/app`** on npmjs
 (TypeScript, 0.19.0) and **`HostySdk.App`** on NuGet (.NET, 0.6.0). They own the app half of the
@@ -39,6 +39,11 @@ contract; none depends on the default Shell or its embedding messages.
 HostySdk.App                   # NuGet — Hosty auth scheme, cached Core revalidation,
                                # HOSTY_* options binding, HostySecretsClient
 ```
+
+All repository subpath exports point to TypeScript source, including the permission helpers, so
+workspace consumers build from a clean checkout without generated SDK output. The publish preparation
+script maps them to compiled JavaScript and declarations in `dist`. A package contract test checks
+every workspace export against this rule.
 
 The server/client boundary is enforced by subpath exports: the root slice is pure TypeScript with no
 React or Next dependency (usable from a plain `server.mjs`), `server` is marked `import "server-only"`

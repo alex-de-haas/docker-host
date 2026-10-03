@@ -1,12 +1,7 @@
-import type { AppPermissionState } from "./providers";
+import type { PermissionNoticeState } from "./permission-types.js";
+export type { PermissionNoticeState } from "./permission-types.js";
 
 export const PERMISSION_REVIEW_REQUEST = "hosty:request-permission-review";
-export type PermissionNoticeState = {
-  hostRole: string | null;
-  appId: string;
-  corePublicOrigin: string | null;
-  permissions: AppPermissionState | null;
-};
 
 /** No optional declaration, or declaration alone, confers authority. */
 export function permissionNotice(state: PermissionNoticeState): "missing" | "unsupported" | null {
