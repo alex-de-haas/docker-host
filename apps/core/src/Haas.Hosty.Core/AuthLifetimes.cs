@@ -18,8 +18,11 @@ internal sealed record AuthLifetimes(
     TimeSpan CliGrantLifetime,
     TimeSpan CoreSessionIdle,
     TimeSpan CoreSessionAbsolute,
-    TimeSpan AccessTokenIdle)
+    TimeSpan AccessTokenIdle,
+    TimeSpan AppActivityWindow = default)
 {
+    public TimeSpan EffectiveActivityWindow => AppActivityWindow > TimeSpan.Zero ? AppActivityWindow : TimeSpan.FromHours(1);
+
     public static AuthLifetimes Defaults { get; } = new(
         AppGrantIdle: TimeSpan.FromDays(7),
         AppGrantAbsolute: TimeSpan.FromDays(30),
@@ -28,7 +31,8 @@ internal sealed record AuthLifetimes(
         CliGrantLifetime: TimeSpan.FromHours(12),
         CoreSessionIdle: TimeSpan.FromDays(7),
         CoreSessionAbsolute: TimeSpan.FromDays(30),
-        AccessTokenIdle: TimeSpan.FromDays(90));
+        AccessTokenIdle: TimeSpan.FromDays(90),
+        AppActivityWindow: TimeSpan.FromHours(1));
 
     // The idle window for a credential, chosen by its kind. A browser session (null kind) keeps the
     // window it always had; an access token gets its own, longer one, because a console in a pocket or a
@@ -45,7 +49,8 @@ internal sealed record AuthLifetimes(
             CliGrantLifetime: ReadHours("HOSTY_AUTH_CLI_GRANT_HOURS", Defaults.CliGrantLifetime),
             CoreSessionIdle: ReadHours("HOSTY_AUTH_CORE_SESSION_IDLE_HOURS", Defaults.CoreSessionIdle),
             CoreSessionAbsolute: ReadHours("HOSTY_AUTH_CORE_SESSION_ABSOLUTE_HOURS", Defaults.CoreSessionAbsolute),
-            AccessTokenIdle: ReadHours("HOSTY_AUTH_ACCESS_TOKEN_IDLE_HOURS", Defaults.AccessTokenIdle));
+            AccessTokenIdle: ReadHours("HOSTY_AUTH_ACCESS_TOKEN_IDLE_HOURS", Defaults.AccessTokenIdle),
+            AppActivityWindow: ReadHours("HOSTY_AUTH_APP_ACTIVITY_HOURS", Defaults.AppActivityWindow));
 
     // Idle and absolute window for an app grant, chosen by whether the app is a system app and how the
     // grant was issued. CLI-diagnostic grants are probe credentials: a single short fixed lifetime.

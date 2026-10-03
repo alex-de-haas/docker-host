@@ -1,13 +1,17 @@
 # Feature: Automatic Runtime App Ports
 
 Created: 2026-06-05
-Updated: 2026-09-27
+Updated: 2026-09-30
 
 Runtime apps do not hard-code host ports. Core reserves an available host port for every declared
 service port at install and reconciles reservations on reviewed updates and runtime switches.
 It exposes the port through the environment and keeps the stored endpoint URL pointing at the
 port the app actually got. Manifests omit `localPort` / `hostPort` unless a fixed
 port is part of the app's contract.
+
+Browser navigation uses the [local browser origin projection](../local-browser-origins/feature.md).
+The endpoint's stored `url` remains its transport address; `browserOrigin` preserves the assigned
+port while supplying the app-specific hostname. This does not alter reservation or bind policy.
 
 ## Assignment
 

@@ -1,10 +1,10 @@
 # Hosty App SDK
 
 Created: 2026-07-15
-Updated: 2026-09-27
+Updated: 2026-10-03
 
 Shared Host integration for runtime apps, in two published packages: **`@hosty-sdk/app`** on npmjs
-(TypeScript, 0.14.0) and **`HostySdk.App`** on NuGet (.NET, 0.6.0). They own the app half of the
+(TypeScript, 0.19.0) and **`HostySdk.App`** on NuGet (.NET, 0.6.0). They own the app half of the
 [auth session lifecycle](../auth-session-lifecycle/feature.md) contract — session classification,
 recovery, Core revalidation, launch-mode awareness — plus the app secrets client, delegated-token
 validation, and (TypeScript only) the theme protocol between a shell and the pages it embeds.
@@ -29,7 +29,8 @@ contract; none depends on the default Shell or its embedding messages.
 @hosty-sdk/app/server          # import "server-only": Core revalidation, code exchange, app secrets
 @hosty-sdk/app/delegated       # local ECDSA validation of Core-issued delegated tokens
 @hosty-sdk/app/react           # 'use client': AppIdentityBridge, HostLaunchBridge, HostThemeBridge, useLaunchMode
-@hosty-sdk/app/embedder        # 'use client': the verified responders a shell owes its frames, the theme sender half
+@hosty-sdk/app/embedder        # theme sender and legacy message parsers
+@hosty-sdk/app/browser-auth    # same-origin appFetch and Core popup sign-in
 @hosty-sdk/app/install         # pure: typed client and InstallationFlow
 @hosty-sdk/app/install/react   # client: useInstallation and InstallDialog
 @hosty-sdk/app/install/server  # server-only: app-local installation route adapter
@@ -38,6 +39,11 @@ contract; none depends on the default Shell or its embedding messages.
 HostySdk.App                   # NuGet — Hosty auth scheme, cached Core revalidation,
                                # HOSTY_* options binding, HostySecretsClient
 ```
+
+All repository subpath exports point to TypeScript source, including the permission helpers, so
+workspace consumers build from a clean checkout without generated SDK output. The publish preparation
+script maps them to compiled JavaScript and declarations in `dist`. A package contract test checks
+every workspace export against this rule.
 
 The server/client boundary is enforced by subpath exports: the root slice is pure TypeScript with no
 React or Next dependency (usable from a plain `server.mjs`), `server` is marked `import "server-only"`
@@ -89,25 +95,14 @@ same state, which is what stops the three-contradicting-errors failure.
 | --- | --- | --- | --- |
 | `resolving` | probe in flight | quiet skeleton, never an error | same |
 | `active` | token valid | app content | app content |
-| `recoverable` | Core **401** | post `hosty:auth-required`; the shell silently reissues a code. If the parent stays silent past a timeout, one plain "re-authenticate" message — no embedded login UI | redirect to Core `/open` once per tab; Core bounces through `/login?returnTo` and returns a fresh code. Only the loop-guard terminal state shows a message with an explicit link |
+| `recoverable` | Core **401** | offer a button opening Core sign-in; exchange a bound one-time code in the app | redirect to Core `/open` once per tab; Core bounces through `/login?returnTo` and returns a fresh code. Only the loop-guard terminal state shows a message with an explicit link |
 | `denied` | Core **403** | "signed in, no access", no login button — a redirect would loop | same |
 | `unavailable` | **503** / Core unreachable | "can't reach Hosty, retrying" + Retry; the cookie is kept | same |
 | `misconfigured` | no service token or no Core origin | "misconfigured on the host, contact the administrator", no login button | same |
 
-The user-visible rules this implements:
-
-1. Inside a shell, an authenticated user never sees an auth screen. Recovery is silent.
-2. If the shell's own session is dead, the shell redirects the whole window to Core `/login`.
-3. Standalone, an expired session redirects to Core `/login`; no app-rendered sign-in card as the
-   primary surface.
-4. Shell is just an app in standalone mode and follows the same rule.
-5. Core `/login` is therefore the only authentication UI in the system. An app's job is two reflexes —
-   post `hosty:auth-required` when embedded, navigate to `/open` when standalone — plus not rendering
-   errors while they run.
-
-`denied`, `unavailable`, and `misconfigured` do not violate rule 1: none of them is an
-"unauthenticated" surface. A login affordance exists only in `recoverable` fallback paths (non-shell
-embedder timeout, standalone loop-guard terminal).
+Core owns the password form. Embedded apps offer a sign-in action that opens Core; standalone
+apps navigate through Core with a once-per-tab loop guard. Shell follows the same standalone rule.
+Denied, unavailable and misconfigured states remain distinct from recoverable authentication.
 
 The one piece of complexity that survives the simplicity pressure is the standalone once-per-tab
 redirect guard: without it a failing code exchange becomes an infinite redirect loop, which is worse
@@ -146,8 +141,8 @@ helper, resolved from the `hosty_launch` parameter with a `sessionStorage` fallb
 `data-hosty-launch` attribute plus the `hosty-shell-chrome` class, so an app can drop the navigation
 its embedder already renders without a flash.
 
-Logout UI is the app's discretion, gated by that helper: embedded hides logout entirely (the session
-belongs to the shell), standalone may offer a control that drops the app cookie and navigates to Core's
+Logout UI is the app's discretion, gated by that helper: embedded can hide logout to avoid duplicating the host account controls (the app still owns
+its session), standalone may offer a control that drops the app cookie and navigates to Core's
 login page. Logout is a cookie drop only — the grant then lives until its idle expiry.
 
 ## Theme Bridging
@@ -204,59 +199,35 @@ again, and `apps/harness/web` declares the SDK itself rather than relying on the
 package's copy, because npm scopes a nested-workspace install to the workspace it is run from. The native client (`apps/shell-swift`) declares no theme; its web view reads the operating
 system, which is what a native app's chrome follows anyway.
 
-## The Embedder Contract
+## Embedded App Sign-In
 
-Recovery needs the user's Core session in a first-party context (to mint a launch code) and control of
-the iframe `src` (to deliver it). Only an embedder has both, so its participation is irreducible: the
-embedded app cannot self-recover, since the sandbox forbids top navigation and an in-iframe navigation
-to Core `/open` cannot be relied on to carry Core's session cookie.
+Shell opens the app URL without minting credentials. An app with a valid own-origin session opens
+immediately; otherwise `AppIdentityBridge` offers a user-initiated Core sign-in popup. The frame does
+not navigate its parent or ask Shell for a user token.
 
-The contract is one sentence: *on a verified `hosty:auth-required` from an app you embed, re-run your
-normal open flow for that app, rate-limited.* Two sharpenings it carries:
+Core `/api/apps/{appId}/open?responseMode=web_message&state=...` requires a browser navigation and
+its own origin-bound session cookie. It validates the app assignment and registered callback origin,
+then posts a single-use code to that exact app origin. The SDK accepts the message only from the
+opened popup, at the configured Core origin, with the matching random 256-bit state. Missing Core
+sessions go through Core's password form. Invalid targets, mismatched state and code replay fail.
 
-- *Verified* means `event.source` is your iframe's `contentWindow`, `event.origin` is that app's
-  endpoint origin, and the `appId` matches. Only the embedder can check these — they are facts about
-  its own DOM.
-- The re-open must take the full launch-code path. Hosty Shell's "already open → reuse the URL without
-  a code" optimization must not short-circuit recovery; that optimization is exactly what makes the
-  app-side `postMessage` load-bearing.
+The app's own server exchanges the code and validates the result with its service credential before
+returning its app grant and setting its host-only HttpOnly cookie. Where iframe cookie access is
+blocked, the bridge keeps the app grant only in document memory; `appFetch` attaches it exclusively
+to same-origin requests and refuses redirects. The token is never stored in browser storage or sent
+to Shell. A reload discards that memory and probes the cookie again. A 401 triggers recovery, a 403
+is terminal denial, and a 503 preserves credentials.
 
-Shell consumes the `embedder` slice, so the reference implementation and the shipped artifact are the
-same code. A missing or broken embedder degrades to the app's plain re-authenticate message and a
-working standalone link, not to a dead end. A sloppy or malicious embedder is contained by Core rather
-than by embedder correctness: codes are single-use with a 5-minute lifetime, minting requires the
-embedder's own session plus CSRF, and Core validates `redirectUri` against the target app's registered
-endpoint origins — so a code minted for app X can only be delivered to X's origin.
+Use `appFetch` from `@hosty-sdk/app/browser-auth` for protected client API calls and streams. Gate
+protected content with the bridge's children or `renderState`; a custom sign-in view must invoke
+`state.signIn` directly from a user gesture. Popup cancellation, blocking and timeout return a
+retryable sign-in state. Server-rendered protected data needs its own compatible loading design;
+a client-held frame grant is not automatically available to an initial server render.
 
-`hosty:auth-required` is a frozen protocol constant that does not track branding, on the precedent of
-the `x-docker-host-identity` header, which survived the docker-host → hosty rename. An unprefixed name
-like `auth:required` was rejected because `postMessage` is a party line every embedded document shares.
-
-The second thing only an embedder can do is mint a **delegated token** — same reason, the user's Core
-session in a first-party context. A page that calls its own app's admin-gated API from the browser
-therefore posts `hosty:request-delegated-token` and the embedder answers `hosty:delegated-token`
-carrying the token and its expiry, verified by the same sender checks
-(`parseActiveFrameDelegatedTokenRequest`). Two rules keep the reply from being a hole in the
-delegated-token bounds:
-
-- The reply goes to the frame's own origin, never `*`. Unlike a launch code, what crosses here is the
-  credential itself.
-- Answering is a per-app decision, not a reflex. The parser reports who asked; who is granted stays
-  the embedder's policy, because a delegated token is user-scoped and a system app may branch it to
-  other apps. Hosty Shell answers for the app declaring `assistant` and no other frame — it already
-  mints that app tokens to run the chat panel, so the handshake widens nothing.
-- Answering is **idempotent**, because asking is repeated. The app's request can be posted the moment
-  its document runs, and nothing obliges an embedder to have a listener attached by then; an app that
-  asked once and lost the race would sit dead until its timeout. So the app re-asks until answered,
-  and Hosty Shell additionally attaches its listener in a layout effect — the same task that inserts
-  the iframe, before the browser can dispatch anything from it.
-- The request carries `refresh` when the app's current token was **refused**. Only the app learns
-  that, and an embedder caching its mints would otherwise keep answering with the token the API just
-  rejected — the two clocks need not agree on when a token expired. An embedder that caches must
-  treat the flag as "discard yours too".
-
-A frame that is never answered is a page that renders and reports no access, which is why the app
-half states the "open me from your shell" case itself rather than waiting out a timeout.
+The SDK retains legacy embedder parsers for compatibility. Their presence grants no authority;
+Hosty Shell does not issue cross-app launch codes or answer delegated-token requests. MCP access
+requires a separate authorization basis from app sign-in. The remaining Harness migration and
+browser acceptance are tracked in [local browser origins](../local-browser-origins/plan.md).
 
 ## Distribution And Versioning
 
@@ -301,7 +272,7 @@ The remaining adoption debts and the second-wave extraction inventory are in [pl
   Core-injected public key.
 - Cookie and header names stay per-app, parameterized through the config object
   (`{ appId, identityCookieName, internalHeaderPrefix, mapHostRole? }`). No forced cookie migration.
-- The Shell embed iframe sandbox is not loosened; embedded recovery stays `postMessage`-only.
+- The Shell iframe sandbox forbids top navigation. App sign-in uses its existing popup capability.
 - Adoption is layered and opt-in. An app with no protected data is never forced to take the full gate.
 - Rejected shapes, recorded so they are not re-proposed: a React-first component library (solitaire is
   vanilla JS); copy-and-keep-in-sync with a lint rule (a lint rule flags drift, it does not stop it);
@@ -310,7 +281,7 @@ The remaining adoption debts and the second-wave extraction inventory are in [pl
 `AppIdentityBridge` accepts an optional `renderState` callback, receiving recovering, active,
 signin, denied, unavailable or misconfigured state. Apps can gate their content and data requests
 on `active`, using the same recovery lifecycle as the bridge. Omitting the callback keeps the
-existing default recovery UI. The initial state is recovering; an active identity probe permits
+default recovery UI; optional children render only after an active probe. The initial state is recovering; an active identity probe permits
 content, while failed probes never expose an active state.
 
 ## Assistant Handoff Client
@@ -321,6 +292,36 @@ before sending. Delegated-token refresh retries once on 401. Callers preserve in
 transport failure. The receiving assistant applies its draft/immediate-start setting; embedded
 `askAssistant` reports only whether its message was posted. See [the contract](../hosty-harness-rename/feature.md).
 
+## Assistant MCP Validation
+
+JavaScript `introspectMcpToken` and .NET `IntrospectMcpAsync` explicitly identify the MCP surface
+when calling Core introspection. They validate external scoped credentials and assistant MCP-only
+tokens, return the current user/scopes and calling assistant, and do not cache. Ordinary scoped
+helpers omit that purpose and reject assistant MCP-only credentials. App identity and delegated
+validators also reject their distinct format. Applications keep MCP validation out of general API
+authentication and enforce their domain user permissions after validation.
+
+## Required-permission setup notice
+
+`@hosty-sdk/app/permissions/server` exports `readOwnPermissionNotice` for an
+app-authenticated server route. Pass the authenticated viewer's host role. The helper
+reads only this app's `/api/internal/apps/{appId}/permissions` using its private service
+credential, including unsupported required names. It returns no permission details to
+non-administrators. Do not take the role or app id from browser input.
+
+`@hosty-sdk/app/permissions` exports the framework-neutral `permissionNotice` classifier
+and synchronous click handler `requestPermissionReview`.
+`MissingPermissionsNotice` is exported from `/react` and `/permissions/react`; mount it
+after identity recovery. Its default authenticated GET endpoint is `/api/hosty/permissions`.
+The component handles administrator-only review, unsupported names, focus/pending refresh,
+and dismissal until remount. Optional permissions do not trigger a notice.
+
+Standalone clicks open Core review directly. Embedded clicks send a credential-free
+`hosty:request-permission-review` message. Embedders use
+`parseActiveFramePermissionReview` from `/embedder` to verify window and origin and derive
+the target from the mounted frame. Payload app ids and URLs never choose the target.
+See [permission management](../app-permission-management/feature.md) for first-party adoption.
+
 ## Testing Expectations
 
 - The classification table is exercised per status, including that a 503 keeps the cookie while a 401
@@ -328,10 +329,10 @@ transport failure. The receiving assistant applies its draft/immediate-start set
   single-case test.
 - The revalidation cache is asserted in both directions: a positive result is reused inside the window
   and clamped to the grant's expiry, a failure is never cached, and the map stays bounded.
-- Recovery decisions are covered for both channels — embedded posts the intent, standalone builds the
+- Recovery decisions are covered for both channels — embedded opens a bound Core popup, standalone builds the
   `/open` URL — plus the two guards: once per tab, and no redirect when the Core origin is loopback and
   the page host is not.
-- The embedder responder rejects a foreign `event.source`, a mismatched origin, and a mismatched
+- Legacy embedder parser compatibility tests reject a foreign `event.source`, a mismatched origin, and a mismatched
   `appId`, and its rate limiter holds under repeated intents.
 - The two responders are covered against each other, not only against forged senders: a
   delegated-token request must not satisfy the auth-required parser or the reverse, since one
@@ -357,3 +358,6 @@ transport failure. The receiving assistant applies its draft/immediate-start set
   after an actual unmount.
 - Bridge render-state tests keep content gated until an active probe and cover denied, unavailable
   and misconfigured responses without replacing the default recovery contract.
+
+- Popup tests reject wrong window, origin and state; code exchange rejects foreign app audiences and replay.
+- Browser transport tests reject cross-origin requests and redirects, preserve credentials on 503, and initiate recovery on 401.

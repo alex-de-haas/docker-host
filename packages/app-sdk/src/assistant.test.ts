@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AssistantClient, assistantContractError, createAssistantRequestId, resolveAssistantDestination } from "./assistant.js";
+import { AssistantError } from "./assistant.js";
 describe("assistant contract", () => {
   it("requires the base version but permits missing optional attachments and unknown optional capabilities", () => {
     expect(assistantContractError({})).not.toBeNull();
@@ -25,6 +26,14 @@ describe("assistant contract", () => {
 
 describe("assistant upload deadlines", () => {
   afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+  it.each([[403, "app_permission_required"], [409, "request_conflict"], [410, "request_expired"]])(
+    "preserves provider status %s and code %s for server-side consumers", async (status, code) => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ code, message: "Request refused" }, { status }));
+      const client = new AssistantClient("https://assistant/api", { version: 1, capabilities: [] }, async () => ({ token: "test" }));
+      const request = client.prepare({ requestId: createAssistantRequestId(), prompt: "Help", appIds: [] });
+      await expect(request).rejects.toBeInstanceOf(AssistantError);
+      await expect(request).rejects.toMatchObject({ status, code, message: "Request refused" });
+    });
   it("allows an upload lasting longer than the control deadline", async () => {
     vi.useFakeTimers();
     const timeout = vi.spyOn(AbortSignal, "timeout");

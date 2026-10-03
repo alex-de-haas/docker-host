@@ -23,54 +23,18 @@ async function fill(id: string, value: string) {
     node.dispatchEvent(new Event(node instanceof HTMLSelectElement ? "change" : "input", { bubbles: true }));
   });
 }
-it("loads the user's accounts and saves their display name through Core", async () => {
+it("loads only the current profile and saves only the display name", async () => {
   await render();
-  expect(fetch).toHaveBeenCalledWith("https://core.test/api/profile", expect.objectContaining({ credentials: "include", cache: "no-store" }));
-  expect(container.textContent).toContain("octocat"); expect(container.textContent).toContain("work-account");
+  expect(fetch).toHaveBeenCalledWith("/api/core/api/profile", expect.objectContaining({ credentials: "same-origin", cache: "no-store" }));
+  expect(container.textContent).not.toContain("octocat"); expect(container.textContent).not.toContain("Connected accounts");
   await fill("profile-name", "New name");
   await act(async () => button("Save profile").click());
-  expect(send).toHaveBeenCalledWith("https://core.test/api/profile", { displayName: "New name", gitIdentity: null, updateGitIdentity: true }, "PUT");
+  expect(send).toHaveBeenCalledWith("https://core.test/api/profile", { displayName: "New name"}, "PUT");
   expect(saved).toHaveBeenCalledOnce();
 });
-it("offers PAT fallback when OAuth is not configured and clears rejected tokens", async () => {
-  vi.mocked(fetch).mockImplementation(async () => Response.json({ ...profile, providers: { gitHubDevice: false, azureDevice: false } }));
-  await render(); await act(async () => button("Add connection").click());
-  expect(container.textContent).toContain("not configured"); expect(button("Connect account").disabled).toBe(true);
-  await fill("connection-label", "Another account"); await fill("connection-method", "pat"); await fill("connection-token", "never-store-in-ui");
-  send.mockRejectedValueOnce(new Error("Provider access denied"));
-  await act(async () => button("Connect account").click());
-  expect(send).toHaveBeenCalledWith("https://core.test/api/profile/connections/pat", expect.objectContaining({ token: "never-store-in-ui", provider: "github" }));
-  expect(container.querySelector<HTMLInputElement>("#connection-token")!.value).toBe("");
-  expect(container.querySelector('[role="alert"]')!.textContent).toBe("Provider access denied");
-});
-it("respects the device polling interval and cancels its pending attempt", async () => {
-  vi.useFakeTimers(); await render(); await act(async () => button("Add connection").click()); await fill("connection-label", "GitHub");
-  const pending = { id: "attempt", status: "pending", userCode: "ABCD-EFGH", verificationUri: "https://github.com/login/device", expiresAt: "2026-09-28T12:00:00Z", interval: 10 };
-  send.mockImplementation(async () => Response.json(pending));
-  await act(async () => button("Connect account").click());
-  expect(container.textContent).toContain("ABCD-EFGH");
-  await act(async () => vi.advanceTimersByTimeAsync(9000)); expect(send).toHaveBeenCalledTimes(1);
-  await act(async () => vi.advanceTimersByTimeAsync(1000));
-  expect(send).toHaveBeenLastCalledWith("https://core.test/api/profile/connections/device/attempt/poll", {});
-  await act(async () => button("Cancel").click());
-  expect(send).toHaveBeenLastCalledWith("https://core.test/api/profile/connections/device/attempt", undefined, "DELETE");
-  const count = send.mock.calls.length;
-  await act(async () => vi.advanceTimersByTimeAsync(30000)); expect(send).toHaveBeenCalledTimes(count);
-});
-it("disconnects only the confirmed account and keeps a failed rename editable", async () => {
-  await render(); await act(async () => button("Rename").click());
-  send.mockRejectedValueOnce(new Error("Network unavailable"));
-  await act(async () => button("Save").click());
-  expect(container.querySelector('[aria-label="Name for Personal"]')).not.toBeNull();
-  await act(async () => button("Cancel rename").click());
-  await act(async () => button("Disconnect").click());
-  expect(send).toHaveBeenCalledTimes(1);
-  await act(async () => button("Remove connection").click());
-  expect(send).toHaveBeenLastCalledWith("https://core.test/api/profile/connections/personal", undefined, "DELETE");
-});
-
-it("saves explicit Git identity separately from the connected account", async () => {
-  await render(); await fill("git-name", "Git Author"); await fill("git-email", "author@example.test");
+it("reports a failed profile save", async () => {
+  await render(); send.mockRejectedValueOnce(new Error("Save unavailable"));
   await act(async () => button("Save profile").click());
-  expect(send).toHaveBeenCalledWith("https://core.test/api/profile", { displayName: "Alice", updateGitIdentity: true, gitIdentity: { name: "Git Author", email: "author@example.test" } }, "PUT");
+  expect(container.querySelector('[role="alert"]')!.textContent).toBe("Save unavailable");
+  expect(saved).not.toHaveBeenCalled();
 });

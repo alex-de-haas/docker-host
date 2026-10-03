@@ -104,14 +104,24 @@ Use $hosty-app-skill to wrap this app as a Hosty runtime app.
 
 See [Local development and testing](docs/features/local-development/feature.md) for detailed guidance.
 
-Run Core and Shell from source with seeded development users:
+Run Core and Shell from source:
 
 ```bash
 npm install
 npm run dev
 ```
 
-This starts Core on `http://localhost:3001` and Shell on `http://localhost:3000`, uses `.hosty-dev/` as an isolated data root, and seeds two local users: `admin@hosty.local` (admin) and `user@hosty.local` (user).
+This starts Core on `http://localhost:3001` and Shell on `http://localhost:3000`, using `.hosty-dev/` as an isolated data root. Sign-in requires an email and password in every environment; no default users or passwords are created.
+
+After Core is ready, initialize a new development data root from another terminal:
+
+```bash
+hosty --data-root "$PWD/.hosty-dev" auth setup-token
+```
+
+Open the returned Core setup link and choose your administrator email and password. For an existing
+development account without a password, use `auth recovery-token` instead. If `HOSTY_DEV_DATA_ROOT`
+overrides the data root, pass that same absolute path to the CLI.
 
 If those ports are taken, override them:
 

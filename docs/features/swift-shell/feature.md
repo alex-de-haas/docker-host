@@ -1,7 +1,7 @@
 # Swift Shell
 
 Created: 2026-07-29
-Updated: 2026-09-17
+Updated: 2026-10-01
 
 `apps/shell-swift` is a native SwiftUI client for iOS, iPadOS, and macOS that manages a Hosty host's
 installed apps: their state, lifecycle, and updates.
@@ -302,8 +302,8 @@ contradicted.
 
 The Apps destination shows exactly the apps Core resolved a UI for — a headless app never appears, and
 public endpoints alone do not make one. There is no system/ordinary split: Core already filters
-`GET /api/apps` per user and refuses a launch code for a system app to a non-administrator, so a
-second visibility rule here would be a copy of an authorization decision.
+`GET /api/apps` per user and checks assignments when issuing launch codes, including for system
+apps. A second visibility rule here would duplicate that authorization decision.
 
 **A grid of icons, not a list of rows.** This destination answers one question — which app do I want to
 open — and an icon answers it faster than a line of text. Everything a row carried besides the name is

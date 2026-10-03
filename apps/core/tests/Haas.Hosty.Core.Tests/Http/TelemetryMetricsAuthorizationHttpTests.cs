@@ -39,8 +39,6 @@ public sealed class TelemetryMetricsAuthorizationHttpTests
     [Fact]
     public async Task Metrics_AcceptsAnInstalledAppsServiceToken()
     {
-        // Any installed app's token is accepted: the exposition is host-wide, so there is nothing to
-        // scope per app, and the token only has to prove the caller is an app rather than the internet.
         await using var harness = await CoreHttpHarness.StartAsync();
         const string appId = "com.haas.telemetry";
         await harness.Services.GetRequiredService<AppRegistryStore>().UpsertAppAsync(CreateApp(appId));
@@ -53,6 +51,23 @@ public sealed class TelemetryMetricsAuthorizationHttpTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("text/plain", response.Content.Headers.ContentType?.MediaType);
+    }
+
+    [Theory]
+    [InlineData("apps.read")]
+    [InlineData("core.read")]
+    [InlineData("")]
+    public async Task Metrics_RequiresBothReadGrants_AndHonorsRevocation(string remaining)
+    {
+        await using var harness = await CoreHttpHarness.StartAsync();
+        var apps = harness.Services.GetRequiredService<AppRegistryStore>();
+        var app = CreateApp("example.collector");
+        await apps.UpsertAppAsync(app);
+        using var client = harness.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new("Bearer", harness.Services.GetRequiredService<AppServiceTokenService>().CreateToken(app.Id));
+        (await client.GetAsync(MetricsPath)).EnsureSuccessStatusCode();
+        await apps.UpsertAppAsync(app with { GrantedCorePermissions = remaining.Length == 0 ? [] : [remaining] });
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync(MetricsPath)).StatusCode);
     }
 
     [Fact]
@@ -106,5 +121,6 @@ public sealed class TelemetryMetricsAuthorizationHttpTests
             Dependencies: [],
             Endpoints: [],
             InstalledAt: DateTimeOffset.UtcNow,
-            UpdatedAt: DateTimeOffset.UtcNow);
+            UpdatedAt: DateTimeOffset.UtcNow,
+            GrantedCorePermissions: [CoreAppPermissions.ReadApps, CoreAppPermissions.ReadCore]);
 }

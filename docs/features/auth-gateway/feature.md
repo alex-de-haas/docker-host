@@ -1,28 +1,39 @@
 # Auth And Gateway Model
 
 Created: 2026-05-13
-Updated: 2026-07-31
+Updated: 2026-10-01
 
 ## Description
 
 Hosty Core owns Host user authentication, app access assignment, app identity issuance, and scoped app directory access. Runtime apps own their own app-origin sessions and app-specific permissions.
 
+Core's local login verifies email/password in every environment, including source/IDE Development
+launches. There is no environment-based user impersonation endpoint. New accounts use setup or
+invitations; passwordless legacy development accounts use explicit recovery. See
+[Local Password Login](../local-password-login/feature.md).
+
 ## Current Auth Flow
 
 ```mermaid
 sequenceDiagram
-  participant User
-  participant Shell
+  participant Browser
   participant Core
-  participant App
-  User->>Shell: open installed app
-  Shell->>Core: request app open link
-  Core-->>Shell: app URL with code
-  Shell->>App: navigate to app origin
-  App->>Core: exchange code
-  Core-->>App: app identity token
-  App->>Core: revalidate token when needed
+  participant App as App (including Shell)
+  Browser->>Core: navigate to app open / login
+  Core-->>Browser: redirect to the app with a one-time code
+  Browser->>App: callback
+  App->>Core: exchange and validate app-bound code
+  Core-->>App: app identity grant
+  App-->>Browser: app-owned session
+  App->>Core: service token + app user grant for permitted operations
 ```
+
+Shell's callback validates browser-bound state before exchange. Core-owned credential-issuance and consent
+pages use Core's primary cookie directly, and Core serves their executable assets. They reject
+framing and non-navigation reads and provide no credentialed CORS exception to Shell.
+Embedded JavaScript apps establish their own identity through a Core popup and retain an app-only
+grant in document memory if cookies are unavailable. Shell does not mint their credentials.
+Harness MCP consent and the remaining acceptance matrix are tracked in [local browser origins](../local-browser-origins/plan.md).
 
 ## Session Credentials
 
@@ -47,6 +58,25 @@ Native clients use the bearer form for a second reason beyond CSRF: cookies are 
 - Runtime apps exchange Core-issued authorization codes for app identity tokens.
 - Runtime apps keep app-owned permissions in app data.
 - Core provides a scoped app directory for assigned Host users.
+
+## User Access And App Authority
+
+Core uses two independent checks for app management calls. The service token identifies the app;
+its opaque app grant identifies the user. Core revalidates the user grant, checks the calling app's
+current persisted permissions and retains the endpoint's user-role/assignment check. App grants
+never turn a `host.user` into an administrator. User authority is currently role-based; per-user
+management permission sets are not part of this contract.
+
+Enabled administrators can access every installed app. Other users can access only explicitly
+assigned apps, including system apps and Shell. Assignment selection includes both kinds.
+An app's own API may impose additional operation-level roles.
+
+Standalone sign-in does not require Shell. The SDK navigates to Core's app-open endpoint with the
+app ID and a redirect URI. After password login, Core resumes that request, checks access and returns
+a one-time code only to a registered origin of that particular app. Registered local browser origins
+and explicit public origins are supported independently of ingress. Removing the assignment denies
+subsequent issuance and revalidation. Harness MCP consent and remaining browser acceptance are tracked in
+[local browser origins](../local-browser-origins/plan.md).
 
 ## App Identity
 

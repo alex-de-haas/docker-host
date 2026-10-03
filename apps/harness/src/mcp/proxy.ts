@@ -296,11 +296,11 @@ export class McpProxy {
  */
 function sendChainExpired(response: ServerResponse, body: Buffer | undefined): void {
   const message =
-    "This agent session's delegation has expired. Ask the operator to send a message in the session, " +
-    "which renews it, then retry.";
+    "This session has no current tool authority. Ask the operator to approve or renew tool access in Core, then retry. " +
+    "Sending a message cannot extend this authority.";
   const id = readRequestId(body);
   if (id === undefined) {
-    sendJson(response, 503, { code: "delegation_expired", message });
+    sendJson(response, 401, { code: "reauth_required", message });
     return;
   }
 

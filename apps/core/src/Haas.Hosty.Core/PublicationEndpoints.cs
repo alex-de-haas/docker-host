@@ -28,7 +28,7 @@ internal static class PublicationEndpoints
     private static async Task<IResult> Handle<T>(Func<Task<T>> action)
     {
         try { return CoreJson.Json(await action()); }
-        catch (AppIdentityException e) { return CoreJson.Json(new ErrorResponse(e.Code, e.Message), e.Code == "token_invalid" ? 401 : 403); }
+        catch (AppIdentityException e) { return CoreJson.Json(new ErrorResponse(e.Code, e.Message), e.Code is "token_invalid" or "reauth_required" ? 401 : 403); }
         catch (PublicationException e) { return CoreJson.Json(new ErrorResponse(e.Code, e.Message), e.Code == "publication_forbidden" ? 403 : 409); }
         catch (UserConnectionException e) { return CoreJson.Json(new ErrorResponse(e.Code, e.Message), e.Status); }
         catch (AppLifecycleException e) { return CoreJson.Json(new ErrorResponse(e.Code, e.Message), 409); }

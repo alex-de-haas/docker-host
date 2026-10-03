@@ -1,29 +1,14 @@
 import type { IncomingMessage } from "node:http";
 import { validateDelegatedToken, type DelegatedTokenClaims } from "@hosty-sdk/app/delegated";
-import { readIdentityCookie, resolveAppSession } from "./app-session.js";
+import { readAppCredential, resolveAppSession } from "./app-session.js";
 
 // Operator sessions are admin-only by decision (docs/features/ai-gateway/plan.md, Execution
 // Profiles): the profile's enforcement boundary is who can hold a session at all, so every API
-// route requires a delegated token whose actor carries the host.admin role. Validation is fully
-// local (Core-injected public key); a missing key or a non-admin actor both read as "no access".
+// route requires an actor with the host.admin role. App grants are revalidated against Core;
+// legacy delegated tokens are checked locally using the Core-injected public key.
 const ADMIN_ROLE = "host.admin";
 
-/**
- * Who may call this gateway's API.
- *
- * Two shapes, because there are two clients and they are not interchangeable:
- *
- * - the **Shell assistant panel** presents a delegated token. It has always done so, and Shell mints
- *   these for it to run the chat — that is the panel's whole authentication story.
- * - the **settings page** presents this app's own Hosty session cookie, like every other embedded
- *   Hosty page. It used to use a delegated token too, which made this app the one that authenticated
- *   differently from all the others; the cost showed up as soon as the page was embedded somewhere
- *   the token handshake was not answered.
- *
- * Both must resolve to a host administrator. That is not re-decided here: Core refuses to mint
- * either credential for a non-admin on a system app, so this check is the app agreeing with a rule
- * it does not own.
- */
+/** The app owns its session; legacy signed clients remain supported. Every route requires an admin. */
 export async function resolveAdminActor(request: IncomingMessage): Promise<AdminActor | null> {
   const delegated = resolveAdmin(request);
   if (delegated) {
@@ -33,7 +18,7 @@ export async function resolveAdminActor(request: IncomingMessage): Promise<Admin
   // Only the "active" arm carries an identity, so a failed resolution cannot be mistaken for an
   // anonymous-but-present one. Narrowed in its own statement because the union discriminates on
   // `status` and TypeScript will not carry that through a compound condition here.
-  const session = await resolveAppSession(readIdentityCookie(request));
+  const session = await resolveAppSession(readAppCredential(request));
   if (session.status !== "active") {
     return null;
   }

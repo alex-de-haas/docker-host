@@ -1,3 +1,4 @@
+import { MissingPermissionsNotice } from "@hosty-sdk/app/react";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { launchModeBootstrapScript } from "@hosty-sdk/app";
@@ -26,10 +27,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <script dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
       </head>
       <body>
-        <AppIdentityBridge />
         <HostThemeBridge />
         <HostLaunchBridge />
-        <AppShell>{children}</AppShell>
+        <AppIdentityBridge><MissingPermissionsNotice /><AppShell>{children}</AppShell></AppIdentityBridge>
       </body>
     </html>
   );

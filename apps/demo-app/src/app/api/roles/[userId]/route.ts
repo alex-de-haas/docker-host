@@ -16,6 +16,9 @@ export async function PUT(
 ) {
   try {
     const snapshot = await getDemoRoleManagementSnapshot(request.headers);
+    if (snapshot.current.role === "anonymous") {
+      return roleError("app_identity_required", "Sign in through Hosty to manage roles.", 401);
+    }
     if (!snapshot.canManage) {
       return roleError("app_role_forbidden", "Current app role cannot manage roles.", 403);
     }
@@ -50,6 +53,9 @@ export async function DELETE(
 ) {
   try {
     const snapshot = await getDemoRoleManagementSnapshot(request.headers);
+    if (snapshot.current.role === "anonymous") {
+      return roleError("app_identity_required", "Sign in through Hosty to manage roles.", 401);
+    }
     if (!snapshot.canManage) {
       return roleError("app_role_forbidden", "Current app role cannot manage roles.", 403);
     }

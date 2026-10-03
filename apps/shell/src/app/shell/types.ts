@@ -86,6 +86,7 @@ export type CoreEndpoint = {
   service?: string | null;
   port?: string | null;
   publicOrigin?: string | null;
+  browserOrigin?: string | null;
   // Install-time port reservations: "assigned" (a durable port target exists but the service is stopped),
   // "running" (the service is up), or "unavailable" (the reserved port failed preflight/binding). Absent on
   // older Core builds, so treat undefined as "no availability information".
@@ -950,6 +951,6 @@ export type NotificationMarkReadResponse = {
 export type AppPermissionObservation = {
   status: "known" | "unknown" | "stale";
   required: string[]; optional: string[]; acceptedRequired: string[]; acceptedOptional: string[];
-  granted: string[]; missingRequired: string[]; reviewRequired: boolean; unconfirmedRoles: string[];
+  granted: string[]; missingRequired: string[]; unsupportedRequired?: string[]; unsupportedOptional?: string[]; reviewRequired: boolean; unconfirmedRoles: string[];
   error: string | null; checkedAt: string | null; descriptions: Record<string, string>;
 };

@@ -1,4 +1,5 @@
-import { loginContinuation } from "./shell-routes";
+import { fetchCore } from "./core-transport.js";
+import { APP_SESSION_ENDED } from "@hosty-sdk/app/browser-auth";
 import type { CoreAppFeedsResponse, CoreError } from "./types";
 
 export class AuthRequiredRedirectError extends Error {
@@ -17,8 +18,8 @@ export function isAuthRequiredResponse(response: Response) {
 }
 
 export function redirectToCoreLogin(coreOrigin: string): never {
-  const continuation = loginContinuation(window.location.pathname, window.location.search);
-  window.location.assign(`${coreOrigin}/login${continuation}`);
+  void coreOrigin;
+  window.dispatchEvent(new Event(APP_SESSION_ENDED));
   throw new AuthRequiredRedirectError();
 }
 
@@ -64,7 +65,7 @@ export async function readCoreErrorDetail(response: Response) {
 }
 
 export async function getAppFeeds(coreOrigin: string, appId: string, signal?: AbortSignal): Promise<CoreAppFeedsResponse> {
-  const response = await fetch(`${coreOrigin}/api/apps/${encodeURIComponent(appId)}/feeds`, {
+  const response = await fetchCore(`${coreOrigin}/api/apps/${encodeURIComponent(appId)}/feeds`, {
     credentials: "include",
     signal,
   });

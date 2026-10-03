@@ -125,4 +125,6 @@ internal sealed record AppSessionGrantRecord(
     DateTimeOffset LastSeenAt,
     DateTimeOffset AbsoluteExpiresAt,
     DateTimeOffset? RevokedAt,
-    string? AuthorizingSessionId);
+    string? AuthorizingSessionId,
+    string? AuthRevision = null,
+    DateTimeOffset? ActiveUntil = null);

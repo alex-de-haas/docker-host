@@ -204,6 +204,9 @@ internal sealed class AuthBootstrapService(
                 Role = "host.admin",
                 Disabled = false,
                 UpdatedAt = now,
+                // Change atomically with the password: old codes/grants remain invalid even if a
+                // concurrent exchange writes its grant after this recovery has completed.
+                AuthRevision = Guid.NewGuid().ToString("N"),
             };
             var restoredCredentials = passwords.UpsertCredential(userState.PasswordCredentials, restored.Id, request.Password, now);
             return (userState with

@@ -1,238 +1,74 @@
-# Delegated Token Exchange
+# Assistant MCP Delegation
 
 Created: 2026-08-15
-Updated: 2026-09-02
+Updated: 2026-10-01
 
-A system app trades the delegated token it holds for one scoped to another app, so an agent session
-can call app MCP endpoints on behalf of the user currently talking to it — without Core entering the
-data path, and without any app holding a credential stronger than that user.
+Core grants individual installed assistants access to selected MCP targets. The relationship is
+stored in the Core agent policy and requires administrative configuration. A host-wide offer, the
+`system` flag, an assistant declaration or an ordinary app login alone grants no cross-app access.
+The [agent directory](../agent-mcp-directory/feature.md) exposes and edits these relationships.
 
-This is what makes the [ai-gateway](../ai-gateway/feature.md) MCP provider toggle do something, and
-it is the mechanism rollout step 9 of the [AI Agent Bridge](../ai-agent-bridge/plan.md) — the user
-profile — depends on.
+## Issuance And Identity
 
-## The Exchange
+`POST /api/internal/apps/{appId}/mcp/token` authenticates the assistant with its service bearer and
+the acting user with `X-Hosty-User-Token`, an app grant issued to that same assistant. The body names
+`targetAppId`. Core checks the current app grant, confirmed assistant role/interface, explicit target
+relationship, both installation identities, global offer and user access to the target. Core MCP
+also requires the current user to be an administrator.
 
-`POST /api/apps/{appId}/delegated-token` takes two credentials. A **Core session** is the browser
-path, unchanged. A **delegated token** is the exchange: Core reads its claims, applies the bounds
-below, re-runs the same access policy the session path runs, and mints a token for the same `sub`
-with `aud` = the requested app. The result is therefore never stronger than what that user could
-obtain through Shell themselves.
+The five-minute `hosty_mcp.1` credential is signed and distinct from app sessions and legacy delegated
+tokens. Its claims bind the assistant, target, user, installations, relationship revision and a
+one-way reference to the parent app grant. The parent secret is never exported. A grant predating
+an assistant reinstall cannot mint credentials for that new installation.
 
-The caller is **the presented token's audience** — not something it asserts. That is why the claims
-are read without pinning an audience, unlike ordinary validation.
+## Validation And Revocation
 
-## Bounds
+MCP handlers use `introspectMcpToken` in the JavaScript SDK or `IntrospectMcpAsync` in the .NET SDK.
+These call the existing target-service-authenticated introspection endpoint with `purpose: mcp`.
+The response includes the current user/role, `callerAppId`, and `mcp:read`/`mcp:invoke` scopes. The
+receiving application applies its own user permissions to every tool. Invocation scope permits MCP
+operations within that user policy, not arbitrary HTTP API access.
 
-- **Only a system app may exchange.** A domain app calling another is
-  [cross-app-dependencies](../cross-app-dependencies/plan.md), a different trust story nobody has
-  designed. Opening this later is a decision; opening it now would have been an accident.
-- **A branched token may be refreshed, never branched again.** What chaining endangers is reach
-  *spreading across apps* — each hop launders it, and the premise that justifies the mechanism ("the
-  caller holds proof that this user is talking to it right now") decays with every step.
-- **The chain expires an hour after the human interaction it descends from**, carried in the claims
-  as an origin instant rather than measured from the last hop, so the cap is absolute and not
-  sliding. Extending in *time* is a separate axis from spreading across apps, which is why one rule
-  does not cover both.
-- **Nothing about the target's interfaces is checked.** Gating on "declares `mcp`" would be theatre:
-  the access policy is the real gate, and the check would break non-MCP uses for no security gain.
-- **Core is a target.** `hosty:core` — the audience Core mints tokens for its own MCP surface under —
-  may be named as the target, so the assistant's session carries Core's tools beside the apps'
-  through one mechanism. There is no app record to resolve access against, so the rule is that
-  surface's own: administrators only, re-read from the directory rather than taken from the claims.
-  The token it mints is accepted by `/api/mcp` as read-only whatever the actor's role — a delegated
-  token never carries scopes, so it cannot prove a standing grant (see
-  [core-mcp](../core-mcp/feature.md)). A Core-audience token is a dead end for the exchange, like
-  one branched to a domain app: `hosty:core` is not a system app, so it may not exchange even to
-  refresh itself.
+Ordinary scoped introspection omits the MCP purpose and rejects these credentials. App-session and
+legacy delegated-token validators also reject the separate token format. Applications must use
+the MCP-specific helper only on their MCP surface and must not cache introspection. Applications
+using only the old local delegated validator need an SDK/handler update before accepting this format.
 
-Two claims carry this: `chainOrigin` (absent on a session-minted token, whose own `iat` is the
-origin) and `branched` (absent rather than false, so an unexchanged payload is byte-identical to what
-shipped before this feature). The SDK validator needed no change — it reads the fields it needs and
-ignores the rest.
+Introspection rechecks the relationship, installations, global offer, parent app grant and current
+user access on every call. Revoking the relationship, explicit logout revoking the parent grant,
+removing a user assignment or disabling the user refuses subsequent calls. Regranting a relationship
+does not revive a token carrying its old revision. Core outages refuse validation; already-dispatched
+operations are not rolled back.
 
-**Every attempt is audited, refusals included.** This is the one place where an app acts as a user
-toward another app; a refusal is the more interesting half of that record.
+Core MCP additionally checks the assistant's existing Core permissions for each tool: app reads/logs,
+Core state/logs, application lifecycle/install and Core lifecycle. A relationship with Core alone
+does not grant management authority. Harness declares additional Core MCP permissions as optional;
+the administrator approves only the operations needed.
 
-### One consequence worth knowing
+## Harness Transport
 
-A branched token is only refreshable when its audience is *itself* a system app — the system-only
-rule and the refresh rule meet nowhere else. A token branched to a domain app cannot be presented at
-all. That is not a gap: a caller keeps app credentials fresh by **re-branching from its own token**,
-never by renewing the branched one, which is exactly what the gateway does.
+Harness keeps the user's app credential in memory and requests target-specific MCP tokens from
+Core with its service credential. The local session proxy forwards only the target credential.
+Native agent processes receive a session-local proxy key, never the Core cookie or app grant.
+Source/workspace operations retain their own app-credential path. Session transcripts persist no
+credentials. Harness's Ask / Run unprompted / Disabled rules are an additional execution policy.
 
-## How The Gateway Uses It
+## Legacy Compatibility
 
-- The token the operator's client presents seeds the session's chain. Every message replaces it, so
-  an active conversation always holds the freshest one.
-- At session start the gateway discovers providers from Core, keeps the ones the operator enabled,
-  and branches one token per app. Each becomes an MCP server on the harness, named after the app —
-  a client namespaces tools by server, so the name is what the model reads.
-- A provider that is disabled, stopped, has no resolved URL, or whose exchange is refused is simply
-  absent. Offering a tool that cannot work is worse than offering nothing: the failure would surface
-  mid-task as a confusing error rather than as a capability the agent never had. That start-of-session
-  exchange is an availability probe as much as a credential: the tokens it produces seed the proxy's
-  cache, so the first real call does not repeat the round trip.
-- The gateway self-refreshes its own credential on a timer, which is what keeps its right to branch.
-  It does **not** rebuild the harness's server list on that tick: since the proxy below, that list
-  holds no expiring credential, and pushing an identical config would tear down and rebuild every
-  live MCP connection for nothing.
-- A provider toggle is pushed into live sessions the moment it is saved, not at the next refresh tick,
-  because the settings page tells the operator it applied. A provider switched off has to stop being
-  callable then — the rebuilt list drops it and the proxy discards the token cached for it, so neither
-  half waits for a TTL.
-- Past the one-hour chain cap, self-refresh is refused: the credential is dropped, **the harness's MCP
-  servers are cleared**, the proxy registration is removed, and the refresh timer stops. Clearing
-  matters — leaving the servers in place would keep dead tools on offer. The session keeps its host
-  tools and regains app MCP the moment the operator says anything.
-
-## The Per-Session Proxy
-
-The harness never holds a delegated token. Each enabled provider is an MCP server pointing at a
-loopback route on the gateway itself — `/internal/mcp/{sessionId}/{appId}` — authenticated with a
-random per-session key. The gateway mints the app token as the request goes out and forwards the
-call.
-
-This exists because **MCP server headers are static for the life of a connection**. A five-minute
-token baked into that config dies mid-session, and — the part that took a live run to learn — it
-cannot be repaired by replacing the configuration: a call paused on an approval is bound to the
-connection it was prepared on, so new configuration reaches the *next* call and never that one. An
-approval gate exists so a human can think, and thinking for six minutes made the call fail. Re-minting
-on release was implemented first and verified live not to work; the proxy replaces it, and that
-re-mint is gone rather than kept as decoration.
-
-Properties worth naming:
-
-- **The key outlives the session; the token does not.** The TTL becomes a property of the hop the
-  gateway makes, invisible to the harness. A token is reused while it has more than a minute left and
-  re-minted otherwise, so Core stays out of the steady-state path without the credential ever going
-  stale.
-- **It is a transparent forwarder, not a JSON-RPC implementation.** An app may serve plain POST
-  JSON-RPC (demo-app does) or full streamable HTTP with SSE and `Mcp-Session-Id`; the proxy has no
-  business knowing which, so it copies the protocol headers and pipes the body rather than buffering.
-- **The caller's own credential never travels onward.** The session key authorizes the hop in; what
-  reaches the app is only the Core-signed token minted for it.
-- **The 256-bit per-session key is the gate**, and the loopback check is a narrowing, not a wall.
-  Said plainly because the opposite is the easy assumption: this app's endpoint is `public: true`, and
-  Cloudflare ingress routes a public hostname straight at its port from `cloudflared` running on the
-  same host — so a tunneled request presents as loopback and passes that check. What loopback does buy
-  is the direct-network path to the published port. What refuses everything else is the key, which is
-  random per session, compared in constant time, and gone when the session ends.
-- **A lapsed chain answers as a JSON-RPC error**, not a transport failure — a sentence telling the
-  model to ask the operator to send a message, which is what actually renews it. An unreachable app is
-  a 502, keeping "this tool failed" distinct from "the assistant broke".
-- The registration dies with the session: cancelled, failed, or shut down, the route stops minting.
-
-## Which App Tools Run Without Asking
-
-The harness auto-allows a fixed set of its own read-only tools (`Read`, `Grep`, `WebFetch`, …). App
-tools are **not** in it, and the reason is the distinction the whole feature turns on: those built-ins
-are read-only because the gateway knows what they are, while an app tool is read-only because the app
-*said so* in its `readOnlyHint`.
-
-So the operator decides, per app. Each provider carries a second control beside its enable toggle,
-off by default: *run this app's read-only tools unprompted*. Turning it on is the operator vouching
-for that app's declarations about itself; the annotations then select which of its tools the decision
-covers. An app with the grant still gets a card for any tool it did not declare.
-
-What this guards is not a hostile app — an installed app already runs code on the host and needs no
-trickery — but an honest mislabelled annotation on a mutating tool, which would otherwise run with no
-card at all. A single global switch would have been the rejected "just trust the hint" wearing a
-checkbox.
-
-Core is the one provider whose grant is on by default, and the distinction above is exactly why:
-Core's annotations are the platform's own word about its own tools, asserted by its test suite, which
-is the standing the harness's built-in read-only set already has. The operator can still set Core to
-ask, and the grant is computed the same way — from Core's `tools/list` — so only the tools Core
-declares read-only are ever covered.
-
-Mechanically: for a trusted, enabled provider the gateway runs `initialize` then `tools/list` against
-the app, following `nextCursor` to the end, and keeps the names declaring `readOnlyHint: true`. **An
-unreadable list — or an unreadable later page — grants nothing**: "we do not know" and "it offers
-nothing read-only" are different answers, only the second may lead to skipping a card, and a partial
-grant is indistinguishable from a complete one where it is consulted.
-
-The grant is rebuilt from scratch, never merged, on every provider-policy change and on the session's
-existing refresh tick. Both matter for different reasons. The first makes withdrawing trust apply to a
-running session at once rather than at the next one. The second bounds a subtler staleness: the grant
-is keyed by tool *name*, and a trusted app updated mid-session can keep a name while making it
-mutating — rebuilding periodically caps that window at one interval instead of at the length of the
-session. It costs one listing per *trusted* app, and the tick skips the work entirely when nobody has
-vouched for anything, which is the common case. The grant is also dropped when the delegation chain
-lapses, and cleared on every path that leaves the session with no providers at all.
-
-Codex reports `appMcp: true` and `liveReconfigure: false`, and the difference is real: it takes its
-MCP servers from configuration read at **startup** and offers no way to change them mid-thread, so a
-provider toggled during a session takes effect in the next one.
-
-The configuration is passed as `-c` overrides at spawn, never written to a file, because these
-servers belong to one session of one gateway rather than to the machine — the operator's own
-`~/.codex/config.toml` is untouched. The shape was not inferred from documentation: `codex mcp add`
-was allowed to write its own config on 0.147.0, producing `[mcp_servers.<name>]` with `url` and
-`bearer_token_env_var`. Guessing at this adapter's protocol is what has caught this code twice.
-
-The bearer travels in the **environment**, which is the only place Codex reads one from — there is no
-arbitrary-header option as the Claude side has, and it keeps a per-session proxy key out of config
-files and out of `codex mcp list`. Each variable's name carries a digest when sanitizing changes the
-server name, because `a-b` and `a_b` are both legal names that would otherwise share one variable:
-the token is precisely what scopes a call to one app, so one app's silently becoming another's is
-the worst failure available here.
-
-A server that fails to start is reported to the operator as a **notice, not an error**. An error
-means the harness is dead — the manager drops the run, unregisters the proxy routes and fails the
-session — and one optional provider must not do that to a session that still has its other tools.
+Direct Core-session issuance of legacy app tokens and their same-audience renewal remain available
+for existing clients. Cross-app branching through `/api/apps/{appId}/delegated-token` is refused,
+including for system apps: callers use the explicitly authorized MCP-only endpoint instead.
+The CLI and external scoped/OAuth credentials retain their own authorization paths; assistant grants
+do not enlarge those credentials.
 
 ## Testing Expectations
 
-- Core HTTP suite, every bound tested **as a pair** — the refusal beside the acceptance it must be
-  distinguishable from. A route that refuses everything satisfies each negative alone and is
-  completely broken, which is a failure mode this repository has hit more than once. The pairs:
-  system caller succeeds / domain caller refused; branched token refreshes / cannot reach a third
-  app; self-refresh keeps the right to branch; a chain inside the hour works / past it is refused;
-  a permitted user succeeds / one who may not reach the target is refused; a live token works /
-  an expired one does not; a system caller exchanges for `hosty:core` as an administrator and the
-  token reaches `/api/mcp` / a member is refused and the Core-audience token cannot exchange at all.
-- The session path is covered too, including that a token it mints is still branchable — otherwise
-  Shell's tokens would be dead ends.
-- Auto-allow, as pairs: an enabled but unvouched-for app still raises a card, while the same call on
-  the same tool runs unprompted once the operator vouches — the only difference being their decision;
-  a tool the app declared nothing about stays out of the grant even for a trusted app; revoking trust
-  empties the grant on the running session; and an app whose tool list cannot be read grants nothing.
-  Core's own pair: the same call aimed at Core's server runs unprompted with nothing written to
-  settings, covering only what Core declared read-only, and asks once the operator sets Core to ask.
-  The read-only discovery is covered on its own too: only a literal `true` counts, the MCP lifecycle
-  runs before the listing with the session id carried, an SSE-framed answer is understood, and an
-  unreachable or wrong-shaped answer returns null rather than an empty set.
-- Gateway (vitest): one server per enabled provider each with **its own** token (the audience claim
-  is the point); disabled, stopped, URL-less and refused providers all absent; self-refresh asks for
-  its own audience; an unreachable Core degrades to no providers rather than throwing; the harness
-  config points at the proxy and contains no delegated token.
-- The proxy is driven over **real sockets against a real upstream**, because what matters is
-  transport-level: which credential the app actually receives and when it was minted. A mocked
-  `fetch` would assert the shape of a call the harness never makes. Covered: a stale cached token is
-  re-minted at request time while a live one is reused; the caller's key never reaches the app; an
-  unknown session, unknown app, and wrong key are refused identically **beside a permitted call that
-  succeeds** in the same test; an unregistered session stops serving; a switched-off provider's
-  cached token is discarded; a lapsed chain is a JSON-RPC error; an unreachable app is a 502; SSE is
-  streamed rather than buffered; the key survives a re-register, so a policy change does not drop
-  connections for providers nobody touched.
-- Verified live on 2026-08-15 against Core 0.80.0 and gateway 0.8.0 on a running host: the full chain
-  (session token → gateway token → branched app token → a call to demo-app's MCP returning the real
-  domain role), the bounds as pairs (a branched domain-app token refused onward, self-refresh
-  succeeding, branching still allowed after self-refresh), and the audit trail carrying both outcomes.
-  A live session reached demo-app through `mcp__com-haas-demo-app__get_my_app_role`, which the model
-  found via tool search — MCP tools are deferred, not loaded eagerly.
-- Two things that live run exposed and unit tests could not: an app-MCP tool raises an approval card,
-  because MCP tools are not in the harness's auto-allow list; and the expiry-under-approval defect the
-  proxy now answers.
-- **The proxy was verified live on 2026-08-17**, on the case it exists for and nothing less. Against
-  gateway 0.9.0 on a running host: the assistant called demo-app's `get_my_app_role`, the approval
-  card was raised at 5s, held for 390 seconds — **96 seconds past the five-minute TTL the call would
-  once have been bound to** — then released. It came back with `host-admin-bootstrap 7`, demo-app's
-  own answer, and the session went idle on success.
-  The value asked for was deliberately `source` plus a permission count rather than the role:
-  `admin` is guessable from context and would have proved only that the model answered, not that the
-  call reached the app.
-  The driver reconnected its own event stream mid-hold, because the operator token authenticating it
-  also lives five minutes — which is what a real client does, and skipping it would have tested a
-  gentler scenario than the real one.
+- Exercise the real Core HTTP pipeline for successful issue/use and missing relationships, wrong
+  service/user audience, target substitution, signature tampering and ordinary API rejection.
+- Verify current user role/assignment, both reinstallations, parent logout, global disable and
+  revoke/regrant; existing global offers must not become assistant grants.
+- Verify Core MCP tool permissions independently of the target relationship and legacy branch refusal.
+- Verify both SDKs' explicit MCP-purpose request and assistant identity, and Harness service/user
+  credential separation, target selection and refusal without fallback.
+- Verify Core-managed embedded/standalone Harness discovery and calls, including revocation while a
+  session is open; fake chat output alone is not proof of a completed MCP operation.

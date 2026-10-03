@@ -146,7 +146,7 @@ export class HandoffStore {
       } finally { stream.resume(); await rm(temporary, { force: true }); }
     });
   }
-  private async applyFinalized(record: Record, credential?: string, dispatch = false): Promise<void> {
+  private async applyFinalized(record: Record, credential?: string, dispatch = false, workspaceCredential?: string): Promise<void> {
     const session = await this.manager.getSession(record.conversationId);
     if (!session) {
       delete record.prompt; delete record.appIds;
@@ -163,7 +163,7 @@ export class HandoffStore {
       const current = await this.manager.getSession(record.conversationId);
       if (current?.handoffDispatch?.state === "queued") {
         try { await this.manager.postMessage(record.conversationId, current.handoffDraft?.text ?? "", credential,
-          current.handoffDraft?.attachments.map(a => a.name) ?? [], { expectedRevision: current.appContextRevision, dispatchId: record.result.dispatchId }); }
+          current.handoffDraft?.attachments.map(a => a.name) ?? [], { expectedRevision: current.appContextRevision, dispatchId: record.result.dispatchId, workspaceCredential }); }
         catch (error) {
           await this.manager.recordHandoffFailure(record.conversationId,
             error instanceof AppContextError || error instanceof ConnectionError ? error.message : "Execution could not be confirmed. Inspect this conversation before retrying.");
@@ -175,7 +175,7 @@ export class HandoffStore {
     await rm(path.join(this.dir(record.handoffId), "files"), { recursive: true, force: true });
     await this.save(record);
   }
-  async finalize(actor: string, id: string, ids: unknown, credential?: string, consumer?: string): Promise<AssistantHandoff> {
+  async finalize(actor: string, id: string, ids: unknown, credential?: string, consumer?: string, workspaceCredential?: string): Promise<AssistantHandoff> {
     return this.serial(async () => {
       const record = await this.owned(id, actor, consumer);
       if (record.state !== "finalized") this.pending(record);
@@ -189,7 +189,7 @@ export class HandoffStore {
           open: { endpoint: "http", path: `/assistant?session=${encodeURIComponent(record.conversationId)}` }, ...(immediate ? { dispatchId: randomUUID() } : {}) };
         record.state = "finalized"; await this.save(record);
       }
-      await this.applyFinalized(record, credential, true); return this.view(record);
+      await this.applyFinalized(record, credential, true, workspaceCredential); return this.view(record);
     });
   }
   async status(actor: string, id: string, consumer?: string): Promise<AssistantHandoff> {

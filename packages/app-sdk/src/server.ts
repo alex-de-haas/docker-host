@@ -42,6 +42,8 @@ export interface HostIdentity {
   /** `mapHostRole(hostRole)` when the config provides the hook, else the raw host role. */
   appRole: string | null;
   expiresAt: string | null;
+  activeUntil?: string | null;
+  activityRequired?: boolean;
 }
 
 /** Structured detail for a failed resolution: the Core HTTP status (null when Core was
@@ -83,16 +85,10 @@ export function getRecoveryParams(config: HostyAppConfig): SessionRecoveryParams
 export type HeaderReader = { get(name: string): string | null };
 
 /**
- * Reads the app identity token from a request: the app-origin cookie first (authoritative
- * when present), then the Authorization bearer fallback the browser sends when the
- * cross-site cookie is blocked, then the legacy inbound identity header.
+ * Reads an explicitly presented app grant first, then the app cookie and legacy identity header.
+ * A recovered iframe grant must not be shadowed by an older cookie.
  */
 export function readAppIdentityToken(headers: HeaderReader, config: HostyAppConfig): string | null {
-  const cookieToken = readCookie(headers.get("cookie"), config.identityCookieName);
-  if (cookieToken) {
-    return cookieToken;
-  }
-
   const authorization = headers.get("authorization")?.trim();
   if (authorization?.toLowerCase().startsWith("bearer ")) {
     const token = authorization.slice("bearer ".length).trim();
@@ -101,7 +97,7 @@ export function readAppIdentityToken(headers: HeaderReader, config: HostyAppConf
     }
   }
 
-  return headers.get(HOSTY_APP_IDENTITY_HEADER)?.trim() || null;
+  return readCookie(headers.get("cookie"), config.identityCookieName) || headers.get(HOSTY_APP_IDENTITY_HEADER)?.trim() || null;
 }
 
 /** True when the effective request protocol is https (honouring the forwarded proto). */
@@ -283,6 +279,8 @@ async function revalidateWithCore(
     hostRole,
     appRole: config.mapHostRole ? config.mapHostRole(hostRole) : hostRole,
     expiresAt,
+    activeUntil: readString(payload.activeUntil),
+    activityRequired: payload.activityRequired === true,
   };
 
   const expiresAtMs = expiresAt ? Date.parse(expiresAt) : Number.NaN;
@@ -335,7 +333,7 @@ export async function classifyAppSessionFromCookie(
 const MAX_COOKIE_AGE_SECONDS = 400 * 24 * 60 * 60;
 
 export type AppCodeExchange =
-  | { ok: true; accessToken: string; expiresInSeconds: number | null }
+  | { ok: true; accessToken: string; expiresInSeconds: number | null; activeUntil?: string | null }
   | { ok: false; status: number; code: string; message: string };
 
 /** Exchanges a one-time Shell/Core launch code for an identity token at Core. The code is
@@ -378,7 +376,7 @@ export async function exchangeAppCode(code: string): Promise<AppCodeExchange> {
   }
 
   const payload = (await response.json().catch(() => null)) as
-    | { accessToken?: unknown; expiresInSeconds?: unknown }
+    | { accessToken?: unknown; expiresInSeconds?: unknown; activeUntil?: unknown }
     | null;
   const accessToken = readString(payload?.accessToken);
   if (!accessToken) {
@@ -392,7 +390,7 @@ export async function exchangeAppCode(code: string): Promise<AppCodeExchange> {
     typeof payload?.expiresInSeconds === "number" && payload.expiresInSeconds > 0
       ? payload.expiresInSeconds
       : null;
-  return { ok: true, accessToken, expiresInSeconds };
+  return { ok: true, accessToken, expiresInSeconds, activeUntil: readString(payload?.activeUntil) };
 }
 
 /**
@@ -403,6 +401,10 @@ export async function exchangeAppCode(code: string): Promise<AppCodeExchange> {
  */
 export function createAppCodeRouteHandler(config: HostyAppConfig) {
   return async function POST(request: Request): Promise<Response> {
+    const origin = request.headers.get("origin");
+    let sameOrigin = request.headers.get("sec-fetch-site") === "same-origin";
+    try { sameOrigin ||= !!origin && new URL(origin).host === (request.headers.get("host") ?? new URL(request.url).host); } catch { /* invalid origin */ }
+    if (!sameOrigin) return jsonResponse({ code: "cross_site_request_blocked", message: "Sign-in must originate from this app." }, 403);
     let body: unknown = null;
     try {
       body = await request.json();
@@ -420,6 +422,10 @@ export function createAppCodeRouteHandler(config: HostyAppConfig) {
       return jsonResponse({ code: exchange.code, message: exchange.message }, exchange.status);
     }
 
+    const identity = await resolveAppSession(exchange.accessToken, config);
+    if (identity.status !== "active")
+      return jsonResponse({ code: "app_identity_rejected", message: "Core could not validate this app session." },
+        identity.status === "unavailable" || identity.status === "misconfigured" ? 503 : 403);
     const secure = isSecureRequest(request.headers, safeProtocol(request.url));
     const attributes = identityCookieAttributes(
       secure,
@@ -435,7 +441,7 @@ export function createAppCodeRouteHandler(config: HostyAppConfig) {
     ].join("; ");
 
     return jsonResponse(
-      { accessToken: exchange.accessToken, expiresInSeconds: exchange.expiresInSeconds },
+      { accessToken: exchange.accessToken, expiresInSeconds: exchange.expiresInSeconds, activeUntil: exchange.activeUntil },
       200,
       { "set-cookie": cookie },
     );

@@ -1,9 +1,10 @@
+import { fetchCore } from "./core-transport.js";
 import type { CoreStatus, CoreUpdateStatus } from "./types";
 
 /** A restart can interrupt this read; retain the last status and retry on the next stream sync. */
 export async function readCoreStatus(coreOrigin: string, signal?: AbortSignal): Promise<CoreStatus | null> {
   try {
-    const response = await fetch(`${coreOrigin}/api/core/status`, {
+    const response = await fetchCore(`${coreOrigin}/api/core/status`, {
       credentials: "include",
       cache: "no-store",
       signal,

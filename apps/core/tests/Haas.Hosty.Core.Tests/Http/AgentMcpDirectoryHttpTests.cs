@@ -145,6 +145,44 @@ public sealed class AgentMcpDirectoryHttpTests
         Assert.Empty(await unchanged.Content.ReadAsStringAsync());
     }
 
+    [Fact]
+    public async Task AssistantAssignmentsAreExplicitVersionedAndCannotBeSelfGranted()
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        var assistant = CreateApp("example.assistant") with { ConfirmedRoles = ["assistant"],
+            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["assistant"] = [new("default", null, "/assistant")] } };
+        await apps.UpsertAppAsync(assistant);
+        var directory = host.Services.GetRequiredService<AgentMcpDirectory>();
+        var policies = host.Services.GetRequiredService<AgentPolicyStore>();
+        var snapshot = await directory.ReadAsync();
+        Assert.Contains(snapshot.Assistants!, a => a.Id == assistant.Id);
+        Assert.False((await directory.ReadForAssistantAsync(assistant.Id, default)).Targets.Single(t => t.Id == "hosty:core").Offered);
+        using var client = host.CreateClient();
+        async Task<HttpResponseMessage> Grant(string revision, string[] ids) => await client.PutAsJsonAsync("/api/core/agents/hosty:core", new { revision, offered = true, assistantIds = ids });
+        client.DefaultRequestHeaders.Authorization = new("Bearer", host.Services.GetRequiredService<AppServiceTokenService>().CreateToken(assistant.Id));
+        Assert.False((await Grant(snapshot.Revision, [assistant.Id])).IsSuccessStatusCode);
+        client.DefaultRequestHeaders.Authorization = null;
+        await SignInAsync(host, "host.admin");
+        client.DefaultRequestHeaders.Add("Cookie", "hosty_session=agent-session; hosty_csrf=csrf");
+        client.DefaultRequestHeaders.Add("X-Hosty-CSRF", "csrf");
+        Assert.Equal(HttpStatusCode.BadRequest, (await Grant(snapshot.Revision, ["not-installed"])).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await Grant(snapshot.Revision, [assistant.Id])).StatusCode);
+        var first = (await policies.ReadAsync()).Targets["hosty:core"].Assistants![assistant.Id];
+        var grantedRevision = (await directory.ReadAsync()).Revision;
+        var appView = await directory.ReadForAssistantAsync(assistant.Id, default);
+        Assert.Null(appView.Assistants);
+        Assert.All(appView.Targets, t => Assert.Null(t.AssistantIds));
+        Assert.True((await directory.ReadForAssistantAsync(assistant.Id, default)).Targets.Single(t => t.Id == "hosty:core").Offered);
+        Assert.Equal(HttpStatusCode.Conflict, (await Grant(snapshot.Revision, [])).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await Grant((await directory.ReadAsync()).Revision, [])).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await Grant((await directory.ReadAsync()).Revision, [assistant.Id])).StatusCode);
+        Assert.NotEqual(first.Revision, (await policies.ReadAsync()).Targets["hosty:core"].Assistants![assistant.Id].Revision);
+        Assert.NotEqual(grantedRevision, (await directory.ReadAsync()).Revision);
+        await apps.UpsertAppAsync(assistant with { InstalledAt = assistant.InstalledAt.AddMinutes(1) });
+        Assert.False((await directory.ReadForAssistantAsync(assistant.Id, default)).Targets.Single(t => t.Id == "hosty:core").Offered);
+    }
+
     private static async Task SignInAsync(CoreHttpHarness host, string role)
     {
         var now = host.Services.GetRequiredService<IClock>().UtcNow;
@@ -174,5 +212,6 @@ public sealed class AgentMcpDirectoryHttpTests
             Dependencies: [],
             Endpoints: [],
             InstalledAt: DateTimeOffset.UtcNow,
-            UpdatedAt: DateTimeOffset.UtcNow);
+            UpdatedAt: DateTimeOffset.UtcNow,
+            GrantedCorePermissions: [CoreAppPermissions.ReadApps]);
 }

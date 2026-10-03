@@ -1,9 +1,9 @@
 # Runtime Source Workflows
 
 Created: 2026-06-03
-Updated: 2026-09-23
+Updated: 2026-10-02
 
-Runtime source workflows let administrators and local operators inspect and update the source state stored for an installed Hosty runtime app. Manifests declare source metadata, Core stores managed checkout and local override state, local command runtimes run from those folders, and Shell exposes Git inspection and reviewed file discard.
+Runtime source workflows let administrators and local operators inspect and update the source state stored for an installed Hosty runtime app. Manifests declare source metadata, Core stores managed checkout and local override state, local command runtimes run from those folders, and Core exposes Git inspection and reviewed file discard to authorized source tools.
 
 ```mermaid
 flowchart LR
@@ -64,25 +64,17 @@ the app stopped. Source history and explicit discard belong to Git; data backups
 ## Source Inspection And Selected Discard
 
 Core inspects the effective source root (local override first, otherwise managed checkout). In a
-monorepo it narrows inspection to the recorded manifest subdirectory. Shell displays that absolute
+monorepo it narrows inspection to the recorded manifest subdirectory. Source summaries expose that absolute
 scope: changes in shared libraries outside the app directory are not included. No extra source
 registry, history, automatic commit, fetch or push is involved.
 
-The administrator-only Dashboard version cell for a live/development app shows the current branch
-with a dotted underline and an explicit file count (`2 files`, or `No changes` when clean), followed
-by green added-line and red deleted-line totals when available. Its tooltip contains the
-full HEAD, scope and observation time; the hash takes no space in the table. The branch only exposes
-the tooltip; clicking the separate change-count line opens the source dialog. Manifest version remains
-in the source dialog. Other apps
-can open **Inspect source changes** in Source settings. Visible panels refresh every 15 seconds and
-on explicit refresh; observations carry their time. A clean result describes files on disk, not an
-uploaded commit, a running process's loaded code or successful hot reload.
+The administrator-only Dashboard version cell shows branch, HEAD, scope, observation time and
+aggregate changed-file/line counts. This summary is available under `apps.lifecycle`; it contains
+no file list, patches or image bytes. Shell links to a running source-capable app instead of
+reading or discarding files itself. Core's source status/diff/discard APIs remain available to the
+direct administrator interface and to apps with `apps.sources` plus administrator user authority.
+A clean observation describes files on disk, not a process's loaded code or successful hot reload.
 
-Dashboard requests only summary metadata: branch, HEAD, observation time, total changed-file count
-and available aggregate line statistics. It receives no file entries, patches or image bytes.
-Opening the source dialog requests the complete file metadata list, without pagination or a
-fixed file-count cap; each entry contains only its path, status, discard eligibility and line counts.
-Full diff/image requests happen only when a specific file is expanded.
 
 Status distinguishes `none`, `missing`, `no-git`, `clean`, `changes` and `unavailable`. Unborn branches
 have no HEAD; detached HEAD and linked worktrees are supported. No-Git folders have no invented
@@ -92,21 +84,10 @@ only if that resource limit is reached. Each Git invocation has a ten-second dea
 output. File counts are independent of preview loading. Git paths are literal and no credentials
 or remote URLs are returned by these reads.
 
-Each file row in the source dialog independently expands to show its HEAD-to-working-tree diff
-directly below the filename, with staged changes in a nested disclosure. Multiple files can stay
-expanded; opening or closing a preview does not change its discard checkbox. Previews load on
-expansion and reload when reopened. Loading and error states appear inside the owning file section.
-The diff fills the file card's width without an inset border or its own vertical scrollbar;
-expanded sections grow to their content height and share the dialog body's vertical scrolling.
-Long code lines wrap by default and scroll horizontally when wrapping is disabled. The repository
-HEAD appears once at the top of the dialog. File headers show green added-line and red deleted-line counts from source status,
-including while collapsed and before a preview is requested. The Dashboard uses the same source
-status for aggregate counts. Both compare HEAD with the working tree, exclude context lines and
-do not double-count staged changes. A file whose staged edit was reverted on disk has zero net
-line changes even though its index is still dirty. Files removed with `git rm --cached` but retained
-on disk are compared through a temporary HEAD index, preserving the operator's real index. Binary files have no per-file line counts and
-contribute zero to textual totals. Incomplete/unsupported statistics remain unknown; the Dashboard
-omits an incomplete total and explains this in the branch tooltip.
+Core's metadata compares HEAD with the working tree without double-counting staged changes.
+Files removed from the index but retained on disk use a temporary HEAD index; the operator's real
+index is preserved. Binary files do not contribute to textual totals; incomplete totals remain
+unknown.
 
 Core obtains tracked counts in one scoped `git diff --numstat -z` call per non-clean status
 observation, with external diff/text conversion disabled and the existing output/time limits.
@@ -118,26 +99,13 @@ Binary NUL bytes stop text counting. Missing final newlines
 count as one final line. The existing 15-second status refresh cadence is unchanged; opening
 previews and validating discard plans use status without computing statistics again. A truncated
 file list never exposes its partial sum as a complete total.
-Shell lazily loads `@pierre/diffs` in the browser for previews with syntax highlighting, using
-the Shell's light/dark theme. A shared display toolbar controls unified/split layout, bars/classic/no
-change markers, word-alt/word/character/no inline highlighting, unchanged-line separators
-(Line Info Basic, Line Info, Metadata or Simple), change backgrounds, line wrapping
-and line numbers. It applies to all expanded files and their staged previews without refetching
-patches. Each dialog starts with unified layout, bars, word-alt highlighting, Line Info Basic separators, backgrounds, wrapping
-and line numbers enabled; settings last until the dialog closes. File cards still share the dialog's
-vertical scroll area. The dialog fills the viewport on narrow screens; on desktop it leaves a
-16 px margin on each edge. Its header and footer stay visible while the body scrolls.
-New untracked text files appear as additions; binary files have a label. Oversized patches
-return only a truncation marker with no partial patch payload; Shell shows a
-clear message directing the operator to an editor or Git client, without mounting the diff viewer.
-Unparseable complete patches retain a plain-text fallback.
 Text previews allow up to 4,194,304 decoded characters per Git patch part, or 4 MiB of raw
 untracked contents, and mark truncation beyond that bound. This protects response size and browser
 parsing without cutting off ordinary documents of several hundred kilobytes. Binary detection is
 independent of size: tracked files follow Git's binary classification; untracked previews detect
 NUL bytes in the inspected contents. Rename detection is disabled:
 a rename appears as the old path's deletion and the new path's addition, so each path is explicit.
-Symlinks, submodule directories and special files cannot be previewed through this panel.
+Symlinks, submodule directories and special files cannot be previewed through the API.
 
 PNG, JPEG, GIF and WebP paths render image previews instead of text diffs. Core returns the
 HEAD version (Before) and the working-tree version (After), or only the existing side for an
@@ -155,12 +123,6 @@ No public image/file-download endpoint or image optimizer is involved, and SVG/H
 returned as an image. These checks share the existing trusted-local-worktree boundary: they
 do not sandbox a malicious local process racing filesystem changes or controlling Git storage.
 
-**Select all** above the file list selects/deselects all eligible files and shows a mixed state for
-partial selection. After status refreshes, review requests and counts include only currently discardable
-selected files. Viewers without source-management rights see the manifest version instead of Git details.
-Unsupported files remain unavailable; lists above the 32-file review limit
-explain the limit and require manual selection rather than silently selecting only a subset.
-
 **Review discard** accepts 1–32 selected paths. The review names the exact HEAD, source scope and
 files, marking new files for deletion. It expires after five minutes and is single-use. Apply checks
 HEAD, canonical source binding, selected Git status/index, file mode and contents again. A changed
@@ -172,8 +134,7 @@ new files are deleted; unrelated edits/staging are preserved. Files above 4 MiB,
 paths, symlinks and submodules require an external Git workflow. Core never recursively cleans the
 source tree and keeps no recovery copy. Its app/scope locks serialize its own discard operations;
 external editors and Git clients are not locked. A concurrent external write or filesystem failure
-can interrupt apply or leave a partial result, so the UI refreshes status after failures as well as
-success. Users reload/restart explicitly when the profile commands do not provide hot reload.
+can interrupt apply or leave a partial result, so callers must refresh status after failures as well as success. Users reload/restart explicitly when the profile commands do not provide hot reload.
 
 Browser API routes under `/api/apps/{appId}/source`:
 
@@ -247,6 +208,26 @@ Core and combined-Host self-runtime changes are different from Shell-only change
 
 Shell also exposes Hosty Shell runtime switching in the Installed Apps System Apps table when Core reports multiple runtime profiles. System apps also use the ordinary lifecycle controls; stopping Shell interrupts its UI.
 
+## Source Selection Authority
+
+App-mediated source override requires `apps.lifecycle`, an administrator actor and an isolated Core
+confirmation for every folder, including registered Core worktrees. The app-facing POST always
+returns `source_override_confirmation_required`; the existing approval flow performs the change.
+Direct Core operators and CLI users can select permitted folders and worktrees without that dialog. The reviewed snapshot binds the installation, source
+state, resolved folder, effective manifest digest and development commands; changed state requires
+another review. Core explicitly explains that future edits in the folder can execute on the host.
+
+All override writers, including CLI and bootstrap, reject app storage/managed-source directories,
+legacy source storage and external/shared mount directories, resolving symlink ancestors and the
+effective manifest location. Protected paths cannot be approved. Core stores the resolved source
+path. Source selection/clear share the lifecycle operation lock, and source/mount mutations share
+a cross-app path lock. A background Git resolution preserves the current override rather than
+restoring its earlier snapshot.
+
+`apps.sources` permits modifying code that Hosty can execute on the host in development mode.
+This API policy does not sandbox native agents with direct filesystem access. Clearing an override,
+runtime switches and normal lifecycle operations keep their existing authorization.
+
 ## Testing Expectations
 
 - Changing the selected profile's development flag in either direction appears in the update plan and requires review, even alongside a version bump.
@@ -272,17 +253,10 @@ Shell also exposes Hosty Shell runtime switching in the Installed Apps System Ap
   the control secret. Large child-process outputs are drained with bounded retention.
 - Text preview coverage includes complete documents above the former 64 KiB limit and tracked/
   untracked content above the 4 MiB/character limit returning a marker with no partial payload.
-- Shell preview coverage includes tracked and staged patches, untracked text (including patch-like
-  contents), empty and binary files, missing final newlines, and truncated or malformed patches.
-  Verify independent file expansion/collapse, reopening, and discard-checkbox independence through
-  Core-managed Shell in the browser.
-- Verify the shared diff display controls in both Shell themes: unified/split, marker and inline
-  highlighting modes, unchanged-line separator styles, backgrounds, wrapping and line numbers. Settings affect combined and staged
-  previews without new diff requests, and reset when the dialog is reopened.
 - Image previews cover added/staged, modified and deleted images, exact binary round trips from
   HEAD, nested app scopes, literal names, format detection, both-side size limits and disguised
   active content. Unauthorized sessions, absent CSRF, unlisted/ignored/unchanged files, traversal,
-  filesystem symlinks and deleted Git symlinks must not expose source bytes. Shell accepts only
+  filesystem symlinks and deleted Git symlinks must not expose source bytes. Source preview clients accept only
   inline raster data URLs and reports unsupported binary formats, including older Core responses.
 - Source statistics cover staged/unstaged cancellation, untracked and unborn text, binary files,
   missing final newlines, scoped paths with tabs/newlines, deleted files, large text limits and
@@ -293,6 +267,8 @@ Shell also exposes Hosty Shell runtime switching in the Installed Apps System Ap
   remain previewable/reviewable. Summary serialization contains neither file paths nor previews;
   summary routes enforce administrator/control-secret authorization. Verify a large list in the
   Core-managed dialog while Dashboard continues to request summary metadata only.
-- Core-managed Shell verification: edit a clean Demo App source file, see the changed title in the
-  embedded app, inspect its diff, review/discard that file, verify clean scoped status and the original
-  title. This verifies source operations, not assistant execution grants or app-role identity.
+- Verify Shell's source summaries contain no file contents and source actions link to an authorized
+  source tool. Browser and API tests must preserve the `apps.lifecycle` / `apps.sources` boundary.
+
+- Verify source/mount approval, protected paths and symlinks, stale snapshots and caller revocation;
+  require confirmation for app-selected workspaces and preserve operator authority and intentional Docker source mounts.

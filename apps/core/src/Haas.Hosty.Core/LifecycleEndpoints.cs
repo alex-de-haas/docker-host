@@ -123,7 +123,10 @@ internal static class LifecycleEndpoints
                 request,
                 users,
                 clock,
-                async () => await HandleLifecycleError(() => lifecycle.ConfigureAsync(appId, input, cancellationToken)),
+                async () => input.Autostart is not null &&
+                    AppManagementAuthorization.RequireAdditional(request, CoreAppPermissions.AppLifecycle) is { } denied
+                        ? denied
+                        : await HandleLifecycleError(() => lifecycle.ConfigureAsync(appId, input, cancellationToken)),
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
@@ -171,7 +174,7 @@ internal static class LifecycleEndpoints
                 request,
                 users,
                 clock,
-                async () => await HandleLifecycleError(() => lifecycle.ConfigureMountsAsync(appId, input, cancellationToken)),
+                async () => await HandleLifecycleError(() => lifecycle.ConfigureMountsAsync(appId, input, cancellationToken, AppManagementAuthorization.Caller(request) is not null)),
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
@@ -241,7 +244,9 @@ internal static class LifecycleEndpoints
                 request,
                 users,
                 clock,
-                async () => await HandleLifecycleError(() => sources.SetLocalOverrideAsync(appId, input, cancellationToken)),
+                async () => AppManagementAuthorization.Caller(request) is not null
+                    ? CoreJson.Json(new ErrorResponse("source_override_confirmation_required", "Confirm this source folder in Core before selecting it."), StatusCodes.Status403Forbidden)
+                    : await HandleLifecycleError(() => sources.SetLocalOverrideAsync(appId, input, cancellationToken)),
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
@@ -320,7 +325,12 @@ internal static class LifecycleEndpoints
                 request,
                 users,
                 clock,
-                async () => await HandleLifecycleError(() => lifecycle.CreateUpdatePlanAsync(appId, input, cancellationToken)),
+                async () =>
+                {
+                    var current = await request.HttpContext.RequestServices.GetRequiredService<AppRegistryStore>().GetAppAsync(appId, cancellationToken);
+                    if (AppManagementAuthorization.RequirePrivateSourceAccess(request, current?.PrivateSources) is { } denied) return denied;
+                    return await HandleLifecycleError(() => lifecycle.CreateUpdatePlanAsync(appId, input, cancellationToken));
+                },
                 requireCsrf: true,
                 cancellationToken: cancellationToken));
 
@@ -355,7 +365,17 @@ internal static class LifecycleEndpoints
                 request,
                 users,
                 clock,
-                async () => await HandleLifecycleError(() => lifecycle.GetPendingUpdatePlanAsync(appId, cancellationToken)),
+                async () =>
+                {
+                    var current = await request.HttpContext.RequestServices.GetRequiredService<AppRegistryStore>().GetAppAsync(appId, cancellationToken);
+                    if (AppManagementAuthorization.RequirePrivateSourceAccess(request, current?.PrivateSources) is { } denied) return denied;
+                    try
+                    {
+                        var pending = await lifecycle.GetPendingUpdatePlanAsync(appId, cancellationToken);
+                        return AppManagementAuthorization.RequirePrivateSourceAccess(request, pending.Plan?.PrivateSources) ?? CoreJson.Json(pending);
+                    }
+                    catch (AppLifecycleException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), ex.Code == "app_not_found" ? 404 : 400); }
+                },
                 cancellationToken: cancellationToken));
 
         // Enqueue-and-return: validation errors (digest mismatch, stale base, already updating) come
@@ -479,11 +499,8 @@ internal static class LifecycleEndpoints
         // unauthenticated on the theory that scrape traffic stays on a trusted internal network — but
         // managed ingress publishes Core's whole origin (its rules are hostname->service, with no path
         // support), so "internal" was never a boundary and this leaked the installed-app inventory
-        // plus per-service load to anyone who found the path. Any valid app token is accepted: the
-        // exposition is host-wide, so there is no per-app scoping to enforce, and the token proves only
-        // that the caller is an installed app. Living under /api/internal/ also puts it inside the
-        // endpoint-authorization harness, which enumerates /api routes — the old /internal path sat in
-        // its blind spot. See docs/features/observability/feature.md.
+        // plus per-service load. Service authentication identifies the installed collector; the
+        // same read grants as the aggregate resource API authorize host-wide collection.
         app.MapGet("/api/internal/telemetry/metrics", async (
             HttpRequest request,
             AppServiceTokenService serviceTokens,
@@ -497,12 +514,17 @@ internal static class LifecycleEndpoints
             // token copied before the app was removed verifies forever. Requiring the app to still be
             // installed matches every other app-token route and bounds a leaked token to the lifetime
             // of its installation.
-            if (callerAppId is null || await apps.GetAppAsync(callerAppId, cancellationToken) is null)
+            var caller = callerAppId is null ? null : await apps.GetAppAsync(callerAppId, cancellationToken);
+            if (caller is null)
             {
                 return CoreJson.Json(
                     new ErrorResponse("telemetry_metrics_unauthorized", "App service token is missing or invalid."),
                     statusCode: StatusCodes.Status401Unauthorized);
             }
+
+            if (!AppManagementAuthorization.HasPermission(caller, CoreAppPermissions.ReadApps) ||
+                !AppManagementAuthorization.HasPermission(caller, CoreAppPermissions.ReadCore))
+                return CoreJson.Json(new ErrorResponse("app_permission_required", "Telemetry collection requires apps.read and core.read."), 403);
 
             return Results.Text(exposition.CurrentPrometheusText, "text/plain; version=0.0.4");
         });
@@ -895,6 +917,7 @@ internal static class LifecycleEndpoints
         {
             var statusCode = ex.Code switch
             {
+                "source_override_confirmation_required" or "source_override_path_forbidden" or "app_mount_confirmation_required" or "app_mount_path_is_source" => StatusCodes.Status403Forbidden,
                 "app_not_found" => StatusCodes.Status404NotFound,
                 // Conflict with current state, not a malformed request: the same install succeeds
                 // once the app is removed, and an update is the way to change it in place.

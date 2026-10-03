@@ -1,21 +1,26 @@
 # App-Owned MCP
 
 Created: 2026-08-11
-Updated: 2026-09-16
+Updated: 2026-10-01
 
 Runtime apps expose their domain actions to agents through an MCP endpoint they own, and Core tells
 agent clients which apps have one. This is step 4 of the [AI Agent Bridge](../ai-agent-bridge/plan.md)
 rollout, and it is the contract [core-mcp](../core-mcp/feature.md) deliberately does not provide:
 Core MCP is control-plane only and never proxies work belonging to an app.
 
+Assistant access uses Core's explicit assistant-target grants and MCP-only credentials. MCP
+handlers validate them online with `introspectMcpToken` (JavaScript) or `IntrospectMcpAsync` (.NET),
+then apply the user's app permissions. The result includes the calling assistant. Ordinary app
+identity and scoped API validators reject these tokens. Existing CLI delegated and direct
+scoped/OAuth clients retain their own paths. See [MCP delegation](../delegated-token-exchange/feature.md).
+
 ## The Division Of Labour
 
 It is the whole point of the contract, and easy to get backwards.
 
-- **Core authenticates.** The caller presents a short-TTL delegated token Core signed; the app
-  validates it locally with the public key Core injects as `HOSTY_DELEGATED_TOKEN_PUBLIC_KEY`, so
-  Core stays out of the data path and there is no per-call round trip. Apps build no identity system
-  of their own — the platform forbids requiring that.
+- **Core authenticates.** MCP-only assistant credentials and external scoped tokens use online
+  introspection; legacy CLI delegated tokens use the injected signing key. Apps build no identity
+  system of their own and apply the current identity returned by the appropriate validator.
 - **The app authorizes.** Core cannot know what a domain action means or who may perform it. Every
   tool re-runs the app's own permission model for the delegated actor, using the same model its HTTP
   routes use rather than a parallel one written for agents. An MCP surface that skipped this would be

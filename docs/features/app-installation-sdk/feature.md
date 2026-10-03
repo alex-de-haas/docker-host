@@ -1,7 +1,7 @@
 # App Installation SDK And Core Confirmation
 
 Created: 2026-09-18
-Updated: 2026-09-30
+Updated: 2026-10-02
 
 ## Installation Ownership
 
@@ -28,22 +28,20 @@ forwarded headers cannot authorize that fallback; configured public origins rema
 Core exposes create, submit and status operations under `/api/installations` for authenticated
 operator clients, and `/api/internal/apps/{appId}/installations` for delegated app callers.
 The app transport requires a currently enabled administrator and the installed app's approved
-permission for installation/update requests. An app can request review of its own permission declarations and optional grants
-with `permissionsAppId` without an install/update grant. Shell retains its existing full Core browser-session transport; this is operator
-access, not an app-ID permission exemption. The remaining Shell-specific CORS policy for that
-legacy management transport is unchanged. Custom app clients use the SDK server adapter.
+`apps.install` permission for installation, update and removal requests. An app can request review
+of its own permission declarations and optional grants with `permissionsAppId` without that grant.
+Shell uses app service and user identity credentials through its server, with the same permission
+checks as other apps. Custom app clients use the SDK server adapter.
 
 ## Manifest Permissions
 
-`corePermissions` is an optional array in `app.0.1`. The vocabulary is:
+`corePermissions` is an optional array in `app.0.1`. The currently wired app-delegated operations use:
 
 | Permission | App-delegated authority |
 | --- | --- |
 | `apps.skills.read` | Read agent skills published by installed apps |
-| `apps.install` | Prepare installation requests and submit them for Core confirmation |
-| `apps.update` | Submit an existing reviewed update plan for Core confirmation |
-| `apps.workspaces.manage` | Session worktrees and local Git operations with an administrator credential |
-| `apps.publications.manage` | Session pull requests using the acting administrator's Git account |
+| `apps.install` | Prepare installation/update/removal requests and submit them for Core confirmation |
+| `apps.sources` | Session worktrees, local Git operations and session pull requests with the acting administrator's Git account |
 | `providers.speech-to-text` | List and use all confirmed speech providers |
 | `providers.assistant` | List and make user-attributed requests to all confirmed assistant providers |
 
@@ -53,7 +51,13 @@ changes use the same confirmation page and reject stale reviews; Shell exposes t
 Removed declarations revoke grants, unchanged accepted optional choices survive updates, and moving an
 optional declaration to required needs review. See [Provider consumption](../provider-consumption/feature.md).
 
-Unknown and duplicate entries fail manifest validation. These are distinct from lifecycle UI
+New installs and updates reject unknown and duplicate entries. Installed manifests retain unsupported
+names for compatibility diagnostics. Core removes unsupported persisted grants at startup and on
+registry writes, preserves their declarations and changes the permission revision when removing grants.
+The catalogue also recognizes `apps.read`, `apps.logs`, `apps.notifications`, `apps.lifecycle`,
+`apps.configure`, `core.read`, `core.update`, `core.lifecycle`, `core.configure`, `core.logs`,
+`users.read` and `users.manage`; their management-API integration remains tracked in the
+[local browser origins plan](../local-browser-origins/plan.md). These are distinct from lifecycle UI
 `capabilities`, platform `provides` slots, and external-client OAuth/MCP scopes.
 
 Core records the approved set as `GrantedCorePermissions` on installation and reviewed update.
@@ -73,7 +77,41 @@ through app summaries. Install plans include `requestedRoles`, `permissionDescri
 confirmation exactly like permission additions. Source projection never confirms a role.
 See [assistant provider permissions](../assistant-provider-permissions/feature.md).
 
+## Required Permissions And Runtime Lifecycle
+
+Core checks the effective manifest before start, restart and runtime switching, and rechecks before
+launching services. Unsupported required names produce `app_permissions_unsupported`; known but
+ungranted requirements produce `app_permissions_required`. An unreadable contract produces
+`app_permissions_unverifiable`. A last-good manifest fallback cannot bypass these checks. Optional
+permissions, including unsupported names in an installed manifest, do not block execution.
+
+The permission observer checks running apps every five seconds and stops apps with verified missing
+or unsupported required permissions using the installed runtime contract. Unreadable manifests
+produce stale permission observations without stopping a running app; launch still refuses them.
+The observer skips apps whose lifecycle lock is busy and retries them on a later pass, so long
+operations do not delay checks for the remaining apps. Boot reconciliation checks retained workloads
+before autostart. Permission-blocked apps retain an explanatory error and do not enter automatic
+restart loops. API authorization continues to check current grants independently of the stop sweep.
+Shell shows unsupported requirements separately from missing approval; only supported requirements
+can be approved. Direct Core navigation to `/install/permissions/{appId}` prepares a review without
+running Shell or the target app. It requires an administrator cookie on Core's isolated origin,
+then uses the ordinary nonce-protected confirmation page; visiting the URL grants no permissions.
+
 ## Trusted Confirmation
+
+Removal uses the same request/submit/status flow with `removeAppId` and optional `removalOptions`.
+Preparation freezes the installation identity and all five cleanup flags: `deleteRuntimeState`
+(default true), `deleteData`, `deleteBackups`, `deleteSource` and `ignoreRuntimeErrors` (default false).
+The isolated Core page shows the requester, target ID/name/version, each cleanup choice, permanent
+deletion warning and advisory dependency/publication impact. Submit and decision payloads cannot
+replace the target or flags. Approval revalidates the requesting app/user grants and checks the
+installation identity under the target lifecycle lock immediately before removal. Missing,
+reinstalled or changed targets require a new review. Audit events include the frozen cleanup choices.
+
+App credentials cannot invoke `POST /api/apps/{appId}/remove` directly, even with `apps.install`.
+Shell's removal panel opens Core confirmation and waits for successful execution before reporting
+removal; denial leaves the target intact. Trusted operator sessions and the local CLI control-secret
+route retain direct removal, including cleanup of retained data for an already absent application.
 
 A request starts as `draft`. Submit freezes settings and autostart, then changes it to `pending`.
 The SDK opens `/install/confirm/{id}` in a top-level window; a visible link is available when a
@@ -81,7 +119,7 @@ popup is blocked. The page displays the target, version, source, requester, prov
 Role and permission additions and removals are marked on updates. Direct host-command installs carry a warning.
 
 Shell allows confirmation popups to escape the iframe sandbox only when Core's app summary
-reports persisted `apps.install` or `apps.update` grants. Workspace, settings and panel surfaces
+reports a persisted `apps.install` grant. Workspace, settings and panel surfaces
 use the same policy; ordinary apps retain sandboxed popups. Missing grants remain restricted,
 and a changed sandbox policy remounts the frame.
 
@@ -113,14 +151,15 @@ pending plan is evicted when the 64-plan cache fills, so abandoned reviews do no
 ## Browser Cookie Boundary And Migration
 
 Cookies are scoped to a hostname, not a port. Confirmation therefore refuses to operate on a
-hostname also used by any registered public app endpoint or its configured public origin.
+hostname also used by any registered public app endpoint, its configured public origin or its
+generated browser origin.
 The Core browser session must have been issued on the exact confirmation origin; legacy sessions
 need a fresh login. Core login preserves the confirmation continuation without requiring Shell.
 
-Use a dedicated Core hostname. For the existing Shell cookie transport, Core and Shell also need
-to remain same-site because the Core cookie uses `SameSite=Lax`; distinct sibling hostnames under
-one site satisfy both requirements. Merely moving Core to another port does not. The new
-Marketplace server transport has no dependency on cross-origin Core cookies.
+The [local browser origin policy](../local-browser-origins/feature.md) supplies a dedicated Core
+hostname by default. Browser compatibility is tracked there. Shell and Marketplace server transports
+use app-scoped credentials and have no dependency on cross-origin Core cookies. Confirmation still
+requires Core's own host-only browser cookie; merely moving Core to another port does not isolate it.
 
 New trusted distribution installs record their declared permissions. Existing Marketplace/Shell
 installations acquire declarations through a reviewed update, without silent ID-based grants.
@@ -132,19 +171,42 @@ This protects the app-token API boundary. Full operator credentials and localCom
 running as Core's OS account are separate trust boundaries; it is not an OS sandbox.
 
 Permission-only reviews read the app's current local manifest in Core and freeze its digest and
-installation/source/runtime identity. `submit` accepts optional draft selections as a fourth argument;
-these preselect the Core confirmation form and do not authorize a grant. Required/optional transitions
+installation/source/runtime identity. `submit` accepts only settings and autostart; requesting apps
+cannot preselect or clear optional rights. Legacy `optionalPermissions` request fields are ignored.
+Core checks only already granted rights from the reviewed plan; optional rights on a new install
+start unchecked. Required/optional transitions
 and removals are shown on the isolated page. See [App permission management](../app-permission-management/feature.md).
+
+## Host Path Confirmation
+
+`InstallationSource.hostPathChange` uses the same draft/submit/decision/status flow for source
+selection, inline app mount bindings and shared-registry upserts. Each request contains exactly one
+operation. Its required permission is respectively `apps.lifecycle`, `apps.configure` or
+`core.configure`, not `apps.install`. Core renders the path and effects from its frozen plan and
+revalidates the caller and snapshot under the mutation locks. Denial, expiry, replay and stale plans
+do not apply the change. Shell tries the direct operation once and opens review only for a structured
+confirmation-required error. Every app source-override POST returns that error, including worktrees;
+protected paths are rejected during review preparation and never produce an approvable plan. Blocked popups retain an explicit link,
+and completion is reported only after Core returns `succeeded`.
 
 ## Testing Expectations
 
 - Test real HTTP decisions, separate app/user credentials, rejected cross-origin decisions,
   framing headers, nonce secrecy, ownership, expiration and single-use behavior.
 - Test frozen manifest execution and persisted grants, including source changes during approval.
+- Test direct app-removal denial with destructive flags; frozen cleanup options, Core-only decisions,
+  denial/replay, missing or reinstalled targets, revoked grants, and trusted operator cleanup.
+- Test Shell removal waits for completion, handles denial/errors and recovers a lost submit without
+  repeating the mutation.
 - Test cache recovery after abandoned reviews and decision audit failures without stuck execution.
 - Test that only persisted installation grants enable unsandboxed popups across Shell surfaces.
 - Test permission additions on updates and that source adoption cannot silently grant rights.
+- Test required-permission launch refusal, running-app stop, unsupported-name cleanup and direct
+  Core recovery, including a blocked Shell and optional-only revocation.
 - Test client races, duplicate submits, lost responses, API errors and the server adapter boundary.
 - Build and test Core, SDK, Shell and Marketplace; check package exports and artifact versions.
 - Complete the remaining managed-runtime/browser verification in [plan.md](plan.md), including
   standalone Marketplace, embedding without an installation responder, and cookie-host isolation.
+
+- Verify source/mount approval, protected paths and symlinks, stale snapshots and caller revocation;
+  require confirmation for app-selected workspaces and preserve operator authority and intentional Docker source mounts.

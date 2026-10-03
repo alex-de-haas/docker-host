@@ -54,3 +54,10 @@ it("does not show login redirect errors while saving", async () => {
   expect(container.querySelector('[role="alert"]')).toBeNull();
   expect(fetch).toHaveBeenCalledTimes(1);
 });
+
+it("assigns a target to one assistant without changing the global offer", async () => {
+  vi.mocked(fetch).mockResolvedValue(Response.json({ ...directory, assistants: [{ id: "harness", displayName: "Harness" }] }));
+  await render();
+  await act(async () => container.querySelector<HTMLInputElement>('input[aria-label="Allow Harness to use Notes MCP"]')!.click());
+  expect(send).toHaveBeenCalledWith("https://core.test/api/core/agents/notes", { revision: "revision-reviewed", offered: false, assistantIds: ["harness"] }, "PUT");
+});

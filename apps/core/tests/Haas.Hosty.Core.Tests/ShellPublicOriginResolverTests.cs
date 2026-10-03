@@ -38,7 +38,7 @@ public sealed class ShellPublicOriginResolverTests : IDisposable
         var resolver = CreateResolver(out var apps);
         await apps.UpsertAppAsync(CreateShell(publicOrigin: null, endpointUrl: "http://127.0.0.1:7171"));
 
-        Assert.Equal("http://127.0.0.1:7171", await resolver.ResolveAsync());
+        Assert.Equal("http://ahosty-dshellz.hosty.localhost:7171", await resolver.ResolveAsync());
     }
 
     [Fact]
@@ -48,7 +48,7 @@ public sealed class ShellPublicOriginResolverTests : IDisposable
         var resolver = CreateResolver(out var apps);
         await apps.UpsertAppAsync(CreateShell(publicOrigin: "not-an-origin", endpointUrl: "http://127.0.0.1:7171"));
 
-        Assert.Equal("http://127.0.0.1:7171", await resolver.ResolveAsync());
+        Assert.Equal("http://ahosty-dshellz.hosty.localhost:7171", await resolver.ResolveAsync());
     }
 
     [Fact]

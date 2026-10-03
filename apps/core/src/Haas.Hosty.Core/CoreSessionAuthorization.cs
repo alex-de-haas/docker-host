@@ -268,6 +268,12 @@ internal static class CoreSessionAuthorization
         IClock clock,
         CancellationToken cancellationToken)
     {
+        if (AppManagementAuthorization.Caller(request) is { } caller)
+            return new CoreSessionAuthorizationResult(caller.User, null);
+        // Reject an app identity header unless the management middleware authenticated its route.
+        if (request.Headers.ContainsKey(AppManagementAuthorization.IdentityHeader))
+            return Unauthorized("app_operation_forbidden", "This route does not accept app credentials.");
+
         var sessionId = ReadSessionCredential(request).Value;
         if (string.IsNullOrWhiteSpace(sessionId))
         {

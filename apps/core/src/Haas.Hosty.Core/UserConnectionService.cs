@@ -23,8 +23,7 @@ internal sealed class UserConnectionService(UserDirectoryStore users, UserConnec
     }
     public async Task<UserProfileResponse> UpdateProfileAsync(string userId, string name, CancellationToken ct, PublicationIdentity? gitIdentity = null, bool updateGitIdentity = false)
     {
-        if (gitIdentity is not null && (string.IsNullOrWhiteSpace(gitIdentity.Name) || gitIdentity.Name.Length > 200 || gitIdentity.Name.Any(c => char.IsControl(c) || c is '<' or '>') || string.IsNullOrWhiteSpace(gitIdentity.Email) || gitIdentity.Email.Length > 254 || !gitIdentity.Email.Contains('@') || gitIdentity.Email.Any(c => char.IsWhiteSpace(c) || c is '<' or '>')))
-            throw new UserConnectionException("git_identity_invalid", "Enter a valid Git author name and email.");
+        ValidateGitIdentity(gitIdentity);
         name = BoundedName(name);
         await users.UpdateAsync(state =>
         {
@@ -32,6 +31,22 @@ internal sealed class UserConnectionService(UserDirectoryStore users, UserConnec
             return state with { Users = state.Users.Select(u => u.Id == userId ? user with { DisplayName = name, GitIdentity = updateGitIdentity ? gitIdentity : u.GitIdentity, UpdatedAt = clock.UtcNow } : u).ToArray() };
         }, ct);
         await Audit(userId, "profile.updated", userId, ct);
+        return await ProfileAsync(userId, ct);
+    }
+    private static void ValidateGitIdentity(PublicationIdentity? gitIdentity)
+    {
+        if (gitIdentity is not null && (string.IsNullOrWhiteSpace(gitIdentity.Name) || gitIdentity.Name.Length > 200 || gitIdentity.Name.Any(c => char.IsControl(c) || c is '<' or '>') || string.IsNullOrWhiteSpace(gitIdentity.Email) || gitIdentity.Email.Length > 254 || !gitIdentity.Email.Contains('@') || gitIdentity.Email.Any(c => char.IsWhiteSpace(c) || c is '<' or '>')))
+            throw new UserConnectionException("git_identity_invalid", "Enter a valid Git author name and email.");
+    }
+    public async Task<UserProfileResponse> UpdateGitIdentityAsync(string userId, PublicationIdentity? gitIdentity, CancellationToken ct)
+    {
+        ValidateGitIdentity(gitIdentity);
+        await users.UpdateAsync(state =>
+        {
+            var user = RequireUser(state, userId);
+            return state with { Users = state.Users.Select(u => u.Id == userId ? user with { GitIdentity = gitIdentity, UpdatedAt = clock.UtcNow } : u).ToArray() };
+        }, ct);
+        await Audit(userId, "source-identity.updated", userId, ct);
         return await ProfileAsync(userId, ct);
     }
     public Task<UserConnectionSummary> AddPatAsync(string userId, UserConnectionInput input, CancellationToken ct)

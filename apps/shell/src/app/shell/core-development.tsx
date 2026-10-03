@@ -1,9 +1,11 @@
 "use client";
 
+import { fetchCore } from "./core-transport.js";
+
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, FolderGit2, GitBranch, LoaderCircle, Lock, Radio } from "lucide-react";
 import { toast } from "@/components/reui/operation-toast";
-import { CoreSourceChangesDialog } from "./source/source-changes";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -33,7 +35,7 @@ export function useCoreDevelopment(coreOrigin: string, enabled: boolean) {
   const pollNow = useRef<(() => Promise<void>) | null>(null);
   const key = `hosty:core-operation:${coreOrigin}`;
   const refresh = useCallback(async (signal?: AbortSignal) => {
-    const response = await fetch(`${coreOrigin}/api/core/development`, { credentials: "include", cache: "no-store", signal });
+    const response = await fetchCore(`${coreOrigin}/api/core/development`, { credentials: "include", cache: "no-store", signal });
     if (!response.ok) throw new Error(await readCoreError(response));
     const value = await response.json() as CoreDevelopment;
     if (!signal?.aborted) setState(value);
@@ -54,7 +56,7 @@ export function useCoreDevelopment(coreOrigin: string, enabled: boolean) {
       try {
         await refresh(controller.signal);
         if (operation.current && !submitting.current) {
-          const response = await fetch(`${coreOrigin}/api/core/operations/${operation.current}`, { credentials: "include", cache: "no-store", signal: controller.signal });
+          const response = await fetchCore(`${coreOrigin}/api/core/operations/${operation.current}`, { credentials: "include", cache: "no-store", signal: controller.signal });
           if (response.ok) {
             const value = await response.json() as Operation;
             if (controller.signal.aborted) return;
@@ -184,22 +186,10 @@ export function CoreModeControl({ state, disabled, onChange }: { state: CoreDeve
 }
 
 export function CoreGitCell({ state }: { state: CoreDevelopment | null }) {
-  const [open, setOpen] = useState(false);
-  return <>
-    <div className="min-w-0 text-xs" title={state?.gitError ?? `${state?.launch.projectPath ?? ""}\n${state?.commit ?? ""}`}>
-      <div className="flex min-w-0 cursor-help items-center gap-1 font-mono text-sm"><GitBranch className="size-3.5 shrink-0" /><span className="truncate underline decoration-dotted decoration-muted-foreground/70 underline-offset-4">{state?.branch ?? state?.commit?.slice(0, 10) ?? "Source unavailable"}</span></div>
-      <button type="button" className="flex max-w-full flex-wrap items-center gap-x-2 text-left text-xs text-muted-foreground hover:underline" aria-label="Source changes for Hosty Core" onClick={() => setOpen(true)}>
-        {state?.changedFiles == null ? "Inspect source" : state.changedFiles === 0 && !state.gitTruncated ? "No changes" : <>
-          <span>{state.changedFiles}{state.gitTruncated ? "+" : ""} {state.changedFiles === 1 && !state.gitTruncated ? "file" : "files"}</span>
-          {state.additions != null && state.deletions != null && <>
-            <span className="text-green-700 dark:text-green-400">+{state.additions}</span>
-            <span className="text-red-700 dark:text-red-400">−{state.deletions}</span>
-          </>}
-        </>}
-      </button>
-    </div>
-    {open && <CoreSourceChangesDialog onClose={() => setOpen(false)} />}
-  </>;
+  return <div className="min-w-0 text-xs" title={state?.gitError ?? `${state?.launch.projectPath ?? ""}\n${state?.commit ?? ""}`}>
+    <div className="flex min-w-0 items-center gap-1 font-mono text-sm"><GitBranch className="size-3.5 shrink-0" /><span className="truncate">{state?.branch ?? state?.commit?.slice(0, 10) ?? "Source unavailable"}</span></div>
+    {state?.changedFiles != null && <span>{state.changedFiles}{state.gitTruncated ? "+" : ""} changed files</span>}
+  </div>;
 }
 
 export function CoreSourceDialog({ open, onOpenChange, state, disabled, onSave }: { open: boolean; onOpenChange: (open: boolean) => void; state: CoreDevelopment | null; disabled: boolean; onSave: (path: string | null) => Promise<void> }) {

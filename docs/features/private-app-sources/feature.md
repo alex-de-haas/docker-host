@@ -1,11 +1,11 @@
 # Private App Sources
 
 Created: 2026-09-28
-Updated: 2026-09-28
+Updated: 2026-10-01
 
 Core reads private repository manifests and Git sources through explicitly selected
-[personal provider connections](../user-profile-connections/feature.md). Shell's installation dialog
-selects the manifest account and Git account independently. Public/local installation remains
+[personal provider connections](../user-profile-connections/feature.md), configured in Harness
+settings → Source providers. Shell links to authorized source tools and never reads personal connection summaries. Public/local installation remains
 available without personal connections; selecting a connection does not make it a host default.
 
 ## Supported Resources
@@ -30,15 +30,19 @@ image pulls or other artifact hosts.
 
 ## Review And Persistence
 
-The direct operator installation request accepts `sourceConnections.manifestConnectionId` and
+The reviewed installation request accepts `sourceConnections.manifestConnectionId` and
 `sourceConnections.gitConnectionId`. Updates keep omitted connections; explicit
 `clearManifestConnection` / `clearGitConnection` flags remove the corresponding grant after review.
 A request cannot both clear and select the same connection. The confirmation displays which resources
 use no personal connection. This also permits recovery after a formerly private source becomes public,
 without requiring the old connection to remain valid. Core derives the owner from the authenticated user and validates
 each resource against the selected provider; clients cannot supply trusted owner/grant records.
-App-delegated installation requests cannot select personal connections or update an app with private
-grants. Existing runtime assignments confer no repository credential access.
+App callers need both `apps.install` and `apps.sources`, including updates that keep existing private
+bindings and requests that remove them. Core derives the connection owner from the current actor,
+checks cached-plan bindings too, and rechecks the permissions on submission, status reads and execution.
+Runtime assignments confer no repository credential access. Shell exposes no connection selectors.
+Harness Source providers includes Application sources: install from a manifest, inspect an installed
+app's bindings, keep/replace/remove each connection, and submit a reviewed request to Core.
 
 The separate Core confirmation page displays the resource, connection label and external account,
 and explains continued access for the app, background updates and source workspaces requested by
@@ -56,10 +60,9 @@ local copies or stop a runtime.
 
 ## Recovery And Source Workspaces
 
-Settings → Source → Repository connections shows the saved connections and local missing-access
-state. The source owner reconnects in Profile, selects replacement connections, then confirms a
-reviewed app update. Public / no connection removes a saved binding. Local manifest installs expose
-only their Git connection selector; the source-access response never substitutes a host path for a URL.
+The source owner reconnects in Harness settings → Source providers. Harness and the direct operator API
+accept replacement bindings through a reviewed app update. Public / no connection removes a saved
+binding. The source-access response never substitutes a host path for a URL.
 A new connection ID never inherits old grants automatically. Ownership cannot
 be transferred through this flow. Provider-side revocation is discovered on a provider read/check;
 a locally available connection is not proof of remote repository permission.
@@ -73,8 +76,8 @@ connection blocks remote operations, while local files remain recoverable.
 Source updates prefetch missing reviewed Git objects before stopping the old runtime. A denied read
 therefore preserves the running app and installed version. An installation whose initial start fails
 retains the app record and reviewed bindings for recovery; it does not require a second installation.
-Local control remains trusted operator authority. Initial personal connection selection and replacement
-are exposed through Shell's signed-in operator flow; no CLI token argument is required or added.
+Local control remains trusted operator authority. Personal connection selection and replacement
+are exposed in Harness; Core keeps the confirmation page. No CLI token argument is required or added.
 
 ## Credential Handling
 
@@ -99,8 +102,10 @@ cooperative agent boundary.
   logout, disconnect/disable/delete, denied workspaces, failed updates preserving the running app,
   and revoked cached installation/update plans.
 - Real Git process tests verify URL-scoped transient configuration and absence of persisted tokens.
-- Shell component tests cover independent selections, missing-access state, denied review and popup
-  fallback. Core-managed Shell verification covers the installation and source settings surfaces.
+- Harness source-selection DOM tests cover explicit preparation, independent connection selection and the bound
+  review request; HTTP tests cover its session/navigation boundary. Shell tests verify that private
+  source links do not read personal connections or initiate installation implicitly.
+- Core-managed browser verification covers the installation and source settings surfaces.
 - Core/CLI tests, Shell build/tests/lint, Native AOT and documentation/version checks guard integration.
   Live provider clone/refresh tests require disposable external credentials; fixtures do not claim
   to replace that provider integration check.

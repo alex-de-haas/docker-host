@@ -10,6 +10,28 @@ namespace Haas.Hosty.Core.Tests.Http;
 public sealed class ProviderHttpTests
 {
     [Fact]
+    public async Task OwnPermissionStateNeedsNoGrant_ReportsUnsupportedNames_AndRejectsForeignApp()
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        var tokens = host.Services.GetRequiredService<AppServiceTokenService>();
+        await apps.UpsertAppAsync(Record("example.consumer") with {
+            RequiredCorePermissions = [CoreAppPermissions.ReadApps, "removed.permission"],
+            GrantedCorePermissions = [], OptionalCorePermissions = [CoreAppPermissions.AppLogs] });
+        await apps.UpsertAppAsync(Record("example.other"));
+        using var client = host.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new("Bearer", tokens.CreateToken("example.consumer"));
+        using var response = await client.GetAsync("/api/internal/apps/example.consumer/permissions");
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("removed.permission", body.GetProperty("unsupportedRequired")[0].GetString());
+        Assert.Equal(2, body.GetProperty("required").GetArrayLength());
+        Assert.Empty(body.GetProperty("granted").EnumerateArray());
+        Assert.False(body.GetProperty("reviewAvailable").GetBoolean());
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/internal/apps/example.other/permissions")).StatusCode);
+    }
+
+    [Fact]
     public async Task OrdinaryConsumerNeedsGrant_AndCredentialIsBoundToProviderAndCategory()
     {
         await using var host = await CoreHttpHarness.StartAsync();
@@ -97,7 +119,8 @@ public sealed class ProviderHttpTests
         var user = new HostUserRecord("member", "member@example.test", "Member", "host.user", false, now, now);
         var state = new UserDirectoryState(1, [user], [], [new(caller.Id, user.Id, now)], []);
         await users.WriteAsync(state);
-        var credential = await identity.CreateLaunchTokenAsync(caller.Id, user.Id);
+        var credential = await BrowserAuthorityFixture.Grant(host, caller.Id, user.Id);
+        state = await users.ReadAsync();
         await Assert.ThrowsAsync<AppIdentityException>(() => access.IssueAsync(caller, "assistant", new(target.Id), null, default));
         await Assert.ThrowsAsync<AppIdentityException>(() => access.IssueAsync(caller, "assistant", new(target.Id), credential.AccessToken, default));
         await users.WriteAsync(state with { Assignments = [new(caller.Id, user.Id, now), new(target.Id, user.Id, now)] });

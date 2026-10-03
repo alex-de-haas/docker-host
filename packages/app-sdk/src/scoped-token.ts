@@ -13,7 +13,7 @@
 /** What Core says about a credential. `active` is sufficient on its own: a caller that reads
  * nothing else is not thereby insecure, because everything else is present only when it is true. */
 export type ScopedTokenIntrospection =
-  | { active: true; sub: string; role: string | null; scopes: string[] }
+  | { active: true; sub: string; role: string | null; scopes: string[]; callerAppId?: string }
   | { active: false; error?: ScopedTokenError };
 
 /** Why the answer could not be obtained. Present only when Core was never reached or answered
@@ -56,6 +56,15 @@ export async function introspectScopedToken(
   token: string,
   options: IntrospectScopedTokenOptions = {},
 ): Promise<ScopedTokenIntrospection> {
+  return introspect(token, options);
+}
+
+/** MCP handlers only. Ordinary APIs must use introspectScopedToken, which rejects MCP-only tokens. */
+export async function introspectMcpToken(token: string, options: IntrospectScopedTokenOptions = {}): Promise<ScopedTokenIntrospection> {
+  return introspect(token, options, "mcp");
+}
+
+async function introspect(token: string, options: IntrospectScopedTokenOptions, purpose?: "mcp"): Promise<ScopedTokenIntrospection> {
   const appId = options.appId?.trim() || process.env.HOSTY_APP_ID?.trim();
   const serviceToken = options.serviceToken?.trim() || process.env.HOSTY_APP_SERVICE_TOKEN?.trim();
   // No fallback origin is invented when the variable is missing. Core injects HOSTY_CORE_ORIGIN
@@ -97,7 +106,7 @@ export async function introspectScopedToken(
     response = await fetch(endpoint, {
       method: "POST",
       headers: { authorization: `Bearer ${serviceToken}`, "content-type": "application/json" },
-      body: JSON.stringify({ token, ...(options.tool ? { tool: options.tool } : {}) }),
+      body: JSON.stringify({ token, ...(purpose ? { purpose } : {}), ...(options.tool ? { tool: options.tool } : {}) }),
       cache: "no-store",
       signal: AbortSignal.timeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS),
     });
@@ -137,7 +146,7 @@ export async function introspectScopedToken(
     };
   }
 
-  const body = payload as { active?: unknown; sub?: unknown; role?: unknown; scopes?: unknown };
+  const body = payload as { active?: unknown; sub?: unknown; role?: unknown; scopes?: unknown; callerAppId?: unknown };
 
   // A literal `false` is an answer: Core checked and said no.
   if (body?.active === false) {
@@ -174,6 +183,7 @@ export async function introspectScopedToken(
     sub: body.sub,
     role: typeof body.role === "string" ? body.role : null,
     scopes: body.scopes as string[],
+    ...(typeof body.callerAppId === "string" ? { callerAppId: body.callerAppId } : {}),
   };
 }
 
@@ -186,3 +196,6 @@ export function hasScope(result: ScopedTokenIntrospection, scope: string): boole
 /** The scope every read-only MCP tool is gated on today. Mutation scopes arrive with the feature
  * that introduces mutations. */
 export const SCOPE_MCP_READ = "mcp:read";
+
+/** A Core-authorized assistant may invoke MCP operations subject to the target user policy. */
+export const SCOPE_MCP_INVOKE = "mcp:invoke";

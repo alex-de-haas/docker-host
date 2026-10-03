@@ -1,5 +1,8 @@
 "use client";
 
+import { fetchCore } from "../core-transport.js";
+
+
 import { createContext, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { Cpu, MemoryStick } from "lucide-react";
 import { CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts";
@@ -27,7 +30,7 @@ export function ResourceUsageProvider({ coreOrigin, children }: { coreOrigin: st
         const previous = cache.current;
         const last = previous?.history.at(-1)?.timestamp;
         const query = last ? `?after=${encodeURIComponent(last)}&runId=${encodeURIComponent(previous!.runId)}` : "";
-        const response = await fetch(`${coreOrigin}/api/core/resources${query}`, { credentials: "include", signal: controller.signal });
+        const response = await fetchCore(`${coreOrigin}/api/core/resources${query}`, { credentials: "include", signal: controller.signal });
         if (!response.ok) { setFresh(false); return; }
         const next = mergeResources(previous, await response.json() as ResourceSnapshot);
         if (controller.signal.aborted) return;

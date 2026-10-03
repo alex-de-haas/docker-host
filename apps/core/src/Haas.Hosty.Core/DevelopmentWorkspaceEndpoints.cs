@@ -1,30 +1,22 @@
 namespace Haas.Hosty.Core;
 
 internal sealed class WorkspaceAuthorization(AppServiceTokenService serviceTokens, AppRegistryStore apps,
-    DelegatedTokenService delegated, AppIdentityService identity)
+    AppIdentityService identity, AssistantSessionAuthority authority)
 {
     public async Task<WorkspaceOwner> RequireAsync(HttpRequest request, string appId, string sessionId, CancellationToken ct)
     {
         if (!serviceTokens.ValidateToken(appId, CoreSessionAuthorization.ReadBearerToken(request) ?? ""))
             throw new AppIdentityException("token_invalid", "An app service token is required.");
         var caller = await apps.GetAppAsync(appId, ct) ?? throw new AppIdentityException("app_access_denied", "Assistant is not installed.");
-        if (caller.GrantedCorePermissions?.Contains(CoreAppPermissions.Workspaces, StringComparer.Ordinal) != true)
-            throw new AppIdentityException("app_permission_required", "The assistant needs the reviewed apps.workspaces.manage permission.");
+        if (caller.GrantedCorePermissions?.Contains(CoreAppPermissions.Sources, StringComparer.Ordinal) != true)
+            throw new AppIdentityException("app_permission_required", "The assistant needs the reviewed apps.sources permission.");
         var credential = request.Headers["X-Hosty-User-Token"].ToString();
-        string userId;
-        var claims = delegated.ValidateToken(credential, appId);
-        if (claims is not null)
-        {
-            var (user, _) = await identity.RequireAccessibleUserAsync(appId, claims.Sub, ct);
-            if (!AppAccessPolicy.IsAdmin(user)) throw new AppIdentityException("admin_required", "Workspace operations require an administrator.");
-            userId = user.Id;
-        }
-        else
-        {
-            var actor = await identity.RevalidateAsync(credential, appId, ct);
-            if (actor.HostRole != "host.admin") throw new AppIdentityException("admin_required", "Workspace operations require an administrator.");
-            userId = actor.UserId;
-        }
+        if (!credential.StartsWith("hostyg_", StringComparison.Ordinal))
+            throw new AppIdentityException("reauth_required", "Workspace access requires a browser app identity and Core-approved assistant session.");
+        var lease = await authority.RequireAsync(appId, sessionId, AppIdentityService.HashToken(credential), ct);
+        var actor = await identity.RevalidateAsync(credential, appId, ct);
+        if (actor.HostRole != "host.admin") throw new AppIdentityException("admin_required", "Workspace operations require an administrator.");
+        var userId = lease.UserId;
         return new(appId, caller.InstalledAt, userId, sessionId);
     }
 }
@@ -93,7 +85,7 @@ internal static class DevelopmentWorkspaceEndpoints
     private static async Task<IResult> Handle<T>(Func<Task<T>> action)
     {
         try { return CoreJson.Json(await action()); }
-        catch (AppIdentityException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), ex.Code == "token_invalid" ? 401 : 403); }
+        catch (AppIdentityException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), ex.Code is "token_invalid" or "reauth_required" ? 401 : 403); }
         catch (AppLifecycleException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), ex.Code == "workspace_not_found" ? 404 : ex.Code == "workspace_forbidden" ? 403 : 409); }
     }
 }

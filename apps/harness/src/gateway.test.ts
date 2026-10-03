@@ -876,6 +876,60 @@ describe("gateway", () => {
     }
   });
 
+  it("accepts app-authenticated chat without giving it cross-app MCP authority", async () => {
+    const seen: string[] = [];
+    const core = createServer((request, response) => {
+      seen.push(request.url!);
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ active: true, userId: "user_admin", hostRole: "host.admin" }));
+    });
+    await new Promise<void>(resolve => core.listen(0, resolve));
+    process.env.HOSTY_CORE_ORIGIN = `http://127.0.0.1:${(core.address() as AddressInfo).port}`;
+    process.env.HOSTY_APP_SERVICE_TOKEN = "chat-service";
+    try {
+      const session = await manager.createSession({ createdBy: "user_admin" });
+      const response = await fetch(`${origin}/api/sessions/${session.id}/messages`, { method: "POST",
+        headers: { authorization: "Bearer hostyg_browser", origin, "content-type": "application/json" }, body: JSON.stringify({ text: "hello" }) });
+      expect(response.status).toBe(202);
+      expect(seen).toEqual(["/api/auth/apps/revalidate"]);
+      expect(await manager.mintAppToken(session.id, "another.app")).toBeNull();
+      const messages = await store.readEvents(session.id, 0);
+      expect(JSON.stringify(messages)).not.toContain("mcp_authorization_required");
+      expect(JSON.stringify(messages)).not.toContain("hostyg_browser");
+    } finally { await new Promise(resolve => core.close(resolve)); }
+  });
+
+  it("source provider settings require an app session, same-origin writes and Core permission", async () => {
+    const forwarded: { path: string; headers: import("node:http").IncomingHttpHeaders; body: unknown }[] = [];
+    const core = createServer(async (request, response) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(chunk as Buffer);
+      response.setHeader("content-type", "application/json");
+      if (request.url === "/api/auth/apps/revalidate") {
+        response.end(JSON.stringify({ active: true, userId: "user_admin", hostRole: "host.admin" })); return;
+      }
+      forwarded.push({ path: request.url!, headers: request.headers, body: JSON.parse(Buffer.concat(chunks).toString() || "null") });
+      response.statusCode = 403; response.end(JSON.stringify({ code: "app_permission_required" }));
+    });
+    await new Promise<void>(resolve => core.listen(0, resolve));
+    process.env.HOSTY_CORE_ORIGIN = `http://127.0.0.1:${(core.address() as AddressInfo).port}`;
+    process.env.HOSTY_APP_SERVICE_TOKEN = "source-service";
+    try {
+      const headers = { cookie: "hosty_harness_identity=hostyg_own", "content-type": "application/json" };
+      expect((await fetch(`${origin}/api/source-connections/identity`, { method: "PUT", headers, body: "{}" })).status).toBe(403);
+      expect(forwarded).toHaveLength(0);
+      const reply = await fetch(`${origin}/api/source-connections/identity`, { method: "PUT", headers: { ...headers, origin }, body: '{"gitIdentity":null}' });
+      expect(reply.status).toBe(403); expect(await reply.json()).toEqual({ code: "app_permission_required" });
+      expect(reply.headers.get("cache-control")).toBe("no-store");
+      expect(forwarded).toHaveLength(1);
+      expect(forwarded[0]).toMatchObject({ path: "/api/source-connections/identity", body: { gitIdentity: null }, headers: { authorization: "Bearer source-service", "x-hosty-app-identity": "hostyg_own" } });
+      expect(forwarded[0]!.headers.cookie).toBeUndefined();
+      expect((await call("/api/source-connections")).status).toBe(403);
+      expect((await fetch(`${origin}/api/source-connections/../auth/credentials`, { method: "POST", headers: { ...headers, origin }, body: "{}" })).status).toBe(404);
+      expect(forwarded).toHaveLength(1);
+    } finally { await new Promise(resolve => core.close(resolve)); }
+  });
+
   it("refuses a session whose host role is not administrator", async () => {
     // Paired with the acceptance above: same valid session, one field different. Without this the
     // previous test is also satisfied by an app that never looks at the role at all.

@@ -36,7 +36,7 @@ public sealed partial class CoreLifecycleServiceTests
         var workspaces = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
         var w = await workspaces.PrepareAsync(owner, WorkspaceRequest(), default);
         var app = (await f.Apps.GetAppAsync(SourceTestApp))!;
-        await f.Apps.UpsertAppAsync(app with { Id = owner.AppId, InstalledAt = owner.Installation, GrantedCorePermissions = [CoreAppPermissions.Publication, CoreAppPermissions.Workspaces] });
+        await f.Apps.UpsertAppAsync(app with { Id = owner.AppId, InstalledAt = owner.Installation, GrantedCorePermissions = [CoreAppPermissions.Sources] });
         var users = new UserDirectoryStore(f.Paths);
         await users.WriteAsync(new(1, [new(owner.UserId, "admin@example.test", "Admin", "host.admin", false, f.Clock.UtcNow, f.Clock.UtcNow)], [], [], [],
             ProviderConnections: [new("connection", owner.UserId, "GitHub", "github", "", "", "42", "owner", "pat", "secret-for-fixture", null, null, null, f.Clock.UtcNow, null, "connected", "r1")]));
@@ -114,7 +114,7 @@ public sealed partial class CoreLifecycleServiceTests
     {
         var f = await PublicationFixture();
         var assistant = (await f.F.Apps.GetAppAsync(f.W.Owner.AppId))!;
-        await f.F.Apps.UpsertAppAsync(assistant with { GrantedCorePermissions = [CoreAppPermissions.Workspaces] });
+        await f.F.Apps.UpsertAppAsync(assistant with { GrantedCorePermissions = [] });
         var error = await Assert.ThrowsAsync<PublicationException>(() => f.Service.CommandAsync(f.W.Id, f.W.Owner, "publish", new(Guid.NewGuid().ToString(), f.W.Observation!.Head, Title: "Feature"), default));
         Assert.Equal("publication_forbidden", error.Code);
         Assert.Equal("unavailable", (await f.Service.ObserveAsync(f.W.Id, null, default)).Observation!.State);

@@ -36,6 +36,8 @@ export interface MarketplaceIdentity {
   displayName: string | null;
   hostRole: string | null;
   expiresAt: string | null;
+  activeUntil?: string | null;
+  activityRequired?: boolean;
   error: { code: string; message: string; status: number | null } | null;
 }
 
@@ -69,6 +71,8 @@ export async function getMarketplaceIdentity(headersList: HeaderReader): Promise
     displayName: resolution.identity.displayName,
     hostRole: resolution.identity.hostRole,
     expiresAt: resolution.identity.expiresAt,
+    activeUntil: resolution.identity.activeUntil,
+    activityRequired: resolution.identity.activityRequired,
     error: null,
   };
 }

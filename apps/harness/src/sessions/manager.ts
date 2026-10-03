@@ -38,6 +38,7 @@ interface LiveSession {
   mcpSignature?: string;
   mcpTargetSignature?: string;
   mcpNoticeSignature?: string;
+  mcpAuthorizationNotice?: boolean;
   record: SessionRecord;
   run: HarnessRun | null;
   listeners: Set<SessionListener>;
@@ -57,6 +58,8 @@ interface LiveSession {
    * session keeps working with its host tools and simply loses app MCP until the operator speaks.
    */
   credential: string | null;
+  /** This app's identity for its own apps.sources operations; never exchanged for another app. */
+  workspaceCredential: string | null;
   refreshTimer: NodeJS.Timeout | null;
   /**
    * Harness-facing names of app tools that may run without an approval card: an app the operator
@@ -161,7 +164,20 @@ export class SessionManager {
     }
   }
 
-  async discoverMcpTools(credential: string): Promise<string[]> {
+  /** Update credentials only after the browser has renewed identity; Core still owns the lease. */
+  async refreshSessionAuthority(id: string, userId: string, credential: string): Promise<void> {
+    await this.serialize(id, async () => {
+      const session = await this.requireLive(id);
+      if (session.record.createdBy !== userId) throw new AppContextError(403, "session_forbidden", "This session belongs to another user.");
+      session.credential = credential;
+      session.workspaceCredential = credential;
+      if (session.run) await this.refreshMcpServers(session);
+    });
+  }
+
+  async discoverMcpTools(credential: string, sessionId: string, userId: string): Promise<string[]> {
+    const session = await this.requireLive(sessionId);
+    if (session.record.createdBy !== userId) throw new AppContextError(403, "session_forbidden", "This session belongs to another user.");
     const unavailable: string[] = [];
     if (this.development?.available) await this.mcpPolicy.catalog(DEVELOPMENT_PROVIDER, DEVELOPMENT_IDENTITY, developmentTools());
     const snapshot = await this.providers?.read();
@@ -169,7 +185,7 @@ export class SessionManager {
     for (const p of [this.providers?.core(), ...snapshot.providers]) {
       if (!p?.offered || !p.url || !p.policyIdentity) continue;
       try {
-        const token = await this.exchange?.exchange(credential, p.appId);
+        const token = await this.exchange?.exchange(credential, p.appId, sessionId);
         if (!token) throw new Error("Provider identity unavailable");
         await this.mcpPolicy.discover(p.appId, p.policyIdentity, p.url, token.token);
       } catch { unavailable.push(p.appId); }
@@ -182,7 +198,7 @@ export class SessionManager {
       const session = await this.requireLive(id);
       if (userId && session.record.createdBy !== userId) throw new AppContextError(403, "workspace_forbidden", "This session belongs to another user.");
       if (!this.development?.available) throw new AppContextError(503, "workspaces_unavailable", "Workspaces require a Core-managed assistant.");
-      const token = credential ?? session.credential;
+      const token = credential ?? session.workspaceCredential ?? session.credential;
       if (!token) throw new AppContextError(401, "workspace_credentials_required", "Refresh the session's Hosty credentials before using workspaces.");
       if (!["list", "prepare", "status", "diff", "commit", "refresh", "merge", "abort-merge", "cleanup", "references", "pr-resolve-review", "pr-commit", "pr-list", "pr-connections", "pr-status", "pr-configure", "pr-publish", "pr-link", "pr-ready", "pr-merge", "pr-complete", "pr-corrective"].includes(action))
         throw new AppContextError(400, "workspace_action_invalid", "Unknown workspace action.");
@@ -224,17 +240,18 @@ export class SessionManager {
 
   private async leaseWorkspaces(session: LiveSession, acquire: boolean): Promise<void> {
     if (!this.development || !session.record.developmentLease) return;
-    if (!session.credential) throw new AppContextError(401, "workspace_credentials_required", "Refresh Hosty credentials before continuing development.");
+    const credential = session.workspaceCredential ?? session.credential;
+    if (!credential) throw new AppContextError(401, "workspace_credentials_required", "Refresh Hosty credentials before continuing development.");
     if (acquire) {
       // A prepare response can be lost after Core allocated the tree. Recover associations before
       // every subsequent turn, so a restart never resumes source work without its activity lease.
-      const result = await this.development.call(session.record.id, session.credential, "list", {}) as { workspaces: DevelopmentWorkspace[] };
+      const result = await this.development.call(session.record.id, credential, "list", {}) as { workspaces: DevelopmentWorkspace[] };
       session.record.developmentWorkspaces = result.workspaces;
     }
     const workspaces = session.record.developmentWorkspaces?.filter(w => w.state === "active") ?? [];
     await this.store.saveRecord(session.record);
     for (const workspace of workspaces) {
-      await this.development.call(session.record.id, session.credential, acquire ? "lease" : "release-lease", {
+      await this.development.call(session.record.id, credential, acquire ? "lease" : "release-lease", {
         workspaceId: workspace.id, requestId: randomUUID(), leaseId: session.record.developmentLease,
       });
     }
@@ -254,7 +271,7 @@ export class SessionManager {
       return null;
     }
 
-    const issued = await this.exchange.exchange(session.credential, appId);
+    const issued = await this.exchange.exchange(session.credential, appId, sessionId);
     return issued ? { token: issued.token, expiresAtMs: new Date(issued.expiresAt).getTime() } : null;
   }
 
@@ -310,6 +327,7 @@ export class SessionManager {
         pendingApprovals: new Map(),
         pendingQuestions: new Map(),
         credential: null,
+        workspaceCredential: null,
         refreshTimer: null,
         autoAllowed: new Set(),
       });
@@ -517,7 +535,7 @@ export class SessionManager {
    * Their paths are appended to what the harness receives, in a fixed form, and never to the system
    * prompt: a file is the operator's input for one turn, not standing instruction.
    */
-  async postMessage(id: string, text: string, credential?: string, attachments: string[] = [], context: { expectedRevision?: unknown; withoutDetails?: boolean; dispatchId?: string } = {}): Promise<void> {
+  async postMessage(id: string, text: string, credential?: string, attachments: string[] = [], context: { expectedRevision?: unknown; withoutDetails?: boolean; dispatchId?: string; workspaceCredential?: string | null } = {}): Promise<void> {
     return this.serialize(id, async () => {
       const session = await this.requireLive(id);
       if (session.record.handoffPending) throw new AppContextError(409, "handoff_pending", "Finalize the prepared handoff before sending.");
@@ -561,11 +579,24 @@ export class SessionManager {
           }
           attached.push({ name, path: file });
         }
+        if (context.workspaceCredential !== undefined) {
+          session.workspaceCredential = context.workspaceCredential;
+          // A new app-authenticated turn cannot inherit a legacy client's cross-app delegation.
+          if (!credential) {
+            await this.dropAppMcp(session);
+            if (!session.mcpAuthorizationNotice) {
+              await this.append(id, { type: "notice", message: "Other applications' MCP tools are unavailable until separately authorized through Core." });
+              session.mcpAuthorizationNotice = true;
+            }
+          }
+        }
         if (credential) {
+          if (context.workspaceCredential === undefined) session.workspaceCredential = null;
           // A fresh credential is also the documented recovery from a lapsed chain, so an existing run
           // gets its servers rebuilt here rather than waiting for the next timer tick — otherwise
           // "the operator saying anything at all" restores nothing for up to three minutes.
           session.credential = credential;
+          session.mcpAuthorizationNotice = false;
         }
         await this.leaseWorkspaces(session, true);
         if (session.run) await this.refreshMcpServers(session);
@@ -667,7 +698,7 @@ export class SessionManager {
   private async buildMcpServers(session: LiveSession, knownCandidates?: McpProvider[]): Promise<Record<string, unknown> | undefined> {
     const raw = await this.buildAppMcpServers(session, knownCandidates);
     const appServers = raw && Object.fromEntries(Object.entries(raw).map(([key, server]) => [key, { ...(server as object), hostyPolicy: true }]));
-    if (!this.development?.available || !this.proxyBaseUrl || !session.credential) return appServers;
+    if (!this.development?.available || !this.proxyBaseUrl || !(session.workspaceCredential ?? session.credential)) return appServers;
     return { ...appServers, ...this.developmentMcp.config(session.record.id, this.proxyBaseUrl) };
   }
 
@@ -696,7 +727,7 @@ export class SessionManager {
       return undefined;
     }
 
-    const servers = await this.exchange.buildServers(session.credential, candidates, Object.fromEntries(candidates.map(provider => [provider.appId, provider.offered === true])));
+    const servers = await this.exchange.buildServers(session.credential, candidates, Object.fromEntries(candidates.map(provider => [provider.appId, provider.offered === true])), session.record.id);
     if (servers.length === 0) {
       session.autoAllowed.clear();
       session.mcpAppIds = [];
@@ -796,7 +827,7 @@ export class SessionManager {
       return;
     }
 
-    const servers = await this.exchange.buildServers(session.credential, candidates, Object.fromEntries(candidates.map(provider => [provider.appId, provider.offered === true])));
+    const servers = await this.exchange.buildServers(session.credential, candidates, Object.fromEntries(candidates.map(provider => [provider.appId, provider.offered === true])), session.record.id);
     await this.refreshAutoAllowed(session, servers, policy.mcpAutoAllow);
   }
 
@@ -871,10 +902,16 @@ export class SessionManager {
    */
   private async dropAppMcp(session: LiveSession): Promise<boolean> {
     session.credential = null;
+    session.mcpAppIds = [];
+    session.mcpSignature = undefined;
     session.autoAllowed.clear();
     this.proxy?.unregister(session.record.id);
-    this.developmentMcp.unregister(session.record.id);
-    await session.run?.setMcpServers({}).catch(() => false);
+    // Independent app authority survives an expired cross-app delegation. Core revalidates the
+    // app grant, apps.sources and the current user on every workspace operation.
+    const ownServers = this.development?.available && this.proxyBaseUrl && session.workspaceCredential
+      ? this.developmentMcp.config(session.record.id, this.proxyBaseUrl) : {};
+    if (!session.workspaceCredential) this.developmentMcp.unregister(session.record.id);
+    await session.run?.setMcpServers(ownServers).catch(() => false);
     this.clearRefresh(session);
     return false;
   }
@@ -1169,6 +1206,7 @@ export class SessionManager {
       pendingApprovals: new Map(),
       pendingQuestions: new Map(),
       credential: null,
+      workspaceCredential: null,
       refreshTimer: null,
       autoAllowed: new Set(),
     };

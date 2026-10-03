@@ -24,14 +24,15 @@ internal sealed class AppIdentityService(
         string userId,
         string redirectUri,
         string? authorizingSessionId = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool activityAuthorized = false)
     {
         await RequireAllowedRedirectUriAsync(appId, redirectUri, cancellationToken);
         var (user, _) = await RequireAccessibleUserAsync(appId, userId, cancellationToken);
         var now = clock.UtcNow;
         var code = CreateOpaqueToken();
         await codes.AppendCodeAsync(
-            new AppAuthCodeRecord(code, appId, user.Id, redirectUri, now, now.Add(AuthCodeLifetime), null, authorizingSessionId),
+            new AppAuthCodeRecord(code, appId, user.Id, redirectUri, now, now.Add(AuthCodeLifetime), null, authorizingSessionId, user.AuthRevision, activityAuthorized),
             now,
             cancellationToken);
 
@@ -50,7 +51,8 @@ internal sealed class AppIdentityService(
         };
 
         var (user, app) = await RequireAccessibleUserAsync(match.AppId, match.UserId, cancellationToken);
-        return await CreateGrantAsync(app, user, AppGrantIssuedVia.Code, match.AuthorizingSessionId, cancellationToken);
+        RequireCurrentAuthRevision(match.AuthRevision, user);
+        return await CreateGrantAsync(app, user, AppGrantIssuedVia.Code, match.AuthorizingSessionId, cancellationToken, match.ActivityAuthorized);
     }
 
     public async Task<AppIdentityTokenResult> CreateLaunchTokenAsync(
@@ -62,12 +64,18 @@ internal sealed class AppIdentityService(
         return await CreateGrantAsync(app, user, AppGrantIssuedVia.CliDiagnostic, authorizingSessionId: null, cancellationToken);
     }
 
+    // Internal binding only: the primary browser credential never leaves Core.
+    internal async Task<string?> AuthorizingBrowserSessionAsync(string token, string appId, CancellationToken ct)
+    {
+        await RevalidateAsync(token, appId, ct);
+        return (await grants.TryResolveAsync(HashToken(token), ct))?.AuthorizingSessionId;
+    }
+
     public async Task<AppSessionValidationResult> RevalidateAsync(
         string? token,
         string callingAppId,
         CancellationToken cancellationToken = default)
     {
-        var now = clock.UtcNow;
         // A body that omits the token is an unrecognized token, not a server fault: the hash below
         // would throw on null, and the caller's contract for "no usable token" is already token_invalid.
         if (string.IsNullOrWhiteSpace(token))
@@ -75,7 +83,13 @@ internal sealed class AppIdentityService(
             throw new AppIdentityException("token_invalid", "App session token is not recognized.");
         }
 
-        var tokenHash = HashToken(token);
+        return await RevalidateHashAsync(HashToken(token), callingAppId, cancellationToken);
+    }
+
+    // MCP credentials carry only this one-way reference, never the parent app session secret.
+    internal async Task<AppSessionValidationResult> RevalidateHashAsync(string tokenHash, string callingAppId, CancellationToken cancellationToken)
+    {
+        var now = clock.UtcNow;
         var grant = await grants.TryResolveAsync(tokenHash, cancellationToken) ??
             throw new AppIdentityException("token_invalid", "App session token is not recognized.");
 
@@ -97,6 +111,7 @@ internal sealed class AppIdentityService(
         // Policy (disabled / unassigned / system-app-admin / role downgrade) is re-checked online on every
         // revalidation — the primary revocation guarantee — so grant TTLs can be long without weakening it.
         var (user, app) = await RequireAccessibleUserAsync(grant.AppId, grant.UserId, cancellationToken);
+        RequireCurrentAuthRevision(grant.AuthRevision, user);
 
         var (idle, _) = settings.AuthLifetimes.ForGrant(app.System, grant.IssuedVia);
         if (grant.LastSeenAt.Add(idle) <= now)
@@ -126,7 +141,8 @@ internal sealed class AppIdentityService(
             user.Email,
             user.DisplayName,
             user.Role,
-            grant.AbsoluteExpiresAt);
+            grant.AbsoluteExpiresAt, grant.ActiveUntil,
+            (app.RequiredCorePermissions?.Count ?? 0) + (app.OptionalCorePermissions?.Count ?? 0) + (app.GrantedCorePermissions?.Count ?? 0) > 0);
     }
 
     private async Task<AppIdentityTokenResult> CreateGrantAsync(
@@ -134,12 +150,18 @@ internal sealed class AppIdentityService(
         HostUserRecord user,
         string issuedVia,
         string? authorizingSessionId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, bool activityAuthorized = false)
     {
         var now = clock.UtcNow;
         var (_, absolute) = settings.AuthLifetimes.ForGrant(app.System, issuedVia);
         var absoluteExpiresAt = now.Add(absolute);
         var token = CreateGrantToken();
+        DateTimeOffset? activeUntil = null;
+        if (activityAuthorized)
+        {
+            await RequireLiveAuthorizingSessionAsync(authorizingSessionId, user.Id, cancellationToken);
+            activeUntil = now.Add(settings.AuthLifetimes.EffectiveActivityWindow);
+        }
         var record = new AppSessionGrantRecord(
             Id: CreateOpaqueToken(),
             AppId: app.Id,
@@ -150,9 +172,48 @@ internal sealed class AppIdentityService(
             LastSeenAt: now,
             AbsoluteExpiresAt: absoluteExpiresAt,
             RevokedAt: null,
-            AuthorizingSessionId: authorizingSessionId);
+            AuthorizingSessionId: authorizingSessionId,
+            AuthRevision: user.AuthRevision,
+            ActiveUntil: activeUntil);
         await grants.AppendAsync(record, now, cancellationToken);
-        return new AppIdentityTokenResult(token, "Bearer", absoluteExpiresAt, (int)absolute.TotalSeconds);
+        return new AppIdentityTokenResult(token, "Bearer", absoluteExpiresAt, (int)absolute.TotalSeconds, activeUntil);
+    }
+
+    internal Task<AppSessionValidationResult> RequireActivityAsync(string token, string appId, CancellationToken ct)
+        => RequireActivityHashAsync(HashToken(token), appId, ct);
+
+    internal async Task<AppSessionValidationResult> RequireActivityHashAsync(string hash, string appId, CancellationToken ct)
+    {
+        var actor = await RevalidateHashAsync(hash, appId, ct);
+        var grant = await grants.TryResolveAsync(hash, ct);
+        if (grant?.ActiveUntil is not { } until || until <= clock.UtcNow)
+            throw new AppIdentityException("reauth_required", "Renew app activity through Core before continuing.");
+        await RequireLiveAuthorizingSessionAsync(grant.AuthorizingSessionId, actor.UserId, ct);
+        return actor;
+    }
+
+    internal async Task<AppSessionValidationResult> RequireBrowserIdentityHashAsync(string hash, string appId, CancellationToken ct)
+    {
+        var actor = await RevalidateHashAsync(hash, appId, ct);
+        var grant = await grants.TryResolveAsync(hash, ct);
+        await RequireLiveAuthorizingSessionAsync(grant?.AuthorizingSessionId, actor.UserId, ct);
+        return actor;
+    }
+
+    internal async Task<AuthSessionRecord> RequireLiveAuthorizingSessionAsync(string? id, string userId, CancellationToken ct)
+    {
+        var state = await users.ReadAsync(ct);
+        var session = state.Sessions.FirstOrDefault(s => s.Id == id && s.UserId == userId);
+        if (session is null || session.Kind is not null || session.BrowserOrigin is null ||
+            !CoreSessionAuthorization.IsSessionLive(session, clock.UtcNow, settings.AuthLifetimes.CoreSessionIdle))
+            throw new AppIdentityException("reauth_required", "Sign in through Core to renew privileged app activity.");
+        return session;
+    }
+
+    private static void RequireCurrentAuthRevision(string? revision, HostUserRecord user)
+    {
+        if (!string.Equals(revision, user.AuthRevision, StringComparison.Ordinal))
+            throw new AppIdentityException("token_revoked", "Authorization was revoked by account recovery. Sign in again.");
     }
 
     // Public because it is the single access-policy gate shared by every identity flow, including
@@ -190,24 +251,9 @@ internal sealed class AppIdentityService(
             throw new AppIdentityException("user_disabled", "Host user is disabled.");
         }
 
-        // System apps are administrator surfaces. This is the enforcement point for every identity flow
-        // (authorize, launch, exchange, revalidate), so a role downgrade revokes access no later than the
-        // next revalidation.
-        if (app.System && !string.Equals(user.Role, "host.admin", StringComparison.Ordinal))
-        {
-            throw new AppIdentityException("system_app_admin_required", "System app access requires a Host administrator.");
-        }
-
-        // Assignments are a per-user allowlist, so an app with no rows at all grants nobody access. The
-        // rule must not weaken to "unassigned means public": that made every never-assigned app reachable
-        // by every user, which is the opposite of what the admin picker's unchecked box promises.
-        // The `?? []` is not ceremony: the store only substitutes a default state for a *missing* file, so
-        // a document that exists without an `assignments` key deserializes this to null despite the
-        // non-nullable declaration. Guarding keeps that a closed door rather than a 500.
-        var userAssigned = (state.Assignments ?? []).Any(assignment =>
-            string.Equals(assignment.AppId, app.Id, StringComparison.Ordinal) &&
-            string.Equals(assignment.UserId, user.Id, StringComparison.Ordinal));
-        if (!string.Equals(user.Role, "host.admin", StringComparison.Ordinal) && !userAssigned)
+        // The system role describes the app, not who may use it. Assignments and host roles
+        // are shared with listings/assets; management endpoints check administrative authority.
+        if (!AppAccessPolicy.CanAccessApp(state, user, app.Id, app.System))
         {
             throw new AppIdentityException("app_access_denied", "Host user is not assigned to this app.");
         }
@@ -227,7 +273,7 @@ internal sealed class AppIdentityService(
         var redirect = ValidateRedirectUri(redirectUri);
         var app = await RequireInstalledAppAsync(appId, cancellationToken);
         var allowed = app.Endpoints
-            .SelectMany(endpoint => GetAllowedEndpointOrigins(endpoint, app.Settings))
+            .SelectMany(endpoint => GetAllowedEndpointOrigins(app, endpoint))
             .Where(origin => !string.IsNullOrWhiteSpace(origin))
             .Select(origin => Uri.TryCreate(origin, UriKind.Absolute, out var uri) ? uri : null)
             .OfType<Uri>()
@@ -240,15 +286,16 @@ internal sealed class AppIdentityService(
     }
 
     private static IEnumerable<string?> GetAllowedEndpointOrigins(
-        AppEndpointContract endpoint,
-        IReadOnlyDictionary<string, AppSettingValue> settings)
+        AppRecord app,
+        AppEndpointContract endpoint)
     {
         yield return endpoint.Url;
         yield return endpoint.PublicOrigin;
+        yield return LocalBrowserOrigins.App(app, endpoint);
 
         if (endpoint.Public &&
             !string.IsNullOrWhiteSpace(endpoint.Url) &&
-            settings.TryGetValue(PublicOriginSettings.BuildSettingKey(endpoint.Key), out var setting) &&
+            app.Settings.TryGetValue(PublicOriginSettings.BuildSettingKey(endpoint.Key), out var setting) &&
             PublicOriginSettings.TryNormalizeOrigin(setting.Value, out var publicOrigin))
         {
             yield return publicOrigin;
@@ -286,7 +333,7 @@ internal sealed class AppIdentityService(
     private static string CreateGrantToken()
         => GrantTokenPrefix + Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
 
-    private static string HashToken(string token)
+    internal static string HashToken(string token)
         => Base64UrlEncode(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
 
     private static string Base64UrlEncode(byte[] bytes)
@@ -295,7 +342,7 @@ internal sealed class AppIdentityService(
 
 internal sealed record AppAuthorizeResult(string Code, string RedirectUri, DateTimeOffset ExpiresAt);
 
-internal sealed record AppIdentityTokenResult(string AccessToken, string TokenType, DateTimeOffset ExpiresAt, int ExpiresInSeconds);
+internal sealed record AppIdentityTokenResult(string AccessToken, string TokenType, DateTimeOffset ExpiresAt, int ExpiresInSeconds, DateTimeOffset? ActiveUntil = null);
 
 internal sealed record AppSessionValidationResult(
     bool Active,
@@ -304,7 +351,7 @@ internal sealed record AppSessionValidationResult(
     string? Email,
     string? DisplayName,
     string HostRole,
-    DateTimeOffset ExpiresAt);
+    DateTimeOffset ExpiresAt, DateTimeOffset? ActiveUntil = null, bool ActivityRequired = false);
 
 internal sealed class AppIdentityException(string code, string message) : Exception(message)
 {

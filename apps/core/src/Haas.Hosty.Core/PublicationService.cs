@@ -24,7 +24,7 @@ internal sealed class PublicationService(CoreDataPaths paths, DevelopmentWorkspa
     {
         var app = await apps.GetAppAsync(owner.AppId, ct);
         var user = (await users.ReadAsync(ct)).Users.FirstOrDefault(u => u.Id == owner.UserId && !u.Disabled);
-        if (app?.InstalledAt != owner.Installation || app.GrantedCorePermissions?.Contains(CoreAppPermissions.Publication) != true || app.GrantedCorePermissions?.Contains(CoreAppPermissions.Workspaces) != true || user is null || !AppAccessPolicy.IsAdmin(user))
+        if (app?.InstalledAt != owner.Installation || app.GrantedCorePermissions?.Contains(CoreAppPermissions.Sources) != true || user is null || !AppAccessPolicy.IsAdmin(user))
             throw new PublicationException("forbidden", "The assistant installation or administrator publication grant is no longer valid.");
     }
     public async Task<PublicationConnections> ConnectionsAsync(WorkspaceOwner owner, CancellationToken ct)

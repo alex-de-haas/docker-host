@@ -1,7 +1,7 @@
 # Shell Navigation
 
 Created: 2026-07-30
-Updated: 2026-09-30
+Updated: 2026-10-02
 
 The browser Shell has three top-level destinations: **Dashboard**, the host you manage; **Settings**,
 the host you configure; and **Apps**, the apps you use. This document owns the route table and the
@@ -60,10 +60,9 @@ Two groups:
   row for it could only be a dead end.
 
 There is no System group. The gate it expressed is Core's: `GET /api/apps` filters per user through
-`AppAccessPolicy`, which admits a system app only to an administrator, and `AppIdentityService`
-refuses a launch code for one with `system_app_admin_required`. A non-administrator never receives a
-system app in the list at all, so a client-side split would be a second copy of an authorization
-decision — the kind that drifts.
+`AppAccessPolicy`: administrators have implicit access, and other users see only explicitly
+assigned apps, including assigned system apps. Identity issuance and revalidation enforce the
+same rule. A client-side system/ordinary split would duplicate Core's access decision.
 
 Below 768px the sidebar defaults to a 60px icon rail, independently of the saved desktop width.
 The top-bar toggle expands it over the content, up to 280px wide. The toggle, Escape, the backdrop,
@@ -314,7 +313,9 @@ stay on their Profile and Access tokens pages, while host and app administration
 The check also runs when only the settings query parameter changes.
 
 Administrators have an always-visible Permissions tab in each app's settings panel. It displays
-accepted and observed declarations, effective grants, optional draft choices and confirmation status.
+accepted and observed declarations and effective grants read-only. **Change permissions** opens
+Core's isolated page, where only already granted optional rights start checked. Shell refreshes
+the displayed grants when focus returns; it holds no draft selections of its own.
 Dashboard's actionable permission problem opens that tab; missing required access contributes to the
 attention count without changing the factual runtime badge. Invalid observation is a distinct warning;
 disabled optional permissions are not a problem. See [App permission management](../app-permission-management/feature.md).

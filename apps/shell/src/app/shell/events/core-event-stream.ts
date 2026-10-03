@@ -1,4 +1,5 @@
 "use client";
+import { APP_ACTIVITY_RENEWED } from "@hosty-sdk/app/browser-auth";
 
 // Client for Core's unified event stream (GET /api/events).
 //
@@ -104,7 +105,7 @@ function openConnection(coreOrigin: string, connection: Connection): void {
 
   let source: EventSource;
   try {
-    source = new EventSource(`${coreOrigin}/api/events`, { withCredentials: true });
+    source = new EventSource("/api/core/api/events", { withCredentials: true });
   } catch {
     // No EventSource (or it refused to construct): subscribers keep whatever polling fallback they
     // have. Nothing here is load-bearing enough to surface.
@@ -179,8 +180,14 @@ function getConnection(coreOrigin: string): Connection {
     }
   };
 
+  const onRenewed = () => {
+    connection.source?.close(); connection.source = null;
+    openConnection(coreOrigin, connection);
+    for (const subscriber of connection.subscribers) void runSync(subscriber);
+  };
   document.addEventListener("visibilitychange", onVisibility);
-  connection.disposeVisibility = () => document.removeEventListener("visibilitychange", onVisibility);
+  window.addEventListener(APP_ACTIVITY_RENEWED, onRenewed);
+  connection.disposeVisibility = () => { document.removeEventListener("visibilitychange", onVisibility); window.removeEventListener(APP_ACTIVITY_RENEWED, onRenewed); };
   connections.set(coreOrigin, connection);
   return connection;
 }

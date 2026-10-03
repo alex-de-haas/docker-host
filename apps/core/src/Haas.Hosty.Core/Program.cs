@@ -55,6 +55,7 @@ if (!string.IsNullOrWhiteSpace(generation) && Path.GetDirectoryName(Path.GetFull
 else generation = null;
 
 HostyCoreApplication.ConfigureServices(builder, config);
+DockerCoreListener.Configure(builder, config);
 // Registered for disposal with the host so the lock is held for the full process lifetime and
 // released cleanly on shutdown (the OS releases it on any harder exit).
 builder.Services.AddSingleton(_ => rootLock);
@@ -65,6 +66,11 @@ if (generation is not null)
 // Materialize the lock registration so the container tracks it for disposal — nothing else ever
 // resolves it.
 _ = app.Services.GetRequiredService<CoreRootLock>();
+if (app.Services.GetService<DockerCoreListener>() is { } dockerListener)
+{
+    await dockerListener.RefreshAsync(CancellationToken.None);
+    app.Use(DockerCoreListener.GuardControlAsync);
+}
 HostyCoreApplication.MapEndpoints(app);
 
 // Resolve the listen URL before running: once RunAsync rethrows a startup failure the

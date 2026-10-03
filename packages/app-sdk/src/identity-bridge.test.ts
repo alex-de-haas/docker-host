@@ -22,21 +22,21 @@ describe("AppIdentityBridge launch exchange", () => {
   beforeEach(() => {
     hooks.state = { kind: "recovering" };
     reload = vi.fn();
-    const location = { href: "http://app.local/?code=one-time-code", reload };
+    const location = { origin: "http://app.local", href: "http://app.local/?code=one-time-code", reload };
     vi.stubGlobal("window", {
       location,
       history: { replaceState: (_state: unknown, _title: string, path: string) => {
         location.href = new URL(path, location.href).href;
       } },
       sessionStorage: { removeItem: vi.fn(), getItem: () => null },
-      setTimeout, clearTimeout,
+      setTimeout, clearTimeout, addEventListener: vi.fn(), removeEventListener: vi.fn(),
     });
   });
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
   it("finishes one code exchange across the development effect replay before probing", async () => {
     const exchange = deferredResponse();
-    const fetchMock = vi.fn().mockReturnValue(exchange.promise);
+    const fetchMock = vi.fn().mockReturnValueOnce(exchange.promise).mockResolvedValue(new Response(JSON.stringify({ status: "active" })));
     vi.stubGlobal("fetch", fetchMock);
     AppIdentityBridge();
     const cleanup = hooks.effect!();
@@ -51,8 +51,8 @@ describe("AppIdentityBridge launch exchange", () => {
     expect(window.location.href).not.toContain("code=");
 
     exchange.resolve(new Response("{}", { status: 200 }));
-    await vi.waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(reload).not.toHaveBeenCalled();
     cleanupReplay();
   });
 

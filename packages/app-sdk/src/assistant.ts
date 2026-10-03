@@ -1,3 +1,14 @@
+/** Preserve provider refusal details through app-owned server transports. */
+export class AssistantError extends Error {
+  readonly code: string;
+  readonly status: number;
+  constructor(code: string, message: string, status: number) {
+    super(message);
+    this.code = code;
+    this.status = status;
+  }
+}
+
 /** Version 1 of the manifest-discovered assistant handoff. */
 export type AssistantContract = { version?: number | null; capabilities?: readonly string[] | null };
 export type AssistantDestination = { endpoint: string; path: string };
@@ -59,8 +70,9 @@ export class AssistantClient {
       if (typeof init.body === "string") headers.set("content-type", "application/json");
       const response = await fetch(`${this.baseUrl.replace(/\/$/, "")}${route}`, { ...init, redirect: "error", headers, signal: init.signal ?? (controlDeadline ? AbortSignal.timeout(60_000) : undefined) });
       if (response.status === 401 && attempt === 0) continue;
-      const body = await response.json().catch(() => null) as { message?: string } | null;
-      if (!response.ok) throw new Error(body?.message || `Assistant request failed (${response.status}).`);
+      const body = await response.json().catch(() => null) as { code?: string; message?: string } | null;
+      if (!response.ok) throw new AssistantError(body?.code ?? "assistant_failed",
+        body?.message || `Assistant request failed (${response.status}).`, response.status);
       return body as T;
     }
     throw new Error("Assistant authorization expired.");

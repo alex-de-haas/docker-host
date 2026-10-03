@@ -362,6 +362,101 @@ public sealed class PrivateSourceTests
         finally { Directory.Delete(directory, true); }
     }
 
+    [Theory]
+    [InlineData("apps.sources")]
+    [InlineData("apps.install")]
+    public async Task AppPrivateReview_RechecksBothPermissionsAtSubmitAndExecution(string revoked)
+    {
+        using var provider = new FakeHttp(); await using var h = await Start(provider);
+        using var client = await AppClient(h, "alice", [CoreAppPermissions.Install]);
+        var input = new { manifestPath = Url, sourceConnections = new { manifestConnectionId = "github-a" } };
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/installations", input)).StatusCode);
+        Assert.Empty(provider.Calls);
+        await AppGrants(h, [CoreAppPermissions.Install, CoreAppPermissions.Sources]);
+        using var response = await client.PostAsJsonAsync("/api/installations", input);
+        response.EnsureSuccessStatusCode();
+        var text = await response.Content.ReadAsStringAsync();
+        Assert.DoesNotContain("github-secret", text);
+        var id = JsonDocument.Parse(text).RootElement.GetProperty("id").GetString()!;
+        await AppGrants(h, CoreAppPermissions.Known.Except([revoked]).ToArray());
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync($"/api/installations/{id}/submit", new { autostart = false })).StatusCode);
+        await AppGrants(h, [CoreAppPermissions.Install, CoreAppPermissions.Sources]);
+        (await client.PostAsJsonAsync($"/api/installations/{id}/submit", new { autostart = false })).EnsureSuccessStatusCode();
+        var store = h.Services.GetRequiredService<InstallationApprovalStore>();
+        var entry = store.Get(id);
+        store.Decide(entry, store.IssueNonce(entry, "alice-browser"), "alice-browser", true);
+        await AppGrants(h, CoreAppPermissions.Known.Except([revoked]).ToArray());
+        await h.Services.GetRequiredService<InstallationApprovalService>().ExecuteAsync(entry, default);
+        Assert.Equal("failed", entry.Status);
+        Assert.Contains(revoked, entry.Error);
+        Assert.Null(await h.Services.GetRequiredService<AppRegistryStore>().GetAppAsync("example.private"));
+    }
+
+    [Fact]
+    public async Task InstalledPrivateBindings_RequireSourcesAndOwner_EvenWithoutNewSelection()
+    {
+        using var provider = new FakeHttp(); await using var h = await Start(provider);
+        var approvals = h.Services.GetRequiredService<InstallationApprovalService>();
+        var install = await approvals.PrepareAsync(new("alice", null, null, "Alice"), new(ManifestPath: Url, SourceConnections: new("github-a")), default);
+        install.Autostart = false; await approvals.ExecuteAsync(install, default); Assert.Null(install.Error);
+        using var owner = await AppClient(h, "alice", [CoreAppPermissions.Install]);
+        foreach (var path in new[] { "source-access", "update/plan" })
+            Assert.Equal(HttpStatusCode.Forbidden, (await owner.GetAsync($"/api/apps/example.private/{path}")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await owner.PostAsJsonAsync("/api/installations", new { updateAppId = "example.private" })).StatusCode);
+        await AppGrants(h, [CoreAppPermissions.Install, CoreAppPermissions.Sources]);
+        (await owner.GetAsync("/api/apps/example.private/source-access")).EnsureSuccessStatusCode();
+        (await owner.PostAsJsonAsync("/api/installations", new { updateAppId = "example.private" })).EnsureSuccessStatusCode();
+        using var foreign = await AppClient(h, "bob", [CoreAppPermissions.Install, CoreAppPermissions.Sources]);
+        Assert.Equal(HttpStatusCode.Forbidden, (await foreign.GetAsync("/api/apps/example.private/source-access")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await foreign.GetAsync("/api/apps/example.private/update/plan")).StatusCode);
+        var count = provider.Calls.Count;
+        using var denied = await foreign.PostAsJsonAsync("/api/installations", new { updateAppId = "example.private" });
+        Assert.False(denied.IsSuccessStatusCode); Assert.Equal(count, provider.Calls.Count);
+    }
+
+    [Fact]
+    public async Task CachedNewPrivateBinding_CannotBypassSourcePermissionOrOwner()
+    {
+        using var provider = new FakeHttp(); await using var h = await Start(provider);
+        var localPath = Path.Combine(h.Services.GetRequiredService<CoreDataPaths>().CoreRoot, "public-manifest.json");
+        await File.WriteAllTextAsync(localPath, Manifest);
+        var approvals = h.Services.GetRequiredService<InstallationApprovalService>();
+        var install = await approvals.PrepareAsync(new("alice", null, null, "Alice"), new(ManifestPath: localPath), default);
+        install.Autostart = false; await approvals.ExecuteAsync(install, default); Assert.Null(install.Error);
+        var update = await approvals.PrepareAsync(new("alice", null, null, "Alice"), new(UpdateAppId: "example.private", ManifestPath: Url, SourceConnections: new("github-a")), default);
+        using var client = await AppClient(h, "alice", [CoreAppPermissions.Install]);
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/apps/example.private/update/plan")).StatusCode);
+        var input = new { updateAppId = "example.private", planDigest = update.UpdatePlan!.PlanDigest };
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/installations", input)).StatusCode);
+        await AppGrants(h, [CoreAppPermissions.Install, CoreAppPermissions.Sources]);
+        (await client.PostAsJsonAsync("/api/installations", input)).EnsureSuccessStatusCode();
+        using var foreign = await AppClient(h, "bob", [CoreAppPermissions.Install, CoreAppPermissions.Sources]);
+        Assert.False((await foreign.PostAsJsonAsync("/api/installations", input)).IsSuccessStatusCode);
+    }
+
+    private static async Task<HttpClient> AppClient(CoreHttpHarness h, string user, IReadOnlyList<string> permissions)
+    {
+        const string id = "example.sources";
+        var now = DateTimeOffset.UtcNow;
+        var apps = h.Services.GetRequiredService<AppRegistryStore>();
+        if (await apps.GetAppAsync(id) is null)
+            await apps.UpsertAppAsync(new(id, "Source tools", null, "1.0.0", "runtime", false, "manifest", null, null, "dev",
+                "installed", "stopped", null, null, [], new Dictionary<string, AppSettingValue>(), [], [], [], now, now,
+                GrantedCorePermissions: permissions, RequiredCorePermissions: [], OptionalCorePermissions: CoreAppPermissions.Known));
+        await AppGrants(h, permissions);
+        var grant = await BrowserAuthorityFixture.Grant(h, id, user, user + "-browser");
+        var client = h.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new("Bearer", h.Services.GetRequiredService<AppServiceTokenService>().CreateToken(id));
+        client.DefaultRequestHeaders.Add(AppManagementAuthorization.IdentityHeader, grant.AccessToken);
+        return client;
+    }
+
+    private static async Task AppGrants(CoreHttpHarness h, IReadOnlyList<string> permissions)
+    {
+        var apps = h.Services.GetRequiredService<AppRegistryStore>();
+        await apps.UpsertAppAsync((await apps.GetAppAsync("example.sources"))! with { GrantedCorePermissions = permissions });
+    }
+
     private static async Task<CoreHttpHarness> Start(FakeHttp handler)
     {
         var h = await CoreHttpHarness.StartAsync(configure: services =>

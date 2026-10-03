@@ -1,5 +1,7 @@
 "use client";
 
+import { appFetch } from "@hosty-sdk/app/browser-auth";
+
 export type Provider = { appId: string; displayName: string; url: string | null; running: boolean };
 
 /** The provider id Core's own tools are offered under — the gateway's constant, mirrored here. */
@@ -47,7 +49,7 @@ export type SettingsResponse = {
  * authenticates as the operator who opened it, exactly as every other embedded Hosty page does.
  */
 export async function call(path: string, init?: RequestInit): Promise<Response> {
-  const response = await fetch(`/api${path}`, {
+  const response = await appFetch(`/api${path}`, {
     ...init,
     credentials: "include",
     headers: { ...(init?.body ? { "content-type": "application/json" } : {}), ...init?.headers },
@@ -57,29 +59,6 @@ export async function call(path: string, init?: RequestInit): Promise<Response> 
     throw new Error(body?.message || `Request failed (${response.status}).`);
   }
   return response;
-}
-
-/**
- * Trades the launch code Shell put on the URL for this app's session cookie, once, before anything
- * else is fetched.
- *
- * The code is removed from the address bar afterwards: it is single-use, so leaving it there makes
- * a refresh look broken and puts a spent credential in the operator's history.
- */
-export async function establishSession(): Promise<void> {
-  const params = new URLSearchParams(window.location.search);
-  const code = params.get("code");
-  if (!code) {
-    return;
-  }
-
-  try {
-    await call("/app-code", { method: "POST", body: JSON.stringify({ code }) });
-  } finally {
-    params.delete("code");
-    const query = params.toString();
-    window.history.replaceState(null, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
-  }
 }
 
 export async function loadSettings(): Promise<SettingsResponse> {

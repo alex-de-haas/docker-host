@@ -1,9 +1,9 @@
 import type { CoreApp } from "../types";
-import { AssistantClient, assistantContractError, createAssistantRequestId, resolveAssistantDestination, type AssistantHandoffResult } from "@hosty-sdk/app/assistant";
+import { assistantContractError, createAssistantRequestId, resolveAssistantDestination, type AssistantHandoffResult } from "@hosty-sdk/app/assistant";
 export { createAssistantRequestId };
 export const ASSISTANT_INTERFACE = "assistant";
 export type AssistantGateway = {
-  appId: string; baseUrl: string; running: boolean;
+  appId: string; key?: string; baseUrl: string; running: boolean;
   version?: number | null; capabilities?: readonly string[] | null; problem?: string | null;
 };
 export function findAssistantGateways(apps: readonly CoreApp[]): AssistantGateway[] {
@@ -12,7 +12,7 @@ export function findAssistantGateways(apps: readonly CoreApp[]): AssistantGatewa
     const declarations = app.interfaces?.assistant;
     if (!declarations?.length) return [];
     const declaration = declarations.find(item => item.key === "default") ?? declarations[0]!;
-    return [{ appId: app.id, baseUrl: declaration.url?.replace(/\/$/, "") ?? "",
+    return [{ appId: app.id, key: declaration.key, baseUrl: declaration.url?.replace(/\/$/, "") ?? "",
       running: app.runtimeState === "running" && !!declaration.url, version: declaration.version,
       capabilities: declaration.capabilities, problem: assistantContractError(declaration) }];
   });
@@ -34,8 +34,7 @@ export function assistantMessageFor<T extends { userId: string | null; appId: st
 }
 
 
-export function assistantSupportsContext(gateway: AssistantGateway, _issue?: (refresh: boolean) => Promise<{ token: string }>): Promise<boolean> {
-  void _issue;
+export function assistantSupportsContext(gateway: AssistantGateway): Promise<boolean> {
   return Promise.resolve(gateway.running && !assistantContractError(gateway));
 }
 export function assistantOpenUrl(app: CoreApp, result: AssistantHandoffResult): string {
@@ -45,25 +44,26 @@ export function assistantOpenUrl(app: CoreApp, result: AssistantHandoffResult): 
     { endpoint: app.entryEndpoint, path: app.entryPath, url: app.embeddedUrl },
   ]);
 }
-export async function createHandoff(gateway: AssistantGateway, issue: (refresh: boolean) => Promise<{ token: string }>,
+type SendHandoff = (path: string, body: unknown) => Promise<Response>;
+export async function createHandoff(gateway: AssistantGateway, send: SendHandoff,
   prompt: string, appIds: string[], requestId: string): Promise<{ id: string; result: AssistantHandoffResult }> {
-  const client = new AssistantClient(gateway.baseUrl, gateway, issue);
+  const incompatible = assistantContractError(gateway);
+  if (incompatible) throw new Error(incompatible);
+  const input = { providerAppId: gateway.appId, key: gateway.key ?? "default", prompt, appIds, requestId };
   const run = async () => {
-    const prepared = await client.prepare({ requestId, prompt, appIds });
-    const finalized = await client.finalize(prepared.handoffId, []);
-    if (!finalized.result) throw new Error("The assistant did not return a finalized handoff.");
-    return { id: finalized.conversationId, result: finalized.result };
+    const response = await send("/api/assistant/handoff", input);
+    return response.json() as Promise<{ id: string; result: AssistantHandoffResult }>;
   };
   try { return await run(); } catch (error) {
     if (!(error instanceof TypeError) && !(error instanceof DOMException)) throw error;
-    return run(); // Repeat the same identities after transport uncertainty.
+    return run(); // The server repeats prepare/finalize with the same durable request identity.
   }
 }
-export function createAppSession(gateway: AssistantGateway, issue: (refresh: boolean) => Promise<{ token: string }>, appId: string, requestId: string) {
-  return createHandoff(gateway, issue, "", [appId], requestId);
+export function createAppSession(gateway: AssistantGateway, send: SendHandoff, appId: string, requestId: string) {
+  return createHandoff(gateway, send, "", [appId], requestId);
 }
-export function createErrorSession(gateway: AssistantGateway, issue: (refresh: boolean) => Promise<{ token: string }>, appId: string | undefined, requestId: string, prompt = "") {
-  return createHandoff(gateway, issue, prompt, appId ? [appId] : [], requestId);
+export function createErrorSession(gateway: AssistantGateway, send: SendHandoff, appId: string | undefined, requestId: string, prompt = "") {
+  return createHandoff(gateway, send, prompt, appId ? [appId] : [], requestId);
 }
 
 /** Retain uncertain intents across page reloads; clear only after the destination is accepted. */

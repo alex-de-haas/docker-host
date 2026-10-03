@@ -5,13 +5,14 @@ namespace Haas.Hosty.Core;
 // (GlobalMountService) so the same isolation rules apply wherever an operator names a host path.
 internal sealed class MountPathPolicy(CoreDataPaths paths)
 {
+    internal CoreDataPaths Paths => paths;
     private static readonly string[] DenyRoots =
         OperatingSystem.IsWindows()
             ? []
             : ["/etc", "/proc", "/sys", "/dev", "/boot", "/run", "/var/run"];
 
     private static StringComparison PathComparison
-        => OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        => (OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()) ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 
     // Validates and normalizes an operator host path. Shape only — existence is checked at start time.
     public string NormalizeAndValidate(string? raw)
@@ -70,6 +71,9 @@ internal sealed class MountPathPolicy(CoreDataPaths paths)
         var real = ResolveRealPath(lexical);
 
         EnsureNotWithin(lexical, real, paths.DataRoot, "app_mount_path_in_data_root", "External mount host path may not be inside the Hosty data root");
+        if (PathEqualsOrWithin(lexical, Path.GetFullPath(paths.DataRoot)) ||
+            PathEqualsOrWithin(real, ResolveRealPath(paths.DataRoot)))
+            throw new AppLifecycleException("app_mount_path_in_data_root", "External mount host path must not expose the Hosty data root through a parent directory.");
 
         if (IsFileSystemRoot(lexical) || IsFileSystemRoot(real))
         {

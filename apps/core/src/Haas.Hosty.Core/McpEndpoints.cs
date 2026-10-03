@@ -55,6 +55,46 @@ internal static class McpEndpoints
             var bearer = CoreSessionAuthorization.ReadBearerToken(http.Request);
             if (bearer is not null)
             {
+                if (bearer.StartsWith(AssistantMcpAccess.Prefix, StringComparison.Ordinal))
+                {
+                    var actor = await http.RequestServices.GetRequiredService<AssistantMcpAccess>()
+                        .ValidateAsync(bearer, AgentMcpDirectory.CoreId, http.RequestAborted);
+                    if (actor is null) return CoreJson.Json(new ErrorResponse("mcp_access_denied", "Assistant MCP access is no longer valid."), 403);
+                    bool Has(string permission) => AppManagementAuthorization.HasPermission(actor.Caller, permission);
+                    // Tool names are protocol input, never authority. Unknown tools fail closed.
+                    if (HttpMethods.IsPost(http.Request.Method))
+                    {
+                        http.Request.EnableBuffering();
+                        try
+                        {
+                            using var body = await System.Text.Json.JsonDocument.ParseAsync(http.Request.Body, cancellationToken: http.RequestAborted);
+                            if (body.RootElement.TryGetProperty("method", out var method) && method.GetString() == "tools/call")
+                            {
+                                var name = body.RootElement.GetProperty("params").GetProperty("name").GetString();
+                                var permission = name switch
+                                {
+                                    "list_apps" or "get_app" => CoreAppPermissions.ReadApps,
+                                    "get_host_status" or "get_core_operation" or "get_core_development" => CoreAppPermissions.ReadCore,
+                                    "tail_app_logs" => CoreAppPermissions.AppLogs,
+                                    "search_audit" => CoreAppPermissions.CoreLogs,
+                                    "start_app" or "stop_app" or "restart_app" => CoreAppPermissions.AppLifecycle,
+                                    "plan_app_update" or "apply_app_update" => CoreAppPermissions.Install,
+                                    "restart_core" => CoreAppPermissions.CoreLifecycle,
+                                    _ => null,
+                                };
+                                if (permission is null || !Has(permission))
+                                    return CoreJson.Json(new ErrorResponse("app_permission_required", "The assistant lacks the Core permission for this tool."), 403);
+                            }
+                        }
+                        catch (Exception ex) when (ex is System.Text.Json.JsonException or InvalidOperationException or KeyNotFoundException)
+                        { return CoreJson.Json(new ErrorResponse("mcp_request_invalid", "Invalid MCP request."), 400); }
+                        finally { http.Request.Body.Position = 0; }
+                    }
+                    http.Items[McpCallerGrants.Key] = new McpCallerGrants(Has(CoreAppPermissions.AppLifecycle),
+                        Has(CoreAppPermissions.Install), actor.UserId, Has(CoreAppPermissions.CoreLifecycle));
+                    return await next(context);
+                }
+
                 var lifetimes = http.RequestServices.GetRequiredService<AuthLifetimes>();
                 var state = await users.ReadAsync(http.RequestAborted);
 

@@ -5,6 +5,36 @@ namespace Haas.Hosty.Core.Tests;
 
 public sealed class AppRegistryStoreTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PermissionCleanup_PreservesDeclarationsAndIsIdempotent(bool legacy)
+    {
+        var paths = CreatePaths(await CreateTempRootAsync());
+        var app = CreateApp("example.legacy") with
+        {
+            GrantedCorePermissions = [CoreAppPermissions.ReadSkills, "retired.permission"],
+            RequiredCorePermissions = legacy ? null : ["retired.permission"],
+            OptionalCorePermissions = ["retired.optional"],
+            PermissionRevision = "old",
+        };
+        var path = Path.Combine(paths.AppsRoot, app.Id, "state.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await File.WriteAllTextAsync(path, JsonSerializer.Serialize(new AppStateDocument(2, app), CoreJson.TypeInfo<AppStateDocument>()));
+        var store = new AppRegistryStore(paths);
+        await new AppPermissionMigration(store).StartAsync(default);
+        var cleaned = (await store.GetAppAsync(app.Id))!;
+        Assert.Equal([CoreAppPermissions.ReadSkills], cleaned.GrantedCorePermissions);
+        Assert.Contains("retired.permission", cleaned.RequiredCorePermissions!);
+        Assert.Equal(["retired.optional"], cleaned.OptionalCorePermissions);
+        Assert.NotEqual("old", cleaned.PermissionRevision);
+        var saved = await File.ReadAllTextAsync(path);
+        await new AppPermissionMigration(store).StartAsync(default);
+        Assert.Equal(saved, await File.ReadAllTextAsync(path));
+        await store.UpdateAppAsync(app.Id, current => current with { GrantedCorePermissions = ["retired.permission"] });
+        Assert.Empty((await store.GetAppAsync(app.Id))!.GrantedCorePermissions!);
+    }
+
     [Fact]
     public async Task AssistantContractSurvivesStorageUpdatesAndSummaryProjection()
     {
@@ -38,10 +68,10 @@ public sealed class AppRegistryStoreTests
         var store = new AppRegistryStore(CreatePaths(root));
         await store.UpsertAppAsync(CreateApp("com.example.notes") with
         {
-            GrantedCorePermissions = granted ? [CoreAppPermissions.Install, CoreAppPermissions.Update] : null,
+            GrantedCorePermissions = granted ? [CoreAppPermissions.Install] : null,
         });
         var summary = Assert.Single(await store.ListAppsAsync());
-        Assert.Equal(granted ? [CoreAppPermissions.Install, CoreAppPermissions.Update] : Array.Empty<string>(), summary.GrantedCorePermissions);
+        Assert.Equal(granted ? [CoreAppPermissions.Install] : Array.Empty<string>(), summary.GrantedCorePermissions);
     }
 
     [Theory]
@@ -154,19 +184,19 @@ public sealed class AppRegistryStoreTests
 
         var app = Assert.Single(apps);
         Assert.Equal("/", app.EntryPath);
-        Assert.Equal("http://localhost:3100/", app.EmbeddedUrl);
+        Assert.Equal("http://acom-dexample-dnotesz.hosty.localhost:3100/", app.EmbeddedUrl);
         Assert.Collection(
             app.Navigation,
             item =>
             {
                 Assert.Equal("Notes", item.Label);
-                Assert.Equal("http://localhost:3100/", item.EmbeddedUrl);
+                Assert.Equal("http://acom-dexample-dnotesz.hosty.localhost:3100/", item.EmbeddedUrl);
             },
             item =>
             {
                 Assert.Equal("Settings", item.Label);
                 Assert.Equal("/settings", item.Path);
-                Assert.Equal("http://localhost:3100/settings", item.EmbeddedUrl);
+                Assert.Equal("http://acom-dexample-dnotesz.hosty.localhost:3100/settings", item.EmbeddedUrl);
             });
     }
 

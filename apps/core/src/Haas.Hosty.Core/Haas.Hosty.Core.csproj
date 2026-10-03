@@ -17,5 +17,6 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="../../../../shared/*.cs" Link="%(Filename)%(Extension)" />
+    <EmbeddedResource Include="Browser/*" />
   </ItemGroup>
 </Project>

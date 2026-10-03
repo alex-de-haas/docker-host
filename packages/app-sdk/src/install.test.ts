@@ -8,12 +8,19 @@ function client(): InstallationClient {
 }
 
 describe("installation client", () => {
-  it("stages optional choices without making an approval decision", async () => {
+  it("prepares removal with explicit cleanup options through the Core approval flow", async () => {
+    const request = vi.fn(async () => Response.json(draft));
+    const source = { removeAppId: "example.app", removalOptions: { deleteData: true, deleteBackups: false } };
+    await createInstallationClient({ request }).prepare(source);
+    expect(request).toHaveBeenCalledExactlyOnceWith("/api/hosty/installations", source, "POST");
+  });
+  it("submits settings without accepting optional permission choices", async () => {
     const request = vi.fn(async () => Response.json(draft));
     const api = createInstallationClient({ request });
-    await api.submit(draft.id, {}, false, ["providers.speech-to-text"]);
+    // Old JavaScript callers may still pass the removed fourth argument; it must not be sent.
+    await Reflect.apply(api.submit, api, [draft.id, {}, false, ["providers.speech-to-text"]]);
     expect(request).toHaveBeenCalledExactlyOnceWith(`/api/hosty/installations/${draft.id}/submit`, {
-      settings: {}, autostart: false, optionalPermissions: ["providers.speech-to-text"],
+      settings: {}, autostart: false,
     }, "POST");
   });
   it("uses request/submit/status only and preserves settings without an apply endpoint", async () => {

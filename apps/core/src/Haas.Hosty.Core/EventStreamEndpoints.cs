@@ -64,6 +64,15 @@ internal static class EventStreamEndpoints
                 using var streamCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, applicationStopping);
                 var streamToken = streamCts.Token;
 
+                async Task<bool> IsStillAuthorizedAsync()
+                {
+                    if (AppManagementAuthorization.Caller(request) is null) return true;
+                    var current = await AppManagementAuthorization.ResolveAsync(request, streamToken);
+                    // A subscription captures its audience at creation. End it when the role changes,
+                    // even if the user can still access the calling app, before delivering queued data.
+                    return current.Error is null && current.Caller?.User.Role == user.Role;
+                }
+
                 try
                 {
                     // Emit an initial comment so the whole proxy chain (cloudflared -> Cloudflare edge)
@@ -74,6 +83,9 @@ internal static class EventStreamEndpoints
 
                     while (true)
                     {
+                        if (!await IsStillAuthorizedAsync())
+                            break;
+
                         // Cancel only the read wait (not the request) when the heartbeat elapses, so an
                         // idle stream sends a keep-alive comment instead of stalling past the proxy timeout.
                         using var heartbeatCts = CancellationTokenSource.CreateLinkedTokenSource(streamToken);
@@ -98,6 +110,9 @@ internal static class EventStreamEndpoints
 
                         while (subscription.Reader.TryRead(out var envelope))
                         {
+                            if (!await IsStillAuthorizedAsync())
+                                return Results.Empty;
+
                             // Named events: a client subscribes to what it cares about with
                             // addEventListener, and new names are additive for older clients.
                             await response.WriteAsync($"event: {envelope.Name}\ndata: {envelope.Data}\n\n", streamToken);

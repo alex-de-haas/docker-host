@@ -1030,7 +1030,9 @@ public sealed partial class CoreLifecycleServiceTests
 
         // The operator edits the same source folder; an update with no explicit path must re-read it
         // rather than the internal copy Core saved at install.
+        var originalWriteTime = File.GetLastWriteTimeUtc(manifestPath);
         await File.WriteAllTextAsync(manifestPath, CreateRemoteManifestJson("2.0.0"));
+        File.SetLastWriteTimeUtc(manifestPath, originalWriteTime);
         var plan = await fixture.Service.CreateUpdatePlanAsync("com.example.notes", new AppUpdatePlanRequest());
 
         Assert.Equal("1.0.0", plan.CurrentVersion);
@@ -1395,7 +1397,7 @@ public sealed partial class CoreLifecycleServiceTests
 
         var overridden = (await fixture.Service.ListAppsAsync()).Single(summary => summary.Id == "com.example.src");
         Assert.True(overridden.SupportsSource);
-        Assert.Equal(Path.GetFullPath(overrideFolder), overridden.SourceOverridePath);
+        Assert.Equal(MountPathPolicy.ResolveRealPath(overrideFolder), overridden.SourceOverridePath);
         Assert.Equal(Path.Combine(fixture.Paths.AppsRoot, "com.example.src", "source"), overridden.SourceManagedPath);
         // Still on the docker runtime, so it is not running live and no live source path is surfaced.
         Assert.Null(overridden.SourceLivePath);
@@ -1406,7 +1408,7 @@ public sealed partial class CoreLifecycleServiceTests
         await fixture.Apps.UpsertAppAsync(record! with { SelectedRuntime = "local" });
         var liveSrc = (await fixture.Service.ListAppsAsync()).Single(summary => summary.Id == "com.example.src");
         Assert.True(liveSrc.Live);
-        Assert.Equal(Path.GetFullPath(overrideFolder), liveSrc.SourceLivePath);
+        Assert.Equal(MountPathPolicy.ResolveRealPath(overrideFolder), liveSrc.SourceLivePath);
     }
 
     [Fact]
@@ -1505,9 +1507,9 @@ public sealed partial class CoreLifecycleServiceTests
 
         var live = (await fixture.Service.ListAppsAsync()).Single(summary => summary.Id == "com.example.url-dev");
         Assert.True(live.SupportsSource);
-        Assert.Equal(Path.GetFullPath(overrideFolder), live.SourceOverridePath);
+        Assert.Equal(MountPathPolicy.ResolveRealPath(overrideFolder), live.SourceOverridePath);
         Assert.True(live.Live);
-        Assert.Equal(Path.GetFullPath(overrideFolder), live.SourceLivePath);
+        Assert.Equal(MountPathPolicy.ResolveRealPath(overrideFolder), live.SourceLivePath);
 
         // While it runs live from the operator's folder, the reviewed-update path no longer applies.
         var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
@@ -3562,8 +3564,8 @@ public sealed partial class CoreLifecycleServiceTests
             new AppSourceOverrideRequest(overridePath, Commit: "abc123"));
         var app = await fixture.Apps.GetAppAsync("com.example.notes");
 
-        Assert.Equal(overridePath, response.Source?.LocalOverridePath);
-        Assert.Equal(overridePath, app?.SourceState?.LocalOverridePath);
+        Assert.Equal(MountPathPolicy.ResolveRealPath(overridePath), response.Source?.LocalOverridePath);
+        Assert.Equal(MountPathPolicy.ResolveRealPath(overridePath), app?.SourceState?.LocalOverridePath);
         // The folder's commit is recorded as the override's own, never as the reviewed pin.
         Assert.Equal("abc123", app?.SourceState?.OverrideCommit);
         Assert.Null(app?.SourceState?.Commit);
@@ -3585,7 +3587,7 @@ public sealed partial class CoreLifecycleServiceTests
 
         var response = await fixture.Sources.SetLocalOverrideAsync("com.example.notes", new AppSourceOverrideRequest(nested));
 
-        Assert.Equal(nested, response.Source?.LocalOverridePath);
+        Assert.Equal(MountPathPolicy.ResolveRealPath(nested), response.Source?.LocalOverridePath);
         Assert.Equal(head, response.Source?.OverrideCommit);
     }
 
@@ -3601,7 +3603,7 @@ public sealed partial class CoreLifecycleServiceTests
 
         var response = await fixture.Sources.SetLocalOverrideAsync("com.example.notes", new AppSourceOverrideRequest(plainFolder));
 
-        Assert.Equal(plainFolder, response.Source?.LocalOverridePath);
+        Assert.Equal(MountPathPolicy.ResolveRealPath(plainFolder), response.Source?.LocalOverridePath);
         Assert.Null(response.Source?.OverrideCommit);
     }
 
@@ -4770,7 +4772,7 @@ public sealed partial class CoreLifecycleServiceTests
             Assert.Equal("app", service.Service);
             Assert.Equal("running", service.Status);
             Assert.NotNull(service.ProcessId);
-            Assert.Equal(overridePath, service.WorkingDirectory);
+            Assert.Equal(MountPathPolicy.ResolveRealPath(overridePath), service.WorkingDirectory);
             Assert.EndsWith(Path.Combine("logs", "app.log"), service.LogPath);
         }
         finally
@@ -5205,7 +5207,9 @@ public sealed partial class CoreLifecycleServiceTests
 
         // The operator edits the live source folder; Core must run the live manifest on the next
         // start, not the reviewed internal copy saved at install (2b/R5).
+        var originalWriteTime = File.GetLastWriteTimeUtc(manifestPath);
         await File.WriteAllTextAsync(manifestPath, CreateLocalCommandFolderManifestJson("2.0.0"));
+        File.SetLastWriteTimeUtc(manifestPath, originalWriteTime);
         var app = await fixture.Apps.GetAppAsync("com.example.notes");
 
         var load = await fixture.Service.LoadSelectionWithStatusAsync(app!, CancellationToken.None);
@@ -5230,7 +5234,9 @@ public sealed partial class CoreLifecycleServiceTests
         var installed = await fixture.Apps.GetAppAsync("com.example.notes");
         await fixture.Apps.UpsertAppAsync(installed! with { RuntimeProfiles = null });
 
+        var originalWriteTime = File.GetLastWriteTimeUtc(manifestPath);
         await File.WriteAllTextAsync(manifestPath, CreateLocalCommandFolderManifestJson("2.0.0"));
+        File.SetLastWriteTimeUtc(manifestPath, originalWriteTime);
         var app = await fixture.Apps.GetAppAsync("com.example.notes");
         Assert.Null(app!.RuntimeProfiles);
 
@@ -5381,6 +5387,8 @@ public sealed partial class CoreLifecycleServiceTests
         var app = await fixture.Apps.GetAppAsync("com.example.notes");
         var load = await fixture.Service.LoadSelectionWithStatusAsync(app!, CancellationToken.None);
 
+        var copyPath = Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "manifest.json");
+        var copyTimestamp = File.GetLastWriteTimeUtc(copyPath);
         var reconciled = await fixture.Service.ReconcileLiveContractAsync(app!, load, CancellationToken.None);
 
         // The persisted contract adopts the live version (no reviewed-update ceremony, R5) and the
@@ -5389,6 +5397,7 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Contains(reconciled.LiveChanges ?? [], change => change == "version:1.0.0->2.0.0");
         // The last-good internal copy is freshened, so a re-read now baselines at the new version (R10).
         var internalCopy = Path.Combine(fixture.Paths.AppsRoot, "com.example.notes", "manifest.json");
+        File.SetLastWriteTimeUtc(internalCopy, copyTimestamp);
         var refreshed = await fixture.Manifests.LoadAsync(internalCopy);
         Assert.Equal("2.0.0", refreshed.Manifest.Version);
     }
@@ -5649,7 +5658,7 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Fact]
-    public async Task RestartAsync_LiveSourceApp_InvalidEditKeepsLastGoodAndRecordsError()
+    public async Task RestartAsync_LiveSourceApp_InvalidEditUsesLastGoodRuntime()
     {
         var fixture = await LifecycleFixture.CreateAsync();
         var folder = Path.Combine(fixture.Root, "live-app");
@@ -5662,14 +5671,10 @@ public sealed partial class CoreLifecycleServiceTests
         {
             _ = await fixture.Service.StartAsync("com.example.notes");
 
-            // A mid-edit-invalid folder manifest must not break the restart: Core keeps running the
-            // last-good contract and surfaces the error on the record (2b/R13/R14).
+            // Permission observation reports the invalid edit independently of runtime recovery.
             await File.WriteAllTextAsync(manifestPath, "{ not valid json");
-
-            var restarted = await fixture.Service.RestartAsync("com.example.notes");
-
-            Assert.Equal("1.0.0", restarted.App!.Version);
-            Assert.NotNull(restarted.App.ManifestError);
+            await fixture.Service.RestartAsync("com.example.notes");
+            Assert.NotNull(fixture.LocalProcesses.Get("com.example.notes", "app"));
         }
         finally
         {
@@ -7065,12 +7070,12 @@ public sealed partial class CoreLifecycleServiceTests
             return new LifecycleFixture(root, paths, apps, backups, manifests, sources, service, adapter, localAdapter, localProcesses, clock, coreSettings, publications);
         }
 
-        public CoreLifecycleService RecreateService()
+        public CoreLifecycleService RecreateService(CorePublicOriginResolver? coreOrigins = null)
         {
             var registry = new AppRegistryStore(Paths);
             return new CoreLifecycleService(Paths, registry, Manifests, new AppBackupService(Paths, Clock),
                 new AppSourceService(Paths, registry, Clock), [Adapter, LocalAdapter], new NoopIngressController(),
-                Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreLifecycleService>.Instance, clock: Clock);
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreLifecycleService>.Instance, clock: Clock, coreOrigins: coreOrigins);
         }
 
         // Shared-mounts library over the same data root the lifecycle service reads from.
@@ -7460,6 +7465,8 @@ public sealed partial class CoreLifecycleServiceTests
 
         public int? FailOnStartCount { get; set; }
 
+        public IReadOnlyList<string>? CreatedServices { get; set; }
+
         public Action? OnStarted { get; set; }
 
         public RuntimeLifecycleContext? LastContext { get; private set; }
@@ -7505,7 +7512,7 @@ public sealed partial class CoreLifecycleServiceTests
             return new AppRuntimeStartResult(
                 "running",
                 [new AppEndpointContract("app.http", "http", "http://localhost:3100", Public: true, Service: "app", Port: "http")],
-                StartLocks);
+                StartLocks, CreatedServices);
         }
 
         public Task<string?> ResolveRemoteDigestAsync(RuntimeDockerImage image, CancellationToken cancellationToken = default)

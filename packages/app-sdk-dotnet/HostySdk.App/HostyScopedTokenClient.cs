@@ -51,10 +51,17 @@ public sealed class HostyScopedTokenClient(IHttpClientFactory httpClientFactory,
     /// Core was unreachable, timed out, or answered unusably. This is deliberately not an inactive
     /// result: the caller owes its client a 503 here, not a 401, because nothing was established.
     /// </exception>
-    public async Task<HostyScopedTokenResult> IntrospectAsync(
+    public Task<HostyScopedTokenResult> IntrospectAsync(
         string token,
         string? tool = null,
         CancellationToken cancellationToken = default)
+        => IntrospectCoreAsync(token, tool, null, cancellationToken);
+
+    /// <summary>MCP handlers only: validates scoped or assistant MCP-only tokens online. Ordinary APIs must use IntrospectAsync.</summary>
+    public Task<HostyScopedTokenResult> IntrospectMcpAsync(string token, string? tool = null, CancellationToken cancellationToken = default)
+        => IntrospectCoreAsync(token, tool, "mcp", cancellationToken);
+
+    private async Task<HostyScopedTokenResult> IntrospectCoreAsync(string token, string? tool, string? purpose, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(options.ServiceToken))
         {
@@ -72,7 +79,7 @@ public sealed class HostyScopedTokenClient(IHttpClientFactory httpClientFactory,
             HttpMethod.Post,
             $"/api/internal/apps/{Uri.EscapeDataString(options.AppId)}/token/introspect")
         {
-            Content = JsonContent.Create(new IntrospectionRequest(token, tool)),
+            Content = JsonContent.Create(new IntrospectionRequest(token, tool, purpose)),
         };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", options.ServiceToken);
 
@@ -119,20 +126,22 @@ public sealed class HostyScopedTokenClient(IHttpClientFactory httpClientFactory,
             // Fail closed on the shape: an answer without a subject is one that could not be read,
             // and an unreadable answer is not a grant.
             return payload is { Active: true, Sub: { Length: > 0 } sub }
-                ? new HostyScopedTokenResult(true, sub, payload.Role, payload.Scopes ?? [])
+                ? new HostyScopedTokenResult(true, sub, payload.Role, payload.Scopes ?? [], payload.CallerAppId)
                 : HostyScopedTokenResult.Inactive;
         }
     }
 
     private sealed record IntrospectionRequest(
         [property: JsonPropertyName("token")] string Token,
-        [property: JsonPropertyName("tool")] string? Tool);
+        [property: JsonPropertyName("tool")] string? Tool,
+        [property: JsonPropertyName("purpose")] string? Purpose);
 
     private sealed record IntrospectionResponse(
         [property: JsonPropertyName("active")] bool Active,
         [property: JsonPropertyName("sub")] string? Sub,
         [property: JsonPropertyName("role")] string? Role,
-        [property: JsonPropertyName("scopes")] IReadOnlyList<string>? Scopes);
+        [property: JsonPropertyName("scopes")] IReadOnlyList<string>? Scopes,
+        [property: JsonPropertyName("callerAppId")] string? CallerAppId);
 }
 
 /// <summary>What Core said about a credential.</summary>
@@ -140,11 +149,12 @@ public sealed class HostyScopedTokenClient(IHttpClientFactory httpClientFactory,
 /// <param name="Sub">The acting Host user id; null when inactive.</param>
 /// <param name="Role">The actor's Host role at this moment; null when inactive.</param>
 /// <param name="Scopes">What the credential may do here; empty when inactive.</param>
+/// <param name="CallerAppId">The calling assistant for MCP-only credentials.</param>
 public sealed record HostyScopedTokenResult(
     bool Active,
     string? Sub,
     string? Role,
-    IReadOnlyList<string> Scopes)
+    IReadOnlyList<string> Scopes, string? CallerAppId = null)
 {
     /// <summary>The single shape every refusal takes, so an app cannot leak which reason applied.</summary>
     public static HostyScopedTokenResult Inactive { get; } = new(false, null, null, []);

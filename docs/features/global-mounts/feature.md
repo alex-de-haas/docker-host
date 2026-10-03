@@ -1,7 +1,7 @@
 # Global (Shared) Host-Path Mounts
 
 Created: 2026-06-30
-Updated: 2026-09-10
+Updated: 2026-10-02
 
 ## Goal
 
@@ -244,6 +244,28 @@ changes how the operator supplies the path, not what the app is allowed to recei
 - **Inline kept as an escape hatch.** Local bindings remain valid, so the change is additive with no
   migration; the library is the default path source, inline is for one-offs.
 
+## App Delegation And Source Boundaries
+
+Apps need `apps.configure` plus an administrator actor to change an app's mount bindings.
+Selecting registered shared entries is immediate. Inline host paths require the existing isolated
+Core confirmation flow. App-mediated shared-registry upserts similarly require `core.configure`
+and Core confirmation, so registering a path cannot bypass the inline-path decision. CLI/operator
+changes retain direct authority. Shell waits for approval and execution before reporting success.
+
+The frozen review binds the target installation, existing bindings/slots, resolved paths and shared
+entry state. Core rechecks them while holding the writer locks; changed paths or state require a new
+review. Host folders cannot expose the Core data root, including through an ancestor or symlink,
+or overlap executable app source directories. Source selection and mount writes share one cross-app
+lock, and retained bindings and live contract adoption receive the same checks. The deliberate
+Docker development `sourceMount` remains a separate manifest-reviewed mechanism.
+
+Core persists host paths already supplied to a runtime. Clearing desired bindings or repointing a
+shared entry does not release those paths from source protection while the old process/container
+still uses them. A verified stop or complete fresh start releases/replaces that snapshot; adopted
+services and failed transitions retain protection across Core restarts. Source paths still used by
+a runtime receive the corresponding protection against later external mounts. macOS comparisons
+conservatively reject case aliases, including on case-sensitive Mac volumes.
+
 ## Testing Expectations
 
 - `GlobalMountStore`/service: upsert + path policy at registration, name validation/uniqueness,
@@ -266,3 +288,6 @@ changes how the operator supplies the path, not what the app is allowed to recei
   respect both read-only caps and occupied-slot conflicts; retain partial successes and retry only
   failures, including failures with empty error messages. Verify selection/cancellation and narrow
   viewport layout through the Core-managed Shell without changing real app bindings.
+
+- Verify source/mount approval, protected paths and symlinks, stale snapshots and caller revocation;
+  require confirmation for app-selected workspaces and preserve operator authority and intentional Docker source mounts.

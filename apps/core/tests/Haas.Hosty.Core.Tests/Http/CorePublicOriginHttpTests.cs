@@ -38,7 +38,7 @@ public sealed class CorePublicOriginHttpTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         Assert.Equal(JsonValueKind.Null, document.RootElement.GetProperty("publication").ValueKind);
-        Assert.Equal("http://localhost:7070", document.RootElement.GetProperty("origin").GetString());
+        Assert.Equal("http://core.hosty.localhost:7070", document.RootElement.GetProperty("origin").GetString());
         Assert.True(document.RootElement.GetProperty("configured").GetBoolean());
     }
 
@@ -65,7 +65,7 @@ public sealed class CorePublicOriginHttpTests
 
         var listed = await ReadSettingAsync(client, secret);
         // The harness boots with the environment baseline set, which is what an unedited host reports.
-        Assert.Equal("http://localhost:7070", listed.Value);
+        Assert.Equal("http://core.hosty.localhost:7070", listed.Value);
         Assert.False(listed.Overridden);
 
         using var saved = await PutSettingAsync(client, secret, "https://core.example.test");
@@ -75,13 +75,13 @@ public sealed class CorePublicOriginHttpTests
         Assert.Equal("https://core.example.test", after.Value);
         Assert.True(after.Overridden);
         // `Default` is what a reset lands on: the environment baseline, not a hardcoded fallback.
-        Assert.Equal("http://localhost:7070", after.Default);
+        Assert.Equal("http://core.hosty.localhost:7070", after.Default);
 
         // `hosty core settings reset HOSTY_CORE_PUBLIC_ORIGIN` — the headless escape hatch.
         using var reset = await PutSettingAsync(client, secret, null);
         Assert.Equal(HttpStatusCode.OK, reset.StatusCode);
         var cleared = await ReadSettingAsync(client, secret);
-        Assert.Equal("http://localhost:7070", cleared.Value);
+        Assert.Equal("http://core.hosty.localhost:7070", cleared.Value);
         Assert.False(cleared.Overridden);
     }
 
@@ -95,7 +95,7 @@ public sealed class CorePublicOriginHttpTests
         using var response = await PutSettingAsync(client, secret, "https://core.example.test/admin");
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        Assert.Equal("http://localhost:7070", (await ReadSettingAsync(client, secret)).Value);
+        Assert.Equal("http://core.hosty.localhost:7070", (await ReadSettingAsync(client, secret)).Value);
     }
 
     // Every browser- and client-facing document is built per request, so a save is in effect immediately.
@@ -166,7 +166,7 @@ public sealed class CorePublicOriginHttpTests
         // control plane: the browser recovery path, not just the headless one.
         using var repaired = await PutAdminSettingAsync(client, session!, "http://localhost:7070");
         Assert.Equal(HttpStatusCode.OK, repaired.StatusCode);
-        Assert.Equal("http://localhost:7070", (await ReadSettingAsync(client, secret)).Value);
+        Assert.Equal("http://core.hosty.localhost:7070", (await ReadSettingAsync(client, secret)).Value);
     }
 
     // The session cookie's Secure flag follows the request scheme, not the public origin. A cookie marked

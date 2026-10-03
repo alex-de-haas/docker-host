@@ -1,9 +1,9 @@
 # Feature: Public Origins
 
 Created: 2026-08-10
-Updated: 2026-08-16
+Updated: 2026-09-30
 
-A public origin is the external HTTPS address one app endpoint answers on. It is a durable property of
+A public origin is an explicit HTTP or HTTPS address one app endpoint answers on. It is a durable property of
 the endpoint, not of the process behind it: Core reserves the endpoint's local port at install, so the
 address exists before the app has ever started and survives it being stopped.
 
@@ -11,6 +11,11 @@ Three ingress providers implement it, and exactly one owns a given endpoint's or
 ([cloudflare-ingress/feature.md](../cloudflare-ingress/feature.md) describes the two Cloudflare ones in
 full). What this document describes is what they have in common: one control that sets an origin, one
 owner that decides who may, and one reconcile that materializes it whoever moved the underlying port.
+
+Automatic [local browser origins](../local-browser-origins/feature.md) are separate from publication.
+An unset public origin uses the generated `.localhost` browser address. Under `none`, a full custom
+origin can also name a local subdomain with its endpoint port; saving it creates no DNS record or
+proxy. Clearing it returns to the generated address. Origin validation rejects Core/app host collisions.
 
 ## One control
 

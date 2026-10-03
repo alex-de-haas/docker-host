@@ -1,7 +1,7 @@
 # Auth Session Lifecycle And Recovery
 
 Created: 2026-07-13
-Updated: 2026-09-06
+Updated: 2026-10-02
 
 How a Hosty app session begins, how long it lives, and how a browser that lost one gets back in.
 Two credentials are in scope: the **Core browser session** (`hosty_session`, the signed-in Host user)
@@ -75,6 +75,16 @@ internal sealed record AppSessionGrantRecord(
   cookie `Max-Age` from it.
 - `hosty apps identity <app> --user <email>` issues a `cli-diagnostic` grant through the same path.
   These are probe credentials, not sessions, and get a single short fixed lifetime.
+
+## Account Recovery Revocation
+
+Administrator recovery changes the user's `AuthRevision` atomically with the password and revokes
+existing Core sessions. Application authorization codes and grants capture that revision. Core
+rejects an old revision with `token_revoked` during code exchange and every grant revalidation,
+including MCP validation through the parent grant. Old grants cannot survive recovery merely because
+they normally outlive their Core session. A delayed exchange that writes an old-revision grant after
+recovery also cannot restore access. Fresh authentication issues credentials with the new revision.
+Legacy records omit the revision and remain compatible until that account is recovered.
 
 ## Core Sessions
 
@@ -175,26 +185,41 @@ valid-but-denied account keeps its 403 rather than bouncing to a login that woul
 Both redirect targets are validated server-side. `redirectUri` is checked against the app's registered
 endpoint origins (`RequireAllowedRedirectUriAsync`), so a code minted for one app can only be delivered
 to that app's origin. `returnTo` accepts two relative shapes and nothing else: a Core-relative
-`/api/apps/{id}/open` continuation, or any other relative path resolved against the Shell origin —
-the second exists because a destination inside Shell (the device-authorization approval screen, where
+`/api/apps/{id}/open`, account, installation or OAuth continuation, or another safe relative path resolved against the Shell origin —
+the second exists because a destination inside Shell (a workspace route, where
 someone is waiting) otherwise cannot survive a sign-in. Protocol-relative values, backslashes, control
 characters, and absolute URLs are rejected; anything unrecognized falls back to the Shell origin, and
 to null on a host with no Shell.
 
 ## Recovery — Embedded
 
-The Shell embed iframe sandbox is not loosened, so an embedded app cannot navigate the top window.
-Recovery is a `postMessage` instead: the app posts `{ type: "hosty:auth-required", appId }` (no secrets
-in the payload) to `window.parent`. Shell verifies that `event.source` is the active frame's
-`contentWindow`, that `event.origin` matches that app's endpoint origin, and that the `appId` matches
-the mounted app; only then does it reissue a launch code and swap the iframe `src`, rate-limited to one
-reissue per app per 3 seconds. Both halves ship in the SDK — `parseActiveFrameAuthRequired` and
-`createReissueRateLimiter` in `@hosty-sdk/app/embedder` — and Shell consumes them, so the reference
-implementation and the shipped artifact are the same code.
+Shell opens the app URL without minting credentials. An app with a valid own-origin session opens
+immediately; otherwise `AppIdentityBridge` offers a user-initiated Core sign-in popup. The frame does
+not navigate its parent or ask Shell for a user token.
 
-Apps pick the channel by embedding detection. An embedded app whose parent stays silent past a timeout
-(a non-Shell embedder) falls back to a plain message whose link opens the standalone recovery URL in a
-new tab, which `allow-popups` permits.
+Core `/api/apps/{appId}/open?responseMode=web_message&state=...` requires a browser navigation and
+its own origin-bound session cookie. It validates the app assignment and registered callback origin,
+then posts a single-use code to that exact app origin. The SDK accepts the message only from the
+opened popup, at the configured Core origin, with the matching random 256-bit state. Missing Core
+sessions go through Core's password form. Invalid targets, mismatched state and code replay fail.
+
+The app's own server exchanges the code and validates the result with its service credential before
+returning its app grant and setting its host-only HttpOnly cookie. Where iframe cookie access is
+blocked, the bridge keeps the app grant only in document memory; `appFetch` attaches it exclusively
+to same-origin requests and refuses redirects. The token is never stored in browser storage or sent
+to Shell. A reload discards that memory and probes the cookie again. A 401 triggers recovery, a 403
+is terminal denial, and a 503 preserves credentials.
+
+Use `appFetch` from `@hosty-sdk/app/browser-auth` for protected client API calls and streams. Gate
+protected content with the bridge's children or `renderState`; a custom sign-in view must invoke
+`state.signIn` directly from a user gesture. Popup cancellation, blocking and timeout return a
+retryable sign-in state. Server-rendered protected data needs its own compatible loading design;
+a client-held frame grant is not automatically available to an initial server render.
+
+The SDK retains legacy embedder parsers for compatibility. Their presence grants no authority;
+Hosty Shell does not issue cross-app launch codes or answer delegated-token requests. MCP access
+requires a separate authorization basis from app sign-in. The remaining Harness migration and
+browser acceptance are tracked in [local browser origins](../local-browser-origins/plan.md).
 
 ## Boundaries
 
@@ -210,8 +235,15 @@ new tab, which `allow-popups` permits.
   parameter is followed.
 - On 503 an app keeps its session cookie and does not trigger recovery navigation.
 - Apps render no login UI of their own: Core `/login` is the only authentication surface, and an app's
-  job is the two reflexes (post `hosty:auth-required` when embedded, navigate to `/open` when
-  standalone) plus staying quiet while they run.
+  job is to open Core from a sign-in action when embedded, or navigate to `/open` when standalone.
+
+
+## Privileged App Activity
+
+Long-lived app identity does not keep privileged actions authorized indefinitely. The separate
+[app activity window](../app-activity-window/feature.md) requires browser-established activity and
+a live authorizing Core session. Its expiry returns `reauth_required` without revoking identity.
+SDK popup renewal preserves the existing document and drafts.
 
 ## Testing Expectations
 
@@ -219,7 +251,7 @@ new tab, which `allow-popups` permits.
   class — the table is the contract apps branch on, and a code silently moving between 401 and 403 is
   the regression that matters.
 - Grant validity in all four dimensions: revoked, absolutely expired, idle-expired, and live; plus the
-  policy re-check (disabled user, removed assignment, non-admin against a system app) still refusing a
+  policy re-check (disabled user, removed assignment, ordinary user without an assignment) still refusing a
   structurally valid grant.
 - A Core session refusal names its cause across the same dimensions — revoked, past its cap, idled
   out, and an id no record answers to — each a distinct code or sentence, and a revoked *access
@@ -227,6 +259,9 @@ new tab, which `allow-popups` permits.
 - The idle slide is throttled — repeated revalidation inside the throttle window writes once — and a
   grant that keeps being used never crosses its absolute cap.
 - Explicit logout revokes the session's grants; session *expiry* does not.
+- Account recovery rejects previously issued app codes and grants, including legacy records without
+  an authorization revision and delayed writes carrying the previous revision. Fresh authorization
+  succeeds, and both recovery revocation and new sessions survive a Core restart.
 - A refused Core credential names its cause: a revoked record and an expired one, refused side by side,
   answer the same `session_invalid` code and different messages — plus revocation winning over a
   concurrent expiry, an access token called by its own name, and an unknown id still answered vaguely.
@@ -240,5 +275,5 @@ new tab, which `allow-popups` permits.
 - `returnTo` hardening in both directions: the two accepted relative shapes work, and
   protocol-relative, backslash, control-character, and absolute values fall back to the Shell origin.
 - Pruning drops expired and long-revoked records while keeping live ones, for both stores.
-- The embedded responder rejects a message from a foreign `event.source`, a mismatched origin, or a
-  mismatched `appId`, and rate-limits repeated reissues.
+- Embedded sign-in rejects messages from a foreign window, mismatched Core origin or initiation state.
+- Exercise popup blocking/cancellation, code replay, foreign app audience, and recovery with iframe cookies unavailable.

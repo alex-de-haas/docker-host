@@ -254,6 +254,9 @@ public sealed partial class CoreLifecycleServiceTests
         var f = await LifecycleFixture.CreateAsync();
         var appId = await InstallDevelopmentSourceAppAsync(f, development: true);
         var origin = await CreateGitRepositoryAsync(f.Root);
+        File.Copy((await f.Apps.GetAppAsync(appId))!.ManifestPath!, Path.Combine(origin, "manifest.json"));
+        await RunGitAsync(origin, ["add", "manifest.json"]);
+        await RunGitAsync(origin, ["-c", "user.name=Hosty Test", "-c", "user.email=hosty@example.test", "commit", "-m", "Add runtime contract"]);
         await f.Sources.SetLocalOverrideAsync(appId, new(origin));
         await f.Apps.UpdateAppAsync(appId, app => app with { SourceState = app.SourceState! with { Repository = origin, ManifestSubpath = null } });
         var service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock, f.LocalProcesses);

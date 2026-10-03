@@ -1,5 +1,8 @@
 # Demo App
 
+Created: 2026-06-03
+Updated: 2026-10-01
+
 Demo App is the repository-local Hosty runtime app under `apps/demo-app`. It is the primary first-party app used to validate runtime app lifecycle work, source overrides, local command runtime profiles, runtime switching, Hosty identity, scoped app directory access, storage probes, and app-owned roles.
 
 ```mermaid
@@ -69,3 +72,32 @@ hosty apps install apps/demo-app --runtime dev
 ```
 
 The removed Legacy Host fixture route at `http://localhost:3000/fixtures/apps/demo-app` is no longer available. Local Docker image testing should use `hosty-demo-app:dev` together with a manifest or feed entry that selects the local image and `pullPolicy: ifNotPresent`.
+
+
+## Browser Identity
+
+The SDK `AppIdentityBridge` completes app-owned authorization before `DemoSession` loads the
+current user through `/api/auth/identity`. Overview, People, Roles and the Session panel consume
+that authenticated client snapshot. Server components pass runtime diagnostics, not user identity.
+This works when Safari blocks app cookies inside Shell: `appFetch` sends the app grant held in
+document memory. Standalone navigation uses the app's HttpOnly cookie. Core's primary session
+cookie is never an application credential.
+
+Explicit bearer identity takes precedence over cookies, and an invalid bearer cannot fall back
+to a different cookie identity. The identity endpoint distinguishes missing/expired identity (401),
+denied access (403) and unavailable validation (503), while retaining the SDK recovery coordinates.
+Role updates use `appFetch` and retain server-side app-role authorization. JSON buttons display
+responses in a dialog using the same transport, preserving the document's embedded grant.
+
+An iframe document replacement discards its in-memory grant. In cookie-restricted contexts the
+replacement document offers app-owned sign-in again; Shell does not relay the previous grant.
+
+## Testing Expectations
+
+- Run `npm test --workspace @haas/hosty-demo-app`, `npm run lint --workspace @haas/hosty-demo-app`
+  and `npm run build --workspace @haas/hosty-demo-app -- --webpack`.
+- Cover authenticated client loading, refused/unavailable sessions and retry, bearer precedence,
+  invalid-bearer refusal and recovery coordinates on 401 responses.
+- Verify a Core-managed installation both inside Shell and standalone with normal password login.
+  Check the current user, scoped directory, role page, Session panel and protected JSON inspection
+  in a cookie-restricted browser. Diagnostic CLI tokens alone do not establish browser acceptance.

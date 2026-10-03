@@ -354,11 +354,6 @@ function readAppIdentityToken(headersList: HeaderReader): {
   token: string | null;
   source: AppIdentityTokenSource | null;
 } {
-  const cookieToken = readCookie(headersList.get("cookie"), appIdentityCookieName);
-  if (cookieToken) {
-    return { token: cookieToken, source: "cookie" };
-  }
-
   const authorization = headersList.get("authorization");
   if (authorization?.startsWith("Bearer ")) {
     return { token: authorization.slice("Bearer ".length).trim(), source: "authorization-header" };
@@ -367,6 +362,11 @@ function readAppIdentityToken(headersList: HeaderReader): {
   const identityHeader = headersList.get(identityHeaderName);
   if (identityHeader) {
     return { token: identityHeader, source: "identity-header" };
+  }
+
+  const cookieToken = readCookie(headersList.get("cookie"), appIdentityCookieName);
+  if (cookieToken) {
+    return { token: cookieToken, source: "cookie" };
   }
 
   return { token: null, source: null };

@@ -11,10 +11,10 @@ import {
 } from "@/components/ui/field";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { SourceProviders } from "@/components/source-providers";
 import { AgentProviders } from "@/components/agent-providers";
 import { McpAccess } from "@/components/mcp-access";
 import {
-  establishSession,
   loadSettings,
   saveSettings,
   type Settings,
@@ -24,7 +24,7 @@ import {
 export function GatewaySettings({
   section = "providers",
 }: {
-  section?: "providers" | "prompt" | "access";
+  section?: "providers" | "sources" | "prompt" | "access";
 }) {
   const [data, setData] = useState<SettingsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -36,8 +36,7 @@ export function GatewaySettings({
   useEffect(() => {
     // The session first, then the data: a launch code that has not been spent yet means every
     // request below would be answered 401 by an app that is working correctly.
-    void establishSession()
-      .then(loadSettings)
+    void loadSettings()
       .then((loaded) => {
         setData(loaded);
         setPrompt(loaded.settings.systemPrompt);
@@ -102,7 +101,8 @@ export function GatewaySettings({
           <TabsList variant="line" aria-label="Hosty Harness settings">
             {(
               [
-                ["providers", "Providers"],
+                ["providers", "Agent providers"],
+                ["sources", "Source providers"],
                 ["prompt", "System prompt"],
                 ["access", "MCP access"],
               ] as const
@@ -120,6 +120,7 @@ export function GatewaySettings({
         >
           {data.agentConnections && <AgentProviders />}
         </TabsContent>
+        <TabsContent value="sources"><SourceProviders /></TabsContent>
         <TabsContent
           value="prompt"
           forceMount

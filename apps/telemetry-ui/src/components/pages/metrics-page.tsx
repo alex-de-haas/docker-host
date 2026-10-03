@@ -1,5 +1,7 @@
 "use client";
 
+import { appFetch } from "@hosty-sdk/app/browser-auth";
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Activity, ChevronDown, LineChart, ListChecks, LoaderCircle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -104,7 +106,7 @@ export function ObservabilityMetricsPage({ apps }: { apps: TelemetryApp[] }) {
         [app.id]: { loading: true, error: null, metrics: current[app.id]?.metrics ?? null },
       }));
       try {
-        const response = await fetch(`/api/apps/${encodeURIComponent(app.id)}/metrics?range=${range}`);
+        const response = await appFetch(`/api/apps/${encodeURIComponent(app.id)}/metrics?range=${range}`);
         throwIfAuthRequired(response);
         if (!response.ok) {
           throw new Error(await readApiError(response));

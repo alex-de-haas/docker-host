@@ -1,7 +1,7 @@
 # Runtime App Manifest
 
 Created: 2026-06-04
-Updated: 2026-09-29
+Updated: 2026-10-02
 
 ## Description
 
@@ -58,7 +58,7 @@ The optional top-level `role` field marks a platform system app:
 
 Install stores the role as the app record's `System` flag and reports it on the install plan (`system: true`) so review UIs can surface the escalation. On a reviewed update, a manifest that newly declares `role: system` adds a `role:runtime->system` entry to the plan changes; confirming the plan applies the escalation. The flag is sticky: dropping `role` from a later manifest never downgrades an installed system app, and no lifecycle path flips `System` outside install and reviewed update.
 
-System apps are administrator surfaces: Core requires an enabled `host.admin` in every app identity flow for them (`system_app_admin_required`), they are hidden from ordinary users' app listings, and they are excluded from user assignments.
+System and ordinary apps follow the same user-access rule: enabled administrators have implicit access; other enabled users need an explicit assignment. System apps are included in assignment selection. The system flag does not grant administrative authority to the user or replace an app permission check. Apps still enforce their own operation-level roles.
 
 A system app that declares `ui` is validated strictly and fail-closed: the entrypoint must name an explicit endpoint that resolves to a declared http(s) endpoint (`app_manifest_system_ui_endpoint_required` / `app_manifest_system_ui_endpoint_unknown` / `app_manifest_system_ui_endpoint_not_http`), page paths must be root-relative with no scheme, host, query, fragment, or backslash (`app_manifest_system_ui_path_invalid`), and duplicate page paths are rejected (`app_manifest_system_ui_path_duplicate`). Ordinary manifests keep the permissive runtime behavior (endpoint fallback, path prefixing).
 
@@ -253,9 +253,16 @@ All fields are optional; blanks are dropped and an all-empty block is ignored. `
 
 ## Core Operation Permissions
 
-`corePermissions` declares required operations. Supported names are `apps.install`, `apps.update`,
-`apps.skills.read`, `apps.workspaces.manage`, `apps.publications.manage`, `providers.speech-to-text`, and `providers.assistant`.
-Unknown or duplicate names fail validation. `optionalCorePermissions` declares optional operations;
+`corePermissions` declares required operations. The catalogue recognizes `apps.install`, `apps.read`,
+`apps.logs`, `apps.notifications`, `apps.lifecycle`, `apps.configure`, `apps.sources`, `apps.skills.read`,
+`core.read`, `core.update`, `core.lifecycle`, `core.configure`, `core.logs`, `users.read`, `users.manage`,
+`providers.speech-to-text` and `providers.assistant`. See [App installation](../app-installation-sdk/feature.md)
+for currently wired delegated operations and management-API integration status.
+New installs and updates reject unknown or duplicate names. Installed unsupported declarations remain
+visible for compatibility diagnostics. Neither missing required grants nor unknown required names
+block launch; per-call authorization uses stored grants only. Unknown names cannot be approved.
+`apps.update`, `apps.workspaces.manage` and `apps.publications.manage` are retired; Core removes their
+stored grants without erasing the manifest's requirements. `optionalCorePermissions` declares optional operations;
 the required and optional lists must be disjoint. Installation review offers optional permissions
 unchecked. An update preserves accepted choices, requires review for new declarations or moving
 optional authority to required, and removes grants for removed declarations. Source restart does not

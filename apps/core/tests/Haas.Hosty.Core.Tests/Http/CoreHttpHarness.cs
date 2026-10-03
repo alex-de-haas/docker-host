@@ -39,14 +39,15 @@ public sealed class CoreHttpHarness : IAsyncDisposable
 
     /// <summary>Boots the pipeline. Pass a clock to control time — used by tests that need a token to
     /// expire; omitted everywhere else, so the default stays the real clock.</summary>
-    internal static async Task<CoreHttpHarness> StartAsync(IClock? clock = null, Action<IServiceCollection>? configure = null)
+    internal static async Task<CoreHttpHarness> StartAsync(IClock? clock = null, Action<IServiceCollection>? configure = null,
+        string environmentName = "Production")
     {
         var dataRoot = Path.Combine(Path.GetTempPath(), $"hosty-core-http-tests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(dataRoot);
 
         // Rooted at the temp dir: everything downstream (CoreDataPaths, stores) resolves
         // HostyCoreRuntimeConfig from DI, so this reroutes all state.
-        var builder = WebApplication.CreateSlimBuilder();
+        var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { EnvironmentName = environmentName });
         HostyCoreApplication.ConfigureServices(builder, new HostyCoreRuntimeConfig(
             DataRoot: dataRoot,
             RunDirectory: Path.Combine(dataRoot, "core", "run"),

@@ -3,11 +3,11 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { GatewaySettings } from "./gateway-settings";
-import { approveSkill, establishSession, loadSettings, saveSettings, type SettingsResponse } from "../lib/api";
+import { approveSkill, loadSettings, saveSettings, type SettingsResponse } from "../lib/api";
 
 vi.mock("../lib/api", async original => ({
   ...await original<typeof import("../lib/api")>(),
-  approveSkill: vi.fn(), establishSession: vi.fn(), loadSettings: vi.fn(), saveSettings: vi.fn(),
+  approveSkill: vi.fn(), loadSettings: vi.fn(), saveSettings: vi.fn(),
 }));
 vi.mock("./agent-providers", () => ({ AgentProviders: () => null }));
 
@@ -28,7 +28,6 @@ beforeEach(() => {
     harness: { name: "Claude", capabilities: { autoAllow: true, liveReconfigure: true } },
     pendingSkills: [{ appId: "projects", displayName: "Project Manager", markdown: "Complete updated instructions", approvedDigest: "old" }],
   };
-  vi.mocked(establishSession).mockResolvedValue();
   vi.mocked(loadSettings).mockImplementation(async () => structuredClone(data));
   container = document.createElement("div");
   document.body.append(container);

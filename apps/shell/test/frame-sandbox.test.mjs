@@ -13,7 +13,7 @@ test("ordinary apps retain sandboxed popups, including missing and unrelated gra
 
 test("either approved installation permission enables Core confirmation without changing other flags", () => {
   const baseline = appFrameSandbox().split(" ");
-  for (const grants of [["apps.install"], ["apps.update"], ["apps.install", "apps.update"]]) {
+  for (const grants of [["apps.install"], ["apps.install", "apps.read"]]) {
     const flags = appFrameSandbox(grants).split(" ");
     assert.deepEqual(flags.filter((flag) => flag !== "allow-popups-to-escape-sandbox"), baseline);
     assert.ok(flags.includes("allow-popups-to-escape-sandbox"));

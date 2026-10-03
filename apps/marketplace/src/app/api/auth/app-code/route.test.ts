@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { clearRevalidationCache } from "@hosty-sdk/app/server";
 import { POST } from "@/app/api/auth/app-code/route";
 
 afterEach(() => {
+  clearRevalidationCache();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
 });
@@ -9,7 +11,7 @@ afterEach(() => {
 describe("Marketplace app-code exchange", () => {
   it("rejects a missing authorization code", async () => {
     const response = await POST(new Request("http://marketplace.local/api/auth/app-code", {
-      method: "POST",
+      method: "POST", headers: { "sec-fetch-site": "same-origin" },
       body: "{}",
     }));
 
@@ -18,8 +20,11 @@ describe("Marketplace app-code exchange", () => {
   });
 
   it("exchanges through Core and establishes an app-origin HttpOnly cookie", async () => {
+    vi.stubEnv("HOSTY_APP_SERVICE_TOKEN", "service-token");
+    vi.stubEnv("HOSTY_APP_ID", "hosty.marketplace");
     vi.stubEnv("HOSTY_CORE_ORIGIN", "http://core.local:7070");
     const coreFetch = vi.fn(async () => new Response(JSON.stringify({
+      active: true, appId: "hosty.marketplace", userId: "operator", hostRole: "host.admin",
       accessToken: "app-identity-token",
       expiresInSeconds: 600,
     }), { status: 200, headers: { "Content-Type": "application/json" } }));
@@ -27,7 +32,7 @@ describe("Marketplace app-code exchange", () => {
 
     const response = await POST(new Request("http://marketplace.local/api/auth/app-code", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "sec-fetch-site": "same-origin" },
       body: JSON.stringify({ code: " one-time-code " }),
     }));
 
@@ -44,15 +49,17 @@ describe("Marketplace app-code exchange", () => {
   });
 
   it("uses SameSite=None and Secure behind an HTTPS gateway", async () => {
+    vi.stubEnv("HOSTY_APP_SERVICE_TOKEN", "service-token");
+    vi.stubEnv("HOSTY_APP_ID", "hosty.marketplace");
     vi.stubEnv("HOSTY_CORE_ORIGIN", "https://core.example");
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ accessToken: "token" }), {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ accessToken: "token", active: true, appId: "hosty.marketplace", userId: "operator", hostRole: "host.admin" }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     })));
 
     const response = await POST(new Request("http://marketplace.local/api/auth/app-code", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Forwarded-Proto": "https" },
+      headers: { "Content-Type": "application/json", "X-Forwarded-Proto": "https", "sec-fetch-site": "same-origin" },
       body: JSON.stringify({ code: "code" }),
     }));
 

@@ -30,11 +30,12 @@ public sealed class AppAccessPolicyTests
     }
 
     [Fact]
-    public void User_IsDeniedASystemAppEvenWhenAssigned()
+    public void User_CanAccessAssignedSystemApp_WithoutAccessToOtherSystemApps()
     {
         var state = StateWith(("hosty.shell", "user_1"));
 
-        Assert.False(AppAccessPolicy.CanAccessApp(state, User("user_1"), "hosty.shell", system: true));
+        Assert.True(AppAccessPolicy.CanAccessApp(state, User("user_1"), "hosty.shell", system: true));
+        Assert.False(AppAccessPolicy.CanAccessApp(state, User("user_1"), "hosty.other", system: true));
     }
 
     [Fact]

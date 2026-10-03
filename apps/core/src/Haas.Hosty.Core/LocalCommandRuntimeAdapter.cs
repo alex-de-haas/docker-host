@@ -626,6 +626,11 @@ internal sealed class LocalCommandRuntimeAdapter(
                 Port: key));
         }
 
+        var browserApp = context.App with { BrowserOriginScope = config.InstanceId };
+        foreach (var environment in LocalBrowserOrigins.Environment(browserApp, context.App.Endpoints.Select(endpoint =>
+            endpoint with { Url = endpoints.FirstOrDefault(e => e.Service == endpoint.Service && e.Port == endpoint.Port)?.Url ?? endpoint.Url })))
+            startInfo.Environment[environment.Key] = environment.Value;
+
         if (assignedHostPorts.Count == 1 && !HasExplicitPortEnvironment(context, service))
         {
             startInfo.Environment["PORT"] = assignedHostPorts[0].ToString(System.Globalization.CultureInfo.InvariantCulture);

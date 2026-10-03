@@ -3,7 +3,7 @@
   "id": "hosty.shell",
   "name": "Hosty Shell",
   "description": "Hosty browser management shell.",
-  "version": "0.91.0",
+  "version": "0.92.1",
   "role": "system",
   "source": {
     "type": "git",
@@ -104,6 +104,20 @@
   },
   "corePermissions": [
     "apps.install",
-    "apps.update"
+    "apps.read",
+    "apps.logs",
+    "apps.notifications",
+    "apps.lifecycle",
+    "apps.configure",
+    "core.read",
+    "core.update",
+    "core.lifecycle",
+    "core.configure",
+    "core.logs",
+    "users.read",
+    "users.manage"
+  ],
+  "optionalCorePermissions": [
+    "providers.assistant"
   ]
 }

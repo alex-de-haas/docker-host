@@ -123,7 +123,7 @@ public sealed class ControlDelegatedTokenHttpTests
 
         using var denied = await PostAsync(harness, client, "hosty.harness", "member@example.test");
         Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
-        Assert.Equal("system_app_admin_required", (await ReadJsonAsync(denied)).GetProperty("code").GetString());
+        Assert.Equal("app_access_denied", (await ReadJsonAsync(denied)).GetProperty("code").GetString());
 
         using var allowed = await PostAsync(harness, client, "hosty.harness", "admin@example.test");
         Assert.Equal(HttpStatusCode.OK, allowed.StatusCode);

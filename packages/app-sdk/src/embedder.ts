@@ -221,3 +221,17 @@ export function appendThemeLaunchParams(
   url.searchParams.set(THEME_PREFERENCE_PARAM, preference);
   return url.toString();
 }
+
+/** Return the trusted mounted app id, ignoring any id or URL claimed by the payload. */
+export function parseActiveFramePermissionReview(event: EmbedderMessage, frame: unknown, url: string, appId: string): string | null {
+  if (!isActiveFrameMessage(event, frame, url)) return null;
+  return (event.data as { type?: unknown }).type === "hosty:request-permission-review" ? appId : null;
+}
+
+/** An assistant frame may request its own session review, never another app's. */
+export function parseActiveFrameAssistantReview(event: EmbedderMessage, frame: unknown, url: string, appId: string): { appId: string; sessionId: string } | null {
+  if (!isActiveFrameMessage(event, frame, url)) return null;
+  const data = event.data as { type?: unknown; sessionId?: unknown };
+  return data.type === "hosty:request-assistant-authority" && typeof data.sessionId === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(data.sessionId)
+    ? { appId, sessionId: data.sessionId } : null;
+}

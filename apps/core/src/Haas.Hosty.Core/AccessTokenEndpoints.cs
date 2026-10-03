@@ -21,12 +21,11 @@ internal static class AccessTokenEndpoints
         // Unauthenticated by nature: the caller has no credential yet, which is the whole point. The
         // guards are a short lifetime, a per-source cap, and the fact that nothing happens until a
         // signed-in human approves it.
-        app.MapPost("/api/auth/device/code", async (
+        app.MapPost("/api/auth/device/code", (
             HttpRequest request,
             DeviceAuthorizationCodeRequest? input,
             DeviceAuthorizationStore devices,
-            ShellPublicOriginResolver shellOrigin,
-            CancellationToken cancellationToken) =>
+            CorePublicOriginResolver coreOrigin) =>
         {
             var result = devices.Create(input?.Label, ResolveSourceKey(request));
             if (result.Request is null)
@@ -36,17 +35,10 @@ internal static class AccessTokenEndpoints
                     statusCode: StatusCodes.Status429TooManyRequests);
             }
 
-            var origin = await shellOrigin.ResolveAsync(cancellationToken);
             return CoreJson.Json(new DeviceAuthorizationCodeResponse(
                 result.Request.DeviceCode,
                 result.Request.UserCode,
-                // Straight to the tab that approves it — Settings opens on Users otherwise. The path is
-                // Shell's own route (`/settings`), not a `/shell`-prefixed one: Shell serves its pages
-                // at the root of its origin, so the prefix this used to carry was a 404 for everyone who
-                // followed it. Null when this host has no Shell: the device shows the code and the
-                // operator finds the approval screen themselves rather than being sent to an invented
-                // address.
-                string.IsNullOrWhiteSpace(origin) ? null : $"{origin.TrimEnd('/')}/settings?tab=tokens",
+                $"{coreOrigin.Effective}/account/tokens",
                 (int)DeviceAuthorizationStore.PollInterval.TotalSeconds,
                 (int)DeviceAuthorizationStore.RequestLifetime.TotalSeconds));
         });

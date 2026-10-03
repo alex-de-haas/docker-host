@@ -1,3 +1,4 @@
+import { appFetch } from "@hosty-sdk/app/browser-auth";
 import type {
   CatalogAppDetailResponse,
   CatalogAppsResponse,
@@ -40,7 +41,7 @@ export class MarketplaceApiError extends Error {
 }
 
 async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(url, { cache: "no-store", signal });
+  const response = await appFetch(url, { cache: "no-store", signal });
   if (!response.ok) {
     const body = await response.json().catch(() => null) as ErrorResponse | null;
     throw new MarketplaceApiError(body?.message || `Marketplace request returned HTTP ${response.status}.`, response.status, body?.code);

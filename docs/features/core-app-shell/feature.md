@@ -1,7 +1,7 @@
 # Core App Shell
 
 Created: 2026-05-19
-Updated: 2026-09-29
+Updated: 2026-10-03
 
 Hosty Shell is the Core-managed browser UI runtime app. It renders a single authenticated Shell surface backed by Hosty Core APIs; it does not own Core lifecycle logic and it does not reintroduce the retired combined Next.js Host package.
 
@@ -14,15 +14,20 @@ The implemented Shell provides:
 - administrator-only Settings: users and invitations, Core's own settings and ingress connection, and
   host-wide shared mounts;
 - Apps navigation for app manifests that declare shell UI metadata;
-- embedded app workspaces that open app-owned UI origins through Core-issued launch codes.
+- embedded app workspaces whose apps establish their own Core-authorized sessions.
 
 The route table and sidebar structure live in [Shell Navigation](../shell-navigation/feature.md).
 
-Shell uses Core session cookies and redirects unauthenticated users to Core-owned `/login`. Public status comes from `/api/core/status`; protected data comes from Core APIs such as `/api/auth/session`, `/api/apps`, `/api/auth/users`, and `/api/apps/{appId}/...` lifecycle endpoints. If a protected Core API returns `401`, Shell treats that as an authentication-required state and navigates to Core `/login` instead of rendering a reduced unauthenticated Shell surface. `403` responses remain visible authorization or CSRF failures.
+Shell owns only an app-bound HttpOnly cookie. Its `/auth/start` navigates to Core's app-open flow;
+`/auth/callback` checks browser-bound state, exchanges the code and revalidates its audience before
+setting the cookie. Same-origin `/api/core/...` handlers send the server's service credential and
+app-bound user grant to Core. Core checks the app's confirmed permission and the user's current
+role/assignment. Core's primary cookie is never forwarded to Shell; no credentialed Core CORS
+exception remains for Shell. Public status comes from `/api/core/status`; protected data comes from Core APIs such as `/api/auth/session`, `/api/apps`, `/api/auth/users`, and `/api/apps/{appId}/...` lifecycle endpoints. If a protected Core API returns `401`, Shell treats that as an authentication-required state and navigates to its `/auth/start` flow instead of rendering a reduced unauthenticated Shell surface. `403` responses remain visible authorization or CSRF failures.
 
 Shell is a thin browser client for Core APIs. Its browser-facing Core origin comes from `HOSTY_CORE_PUBLIC_ORIGIN` or, for client-side build compatibility, `NEXT_PUBLIC_HOSTY_CORE_PUBLIC_ORIGIN`. `NEXT_PUBLIC_HOSTY_CORE_ORIGIN` is accepted only as a legacy fallback. When Core manages Shell without an explicit public origin, Shell uses Core's fallback `http://localhost:<core-port>` value. `HOSTY_CORE_ORIGIN` is reserved for runtime process-to-Core calls; Docker runtimes may receive it as `http://host.docker.internal:<core-port>`, but Shell must not serialize that internal container origin into browser fetches or login links.
 
-When `HOSTY_CORE_PUBLIC_ORIGIN` or `HOSTY_SHELL_PUBLIC_ORIGIN` is not configured, Core uses local fallback origins from the configured ports: `http://localhost:<core-port>` and `http://localhost:<shell-port>`. Login redirects, Shell CORS, setup/recovery redirects, and Shell status all use these effective origins.
+Without an explicit public origin, Core derives separate per-app browser names under `hosty.localhost`, keeping the assigned ports. Login, account/consent, setup/recovery and status links use these effective browser origins; internal transport remains separate.
 
 ## Client Module Structure
 
@@ -65,7 +70,7 @@ flowchart TD
   B --> C["Dashboard"]
   B --> E["Settings"]
   B --> F["Apps navigation"]
-  F --> G["Core launch code"]
+  F --> G["App-owned sign-in through Core"]
   G --> H["Embedded app origin"]
   C --> I["Core lifecycle APIs"]
   E --> J["Core auth/user + settings APIs"]
@@ -103,6 +108,12 @@ Below 1240 px of dashboard workspace width, the header actions collapse into an 
 ellipsis menu at the same breakpoint as the row shortcuts. The menu contains Install app,
 Check updates (disabled while a check is running), and Update all when routine updates are available.
 Checking updates keeps the menu open so its progress indicator remains visible.
+Every update requested by Shell, including a routine update without new grants, goes through
+Core's installation confirmation flow. Update all reuses one popup for sequential confirmations,
+with Shell itself last. Denial leaves the app unchanged; success is reported only after Core
+finishes applying the update. During a Shell self-update, interrupted status reads are retried
+within the confirmation deadline without repeating the mutation, and the page reloads only after
+Core reports success and the new Shell origin responds.
 At wider widths, the existing icon buttons remain visible. Opening the assistant panel or resizing
 it changes this layout based on the remaining workspace width, not the browser viewport.
 
@@ -155,13 +166,31 @@ This list is a client hint, never a grant. The separate manifest `provides` fiel
 
 System Apps are inspectable and configurable in Shell. Administrators can open their ordinary settings dialog, switch runtime profiles, and apply reviewed updates — system apps update through the exact same plan/apply flow as every other runtime app. Logs remain available when the `logs` capability is present. Shell hides start, stop, restart, backup, restore, autostart, and removal controls for all `system` apps. This lets Marketplace own its catalog URL as a manifest setting without adding Marketplace logic to Core. Core remains the source of truth for what operations are allowed.
 
+## Profile and authorization surfaces
+
+Shell renders display-name editing at `/settings?tab=profile` through its app-session BFF.
+Harness settings owns source-provider connection forms under `apps.sources`; Shell does not read
+or configure them. Core keeps persistence and ownership checks in the API; it serves no profile/settings page.
+An authenticated app can read and edit its current user's profile without `users.read/manage`.
+The API accepts profile fields only; user administration remains a separate permission boundary.
+
+Credential issuance stays at Core `/account/tokens`, and OAuth consent at `/oauth/consent`.
+Installation/permission confirmation stays on Core's isolated origin. Source selection is app UI;
+Core remains responsible for validating ownership and the final reviewed installation.
+
+Assistant handoff uses a same-origin Shell server endpoint and the optional `providers.assistant`
+grant. Core chooses the confirmed provider endpoint and validates the acting user; the browser
+receives the handoff result, not provider credentials. The old embedded delegated-token responder
+is disabled. Harness MCP authorization is tracked in
+[local browser origins](../local-browser-origins/plan.md).
+
 ## Embedded Apps
 
 An app appears in the Apps navigation only when its installed manifest includes a `ui` contract. Public runtime endpoints alone do not create Shell navigation, and the Shell itself is excluded from the group.
 
-Ordinary and system apps share one group and one deep link, `/workspace?app=<app-id>&path=<app-path>` (Shell 0.49.0). System apps had their own administrator-only group and `/system-apps/<app-id>` route until then; both expressed a gate Core already enforces, since `GET /api/apps` omits a system app for a non-administrator and `AppIdentityService` refuses its launch code with `system_app_admin_required`. A stopped UI-capable app stays listed but disabled with its runtime state, and direct navigation reports that state.
+Ordinary and system apps share one group and one deep link, `/workspace?app=<app-id>&path=<app-path>` (Shell 0.49.0). Core filters `GET /api/apps` and app identity issuance using the same assignment rule for system and ordinary apps: enabled administrators have implicit access; other users need an explicit assignment. A stopped UI-capable app stays listed but disabled with its runtime state, and direct navigation reports that state.
 
-Shell opens app UIs through the app-owned origin returned by Core. Local runtime app origins use `http://localhost:<assigned-port>`. If an app endpoint has a configured `HOSTY_PUBLIC_ORIGIN_{ENDPOINT_KEY}` value, Core uses that public origin for Shell and standalone links, while endpoint summaries still keep the local `url` and expose the external value separately as `publicOrigin`. For embedded workspaces, Shell navigates to `/workspace?app=<app-id>&path=<app-path>`, requests `/api/apps/{appId}/launch-code`, and loads the resulting redirect URI in an iframe. For standalone tabs, Shell uses `/api/apps/{appId}/open?redirectUri=...`.
+Shell opens app UIs through the app-owned origin returned by Core. Local runtime app browser origins use the generated names described in [local browser origins](../local-browser-origins/feature.md). If an app endpoint has a configured `HOSTY_PUBLIC_ORIGIN_{ENDPOINT_KEY}` value, Core uses that public origin for Shell and standalone links, while endpoint summaries still keep the local `url` and expose the external value separately as `publicOrigin`. All four embedded launch paths open the app URL directly. The app SDK establishes or recovers its own identity through Core; Shell does not issue cross-app launch codes. For standalone tabs, Shell uses `/api/apps/{appId}/open?redirectUri=...`.
 
 The app receives a short-lived code and exchanges it with Core for app-scoped identity. Shell does not proxy app HTML, rewrite assets, or forward Hosty session cookies to the app origin.
 
@@ -194,6 +223,12 @@ generic fallback. This behavior is the same for live development and compiled ru
 
 Image failure state belongs to its URL. A changed URL starts a fresh image load instead of carrying
 a previous failure into the new version's icon.
+
+## Build
+
+Shell development and production commands explicitly select webpack. Its extension aliases resolve
+the workspace SDK's `.js` imports to TypeScript sources; the Docker image uses the same production
+build command.
 
 ## Testing Expectations
 

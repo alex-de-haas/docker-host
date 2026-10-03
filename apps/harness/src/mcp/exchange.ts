@@ -1,15 +1,7 @@
-// Turning enabled MCP providers into something a harness can call.
-//
-// The gateway holds a delegated token whose audience is itself. To reach another app it trades that
-// token for one scoped to the target (docs/features/delegated-token-exchange/plan.md). Two properties
-// of the exchange shape this file:
-//
-//   * **Branch, never refresh a branched token.** A token minted for a domain app cannot be exchanged
-//     again — its audience is not a system app — so a fresh app credential always comes from
-//     branching off the gateway's own token, not from renewing the app one.
-//   * **The chain expires an hour after the human interaction it descends from.** Self-refresh keeps
-//     the gateway's own credential alive inside that hour; past it, the operator has to say something
-//     before the agent can reach apps again. That is the bound, not a bug to work around.
+// Core-authorized MCP access. An app session identifies the user; the assistant's service token
+// identifies the caller. Core's explicit assistant-target relationship supplies authority and
+// yields a distinct MCP-only target token. Legacy seeds can renew themselves but Core refuses
+// cross-app branching through the old delegated endpoint.
 
 import { createHash } from "node:crypto";
 import { CORE_PROVIDER_ID, type McpProvider } from "../settings/providers.js";
@@ -41,6 +33,7 @@ export class TokenExchange {
   constructor(
     private readonly coreOrigin: string | null,
     private readonly appId: string,
+    private readonly serviceToken: string | null = null,
   ) {}
 
   get available(): boolean {
@@ -51,17 +44,22 @@ export class TokenExchange {
    * Trades `presented` for a token scoped to `targetAppId`. Returns null on a credential or policy refusal. A transient
    * Core outage throws CoreTemporarilyUnavailable so callers retain the credential and routes.
    */
-  async exchange(presented: string, targetAppId: string): Promise<IssuedToken | null> {
-    if (!this.coreOrigin) {
+  async exchange(presented: string, targetAppId: string, sessionId?: string): Promise<IssuedToken | null> {
+    const appSession = presented.startsWith("hostyg_");
+    if (sessionId && !appSession) return null;
+    if (!this.coreOrigin || (appSession && !this.serviceToken)) {
       return null;
     }
 
     try {
       const response = await fetch(
-        `${this.coreOrigin}/api/apps/${encodeURIComponent(targetAppId)}/delegated-token`,
+        appSession ? `${this.coreOrigin}/api/internal/apps/${encodeURIComponent(this.appId)}/mcp/token`
+          : `${this.coreOrigin}/api/apps/${encodeURIComponent(targetAppId)}/delegated-token`,
         {
           method: "POST",
-          headers: { authorization: `Bearer ${presented}` },
+          headers: appSession ? { authorization: `Bearer ${this.serviceToken}`, "X-Hosty-User-Token": presented, "content-type": "application/json" }
+            : { authorization: `Bearer ${presented}` },
+          ...(appSession ? { body: JSON.stringify({ targetAppId, sessionId }) } : {}),
           signal: AbortSignal.timeout(5_000),
         },
       );
@@ -78,9 +76,18 @@ export class TokenExchange {
     }
   }
 
-  /** Keeps the gateway's own credential alive without branching, so it stays able to branch. */
-  refreshSelf(presented: string): Promise<IssuedToken | null> {
-    return this.exchange(presented, this.appId);
+  /** Revalidates the app session, or renews a same-audience legacy credential within its lifetime cap. */
+  async refreshSelf(presented: string): Promise<IssuedToken | null> {
+    if (!presented.startsWith("hostyg_")) return this.exchange(presented, this.appId);
+    if (!this.coreOrigin || !this.serviceToken) return null;
+    const response = await fetch(`${this.coreOrigin}/api/auth/apps/revalidate`, {
+      method: "POST", headers: { authorization: `Bearer ${this.serviceToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ accessToken: presented }), signal: AbortSignal.timeout(5_000),
+    }).catch(() => { throw new CoreTemporarilyUnavailable(); });
+    if (response.status === 429 || response.status >= 500) throw new CoreTemporarilyUnavailable();
+    if (!response.ok) return null;
+    const value = await response.json() as { active?: boolean; expiresAt?: string };
+    return value.active === true ? { token: presented, expiresAt: value.expiresAt ?? new Date(Date.now() + 60_000).toISOString() } : null;
   }
 
   /**
@@ -94,6 +101,7 @@ export class TokenExchange {
     presented: string,
     providers: readonly McpProvider[],
     enabled: Readonly<Record<string, boolean>>,
+    sessionId?: string,
   ): Promise<ExchangedServer[]> {
     const wanted = providers.filter(
       (provider) => enabled[provider.appId] === true && provider.running && provider.url,
@@ -101,7 +109,7 @@ export class TokenExchange {
 
     const issued = await Promise.all(
       wanted.map(async (provider) => {
-        const token = await this.exchange(presented, provider.appId);
+        const token = await this.exchange(presented, provider.appId, sessionId);
         return token
           ? {
               appId: provider.appId,

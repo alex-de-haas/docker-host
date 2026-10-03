@@ -12,7 +12,11 @@ export async function GET(request: Request) {
   // route prerendered at image build time.
   const { appId, corePublicOrigin } = getDemoConfig().host;
 
+  const status = snapshot.appSession.status === "active" ? 200
+    : snapshot.appSession.status === "forbidden" ? 403
+    : snapshot.appSession.status === "unavailable" || snapshot.appSession.status === "error" ? 503 : 401;
   return NextResponse.json({ ...snapshot, recovery: { appId, corePublicOrigin } }, {
+    status,
     headers: {
       "Cache-Control": "no-store",
     },

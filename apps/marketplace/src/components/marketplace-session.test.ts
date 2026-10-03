@@ -5,6 +5,7 @@ import type { AppIdentityBridgeState } from "@hosty-sdk/app/react";
 
 const bridge = vi.hoisted(() => ({ state: { kind: "recovering" } as AppIdentityBridgeState }));
 vi.mock("@hosty-sdk/app/react", () => ({
+  MissingPermissionsNotice: () => createElement("aside", null, "Permission notice"),
   AppIdentityBridge: ({ renderState }: { renderState: (state: AppIdentityBridgeState) => unknown }) => renderState(bridge.state),
 }));
 import { MarketplaceSession } from "./marketplace-session";
@@ -16,6 +17,7 @@ describe("Marketplace session gate", () => {
     expect(html).toContain("Connecting to your Hosty session");
     expect(html).toContain('role="status"');
     expect(html).not.toContain("Loading catalog");
+    expect(html).not.toContain("Permission notice");
     expect(html).not.toContain("No source configured");
     expect(html).not.toContain('role="alert"');
   });
@@ -25,6 +27,7 @@ describe("Marketplace session gate", () => {
     const html = renderToStaticMarkup(createElement(MarketplaceSession));
     expect(html.match(/role="alert"/g)).toHaveLength(1);
     expect(html).not.toContain("Loading catalog");
+    expect(html).not.toContain("Permission notice");
     expect(html).not.toContain("No source configured");
     expect(html).not.toContain("Catalog source");
   });
@@ -35,12 +38,14 @@ describe("Marketplace session gate", () => {
     expect(html).toContain('href="https://host.example/open"');
     expect(html).toContain("Sign in via Hosty");
     expect(html).not.toContain("Loading catalog");
+    expect(html).not.toContain("Permission notice");
   });
 
   it("starts the storefront with only catalog loading after the session is active", () => {
     bridge.state = { kind: "active" };
     const html = renderToStaticMarkup(createElement(MarketplaceSession));
     expect(html).toContain("Loading catalog");
+    expect(html).toContain("Permission notice");
     expect(html).not.toContain("Connecting to your Hosty session");
     expect(html).not.toContain("No source configured");
     expect(html).not.toContain("Marketplace is not ready");

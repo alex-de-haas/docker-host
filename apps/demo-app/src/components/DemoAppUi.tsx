@@ -108,13 +108,7 @@ export function DemoNavigation({ active }: { active: DemoRoute }) {
   );
 }
 
-export function JsonButton({ href }: { href: string }) {
-  return (
-    <Button asChild variant="outline" size="sm">
-      <a href={href}>JSON</a>
-    </Button>
-  );
-}
+export { JsonButton } from "./JsonInspector";
 
 export function MetricCard({
   label,

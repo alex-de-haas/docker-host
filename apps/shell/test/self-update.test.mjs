@@ -82,7 +82,7 @@ test("stays pending through the apply and the restart it hands off to", async ()
     await stream.hint();
     assert.deepEqual(await wait, { kind: "settled" });
     assert.equal(stream.unsubscribes(), 1);
-    assert.deepEqual(stub.calls, Array(4).fill(`${CORE_ORIGIN}/api/apps`));
+    assert.deepEqual(stub.calls, Array(4).fill("/api/core/api/apps"));
   } finally {
     stub.restore();
   }

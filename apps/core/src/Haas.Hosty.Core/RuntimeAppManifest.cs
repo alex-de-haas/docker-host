@@ -59,7 +59,8 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
         bool requirePanelIcons = false,
         string? legacyManifestDigest = null,
         SourceReadGrant? manifestGrant = null,
-        bool forceRead = false)
+        bool forceRead = false,
+        bool allowUnsupportedPermissions = false)
     {
         if (string.IsNullOrWhiteSpace(manifestPath))
         {
@@ -75,7 +76,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
             localManifestCache.TryGetValue(localPath, out var cached) &&
             cached.Stamp == stamp)
         {
-            return Select(cached.Manifest, localPath, cached.Digest, selectedRuntime, cached.Json, manifestUrl: null, validateAllProfiles: validateAllProfiles, requirePanelIcons: requirePanelIcons && cached.Digest != legacyManifestDigest);
+            return Select(cached.Manifest, localPath, cached.Digest, selectedRuntime, cached.Json, manifestUrl: null, validateAllProfiles: validateAllProfiles, requirePanelIcons: requirePanelIcons && cached.Digest != legacyManifestDigest, allowUnsupportedPermissions: allowUnsupportedPermissions);
         }
 
         var source = manifestGrant is null
@@ -103,7 +104,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
             localManifestCache[localPath] = new CachedLocalManifest(manifest, source.Json, digest, stamp);
         }
 
-        return Select(manifest, source.Reference, digest, selectedRuntime, source.Json, source.ManifestUrl, validateAllProfiles: validateAllProfiles, requirePanelIcons: requirePanelIcons && digest != legacyManifestDigest);
+        return Select(manifest, source.Reference, digest, selectedRuntime, source.Json, source.ManifestUrl, validateAllProfiles: validateAllProfiles, requirePanelIcons: requirePanelIcons && digest != legacyManifestDigest, allowUnsupportedPermissions: allowUnsupportedPermissions);
     }
 
     // Mirrors ReadManifestSourceAsync/ReadLocalManifestAsync resolution for the cache key: null for a
@@ -141,6 +142,8 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
         // Atomic temp+rename: a plain WriteAllText that crashes mid-write leaves a truncated manifest that
         // fails validation (manifest_json_invalid) on every later lifecycle verb with no self-heal.
         await JsonStorage.WriteTextAsync(targetPath, selection.ManifestJson, cancellationToken);
+        // Same-size atomic replacements can retain the timestamp on fast filesystems.
+        localManifestCache.TryRemove(Path.GetFullPath(targetPath), out _);
     }
 
     // Per-file caps for vendored display assets (D7). Mirrors the catalog tooling.
@@ -485,7 +488,8 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
         string? manifestJson = null,
         string? manifestUrl = null,
         bool validateAllProfiles = true,
-        bool requirePanelIcons = false)
+        bool requirePanelIcons = false,
+        bool allowUnsupportedPermissions = false)
     {
         var errors = new List<AppManifestValidationError>();
         ValidateRequired(manifest.SchemaVersion, "$.schemaVersion", errors);
@@ -516,7 +520,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
         ValidateProvides(manifest.Provides, errors);
         foreach (var permission in manifest.CorePermissions.Concat(manifest.OptionalCorePermissions))
         {
-            if (!CoreAppPermissions.Known.Contains(permission, StringComparer.Ordinal))
+            if (!allowUnsupportedPermissions && !CoreAppPermissions.Known.Contains(permission, StringComparer.Ordinal))
                 errors.Add(new("app_manifest_core_permission_invalid", $"Unknown Core permission '{permission}'.", "$.corePermissions"));
         }
         if (manifest.CorePermissions.Distinct(StringComparer.Ordinal).Count() != manifest.CorePermissions.Count)
@@ -874,7 +878,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
         if (validateAllProfiles)
         {
             foreach (var other in manifest.RuntimeProfiles.Where(profile => profile.Key != selectedProfile!.Key))
-                Select(manifest, manifestPath, manifestDigest, other.Key, manifestJson, manifestUrl, validateAllProfiles: false, requirePanelIcons: requirePanelIcons);
+                Select(manifest, manifestPath, manifestDigest, other.Key, manifestJson, manifestUrl, validateAllProfiles: false, requirePanelIcons: requirePanelIcons, allowUnsupportedPermissions: allowUnsupportedPermissions);
         }
         _ = DockerRuntimeAdapter.OrderServices(selectedServices);
 
@@ -1815,7 +1819,8 @@ internal sealed class DockerRuntimeAdapter(
     // The live public origin, injected into every app's environment when its container is created.
     // Optional so existing direct constructions stay valid; DI supplies it, and without it the startup
     // env baseline stands in.
-    CorePublicOriginResolver? corePublicOrigin = null) : IAppRuntimeAdapter, IImageDigestResolver, IRunningContainerProbe
+    CorePublicOriginResolver? corePublicOrigin = null,
+    DockerCoreListener? dockerCoreListener = null) : IAppRuntimeAdapter, IImageDigestResolver, IRunningContainerProbe
 {
     // Resolved per container create rather than once: a saved origin must reach the next app that starts,
     // not only the apps started after the next Core restart.
@@ -1852,6 +1857,7 @@ internal sealed class DockerRuntimeAdapter(
 
     public async Task<AppRuntimeStartResult> StartAsync(RuntimeLifecycleContext context, CancellationToken cancellationToken = default)
     {
+        if (dockerCoreListener is not null) await dockerCoreListener.EnsureReadyAsync(cancellationToken);
         var endpoints = new List<AppEndpointContract>();
         var services = OrderServices(context.Manifest.Services);
         var resolvedLocks = new Dictionary<string, ArtifactLock>(StringComparer.Ordinal);
@@ -1933,7 +1939,7 @@ internal sealed class DockerRuntimeAdapter(
                 "--restart",
                 "no",
                 "--add-host",
-                "host.docker.internal:host-gateway",
+                $"host.docker.internal:{dockerCoreListener?.Gateway ?? "host-gateway"}",
                 "--label",
                 $"hosty.app.id={context.App.Id}",
                 "--label",
@@ -2039,6 +2045,15 @@ internal sealed class DockerRuntimeAdapter(
             }
 
             var assignedPorts = AssignServicePorts(context, service, hostNetwork);
+            var browserEndpoints = new List<AppEndpointContract>();
+            AppendServiceEndpoints(browserEndpoints, service, assignedPorts, config);
+            var browserApp = context.App with { BrowserOriginScope = config.InstanceId };
+            foreach (var environment in LocalBrowserOrigins.Environment(browserApp, context.App.Endpoints.Select(endpoint =>
+                endpoint with { Url = browserEndpoints.FirstOrDefault(e => e.Service == endpoint.Service && e.Port == endpoint.Port)?.Url ?? endpoint.Url })))
+            {
+                runArgs.Add("-e");
+                runArgs.Add($"{environment.Key}={environment.Value}");
+            }
             foreach (var port in service.Runtime.Ports)
             {
                 if (port.ContainerPort is null)

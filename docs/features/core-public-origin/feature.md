@@ -1,7 +1,7 @@
 # Core's Own Public Origin
 
 Created: 2026-09-01
-Updated: 2026-09-27
+Updated: 2026-09-30
 
 The address Core tells the world it lives at is a live Core setting, editable where every other host
 setting is edited and publishable through the Cloudflare API provider the way an app endpoint is.
@@ -16,7 +16,8 @@ degrade a feature — it points people at a host that does not answer.
 
 The value lives in the `Server` group of `{root}/core/settings.json`, beside the listen port, and is
 served as a "Public origin" row in the "Core process" group by `/api/core/settings` and
-`/control/v1/settings`. Resolution is **persisted → `HOSTY_CORE_PUBLIC_ORIGIN` → Core's listen URL**:
+`/control/v1/settings`. Resolution is **persisted → `HOSTY_CORE_PUBLIC_ORIGIN` → Core's listen URL**, followed by
+[local browser hostname projection](../local-browser-origins/feature.md):
 the stored value wins over the environment variable, and clearing it falls back rather than blanking the
 value. The row's `default` is what a reset would land on, which is the environment baseline when a host
 was launched with one.
@@ -27,7 +28,7 @@ origin builds a link or a metadata document per request, so an origin that only 
 would leave the operator's own invitation links pointing at the old host for as long as they put off
 restarting.
 
-**Validation refuses only what is wrong by form**: a value that is not an absolute `http`/`https` origin,
+**Validation refuses malformed origins and registered app-host collisions**: a value that is not an absolute `http`/`https` origin,
 one carrying a path, query, fragment or userinfo, and the unspecified addresses (`0.0.0.0`, `[::]` — a
 bind address, never somewhere to send a browser). A loopback origin is *accepted*: it is the default
 state and the right answer for a single-machine host. Reachability is never a refusal and there is no
@@ -99,7 +100,7 @@ nothing.
 
 **Unpublish restores the previous origin** — the persisted value from before Hosty took it over, carried
 on the publication record; a null there clears the override, so Core falls back to its environment
-baseline or its listen URL. It restores only while the setting still names the published hostname: an
+baseline or its generated local browser origin. It restores only while the setting still names the published hostname: an
 administrator who edited the value after publishing has made a newer choice, and unpublish must not
 overwrite it with a stale one. A rename reads through to the value from before the *first* publish, so
 unpublishing never restores a hostname Hosty itself wrote.
@@ -121,7 +122,7 @@ the providers that cannot publish it.
 ## Testing Expectations
 
 - The setting: environment baseline versus persisted override, clearing back to the baseline and (with
-  no baseline) to the listen URL, persistence across a reload, and canonicalization of a stored value.
+  no baseline) to the generated local browser origin, persistence across a reload, and canonicalization of a stored value.
 - Validation accepts loopback, LAN and public origins and refuses a bare host, a non-http(s) scheme, a
   path, a query, a fragment, userinfo, and the unspecified addresses — refusing before anything is
   written, so a bad submission never displaces a working value.

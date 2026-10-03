@@ -1,5 +1,11 @@
 "use client";
 
+import { ShellActivityBridge } from "./shell/activity-bridge";
+import { MissingPermissionsNotice } from "@hosty-sdk/app/react";
+
+import { fetchCore } from "./shell/core-transport.js";
+
+
 import { isRoutineUpdate } from "./shell/update-feedback";
 
 import type { ReactNode } from "react";
@@ -15,14 +21,14 @@ import { findAppPageLink, getAppPageLinks } from "./shell/app-helpers";
 import { CoreRequestError, isAuthRequiredRedirectError, readCoreError, readCoreErrorDetail, redirectToCoreLogin, redirectToCoreLoginIfAuthRequired } from "./shell/core-api";
 import { appendThemeLaunchParams, createReissueRateLimiter } from "@hosty-sdk/app/embedder";
 import { CoreEventNames, subscribeToCoreEvents } from "./shell/events/core-event-stream";
-import { isAppUp } from "./shell/runtime-states";
 import { resolveLaunchGate } from "./shell/surfaces/app-surface-tabs";
-import { waitForShellUpdateToSettle } from "./shell/self-update";
+import { requestAppUpdate, reviewUpdatesInOrder } from "./shell/app-updates";
+import { requestAppRemoval, requestCoreApproval } from "./shell/app-removal";
 import { readCoreStatus, reconcileCoreUpdate } from "./shell/core-status";
 import { reconcileAppList } from "./shell/app-list-snapshot";
 import { AppDetailsDialog } from "./shell/dialogs/app-details-dialog";
 import { SourceInstallDialog } from "./shell/dialogs/private-source-connections";
-import { createInstallationClient, openInstallationConfirmation, showInstallationConfirmation } from "@hosty-sdk/app/install";
+import { createInstallationClient, openInstallationConfirmation, showInstallationConfirmation, type InstallationSource } from "@hosty-sdk/app/install";
 import { useAssistantSelection } from "./shell/assistant/use-assistant-selection";
 import { assistantMessageFor, assistantSupportsContext, createAppSession, createErrorSession, createHandoff, pendingAssistantIntent, assistantOpenUrl } from "./shell/assistant/assistant-client";
 import { ShellSidebar } from "./shell/sidebar/shell-sidebar";
@@ -54,16 +60,9 @@ import { normalizeThemePreference, resolveShellTheme } from "./shell/theme";
 import { EmptyState } from "./shell/ui";
 import { EmbeddedWorkspacePanel } from "./shell/workspace/embedded-workspace-panel";
 import { EmbeddedWorkspacePendingPanel } from "./shell/workspace/embedded-workspace-pending-panel";
-import {
-  assistantTokenResponder,
-  createDelegatedTokenCache,
-  type DelegatedTokenCache,
-  type DelegatedTokenGrant,
-} from "./shell/workspace/delegated-token-intent";
 import type {
   ActivePanel,
   AppAction,
-  AppLaunchResponse,
   AppOpenTarget,
   AppPageLink,
   AppPendingUpdatePlanResponse,
@@ -91,9 +90,6 @@ import type {
   WorkspaceRoute,
 } from "./shell/types";
 
-// Minimum spacing between launch-code reissues for one app, a loop guard against a frame that keeps
-// re-posting hosty:auth-required. Enforced by the SDK's per-app rate limiter.
-const AUTH_REISSUE_MIN_INTERVAL_MS = 3_000;
 /** Per app. A human clicking rows never reaches this; a loop is stopped by it. */
 const ASK_MIN_INTERVAL_MS = 1_000;
 
@@ -247,7 +243,7 @@ export function ShellClient({
   // reorders the strip, and an index would then point at somebody else's tool.
   const [activePanelKey, setActivePanelKey] = useState<string | null>(null);
   // Bumped when a placed surface reports its session expired; the shared hook re-mints on the change.
-  const [surfaceAuthNonce, setSurfaceAuthNonce] = useState(0);
+  const surfaceAuthNonce = 0;
   // appId → sessions waiting for the operator, as the panel's own page reports it. Shell never asks:
   // the page holding the sessions is the one source, and a poll here would disagree with it.
   const [panelAttention, setPanelAttention] = useState<Record<string, number>>({});
@@ -261,8 +257,6 @@ export function ShellClient({
   const refreshRequestRef = useRef(0);
   const appsReadSequence = useRef(0);
   const detailRequestRef = useRef(0);
-  // Last launch-code reissue per app id, so a chatty frame cannot storm Core with reissues.
-  const authReissueLimiter = useRef(createReissueRateLimiter(AUTH_REISSUE_MIN_INTERVAL_MS));
   // An ask is cheap for the app and expensive for the operator: it reveals the rail, switches the
   // tab and moves focus. A mounted app looping on it would make Shell unusable while looking like a
   // supported use of the contract, so it is rate-limited per app exactly as reissues are. One a
@@ -278,7 +272,8 @@ export function ShellClient({
   const { assistants, selected: assistantGateway, selectedId: assistantSelection, select: selectAssistant, choose: chooseAssistant, picker: assistantPicker } =
     useAssistantSelection(state.apps, activeUser ? `${coreOrigin}:${activeUser.id}` : null);
   const assistantIds = useMemo(() => assistants.map(app => app.appId), [assistants]);
-  const assistantAvailable = Boolean(canManageApps && assistants.length);
+  const assistantPermission = state.apps.find(app => app.id === shellAppId)?.grantedCorePermissions?.includes("providers.assistant") === true;
+  const assistantAvailable = Boolean(canManageApps && assistants.length && assistantPermission);
 
   // Migration only: with a cookie present the server already rendered the stored state and this
   // does nothing. Without one (pre-cookie builds), the legacy localStorage value is adopted and
@@ -310,8 +305,8 @@ export function ShellClient({
     setState((current) => ({ ...current, loading: true, error: null }));
     try {
       const [statusResponse, sessionResponse] = await Promise.all([
-        fetch(`${coreOrigin}/api/core/status`, { credentials: "include" }),
-        fetch(`${coreOrigin}/api/auth/session`, { credentials: "include" }),
+        fetchCore(`${coreOrigin}/api/core/status`, { credentials: "include" }),
+        fetchCore(`${coreOrigin}/api/auth/session`, { credentials: "include" }),
       ]);
 
       redirectToCoreLoginIfAuthRequired(statusResponse, coreOrigin);
@@ -347,7 +342,7 @@ export function ShellClient({
       let nextGlobalMounts: CoreGlobalMount[] = [];
       if (session?.authenticated) {
         appsReadId = ++appsReadSequence.current;
-        const appsResponse = await fetch(`${coreOrigin}/api/apps`, { credentials: "include", cache: "no-store" });
+        const appsResponse = await fetchCore(`${coreOrigin}/api/apps`, { credentials: "include", cache: "no-store" });
         redirectToCoreLoginIfAuthRequired(appsResponse, coreOrigin);
         if (!appsResponse.ok) {
           throw new Error(`Apps API returned ${appsResponse.status}.`);
@@ -358,7 +353,7 @@ export function ShellClient({
         // The shared-mounts library is admin-only; non-admins simply get an empty list (the picker
         // and Shared mounts button are gated to admins anyway).
         if (session.user?.role === "host.admin") {
-          const mountsResponse = await fetch(`${coreOrigin}/api/global-mounts`, { credentials: "include" });
+          const mountsResponse = await fetchCore(`${coreOrigin}/api/global-mounts`, { credentials: "include" });
           if (mountsResponse.ok) {
             nextGlobalMounts = ((await mountsResponse.json()) as { mounts?: CoreGlobalMount[] }).mounts ?? [];
           }
@@ -405,7 +400,7 @@ export function ShellClient({
   const refreshApps = useCallback(async () => {
     const requestToken = refreshRequestRef.current;
     const appsReadId = ++appsReadSequence.current;
-    const response = await fetch(`${coreOrigin}/api/apps`, { credentials: "include", cache: "no-store" });
+    const response = await fetchCore(`${coreOrigin}/api/apps`, { credentials: "include", cache: "no-store" });
     redirectToCoreLoginIfAuthRequired(response, coreOrigin);
     if (!response.ok) {
       return;
@@ -429,7 +424,7 @@ export function ShellClient({
   }, [coreOrigin]);
 
   const loadCsrfToken = useCallback(async () => {
-    const response = await fetch(`${coreOrigin}/api/auth/csrf`, { credentials: "include" });
+    const response = await fetchCore(`${coreOrigin}/api/auth/csrf`, { credentials: "include" });
     redirectToCoreLoginIfAuthRequired(response, coreOrigin);
     if (!response.ok) {
       throw new Error(`CSRF endpoint returned ${response.status}.`);
@@ -450,7 +445,7 @@ export function ShellClient({
 
       try {
         const csrf = await loadCsrfToken();
-        const response = await fetch(endpoint, {
+        const response = await (endpoint === "/api/assistant/handoff" ? fetch : fetchCore)(endpoint, {
           method,
           credentials: "include",
           headers: {
@@ -476,49 +471,7 @@ export function ShellClient({
     [coreOrigin, loadCsrfToken],
   );
 
-  const mintDelegatedToken = useCallback(
-    async (appId: string): Promise<DelegatedTokenGrant> => {
-      // sendCsrfJson already throws on non-2xx; this guards the shape so a drifted Core response
-      // can never seed the cache with undefined fields.
-      const response = await sendCsrfJson(`${coreOrigin}/api/apps/${encodeURIComponent(appId)}/delegated-token`);
-      const issued = (await response.json().catch(() => null)) as {
-        token?: unknown;
-        expiresAt?: unknown;
-      } | null;
-      if (typeof issued?.token !== "string" || typeof issued.expiresAt !== "string") {
-        throw new Error("Core returned an unexpected delegated-token response.");
-      }
-
-      return { token: issued.token, expiresAt: issued.expiresAt };
-    },
-    [coreOrigin, sendCsrfJson],
-  );
-
-  // Delegated tokens Shell mints for an embedded app. The reuse window, the forced re-mint after a
-  // 401, and the session-change invalidation live in the cache rather than here: they are decisions
-  // about handing over a credential, and they are covered by their own tests. Built once and reached
-  // through a ref so a rebuilt mint callback is what actually runs.
-  const mintDelegatedTokenRef = useRef(mintDelegatedToken);
-  useEffect(() => {
-    mintDelegatedTokenRef.current = mintDelegatedToken;
-  }, [mintDelegatedToken]);
-  const delegatedTokens = useRef<DelegatedTokenCache | null>(null);
-  if (!delegatedTokens.current) {
-    delegatedTokens.current = createDelegatedTokenCache((appId) => mintDelegatedTokenRef.current(appId));
-  }
-
-  const issueDelegatedToken = useCallback(
-    (appId: string, refresh = false): Promise<DelegatedTokenGrant> =>
-      delegatedTokens.current!.issue(appId, refresh),
-    [],
-  );
-
-  // A token names the user it was minted for, so a session change must not leave one reusable —
-  // including a mint that is still in flight and would otherwise resolve into the cleared cache.
   const activeUserId = activeUser?.id ?? null;
-  useEffect(() => {
-    delegatedTokens.current?.invalidateAll();
-  }, [activeUserId]);
 
   // Keep the last successful availability through transient HTTP/network failures.
   const loadCoreUpdateStatus = useCallback(async (force = false, signal?: AbortSignal) => {
@@ -526,7 +479,7 @@ export function ShellClient({
       const live = await readCoreStatus(coreOrigin, signal);
       if (!live || live.launch?.mode === "dev") { setCoreUpdate(null); return; }
       const url = `${coreOrigin}/api/core/update-status${force ? "?refresh=true" : ""}`;
-      const response = await fetch(url, { credentials: "include", cache: "no-store", signal });
+      const response = await fetchCore(url, { credentials: "include", cache: "no-store", signal });
       if (!response.ok) throw new Error(`Core answered HTTP ${response.status}.`);
       const update = await response.json() as CoreUpdateStatus;
       if (!signal?.aborted) setCoreUpdate(previous => update.error && previous && previous.currentVersion === update.currentVersion && previous.releaseTag === update.releaseTag ? {
@@ -584,7 +537,7 @@ export function ShellClient({
           if (!status) setPhase("reconnecting");
           else {
             setState(current => ({ ...current, status }));
-            const response = await fetch(`${coreOrigin}/api/core/update-status?refresh=true`, { credentials: "include", cache: "no-store", signal: controller.signal });
+            const response = await fetchCore(`${coreOrigin}/api/core/update-status?refresh=true`, { credentials: "include", cache: "no-store", signal: controller.signal });
             if (response.ok) {
               const update = await response.json() as CoreUpdateStatus;
               if (coreUpdateProbeGeneration.current !== generation) return;
@@ -699,8 +652,6 @@ export function ShellClient({
       router.push(workspaceHref);
 
       try {
-        const response = await sendCsrfJson(appEndpoint(app, "/launch-code"), { redirectUri: embeddedRedirectUri });
-        const launch = (await response.json()) as AppLaunchResponse;
         const currentUrl = new URL(window.location.href);
         if (
           normalizeShellPath(currentUrl.pathname) !== "/workspace" ||
@@ -715,7 +666,7 @@ export function ShellClient({
           title: app.displayName,
           pageLabel: page.label,
           path: routePath,
-          src: launch.redirectUri,
+          src: embeddedRedirectUri,
           // The standalone href, never the frame's own URL: that one declares the embedded mode,
           // and a new tab opened on it would be an app hiding the navigation nothing else renders.
           externalUrl: getStandaloneAppHref(app, page),
@@ -912,7 +863,7 @@ export function ShellClient({
       }
       setDetailPanel({ loading: true, error: null, backups: null, backupCleanupPlan: null, updatePlan: null });
       try {
-        const response = await fetch(appEndpoint(app, "/backups"), { credentials: "include" });
+        const response = await fetchCore(appEndpoint(app, "/backups"), { credentials: "include" });
         redirectToCoreLoginIfAuthRequired(response, coreOrigin);
         if (!response.ok) {
           throw new Error(await readCoreError(response));
@@ -947,7 +898,7 @@ export function ShellClient({
         // render it instantly instead of rebuilding. An explicit source, or a caller that knows the
         // cached plan is stale (a feed change), skips the cache and rebuilds.
         if (!source && !options?.rebuild) {
-          const pending = await fetch(appEndpoint(app, "/update/plan"), { credentials: "include" });
+          const pending = await fetchCore(appEndpoint(app, "/update/plan"), { credentials: "include" });
           redirectToCoreLoginIfAuthRequired(pending, coreOrigin);
           if (pending.ok) {
             payload = ((await pending.json()) as AppPendingUpdatePlanResponse).plan;
@@ -1117,7 +1068,7 @@ export function ShellClient({
       const actionKey = `${app.id}:backup-cleanup-plan`;
       setBusyAction(actionKey);
       try {
-        const response = await fetch(appEndpoint(app, "/backups/cleanup/plan"), { credentials: "include" });
+        const response = await fetchCore(appEndpoint(app, "/backups/cleanup/plan"), { credentials: "include" });
         redirectToCoreLoginIfAuthRequired(response, coreOrigin);
         if (!response.ok) {
           throw new Error(await readCoreError(response));
@@ -1190,7 +1141,7 @@ export function ShellClient({
     async (app: CoreApp, key: string) => {
       // On-demand only: the app summaries never carry a secret's value, so this is the single path
       // that does, gated on the admin session server-side.
-      const response = await fetch(appEndpoint(app, `/settings/${encodeURIComponent(key)}/value`), { credentials: "include" });
+      const response = await fetchCore(appEndpoint(app, `/settings/${encodeURIComponent(key)}/value`), { credentials: "include" });
       redirectToCoreLoginIfAuthRequired(response, coreOrigin);
       if (!response.ok) {
         throw new Error(await readCoreError(response));
@@ -1228,12 +1179,43 @@ export function ShellClient({
     [appEndpoint, refresh, sendCsrfJson],
   );
 
+  const installationClient = useMemo(() => createInstallationClient({
+    baseUrl: `${coreOrigin}/api/installations`, request: sendCsrfJson,
+  }), [coreOrigin, sendCsrfJson]);
+
+  const changeHostPath = useCallback(async (url: string, body: unknown, change: NonNullable<InstallationSource["hostPathChange"]>) => {
+    const popup = openInstallationConfirmation();
+    let submitted = false;
+    try {
+      try {
+        await sendCsrfJson(url, body);
+        return true;
+      } catch (error) {
+        if (!(error instanceof CoreRequestError) || ![
+          "source_override_confirmation_required", "app_mount_confirmation_required", "global_mount_confirmation_required",
+        ].includes(error.code ?? "")) throw error;
+      }
+      const result = await requestCoreApproval(installationClient, { hostPathChange: change }, pending => {
+        submitted = true;
+        showInstallationConfirmation(popup, pending);
+        toast.info("Confirm host path access in Hosty Core", {
+          duration: 60_000,
+          action: { label: "Open confirmation", onClick: () => window.open(pending.approvalUrl, "_blank", "noopener,noreferrer") },
+        });
+      });
+      if (result.status === "denied") toast.info("Change cancelled");
+      return result.status === "succeeded";
+    } finally {
+      if (!submitted) popup?.close();
+    }
+  }, [installationClient, sendCsrfJson]);
+
   const configureMounts = useCallback(
     async (app: CoreApp, mounts: MountBindingInput[]) => {
       const actionKey = `${app.id}:mounts`;
       setBusyAction(actionKey);
       try {
-        await sendCsrfJson(appEndpoint(app, "/mounts"), { mounts });
+        if (!await changeHostPath(appEndpoint(app, "/mounts"), { mounts }, { kind: "app-mounts", appId: app.id, mounts: { mounts } })) return;
         await refresh();
         setActivePanel(null);
         toast.success("Mounts saved", { description: app.displayName });
@@ -1251,7 +1233,7 @@ export function ShellClient({
         setBusyAction((current) => (current === actionKey ? null : current));
       }
     },
-    [appEndpoint, refresh, sendCsrfJson],
+    [appEndpoint, refresh, changeHostPath],
   );
 
   // Source override: point an app's live source at a custom folder, or clear it to fall back to the
@@ -1264,7 +1246,7 @@ export function ShellClient({
       // The panel stays open on success, so clear any stale error from a prior failed attempt.
       setDetailPanel((current) => ({ ...current, error: null }));
       try {
-        await sendCsrfJson(appEndpoint(app, "/source/override"), { path });
+        if (!await changeHostPath(appEndpoint(app, "/source/override"), { path }, { kind: "source-override", appId: app.id, source: { path } })) return;
         await refresh();
         toast.success("Source updated", { description: app.displayName });
       } catch (error) {
@@ -1281,7 +1263,7 @@ export function ShellClient({
         setBusyAction((current) => (current === actionKey ? null : current));
       }
     },
-    [appEndpoint, refresh, sendCsrfJson],
+    [appEndpoint, refresh, changeHostPath],
   );
 
   const clearAppSource = useCallback(
@@ -1315,10 +1297,12 @@ export function ShellClient({
   // refreshes globalMounts directly; the SharedMountsDialog surfaces any thrown error inline.
   const saveGlobalMount = useCallback(
     async (input: { name: string; hostPath: string; mode?: string; description?: string | null }) => {
-      const response = await sendCsrfJson(`${coreOrigin}/api/global-mounts`, input, "POST");
+      if (!await changeHostPath(`${coreOrigin}/api/global-mounts`, input, { kind: "global-mount", globalMount: input })) throw new Error("Change cancelled.");
+      const response = await fetchCore(`${coreOrigin}/api/global-mounts`, { credentials: "include", cache: "no-store" });
+      if (!response.ok) throw new Error(await readCoreError(response));
       setGlobalMounts(((await response.json()) as { mounts?: CoreGlobalMount[] }).mounts ?? []);
     },
-    [coreOrigin, sendCsrfJson],
+    [coreOrigin, changeHostPath],
   );
 
   const deleteGlobalMount = useCallback(
@@ -1338,7 +1322,7 @@ export function ShellClient({
     setCoreSettings(null);
 
     try {
-      const response = await fetch(`${coreOrigin}/api/core/settings`, { credentials: "include" });
+      const response = await fetchCore(`${coreOrigin}/api/core/settings`, { credentials: "include" });
       redirectToCoreLoginIfAuthRequired(response, coreOrigin);
       if (!response.ok) {
         throw new Error(await readCoreError(response));
@@ -1365,107 +1349,54 @@ export function ShellClient({
     [coreOrigin, sendCsrfJson],
   );
 
-  // Enqueues the update on Core (plan-first updates): the request returns as soon as the apply is
-  // accepted, progress lives on the record (operationStatus "updating" drives the row spinner), and
-  // the outcome arrives as a record flip, hinted on the event stream. A rejected enqueue (the plan
-  // moved, expired, was consumed, or an apply is already running) answers with an actionable error —
-  // surface it and refresh so the row's affordance corrects itself instead of resending a dead
-  // digest.
-  const installationClient = useMemo(() => createInstallationClient({
-    baseUrl: `${coreOrigin}/api/installations`, request: sendCsrfJson,
-  }), [coreOrigin, sendCsrfJson]);
-
+  // Every app-originated update is reviewed on Core, including routine and self-updates.
   const enqueueUpdate = useCallback(
-    async (app: CoreApp, planDigest: string) => {
+    async (app: CoreApp, planDigest: string, popup = openInstallationConfirmation()) => {
       const actionKey = `${app.id}:update`;
       setBusyAction(actionKey);
+      let submitted = false;
       try {
-        const reviewedPlan = detailPanel.updatePlan;
-        if (reviewedPlan?.planDigest === planDigest && (reviewedPlan.targetCorePermissions?.some(permission =>
-          !reviewedPlan.currentCorePermissions?.includes(permission)) || reviewedPlan.targetRoles?.some(role => !reviewedPlan.currentConfirmedRoles?.includes(role)))) {
-          const popup = openInstallationConfirmation();
-          try {
-            const draft = await installationClient.prepare({ updateAppId: app.id, planDigest });
-            const pending = await installationClient.submit(draft.id, {}, true);
-            showInstallationConfirmation(popup, pending);
-            toast.info("Confirm new permissions and roles in Hosty Core", {
-              duration: 60_000,
-              action: { label: "Open confirmation", onClick: () => window.open(pending.approvalUrl, "_blank", "noopener,noreferrer") },
-            });
-            setActivePanel(null);
-          } catch (error) {
-            popup?.close();
-            throw error;
-          }
-          return;
-        }
-        await sendCsrfJson(appEndpoint(app, "/update"), { planDigest });
-        // Close this app's dialog if it is the one open; another app's panel is left alone.
-        setActivePanel((current) => (current?.appId === app.id ? null : current));
-
-        // Shell self-update: the apply runs detached on Core, so it survives this page going away —
-        // and the origin serving us keeps answering from the OLD Shell until the swap happens. Wait
-        // for Core's record to leave "updating" (on the event stream, no poll), and only then probe
-        // our own origin for the new server before reloading into its assets. Probing first would
-        // reload the old bundle within milliseconds of the click, and take the wait down with it.
-        if (app.id === shellAppId) {
-          toast.success("Shell update started", { description: "Waiting for the new Shell, then reloading this page…" });
-          void refresh();
-          const outcome = await waitForShellUpdateToSettle({
-            coreOrigin,
-            shellAppId,
-            // app.removed too: a removal mid-apply is one of the ways this wait ends, and without
-            // it the record would only be re-read on the next unrelated commit or the deadline.
-            subscribe: (onSync) =>
-              subscribeToCoreEvents(coreOrigin, { names: [CoreEventNames.appChanged, CoreEventNames.appRemoved], onSync }),
-            // A running Shell is restarted by the apply, so its "updated" commit lands before the
-            // start this page is actually waiting for. One that is already down ends at "updated".
-            expectRestart: isAppUp(app.runtimeState),
+        const result = await requestAppUpdate(installationClient, app.id, planDigest, pending => {
+          submitted = true;
+          showInstallationConfirmation(popup, pending);
+          toast.info(`Confirm update: ${app.displayName}`, {
+            description: "Review and approve this update in Hosty Core.",
+            duration: 60_000,
+            action: { label: "Open confirmation", onClick: () => window.open(pending.approvalUrl, "_blank", "noopener,noreferrer") },
           });
-          if (outcome.kind === "failed") {
-            toast.error("Shell update failed", { description: outcome.message, appId: app.id });
-            void refresh();
-            return;
-          }
-
-          // Deliberately vague: this is every way the record failed to settle — an apply still
-          // running past the deadline, the app removed, a flip the page never saw. The row renders
-          // whichever it was, so point at it rather than assert one.
-          if (outcome.kind === "unresolved") {
-            toast.warning("Shell update not confirmed", {
-              description: "The page stopped waiting for the outcome — check the app row, and reload once the Shell answers again.",
-            });
-            return;
-          }
-
-          if (await waitForOwnOrigin()) {
-            window.location.reload();
-          } else {
-            toast.warning("Shell is not answering yet", {
-              description: "Keep this tab open and reload manually once the Shell is reachable again.",
-            });
-          }
-          return;
-        }
-
-        toast.success("Update started", { description: app.displayName });
-        await refresh();
-      } catch (error) {
-        if (isAuthRequiredRedirectError(error)) {
-          return;
-        }
-
-        toast.error("Update not started", {
-          appId: app.id,
-          description: error instanceof Error ? error.message : "The update could not be started.",
+          setActivePanel(current => current?.appId === app.id ? null : current);
         });
-        // The verdict or pending plan may have moved — refresh so the row renders current reality.
-        void refresh();
+        if (result.status === "denied") {
+          toast.info("Update cancelled", { description: app.displayName });
+          return false;
+        }
+        // Core reports success after the apply and restart complete. A pending confirmation
+        // must never trigger the old Shell's origin probe or reload.
+        if (app.id === shellAppId) {
+          if (await waitForOwnOrigin()) window.location.reload();
+          else toast.warning("Shell is not answering yet", {
+            description: "Keep this tab open and reload manually once the Shell is reachable again.",
+          });
+          return true;
+        }
+        toast.success("App updated", { description: app.displayName });
+        await refresh();
+        return true;
+      } catch (error) {
+        if (!submitted) popup?.close();
+        if (!isAuthRequiredRedirectError(error)) {
+          toast.error("Update not completed", {
+            appId: app.id,
+            description: error instanceof Error ? error.message : "Check the update status in Core.",
+          });
+          void refresh();
+        }
+        return false;
       } finally {
-        setBusyAction((current) => (current === actionKey ? null : current));
+        setBusyAction(current => current === actionKey ? null : current);
       }
     },
-    [appEndpoint, coreOrigin, refresh, sendCsrfJson, shellAppId, detailPanel.updatePlan, installationClient],
+    [refresh, shellAppId, installationClient],
   );
 
   const applyUpdate = useCallback(
@@ -1475,8 +1406,7 @@ export function ShellClient({
     [enqueueUpdate],
   );
 
-  // Row one-click apply from the fleet-check verdict: the cached pending plan is applied by digest,
-  // no dialog involved. Only offered for routine verdicts (the page gates on requiresReview).
+  // Routine verdicts reuse the cached plan digest but still require Core confirmation.
   const applyUpdateFromRow = useCallback(
     async (app: CoreApp) => {
       const planDigest = app.updateCheck?.planDigest;
@@ -1506,61 +1436,24 @@ export function ShellClient({
     }
   }, [coreOrigin, refresh, sendCsrfJson]);
 
-  // Applies every routine verdict in one action; review-class updates are left for a human and
-  // counted in the summary. Shell's own app goes last: its apply restarts the Shell serving this
-  // page, so every other enqueue must already be accepted by then (enqueueUpdate then owns the
-  // wait-for-new-Shell reload).
+  // Reuse one user-opened popup for sequential Core reviews. Shell goes last because
+  // its approved update restarts the server and reloads this page.
   const updateAllApps = useCallback(async () => {
     const routine = state.apps.filter(isRoutineUpdate);
-    const reviewCount = state.apps.filter(
-      (app) => app.updateCheck?.updateAvailable === true && (app.updateCheck.requiresReview === true || Boolean(app.updateCheck.error) || !app.updateCheck.planDigest),
-    ).length;
-    const reviewNote = reviewCount > 0 ? `${reviewCount} update${reviewCount === 1 ? "" : "s"} need review.` : undefined;
     if (routine.length === 0) {
-      toast.info("No routine updates to apply", { description: reviewNote });
+      toast.info("No routine updates to review");
       return;
     }
-
-    const shellApp = routine.find((app) => app.id === shellAppId);
-    let started = 0;
-    let failed = 0;
-    for (const app of routine.filter((candidate) => candidate.id !== shellAppId)) {
-      try {
-        await sendCsrfJson(appEndpoint(app, "/update"), { planDigest: app.updateCheck!.planDigest });
-        started += 1;
-      } catch (error) {
-        if (isAuthRequiredRedirectError(error)) {
-          return;
-        }
-
-        failed += 1;
-      }
-    }
-
-    // Count only what actually got accepted; the Shell's own enqueue runs after this and reports
-    // through enqueueUpdate's dedicated toast (or its error path), never pre-counted here. A batch
-    // where nothing started is a warning, not a "0 updates started" success.
-    const failedNote = failed > 0 ? `${failed} could not be started.` : undefined;
-    const notes = [reviewNote, failedNote, shellApp ? "The Shell updates last." : undefined]
-      .filter(Boolean)
-      .join(" ") || undefined;
-    if (started > 0) {
-      toast.success(`${started} update${started === 1 ? "" : "s"} started`, { description: notes });
-    } else if (failed > 0) {
-      toast.warning("No updates could be started", { description: notes });
-    }
-    await refresh();
-    if (shellApp?.updateCheck?.planDigest) {
-      await enqueueUpdate(shellApp, shellApp.updateCheck.planDigest);
-    }
-  }, [appEndpoint, enqueueUpdate, refresh, sendCsrfJson, shellAppId, state.apps]);
+    const popup = openInstallationConfirmation();
+    await reviewUpdatesInOrder(routine, shellAppId, app => enqueueUpdate(app, app.updateCheck!.planDigest!, popup));
+  }, [enqueueUpdate, shellAppId, state.apps]);
 
   // Advisory preview for the remove panel: what else declares a dependency on this app and who
   // consumes the platform capabilities it provides. A failure here degrades to "no impact shown"
   // rather than blocking the removal — Core never gates on it either.
   const loadRemovalImpact = useCallback(
     async (appId: string): Promise<CoreRemovalImpact | null> => {
-      const response = await fetch(`${coreOrigin}/api/apps/${encodeURIComponent(appId)}/remove-impact`, {
+      const response = await fetchCore(`${coreOrigin}/api/apps/${encodeURIComponent(appId)}/remove-impact`, {
         credentials: "include",
       });
       redirectToCoreLoginIfAuthRequired(response, coreOrigin);
@@ -1574,19 +1467,31 @@ export function ShellClient({
   );
 
   const removeApp = useCallback(
-    // The RemovePanel is itself the confirmation (it names the app, lists the delete-data/backups/source
-    // options, and gates behind a destructive "Remove app" button), so no extra window.confirm here.
+    // Shell chooses options; only Core's isolated page can authorize their execution.
     async (app: CoreApp, options: RemoveOptions) => {
       const actionKey = `${app.id}:remove`;
       setBusyAction(actionKey);
+      const popup = openInstallationConfirmation();
+      let submitted = false;
       try {
-        await sendCsrfJson(appEndpoint(app, "/remove"), {
+        const result = await requestAppRemoval(installationClient, app.id, {
           deleteRuntimeState: true,
           deleteData: options.deleteData,
           deleteBackups: options.deleteBackups,
           deleteSource: options.deleteSource,
           ignoreRuntimeErrors: options.ignoreRuntimeErrors,
+        }, (pending) => {
+          submitted = true;
+          showInstallationConfirmation(popup, pending);
+          toast.info("Confirm app removal in Hosty Core", {
+            duration: 60_000,
+            action: { label: "Open confirmation", onClick: () => window.open(pending.approvalUrl, "_blank", "noopener,noreferrer") },
+          });
         });
+        if (result.status === "denied") {
+          toast.info("App removal cancelled");
+          return;
+        }
         await refresh();
         setActivePanel(null);
         if (workspace?.appId === app.id) {
@@ -1594,6 +1499,7 @@ export function ShellClient({
         }
         toast.success("App removed", { description: app.displayName });
       } catch (error) {
+        if (!submitted) popup?.close();
         if (isAuthRequiredRedirectError(error)) {
           return;
         }
@@ -1607,7 +1513,7 @@ export function ShellClient({
         setBusyAction((current) => (current === actionKey ? null : current));
       }
     },
-    [appEndpoint, refresh, sendCsrfJson, workspace?.appId],
+    [installationClient, refresh, workspace?.appId],
   );
 
   useEffect(() => {
@@ -1690,9 +1596,7 @@ export function ShellClient({
       return;
     }
 
-    // A system app is not special-cased here any more. Core answers a launch code for one only to an
-    // administrator (`system_app_admin_required`) and omits it from `GET /api/apps` for everyone
-    // else, so a non-admin reaching this point simply does not find the app below.
+    // Core filters every app, including system apps, using this user's assignments.
     const app = state.apps.find((candidate) => candidate.id === routeWorkspace.appId);
     if (!app) {
       resetWorkspaceLaunch({ error: `App '${routeWorkspace.appId}' is not installed or not visible to this user.` });
@@ -1767,8 +1671,6 @@ export function ShellClient({
 
     async function openWorkspace() {
       try {
-        const response = await sendCsrfJson(appEndpoint(workspaceApp, "/launch-code"), { redirectUri: embeddedRedirectUri });
-        const launch = (await response.json()) as AppLaunchResponse;
         if (cancelled) {
           return;
         }
@@ -1778,7 +1680,7 @@ export function ShellClient({
           title: workspaceApp.displayName,
           pageLabel: workspacePage.label,
           path: routePath,
-          src: launch.redirectUri,
+          src: embeddedRedirectUri,
           externalUrl: getStandaloneAppHref(workspaceApp, workspacePage),
         });
       } catch (error) {
@@ -1845,85 +1747,13 @@ export function ShellClient({
     setInstallOpen(true);
   }, []);
 
-  const handleAuthRequired = useCallback(
-    (appId: string) => {
-      const current = workspace;
-      if (!current || current.appId !== appId) {
-        return;
-      }
+  // App-owned recovery never asks Shell to mint credentials or reload another origin.
+  const handleAuthRequired = useCallback((_appId: string) => { void _appId; }, []);
+  const handleSurfaceAuthRequired = handleAuthRequired;
 
-      const app = state.apps.find((candidate) => candidate.id === appId);
-      if (!app || app.runtimeState !== "running") {
-        return;
-      }
 
-      // Loop guard: a frame that keeps re-posting (e.g. it never accepts the new code) must not
-      // drive an unbounded reissue storm. One reissue per app per interval is plenty for recovery.
-      if (!authReissueLimiter.current.tryAcquire(appId)) {
-        return;
-      }
-
-      void (async () => {
-        try {
-          // Reuse the current frame URL as the redirect target, minus the spent code, so the theme,
-          // launch-mode and page params are preserved and Core appends a fresh code.
-          const base = new URL(current.src);
-          base.searchParams.delete("code");
-          const response = await sendCsrfJson(appEndpoint(app, "/launch-code"), { redirectUri: base.toString() });
-          const launch = (await response.json()) as AppLaunchResponse;
-          const stillCurrent = workspace;
-          if (!stillCurrent || stillCurrent.appId !== appId || stillCurrent.path !== current.path) {
-            return;
-          }
-
-          // Only the frame moves. The standalone href is unaffected by a reissue, and the frame's
-          // own URL is not a substitute for it: it declares the embedded mode.
-          setWorkspace({ ...stillCurrent, src: launch.redirectUri });
-        } catch (error) {
-          if (isAuthRequiredRedirectError(error)) {
-            return;
-          }
-          // A failed reissue leaves the app's own fallback UI in place; do not surface a toast for a
-          // background recovery attempt the user did not explicitly trigger.
-        }
-      })();
-    },
-    [workspace, state.apps, sendCsrfJson, appEndpoint],
-  );
-
-  // Recovery for a **placed** surface — a panel tab or a Settings tab.
-  //
-  // `handleAuthRequired` above cannot serve them: it returns unless the centre workspace belongs to
-  // the same app, so a panel docked beside a Shell page, or beside a different app, could never
-  // recover and would sit unauthenticated until it was remounted. A placed surface re-mints its own
-  // code instead; bumping this nonce is what asks the shared hook to do it.
-  //
-  // The same per-app limiter guards it, for the same reason: a frame that never accepts the new code
-  // must not drive an unbounded reissue storm.
-  const handleSurfaceAuthRequired = useCallback(
-    (appId: string) => {
-      const app = state.apps.find((candidate) => candidate.id === appId);
-      if (!app || app.runtimeState !== "running") {
-        return;
-      }
-
-      if (!authReissueLimiter.current.tryAcquire(appId)) {
-        return;
-      }
-
-      setSurfaceAuthNonce((nonce) => nonce + 1);
-    },
-    [state.apps],
-  );
-
-  // Which embedded frame Shell will answer with a delegated token: the assistant gateway's own
-  // pages, and nothing else. Shell already mints tokens for that app whenever the chat panel is
-  // open, so its settings page gains no reach it did not have — whereas answering every frame would
-  // hand a user-scoped credential to whatever the operator happened to install.
-  const handleDelegatedTokenRequest = useMemo(
-    () => assistantTokenResponder(workspace?.appId, assistantIds, issueDelegatedToken),
-    [assistantIds, workspace?.appId, issueDelegatedToken],
-  );
+  // Apps authenticate directly with Core; Shell never distributes another app's credential.
+  const handleDelegatedTokenRequest = undefined;
 
   const closeInstallDialog = useCallback(() => {
     setInstallOpen(false);
@@ -1979,15 +1809,15 @@ export function ShellClient({
   useEffect(() => {
     let cancelled = false;
     const check = async () => {
-      const available = canManageApps && assistantGateway?.running
-        ? await assistantSupportsContext(assistantGateway, refresh => issueDelegatedToken(assistantGateway.appId, refresh)).catch(() => false)
+      const available = canManageApps && assistantPermission && assistantGateway?.running
+        ? await assistantSupportsContext(assistantGateway).catch(() => false)
         : false;
       if (!cancelled) setAssistantContextReady(Boolean(available));
     };
     void check();
     const timer = setInterval(() => void check(), 30_000);
     return () => { cancelled = true; clearInterval(timer); };
-  }, [assistantGateway, canManageApps, issueDelegatedToken, activeUserId]);
+  }, [assistantGateway, canManageApps, assistantPermission, activeUserId]);
 
   const newAppAssistantSession = useCallback(async (appId: string) => {
     if (!canManageApps || creatingAssistantSession.current) return;
@@ -2000,7 +1830,7 @@ export function ShellClient({
     setAssistantSessionPending(true);
     try {
       const intent = await pendingAssistantIntent(activeUserId, gateway.appId, "", [appId]);
-      const session = await createAppSession(gateway, refresh => issueDelegatedToken(gateway.appId, refresh), appId, intent.requestId);
+      const session = await createAppSession(gateway, sendCsrfJson, appId, intent.requestId);
       const app = state.apps.find(app => app.id === gateway.appId)!;
       assistantOpenUrl(app, session.result);
       setAssistantDestination({ appId: gateway.appId, userId: activeUserId, result: session.result });
@@ -2009,7 +1839,7 @@ export function ShellClient({
       intent.complete();
     } catch (cause) { toast.error(cause instanceof Error ? cause.message : String(cause)); }
     finally { creatingAssistantSession.current = false; setAssistantSessionPending(false); }
-  }, [canManageApps, chooseAssistant, appPanelTabs, issueDelegatedToken, activeUserId, state.apps]);
+  }, [canManageApps, chooseAssistant, appPanelTabs, sendCsrfJson, activeUserId, state.apps]);
 
   const askErrorAssistant = useCallback(async (report: ErrorReport, requestId: string) => {
     if (!canManageApps) return false;
@@ -2018,13 +1848,13 @@ export function ShellClient({
     if (!gateway.running) throw new Error("Start the selected assistant to continue.");
     const tab = appPanelTabs.find(item => item.appId === gateway.appId);
     if (!tab) throw new Error("The assistant panel is unavailable. Refresh Shell and retry.");
-    const session = await createErrorSession(gateway, refresh => issueDelegatedToken(gateway.appId, refresh), report.appId, requestId, errorReportText(report));
+    const session = await createErrorSession(gateway, sendCsrfJson, report.appId, requestId, errorReportText(report));
     setPanelOpen(true);
     setActivePanelKey(tab.key);
     const app = state.apps.find(app => app.id === gateway.appId)!;
     assistantOpenUrl(app, session.result);
       setAssistantDestination({ appId: gateway.appId, userId: activeUserId, result: session.result });
-  }, [canManageApps, chooseAssistant, appPanelTabs, issueDelegatedToken, activeUserId, state.apps]);
+  }, [canManageApps, chooseAssistant, appPanelTabs, sendCsrfJson, activeUserId, state.apps]);
 
   const askAssistant = useCallback((text: string, sourceAppId: string) => {
     void (async () => {
@@ -2038,14 +1868,14 @@ export function ShellClient({
       const assistantTab = appPanelTabs.find(tab => tab.appId === gateway.appId);
       if (!assistantTab) throw new Error("The assistant panel is unavailable.");
       const intent = await pendingAssistantIntent(activeUserId, gateway.appId, text, [sourceAppId]);
-      const session = await createHandoff(gateway, refresh => issueDelegatedToken(gateway.appId, refresh), text, [sourceAppId], intent.requestId);
+      const session = await createHandoff(gateway, sendCsrfJson, text, [sourceAppId], intent.requestId);
       const app = state.apps.find(app => app.id === gateway.appId)!;
       assistantOpenUrl(app, session.result);
       setAssistantDestination({ appId: gateway.appId, userId: activeUserId, result: session.result });
       setPanelOpen(true); setActivePanelKey(assistantTab.key);
       intent.complete();
     })().catch(error => toast.error(error instanceof Error ? error.message : String(error)));
-  }, [appPanelTabs, chooseAssistant, activeUserId, issueDelegatedToken, state.apps]);
+  }, [appPanelTabs, chooseAssistant, activeUserId, sendCsrfJson, state.apps]);
 
 
   // The assistant is meant to be at hand, so it gets a key. Toggles rather than only opening: a
@@ -2099,15 +1929,12 @@ export function ShellClient({
       : HOST_SETTINGS_SECTIONS.find(section => section.id === shellRoute.settingsTab)?.label ?? "Users"
     : null);
 
-  // Passes through the existing rule rather than restating it: only an app that already qualifies is
-  // answered, in this context as in the workspace.
-  const requestDelegatedTokenFor = useCallback(
-    (appId: string) => assistantTokenResponder(appId, assistantIds, issueDelegatedToken),
-    [assistantIds, issueDelegatedToken],
-  );
+  const requestDelegatedTokenFor = useCallback((_appId: string) => {
+    void _appId;
+    return undefined;
+  }, []);
 
-  // Mints a launch code for a placed surface and returns the URL to embed, so the frame lands with a
-  // real Hosty app session rather than as an anonymous visitor to the app's origin.
+  // Opens the app-owned surface. Its SDK establishes identity directly through Core.
   //
   // Takes the resolved surface URL rather than a surface kind: Core already resolved it, and a
   // function that branched on "settings or panel" would have to be edited for every surface added
@@ -2122,11 +1949,9 @@ export function ShellClient({
       const redirectUri = appendHostyLaunchParam(
         appendThemeLaunchParams(embeddedUrl, shellResolvedTheme, shellThemePreference),
       );
-      const response = await sendCsrfJson(appEndpoint(app, "/launch-code"), { redirectUri });
-      const launch = (await response.json()) as AppLaunchResponse;
-      return launch.redirectUri;
+      return redirectUri;
     },
-    [appEndpoint, sendCsrfJson, shellResolvedTheme, shellThemePreference, state.apps],
+    [shellResolvedTheme, shellThemePreference, state.apps],
   );
 
   const startAppById = useCallback(
@@ -2246,6 +2071,8 @@ export function ShellClient({
     <ShellActionsContext.Provider value={shellActionsContextValue}>
       <ShellStateContext.Provider value={shellStateContextValue}>
       <div className="flex h-dvh flex-col bg-sidebar">
+        <ShellActivityBridge coreOrigin={coreOrigin} appId={shellAppId} />
+        <MissingPermissionsNotice />
         <ShellTopStrip
           title={stripTitle}
           subtitle={stripSubtitle}
@@ -2444,8 +2271,9 @@ export function ShellClient({
       {assistantPicker}
       {confirmationDialog}
       <AssistantFeedbackContext.Provider value={{
-        installed: assistantAvailable,
+        installed: assistants.length > 0,
         unavailableReason: !canManageApps ? "Host administrator access is required."
+          : !assistantPermission ? "Approve Shell’s optional providers.assistant permission in its app settings."
           : assistantGateway && !assistantGateway.running ? "Start the selected assistant to continue."
           : assistantGateway && !appPanelTabs.some(tab => tab.appId === assistantGateway.appId) ? "The assistant panel is unavailable."
           : undefined,

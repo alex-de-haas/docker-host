@@ -60,7 +60,8 @@ const providersWithCore = {
 function stubNetwork(): void {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
-    if (url.includes("/delegated-token")) {
+    if (url.includes("/api/auth/apps/revalidate")) return Response.json({ active: true, expiresAt: new Date(Date.now() + 3600_000).toISOString() });
+    if (url.includes("/mcp/token")) {
       return new Response(
         JSON.stringify({ token: "app-token", expiresAt: new Date(Date.now() + 300_000).toISOString() }),
         { status: 200, headers: { "content-type": "application/json" } },
@@ -97,7 +98,7 @@ describe("per-app auto-allow", () => {
     dataDir = mkdtempSync(path.join(os.tmpdir(), "hosty-auto-allow-"));
     store = new SessionStore(dataDir);
     settings = new SettingsStore(dataDir);
-    const exchange = new TokenExchange("http://core.test", "hosty.harness");
+    const exchange = new TokenExchange("http://core.test", "hosty.harness", "service");
     const proxy = new McpProxy((sessionId, appId) => manager.mintAppToken(sessionId, appId));
     manager = new SessionManager(
       store,
@@ -128,7 +129,7 @@ describe("per-app auto-allow", () => {
 
   async function run(text: string, expectedEvent: "approval_request" | "assistant_text"): Promise<string[]> {
     const record = await manager.createSession({ createdBy: "user_admin" });
-    await manager.postMessage(record.id, text, "seed-credential");
+    await manager.postMessage(record.id, text, "hostyg_seed");
     // Harness callbacks also persist asynchronously; a fixed delay races filesystem I/O in CI.
     return vi.waitFor(async () => {
       const events = (await store.readEvents(record.id)).map((event) => event.type);
@@ -139,20 +140,20 @@ describe("per-app auto-allow", () => {
 
   it("ignores unrelated fleet revisions but reconfigures a changed upstream behind the stable proxy", async () => {
     const record = await manager.createSession({ createdBy: "user_admin" });
-    await manager.postMessage(record.id, "hello", "seed-credential");
+    await manager.postMessage(record.id, "hello", "hostyg_seed");
     await vi.waitFor(async () => expect((await store.readEvents(record.id)).some(event => event.type === "result")).toBe(true));
     const live = (manager as unknown as { live: Map<string, { run: { setMcpServers: () => Promise<boolean> } }> }).live.get(record.id)!;
     const reconfigure = vi.spyOn(live.run, "setMcpServers").mockResolvedValue(false);
     const renewRequests = vi.spyOn(manager.mcpPolicy, "cancel");
     directoryRevision = "unrelated-app-stopped";
-    await manager.postMessage(record.id, "next turn", "seed-credential");
+    await manager.postMessage(record.id, "next turn", "hostyg_seed");
     expect(reconfigure).not.toHaveBeenCalled();
     expect(renewRequests).not.toHaveBeenCalled();
     expect((await store.readEvents(record.id)).filter(event => event.type === "notice")).toHaveLength(0);
 
     providerUrl = `http://${APP}:9999/api/mcp`;
     directoryRevision = "target-url-changed";
-    await manager.postMessage(record.id, "another turn", "seed-credential");
+    await manager.postMessage(record.id, "another turn", "hostyg_seed");
     expect(reconfigure).toHaveBeenCalledTimes(1);
     expect(renewRequests).toHaveBeenCalledWith(record.id);
     expect((await store.readEvents(record.id)).filter(event => event.type === "notice")).toHaveLength(1);
@@ -179,7 +180,7 @@ describe("per-app auto-allow", () => {
   it("covers only the tools the app declared, not everything it offers", async () => {
     await settings.update({ mcpProviders: { [APP]: true }, mcpAutoAllow: { [APP]: true } });
     const record = await manager.createSession({ createdBy: "user_admin" });
-    await manager.postMessage(record.id, "apptool", "seed-credential");
+    await manager.postMessage(record.id, "apptool", "hostyg_seed");
     await new Promise((resolve) => setTimeout(resolve, 20));
 
     // `delete_person` declares nothing, so it is absent from the grant even though its app is
@@ -192,7 +193,7 @@ describe("per-app auto-allow", () => {
     // true the moment the operator sees it — a grant that lingered would be the worst kind of stale.
     await settings.update({ mcpProviders: { [APP]: true }, mcpAutoAllow: { [APP]: true } });
     const record = await manager.createSession({ createdBy: "user_admin" });
-    await manager.postMessage(record.id, "apptool", "seed-credential");
+    await manager.postMessage(record.id, "apptool", "hostyg_seed");
     await new Promise((resolve) => setTimeout(resolve, 20));
 
     await settings.update({ mcpAutoAllow: { [APP]: false } });
@@ -206,7 +207,7 @@ describe("per-app auto-allow", () => {
     // return that skipped the rebuild would leave a grant outliving the policy that justified it.
     await settings.update({ mcpProviders: { [APP]: true }, mcpAutoAllow: { [APP]: true } });
     const record = await manager.createSession({ createdBy: "user_admin" });
-    await manager.postMessage(record.id, "apptool", "seed-credential");
+    await manager.postMessage(record.id, "apptool", "hostyg_seed");
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(granted(record.id).size).toBe(1);
 
@@ -220,7 +221,7 @@ describe("per-app auto-allow", () => {
     // "We do not know" must not collapse into "nothing is read-only" — it has to keep asking.
     await settings.update({ mcpProviders: { [APP]: true }, mcpAutoAllow: { [APP]: true } });
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
-      String(input).includes("/delegated-token")
+      String(input).includes("/mcp/token")
         ? new Response(
             JSON.stringify({ token: "app-token", expiresAt: new Date(Date.now() + 300_000).toISOString() }),
             { status: 200, headers: { "content-type": "application/json" } },
@@ -248,7 +249,7 @@ describe("Core's default grant", () => {
     dataDir = mkdtempSync(path.join(os.tmpdir(), "hosty-auto-allow-core-"));
     store = new SessionStore(dataDir);
     settings = new SettingsStore(dataDir);
-    const exchange = new TokenExchange("http://core.test", "hosty.harness");
+    const exchange = new TokenExchange("http://core.test", "hosty.harness", "service");
     const proxy = new McpProxy((sessionId, appId) => manager.mintAppToken(sessionId, appId));
     manager = new SessionManager(
       store,
@@ -277,7 +278,7 @@ describe("Core's default grant", () => {
 
   it("runs Core's read-only tools unprompted with nothing written to settings", async () => {
     const record = await manager.createSession({ createdBy: "user_admin" });
-    await manager.postMessage(record.id, "coretool please", "seed-credential");
+    await manager.postMessage(record.id, "coretool please", "hostyg_seed");
     const events = await vi.waitFor(async () => {
       const events = (await store.readEvents(record.id)).map((event) => event.type);
       expect(events).toContain("assistant_text");
@@ -293,7 +294,7 @@ describe("Core's default grant", () => {
     await settings.update({ mcpAutoAllow: { "hosty:core": false } });
 
     const record = await manager.createSession({ createdBy: "user_admin" });
-    await manager.postMessage(record.id, "coretool please", "seed-credential");
+    await manager.postMessage(record.id, "coretool please", "hostyg_seed");
     await vi.waitFor(async () => {
       expect((await store.readEvents(record.id)).map((event) => event.type)).toContain("assistant_text");
     });

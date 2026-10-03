@@ -41,7 +41,7 @@ const settings = new SettingsStore(config.dataDir);
 // external clients, and the provider directory offers it to the assistant's own sessions.
 const coreMcpUrl = config.coreOrigin ? `${config.coreOrigin.replace(/\/$/, "")}/api/mcp` : null;
 const providers = new ProviderDirectory(config.coreOrigin, config.serviceToken, config.appId, coreMcpUrl);
-const exchange = new TokenExchange(config.coreOrigin, config.appId);
+const exchange = new TokenExchange(config.coreOrigin, config.appId, config.serviceToken);
 // The proxy and the manager need each other: the proxy mints through the manager's live session
 // credential, and the manager registers routes on the proxy. Declared first with a late-bound
 // minter, which is the smaller of the two knots.

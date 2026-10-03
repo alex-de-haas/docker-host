@@ -10,7 +10,7 @@ internal sealed record InstallationCaller(string UserId, string? AppId, string? 
 internal sealed class InstallationApprovalService(
     InstallationApprovalStore approvals, CoreLifecycleService lifecycle, AppRegistryStore apps,
     AppIdentityService identity, AppServiceTokenService serviceTokens, AuditStore audit, IClock clock,
-    PrivateSourceService? privateSources = null, AppManifestService? manifests = null)
+    PrivateSourceService? privateSources = null, AppManifestService? manifests = null, HostPathApprovalService? hostPaths = null)
 {
     public async Task<InstallationCaller> AuthenticateAppAsync(string appId, HttpRequest request, CancellationToken ct)
     {
@@ -37,6 +37,38 @@ internal sealed class InstallationApprovalService(
 
     public async Task<InstallationApproval> PrepareAsync(InstallationCaller caller, InstallationPrepare input, CancellationToken ct)
     {
+        if (input.HostPathChange is { } change)
+        {
+            if (input.RemoveAppId is not null || input.RemovalOptions is not null || input.PermissionsAppId is not null ||
+                input.UpdateAppId is not null || input.ManifestPath is not null || input.FeedsUrl is not null ||
+                input.FeedId is not null || input.SelectedRuntime is not null || input.PlanDigest is not null || input.SourceConnections is not null)
+                throw new AppLifecycleException("host_path_request_invalid", "Choose a single host path operation.");
+            await RequirePermissionAsync(caller, change.Permission, ct);
+            var pathEntry = approvals.Add(new InstallationApproval
+            {
+                UserId = caller.UserId, CallerAppId = caller.AppId, IdentityToken = caller.Token,
+                CallerName = caller.Name, ExpiresAt = clock.UtcNow.Add(InstallationApprovalStore.Lifetime),
+                HostPathPlan = await (hostPaths ?? throw new InvalidOperationException()).PrepareAsync(change, caller.UserId, ct),
+            });
+            await RecordAsync(pathEntry, "requested", ct);
+            return pathEntry;
+        }
+        if (input.RemoveAppId is not null || input.RemovalOptions is not null)
+        {
+            if (string.IsNullOrWhiteSpace(input.RemoveAppId) || input.PermissionsAppId is not null ||
+                input.UpdateAppId is not null || input.ManifestPath is not null || input.FeedsUrl is not null ||
+                input.FeedId is not null || input.SelectedRuntime is not null || input.PlanDigest is not null || input.SourceConnections is not null)
+                throw new AppLifecycleException("removal_request_invalid", "Choose one installed app to remove; removal cannot be combined with other operations.");
+            await RequirePermissionAsync(caller, CoreAppPermissions.Install, ct);
+            var removalEntry = approvals.Add(new InstallationApproval
+            {
+                UserId = caller.UserId, CallerAppId = caller.AppId, IdentityToken = caller.Token,
+                CallerName = caller.Name, ExpiresAt = clock.UtcNow.Add(InstallationApprovalStore.Lifetime),
+                RemovalPlan = await lifecycle.CreateRemovalPlanAsync(input.RemoveAppId, input.RemovalOptions ?? new(), ct),
+            });
+            await RecordAsync(removalEntry, "requested", ct);
+            return removalEntry;
+        }
         if (input.PermissionsAppId is { } targetId)
         {
             if (caller.AppId is not null && caller.AppId != targetId)
@@ -53,10 +85,11 @@ internal sealed class InstallationApprovalService(
             return permissionEntry;
         }
         var update = !string.IsNullOrWhiteSpace(input.UpdateAppId);
-        await RequirePermissionAsync(caller, update ? CoreAppPermissions.Update : CoreAppPermissions.Install, ct);
+        await RequirePermissionAsync(caller, CoreAppPermissions.Install, ct);
         var installed = update ? await apps.GetAppAsync(input.UpdateAppId!, ct) : null;
-        if (caller.AppId is not null && (input.SourceConnections is not null || installed?.PrivateSources?.Manifest is not null || installed?.PrivateSources?.Git is not null))
-            throw PrivateSourceService.Denied("Private source reads require the direct operator interface.");
+        var requiresSources = input.SourceConnections is not null || HasPrivateSources(installed?.PrivateSources);
+        if (requiresSources) await RequirePermissionAsync(caller, CoreAppPermissions.Sources, ct);
+        RequireSourceOwner(caller.UserId, installed?.PrivateSources);
         var access = installed?.PrivateSources;
         if (input.SourceConnections is { } choice)
         {
@@ -102,8 +135,14 @@ internal sealed class InstallationApprovalService(
         }
         if (plan is { Action: not "install" })
             throw new AppLifecycleException("already_installed", "This app is already installed. Use its update flow.");
+        // Cached plans may contain a newly selected binding absent from the installed record.
+        requiresSources |= HasPrivateSources(plan?.PrivateSources) || HasPrivateSources(updatePlan?.PrivateSources);
+        if (requiresSources) await RequirePermissionAsync(caller, CoreAppPermissions.Sources, ct);
+        RequireSourceOwner(caller.UserId, plan?.PrivateSources);
+        RequireSourceOwner(caller.UserId, updatePlan?.PrivateSources);
         var entry = approvals.Add(new InstallationApproval
         {
+            RequiresSources = requiresSources,
             UserId = caller.UserId, CallerAppId = caller.AppId, IdentityToken = caller.Token,
             CallerName = caller.Name, ExpiresAt = clock.UtcNow.Add(InstallationApprovalStore.Lifetime),
             InstallPlan = plan, UpdatePlan = updatePlan, FeedsUrl = feed?.FeedsUrl, FeedId = feed?.FeedId,
@@ -112,10 +151,27 @@ internal sealed class InstallationApprovalService(
         return entry;
     }
 
+    private static bool HasPrivateSources(PrivateSourceAccess? access) => access?.Manifest is not null || access?.Git is not null;
+
+    private static void RequireSourceOwner(string userId, PrivateSourceAccess? access)
+    {
+        if (new[] { access?.Manifest, access?.Git }.OfType<SourceReadGrant>().Any(g => g.OwnerId != userId))
+            throw PrivateSourceService.Denied("Only the source owner can review these private connections.");
+    }
+
+    public async Task RequireRequestPermissionsAsync(InstallationCaller caller, InstallationApproval entry, CancellationToken ct)
+    {
+        if (entry.Permission is { } permission) await RequirePermissionAsync(caller, permission, ct);
+        if (entry.RequiresSources) await RequirePermissionAsync(caller, CoreAppPermissions.Sources, ct);
+    }
+
     public Task RecordAsync(InstallationApproval entry, string outcome, CancellationToken ct)
         => audit.AppendAsync(new AuditRecord($"audit_{Guid.NewGuid():N}", entry.PermissionPlan is null ? "app.installation.approval" : "app.permissions.approval", "app",
-            entry.PermissionPlan?.AppId ?? entry.InstallPlan?.AppId ?? entry.UpdatePlan?.AppId, outcome, entry.UserId, clock.UtcNow,
+            entry.HostPathPlan?.Change.AppId ?? entry.PermissionPlan?.AppId ?? entry.RemovalPlan?.AppId ?? entry.InstallPlan?.AppId ?? entry.UpdatePlan?.AppId, outcome, entry.UserId, clock.UtcNow,
             new Dictionary<string, string> { ["requestId"] = entry.Id, ["caller"] = entry.CallerAppId ?? "operator",
+                ["hostPathChange"] = entry.HostPathPlan is { } path ? CoreJson.Text(path.Change) : "",
+                ["operation"] = entry.HostPathPlan?.Change.Kind ?? (entry.RemovalPlan is not null ? "remove" : entry.PermissionPlan is not null ? "permissions" : entry.UpdatePlan is not null ? "update" : "install"),
+                ["removalOptions"] = entry.RemovalPlan is { } removal ? CoreJson.Text(removal.Options) : "",
                 ["selectedOptionalPermissions"] = string.Join(",", entry.SelectedOptionalPermissions ?? []) }), ct);
 
     public InstallationApproval Owned(string id, InstallationCaller caller)
@@ -135,11 +191,21 @@ internal sealed class InstallationApprovalService(
                 var actor = await identity.RevalidateAsync(entry.IdentityToken, appId, ct);
                 if (actor.UserId != entry.UserId || actor.HostRole != "host.admin")
                     throw new AppIdentityException("admin_required", "The requesting administrator no longer has access.");
-                if (entry.Permission is { } permission)
-                    await RequirePermissionAsync(new(entry.UserId, appId, entry.IdentityToken, entry.CallerName), permission, ct);
+                await RequireRequestPermissionsAsync(new(entry.UserId, appId, entry.IdentityToken, entry.CallerName), entry, ct);
             }
-            if (entry.PermissionPlan is { } permissionPlan)
+            if (entry.HostPathPlan is { } pathPlan)
+                await (hostPaths ?? throw new InvalidOperationException()).ApplyAsync(pathPlan, entry.UserId, ct, async () =>
+                {
+                    if (entry.CallerAppId is not { } callerAppId) return;
+                    var currentActor = await identity.RevalidateAsync(entry.IdentityToken, callerAppId, ct);
+                    if (currentActor.UserId != entry.UserId || currentActor.HostRole != "host.admin")
+                        throw new AppIdentityException("admin_required", "The requesting administrator no longer has access.");
+                    await RequireRequestPermissionsAsync(new(entry.UserId, callerAppId, entry.IdentityToken, entry.CallerName), entry, ct);
+                });
+            else if (entry.PermissionPlan is { } permissionPlan)
                 await lifecycle.ApplyOptionalPermissionsAsync(permissionPlan, entry.SelectedOptionalPermissions ?? [], ct);
+            else if (entry.RemovalPlan is { } removal)
+                _ = await lifecycle.ApplyRemovalAsync(removal, ct);
             else if (entry.UpdatePlan is { } update)
                 _ = await lifecycle.ApplyUpdateAsync(update.AppId, new(PlanDigest: update.PlanDigest,
                     OptionalPermissions: entry.SelectedOptionalPermissions), ct);
@@ -176,8 +242,13 @@ internal static class InstallationApprovalEndpoints
             await BrowserAsync(request, users, clock, caller =>
             {
                 var entry = service.Owned(id, caller);
-                store.Submit(entry, input);
-                return Task.FromResult(CoreJson.Json(store.View(entry, origins.Effective)));
+                return SubmitAsync(entry);
+                async Task<IResult> SubmitAsync(InstallationApproval pending)
+                {
+                    await service.RequireRequestPermissionsAsync(caller, pending, ct);
+                    store.Submit(pending, input);
+                    return CoreJson.Json(store.View(pending, origins.Effective));
+                }
             }, ct));
         app.MapGet("/api/apps/{id}/permissions", async (string id, HttpRequest request,
             UserDirectoryStore users, IClock clock, CoreLifecycleService lifecycle, CancellationToken ct) =>
@@ -186,8 +257,12 @@ internal static class InstallationApprovalEndpoints
         app.MapGet("/api/installations/{id}", async (string id, HttpRequest request,
             UserDirectoryStore users, IClock clock, InstallationApprovalService service,
             InstallationApprovalStore store, CorePublicOriginResolver origins, CancellationToken ct) =>
-            await BrowserAsync(request, users, clock, caller =>
-                Task.FromResult(CoreJson.Json(store.View(service.Owned(id, caller), origins.Effective))), ct, csrf: false));
+            await BrowserAsync(request, users, clock, async caller =>
+            {
+                var entry = service.Owned(id, caller);
+                await service.RequireRequestPermissionsAsync(caller, entry, ct);
+                return CoreJson.Json(store.View(entry, origins.Effective));
+            }, ct, csrf: false));
 
         app.MapPost("/api/internal/apps/{appId}/installations", async (string appId, HttpRequest request,
             InstallationPrepare input, InstallationApprovalService service, InstallationApprovalStore store,
@@ -199,14 +274,37 @@ internal static class InstallationApprovalEndpoints
             {
                 var caller = await service.AuthenticateAppAsync(appId, request, ct);
                 var entry = service.Owned(id, caller);
-                if (entry.Permission is { } permission) await service.RequirePermissionAsync(caller, permission, ct);
+                await service.RequireRequestPermissionsAsync(caller, entry, ct);
                 store.Submit(entry, input);
                 return CoreJson.Json(store.View(entry, origins.Effective));
             }));
         app.MapGet("/api/internal/apps/{appId}/installations/{id}", async (string appId, string id,
             HttpRequest request, InstallationApprovalService service, InstallationApprovalStore store,
             CorePublicOriginResolver origins, CancellationToken ct) => await HandleAsync(async () =>
-                CoreJson.Json(store.View(service.Owned(id, await service.AuthenticateAppAsync(appId, request, ct)), origins.Effective))));
+            {
+                var caller = await service.AuthenticateAppAsync(appId, request, ct);
+                var entry = service.Owned(id, caller);
+                await service.RequireRequestPermissionsAsync(caller, entry, ct);
+                return CoreJson.Json(store.View(entry, origins.Effective));
+            }));
+
+        app.MapGet("/install/permissions/{appId}", async (string appId, HttpContext context,
+            InstallationApprovalStore store, InstallationApprovalService service,
+            UserDirectoryStore users, AppRegistryStore apps, IClock clock) => await HandleAsync(async () =>
+            {
+                ProtectPage(context.Response);
+                if (!await HasIsolatedCookieHostAsync(context.Request, apps, context.RequestAborted))
+                    return Results.Text("Open permission review on Core's isolated browser origin.", statusCode: 409);
+                if (!IsPageNavigation(context.Request)) return Results.StatusCode(403);
+                var actor = await BrowserActorAsync(context.Request, users, clock, context.RequestAborted);
+                if (actor is null)
+                    return Results.Redirect($"/login?returnTo={Uri.EscapeDataString($"/install/permissions/{appId}")}");
+                if (!AppAccessPolicy.IsAdmin(actor)) return Results.StatusCode(403);
+                var entry = await service.PrepareAsync(new(actor.Id, null, null, "Core permission recovery"),
+                    new(PermissionsAppId: appId), context.RequestAborted);
+                store.Submit(entry, new());
+                return Results.Redirect($"/install/confirm/{entry.Id}");
+            })).WithMetadata(new DisableCorsAttribute());
 
         app.MapGet("/install/confirm/{id}", async (string id, HttpContext context,
             InstallationApprovalStore store, UserDirectoryStore users, AppRegistryStore apps, IClock clock) => await HandleAsync(async () =>
@@ -250,7 +348,7 @@ internal static class InstallationApprovalEndpoints
                 {
                     // The nonce is already consumed. Fail closed, clear credentials and allow normal
                     // expiration instead of leaving an executing request with no worker to finish it.
-                    store.Complete(entry, "The decision could not be recorded. No installation or update was started. Prepare a new request after Core's audit log is available.");
+                    store.Complete(entry, "The decision could not be recorded. No operation was started. Prepare a new request after Core's audit log is available.");
                     logger.LogError(ex, "Could not record installation decision for request {RequestId}", entry.Id);
                     return Results.Content(Render(entry, ""), "text/html", statusCode: 503);
                 }
@@ -281,14 +379,14 @@ internal static class InstallationApprovalEndpoints
             foreach (var endpoint in app.Endpoints.Where(endpoint => endpoint.Public))
             {
                 var configured = app.Settings.TryGetValue(PublicOriginSettings.BuildSettingKey(endpoint.Key), out var setting) ? setting.Value : null;
-                foreach (var origin in new[] { endpoint.Url, configured })
+                foreach (var origin in new[] { endpoint.Url, configured, LocalBrowserOrigins.App(app, endpoint) })
                     if (Uri.TryCreate(origin, UriKind.Absolute, out var uri) && string.Equals(uri.Host, host, StringComparison.OrdinalIgnoreCase)) return false;
             }
         }
         return true;
     }
 
-    private static async Task<HostUserRecord?> BrowserActorAsync(HttpRequest request, UserDirectoryStore users, IClock clock, CancellationToken ct)
+    internal static async Task<HostUserRecord?> BrowserActorAsync(HttpRequest request, UserDirectoryStore users, IClock clock, CancellationToken ct)
     {
         var credential = CoreSessionAuthorization.ReadSessionCredential(request);
         if (credential.Source != SessionCredentialSource.Cookie) return null;
@@ -301,7 +399,9 @@ internal static class InstallationApprovalEndpoints
     private static Task<IResult> BrowserAsync(HttpRequest request, UserDirectoryStore users, IClock clock,
         Func<InstallationCaller, Task<IResult>> action, CancellationToken ct, bool csrf = true)
         => CoreSessionAuthorization.RequireSessionAsync(request, users, clock, user => AppAccessPolicy.IsAdmin(user)
-            ? HandleAsync(() => action(new(user.Id, null, null, "Host management client")))
+            ? HandleAsync(() => action(AppManagementAuthorization.Caller(request) is { } caller
+                ? new(user.Id, caller.App.Id, request.Headers[AppManagementAuthorization.IdentityHeader].ToString(), caller.App.DisplayName)
+                : new(user.Id, null, null, "Host management client")))
             : Task.FromResult<IResult>(CoreJson.Json(new ErrorResponse("admin_required", "Administrator access is required."), 403)),
             requireCsrf: csrf, cancellationToken: ct);
 
@@ -316,7 +416,7 @@ internal static class InstallationApprovalEndpoints
     private const string CloseWindowScript = "window.close();";
     private static readonly string CloseWindowScriptHash = Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(CloseWindowScript)));
 
-    private static void ProtectPage(HttpResponse response, bool closeWindow = false)
+    internal static void ProtectPage(HttpResponse response, bool closeWindow = false)
     {
         response.Headers.CacheControl = "no-store";
         response.Headers["Content-Security-Policy"] = "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'";
@@ -333,8 +433,8 @@ internal static class InstallationApprovalEndpoints
     {
         static string E(string? text) => WebUtility.HtmlEncode(text ?? "");
         var installing = entry.InstallPlan is not null;
-        var title = entry.PermissionPlan is not null ? "Review app permissions" : installing ? "Confirm app installation" : "Confirm app update";
-        var name = entry.PermissionPlan?.DisplayName ?? entry.InstallPlan?.DisplayName ?? entry.UpdatePlan?.AppId;
+        var title = entry.HostPathPlan is not null ? "Confirm host path access" : entry.RemovalPlan is not null ? "Confirm app removal" : entry.PermissionPlan is not null ? "Review app permissions" : installing ? "Confirm app installation" : "Confirm app update";
+        var name = entry.HostPathPlan?.DisplayName ?? entry.RemovalPlan?.DisplayName ?? entry.PermissionPlan?.DisplayName ?? entry.InstallPlan?.DisplayName ?? entry.UpdatePlan?.AppId;
         var permissions = entry.PermissionPlan?.Required ?? entry.InstallPlan?.CorePermissions ?? entry.UpdatePlan?.TargetCorePermissions ?? [];
         var before = entry.PermissionPlan?.Granted ?? entry.UpdatePlan?.CurrentCorePermissions ?? [];
         var optional = entry.PermissionPlan?.Optional ?? entry.InstallPlan?.OptionalCorePermissions ?? entry.UpdatePlan?.TargetOptionalCorePermissions ?? [];
@@ -348,9 +448,13 @@ internal static class InstallationApprovalEndpoints
                 : !required && wasRequired ? " <strong>(required → optional)</strong>"
                 : !wasRequired && !wasOptional ? " <strong>(new declaration)</strong>" : "";
         }
-        var optionalDefaults = entry.SelectedOptionalPermissions ?? (entry.PermissionPlan is { AcceptedOptional: { } acceptedOptional } ? before.Intersect(acceptedOptional, StringComparer.Ordinal).ToArray() : before);
+        // Defaults come only from the reviewed persisted grants, never the requesting app.
+        // New installs have none; previously granted rights remain checked across declaration changes.
+        var optionalDefaults = before;
         var optionalReview = optional.Count == 0 ? "" : "<fieldset><legend>Optional permissions</legend>" + string.Join("", optional.Select(p =>
-            $"<p><label><input type=checkbox name=optionalPermission value=\"{E(p)}\"{(optionalDefaults.Contains(p, StringComparer.Ordinal) ? " checked" : "")}> {E(CoreAppPermissions.Describe(p))} <code>{E(p)}</code>{DeclarationChange(p, false)}</label></p>")) + "</fieldset>";
+            !CoreAppPermissions.Known.Contains(p, StringComparer.Ordinal)
+                ? $"<p>Unsupported optional permission (not granted): <code>{E(p)}</code></p>"
+                : $"<p><label><input type=checkbox name=optionalPermission value=\"{E(p)}\"{(optionalDefaults.Contains(p, StringComparer.Ordinal) ? " checked" : "")}> {E(CoreAppPermissions.Describe(p))} <code>{E(p)}</code>{DeclarationChange(p, false)}</label></p>")) + "</fieldset>";
         var rights = permissions.Count == 0 ? "<li>No Core permissions requested</li>" : string.Join("", permissions.Select(p =>
             $"<li>{E(CoreAppPermissions.Describe(p))} <code>{E(p)}</code>{DeclarationChange(p, true)}{(!installing && !before.Contains(p, StringComparer.Ordinal) ? " <strong>(new)</strong>" : "")}</li>"));
         var removed = before.Concat(entry.PermissionPlan?.AcceptedRequired ?? []).Concat(entry.PermissionPlan?.AcceptedOptional ?? []).Distinct(StringComparer.Ordinal).Except(permissions.Concat(optional), StringComparer.Ordinal).Select(p => $"<li>Removed: {E(CoreAppPermissions.Describe(p))}</li>");
@@ -369,13 +473,36 @@ internal static class InstallationApprovalEndpoints
             grants += (access.Manifest is null ? "<li>Manifest: no personal connection</li>" : "")
                 + (access.Git is null ? "<li>Git source: no personal connection</li>" : "");
         var accessReview = grants.Length == 0 ? "" : $"<h2>Private source access</h2><ul>{grants}</ul><p>Allow Core to read these resources for this app, its background updates and source workspaces you request using your connections, including after you sign out. Disconnecting a connection or disabling your account blocks new reads; the installed app keeps running. Other app users do not receive your credentials.</p>";
-        var version = entry.InstallPlan?.TargetVersion ?? entry.UpdatePlan?.TargetVersion;
+        var version = entry.RemovalPlan?.Version ?? entry.InstallPlan?.TargetVersion ?? entry.UpdatePlan?.TargetVersion;
         var nameLine = $"<p><strong>{E(name)}</strong>{(version is null ? "" : " · " + E(version))}</p>";
         var sourceAndRoles = entry.PermissionPlan is not null ? "" : $"<p class=source>Source: {E(source)}</p><h2>Provider roles</h2><ul>{roleItems}</ul>";
+        var review = entry.HostPathPlan is { } pathPlan ? "<ul>" + string.Join("", pathPlan.Details.Select(d => $"<li>{E(d)}</li>")) + "</ul>" : entry.RemovalPlan is { } removal ? RenderRemoval(removal, entry.CallerAppId)
+            : $"{sourceAndRoles}<h2>Core permissions</h2><ul>{rights}{string.Join("", removed)}</ul>{warning}{accessReview}";
+        var action = entry.HostPathPlan is not null ? "Approve change" : entry.RemovalPlan is not null ? "Remove app" : entry.PermissionPlan is not null ? "Save permissions" : installing ? "Install app" : "Apply update";
         var body = entry.Status == "pending"
-            ? $"{nameLine}<p>Requested by {E(entry.CallerName)}</p>{sourceAndRoles}<h2>Core permissions</h2><ul>{rights}{string.Join("", removed)}</ul>{warning}{accessReview}<form method=post>{optionalReview}<div class=actions><input type=hidden name=nonce value=\"{E(nonce)}\"><button name=decision value=deny>Cancel</button><button class=primary name=decision value=approve>{(entry.PermissionPlan is not null ? "Save permissions" : installing ? "Install app" : "Apply update")}</button></div></form>"
+            ? $"{nameLine}<p>Requested by {E(entry.CallerName)}</p>{review}<form method=post>{optionalReview}<div class=actions><input type=hidden name=nonce value=\"{E(nonce)}\"><button name=decision value=deny>Cancel</button><button class=primary name=decision value=approve>{action}</button></div></form>"
             : $"<p role=status>{E(entry.Status switch { "succeeded" => "Completed. You can close this window.", "denied" => "Cancelled. Nothing was changed. You can close this window.", "failed" => entry.Error ?? "The operation failed.", "executing" => "Your request was accepted. Follow its progress in the app. You can close this window.", _ => "Finish preparing this request in the app first." })}</p>";
         if (closeWindow) body += $"<script>{CloseWindowScript}</script>";
         return $"<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\"><title>{title} — Hosty Core</title><style>:root{{color-scheme:light dark;font-family:system-ui}}body{{margin:0;padding:24px;background:Canvas;color:CanvasText}}main{{max-width:560px;margin:8vh auto}}h1{{font-size:1.5rem}}h2{{font-size:1rem}}li{{margin:12px 0}}.source{{overflow-wrap:anywhere;font-size:.9rem;opacity:.75}}.warning{{padding:12px;border:1px solid #b7791f;border-radius:8px}}form{{margin-top:32px}}.actions{{display:flex;justify-content:flex-end;gap:12px;margin-top:24px}}fieldset{{border:1px solid GrayText;border-radius:8px}}button{{font:inherit;padding:10px 18px;border:1px solid GrayText;border-radius:8px;cursor:pointer}}.primary{{background:#2563eb;color:white;border-color:#2563eb}}button:focus-visible{{outline:3px solid #60a5fa;outline-offset:3px}}</style><main><p>HOSTY CORE</p><h1>{title}</h1>{body}</main></html>";
+    }
+
+    private static string RenderRemoval(AppRemovalPlan plan, string? callerAppId)
+    {
+        static string E(string? text) => WebUtility.HtmlEncode(text ?? "");
+        var options = plan.Options;
+        var cleanup = $"<li>Runtime state: {(options.DeleteRuntimeState ? "delete" : "keep")}</li>"
+            + $"<li>App data, cache, stored secrets and retained configuration: {(options.DeleteData ? "delete permanently" : "keep")}</li>"
+            + $"<li>Backups: {(options.DeleteBackups ? "delete permanently" : "keep")}</li>"
+            + $"<li>Managed source checkout: {(options.DeleteSource ? "delete permanently" : "keep")}</li>"
+            + $"<li>Runtime errors: {(options.IgnoreRuntimeErrors ? "ignore and continue cleanup" : "stop removal")}</li>";
+        var impact = plan.Impact;
+        var dependents = string.Join("", impact.Dependents.Select(d => $"<li>{E(d.DisplayName)} ({E(d.AppId)}) {(d.Required ? "requires" : "uses")} this app; its dependency connection is lost on its next start.</li>"));
+        var consumers = string.Join("", impact.Capabilities.SelectMany(c => c.Consumers.Select(d => $"<li>{E(d.DisplayName)} ({E(d.AppId)}) uses {E(c.Slot)} provided by this app.</li>")));
+        var publications = string.Join("", impact.PublicOrigins.Select(p => $"<li>{E(p.Hostname)}: tunnel route removed; {(p.OwnershipState == "adopted" ? "existing DNS record kept" : "Hosty-created DNS record removed")}.</li>"));
+        return $"<p>App ID: <code>{E(plan.AppId)}</code></p><p>This stops and removes the app's runtime services.</p><h2>Removal options</h2><ul>{cleanup}</ul>"
+            + (options.DeleteData || options.DeleteBackups || options.DeleteSource ? "<p class=warning>Selected data is permanently deleted. This cannot be undone through Hosty.</p>" : "")
+            + (callerAppId == plan.AppId ? "<p class=warning>This removes the app requesting confirmation. Its interface becomes unavailable; Core continues the operation.</p>" : "")
+            + (dependents.Length + consumers.Length > 0 ? $"<h2>Affected apps</h2><ul>{dependents}{consumers}</ul>" : "")
+            + (publications.Length > 0 ? $"<h2>Published addresses going offline</h2><ul>{publications}</ul>" : "");
     }
 }

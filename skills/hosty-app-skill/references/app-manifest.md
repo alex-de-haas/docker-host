@@ -19,7 +19,7 @@ Use this reference when authoring or reviewing Hosty runtime app manifests, stor
 - Define one or more services.
 - Define endpoints for service access.
 - Define `ui.entrypoint` when the app has a Shell UI.
-- Do not set the top-level `role` field: it accepts only `"system"` (anything else fails validation), and `role: "system"` is reserved for first-party platform system apps. A system app is administrator-only and hidden from ordinary users, which is wrong for a domain app.
+- Do not set the top-level `role` field: it accepts only `"system"` (anything else fails validation), and `role: "system"` is reserved for first-party platform system apps. The system role describes a platform app; user access still follows administrator-controlled assignments.
 
 ## Versioning
 
@@ -207,15 +207,18 @@ The version-1 base contract accepts prompt text and app IDs through prepare/fina
 An assistant declares `"provides": ["assistant"]`, an `assistant` interface and its UI entrypoint
 or panel. The role is inert until administrator confirmation at installation or reviewed update.
 `"corePermissions": ["apps.skills.read"]` requests permission to read installed apps' agent skills;
-other supported permissions are `apps.install` and `apps.update`. Each required declaration is
-shown with a description; the operator accepts the complete set or declines. An older Core rejects
-unknown permissions. Install Core 0.108.0 or newer before requesting `apps.skills.read`.
-`apps.workspaces.manage` (Core 0.111.0+) requests session-owned Git worktree operations. Each call
-also requires a current administrator credential addressed to the calling app. Install Core before
-updating an assistant that requests this permission; the installation review shows the new grant.
-`apps.publications.manage` (Core 0.114.0+) additionally permits session-owned GitHub publication,
-review, merge and completion operations using the authenticated user's selected connection. It does
-not upgrade the external read-only facade.
+`apps.install` covers installation and update requests with Core confirmation.
+Core 0.117.0 replaces `apps.update` with `apps.install`, and replaces `apps.workspaces.manage` /
+`apps.publications.manage` with `apps.sources`. The source capability covers session-owned worktrees,
+local Git operations, source-provider connection settings and GitHub publication, review and merge
+using the acting administrator's selected connection. Harness owns the built-in source-provider
+settings UI; Shell must not request this permission just to edit the current user's display name. Every operation retains user and resource checks; the external read-only
+facade gains no mutation authority. Update Core before installing a manifest that uses new names.
+
+Required permissions are launch preconditions: unsupported names or missing grants block launch,
+and a running app that loses required authority is stopped. Optional permissions remain optional.
+Retired grants are removed without erasing manifest requirements. A blocked Shell can be reviewed
+on Core at `/install/permissions/hosty.shell`; approval still requires the Core confirmation page.
 
 Changing a source manifest grants no roles or permissions. Shell shows each confirmed assistant
 as a separate tab and owns its choice for Ask assistant. The role does not replace the existing
@@ -246,20 +249,18 @@ An app that declares `interfaces.mcp` serves MCP over Streamable HTTP at that pa
 `POST` body. `apps/demo-app/src/app/api/mcp/route.ts` is the reference; `docs/features/app-mcp/feature.md`
 is the contract.
 
-- **Accept both Core credentials, not an app session.** Callers send `Authorization: Bearer <token>`,
-  and the token is one of two kinds:
-  - a **delegated token** from `hosty mcp` or the assistant. Validate it first, locally, with
-    `validateDelegatedToken` / `HostyDelegatedToken.Validate`, which checks it against
-    `HOSTY_DELEGATED_TOKEN_PUBLIC_KEY` and the app id without a round trip;
-  - a **scoped access token** from a stock MCP client connecting directly (manually issued or
-    OAuth). When the bearer is not a delegated token, introspect it with `introspectScopedToken` /
-    `HostyScopedTokenClient.IntrospectAsync` and require the `mcp:read` scope (`hasScope(…,
-    SCOPE_MCP_READ)` / `HasScope(HostyScopedTokenClient.McpReadScope)`). An introspection error
-    means the credential was never checked: answer 503, not 401.
-
-  Accepting only delegated tokens works through `hosty mcp` and the assistant but refuses direct
-  clients (`docs/features/scoped-access-tokens/feature.md`, "The App Side"). The identity scheme in
-  front of the app's other routes validates app identity tokens and refuses both of these.
+- **Authenticate MCP credentials only on the MCP surface.** Callers send a bearer. Legacy
+  delegated tokens from CLI clients use `validateDelegatedToken` / `HostyDelegatedToken.Validate`.
+  For other credentials use `introspectMcpToken` / `HostyScopedTokenClient.IntrospectMcpAsync`: it
+  handles external scoped/OAuth tokens and the distinct `hosty_mcp.1` assistant credential.
+  Introspect every request; do not cache. An unavailable Core is 503, not an invalid-token 401.
+  Require `mcp:read` for reads, or `mcp:invoke` for assistant mutations, and apply the acting user's
+  app permissions in either case. Never infer mutation authority from `readOnlyHint` or an admin
+  role alone. The result includes `callerAppId` for assistant credentials.
+- **Keep ordinary APIs separate.** App login does not itself grant cross-app MCP access. Core
+  checks an administrator-configured assistant-target relationship when issuing and validating
+  `hosty_mcp.1` credentials. Use the ordinary identity/scoped helpers on non-MCP APIs; they reject
+  MCP-only credentials. Do not call the MCP helper from a generic authentication middleware.
 - **Acknowledge notifications with HTTP 202 and no body.** Answer `initialize` with a JSON-RPC result,
   then answer `notifications/initialized` (and any other message without an `id`) with a bare `202`:
   no body, no content type. **Do not answer an empty `200`.** Some clients accept it, including

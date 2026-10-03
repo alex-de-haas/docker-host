@@ -1,7 +1,5 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,29 +8,12 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const dataRoot = path.resolve(process.env.HOSTY_DEV_DATA_ROOT || path.join(repoRoot, ".hosty-dev"));
 const coreUrl = process.env.HOSTY_CORE_URL || `http://localhost:${resolvePort("HOSTY_CORE_PORT", 3001)}`;
 const shellOrigin = process.env.HOSTY_SHELL_PUBLIC_ORIGIN || `http://localhost:${resolvePort("HOSTY_SHELL_PORT", 3000)}`;
-const developmentUsers = [
-  {
-    id: process.env.HOSTY_DEV_USER_ID || "user_dev_admin",
-    email: process.env.HOSTY_DEV_USER_EMAIL || "admin@hosty.local",
-    displayName: process.env.HOSTY_DEV_USER_NAME || "Local Admin",
-    role: "host.admin",
-  },
-  {
-    id: process.env.HOSTY_DEV_LOCAL_USER_ID || "user_dev_local",
-    email: process.env.HOSTY_DEV_LOCAL_USER_EMAIL || "user@hosty.local",
-    displayName: process.env.HOSTY_DEV_LOCAL_USER_NAME || "Local User",
-    role: "host.user",
-  },
-];
-const devAdmin = developmentUsers[0];
-
 let coreEndpoint;
 let shellEndpoint;
 
 try {
   coreEndpoint = parseEndpoint(coreUrl);
   shellEndpoint = parseEndpoint(shellOrigin);
-  await seedDevelopmentUsers();
   await assertPortAvailable("Core", coreEndpoint);
   await assertPortAvailable("Shell", shellEndpoint);
 } catch (error) {
@@ -69,9 +50,12 @@ console.log("Hosty local development is starting.");
 console.log(`Core:  ${coreUrl}`);
 console.log(`Shell: ${shellOrigin}`);
 console.log(`Data:  ${dataRoot}`);
-console.log(`Dev users: ${developmentUsers.map((user) => `${user.email} (${user.role})`).join(", ")}`);
 console.log("");
-console.log(`Open ${shellOrigin}. If redirected to Core login, select ${devAdmin.email}.`);
+console.log(`Open ${shellOrigin} and sign in at Core with your email and password.`);
+console.log("After Core is ready, initialize a new data root from another terminal:");
+console.log(`  hosty --data-root "${dataRoot}" auth setup-token`);
+console.log("For an existing account without a password, use recovery instead:");
+console.log(`  hosty --data-root "${dataRoot}" auth recovery-token`);
 console.log("Press Ctrl+C to stop Core and Shell.");
 
 process.on("SIGINT", () => stopAll("SIGINT"));
@@ -116,75 +100,6 @@ function stopAll(signal) {
       }
     }
   }
-}
-
-async function seedDevelopmentUsers() {
-  const authDirectory = path.join(dataRoot, "core", "auth");
-  const statePath = path.join(authDirectory, "state.json");
-  await mkdir(authDirectory, { recursive: true });
-
-  const state = existsSync(statePath)
-    ? JSON.parse(await readFile(statePath, "utf8"))
-    : { schemaVersion: 1, users: [], invitations: [], assignments: [], sessions: [] };
-
-  state.schemaVersion ??= 1;
-  state.users ??= [];
-  state.invitations ??= [];
-  state.assignments ??= [];
-  state.sessions ??= [];
-
-  const now = new Date().toISOString();
-  let changed = false;
-
-  for (const user of developmentUsers) {
-    const existingIndex = state.users.findIndex((candidate) => isSameDevelopmentUser(candidate, user));
-    if (existingIndex === -1) {
-      state.users.push({
-        id: user.id,
-        email: user.email,
-        displayName: user.displayName,
-        role: user.role,
-        disabled: false,
-        createdAt: now,
-        updatedAt: now,
-      });
-      changed = true;
-      continue;
-    }
-
-    const existing = state.users[existingIndex];
-    if (
-      !existing.id ||
-      existing.email !== user.email ||
-      existing.displayName !== user.displayName ||
-      existing.role !== user.role ||
-      existing.disabled !== false
-    ) {
-      state.users[existingIndex] = {
-        ...existing,
-        id: existing.id || user.id,
-        email: user.email,
-        displayName: user.displayName,
-        role: user.role,
-        disabled: false,
-        updatedAt: now,
-      };
-      changed = true;
-    }
-  }
-
-  if (changed) {
-    await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`);
-  }
-}
-
-function isSameDevelopmentUser(candidate, developmentUser) {
-  if (!candidate) {
-    return false;
-  }
-
-  return candidate.id === developmentUser.id ||
-    (typeof candidate.email === "string" && candidate.email.toLowerCase() === developmentUser.email.toLowerCase());
 }
 
 function resolvePort(name, fallback) {

@@ -2,12 +2,25 @@
 
 Runtime apps should use Core-owned app auth and app-local sessions.
 
+## Local Sign-In And Test Boundaries
+
+Core `/login` requires an email and password in every environment, including Development. There is
+no user-selector login or `POST /api/auth/session` creation API. For a new isolated validation data
+root, start Core and run `hosty --data-root <absolute-test-root> auth setup-token`; complete the Core
+setup form. Existing passwordless development accounts use `auth recovery-token` against that same
+root. Recovery changes the credential and revokes existing sessions. Do not create default users,
+passwords or browser-session shortcuts in runtime apps or development launch scripts.
+
+Browser acceptance must use normal password login and Core-managed app launch. In-process test
+fixtures may seed their own isolated stores, but those sessions do not verify the browser login
+flow. A CLI app-identity token remains a direct-endpoint diagnostic only.
+
 ## App Session Flow
 
-1. Core creates an app open link with a short-lived authorization code.
-2. Shell opens the app origin with the code.
+1. The app navigates to Core or opens its sign-in popup. Core checks the user and app assignment.
+2. Core returns a short-lived single-use code directly to the app; Shell does not mint it.
 3. The app exchanges the code through `/api/auth/apps/token`.
-4. The app stores the returned app identity token in an app-origin HttpOnly cookie. Derive the cookie's `Secure`/`SameSite` attributes from the effective request protocol (`X-Forwarded-Proto` or the request URL): use `SameSite=None; Secure` only over https, and fall back to `SameSite=Lax` without `Secure` on plain http — browsers silently drop `Secure` cookies on insecure origins (Safari even on localhost), which breaks the app session. Set the cookie `Max-Age` from the exchange response `expiresInSeconds` (time to the token's absolute expiry); do not hardcode a fixed cap.
+4. The app validates the exchanged token against its own service identity, then stores the app identity token in an app-origin HttpOnly cookie. Derive the cookie's `Secure`/`SameSite` attributes from the effective request protocol (`X-Forwarded-Proto` or the request URL): use `SameSite=None; Secure` only over https, and fall back to `SameSite=Lax` without `Secure` on plain http — browsers silently drop `Secure` cookies on insecure origins (Safari even on localhost), which breaks the app session. Set the cookie `Max-Age` from the exchange response `expiresInSeconds` (time to the token's absolute expiry); do not hardcode a fixed cap.
 5. The app revalidates through `/api/auth/apps/revalidate`, authenticating with `Authorization: Bearer <HOSTY_APP_SERVICE_TOKEN>`. Core rejects revalidation when the identity token was issued for a different app.
 
 ## Core Origin Variables
@@ -19,12 +32,12 @@ Two origins are injected; use the right one for the caller:
 
 ## Handling Expired Or Invalid Sessions (Recovery)
 
-> Design reference: [`docs/features/auth-session-lifecycle/feature.md`](../../../docs/features/auth-session-lifecycle/feature.md). Fully shipped: the 401/403 recovery contract, the Shell `hosty:auth-required` responder, opaque server-side app session grants (Core stores only the token hash), and sliding idle + absolute session lifetimes. The app identity token is an opaque `hostyg_` value — never assume a JWT — and its `expiresInSeconds` is the grant's absolute lifetime; set the app cookie `Max-Age` from it.
+> Design reference: [`docs/features/auth-session-lifecycle/feature.md`](../../../docs/features/auth-session-lifecycle/feature.md). Implemented: the 401/403 recovery contract and opaque server-side app session grants (Core stores only the token hash), and sliding idle + absolute session lifetimes. The app identity token is an opaque `hostyg_` value — never assume a JWT — and its `expiresInSeconds` is the grant's absolute lifetime; set the app cookie `Max-Age` from it.
 
 An app session ends eventually (idle/absolute expiry, revoke, admin change). The app must **recover, not dead-end** — never render a bare "not authorized" page with no way forward. Classify the revalidation outcome into three cases and act differently:
 
 - **Recoverable — Core `401`** (`token_expired`, `token_invalid`, `token_revoked`, or any code error): clear the app cookie and start re-authorization (below).
-- **Terminal — Core `403`** (`user_disabled`, `app_access_denied`, `system_app_admin_required`, `token_app_mismatch`): render an access-denied state. Do **not** auto-redirect — the user is authenticated but not allowed, and redirecting loops forever.
+- **Terminal — Core `403`** (`user_disabled`, `app_access_denied`, `token_app_mismatch`): render an access-denied state. Do **not** auto-redirect — the user is authenticated but not allowed, and redirecting loops forever.
 - **Core unavailable — `503` / network error / timeout** (app-side classification): keep the cookie and offer a retry. A transient Core outage must never log the user out.
 
 Pick the recovery channel by embedding mode (`window.self === window.top` → standalone; otherwise embedded).
@@ -39,12 +52,21 @@ Top-level page, recoverable failure:
 
 ### Embedded (iframe) Recovery
 
-Embedded in Shell, the app must **not** navigate the top window — the Shell iframe sandbox forbids top navigation. Use `postMessage`:
+Use the SDK `AppIdentityBridge` around protected client content. It offers a sign-in button that
+opens Core from a user gesture, validates the response window/origin/state, and exchanges the
+single-use code on the app's own server. Custom `renderState` views must wire `state.signIn` and
+show `state.error` when present. The password form belongs to Core.
 
-1. `window.parent.postMessage({ type: "hosty:auth-required", appId: <appId> }, <shellOrigin>)`. Never put tokens or secrets in the payload.
-2. Shell verifies the message source/origin/appId, re-issues a launch code, and reloads the iframe with a fresh `?code=`.
-3. **Learn `shellOrigin` from the parent's own postMessage handshake**, not from `document.referrer` — the referrer changes to the app's own origin after the identity bridge self-reloads, which silently breaks the target origin. See the marketplace `embedding-origin` handling for the pattern.
-4. **Non-Shell fallback:** if no parent response arrives within a few seconds (the app is embedded by something other than Shell), render the sign-in card whose button opens the standalone `/open` URL in a **new tab**.
+Use `appFetch` from `@hosty-sdk/app/browser-auth` for all protected same-origin API calls, including
+streams. The bridge keeps the app-only grant in document memory when iframe cookies are blocked;
+`appFetch` attaches it as an explicit bearer and starts recovery on 401. The server reads the bearer
+before a possibly stale app cookie and revalidates it with its own service credential. A server-only
+cookie reader is insufficient for this browser mode. Never store grants in localStorage or
+sessionStorage, send them to Shell, or rely on Shell to mint another app's credentials.
+
+The frame keeps its sandbox. Sign-in needs popup support, not top-navigation permission or
+`apps.install`. Test both embedded and standalone entry; SSR-only protected pages need an explicit
+client loading path because a document-memory grant cannot authenticate the initial HTML request.
 
 ### What Not To Do
 
@@ -98,3 +120,30 @@ claims to prove who authored the prompt. Authentication and tool permissions sti
   Do not pre-truncate; do not expect a message from another origin to arrive.
 
 Shell prepares and finalizes a version-1 handoff with the text and the app ID it mounted, then opens the returned UI destination. It does not trust an app ID claimed by the frame.
+
+## User access and administrative operations
+
+Core applies assignments to both ordinary and system apps. Enabled administrators have implicit
+access; other users need explicit assignment, including for Shell. Do not treat `role: system`
+as proof that every authenticated caller is an administrator. Check operation-level roles in
+the app; Core management also checks the user separately from the calling app's grants.
+Standalone login goes through Core and returns to the requesting app, without requiring Shell.
+
+## Shell transport transition (2026-10-01)
+
+Shell uses its own app grant and confirmed app permissions, not the primary Core cookie. Never
+restore cross-app launch-code or delegated-token minting to Shell as an implicit privilege.
+Profile and provider-connection UI belongs to apps. Core `/api/profile` accepts a service token
+plus an app grant for current-user profile reads and edits; no `users.read/manage` grant is
+required for this self-service API. It returns ID/email/display name and edits only display name;
+never use it to expose provider connections, Git identity, roles or assignments. Ownership follows
+the acting user, never a supplied ID. Shell uses its same-origin BFF and has no `apps.sources`.
+Harness settings owns source-provider UI. `/api/source-connections` reads/mutations require
+`apps.sources`, the current administrator and connection ownership; stored tokens never leave Core.
+Device authorization binds internally to the app grant's live parent browser session. Private-source
+installation/binding requires both `apps.install` and `apps.sources`, connection ownership and final
+Core confirmation. Harness owns the selection/rebinding UI; configuring a connection alone does not
+authorize installation or MCP delegation. Core retains credential issuance
+(`/account/tokens`) and OAuth consent; it serves no profile/source-settings pages. The JavaScript SDK supports app-owned popup recovery. Assistant-to-target MCP grants and the remaining
+acceptance matrix are tracked in `docs/features/local-browser-origins/plan.md`; app login does not
+authorize cross-app tools.
