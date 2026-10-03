@@ -21,9 +21,8 @@ import { findAppPageLink, getAppPageLinks } from "./shell/app-helpers";
 import { CoreRequestError, isAuthRequiredRedirectError, readCoreError, readCoreErrorDetail, redirectToCoreLogin, redirectToCoreLoginIfAuthRequired } from "./shell/core-api";
 import { appendThemeLaunchParams, createReissueRateLimiter } from "@hosty-sdk/app/embedder";
 import { CoreEventNames, subscribeToCoreEvents } from "./shell/events/core-event-stream";
-import { isAppUp } from "./shell/runtime-states";
 import { resolveLaunchGate } from "./shell/surfaces/app-surface-tabs";
-import { waitForShellUpdateToSettle } from "./shell/self-update";
+import { requestAppUpdate, reviewUpdatesInOrder } from "./shell/app-updates";
 import { requestAppRemoval, requestCoreApproval } from "./shell/app-removal";
 import { readCoreStatus, reconcileCoreUpdate } from "./shell/core-status";
 import { reconcileAppList } from "./shell/app-list-snapshot";
@@ -1350,104 +1349,54 @@ export function ShellClient({
     [coreOrigin, sendCsrfJson],
   );
 
-  // Enqueues the update on Core (plan-first updates): the request returns as soon as the apply is
-  // accepted, progress lives on the record (operationStatus "updating" drives the row spinner), and
-  // the outcome arrives as a record flip, hinted on the event stream. A rejected enqueue (the plan
-  // moved, expired, was consumed, or an apply is already running) answers with an actionable error —
-  // surface it and refresh so the row's affordance corrects itself instead of resending a dead
-  // digest.
-
+  // Every app-originated update is reviewed on Core, including routine and self-updates.
   const enqueueUpdate = useCallback(
-    async (app: CoreApp, planDigest: string) => {
+    async (app: CoreApp, planDigest: string, popup = openInstallationConfirmation()) => {
       const actionKey = `${app.id}:update`;
       setBusyAction(actionKey);
+      let submitted = false;
       try {
-        const reviewedPlan = detailPanel.updatePlan;
-        if (reviewedPlan?.planDigest === planDigest && (reviewedPlan.targetCorePermissions?.some(permission =>
-          !reviewedPlan.currentCorePermissions?.includes(permission)) || reviewedPlan.targetRoles?.some(role => !reviewedPlan.currentConfirmedRoles?.includes(role)))) {
-          const popup = openInstallationConfirmation();
-          try {
-            const draft = await installationClient.prepare({ updateAppId: app.id, planDigest });
-            const pending = await installationClient.submit(draft.id, {}, true);
-            showInstallationConfirmation(popup, pending);
-            toast.info("Confirm new permissions and roles in Hosty Core", {
-              duration: 60_000,
-              action: { label: "Open confirmation", onClick: () => window.open(pending.approvalUrl, "_blank", "noopener,noreferrer") },
-            });
-            setActivePanel(null);
-          } catch (error) {
-            popup?.close();
-            throw error;
-          }
-          return;
-        }
-        await sendCsrfJson(appEndpoint(app, "/update"), { planDigest });
-        // Close this app's dialog if it is the one open; another app's panel is left alone.
-        setActivePanel((current) => (current?.appId === app.id ? null : current));
-
-        // Shell self-update: the apply runs detached on Core, so it survives this page going away —
-        // and the origin serving us keeps answering from the OLD Shell until the swap happens. Wait
-        // for Core's record to leave "updating" (on the event stream, no poll), and only then probe
-        // our own origin for the new server before reloading into its assets. Probing first would
-        // reload the old bundle within milliseconds of the click, and take the wait down with it.
-        if (app.id === shellAppId) {
-          toast.success("Shell update started", { description: "Waiting for the new Shell, then reloading this page…" });
-          void refresh();
-          const outcome = await waitForShellUpdateToSettle({
-            coreOrigin,
-            shellAppId,
-            // app.removed too: a removal mid-apply is one of the ways this wait ends, and without
-            // it the record would only be re-read on the next unrelated commit or the deadline.
-            subscribe: (onSync) =>
-              subscribeToCoreEvents(coreOrigin, { names: [CoreEventNames.appChanged, CoreEventNames.appRemoved], onSync }),
-            // A running Shell is restarted by the apply, so its "updated" commit lands before the
-            // start this page is actually waiting for. One that is already down ends at "updated".
-            expectRestart: isAppUp(app.runtimeState),
+        const result = await requestAppUpdate(installationClient, app.id, planDigest, pending => {
+          submitted = true;
+          showInstallationConfirmation(popup, pending);
+          toast.info(`Confirm update: ${app.displayName}`, {
+            description: "Review and approve this update in Hosty Core.",
+            duration: 60_000,
+            action: { label: "Open confirmation", onClick: () => window.open(pending.approvalUrl, "_blank", "noopener,noreferrer") },
           });
-          if (outcome.kind === "failed") {
-            toast.error("Shell update failed", { description: outcome.message, appId: app.id });
-            void refresh();
-            return;
-          }
-
-          // Deliberately vague: this is every way the record failed to settle — an apply still
-          // running past the deadline, the app removed, a flip the page never saw. The row renders
-          // whichever it was, so point at it rather than assert one.
-          if (outcome.kind === "unresolved") {
-            toast.warning("Shell update not confirmed", {
-              description: "The page stopped waiting for the outcome — check the app row, and reload once the Shell answers again.",
-            });
-            return;
-          }
-
-          if (await waitForOwnOrigin()) {
-            window.location.reload();
-          } else {
-            toast.warning("Shell is not answering yet", {
-              description: "Keep this tab open and reload manually once the Shell is reachable again.",
-            });
-          }
-          return;
-        }
-
-        toast.success("Update started", { description: app.displayName });
-        await refresh();
-      } catch (error) {
-        if (isAuthRequiredRedirectError(error)) {
-          return;
-        }
-
-        toast.error("Update not started", {
-          appId: app.id,
-          description: error instanceof Error ? error.message : "The update could not be started.",
+          setActivePanel(current => current?.appId === app.id ? null : current);
         });
-        // The verdict or pending plan may have moved — refresh so the row renders current reality.
-        void refresh();
+        if (result.status === "denied") {
+          toast.info("Update cancelled", { description: app.displayName });
+          return false;
+        }
+        // Core reports success after the apply and restart complete. A pending confirmation
+        // must never trigger the old Shell's origin probe or reload.
+        if (app.id === shellAppId) {
+          if (await waitForOwnOrigin()) window.location.reload();
+          else toast.warning("Shell is not answering yet", {
+            description: "Keep this tab open and reload manually once the Shell is reachable again.",
+          });
+          return true;
+        }
+        toast.success("App updated", { description: app.displayName });
+        await refresh();
+        return true;
+      } catch (error) {
+        if (!submitted) popup?.close();
+        if (!isAuthRequiredRedirectError(error)) {
+          toast.error("Update not completed", {
+            appId: app.id,
+            description: error instanceof Error ? error.message : "Check the update status in Core.",
+          });
+          void refresh();
+        }
+        return false;
       } finally {
-        setBusyAction((current) => (current === actionKey ? null : current));
+        setBusyAction(current => current === actionKey ? null : current);
       }
     },
-    [appEndpoint, coreOrigin, refresh, sendCsrfJson, shellAppId, detailPanel.updatePlan, installationClient],
+    [refresh, shellAppId, installationClient],
   );
 
   const applyUpdate = useCallback(
@@ -1457,8 +1406,7 @@ export function ShellClient({
     [enqueueUpdate],
   );
 
-  // Row one-click apply from the fleet-check verdict: the cached pending plan is applied by digest,
-  // no dialog involved. Only offered for routine verdicts (the page gates on requiresReview).
+  // Routine verdicts reuse the cached plan digest but still require Core confirmation.
   const applyUpdateFromRow = useCallback(
     async (app: CoreApp) => {
       const planDigest = app.updateCheck?.planDigest;
@@ -1488,54 +1436,17 @@ export function ShellClient({
     }
   }, [coreOrigin, refresh, sendCsrfJson]);
 
-  // Applies every routine verdict in one action; review-class updates are left for a human and
-  // counted in the summary. Shell's own app goes last: its apply restarts the Shell serving this
-  // page, so every other enqueue must already be accepted by then (enqueueUpdate then owns the
-  // wait-for-new-Shell reload).
+  // Reuse one user-opened popup for sequential Core reviews. Shell goes last because
+  // its approved update restarts the server and reloads this page.
   const updateAllApps = useCallback(async () => {
     const routine = state.apps.filter(isRoutineUpdate);
-    const reviewCount = state.apps.filter(
-      (app) => app.updateCheck?.updateAvailable === true && (app.updateCheck.requiresReview === true || Boolean(app.updateCheck.error) || !app.updateCheck.planDigest),
-    ).length;
-    const reviewNote = reviewCount > 0 ? `${reviewCount} update${reviewCount === 1 ? "" : "s"} need review.` : undefined;
     if (routine.length === 0) {
-      toast.info("No routine updates to apply", { description: reviewNote });
+      toast.info("No routine updates to review");
       return;
     }
-
-    const shellApp = routine.find((app) => app.id === shellAppId);
-    let started = 0;
-    let failed = 0;
-    for (const app of routine.filter((candidate) => candidate.id !== shellAppId)) {
-      try {
-        await sendCsrfJson(appEndpoint(app, "/update"), { planDigest: app.updateCheck!.planDigest });
-        started += 1;
-      } catch (error) {
-        if (isAuthRequiredRedirectError(error)) {
-          return;
-        }
-
-        failed += 1;
-      }
-    }
-
-    // Count only what actually got accepted; the Shell's own enqueue runs after this and reports
-    // through enqueueUpdate's dedicated toast (or its error path), never pre-counted here. A batch
-    // where nothing started is a warning, not a "0 updates started" success.
-    const failedNote = failed > 0 ? `${failed} could not be started.` : undefined;
-    const notes = [reviewNote, failedNote, shellApp ? "The Shell updates last." : undefined]
-      .filter(Boolean)
-      .join(" ") || undefined;
-    if (started > 0) {
-      toast.success(`${started} update${started === 1 ? "" : "s"} started`, { description: notes });
-    } else if (failed > 0) {
-      toast.warning("No updates could be started", { description: notes });
-    }
-    await refresh();
-    if (shellApp?.updateCheck?.planDigest) {
-      await enqueueUpdate(shellApp, shellApp.updateCheck.planDigest);
-    }
-  }, [appEndpoint, enqueueUpdate, refresh, sendCsrfJson, shellAppId, state.apps]);
+    const popup = openInstallationConfirmation();
+    await reviewUpdatesInOrder(routine, shellAppId, app => enqueueUpdate(app, app.updateCheck!.planDigest!, popup));
+  }, [enqueueUpdate, shellAppId, state.apps]);
 
   // Advisory preview for the remove panel: what else declares a dependency on this app and who
   // consumes the platform capabilities it provides. A failure here degrades to "no impact shown"

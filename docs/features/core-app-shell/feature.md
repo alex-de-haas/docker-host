@@ -1,7 +1,7 @@
 # Core App Shell
 
 Created: 2026-05-19
-Updated: 2026-10-01
+Updated: 2026-10-03
 
 Hosty Shell is the Core-managed browser UI runtime app. It renders a single authenticated Shell surface backed by Hosty Core APIs; it does not own Core lifecycle logic and it does not reintroduce the retired combined Next.js Host package.
 
@@ -108,6 +108,12 @@ Below 1240 px of dashboard workspace width, the header actions collapse into an 
 ellipsis menu at the same breakpoint as the row shortcuts. The menu contains Install app,
 Check updates (disabled while a check is running), and Update all when routine updates are available.
 Checking updates keeps the menu open so its progress indicator remains visible.
+Every update requested by Shell, including a routine update without new grants, goes through
+Core's installation confirmation flow. Update all reuses one popup for sequential confirmations,
+with Shell itself last. Denial leaves the app unchanged; success is reported only after Core
+finishes applying the update. During a Shell self-update, interrupted status reads are retried
+within the confirmation deadline without repeating the mutation, and the page reloads only after
+Core reports success and the new Shell origin responds.
 At wider widths, the existing icon buttons remain visible. Opening the assistant panel or resizing
 it changes this layout based on the remaining workspace width, not the browser viewport.
 

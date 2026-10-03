@@ -5,6 +5,7 @@ export async function requestCoreApproval(
   client: InstallationClient,
   source: InstallationSource,
   onSubmitted: (request: InstallationRequest) => void,
+  options: { retryInterruptedStatus?: boolean } = {},
 ): Promise<InstallationRequest> {
   const flow = new InstallationFlow(client);
   try {
@@ -17,7 +18,14 @@ export async function requestCoreApproval(
       if (Date.now() >= Date.parse(request.expiresAt))
         throw new Error("Core confirmation expired or is still running. Check Core before preparing another request.");
       await new Promise(resolve => setTimeout(resolve, 1000));
-      request = await client.status(request.id);
+      try {
+        request = await client.status(request.id);
+      } catch (error) {
+        // A Shell self-update temporarily removes the proxy serving this status request.
+        // Retry only reads, within the existing deadline; never repeat prepare or submit.
+        const status = error instanceof Error && "status" in error ? Number(error.status) : null;
+        if (!options.retryInterruptedStatus || !(error instanceof TypeError || (status !== null && status >= 500))) throw error;
+      }
     }
     if (request.status === "failed") throw new Error(request.error ?? "Operation failed.");
     if (request.status !== "succeeded" && request.status !== "denied")
