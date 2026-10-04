@@ -101,16 +101,20 @@ export function logoutApp(request: Request): Response {
   return response;
 }
 
-async function callCore(path: string, init: RequestInit): Promise<Response> {
+async function callCore(path: string, init: RequestInit, timeoutMs = 15_000): Promise<Response> {
   const transport = getCoreTransport();
   if (!transport || !getServiceToken()) return error(503, "app_auth_misconfigured", "Shell must run through Core with its app credentials.");
-  // Bound connection setup; streaming responses remain open until the browser disconnects.
+  // Fetch resolves after response headers, not after connecting. Lifecycle mutations can
+  // spend minutes installing dependencies/building before sending those headers. Streaming
+  // responses remain open until the browser disconnects.
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15000);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(new URL(path, transport), { ...init, cache: "no-store", redirect: "manual",
       signal: init.signal ? AbortSignal.any([init.signal, controller.signal]) : controller.signal });
   } catch {
+    if (controller.signal.aborted)
+      return error(504, "core_request_timeout", "Core did not finish this request in time. Check the current state before trying again.");
     return error(503, "core_unavailable", "Core could not be reached. Try again shortly.");
   } finally { clearTimeout(timer); }
 }
@@ -153,7 +157,7 @@ export async function proxyCore(request: Request, path: string[]): Promise<Respo
   const response = await callCore(pathname + new URL(request.url).search, {
     method: request.method, headers, signal: request.signal,
     body: ["GET", "HEAD"].includes(request.method) ? undefined : await request.arrayBuffer(),
-  });
+  }, ["GET", "HEAD"].includes(request.method) ? 15_000 : 10 * 60_000);
   const outgoing = new Headers(privateHeaders);
   for (const name of ["Content-Type", "ETag", "Content-Range", "Accept-Ranges"]) {
     const value = response.headers.get(name);
