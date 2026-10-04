@@ -230,6 +230,14 @@ Shell development and production commands explicitly select webpack. Its extensi
 the workspace SDK's `.js` imports to TypeScript sources; the Docker image uses the same production
 build command.
 
+Shell's app-session proxy uses a 15-second response-header deadline for reads and auth checks,
+and a 10-minute operation deadline for mutations, matching the local CLI's operation budget.
+Starting a local app can install dependencies and build its UI before Core responds. Shell does
+not cancel that setup at the short read deadline. Browser disconnects still cancel the request;
+streaming responses remain tied to that signal after headers arrive. A proxy deadline returns
+`core_request_timeout` (504), with guidance to check current state before retrying. Shell never
+replays a mutation automatically.
+
 ## Testing Expectations
 
 Shell has no browser or component-rendering harness: `npm test --workspace @haas/hosty-shell` runs

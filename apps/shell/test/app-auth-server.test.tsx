@@ -14,7 +14,7 @@ beforeEach(() => {
   vi.stubEnv("HOSTY_APP_ID", "example.console");
   fetchMock = vi.fn(); vi.stubGlobal("fetch", fetchMock); exchange.mockReset();
 });
-afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 function callback(supplied = state) {
   return new Request(`${origin}/auth/callback?code=one-time-code&state=${supplied}`, {
     headers: { cookie: `hosty_shell_auth_state=${state}; hosty_shell_auth_return=%2Fapps` },
@@ -96,4 +96,69 @@ it("uses the browser Host when Next constructs Request.url from the server liste
   }));
   expect(new URL(response.headers.get("location")!).origin).toBe("http://core.hosty.localhost:7070");
   expect(response.headers.getSetCookie()).toHaveLength(2);
+});
+
+function startRequest(signal?: AbortSignal) {
+  return new Request(`${origin}/api/core/api/apps/hosty.harness/start`, { method: "POST", signal,
+    headers: { cookie: `${appCookie}=own-grant; hosty_shell_csrf=csrf`, "X-Hosty-CSRF": "csrf", Origin: origin }, body: "{}" });
+}
+
+function pendingCoreResponse() {
+  fetchMock.mockImplementation((_url: URL, init: RequestInit) => new Promise<Response>((resolve, reject) => {
+    init.signal!.addEventListener("abort", () => reject(init.signal!.reason), { once: true });
+    setTimeout(() => resolve(Response.json({ state: "running" })), 45_000);
+  }));
+}
+
+it("lets app startup finish after setup exceeds the short read timeout, without replaying it", async () => {
+  vi.useFakeTimers();
+  pendingCoreResponse();
+  const pending = proxyCore(startRequest(), ["api", "apps", "hosty.harness", "start"]);
+  await vi.advanceTimersByTimeAsync(16_000);
+  expect(fetchMock.mock.calls[0][1].signal.aborted).toBe(false);
+  await vi.advanceTimersByTimeAsync(29_000);
+  const response = await pending;
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ state: "running" });
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+it("keeps reads bounded and reports timeout without suggesting a mutation retry", async () => {
+  vi.useFakeTimers();
+  pendingCoreResponse();
+  const pending = proxyCore(new Request(`${origin}/api/core/api/apps`, {
+    headers: { cookie: `${appCookie}=own-grant` },
+  }), ["api", "apps"]);
+  await vi.advanceTimersByTimeAsync(15_000);
+  const response = await pending;
+  expect(response.status).toBe(504);
+  expect((await response.json()).code).toBe("core_request_timeout");
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+it("still cancels a long operation when its browser request disconnects", async () => {
+  vi.useFakeTimers();
+  pendingCoreResponse();
+  const controller = new AbortController();
+  const pending = proxyCore(startRequest(controller.signal), ["api", "apps", "hosty.harness", "start"]);
+  await vi.advanceTimersByTimeAsync(1);
+  controller.abort();
+  await pending;
+  expect(fetchMock.mock.calls[0][1].signal.aborted).toBe(true);
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+it("bounds stalled mutations with the operation deadline and never replays them", async () => {
+  vi.useFakeTimers();
+  fetchMock.mockImplementation((_url: URL, init: RequestInit) => new Promise<Response>((_resolve, reject) => {
+    init.signal!.addEventListener("abort", () => reject(init.signal!.reason), { once: true });
+  }));
+  const pending = proxyCore(startRequest(), ["api", "apps", "hosty.harness", "start"]);
+  await vi.advanceTimersByTimeAsync(10 * 60_000 - 1);
+  expect(fetchMock.mock.calls[0][1].signal.aborted).toBe(false);
+  await vi.advanceTimersByTimeAsync(1);
+  const response = await pending;
+  expect(response.status).toBe(504);
+  expect((await response.json()).code).toBe("core_request_timeout");
+  expect(fetchMock).toHaveBeenCalledTimes(1);
 });

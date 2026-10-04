@@ -1,13 +1,16 @@
 # App Permission Management
 
 Created: 2026-09-30
-Updated: 2026-10-02
+Updated: 2026-10-03
 
 Administrators manage an installed app's permission declarations and optional choices from the
 Permissions tab in its existing settings panel. The tab remains accessible for empty and legacy
 installations. It distinguishes effective access from accepted declarations and the currently
 observed manifest, with descriptions, technical identifiers, additions, removals and transitions.
-The settings panel displays required and optional access read-only. Its **Change permissions**
+The settings panel displays required and optional access read-only in separate compact groups.
+Each row shows a short label and an icon with a text status. Expanding the row reveals Core's full
+description and technical identifier; manifest additions, removals and transitions remain visible
+without expansion. Rows use native keyboard-accessible disclosure controls and theme colors. Its **Change permissions**
 button opens Core's isolated page for every app, including Shell itself. Required access is not an
 optional toggle. Core checks only rights already granted to this application; new optional rights
 default off. The user can select or revoke optional rights only on that Core page.

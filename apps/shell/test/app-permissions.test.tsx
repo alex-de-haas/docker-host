@@ -26,8 +26,8 @@ it("shows permission grants read-only, including Shell's own optional permission
   await render();
   expect(container.textContent).toContain("Required permissions need approval");
   expect(container.textContent).toContain("Read skills");
-  expect(container.textContent).toContain("Optional · Allowed");
-  expect(container.textContent).toContain("Optional · Not allowed");
+  expect(container.querySelector('[aria-label="Optional permissions"]')?.textContent).toContain("Allowed");
+  expect(container.querySelector('[aria-label="Optional permissions"]')?.textContent).toContain("Not allowed");
   expect(container.querySelectorAll('[role="switch"], input[type="checkbox"]')).toHaveLength(0);
 });
 it("opens Core for Shell itself without submitting selections, with a blocked-popup fallback", async () => {
@@ -46,7 +46,7 @@ it("refreshes grants and dashboard on returning from Core", async () => {
   await act(async () => window.dispatchEvent(new Event("focus")));
   expect(api.refresh).toHaveBeenCalledOnce();
   expect(container.textContent).not.toContain("Required permissions need approval");
-  expect(container.textContent).toContain("Required · Allowed");
+  expect(container.querySelector('[aria-label="Required permissions"]')?.textContent).toContain("Allowed");
 });
 it("shows explicit empty and unavailable states", async () => {
   state = { ...state, required: [], optional: [], missingRequired: [], reviewRequired: false };
