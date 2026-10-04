@@ -1,9 +1,14 @@
 # Core App Shell
 
 Created: 2026-05-19
-Updated: 2026-10-03
+Updated: 2026-10-04
 
 Hosty Shell is the Core-managed browser UI runtime app. It renders a single authenticated Shell surface backed by Hosty Core APIs; it does not own Core lifecycle logic and it does not reintroduce the retired combined Next.js Host package.
+
+The Shell frame stays within the viewport. Its navigation, workspace and right panel have
+independent bounded scroll areas: expanding navigation sections does not grow the document,
+and the account footer stays visible below the navigation. Navigation scroll gestures do not
+propagate to the surrounding page when the list reaches an edge.
 
 ## Scope
 

@@ -107,7 +107,7 @@ export function ShellRightPanel({
       </section>
       <TooltipProvider delayDuration={350}>
         <div role="toolbar" aria-label="Panels" aria-orientation="vertical"
-          className={cn("flex w-12 max-w-full shrink-0 flex-col items-center gap-1 overflow-y-auto overflow-x-hidden bg-background py-2", expanded && "border-l")}>
+          className={cn("flex min-h-0 w-12 max-w-full shrink-0 flex-col items-center gap-1 overflow-y-auto overflow-x-hidden overscroll-contain bg-background py-2", expanded && "border-l")}>
           {tabs.map((tab, index) => {
             const selected = expanded && tab.key === activeTab?.key;
             const unavailable = !tab.embeddedUrl;

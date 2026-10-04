@@ -2070,7 +2070,7 @@ export function ShellClient({
   return (
     <ShellActionsContext.Provider value={shellActionsContextValue}>
       <ShellStateContext.Provider value={shellStateContextValue}>
-      <div className="flex h-dvh flex-col bg-sidebar">
+      <div className="flex h-dvh flex-col overflow-hidden bg-sidebar">
         <ShellActivityBridge coreOrigin={coreOrigin} appId={shellAppId} />
         <MissingPermissionsNotice />
         <ShellTopStrip
@@ -2094,7 +2094,7 @@ export function ShellClient({
 
       <div
         className={cn(
-          "relative grid min-h-0 flex-1",
+          "relative grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)]",
           chromeTransitions && !narrowViewport && "motion-safe:transition-[grid-template-columns] motion-safe:duration-200",
           (narrowViewport || sidebarCompact)
             ? "grid-cols-[60px_minmax(0,1fr)]"
@@ -2110,7 +2110,7 @@ export function ShellClient({
           />
         )}
         <aside id="shell-navigation" className={cn(
-          "relative z-30 h-full overflow-visible bg-sidebar text-sidebar-foreground",
+          "relative z-30 h-full min-h-0 overflow-visible bg-sidebar text-sidebar-foreground",
           narrowViewport && mobileSidebarOpen && "absolute inset-y-0 left-0 w-[280px] max-w-[85vw] shadow-lg",
         )}>
           <ShellSidebar
